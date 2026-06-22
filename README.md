@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Karos CMO
 
-## Getting Started
+An AI marketing-agency operating system. Manage your team, give clients a portal,
+**build and run AI agents** that produce on-brand content, and **auto-ingest meeting
+transcripts** from Fireflies.
 
-First, run the development server:
+Dark, neon-green UI. Built on **Next.js 16 · Firebase Auth · Firestore · Anthropic (Claude) · Resend**.
+
+## What's inside
+
+- **Role-based workspace** — Admin / Employee / Client, each with a tailored view.
+- **Agent builder** — employees create reusable AI "skills" in-app: prompt, model,
+  inputs, capabilities (use brand voice, use meeting context, save assets, email client).
+- **Flagship: Instagram + Email Agent** — generates on-brand posts (caption, hashtags,
+  visual brief), stores them as assets, and emails the drafts to the client for review.
+- **Jobs** — every agent run is logged with inputs, output, deliverables and a run trace.
+- **Client portal** — clients see and approve their assets and read meeting summaries.
+- **Fireflies ingestion** — webhook → fetch transcript → Claude summary + action items →
+  auto-route to the matching client by attendee email domain.
+
+## Quick start
+
+See **[SETUP.md](SETUP.md)**. TL;DR:
 
 ```bash
+npm install
+cp .env.example .env.local   # fill in Firebase + Anthropic + Resend + Fireflies
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Architecture
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+src/
+  app/
+    (app)/…            authenticated workspace (dashboard, clients, agents, jobs, assets, meetings, team)
+    api/auth/session   Firebase session-cookie exchange
+    api/ingest/fireflies  Fireflies webhook receiver
+    login, pending     auth entry points
+  lib/
+    firebase/          client + admin SDK init
+    data.ts            Firestore data-access layer (server only)
+    auth.ts            session cookies, getCurrentUser, role guards
+    actions.ts         server actions (the app's write API)
+    agents/run.ts      the agent execution engine
+    transcripts/       Fireflies fetch + ingestion/summarisation
+    email.ts           Resend delivery
+  components/          UI primitives + feature components
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+All Firestore access is server-side through the Admin SDK; the browser uses Firebase
+only for auth.
