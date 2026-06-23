@@ -13,7 +13,25 @@ import { uploadBytes } from "@/lib/storage";
  * bad image doesn't fail an entire job.
  */
 
-const SEGMIND_URL = "https://api.segmind.com/v1/higgsfield-text2image-soul";
+const SOUL_URL = "https://api.segmind.com/v1/higgsfield-text2image-soul";
+
+// Nano Banana (Gemini 2.5 Flash Image) — used whenever a post supplies client
+// reference images. It accepts up to 8 reference image URLs and keeps the
+// referenced products/logos/styles consistent in the freshly generated visual.
+const NANO_BANANA_URL = "https://api.segmind.com/v1/nano-banana";
+
+// Aspect ratios Nano Banana accepts. Unlike Soul it has a native Instagram 4:5,
+// so that's the default here. Overridable via SEGMIND_NANO_BANANA_ASPECT.
+const NANO_BANANA_ASPECTS = new Set([
+  "1:1", "2:3", "3:2", "4:3", "3:4", "4:5", "5:4", "16:9", "9:16", "21:9",
+]);
+const DEFAULT_NANO_BANANA_ASPECT = "4:5";
+
+function resolveNanoBananaAspect(): string {
+  const env = process.env.SEGMIND_NANO_BANANA_ASPECT;
+  if (env && NANO_BANANA_ASPECTS.has(env)) return env;
+  return DEFAULT_NANO_BANANA_ASPECT;
+}
 
 // The exact set of dimensions the Soul model accepts (anything else → HTTP 400).
 const ALLOWED_SIZES = new Set([
@@ -40,11 +58,17 @@ const FALLBACK_STYLE_ID = "1cb4b936-77bf-4f9a-9039-f3d349a4cdbe";
 const DEFAULT_STYLE_STRENGTH = 0.8;
 
 export interface GenerateImageOptions {
-  /** The art-direction brief — maps to the Higgsfield `prompt`. */
+  /** The art-direction brief — maps to the model `prompt`. */
   concept: string;
   /** Destination filename (no extension), used as the storage key prefix. */
   key: string;
-  /** Overrides the default size; ignored if not an allowed dimension. */
+  /**
+   * Public URLs of client reference images. When non-empty, generation routes
+   * to Nano Banana so the result stays visually consistent with these assets
+   * (product, logo, style). When empty/undefined, falls back to Soul text2image.
+   */
+  referenceUrls?: string[];
+  /** Overrides the default Soul size; ignored if not an allowed dimension. */
   size?: string;
   styleId?: string;
 }
@@ -70,20 +94,38 @@ export async function generatePostImage(opts: GenerateImageOptions): Promise<str
   const apiKey = process.env.SEGMIND_API_KEY;
   if (!apiKey) throw new Error("SEGMIND_API_KEY is not set");
 
-  const res = await fetch(SEGMIND_URL, {
+  const refs = (opts.referenceUrls ?? []).filter(Boolean);
+
+  // Reference images present → Nano Banana (image-conditioned). Otherwise Soul.
+  const { endpoint, body } = refs.length
+    ? {
+        endpoint: NANO_BANANA_URL,
+        body: {
+          prompt: opts.concept,
+          image_urls: refs,
+          aspect_ratio: resolveNanoBananaAspect(),
+          response_modalities: "IMAGE",
+        },
+      }
+    : {
+        endpoint: SOUL_URL,
+        body: {
+          prompt: opts.concept,
+          width_and_height: resolveSize(opts.size),
+          style_id: opts.styleId ?? process.env.SEGMIND_SOUL_STYLE_ID ?? FALLBACK_STYLE_ID,
+          style_strength: resolveStyleStrength(),
+          enhance_prompt: true,
+          quality: "1080p",
+        },
+      };
+
+  const res = await fetch(endpoint, {
     method: "POST",
     headers: {
       "x-api-key": apiKey,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      prompt: opts.concept,
-      width_and_height: resolveSize(opts.size),
-      style_id: opts.styleId ?? process.env.SEGMIND_SOUL_STYLE_ID ?? FALLBACK_STYLE_ID,
-      style_strength: resolveStyleStrength(),
-      enhance_prompt: true,
-      quality: "1080p",
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {

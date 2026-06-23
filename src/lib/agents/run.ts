@@ -45,6 +45,17 @@ const igSchema = z.object({
               "instead of generating one — set it when an existing client image fits the post better. " +
               "Use null to generate a fresh image from imageConcept.",
           ),
+        referenceImages: z
+          .array(z.number())
+          .nullable()
+          .describe(
+            "1-based indices of provided client context images to use as VISUAL REFERENCES when " +
+              "GENERATING this post's image (imageConcept) — the generator keeps those products, logos, " +
+              "or styles consistent in the new visual. Use this to ground a fresh image in real brand " +
+              "assets (e.g. put the client's actual product into a new scene). Up to 8. " +
+              "Leave null/empty for a purely text-driven image. Ignored when useContextImage is set, " +
+              "since that reuses an image as-is rather than generating.",
+          ),
       }),
     )
     .describe("The generated Instagram posts."),
@@ -106,7 +117,7 @@ async function loadClientContext(
 
   const lines: string[] = ["\n# Client context (provided reference material)"];
   if (images.length) {
-    lines.push("Reference images (cite by index in useContextImage when one fits a post):");
+    lines.push("Reference images — cite indices in `referenceImages` to visually guide a GENERATED image (keeps the client's products/logos/style), or in `useContextImage` to use one as the final visual as-is:");
     images.forEach((it, i) => lines.push(`  ${i + 1}. ${it.name}${it.note ? ` — ${it.note}` : ""}`));
   }
   if (docs.length) {
@@ -193,8 +204,19 @@ async function generateContent(args: {
         continue;
       }
       if (withImages) {
+        // Resolve the model-chosen reference indices → client image URLs (deduped, in range).
+        const refUrls = [...new Set(object.posts[i].referenceImages ?? [])]
+          .filter((n) => Number.isInteger(n) && n >= 1 && n <= ctx.images.length)
+          .map((n) => ctx.images[n - 1].url);
         try {
-          images[i] = await generatePostImage({ concept: object.posts[i].imageConcept, key: `${imageKeyPrefix}-${i}` });
+          images[i] = await generatePostImage({
+            concept: object.posts[i].imageConcept,
+            key: `${imageKeyPrefix}-${i}`,
+            referenceUrls: refUrls,
+          });
+          if (refUrls.length) {
+            events.push({ at: Date.now(), level: "info", message: `Post ${i + 1}: generated from ${refUrls.length} client reference image${refUrls.length === 1 ? "" : "s"}` });
+          }
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Unknown error";
           events.push({ at: Date.now(), level: "error", message: `Image generation failed for post ${i + 1}: ${msg}` });
