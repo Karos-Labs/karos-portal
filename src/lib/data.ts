@@ -7,6 +7,7 @@ import type {
   AppUser,
   Asset,
   Client,
+  ContextItem,
   Job,
   Role,
   Transcript,
@@ -26,6 +27,7 @@ const col = {
   assets: () => adminDb().collection("assets"),
   transcripts: () => adminDb().collection("transcripts"),
   accessTokens: () => adminDb().collection("accessTokens"),
+  contextItems: () => adminDb().collection("contextItems"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -42,6 +44,10 @@ export async function getUserByEmail(email: string): Promise<AppUser | null> {
 
 export async function upsertUser(user: AppUser): Promise<void> {
   await col.users().doc(user.uid).set(user, { merge: true });
+}
+
+export async function deleteUser(uid: string): Promise<void> {
+  await col.users().doc(uid).delete();
 }
 
 export async function listUsers(role?: Role): Promise<AppUser[]> {
@@ -217,6 +223,33 @@ export async function createTranscript(data: Omit<Transcript, "id">): Promise<st
 
 export async function updateTranscript(id: string, data: Partial<Transcript>): Promise<void> {
   await col.transcripts().doc(id).set(data, { merge: true });
+}
+
+/* -------------------------- context items -------------------------- */
+
+export async function listContextItems(opts: { clientId: string }): Promise<ContextItem[]> {
+  const snap = await col.contextItems().where("clientId", "==", opts.clientId).get();
+  return snap.docs
+    .map((d) => withId<ContextItem>(d))
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+export async function getContextItem(id: string): Promise<ContextItem | null> {
+  const doc = await col.contextItems().doc(id).get();
+  return doc.exists ? withId<ContextItem>(doc) : null;
+}
+
+export async function createContextItem(data: Omit<ContextItem, "id">): Promise<string> {
+  const ref = await col.contextItems().add(data);
+  return ref.id;
+}
+
+export async function updateContextItem(id: string, data: Partial<ContextItem>): Promise<void> {
+  await col.contextItems().doc(id).set(data, { merge: true });
+}
+
+export async function deleteContextItem(id: string): Promise<void> {
+  await col.contextItems().doc(id).delete();
 }
 
 /* -------------------------- access tokens -------------------------- */

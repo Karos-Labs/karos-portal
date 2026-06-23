@@ -18,16 +18,21 @@ export type DraftFields = Pick<
 
 /** Normalise field state — coerce comma-string select options into arrays, sanitise keys. */
 export function cleanFields(fields: AgentField[]): AgentField[] {
-  return fields.map((f) => ({
-    ...f,
-    key: f.key.trim().replace(/\s+/g, "_") || "field",
-    options:
-      f.type === "select"
-        ? typeof f.options === "string"
+  return fields.map((f) => {
+    const { options: _options, ...rest } = f;
+    const clean: AgentField = {
+      ...rest,
+      key: f.key.trim().replace(/\s+/g, "_") || "field",
+    };
+    // Only "select" fields carry options; never write `undefined` (Firestore rejects it).
+    if (f.type === "select") {
+      clean.options =
+        typeof f.options === "string"
           ? (f.options as string).split(",").map((s) => s.trim()).filter(Boolean)
-          : f.options
-        : undefined,
-  }));
+          : f.options ?? [];
+    }
+    return clean;
+  });
 }
 
 /** Every agent must be able to generate; keep that capability present. */

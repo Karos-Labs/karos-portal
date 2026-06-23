@@ -7,6 +7,7 @@ import {
   listAgents,
   getAgent,
   getClient,
+  listContextItems,
 } from "@/lib/data";
 import {
   type DraftFields,
@@ -130,6 +131,23 @@ const handler = createMcpHandler(
         const agent = await getAgent(id);
         if (!agent) return err("Agent not found");
         return text(agent);
+      },
+    );
+
+    server.registerTool(
+      "list_client_context",
+      {
+        description:
+          "List the files & images attached to a client's context library. Agents automatically " +
+          "use these when running for the client (images as visual reference, PDFs/text read natively).",
+        inputSchema: { clientId: z.string() },
+      },
+      async ({ clientId }, extra) => {
+        actor(extra);
+        const items = await listContextItems({ clientId });
+        return text(
+          items.map((i) => ({ id: i.id, kind: i.kind, name: i.name, sizeBytes: i.sizeBytes, note: i.note ?? null })),
+        );
       },
     );
 

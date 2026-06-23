@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getClient, listAgents, listAssets, listTranscripts, listJobs } from "@/lib/data";
+import { getClient, listAgents, listAssets, listTranscripts, listJobs, listContextItems } from "@/lib/data";
 import { Card, CardTitle, Badge, EmptyState, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ClientEditor } from "@/components/client-editor";
+import { ClientContext } from "@/components/client-context";
 import { AgentCard } from "@/components/agent-card";
 import { AssetCard } from "@/components/asset-card";
 import { JobStatusBadge } from "@/components/job-status";
@@ -16,11 +17,12 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const client = await getClient(id);
   if (!client) notFound();
 
-  const [agents, assets, transcripts, jobs] = await Promise.all([
+  const [agents, assets, transcripts, jobs, contextItems] = await Promise.all([
     listAgents({ status: "published" }),
     listAssets({ clientId: id }),
     listTranscripts({ clientId: id }),
     listJobs({ clientId: id }),
+    listContextItems({ clientId: id }),
   ]);
   const activeAgents = agents.filter((a) => a.isActive);
 
@@ -67,6 +69,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               </div>
             )}
           </div>
+
+          {/* Context library */}
+          <ClientContext clientId={id} items={contextItems} />
 
           {/* Assets */}
           <div>

@@ -22,6 +22,7 @@ const NAV: NavItem[] = [
   { href: "/jobs", label: "Jobs", icon: "ListChecks", roles: ["admin", "employee"] },
   { href: "/transcripts", label: "Meetings", icon: "Mic", roles: ["admin", "employee", "client"] },
   { href: "/assets", label: "Assets", icon: "FolderOpen", roles: ["admin", "employee", "client"] },
+  { href: "/registrations", label: "Registrations", icon: "UserCheck", roles: ["admin"] },
   { href: "/team", label: "Team", icon: "Users", roles: ["admin"] },
   { href: "/connect", label: "Connect", icon: "Plug", roles: ["admin", "employee"] },
 ];
@@ -32,7 +33,7 @@ const ROLE_LABEL: Record<Role, string> = {
   client: "Client",
 };
 
-export function Sidebar({ user }: { user: AppUser }) {
+export function Sidebar({ user, pendingCount = 0 }: { user: AppUser; pendingCount?: number }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const items = NAV.filter((n) => n.roles.includes(user.role));
@@ -41,6 +42,7 @@ export function Sidebar({ user }: { user: AppUser }) {
     <nav className="flex flex-1 flex-col gap-1">
       {items.map((item) => {
         const active = pathname === item.href || pathname.startsWith(item.href + "/");
+        const badge = item.href === "/registrations" && pendingCount > 0 ? pendingCount : null;
         return (
           <Link
             key={item.href}
@@ -57,7 +59,12 @@ export function Sidebar({ user }: { user: AppUser }) {
               name={item.icon}
               className={cn("h-4 w-4", active ? "text-neon" : "text-muted-2 group-hover:text-foreground")}
             />
-            {item.label}
+            <span className="flex-1">{item.label}</span>
+            {badge !== null && (
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-neon px-1.5 text-[11px] font-semibold text-[#03110b]">
+                {badge}
+              </span>
+            )}
           </Link>
         );
       })}

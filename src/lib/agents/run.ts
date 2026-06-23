@@ -9,6 +9,7 @@ import {
   getAgent,
   getClient,
   listTranscripts,
+  listContextItems,
   createJob,
   updateJob,
   createAsset,
@@ -16,7 +17,9 @@ import {
 } from "@/lib/data";
 import { sendEmail, emailShell } from "@/lib/email";
 import { generatePostImage, imageGenConfigured } from "@/lib/images";
-import type { Agent, AppUser, Client, Job, JobRunEvent } from "@/lib/types";
+import { CONTEXT_CAPS } from "@/lib/context";
+import type { Agent, AppUser, Client, ContextItem, Job, JobRunEvent } from "@/lib/types";
+import type { ImagePart, FilePart, TextPart } from "@ai-sdk/provider-utils";
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
 
@@ -34,6 +37,14 @@ const igSchema = z.object({
               "On-brand and photographic unless the brief says otherwise. No text overlays, logos, or watermarks.",
           ),
         callToAction: z.string().describe("A short CTA line."),
+        useContextImage: z
+          .number()
+          .nullable()
+          .describe(
+            "1-based index of a provided client context image to use as THIS post's final visual " +
+              "instead of generating one — set it when an existing client image fits the post better. " +
+              "Use null to generate a fresh image from imageConcept.",
+          ),
       }),
     )
     .describe("The generated Instagram posts."),
@@ -74,12 +85,70 @@ interface GeneratedContent {
   text?: string;
 }
 
+type UserPart = TextPart | ImagePart | FilePart;
+
 /**
- * The reusable generation core: loads context, runs the model, optionally
- * generates images. Performs NO persistence (no job/asset/email) — the only
- * side effect is uploading generated images to Storage so they get a URL.
- * Both the real run path (`executeRun`) and the sandboxed test path
- * (`testRunAgent`) call this, so they stay in lockstep.
+ * Load a client's context library (always-on) and turn it into model input:
+ * a text description (enumerated images + inlined text files) plus image/PDF
+ * parts Claude reads natively. Returns the capped image list so the IG branch
+ * can map a post's `useContextImage` index back to a URL.
+ */
+async function loadClientContext(
+  clientId: string,
+  events: JobRunEvent[],
+): Promise<{ text: string; mediaParts: UserPart[]; images: ContextItem[] }> {
+  const all = await listContextItems({ clientId });
+  if (all.length === 0) return { text: "", mediaParts: [], images: [] };
+
+  const images = all.filter((i) => i.kind === "image").slice(0, CONTEXT_CAPS.images);
+  const docs = all.filter((i) => i.kind === "document").slice(0, CONTEXT_CAPS.documents);
+  const texts = all.filter((i) => i.kind === "text");
+
+  const lines: string[] = ["\n# Client context (provided reference material)"];
+  if (images.length) {
+    lines.push("Reference images (cite by index in useContextImage when one fits a post):");
+    images.forEach((it, i) => lines.push(`  ${i + 1}. ${it.name}${it.note ? ` — ${it.note}` : ""}`));
+  }
+  if (docs.length) {
+    lines.push("Attached documents:");
+    docs.forEach((it) => lines.push(`  - ${it.name} (PDF)${it.note ? ` — ${it.note}` : ""}`));
+  }
+
+  // Inline text files within a shared character budget.
+  let budget = CONTEXT_CAPS.textChars;
+  for (const it of texts) {
+    if (budget <= 0) break;
+    try {
+      const res = await fetch(it.url);
+      if (!res.ok) continue;
+      const body = (await res.text()).slice(0, budget);
+      budget -= body.length;
+      lines.push(`\n--- ${it.name}${it.note ? ` (${it.note})` : ""} ---\n${body}`);
+    } catch {
+      // Skip unreadable text file.
+    }
+  }
+
+  const mediaParts: UserPart[] = [
+    ...images.map<ImagePart>((it) => ({ type: "image", image: new URL(it.url), mediaType: it.mimeType })),
+    ...docs.map<FilePart>((it) => ({ type: "file", data: new URL(it.url), mediaType: "application/pdf", filename: it.name })),
+  ];
+
+  events.push({
+    at: Date.now(),
+    level: "info",
+    message: `Included ${all.length} context item${all.length === 1 ? "" : "s"} (${images.length} image${images.length === 1 ? "" : "s"}, ${docs.length} PDF${docs.length === 1 ? "" : "s"}, ${texts.length} text)`,
+  });
+
+  return { text: lines.join("\n"), mediaParts, images };
+}
+
+/**
+ * The reusable generation core: loads context (brand voice, transcripts, and the
+ * client's uploaded files/images), runs the model, optionally generates images.
+ * Performs NO persistence (no job/asset/email) — the only side effect is
+ * uploading generated images to Storage so they get a URL. Both the real run
+ * path (`executeRun`) and the sandboxed test path (`testRunAgent`) call this.
  */
 async function generateContent(args: {
   agent: Agent;
@@ -100,34 +169,40 @@ async function generateContent(args: {
       .join("\n\n");
   }
 
-  const context = buildContext(client, agent, transcriptText, input);
+  const ctx = await loadClientContext(client.id, events);
+  const baseContext = `${buildContext(client, agent, transcriptText, input)}${ctx.text}`;
   const model = anthropic(agent.model || DEFAULT_MODEL);
 
   if (agent.outputKind === "instagram_posts") {
+    const promptText = `${baseContext}\n\nProduce ${input.count || "3"} on-brand Instagram posts.`;
     const { object } = await generateObject({
       model,
       schema: igSchema,
       system: agent.systemPrompt,
-      prompt: `${context}\n\nProduce ${input.count || "3"} on-brand Instagram posts.`,
+      messages: [{ role: "user", content: [{ type: "text", text: promptText }, ...ctx.mediaParts] }],
     });
     events.push({ at: Date.now(), level: "success", message: `Generated ${object.posts.length} Instagram posts` });
 
     const images: (string | null)[] = new Array(object.posts.length).fill(null);
-    if (withImages) {
-      for (let i = 0; i < object.posts.length; i++) {
+    for (let i = 0; i < object.posts.length; i++) {
+      const idx = object.posts[i].useContextImage;
+      // The model chose an existing client image — use it directly (no generation).
+      if (idx != null && idx >= 1 && idx <= ctx.images.length) {
+        images[i] = ctx.images[idx - 1].url;
+        events.push({ at: Date.now(), level: "info", message: `Post ${i + 1}: used client image “${ctx.images[idx - 1].name}”` });
+        continue;
+      }
+      if (withImages) {
         try {
-          images[i] = await generatePostImage({
-            concept: object.posts[i].imageConcept,
-            key: `${imageKeyPrefix}-${i}`,
-          });
+          images[i] = await generatePostImage({ concept: object.posts[i].imageConcept, key: `${imageKeyPrefix}-${i}` });
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Unknown error";
           events.push({ at: Date.now(), level: "error", message: `Image generation failed for post ${i + 1}: ${msg}` });
         }
       }
-      const made = images.filter(Boolean).length;
-      if (made > 0) events.push({ at: Date.now(), level: "success", message: `Generated ${made} image${made === 1 ? "" : "s"}` });
     }
+    const generatedCount = images.filter(Boolean).length;
+    if (generatedCount > 0) events.push({ at: Date.now(), level: "success", message: `${generatedCount} post${generatedCount === 1 ? "" : "s"} have a visual` });
 
     return { rawOutput: JSON.stringify(object, null, 2), posts: object.posts, images };
   }
@@ -136,7 +211,7 @@ async function generateContent(args: {
   const { text } = await generateText({
     model,
     system: agent.systemPrompt,
-    prompt: `${context}\n\nProduce the requested content now.`,
+    messages: [{ role: "user", content: [{ type: "text", text: `${baseContext}\n\nProduce the requested content now.` }, ...ctx.mediaParts] }],
   });
   events.push({ at: Date.now(), level: "success", message: "Generated content" });
   return { rawOutput: text, text, images: [] };

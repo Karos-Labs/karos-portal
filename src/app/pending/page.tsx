@@ -8,6 +8,13 @@ export default async function PendingPage() {
   if (!user) redirect("/login");
   if (!user.disabled) redirect("/dashboard");
 
+  const requested =
+    user.requestedRole === "client"
+      ? `as a client${user.requestedClientName ? ` for ${user.requestedClientName}` : ""}`
+      : user.requestedRole === "employee"
+        ? "as agency staff"
+        : "";
+
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-md animate-fade-up text-center">
@@ -16,8 +23,9 @@ export default async function PendingPage() {
         </div>
         <h1 className="text-xl font-semibold">Awaiting approval</h1>
         <p className="mx-auto mt-2 max-w-sm text-sm text-muted">
-          Your account <span className="text-foreground">{user.email}</span> is registered. An agency
-          admin needs to approve it and assign your role before you can access the workspace.
+          Your account <span className="text-foreground">{user.email}</span> is registered
+          {requested && ` ${requested}`}. An agency admin needs to approve it and confirm your role
+          before you can access the workspace.
         </p>
         <div className="mt-6">
           <LogoutButton />

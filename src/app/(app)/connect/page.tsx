@@ -74,6 +74,7 @@ export default async function ConnectPage() {
             <CardTitle>Available tools</CardTitle>
             {[
               ["list_clients", "Your clients (id, name, brand voice)"],
+              ["list_client_context", "Files & images attached to a client"],
               ["list_agents", "Existing agents — drafts and live"],
               ["get_agent", "Full config of one agent"],
               ["create_agent", "Create a new draft agent"],

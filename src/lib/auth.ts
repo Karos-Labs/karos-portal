@@ -35,17 +35,23 @@ export async function clearSession(): Promise<void> {
   store.delete(SESSION_COOKIE);
 }
 
+/** What a person selected on the self-signup form. Advisory until an admin approves. */
+export interface SignupIntent {
+  requestedRole?: "employee" | "client";
+  /** Company/brand name a client typed (used to seed a Client record on approval). */
+  clientName?: string;
+}
+
 /**
  * Ensure a Firestore user doc exists for an authenticated identity.
- * Bootstrap rule: the first-ever user, or any email in ADMIN_EMAILS, becomes an admin.
- * Everyone else lands as a disabled account awaiting an admin to assign a role.
+ * Bootstrap rule: the first-ever user, or any email in ADMIN_EMAILS, becomes an admin
+ * (active immediately). Everyone else lands disabled & pending until an admin approves them
+ * from the Registrations tab. `intent` (signup-form choices) only applies on first creation.
  */
-async function ensureUserDoc(claims: {
-  uid: string;
-  email?: string;
-  name?: string;
-  picture?: string;
-}): Promise<AppUser> {
+async function ensureUserDoc(
+  claims: { uid: string; email?: string; name?: string; picture?: string },
+  intent?: SignupIntent,
+): Promise<AppUser> {
   const existing = await getUser(claims.uid);
   const email = (claims.email ?? "").toLowerCase();
   if (existing) {
@@ -57,7 +63,11 @@ async function ensureUserDoc(claims: {
 
   const isAdminEmail = adminEmails().includes(email);
   const isFirstUser = (await countUsers()) === 0;
-  const role: Role = isAdminEmail || isFirstUser ? "admin" : "employee";
+  const bootstrap = isAdminEmail || isFirstUser;
+  const requested = intent?.requestedRole;
+  // Bootstrap accounts are admins; everyone else starts at whatever they requested
+  // (default employee) but cannot act until an admin confirms the role.
+  const role: Role = bootstrap ? "admin" : requested ?? "employee";
 
   const user: AppUser = {
     uid: claims.uid,
@@ -65,14 +75,37 @@ async function ensureUserDoc(claims: {
     name: claims.name || email.split("@")[0] || "New user",
     role,
     photoURL: claims.picture ?? null,
+    clientId: null,
     assignedClientIds: [],
-    // Admins are active immediately; everyone else needs explicit approval.
-    disabled: !(isAdminEmail || isFirstUser),
+    requestedRole: bootstrap ? undefined : requested,
+    requestedClientName:
+      !bootstrap && requested === "client" ? intent?.clientName?.trim() || "" : undefined,
+    // Admins are active & approved immediately; everyone else needs explicit approval.
+    disabled: !bootstrap,
+    approvedAt: bootstrap ? Date.now() : null,
     createdAt: Date.now(),
     lastLoginAt: Date.now(),
   };
   await upsertUser(user);
   return user;
+}
+
+/**
+ * Provision (or no-op for an existing) user doc straight after signup, attaching the
+ * signup-form intent. Called by the session route so the role/company choice is recorded
+ * synchronously rather than racing the first `getCurrentUser()`.
+ */
+export async function provisionFromSignup(idToken: string, intent: SignupIntent): Promise<void> {
+  const decoded = await adminAuth().verifyIdToken(idToken);
+  await ensureUserDoc(
+    {
+      uid: decoded.uid,
+      email: decoded.email,
+      name: (decoded.name as string) || undefined,
+      picture: (decoded.picture as string) || undefined,
+    },
+    intent,
+  );
 }
 
 /** Read & verify the current session. Returns null when unauthenticated. */

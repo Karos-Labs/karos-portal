@@ -17,10 +17,15 @@ import {
   getTranscript,
   upsertUser,
   getUser,
+  deleteUser,
   listAccessTokens,
   updateAccessToken,
+  getContextItem,
+  updateContextItem,
+  deleteContextItem,
 } from "@/lib/data";
 import { issueAccessToken } from "@/lib/tokens";
+import { deleteObject } from "@/lib/storage";
 import { startAgentRun, testRunAgent, type TestRunResult } from "@/lib/agents/run";
 import {
   type DraftFields,
@@ -336,11 +341,83 @@ export async function createTeamMemberAction(input: {
     clientId: input.role === "client" ? input.clientId ?? null : null,
     assignedClientIds: input.role === "employee" ? input.assignedClientIds ?? [] : [],
     disabled: false,
+    // Admin-created logins are approved on the spot — they never hit the Registrations queue.
+    approvedAt: Date.now(),
     createdAt: Date.now(),
   };
   await upsertUser(user);
   revalidatePath("/team");
   return { uid: userRecord.uid };
+}
+
+/* --------------------------- registrations --------------------------- */
+
+/**
+ * Approve a pending self-signup: set the final role, link/create a client (for clients) or
+ * assign clients (for employees), and flip the account live.
+ */
+export async function approveRegistrationAction(
+  uid: string,
+  input: {
+    role: Role;
+    /** role=client: link to this existing client. */
+    clientId?: string | null;
+    /** role=client: create a brand-new client with this name instead of linking. */
+    newClientName?: string;
+    /** role=employee: clients to assign. */
+    assignedClientIds?: string[];
+  },
+) {
+  const admin = await requireAdmin();
+  const existing = await getUser(uid);
+  if (!existing) throw new Error("User not found");
+
+  const patch: Partial<AppUser> = {
+    role: input.role,
+    disabled: false,
+    approvedAt: Date.now(),
+    clientId: null,
+    assignedClientIds: [],
+  };
+
+  if (input.role === "client") {
+    let clientId = input.clientId ?? null;
+    const newName = input.newClientName?.trim();
+    if (newName) {
+      clientId = await createClient({
+        name: newName,
+        website: "",
+        industry: "",
+        // Seed the contact with the client's own login email so meetings/assets auto-route.
+        contactEmail: existing.email,
+        domains: [],
+        description: "",
+        brandVoice: "",
+        assignedEmployeeIds: [admin.uid],
+        status: "active",
+        createdAt: Date.now(),
+        createdBy: admin.uid,
+      });
+    }
+    if (!clientId) throw new Error("Pick a client or create a new one for this person.");
+    patch.clientId = clientId;
+  } else if (input.role === "employee") {
+    patch.assignedClientIds = input.assignedClientIds ?? [];
+  }
+
+  await upsertUser({ ...existing, ...patch });
+  await adminAuth().updateUser(uid, { disabled: false }).catch(() => {});
+  revalidatePath("/registrations");
+  revalidatePath("/team");
+}
+
+/** Reject a pending registration: remove the Firestore doc and the auth account. */
+export async function rejectRegistrationAction(uid: string) {
+  await requireAdmin();
+  await deleteUser(uid);
+  await adminAuth().deleteUser(uid).catch(() => {});
+  revalidatePath("/registrations");
+  revalidatePath("/team");
 }
 
 export async function updateTeamMemberAction(uid: string, patch: Partial<AppUser>) {
@@ -352,6 +429,25 @@ export async function updateTeamMemberAction(uid: string, patch: Partial<AppUser
     await adminAuth().updateUser(uid, { disabled: patch.disabled }).catch(() => {});
   }
   revalidatePath("/team");
+}
+
+/* ------------------------ client context ----------------------------- */
+
+export async function deleteContextItemAction(id: string) {
+  await requireStaff();
+  const item = await getContextItem(id);
+  if (!item) return;
+  await deleteObject(item.storagePath);
+  await deleteContextItem(id);
+  revalidatePath(`/clients/${item.clientId}`);
+}
+
+export async function updateContextItemNoteAction(id: string, note: string) {
+  await requireStaff();
+  const item = await getContextItem(id);
+  if (!item) throw new Error("Context item not found");
+  await updateContextItem(id, { note: note.trim() });
+  revalidatePath(`/clients/${item.clientId}`);
 }
 
 /* ------------------------- access tokens ----------------------------- */

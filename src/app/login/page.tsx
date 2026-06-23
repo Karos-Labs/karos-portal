@@ -18,15 +18,23 @@ export default function LoginPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [joinAs, setJoinAs] = useState<"employee" | "client">("employee");
+  const [companyName, setCompanyName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<"email" | "google" | null>(null);
+
+  /** Signup-only: the role/company the new user is requesting (an admin confirms it). */
+  function signupIntent() {
+    if (mode !== "signup") return undefined;
+    return { requestedRole: joinAs, clientName: joinAs === "client" ? companyName.trim() : undefined };
+  }
 
   async function establishSession() {
     const idToken = await auth.currentUser!.getIdToken(true);
     const res = await fetch("/api/auth/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken }),
+      body: JSON.stringify({ idToken, intent: signupIntent() }),
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
@@ -39,6 +47,9 @@ export default function LoginPage() {
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (mode === "signup" && joinAs === "client" && !companyName.trim()) {
+      return setError("Tell us your company or brand name.");
+    }
     setLoading("email");
     try {
       if (mode === "signup") {
@@ -56,6 +67,9 @@ export default function LoginPage() {
 
   async function handleGoogle() {
     setError(null);
+    if (mode === "signup" && joinAs === "client" && !companyName.trim()) {
+      return setError("Tell us your company or brand name.");
+    }
     setLoading("google");
     try {
       await signInWithPopup(auth, googleProvider);
@@ -96,10 +110,42 @@ export default function LoginPage() {
 
           <form onSubmit={handleEmail} className="space-y-3">
             {mode === "signup" && (
-              <div>
-                <Label>Full name</Label>
-                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" />
-              </div>
+              <>
+                <div>
+                  <Label>I'm joining as</Label>
+                  <div className="grid grid-cols-2 gap-1 rounded-[10px] bg-surface-2 p-1">
+                    {([
+                      { value: "employee", label: "Agency staff" },
+                      { value: "client", label: "Client" },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setJoinAs(opt.value)}
+                        className={`h-8 rounded-[8px] text-xs font-medium transition-colors ${
+                          joinAs === opt.value ? "bg-neon text-[#03110b]" : "text-muted hover:text-foreground"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <Label>Full name</Label>
+                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" />
+                </div>
+                {joinAs === "client" && (
+                  <div>
+                    <Label>Company / brand name</Label>
+                    <Input
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                      placeholder="Acme Co"
+                    />
+                  </div>
+                )}
+              </>
             )}
             <div>
               <Label>Work email</Label>
@@ -143,7 +189,9 @@ export default function LoginPage() {
         </div>
 
         <p className="mt-5 text-center text-[11px] text-muted-2">
-          Staff & client accounts are provisioned by your agency admin.
+          {mode === "signup"
+            ? "New accounts are reviewed by your agency admin before access is granted."
+            : "Staff & client accounts are provisioned by your agency admin."}
         </p>
       </div>
     </div>

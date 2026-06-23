@@ -55,7 +55,31 @@ function getAdminApp(): App {
 }
 
 export const adminAuth = () => getAuth(getAdminApp());
-export const adminDb = () => getFirestore(getAdminApp());
+
+// Cache the configured Firestore on globalThis. Next.js evaluates this module in
+// several runtime contexts (RSC render, route handlers, server actions) and across HMR
+// reloads — each gets its own module scope but shares the Node global and the underlying
+// firebase-admin Firestore singleton. A module-local cache would let `settings()` run more
+// than once on that shared singleton, which throws ("settings() can only be called once").
+const globalForDb = globalThis as typeof globalThis & {
+  __karosAdminDb?: FirebaseFirestore.Firestore;
+};
+
+export const adminDb = () => {
+  if (!globalForDb.__karosAdminDb) {
+    const firestore = getFirestore(getAdminApp());
+    try {
+      // Drop undefined fields instead of throwing — optional Agent/field props
+      // (e.g. a non-select field's `options`) are routinely absent on writes.
+      firestore.settings({ ignoreUndefinedProperties: true });
+    } catch {
+      // Another module context already configured this Firestore singleton — the
+      // setting is in effect, so it's safe to reuse the instance as-is.
+    }
+    globalForDb.__karosAdminDb = firestore;
+  }
+  return globalForDb.__karosAdminDb;
+};
 
 /** The default Cloud Storage bucket (from NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET). */
 export function adminBucket() {

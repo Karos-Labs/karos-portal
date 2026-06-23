@@ -17,6 +17,12 @@ export interface AppUser {
   /** For role=employee — clients this employee is assigned to. */
   assignedClientIds?: string[];
   disabled?: boolean;
+  /** The role this person picked at self-signup (advisory — an admin sets the real `role`). */
+  requestedRole?: "employee" | "client";
+  /** For client self-signups — the company/brand they typed, before being linked to a real Client. */
+  requestedClientName?: string;
+  /** Set when an admin approves the account. Absent + disabled ⇒ a pending registration. */
+  approvedAt?: number | null;
   createdAt: number;
   lastLoginAt?: number;
 }
@@ -144,6 +150,29 @@ export interface Asset {
   createdBy: string;
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * A piece of reference material attached to a client (uploaded by an employee) that
+ * agents automatically use when running for that client.
+ */
+export interface ContextItem {
+  id: string;
+  clientId: string;
+  /** image = png/jpeg/webp/gif; document = pdf; text = txt/md/csv; other = stored, not sent to model. */
+  kind: "image" | "document" | "text" | "other";
+  /** Original filename. */
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  /** Bucket object path (for deletion). */
+  storagePath: string;
+  /** Durable public download URL. */
+  url: string;
+  /** Optional employee description to guide the agent ("primary product shot"). */
+  note?: string;
+  createdBy: string;
+  createdAt: number;
 }
 
 /**
