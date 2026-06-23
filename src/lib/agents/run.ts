@@ -19,7 +19,7 @@ import { sendEmail, emailShell } from "@/lib/email";
 import { generatePostImage, imageGenConfigured } from "@/lib/images";
 import { CONTEXT_CAPS } from "@/lib/context";
 import type { Agent, AppUser, Client, ContextItem, Job, JobRunEvent } from "@/lib/types";
-import type { ImagePart, FilePart, TextPart } from "@ai-sdk/provider-utils";
+import type { ImagePart, FilePart, TextPart, ModelMessage } from "@ai-sdk/provider-utils";
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
 
@@ -61,7 +61,13 @@ const igSchema = z.object({
     .describe("The generated Instagram posts."),
 });
 
-function buildContext(client: Client, agent: Agent, transcriptText: string, input: Record<string, string>) {
+/**
+ * Stable, cache-friendly context for a client + agent: client facts, brand
+ * voice, and meeting transcripts. Deliberately excludes the per-request `input`
+ * (see `buildRequestDetails`) so this prefix stays byte-identical across runs
+ * and can be served from Anthropic's prompt cache.
+ */
+function buildContext(client: Client, agent: Agent, transcriptText: string) {
   const parts: string[] = [];
   parts.push(`# Client\nName: ${client.name}`);
   if (client.industry) parts.push(`Industry: ${client.industry}`);
@@ -73,12 +79,16 @@ function buildContext(client: Client, agent: Agent, transcriptText: string, inpu
   if (agent.capabilities.includes("use_transcripts") && transcriptText) {
     parts.push(`\n# Recent meeting context\n${transcriptText}`);
   }
+  return parts.join("\n");
+}
+
+/** The volatile per-request inputs — kept out of the cached prefix. */
+function buildRequestDetails(input: Record<string, string>) {
   const inputLines = Object.entries(input)
     .filter(([, v]) => v?.toString().trim())
     .map(([k, v]) => `- ${k}: ${v}`)
     .join("\n");
-  if (inputLines) parts.push(`\n# Request details\n${inputLines}`);
-  return parts.join("\n");
+  return inputLines ? `\n# Request details\n${inputLines}` : "";
 }
 
 export interface RunResult {
@@ -154,6 +164,53 @@ async function loadClientContext(
   return { text: lines.join("\n"), mediaParts, images };
 }
 
+/** Anthropic prompt-cache breakpoint marker (default 5-minute ephemeral cache). */
+const CACHE_CONTROL = { anthropic: { cacheControl: { type: "ephemeral" } } };
+
+/**
+ * Assemble a cache-friendly message set. Caching is a prefix match, so order
+ * matters: stable content goes first (system prompt, then the client context
+ * text and its images/PDFs) with a cache breakpoint on the last stable block,
+ * and the volatile per-request instruction goes last where it can't invalidate
+ * the cached prefix. Repeat runs for the same agent + client then reuse the
+ * (often large) brand-voice / transcript / context-library tokens at ~10% of
+ * input cost.
+ */
+function buildCachedMessages(args: {
+  systemPrompt: string;
+  stableContext: string;
+  mediaParts: UserPart[];
+  instruction: string;
+}): ModelMessage[] {
+  const stableParts: UserPart[] = [
+    { type: "text", text: args.stableContext },
+    ...args.mediaParts,
+  ];
+  // Breakpoint on the last stable part caches the system prompt + everything
+  // above it; the instruction that follows stays uncached.
+  stableParts[stableParts.length - 1].providerOptions = CACHE_CONTROL;
+  return [
+    { role: "system", content: args.systemPrompt, providerOptions: CACHE_CONTROL },
+    { role: "user", content: [...stableParts, { type: "text", text: args.instruction }] },
+  ];
+}
+
+/** Surface prompt-cache reuse/writes on the job timeline for observability. */
+function logCacheUsage(events: JobRunEvent[], meta: Record<string, unknown> | undefined) {
+  const a = meta?.anthropic as
+    | { cacheReadInputTokens?: number; cacheCreationInputTokens?: number }
+    | undefined;
+  const read = a?.cacheReadInputTokens ?? 0;
+  const written = a?.cacheCreationInputTokens ?? 0;
+  if (read || written) {
+    events.push({
+      at: Date.now(),
+      level: "info",
+      message: `Prompt cache: ${read} tokens reused, ${written} written`,
+    });
+  }
+}
+
 /**
  * The reusable generation core: loads context (brand voice, transcripts, and the
  * client's uploaded files/images), runs the model, optionally generates images.
@@ -181,17 +238,22 @@ async function generateContent(args: {
   }
 
   const ctx = await loadClientContext(client.id, events);
-  const baseContext = `${buildContext(client, agent, transcriptText, input)}${ctx.text}`;
+  const stableContext = `${buildContext(client, agent, transcriptText)}${ctx.text}`;
+  const requestDetails = buildRequestDetails(input);
   const model = anthropic(agent.model || DEFAULT_MODEL);
 
   if (agent.outputKind === "instagram_posts") {
-    const promptText = `${baseContext}\n\nProduce ${input.count || "3"} on-brand Instagram posts.`;
-    const { object } = await generateObject({
+    const { object, providerMetadata } = await generateObject({
       model,
       schema: igSchema,
-      system: agent.systemPrompt,
-      messages: [{ role: "user", content: [{ type: "text", text: promptText }, ...ctx.mediaParts] }],
+      messages: buildCachedMessages({
+        systemPrompt: agent.systemPrompt,
+        stableContext,
+        mediaParts: ctx.mediaParts,
+        instruction: `${requestDetails}\n\nProduce ${input.count || "3"} on-brand Instagram posts.`,
+      }),
     });
+    logCacheUsage(events, providerMetadata);
     events.push({ at: Date.now(), level: "success", message: `Generated ${object.posts.length} Instagram posts` });
 
     const images: (string | null)[] = new Array(object.posts.length).fill(null);
@@ -230,11 +292,16 @@ async function generateContent(args: {
   }
 
   // Freeform / text outputs (articles, emails, social posts)
-  const { text } = await generateText({
+  const { text, providerMetadata } = await generateText({
     model,
-    system: agent.systemPrompt,
-    messages: [{ role: "user", content: [{ type: "text", text: `${baseContext}\n\nProduce the requested content now.` }, ...ctx.mediaParts] }],
+    messages: buildCachedMessages({
+      systemPrompt: agent.systemPrompt,
+      stableContext,
+      mediaParts: ctx.mediaParts,
+      instruction: `${requestDetails}\n\nProduce the requested content now.`,
+    }),
   });
+  logCacheUsage(events, providerMetadata);
   events.push({ at: Date.now(), level: "success", message: "Generated content" });
   return { rawOutput: text, text, images: [] };
 }
@@ -465,7 +532,14 @@ async function executeRun(args: {
         clientId,
         jobId,
         agentId,
-        type: agent.outputKind === "article" ? "article" : agent.outputKind === "email" ? "email" : "social_post",
+        type:
+          agent.outputKind === "article"
+            ? "article"
+            : agent.outputKind === "email"
+              ? "email"
+              : agent.outputKind === "social_posts"
+                ? "social_post"
+                : "note",
         title: input.topic || input.title || `${agent.name} output`,
         content: text,
         status: "draft",

@@ -90,6 +90,8 @@ export interface Agent {
   createdAt: number;
   updatedAt: number;
   runCount?: number;
+  /** Provenance + idempotency key when seeded from the karos-labs skill library (see labs-import.ts). */
+  labsSkillId?: string;
 }
 
 export type JobStatus =

@@ -5,6 +5,7 @@ import { Button, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AgentCard, DraftAgentCard } from "@/components/agent-card";
 import { SeedAgentsButton } from "@/components/seed-agents";
+import { ImportLabsSkillsButton } from "@/components/import-labs-skills";
 
 export default async function AgentsPage() {
   const user = await requireUser(["admin", "employee"]);
@@ -20,12 +21,15 @@ export default async function AgentsPage() {
         title="Agents"
         description="Reusable AI skills your team builds and runs for clients."
         action={
-          <Link href="/agents/new">
-            <Button>
-              <Icon name="Plus" className="h-4 w-4" />
-              New agent
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            {user.role === "admin" && <ImportLabsSkillsButton />}
+            <Link href="/agents/new">
+              <Button>
+                <Icon name="Plus" className="h-4 w-4" />
+                New agent
+              </Button>
+            </Link>
+          </div>
         }
       />
 
@@ -52,8 +56,9 @@ export default async function AgentsPage() {
             title={drafts.length > 0 ? "No live agents yet" : "No agents yet"}
             description="Create a custom agent from scratch, or seed the starter pack including the Instagram + email agent."
             action={
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <SeedAgentsButton />
+                {user.role === "admin" && <ImportLabsSkillsButton variant="primary" />}
                 <Link href="/agents/new">
                   <Button variant="outline">Build from scratch</Button>
                 </Link>

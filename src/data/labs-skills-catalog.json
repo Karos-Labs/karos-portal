@@ -1,0 +1,231 @@
+{
+  "_generated": "Hand-maintained. Mirror of skills/karos/<category>/ and skills/clients/<client>/ filesystem. Update when adding a skill.",
+  "_last_updated": "2026-05-24",
+  "categories": [
+    {
+      "slug": "prospecting",
+      "label": "Prospecting & Intelligence",
+      "path": "skills/karos/prospecting/",
+      "skills": [
+        {
+          "id": "karos-intel",
+          "name": "Digital Intelligence & Competitive Report",
+          "desc": "Full 8-dimension competitive audit. Scans 15 competitors, deep-dives top 3, scores 0-100, branded PDF.",
+          "trigger": "intel on [company]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-intel-startup",
+          "name": "Competitive Landscape & Positioning Report",
+          "desc": "For pre-launch/startup brands or brands without digital commerce. No score. Maps 15 competitors, identifies positioning gaps.",
+          "trigger": "startup intel on [company]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-scope",
+          "name": "Proposal & Internal Ops Plan",
+          "desc": "Takes karos-intel output, generates client proposal PDF + internal ops plan with margins and delivery steps.",
+          "trigger": "scope [company]",
+          "status": "ACTIVE"
+        }
+      ]
+    },
+    {
+      "slug": "seo-geo",
+      "label": "SEO, GEO & Search",
+      "path": "skills/karos/seo-geo/",
+      "skills": [
+        {
+          "id": "karos-seo-geo",
+          "name": "SEO & GEO (merged)",
+          "desc": "One search skill: deep technical SEO audit (parallel sub-agents: technical, content, backlinks, schema, performance) + GEO visibility in AI answers with full optimization (content rewrites, structured data, llms.txt, citations). Composes the seo-audit and geo-monitor engines over the vendor SEO/GEO packs.",
+          "trigger": "seo geo audit for [company]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-ux-audit",
+          "name": "UX/UI Audit",
+          "desc": "Nielsen heuristics, WCAG accessibility, conversion optimization, and visual hierarchy analysis.",
+          "trigger": "ux audit for [company]",
+          "status": "ACTIVE"
+        }
+      ]
+    },
+    {
+      "slug": "paid-media",
+      "label": "Paid Media",
+      "path": "skills/karos/paid-media/",
+      "skills": [
+        {
+          "id": "karos-paid-social",
+          "name": "TikTok & Meta Ads Strategy",
+          "desc": "Audit, strategy, and campaign planning for TikTok and Meta paid social channels.",
+          "trigger": "paid social for [company]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-google-ads",
+          "name": "Google Ads Strategy",
+          "desc": "Search, Shopping, Performance Max. Keyword research, campaign structure, bid strategy, quality score optimization.",
+          "trigger": "google ads for [company]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-ad-creative",
+          "name": "AI Ad Creative Generation",
+          "desc": "Generate ad copy, creative briefs, and visual concepts for Meta, TikTok, Google ads.",
+          "trigger": "ad creative for [company]",
+          "status": "ACTIVE"
+        }
+      ]
+    },
+    {
+      "slug": "content-social",
+      "label": "Content & Social",
+      "path": "skills/karos/content-social/",
+      "skills": [
+        {
+          "id": "karos-instagram-tiktok-content-agent",
+          "name": "Instagram/TikTok Content Agent",
+          "desc": "Per-client Instagram + TikTok content agent: on-brand templates, continuous generators, weekly Content Manager oversight. Formerly karos-client-content-engine.",
+          "trigger": "content engine for [client]",
+          "status": "ACTIVE"
+        }
+      ]
+    },
+    {
+      "slug": "email-sms",
+      "label": "Email, SMS & Chatbot",
+      "path": "skills/karos/email-sms/",
+      "skills": [
+        {
+          "id": "karos-email-campaigns",
+          "name": "Email Campaign Strategy & Copy",
+          "desc": "Full lifecycle email strategy: flow design, copy generation, segmentation, A/B testing plans.",
+          "trigger": "email strategy for [company]",
+          "status": "ACTIVE"
+        }
+      ]
+    },
+    {
+      "slug": "lifecycle",
+      "label": "Client Lifecycle",
+      "path": "skills/karos/lifecycle/",
+      "skills": [
+        {
+          "id": "karos-client-onboard",
+          "name": "Client Onboarding Orchestrator",
+          "desc": "Full onboarding: reads client products, runs every assigned skill in parallel, produces consolidated report.",
+          "trigger": "onboard [client]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-performance-report",
+          "name": "Monthly Performance Dashboard",
+          "desc": "Aggregates all channel data into a monthly performance report with trends and strategic recs.",
+          "trigger": "performance report for [client]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-brand-positioning",
+          "name": "Brand Strategy & Positioning",
+          "desc": "Deep brand strategy analysis: positioning, voice, visual identity, competitive differentiation.",
+          "trigger": "brand positioning for [company]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-rebrand",
+          "name": "Brand Refresh & Rebrand",
+          "desc": "Brand refresh workflow: visual identity, voice update, asset regeneration, rollout plan.",
+          "trigger": "rebrand [company]",
+          "status": "ACTIVE"
+        }
+      ]
+    },
+    {
+      "slug": "amazon",
+      "label": "Amazon",
+      "industry": "ecommerce",
+      "path": "skills/karos/ecommerce/amazon/",
+      "skills": [
+        {
+          "id": "karos-amazon-mgmt",
+          "name": "Amazon Listing & Ads Management",
+          "desc": "Amazon listing optimization, A+ content strategy, and PPC campaign planning.",
+          "trigger": "amazon strategy for [company]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-amazon-launch",
+          "name": "Amazon FBA Launch System",
+          "desc": "Full launch deliverables: launch plan PDF, P&L model XLSX, TLDR, service agreement. Reconciled by unified Python core.",
+          "trigger": "amazon launch for [client]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-price-tracker",
+          "name": "Competitor Price Tracking",
+          "desc": "Monitor competitor pricing across platforms. Fully automated alerts and trend reporting.",
+          "trigger": "price tracking for [company]",
+          "status": "ACTIVE"
+        }
+      ]
+    },
+    {
+      "slug": "intelligence",
+      "label": "Reputation & Reviews",
+      "path": "skills/karos/intelligence/",
+      "skills": [
+        {
+          "id": "karos-reputation",
+          "name": "Brand Reputation Monitoring",
+          "desc": "Track brand mentions, sentiment trends, and crisis response planning. Two-phase: Plan then Execute.",
+          "trigger": "reputation for [company]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-reviews",
+          "name": "Review Monitoring & Response",
+          "desc": "Two-phase: audits platforms and builds launch plan, then executes with drafted responses.",
+          "trigger": "reviews for [company]",
+          "status": "ACTIVE"
+        }
+      ]
+    },
+    {
+      "slug": "karos-content",
+      "label": "Karos Labs Content (carousel formats)",
+      "path": "skills/clients/karos-labs/",
+      "skills": [
+        {
+          "id": "karos-slideshow",
+          "name": "Instagram Carousel Generator",
+          "desc": "925x1233px PNG slides rendered from HTML/CSS via Playwright. Dark theme, chartreuse accents.",
+          "trigger": "slideshow about [topic]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-explainer",
+          "name": "Educational Explainer Carousels",
+          "desc": "Cream paper background, serif typography, hand-drawn underlines. 6-10 slides.",
+          "trigger": "explainer about [topic]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-postit",
+          "name": "Post-It Hot Take Carousels",
+          "desc": "Real photographed post-it backgrounds, Python PIL rendering, 3-4 square slides.",
+          "trigger": "post-it about [topic]",
+          "status": "ACTIVE"
+        },
+        {
+          "id": "karos-tool-tip",
+          "name": "AI Tool Tip Carousels",
+          "desc": "Educational carousel about AI tools and marketing techniques. Cream background, geometric icons.",
+          "trigger": "tool tip about [topic]",
+          "status": "ACTIVE"
+        }
+      ]
+    }
+  ]
+}

@@ -11,6 +11,7 @@ import {
   updateAgent,
   deleteAgent,
   getAgent,
+  listAgents,
   updateAsset,
   getAsset,
   updateTranscript,
@@ -314,6 +315,74 @@ export async function seedAgentsAction() {
   }
   revalidatePath("/agents");
   return { count: ids.length };
+}
+
+/**
+ * Import the karos-labs skill library (the `karos/*` library + the XO Digital client skills)
+ * as runnable agents, mapping each SKILL.md onto an Agent system prompt (see labs-import.ts).
+ *
+ * Idempotent: keyed by `labsSkillId`, a re-run UPDATES each skill's agent in place (refreshing
+ * name/description/prompt/config) rather than creating duplicates, and never overwrites the
+ * agent's lifecycle (status/isActive) — so an admin who unpublished one keeps that choice.
+ * Admin only: it bulk-creates dozens of live agents.
+ */
+export async function importLabsSkillsAction() {
+  const user = await requireAdmin();
+  const { buildLabsAgentSpecs } = await import("@/lib/agents/labs-import");
+  const specs = buildLabsAgentSpecs();
+
+  const existing = await listAgents();
+  const byLabsId = new Map(
+    existing.filter((a) => a.labsSkillId).map((a) => [a.labsSkillId as string, a] as const),
+  );
+
+  const now = Date.now();
+  const result = { created: 0, updated: 0, failed: 0, total: specs.length };
+  const CHUNK = 12; // bound Firestore write concurrency
+
+  for (let i = 0; i < specs.length; i += CHUNK) {
+    // allSettled so one transient Firestore error doesn't abort the whole import; a re-click is
+    // idempotent, so the admin can retry just the failures.
+    const settled = await Promise.allSettled(
+      specs.slice(i, i + CHUNK).map(async (s) => {
+        const config = {
+          name: s.name,
+          description: s.description,
+          icon: s.icon,
+          color: s.color,
+          model: s.model,
+          systemPrompt: s.systemPrompt,
+          outputKind: s.outputKind,
+          fields: s.fields,
+          capabilities: s.capabilities,
+          shared: s.shared,
+        };
+        const prior = byLabsId.get(s.labsSkillId);
+        if (prior) {
+          await updateAgent(prior.id, { ...config, updatedAt: now });
+          return "updated" as const;
+        }
+        await createAgent({
+          ...config,
+          status: "published",
+          isActive: true,
+          labsSkillId: s.labsSkillId,
+          createdBy: user.uid,
+          createdAt: now,
+          updatedAt: now,
+          runCount: 0,
+        });
+        return "created" as const;
+      }),
+    );
+    for (const r of settled) {
+      if (r.status === "fulfilled") result[r.value]++;
+      else result.failed++;
+    }
+  }
+
+  revalidatePath("/agents");
+  return result;
 }
 
 /* -------------------------------- team ------------------------------- */
