@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +26,6 @@ export function Modal({
     }
     if (open) {
       document.addEventListener("keydown", onKey);
-      // Prevent the page behind the modal from scrolling.
       const prev = document.body.style.overflow;
       document.body.style.overflow = "hidden";
       return () => {
@@ -37,14 +37,12 @@ export function Modal({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 md:items-center">
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
       <div
         className={cn(
-          // Cap to the viewport so a tall form never clips its header/footer;
-          // the body scrolls internally instead.
-          "relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius)] border border-border-strong bg-surface shadow-2xl animate-fade-up",
+          "relative z-10 flex max-h-[min(calc(100dvh-2rem),720px)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius)] border border-border-strong bg-surface shadow-2xl animate-fade-up",
           className,
         )}
         role="dialog"
@@ -63,6 +61,7 @@ export function Modal({
           <div className={title ? "mt-4" : ""}>{children}</div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { Icon } from "@/components/icon";
 import { LogoutButton } from "@/components/logout-button";
 import { initials, cn } from "@/lib/utils";
-import type { AppUser, Role } from "@/lib/types";
+import { startImpersonationAction } from "@/lib/actions";
+import type { AppUser, Client, Role } from "@/lib/types";
 
 interface NavItem {
   href: string;
@@ -33,10 +34,139 @@ const ROLE_LABEL: Record<Role, string> = {
   client: "Client",
 };
 
-export function Sidebar({ user, pendingCount = 0 }: { user: AppUser; pendingCount?: number }) {
+function ImpersonatePicker({
+  clients,
+  clientUsers,
+}: {
+  clients: Client[];
+  clientUsers: AppUser[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [pending, startTransition] = useTransition();
+
+  function impersonate(uid: string) {
+    setOpen(false);
+    startTransition(async () => {
+      await startImpersonationAction(uid);
+    });
+  }
+
+  const grouped = clients
+    .map((c) => ({
+      client: c,
+      users: clientUsers.filter((u) => u.clientId === c.id),
+    }))
+    .filter((g) => g.users.length > 0);
+
+  const filtered = query.trim()
+    ? grouped
+        .map((g) => ({
+          ...g,
+          users: g.users.filter(
+            (u) =>
+              u.name.toLowerCase().includes(query.toLowerCase()) ||
+              u.email.toLowerCase().includes(query.toLowerCase()),
+          ),
+        }))
+        .filter((g) => g.users.length > 0)
+    : grouped;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        disabled={pending}
+        className={cn(
+          "flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-colors disabled:opacity-50",
+          open
+            ? "bg-surface-2 text-foreground"
+            : "text-muted hover:bg-surface-2 hover:text-foreground",
+        )}
+      >
+        <Icon name="Eye" className="h-4 w-4 shrink-0 text-muted-2" />
+        <span className="flex-1 text-left">{pending ? "Loading..." : "View as client"}</span>
+        <Icon
+          name="ChevronDown"
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full left-0 z-50 mb-1.5 w-72 overflow-hidden rounded-[12px] border border-border bg-surface shadow-xl">
+            <div className="border-b border-border p-2">
+              <input
+                type="text"
+                placeholder="Search users..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full rounded-[8px] bg-surface-2 px-3 py-1.5 text-xs outline-none placeholder:text-muted-2"
+                autoFocus
+              />
+            </div>
+            <div className="max-h-64 overflow-y-auto p-1">
+              {filtered.length === 0 ? (
+                <p className="px-3 py-4 text-center text-xs text-muted-2">No client users found</p>
+              ) : (
+                filtered.map(({ client, users }) => (
+                  <div key={client.id}>
+                    <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                      {client.name}
+                    </p>
+                    {users.map((u) => (
+                      <button
+                        key={u.uid}
+                        onClick={() => impersonate(u.uid)}
+                        className="flex w-full flex-col rounded-[8px] px-3 py-2 text-left hover:bg-surface-2"
+                      >
+                        <span className="text-sm font-medium text-foreground">{u.name}</span>
+                        <span className="text-[11px] text-muted-2">{u.email}</span>
+                      </button>
+                    ))}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function Sidebar({
+  user,
+  pendingCount = 0,
+  realAdmin,
+  clientUsers = [],
+  clients = [],
+}: {
+  user: AppUser;
+  pendingCount?: number;
+  realAdmin?: AppUser;
+  clientUsers?: AppUser[];
+  clients?: Client[];
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const items = NAV.filter((n) => n.roles.includes(user.role));
+
+  const clientHomePath = user.role === "client" && user.clientId ? `/clients/${user.clientId}` : null;
+
+  const items = NAV.filter((n) => {
+    if (n.roles.includes(user.role)) return true;
+    // Team is also visible for isGroupAdmin clients
+    if (n.href === "/team" && user.role === "client" && user.isGroupAdmin) return true;
+    return false;
+  }).map((n) => {
+    // Point the Dashboard link directly at the client's own page
+    if (n.href === "/dashboard" && clientHomePath) return { ...n, href: clientHomePath };
+    return n;
+  });
 
   const nav = (
     <nav className="flex flex-1 flex-col gap-1">
@@ -85,13 +215,19 @@ export function Sidebar({ user, pendingCount = 0 }: { user: AppUser; pendingCoun
       {nav}
 
       <div className="mt-auto space-y-2 border-t border-border pt-3">
+        {user.role === "admin" && (
+          <ImpersonatePicker clients={clients} clientUsers={clientUsers} />
+        )}
+
         <div className="flex items-center gap-3 px-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-neon">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-neon">
             {initials(user.name)}
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{user.name}</p>
-            <p className="truncate text-[11px] text-muted-2">{ROLE_LABEL[user.role]}</p>
+            <p className="truncate text-[11px] text-muted-2">
+              {realAdmin ? `Viewing as ${ROLE_LABEL[user.role]}` : ROLE_LABEL[user.role]}
+            </p>
           </div>
         </div>
         <LogoutButton compact />

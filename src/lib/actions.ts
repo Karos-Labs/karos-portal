@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getCurrentUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { getCurrentUser, startImpersonation, stopImpersonation } from "@/lib/auth";
 import { adminAuth } from "@/lib/firebase/admin";
 import {
   createClient,
@@ -24,9 +25,16 @@ import {
   getContextItem,
   updateContextItem,
   deleteContextItem,
+  upsertClientReport,
+  createClientCompetitor,
+  deleteClientCompetitor,
+  replaceReportCompetitors,
+  upsertSystemAgent,
 } from "@/lib/data";
+import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
+import type { BrandingGuidelines, ClientCompetitor } from "@/lib/types";
 import { issueAccessToken } from "@/lib/tokens";
-import { deleteObject } from "@/lib/storage";
+import { deleteObject, uploadBytes } from "@/lib/storage";
 import { startAgentRun, testRunAgent, type TestRunResult } from "@/lib/agents/run";
 import {
   type DraftFields,
@@ -500,6 +508,250 @@ export async function updateTeamMemberAction(uid: string, patch: Partial<AppUser
   revalidatePath("/team");
 }
 
+/**
+ * Toggle the isGroupAdmin flag on a client user.
+ * Admins can toggle anyone; client group-admins can toggle others within their own group.
+ */
+export async function toggleGroupAdminAction(uid: string, isGroupAdmin: boolean) {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+
+  const target = await getUser(uid);
+  if (!target) throw new Error("User not found");
+
+  if (user.role === "admin") {
+    await upsertUser({ ...target, isGroupAdmin });
+  } else if (user.role === "client" && user.isGroupAdmin) {
+    if (target.clientId !== user.clientId) throw new Error("Forbidden — different group");
+    if (target.uid === user.uid) throw new Error("Cannot change your own group admin status");
+    await upsertUser({ ...target, isGroupAdmin });
+  } else {
+    throw new Error("Forbidden");
+  }
+
+  revalidatePath("/team");
+}
+
+/** Begin impersonating a client user. Redirects to /dashboard as that user on success. */
+export async function startImpersonationAction(targetUid: string) {
+  await startImpersonation(targetUid);
+  redirect("/dashboard");
+}
+
+/** End impersonation and return to the admin's real session. Redirects to /team. */
+export async function stopImpersonationAction() {
+  await stopImpersonation();
+  redirect("/team");
+}
+
+/* ─────────────────── Intelligence Report Actions ─────────────────── */
+
+/**
+ * Parse a raw Markdown report, persist it, and bulk-create competitor rows.
+ * Admin/employee only. Overwrites any existing report for this client.
+ */
+export async function importReportAction(
+  clientId: string,
+  markdown: string,
+  pdfUrl?: string,
+): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+
+  const client = await getClient(clientId);
+  if (!client) throw new Error("Client not found");
+
+  const parsed = parseMarkdownReport(markdown);
+  const report = buildClientReport(clientId, parsed, markdown, pdfUrl);
+  await upsertClientReport(report);
+
+  // Atomically replace competitors: delete old + create new in one Firestore batch
+  const now = Date.now();
+  await replaceReportCompetitors(
+    clientId,
+    parsed.competitorRows.map((row) => ({
+      ...row,
+      clientId,
+      source: "report" as const,
+      createdAt: now,
+      updatedAt: now,
+    })),
+  );
+
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/** Manually add a competitor to a client's tracker. */
+export async function addCompetitorAction(
+  clientId: string,
+  input: {
+    company: string;
+    url?: string;
+    founded?: string;
+    marketTier: ClientCompetitor["marketTier"];
+    minInvestment?: string;
+    overlap: ClientCompetitor["overlap"];
+    positioning?: string;
+    scale?: string;
+    keyStrengths?: string[];
+    keyWeaknesses?: string[];
+    threatLevel?: ClientCompetitor["threatLevel"];
+  },
+): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+
+  const now = Date.now();
+  await createClientCompetitor({
+    clientId,
+    company: input.company,
+    url: input.url,
+    founded: input.founded,
+    marketTier: input.marketTier,
+    minInvestment: input.minInvestment,
+    overlap: input.overlap,
+    deepDive: false,
+    positioning: input.positioning,
+    scale: input.scale,
+    keyStrengths: input.keyStrengths ?? [],
+    keyWeaknesses: input.keyWeaknesses ?? [],
+    threatLevel: input.threatLevel,
+    source: "manual",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/** Remove a competitor from the tracker. */
+export async function deleteCompetitorAction(id: string): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+
+  await deleteClientCompetitor(id);
+  revalidatePath("/clients");
+}
+
+/** Save or update branding guidelines for a client. */
+export async function saveBrandingGuidelinesAction(
+  clientId: string,
+  guidelines: Omit<BrandingGuidelines, "updatedAt">,
+): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+
+  await updateClient(clientId, {
+    brandingGuidelines: { ...guidelines, updatedAt: Date.now() },
+  });
+
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/* ── Branding presets ─────────────────────────────────────────────────
+   Three distinct brand archetypes used as fallback when no website URL
+   is available or when scraping yields no usable tokens.              */
+const BRANDING_PRESETS: Array<Omit<BrandingGuidelines, "updatedAt">> = [
+  {
+    primaryColor: "#1E293B",
+    secondaryColor: "#6366F1",
+    fontHeading: "Inter",
+    fontBody: "Inter",
+    toneKeywords: ["Innovative", "Precise", "Scalable", "Data-driven"],
+    guidelines:
+      "## Brand Voice\nDirect and confident. Communicate with precision and remove all fluff.\n\n## Visual Identity\nClean layouts, generous whitespace, and indigo accents to signal interactivity and trust.\n\n## Do's and Don'ts\n- Do: Lead with data and specifics\n- Don't: Use buzzwords or vague claims",
+  },
+  {
+    primaryColor: "#292524",
+    secondaryColor: "#D97706",
+    fontHeading: "Playfair Display",
+    fontBody: "Georgia",
+    toneKeywords: ["Authentic", "Sustainable", "Human", "Crafted"],
+    guidelines:
+      "## Brand Voice\nWarm and personal. Speak to people, not customers. Stories over statistics.\n\n## Visual Identity\nOrganic textures, amber accents, and serif typography that convey warmth and craftsmanship.\n\n## Do's and Don'ts\n- Do: Tell the story behind the product\n- Don't: Use corporate or overly technical jargon",
+  },
+  {
+    primaryColor: "#09090B",
+    secondaryColor: "#10B981",
+    fontHeading: "Montserrat",
+    fontBody: "Open Sans",
+    toneKeywords: ["Bold", "Trustworthy", "Challenger", "Performance"],
+    guidelines:
+      "## Brand Voice\nAssertive and results-oriented. Challenge the status quo with data-backed confidence.\n\n## Visual Identity\nHigh contrast, emerald green for key actions, geometric sans-serif for authority and clarity.\n\n## Do's and Don'ts\n- Do: Use strong, active verbs and concrete metrics\n- Don't: Hedge or soften claims unnecessarily",
+  },
+];
+
+/** Extract hex colors and Google Font names from a website's HTML. */
+async function scrapeWebsiteBranding(
+  url: string,
+): Promise<Omit<BrandingGuidelines, "updatedAt"> | null> {
+  try {
+    const normalized = url.startsWith("http") ? url : `https://${url}`;
+    const res = await fetch(normalized, {
+      signal: AbortSignal.timeout(6000),
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; KarosCMO/1.0)" },
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    // <meta name="theme-color" content="#xxxxxx"> (attribute order may vary)
+    const themeColor =
+      html.match(/<meta[^>]+name=["']theme-color["'][^>]+content=["'](#[0-9a-fA-F]{3,8})["']/i)?.[1] ??
+      html.match(/<meta[^>]+content=["'](#[0-9a-fA-F]{3,8})["'][^>]+name=["']theme-color["']/i)?.[1];
+
+    // Google Fonts: fonts.googleapis.com/css2?family=Roboto:wght@400;700
+    const fontMatches = [...html.matchAll(/fonts\.googleapis\.com\/css2?\?family=([^"'&;>\s]+)/gi)];
+    const fonts = fontMatches
+      .flatMap((m) => decodeURIComponent(m[1]).split("|").map((f) => f.split(":")[0].replace(/\+/g, " ")))
+      .filter((f, i, a) => a.indexOf(f) === i); // dedupe
+
+    if (!themeColor && fonts.length === 0) return null;
+
+    return {
+      primaryColor: themeColor,
+      fontHeading: fonts[0],
+      fontBody: fonts[1] ?? fonts[0],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Auto-generate branding guidelines for a client.
+ * Step A: scrape the client's website for colors + fonts.
+ * Step B: if no website or scraping yields nothing, apply one of three preset archetypes.
+ */
+export async function generateBrandingAction(clientId: string): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+
+  const client = await getClient(clientId);
+  if (!client) throw new Error("Client not found");
+
+  let generated: Omit<BrandingGuidelines, "updatedAt"> | null = null;
+
+  if (client.website) {
+    generated = await scrapeWebsiteBranding(client.website);
+  }
+
+  if (!generated) {
+    // Pick a random preset — server-side Math.random() is fine here
+    generated = BRANDING_PRESETS[Math.floor(Math.random() * BRANDING_PRESETS.length)];
+  }
+
+  await updateClient(clientId, {
+    brandingGuidelines: { ...generated, updatedAt: Date.now() },
+  });
+
+  revalidatePath(`/clients/${clientId}`);
+}
+
 /* ------------------------ client context ----------------------------- */
 
 export async function deleteContextItemAction(id: string) {
@@ -536,4 +788,88 @@ export async function revokeAccessTokenAction(id: string) {
   if (!owned.some((t) => t.id === id)) throw new Error("Token not found");
   await updateAccessToken(id, { revoked: true });
   revalidatePath("/connect");
+}
+
+/* ─────────────────── PDF Report Upload ─────────────────── */
+
+/**
+ * Upload a PDF report file to Firebase Storage and return its durable download URL.
+ * Accepts raw bytes as a number[] (JSON-serializable) from the browser.
+ * Path: clients/{clientId}/reports/{timestamp}_intel.pdf
+ */
+export async function uploadReportPdfAction(
+  clientId: string,
+  bytes: number[],
+): Promise<string> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+
+  const buffer = Buffer.from(bytes);
+  const path = `clients/${clientId}/reports/${Date.now()}_intel.pdf`;
+  const { url } = await uploadBytes({ bytes: buffer, path, contentType: "application/pdf" });
+  return url;
+}
+
+/* ────────────────── Intel Report Agent Actions ──────────────────── */
+
+/**
+ * Seed the Intel Report system agent into Firestore (idempotent).
+ * Creates the document with the default prompt if it doesn't exist yet.
+ * Admin-only: call once from the admin UI or on first deploy.
+ */
+export async function seedIntelAgentAction(): Promise<void> {
+  await requireAdmin();
+  const { INTEL_AGENT_ID, DEFAULT_INTEL_PROMPT } = await import("@/lib/intel-report");
+  const existing = await getAgent(INTEL_AGENT_ID);
+  if (existing) return; // already seeded — do not overwrite customised prompt
+  const now = Date.now();
+  await upsertSystemAgent(INTEL_AGENT_ID, {
+    name: "Intel Report Agent",
+    description:
+      "Automated Digital Intelligence & Competitive Report generator. Runs via Claude API — never shown to clients.",
+    icon: "BarChart2",
+    color: "#C8FF00",
+    model: "claude-opus-4-8",
+    systemPrompt: DEFAULT_INTEL_PROMPT,
+    outputKind: "freeform",
+    fields: [],
+    capabilities: ["generate"],
+    status: "published",
+    isActive: true,
+    shared: false,
+    isSystem: true,
+    createdBy: "system",
+    createdAt: now,
+    updatedAt: now,
+    runCount: 0,
+  });
+}
+
+/**
+ * Update the Intel Report Agent's system prompt template.
+ * Changes take effect on the next pipeline run.
+ * Admin-only.
+ */
+export async function updateIntelPromptAction(template: string): Promise<void> {
+  await requireAdmin();
+  const { INTEL_AGENT_ID } = await import("@/lib/intel-report");
+  await updateAgent(INTEL_AGENT_ID, { systemPrompt: template, updatedAt: Date.now() });
+}
+
+/**
+ * Run the Intel Report pipeline for a client.
+ * Calls Claude API, parses the output, stores competitors + report in Firestore,
+ * and uploads a styled HTML report to Firebase Storage.
+ * Admins and employees only.
+ */
+export async function generateIntelReportAction(clientId: string): Promise<void> {
+  await requireStaff();
+  // Auto-seed the agent if it hasn't been seeded yet (first-time setup)
+  const { INTEL_AGENT_ID } = await import("@/lib/intel-report");
+  const existing = await getAgent(INTEL_AGENT_ID);
+  if (!existing) await seedIntelAgentAction();
+  const { runIntelReportPipeline } = await import("@/lib/intel-report");
+  await runIntelReportPipeline(clientId);
+  revalidatePath(`/clients/${clientId}`);
 }

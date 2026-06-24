@@ -7,6 +7,8 @@ import type {
   AppUser,
   Asset,
   Client,
+  ClientCompetitor,
+  ClientReport,
   ContextItem,
   Job,
   Role,
@@ -28,6 +30,8 @@ const col = {
   transcripts: () => adminDb().collection("transcripts"),
   accessTokens: () => adminDb().collection("accessTokens"),
   contextItems: () => adminDb().collection("contextItems"),
+  clientReports: () => adminDb().collection("clientReports"),
+  clientCompetitors: () => adminDb().collection("clientCompetitors"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -131,6 +135,19 @@ export async function updateAgent(id: string, data: Partial<Agent>): Promise<voi
 
 export async function deleteAgent(id: string): Promise<void> {
   await col.agents().doc(id).delete();
+}
+
+/**
+ * Fetch a system agent by its fixed document ID (e.g. "intel-report-agent").
+ * Semantic alias for getAgent() — no extra filtering; the fixed doc ID is the contract.
+ */
+export async function getSystemAgent(id: string): Promise<Agent | null> {
+  return getAgent(id);
+}
+
+/** Create or fully overwrite a system agent document (uses the provided id as doc key). */
+export async function upsertSystemAgent(id: string, data: Omit<Agent, "id">): Promise<void> {
+  await col.agents().doc(id).set({ id, ...data });
 }
 
 export async function bumpAgentRun(id: string): Promise<void> {
@@ -274,4 +291,74 @@ export async function findAccessTokenByHash(tokenHash: string): Promise<AccessTo
 
 export async function updateAccessToken(id: string, data: Partial<AccessToken>): Promise<void> {
   await col.accessTokens().doc(id).set(data, { merge: true });
+}
+
+/* ----------------------- intelligence reports ----------------------- */
+
+/** Uses clientId as the document ID (1:1 relationship). */
+export async function getClientReport(clientId: string): Promise<ClientReport | null> {
+  const doc = await col.clientReports().doc(clientId).get();
+  return doc.exists ? ({ id: doc.id, ...doc.data() } as ClientReport) : null;
+}
+
+/** Save (or overwrite) the report; document ID = clientId. */
+export async function upsertClientReport(data: Omit<ClientReport, "id">): Promise<void> {
+  await col.clientReports().doc(data.clientId).set({ id: data.clientId, ...data });
+}
+
+/* --------------------- client competitors -------------------------- */
+
+export async function listClientCompetitors(clientId: string): Promise<ClientCompetitor[]> {
+  const snap = await col.clientCompetitors().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<ClientCompetitor>(d))
+    .sort((a, b) => (a.company ?? "").localeCompare(b.company ?? ""));
+}
+
+export async function createClientCompetitor(data: Omit<ClientCompetitor, "id">): Promise<string> {
+  const ref = await col.clientCompetitors().add(data);
+  return ref.id;
+}
+
+export async function updateClientCompetitor(id: string, data: Partial<ClientCompetitor>): Promise<void> {
+  await col.clientCompetitors().doc(id).set(data, { merge: true });
+}
+
+export async function deleteClientCompetitor(id: string): Promise<void> {
+  await col.clientCompetitors().doc(id).delete();
+}
+
+/** Delete all report-imported competitors for a client (used before re-import to prevent duplicates). */
+export async function deleteReportCompetitors(clientId: string): Promise<void> {
+  const snap = await col
+    .clientCompetitors()
+    .where("clientId", "==", clientId)
+    .where("source", "==", "report")
+    .get();
+  await Promise.all(snap.docs.map((d) => d.ref.delete()));
+}
+
+/**
+ * Atomically replace all report-imported competitors for a client.
+ * Uses a single Firestore write batch so a partial failure cannot leave a mix
+ * of old and new rows — either all rows are replaced or none are changed.
+ */
+export async function replaceReportCompetitors(
+  clientId: string,
+  rows: Array<Omit<ClientCompetitor, "id">>,
+): Promise<void> {
+  const existing = await col
+    .clientCompetitors()
+    .where("clientId", "==", clientId)
+    .where("source", "==", "report")
+    .get();
+
+  const batch = adminDb().batch();
+  for (const doc of existing.docs) {
+    batch.delete(doc.ref);
+  }
+  for (const row of rows) {
+    batch.set(col.clientCompetitors().doc(), row);
+  }
+  await batch.commit();
 }

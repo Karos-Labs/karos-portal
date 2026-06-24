@@ -17,6 +17,8 @@ export interface AppUser {
   /** For role=employee — clients this employee is assigned to. */
   assignedClientIds?: string[];
   disabled?: boolean;
+  /** Client users only: can manage team members within their own client group. */
+  isGroupAdmin?: boolean;
   /** The role this person picked at self-signup (advisory — an admin sets the real `role`). */
   requestedRole?: "employee" | "client";
   /** For client self-signups — the company/brand they typed, before being linked to a real Client. */
@@ -40,6 +42,7 @@ export interface Client {
   brandVoice?: string;
   logoUrl?: string;
   accentColor?: string;
+  brandingGuidelines?: BrandingGuidelines;
   assignedEmployeeIds: string[];
   status: "active" | "paused" | "archived";
   createdAt: number;
@@ -92,6 +95,11 @@ export interface Agent {
   runCount?: number;
   /** Provenance + idempotency key when seeded from the karos-labs skill library (see labs-import.ts). */
   labsSkillId?: string;
+  /**
+   * When true: this is an internal Karos system agent (e.g. the Intel Report Agent).
+   * Hidden from client-facing views; visible to admins for configuration.
+   */
+  isSystem?: boolean;
 }
 
 export type JobStatus =
@@ -196,6 +204,135 @@ export interface AccessToken {
   lastUsedAt?: number | null;
   revoked?: boolean;
 }
+
+/* ─────────────────────── Intelligence Report ────────────────────────── */
+
+export interface DimensionScore {
+  dimension: string;
+  /** Integer 0-100, e.g. 20 for 20% */
+  weight: number;
+  score: number;
+}
+
+export interface CompetitorRanking {
+  company: string;
+  score: number;
+  grade: string;
+  rank: number;
+  bestDimension: string;
+  weakestDimension: string;
+}
+
+export interface Recommendation {
+  number: number;
+  title: string;
+  description: string;
+  priority: number;
+  priorityLabel: string;
+  /** e.g. "Content", "Brand", "SEO" */
+  tag: string;
+}
+
+export interface SWOTMatrix {
+  strengths: string[];
+  weaknesses: string[];
+  opportunities: string[];
+  threats: string[];
+}
+
+export interface BrandVoiceRow {
+  dimension: string;
+  scores: Record<string, string>;
+}
+
+export interface CustomerSentimentEntry {
+  company: string;
+  rating?: string;
+  ratingLabel?: string;
+  responseTime?: string;
+  wouldReturn?: string;
+}
+
+export interface BrandingGuidelines {
+  primaryColor?: string;
+  secondaryColor?: string;
+  fontHeading?: string;
+  fontBody?: string;
+  toneKeywords?: string[];
+  logoUrl?: string;
+  /** Free-form markdown guidelines text */
+  guidelines?: string;
+  updatedAt: number;
+}
+
+/** Parsed Digital Intelligence & Competitive Report — one per client. */
+export interface ClientReport {
+  id: string;
+  clientId: string;
+  reportDate: string;
+  // Company profile extras (from the report, beyond what Client already stores)
+  url?: string;
+  businessType?: string;
+  founded?: string;
+  authorization?: string;
+  cnpj?: string;
+  minInvestment?: string;
+  techStack?: string;
+  reportStatus?: string;
+  // Scores
+  overallScore: number;
+  overallGrade: string;
+  dimensionScores: DimensionScore[];
+  competitorRankings: CompetitorRanking[];
+  // Full section text (markdown) for each dimension modal
+  contentAnalysis: string;
+  conversionAnalysis: string;
+  seoAnalysis: string;
+  geoAnalysis: string;
+  positioningAnalysis: string;
+  brandAnalysis: string;
+  growthAnalysis: string;
+  // SWOT + recommendations
+  swot: SWOTMatrix;
+  recommendations: Recommendation[];
+  // Brand voice comparison table
+  brandVoiceRows?: BrandVoiceRow[];
+  brandVoiceArchetypes?: Array<{ company: string; archetype: string }>;
+  brandVoiceTerritory?: string;
+  // Customer sentiment (Reclame Aqui + whitespace)
+  customerSentiment?: CustomerSentimentEntry[];
+  whitespaceOpportunities?: string[];
+  // Storage
+  rawMarkdown: string;
+  reportHtml?: string;
+  pdfUrl?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** A competitor parsed from the report or manually added. */
+export interface ClientCompetitor {
+  id: string;
+  clientId: string;
+  company: string;
+  url?: string;
+  founded?: string;
+  marketTier: "Leader" | "Challenger" | "Niche" | "Other";
+  minInvestment?: string;
+  overlap: "High" | "Medium" | "Low-Med" | "Low";
+  deepDive: boolean;
+  positioning?: string;
+  scale?: string;
+  keyStrengths: string[];
+  keyWeaknesses: string[];
+  threatLevel?: "HIGH" | "MEDIUM" | "LOW";
+  /** "report" = imported from MD; "manual" = added by an employee */
+  source: "report" | "manual";
+  createdAt: number;
+  updatedAt: number;
+}
+
+/* ────────────────────────────────────────────────────────────────────── */
 
 export interface Transcript {
   id: string;
