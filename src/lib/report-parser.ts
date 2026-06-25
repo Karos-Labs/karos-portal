@@ -52,10 +52,18 @@ function escRe(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Extract the value of a `**Field:** value` bullet from markdown. */
+/** Returns true when a string is a placeholder value rather than real data. */
+function isPlaceholder(s: string): boolean {
+  return /^(n\/a|unknown|not\s+provided|not\s+applicable|data\s+unavailable|not\s+available|tbd|pending|—|-|omit\s+line\s+if|omit\s+if)$/i.test(
+    s.trim(),
+  );
+}
+
+/** Extract the value of a `**Field:** value` bullet from markdown. Returns "" for placeholders. */
 function bullet(md: string, field: string): string {
   const re = new RegExp(`\\*\\*${escRe(field)}[:\\s]*\\*\\*\\s*(.+)`, "i");
-  return re.exec(md)?.[1]?.trim() ?? "";
+  const val = re.exec(md)?.[1]?.trim() ?? "";
+  return isPlaceholder(val) ? "" : val;
 }
 
 /**
@@ -88,12 +96,12 @@ function parseTable(text: string): string[][] {
   );
 }
 
-/** Pull bullet-point list items from a markdown sub-section. */
+/** Pull bullet-point list items from a markdown sub-section. Strips placeholders. */
 function bullets(text: string): string[] {
   return text
     .split("\n")
     .map((l) => l.replace(/^[>\-*\s]+/, "").trim())
-    .filter(Boolean);
+    .filter((l) => l.length > 0 && !isPlaceholder(l));
 }
 
 /* ────────────────────── Sub-parsers ────────────────────── */
@@ -149,19 +157,21 @@ function parseWideScan(
 ): Omit<ClientCompetitor, "id" | "clientId" | "source" | "createdAt" | "updatedAt">[] {
   const rows = parseTable(sec);
   if (rows.length < 2) return [];
-  return rows.slice(1).map((r) => {
-    const tier = r[1]?.trim() ?? "Other";
-    const overlap = r[3]?.trim() ?? "Low";
-    return {
-      company: r[0] ?? "",
-      marketTier: (["Leader", "Challenger", "Niche"].includes(tier) ? tier : "Other") as ClientCompetitor["marketTier"],
-      minInvestment: r[2] ?? "",
-      overlap: (["High", "Medium", "Low-Med", "Low"].includes(overlap) ? overlap : "Low") as ClientCompetitor["overlap"],
-      deepDive: r[4]?.toLowerCase() === "yes",
-      keyStrengths: [],
-      keyWeaknesses: [],
-    };
-  });
+  return rows.slice(1)
+    .filter((r) => r[0] && !isPlaceholder(r[0]))
+    .map((r) => {
+      const tier = r[1]?.trim() ?? "Other";
+      const overlap = r[3]?.trim() ?? "Low";
+      return {
+        company: r[0] ?? "",
+        marketTier: (["Leader", "Challenger", "Niche"].includes(tier) ? tier : "Other") as ClientCompetitor["marketTier"],
+        minInvestment: isPlaceholder(r[2] ?? "") ? "" : (r[2] ?? ""),
+        overlap: (["High", "Medium", "Low-Med", "Low"].includes(overlap) ? overlap : "Low") as ClientCompetitor["overlap"],
+        deepDive: r[4]?.toLowerCase() === "yes",
+        keyStrengths: [],
+        keyWeaknesses: [],
+      };
+    });
 }
 
 function parseSWOT(sec: string): SWOTMatrix {
@@ -253,15 +263,18 @@ function parseCustomerSentiment(sec: string): {
   const entries: CustomerSentimentEntry[] = [];
   if (rows.length >= 2) {
     for (const row of rows.slice(1)) {
+      const company = row[0] ?? "";
+      if (!company || isPlaceholder(company)) continue;
       const raw = row[1] ?? "";
+      if (isPlaceholder(raw) && isPlaceholder(row[2] ?? "") && isPlaceholder(row[3] ?? "")) continue;
       // "8.1/10 (Otimo)" → rating "8.1/10", label "Otimo"
       const m = raw.match(/^([0-9.]+\/10)\s*\(([^)]+)\)/) ?? raw.match(/^([0-9.]+\/10)/);
       entries.push({
-        company: row[0] ?? "",
-        rating: m ? m[1] : raw || undefined,
+        company,
+        rating: m ? m[1] : (!isPlaceholder(raw) ? raw : undefined),
         ratingLabel: m?.[2] || undefined,
-        responseTime: row[2] || undefined,
-        wouldReturn: row[3] || undefined,
+        responseTime: !isPlaceholder(row[2] ?? "") ? (row[2] || undefined) : undefined,
+        wouldReturn: !isPlaceholder(row[3] ?? "") ? (row[3] || undefined) : undefined,
       });
     }
   }
@@ -271,7 +284,7 @@ function parseCustomerSentiment(sec: string): {
   const whitespace = wsText
     .split("\n")
     .map((l) => l.replace(/^\d+\.\s+/, "").trim())
-    .filter((l) => l.length > 4 && !/^#+/.test(l) && !/^\|/.test(l));
+    .filter((l) => l.length > 4 && !/^#+/.test(l) && !/^\|/.test(l) && !isPlaceholder(l));
 
   return { customerSentiment: entries, whitespaceOpportunities: whitespace };
 }
