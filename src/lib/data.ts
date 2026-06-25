@@ -219,7 +219,11 @@ export async function updateAsset(id: string, data: Partial<Asset>): Promise<voi
 
 /* --------------------------- transcripts --------------------------- */
 
-export async function listTranscripts(opts?: { clientId?: string }): Promise<Transcript[]> {
+export async function listTranscripts(opts?: {
+  clientId?: string;
+  /** When true, records with hiddenFromClient === true are excluded (use for client sessions). */
+  excludeHiddenFromClient?: boolean;
+}): Promise<Transcript[]> {
   let snap;
   if (opts?.clientId) {
     snap = await col.transcripts().where("clientId", "==", opts.clientId).get();
@@ -228,6 +232,7 @@ export async function listTranscripts(opts?: { clientId?: string }): Promise<Tra
   }
   return snap.docs
     .map((d) => withId<Transcript>(d))
+    .filter((t) => !opts?.excludeHiddenFromClient || !t.hiddenFromClient)
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 }
 

@@ -13,7 +13,7 @@ export default async function TranscriptsPage() {
 
   const [transcripts, clients, users] = await Promise.all([
     user.role === "client" && user.clientId
-      ? listTranscripts({ clientId: user.clientId })
+      ? listTranscripts({ clientId: user.clientId, excludeHiddenFromClient: true })
       : user.role === "client"
         ? Promise.resolve([])
         : listTranscripts(),

@@ -210,12 +210,26 @@ export async function updateAssetAction(id: string, patch: { content?: string; t
 
 /* ----------------------------- transcripts --------------------------- */
 
+/** Assign a transcript to a client, Karos Labs internal, or unassociated.
+ *  Pass clientId as a client Firestore id, "__karos__" for Karos Labs internal, or null to unassign. */
 export async function assignTranscriptAction(id: string, clientId: string | null) {
   await requireStaff();
-  await updateTranscript(id, { clientId, assignment: clientId ? "manual" : "unassigned" });
-  const t = await getTranscript(id);
+  const isKarosInternal = clientId === "__karos__";
+  const patch: Partial<Transcript> = isKarosInternal
+    ? { clientId: null, isKarosInternal: true, assignment: "manual" }
+    : { clientId, isKarosInternal: false, assignment: clientId ? "manual" : "unassigned" };
+  await updateTranscript(id, patch);
+  const prev = await getTranscript(id);
   revalidatePath("/transcripts");
-  if (t?.clientId) revalidatePath(`/clients/${t.clientId}`);
+  if (prev?.clientId) revalidatePath(`/clients/${prev.clientId}`);
+}
+
+/** Toggle the "hidden from client" visibility flag. Admin-only. */
+export async function setTranscriptHiddenFromClientAction(id: string, hidden: boolean): Promise<void> {
+  await requireAdmin();
+  await updateTranscript(id, { hiddenFromClient: hidden });
+  revalidatePath("/transcripts");
+  revalidatePath(`/transcripts/${id}`);
 }
 
 export async function ingestManualTranscriptAction(input: {

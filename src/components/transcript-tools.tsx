@@ -9,6 +9,7 @@ import {
   ingestManualTranscriptAction,
   assignTranscriptAction,
   updateTranscriptContextSignalAction,
+  setTranscriptHiddenFromClientAction,
 } from "@/lib/actions";
 import type { Client } from "@/lib/types";
 
@@ -185,23 +186,31 @@ export function ManualIngestButton() {
 
 /* ── TranscriptAssign ────────────────────────────────────────────── */
 
+/**
+ * Client-association selector.
+ * Special values: "" = Unassigned, "__karos__" = Karos Labs Internal, any other = client id.
+ * isKarosInternal controls the initial selected option.
+ */
 export function TranscriptAssign({
   transcriptId,
   clients,
   current,
+  isKarosInternal,
 }: {
   transcriptId: string;
   clients: Client[];
   current?: string | null;
+  isKarosInternal?: boolean;
 }) {
   const router = useRouter();
-  const [value, setValue] = useState(current ?? "");
+  const [value, setValue] = useState(isKarosInternal ? "__karos__" : (current ?? ""));
   const [saving, setSaving] = useState(false);
 
   async function change(v: string) {
     setValue(v);
     setSaving(true);
     try {
+      // "__karos__" is translated to isKarosInternal: true inside the server action
       await assignTranscriptAction(transcriptId, v || null);
       router.refresh();
     } finally {
@@ -218,6 +227,7 @@ export function TranscriptAssign({
         disabled={saving}
       >
         <option value="">Unassigned</option>
+        <option value="__karos__">Karos Labs Internal</option>
         {clients.map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}
@@ -226,6 +236,51 @@ export function TranscriptAssign({
       </Select>
       {saving && <Icon name="LoaderCircle" className="h-4 w-4 animate-spin-slow text-muted" />}
     </div>
+  );
+}
+
+/* ── HideFromClientToggle ────────────────────────────────────────── */
+
+/** Admin-only toggle that controls whether a meeting is hidden from all client-role users. */
+export function HideFromClientToggle({
+  transcriptId,
+  hiddenFromClient,
+}: {
+  transcriptId: string;
+  hiddenFromClient: boolean;
+}) {
+  const router = useRouter();
+  const [hidden, setHidden] = useState(hiddenFromClient);
+  const [saving, setSaving] = useState(false);
+
+  async function toggle() {
+    const next = !hidden;
+    setHidden(next);
+    setSaving(true);
+    try {
+      await setTranscriptHiddenFromClientAction(transcriptId, next);
+      router.refresh();
+    } catch {
+      setHidden(hidden); // revert on failure
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={toggle}
+      disabled={saving}
+      title={hidden ? "Currently hidden from clients — click to make visible" : "Visible to clients — click to hide"}
+      className={`flex h-9 items-center gap-2 rounded-[8px] border px-3 text-xs font-medium transition-colors disabled:opacity-50 ${
+        hidden
+          ? "border-warning/40 bg-warning/10 text-warning hover:bg-warning/20"
+          : "border-border bg-surface-2 text-muted hover:border-neon/40 hover:text-foreground"
+      }`}
+    >
+      <Icon name={saving ? "Loader" : hidden ? "EyeOff" : "Eye"} className={`h-3.5 w-3.5 ${saving ? "animate-spin" : ""}`} />
+      {hidden ? "Hidden from client" : "Visible to client"}
+    </button>
   );
 }
 
