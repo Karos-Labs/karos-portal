@@ -1,0 +1,24 @@
+rules_version = '2';
+
+// Karos CMO data model.
+//
+// All application data access happens server-side through the Firebase Admin SDK,
+// which BYPASSES these rules entirely. The browser only ever uses Firebase for
+// authentication — it never reads or writes Firestore directly. Therefore the
+// safest posture is to deny all direct client access. Server code keeps working.
+//
+// If you later add client-side Firestore reads, replace the deny-all below with
+// per-collection rules keyed on request.auth.uid and the user's role doc.
+//
+// Collections in use:
+//   users, clients, agents, jobs, assets, transcripts, accessTokens,
+//   contextItems, clientReports, clientCompetitors,
+//   clientContextDocs  ← three-tier context documents (internal / client / internal-only)
+//                         tier enforcement is server-side in data.ts; client never reads directly
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

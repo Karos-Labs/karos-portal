@@ -1,26 +1,123 @@
 @import "tailwindcss";
 
+/*
+  Karos CMO — dark theme with neon-green accents.
+  Palette is centralised here as CSS variables and exposed to Tailwind via @theme inline.
+*/
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #07090b;
+  --surface: #0d1117;
+  --surface-2: #131a22;
+  --surface-3: #1a232e;
+  --border: #20303a;
+  --border-strong: #2c4150;
+  --foreground: #e8f0ec;
+  --muted: #8aa2a8;
+  --muted-2: #5f7177;
+
+  /* Neon green accent system */
+  --neon: #2dff9e;
+  --neon-bright: #4dffb0;
+  --neon-dim: #1fbf78;
+  --neon-glow: rgba(45, 255, 158, 0.35);
+  --neon-soft: rgba(45, 255, 158, 0.12);
+
+  --danger: #ff5d6c;
+  --warning: #ffcf5d;
+  --info: #5db4ff;
+
+  --radius: 14px;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
+  --color-neon: var(--neon);
+  --color-neon-bright: var(--neon-bright);
+  --color-neon-dim: var(--neon-dim);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--border);
 }
 
+html,
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
+
+body {
+  background-image:
+    radial-gradient(1200px 600px at 100% -10%, rgba(45, 255, 158, 0.06), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(45, 255, 158, 0.05), transparent 55%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+::selection {
+  background: var(--neon-glow);
+  color: #03110b;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 2px solid var(--background);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--neon-dim);
+}
+
+/* Utility glow helpers */
+.neon-glow {
+  box-shadow: 0 0 0 1px rgba(45, 255, 158, 0.25), 0 0 24px -6px var(--neon-glow);
+}
+.neon-text {
+  color: var(--neon);
+  text-shadow: 0 0 18px var(--neon-glow);
+}
+.card-grad {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)) ,
+    var(--surface);
+}
+
+@keyframes pulse-neon {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.animate-pulse-neon { animation: pulse-neon 1.6s ease-in-out infinite; }
+
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+.animate-spin-slow { animation: spin-slow 1s linear infinite; }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fade-up 0.35s ease backwards; }

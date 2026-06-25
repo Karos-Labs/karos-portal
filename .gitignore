@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+/karolabs-data
 
 # next.js
 /.next/
