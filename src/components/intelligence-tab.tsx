@@ -83,6 +83,154 @@ function extractInsights(docs: ClientContextDoc[], docType: ContextDocType): str
   return insights;
 }
 
+/* ── Quick Insights extraction helpers ───────────────────────── */
+
+function extractTargetAudience(contextDocs: ClientContextDoc[]): string | null {
+  const doc =
+    contextDocs.find((d) => d.docType === "market-strategy") ??
+    contextDocs.find((d) => d.docType === "brand-voice");
+  if (!doc) return null;
+  const content = doc.content.replace(/^---[\s\S]*?---\n?/, "");
+  const patterns = [
+    /(?:target\s+audience|ideal\s+customer|icp|customer\s+profile|who\s+(?:we|they)\s+serve)[^:\n]*[:\s]+([^\n]{10,80})/i,
+    /\*\*(?:target|audience|icp|customer)[^*]*\*\*[:\s]+([^\n]{10,80})/i,
+  ];
+  for (const pat of patterns) {
+    const m = pat.exec(content);
+    if (m?.[1]) return m[1].replace(/^[-*]\s*/, "").replace(/\*\*/g, "").trim().slice(0, 65);
+  }
+  for (const line of content.split("\n")) {
+    const m = line.match(/^[-*+]\s+(.{20,80})/);
+    if (m) return m[1].replace(/\*\*/g, "").trim().slice(0, 65);
+  }
+  return null;
+}
+
+const CHANNEL_DIMENSIONS = new Set([
+  "Social Media & Community",
+  "Content & Messaging",
+  "SEO & Discoverability",
+  "GEO & AI Discoverability",
+]);
+
+const DIMENSION_TO_CHANNEL: Record<string, string> = {
+  "Social Media & Community": "Social Media",
+  "Content & Messaging": "Content Marketing",
+  "SEO & Discoverability": "Organic SEO",
+  "GEO & AI Discoverability": "AI Search",
+};
+
+function extractTopChannel(report: ClientReport | null): string | null {
+  if (!report?.dimensionScores?.length) return null;
+  const top = [...report.dimensionScores]
+    .filter((d) => CHANNEL_DIMENSIONS.has(d.dimension))
+    .sort((a, b) => b.score - a.score)[0];
+  return top ? (DIMENSION_TO_CHANNEL[top.dimension] ?? top.dimension) : null;
+}
+
+function extractPainPoint(report: ClientReport | null, contextDocs: ClientContextDoc[]): string | null {
+  const weakness = report?.swot?.weaknesses?.find((w) => w.length > 5);
+  if (weakness) return weakness.slice(0, 80);
+  const doc =
+    contextDocs.find((d) => d.docType === "competitor-analysis") ??
+    contextDocs.find((d) => d.docType === "market-strategy");
+  if (doc) {
+    const stripped = doc.content.replace(/^---[\s\S]*?---\n?/, "");
+    for (const line of stripped.split("\n")) {
+      const m = line.match(/^[-*+]\s+(.{15,80})/);
+      if (m && /pain|challenge|problem|barrier|cost|difficult|gap|issue/i.test(m[1]))
+        return m[1].replace(/\*\*/g, "").trim().slice(0, 80);
+    }
+  }
+  return null;
+}
+
+function extractOpportunity(report: ClientReport | null): string | null {
+  const opp = report?.swot?.opportunities?.find((o) => o.length > 5);
+  if (opp) return opp.slice(0, 80);
+  return report?.whitespaceOpportunities?.[0]?.slice(0, 80) ?? null;
+}
+
+/* ── Quick Insights hero cards ────────────────────────────────── */
+
+interface InsightCard {
+  icon: Parameters<typeof Icon>[0]["name"];
+  label: string;
+  value: string;
+  iconClass: string;
+  bgClass: string;
+}
+
+function QuickInsights({
+  report,
+  contextDocs,
+}: {
+  report: ClientReport | null;
+  contextDocs: ClientContextDoc[];
+}) {
+  const raw: (InsightCard | null)[] = [
+    (() => {
+      const v = extractTargetAudience(contextDocs);
+      return v
+        ? { icon: "Users", label: "Target Audience", value: v, iconClass: "text-neon", bgClass: "bg-neon-soft" }
+        : null;
+    })(),
+    (() => {
+      const v = extractTopChannel(report);
+      return v
+        ? { icon: "TrendingUp", label: "Top Channel", value: v, iconClass: "text-sky-400", bgClass: "bg-sky-400/10" }
+        : null;
+    })(),
+    (() => {
+      const v = extractPainPoint(report, contextDocs);
+      return v
+        ? { icon: "TriangleAlert", label: "Key Challenge", value: v, iconClass: "text-warning", bgClass: "bg-warning/10" }
+        : null;
+    })(),
+    (() => {
+      const v = extractOpportunity(report);
+      return v
+        ? { icon: "Target", label: "Market Opportunity", value: v, iconClass: "text-purple-400", bgClass: "bg-purple-400/10" }
+        : null;
+    })(),
+  ];
+
+  const cards = raw.filter((c): c is InsightCard => c !== null);
+  if (cards.length === 0) return null;
+
+  const gridCols =
+    cards.length === 1
+      ? "sm:grid-cols-1"
+      : cards.length === 2
+        ? "sm:grid-cols-2"
+        : cards.length === 3
+          ? "sm:grid-cols-3"
+          : "sm:grid-cols-2 lg:grid-cols-4";
+
+  return (
+    <div className={cn("grid gap-3", gridCols)}>
+      {cards.map((card) => (
+        <div
+          key={card.label}
+          className="flex flex-col gap-3 rounded-[14px] border border-border bg-surface p-4 transition-colors hover:border-border-strong"
+        >
+          <div className={cn("flex h-8 w-8 items-center justify-center rounded-[8px]", card.bgClass)}>
+            <Icon name={card.icon} className={cn("h-4 w-4", card.iconClass)} />
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+              {card.label}
+            </p>
+            <p className="mt-1 text-sm font-medium leading-snug text-foreground">
+              {card.value}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ── Company Profile Snapshot ─────────────────────────────────── */
 
 function CompanyProfileSnapshot({
@@ -639,6 +787,9 @@ export function IntelligenceTab({
 
   return (
     <div className="w-full min-w-0 space-y-8 overflow-x-hidden">
+      {/* Quick Insights hero cards — only rendered when data is available */}
+      <QuickInsights report={report} contextDocs={contextDocs} />
+
       {/* Company Profile Snapshot */}
       <CompanyProfileSnapshot
         client={client}

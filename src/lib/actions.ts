@@ -1138,3 +1138,56 @@ export async function refreshClientContextDocsAction(clientId: string): Promise<
 
   revalidatePath(`/clients/${clientId}`);
 }
+
+/**
+ * Generate a 4-5 bullet executive summary for a context document using Claude Haiku.
+ * Results are ephemeral — cached in client component state per session, not persisted.
+ * Accessible to all non-disabled authenticated users who have access to the client.
+ */
+export async function generateDocSummaryAction(
+  clientId: string,
+  docType: string,
+  tier: string,
+): Promise<string[]> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  if (user.role === "client" && user.clientId !== clientId) throw new Error("Forbidden");
+
+  const { listClientContextDocs } = await import("@/lib/data");
+  const docs = await listClientContextDocs(clientId);
+  const doc =
+    docs.find((d) => d.docType === docType && d.tier === tier) ??
+    docs.find((d) => d.docType === docType);
+  if (!doc) return [];
+
+  const { generateText } = await import("ai");
+  const { anthropic } = await import("@ai-sdk/anthropic");
+  const { text } = await generateText({
+    model: anthropic("claude-haiku-4-5-20251001"),
+    system:
+      "You are a strategic analyst. Distill the document into exactly 4-5 high-impact executive insights. " +
+      "Return ONLY a valid JSON array of strings — no markdown, no preamble, no trailing text. " +
+      "Each string: max 20 words, starts with an action verb or key noun, concrete and specific.",
+    messages: [
+      {
+        role: "user",
+        content: doc.content.replace(/^---[\s\S]*?---\n?/, "").slice(0, 4000),
+      },
+    ],
+    maxOutputTokens: 450,
+  });
+
+  try {
+    const cleaned = text.trim().replace(/^```(?:json)?\n?|\n?```$/g, "");
+    const arr = JSON.parse(cleaned);
+    if (Array.isArray(arr))
+      return arr.filter((s): s is string => typeof s === "string" && s.length > 4).slice(0, 5);
+  } catch {
+    // Fallback: parse line-by-line
+  }
+  return text
+    .split("\n")
+    .map((l) => l.replace(/^[-*\d."'\[\]]+\s*/, "").trim())
+    .filter((l) => l.length > 8)
+    .slice(0, 5);
+}

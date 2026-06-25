@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useTransition, useMemo } from "react";
+import { useState, useTransition, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardTitle, Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { refreshClientContextDocsAction } from "@/lib/actions";
+import { refreshClientContextDocsAction, generateDocSummaryAction } from "@/lib/actions";
 import type { ClientContextDoc, ContextDocType, Role } from "@/lib/types";
 
 /* ── Tab config ───────────────────────────────────────────────── */
@@ -261,9 +261,25 @@ function parseDocSections(content: string): DocSection[] {
 
 /* ── Doc viewer ───────────────────────────────────────────────── */
 
-function DocViewer({ doc, label }: { doc: ClientContextDoc | null; label: string }) {
+type ViewMode = "summary" | "full";
+type SummaryStatus = "idle" | "loading" | "done" | "error";
+
+function DocViewer({
+  doc,
+  label,
+  clientId,
+}: {
+  doc: ClientContextDoc | null;
+  label: string;
+  clientId: string;
+}) {
   const sections = useMemo(() => (doc ? parseDocSections(doc.content) : []), [doc]);
   const [openSet, setOpenSet] = useState<Set<number>>(() => new Set([0]));
+  const [viewMode, setViewMode] = useState<ViewMode>("summary");
+  const [summaryStatus, setSummaryStatus] = useState<SummaryStatus>("idle");
+  const [summaryBullets, setSummaryBullets] = useState<string[]>([]);
+  // Cache summaries by doc.id so tab-switching doesn't re-fetch
+  const cache = useRef<Map<string, string[]>>(new Map());
 
   function toggle(i: number) {
     setOpenSet((prev) => {
@@ -272,6 +288,32 @@ function DocViewer({ doc, label }: { doc: ClientContextDoc | null; label: string
       return next;
     });
   }
+
+  // Auto-generate summary when doc changes and we're in summary mode
+  useEffect(() => {
+    setViewMode("summary");
+    setOpenSet(new Set([0]));
+    if (!doc) {
+      setSummaryBullets([]);
+      setSummaryStatus("idle");
+      return;
+    }
+    const cached = cache.current.get(doc.id);
+    if (cached) {
+      setSummaryBullets(cached);
+      setSummaryStatus("done");
+      return;
+    }
+    setSummaryStatus("loading");
+    setSummaryBullets([]);
+    generateDocSummaryAction(clientId, doc.docType, doc.tier)
+      .then((bullets) => {
+        cache.current.set(doc.id, bullets);
+        setSummaryBullets(bullets);
+        setSummaryStatus("done");
+      })
+      .catch(() => setSummaryStatus("error"));
+  }, [doc?.id, clientId]);
 
   if (!doc) {
     return (
@@ -308,70 +350,145 @@ function DocViewer({ doc, label }: { doc: ClientContextDoc | null; label: string
             <Badge tone="neutral" className="text-[9px]">Internal</Badge>
           )}
         </div>
-        <button
-          onClick={() => exportDocToPdf(doc, label)}
-          className="flex items-center gap-1 rounded-[6px] border border-border bg-surface-2 px-2 py-1 text-[10px] text-muted-2 transition-colors hover:border-border-strong hover:text-foreground"
-          title="Export this document to PDF"
-        >
-          <Icon name="FileDown" className="h-3 w-3" />
-          Export PDF
-        </button>
+        <div className="flex items-center gap-2">
+          {/* View mode toggle */}
+          <div className="flex items-center rounded-[8px] border border-border bg-surface-2 p-0.5">
+            <button
+              onClick={() => setViewMode("summary")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[11px] font-medium transition-colors",
+                viewMode === "summary"
+                  ? "bg-neon text-black"
+                  : "text-muted-2 hover:text-foreground",
+              )}
+            >
+              <Icon name="Sparkles" className="h-3 w-3" />
+              Summary
+            </button>
+            <button
+              onClick={() => setViewMode("full")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[11px] font-medium transition-colors",
+                viewMode === "full"
+                  ? "bg-surface-3 text-foreground"
+                  : "text-muted-2 hover:text-foreground",
+              )}
+            >
+              <Icon name="FileText" className="h-3 w-3" />
+              Full Document
+            </button>
+          </div>
+          <button
+            onClick={() => exportDocToPdf(doc, label)}
+            className="flex items-center gap-1 rounded-[6px] border border-border bg-surface-2 px-2 py-1 text-[10px] text-muted-2 transition-colors hover:border-border-strong hover:text-foreground"
+            title="Export this document to PDF"
+          >
+            <Icon name="FileDown" className="h-3 w-3" />
+            PDF
+          </button>
+        </div>
       </div>
 
-      {/* Key insight chips */}
-      {insights.length > 0 && (
+      {/* ── Summary view ── */}
+      {viewMode === "summary" && (
         <div>
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-            Key Insights
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {insights.map((insight, i) => (
-              <span
-                key={i}
-                className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-xs leading-tight text-muted"
-              >
-                {insight.length > 90 ? insight.slice(0, 90) + "…" : insight}
-              </span>
-            ))}
-          </div>
+          {summaryStatus === "loading" && (
+            <div className="flex items-center gap-3 rounded-[10px] border border-border bg-surface-2 px-4 py-6">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-neon/30 border-t-neon" />
+              <p className="text-sm text-muted-2">Generating executive summary…</p>
+            </div>
+          )}
+
+          {summaryStatus === "done" && summaryBullets.length > 0 && (
+            <div className="rounded-[10px] border border-neon/20 bg-neon-soft/10 p-5">
+              <div className="mb-4 flex items-center gap-2">
+                <Icon name="Sparkles" className="h-4 w-4 text-neon" />
+                <p className="text-xs font-semibold uppercase tracking-wider text-neon/80">
+                  Executive Summary
+                </p>
+              </div>
+              <ul className="space-y-3">
+                {summaryBullets.map((bullet, i) => (
+                  <li key={i} className="flex items-start gap-3">
+                    <span className="mt-[3px] flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-neon/15 text-[10px] font-bold text-neon">
+                      {i + 1}
+                    </span>
+                    <p className="text-sm leading-[1.65] text-foreground">{bullet}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {summaryStatus === "error" && (
+            <div className="flex items-center gap-2 rounded-[10px] border border-red-500/20 bg-red-500/10 px-4 py-3">
+              <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-red-400" />
+              <p className="text-xs text-red-400">
+                Could not generate summary. Switch to Full Document to read the content.
+              </p>
+            </div>
+          )}
+
+          {/* Key insight chips below summary */}
+          {summaryStatus === "done" && insights.length > 0 && (
+            <div className="mt-3">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                Key Signals
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {insights.map((insight, i) => (
+                  <span
+                    key={i}
+                    className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-xs leading-tight text-muted"
+                  >
+                    {insight.length > 90 ? insight.slice(0, 90) + "…" : insight}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Accordion sections */}
-      {sections.length === 0 ? (
-        <p className="py-6 text-center text-xs text-muted-2">No content sections found.</p>
-      ) : (
-        <div className="divide-y divide-border overflow-hidden rounded-[10px] border border-border">
-          {sections.map((sec, i) => {
-            const isOpen = openSet.has(i);
-            return (
-              <div key={i}>
-                <button
-                  onClick={() => toggle(i)}
-                  className={cn(
-                    "flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors",
-                    isOpen ? "bg-surface-2" : "hover:bg-surface-2/60",
-                  )}
-                  aria-expanded={isOpen}
-                >
-                  <span className={cn("text-sm font-medium", isOpen ? "text-foreground" : "text-muted")}>
-                    {sec.heading}
-                  </span>
-                  <Icon
-                    name={isOpen ? "ChevronUp" : "ChevronDown"}
-                    className="h-3.5 w-3.5 shrink-0 text-muted-2"
-                  />
-                </button>
-                {isOpen && (
-                  <div
-                    className="w-full min-w-0 overflow-x-hidden break-words px-4 pb-4 pt-3 [&_code]:break-all [&_table]:min-w-0 [&_td]:break-words [&_th]:break-words"
-                    dangerouslySetInnerHTML={{ __html: renderSectionBody(sec.body) }}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
+      {/* ── Full document view (accordion) ── */}
+      {viewMode === "full" && (
+        <>
+          {sections.length === 0 ? (
+            <p className="py-6 text-center text-xs text-muted-2">No content sections found.</p>
+          ) : (
+            <div className="divide-y divide-border overflow-hidden rounded-[10px] border border-border">
+              {sections.map((sec, i) => {
+                const isOpen = openSet.has(i);
+                return (
+                  <div key={i}>
+                    <button
+                      onClick={() => toggle(i)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors",
+                        isOpen ? "bg-surface-2" : "hover:bg-surface-2/60",
+                      )}
+                      aria-expanded={isOpen}
+                    >
+                      <span className={cn("text-sm font-medium", isOpen ? "text-foreground" : "text-muted")}>
+                        {sec.heading}
+                      </span>
+                      <Icon
+                        name={isOpen ? "ChevronUp" : "ChevronDown"}
+                        className="h-3.5 w-3.5 shrink-0 text-muted-2"
+                      />
+                    </button>
+                    {isOpen && (
+                      <div
+                        className="w-full min-w-0 overflow-x-hidden break-words px-4 pb-4 pt-3 [&_code]:break-all [&_table]:min-w-0 [&_td]:break-words [&_th]:break-words"
+                        dangerouslySetInnerHTML={{ __html: renderSectionBody(sec.body) }}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {/* Sources drawer */}
@@ -498,7 +615,7 @@ export function ContextDocsSection({
 
       {/* Doc content */}
       <Card className="min-h-[200px]">
-        <DocViewer doc={activeDoc} label={activeTabLabel} />
+        <DocViewer doc={activeDoc} label={activeTabLabel} clientId={clientId} />
       </Card>
     </div>
   );
