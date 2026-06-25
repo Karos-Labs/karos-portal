@@ -8,7 +8,9 @@ import type {
   Asset,
   Client,
   ClientCompetitor,
+  ClientContextDoc,
   ClientReport,
+  ContextDocTier,
   ContextItem,
   Job,
   Role,
@@ -32,6 +34,7 @@ const col = {
   contextItems: () => adminDb().collection("contextItems"),
   clientReports: () => adminDb().collection("clientReports"),
   clientCompetitors: () => adminDb().collection("clientCompetitors"),
+  clientContextDocs: () => adminDb().collection("clientContextDocs"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -242,6 +245,11 @@ export async function updateTranscript(id: string, data: Partial<Transcript>): P
   await col.transcripts().doc(id).set(data, { merge: true });
 }
 
+export async function getTranscriptByExternalId(externalId: string): Promise<Transcript | null> {
+  const snap = await col.transcripts().where("externalId", "==", externalId).limit(1).get();
+  return snap.empty ? null : withId<Transcript>(snap.docs[0]);
+}
+
 /* -------------------------- context items -------------------------- */
 
 export async function listContextItems(opts: { clientId: string }): Promise<ContextItem[]> {
@@ -360,5 +368,63 @@ export async function replaceReportCompetitors(
   for (const row of rows) {
     batch.set(col.clientCompetitors().doc(), row);
   }
+  await batch.commit();
+}
+
+/* -------------------- client context documents ---------------------- */
+
+export async function listClientContextDocs(
+  clientId: string,
+  tier?: ContextDocTier,
+): Promise<ClientContextDoc[]> {
+  let q = col.clientContextDocs().where("clientId", "==", clientId);
+  if (tier) q = q.where("tier", "==", tier) as typeof q;
+  const snap = await q.get();
+  return snap.docs.map((d) => withId<ClientContextDoc>(d));
+}
+
+export async function getClientContextDoc(
+  clientId: string,
+  docType: string,
+): Promise<ClientContextDoc | null> {
+  const snap = await col
+    .clientContextDocs()
+    .where("clientId", "==", clientId)
+    .where("docType", "==", docType)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<ClientContextDoc>(snap.docs[0]);
+}
+
+/** Create or overwrite one context document (keyed on clientId + docType + tier). */
+export async function upsertClientContextDoc(
+  doc: Omit<ClientContextDoc, "id">,
+): Promise<void> {
+  const snap = await col
+    .clientContextDocs()
+    .where("clientId", "==", doc.clientId)
+    .where("docType", "==", doc.docType)
+    .where("tier", "==", doc.tier)
+    .limit(1)
+    .get();
+  if (snap.empty) {
+    await col.clientContextDocs().add(doc);
+  } else {
+    await snap.docs[0].ref.set(doc);
+  }
+}
+
+/**
+ * Atomically replace all context documents for a client.
+ * Deletes all existing docs for the client, then writes the new set in one batch.
+ */
+export async function replaceClientContextDocs(
+  clientId: string,
+  docs: Array<Omit<ClientContextDoc, "id">>,
+): Promise<void> {
+  const existing = await col.clientContextDocs().where("clientId", "==", clientId).get();
+  const batch = adminDb().batch();
+  for (const d of existing.docs) batch.delete(d.ref);
+  for (const doc of docs) batch.set(col.clientContextDocs().doc(), doc);
   await batch.commit();
 }

@@ -8,6 +8,7 @@ import { SeedAgentsButton } from "@/components/seed-agents";
 import { ImportLabsSkillsButton } from "@/components/import-labs-skills";
 import { IntelAgentSection } from "@/components/intel-agent-section";
 import { INTEL_AGENT_ID } from "@/lib/intel-report";
+import { RESEARCH_ENGINE_RULES, METRICS_RULES } from "@/lib/onboard-templates";
 
 export default async function AgentsPage() {
   const user = await requireUser(["admin", "employee"]);
@@ -80,7 +81,12 @@ export default async function AgentsPage() {
       </section>
 
       {/* Intel Report Agent — admin only, collapsed by default */}
-      {user.role === "admin" && <IntelAgentSection agent={intelAgent} />}
+      {user.role === "admin" && (
+        <IntelAgentSection
+          agent={intelAgent}
+          lockedRules={{ researchEngine: RESEARCH_ENGINE_RULES, metrics: METRICS_RULES }}
+        />
+      )}
     </>
   );
 }

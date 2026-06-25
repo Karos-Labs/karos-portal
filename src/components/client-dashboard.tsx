@@ -6,8 +6,7 @@ import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { IntelligenceTab } from "@/components/intelligence-tab";
 import { AgentsHubTab } from "@/components/agents-hub-tab";
-import { ChatbotWidget } from "@/components/chatbot-widget";
-import type { Agent, Asset, Client, ClientCompetitor, ClientReport, ContextItem, Job, Role } from "@/lib/types";
+import type { Agent, Asset, Client, ClientCompetitor, ClientContextDoc, ClientReport, ContextItem, Job, Role } from "@/lib/types";
 
 const TABS = [
   { id: "overview", label: "Overview & Intelligence", icon: "BarChart2" },
@@ -123,6 +122,7 @@ interface Props {
   jobs: Job[];
   assets: Asset[];
   contextItems: ContextItem[];
+  contextDocs: ClientContextDoc[];
   currentUserRole: Role;
 }
 
@@ -134,6 +134,7 @@ export function ClientDashboard({
   jobs,
   assets,
   contextItems,
+  contextDocs,
   currentUserRole,
 }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
@@ -145,7 +146,7 @@ export function ClientDashboard({
   useBrandPreview(guidelines, previewActive);
 
   return (
-    <div>
+    <div className="min-w-0 w-full">
       {/* Tab bar + preview toggle */}
       <div className="mb-6 flex items-center gap-2 border-b border-border">
         <div className="flex flex-1">
@@ -186,6 +187,7 @@ export function ClientDashboard({
           client={client}
           report={report}
           competitors={competitors}
+          contextDocs={contextDocs}
           currentUserRole={currentUserRole}
         />
       )}
@@ -200,7 +202,6 @@ export function ClientDashboard({
         />
       )}
 
-      <ChatbotWidget clientId={client.id} clientName={client.name} />
     </div>
   );
 }

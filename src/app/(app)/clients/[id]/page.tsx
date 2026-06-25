@@ -5,6 +5,7 @@ import {
   getClient,
   getClientReport,
   listClientCompetitors,
+  listClientContextDocs,
   listAgents,
   listAssets,
   listTranscripts,
@@ -16,6 +17,7 @@ import { Icon } from "@/components/icon";
 import { ClientEditor } from "@/components/client-editor";
 import { JobStatusBadge } from "@/components/job-status";
 import { ClientDashboard } from "@/components/client-dashboard";
+import { ChatbotWidget } from "@/components/chatbot-widget";
 import { initials, relativeTime } from "@/lib/utils";
 
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -32,7 +34,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const client = await getClient(id);
   if (!client) notFound();
 
-  const [agents, assets, transcripts, jobs, contextItems, report, competitors] = await Promise.all([
+  const [agents, assets, transcripts, jobs, contextItems, report, competitors, contextDocs] = await Promise.all([
     listAgents({ status: "published" }),
     listAssets({ clientId: id }),
     listTranscripts({ clientId: id }),
@@ -40,6 +42,8 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     listContextItems({ clientId: id }),
     getClientReport(id),
     listClientCompetitors(id),
+    // Fetch context docs — tier filtering happens in the UI based on user role
+    listClientContextDocs(id),
   ]);
 
   return (
@@ -85,6 +89,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           jobs={jobs}
           assets={assets}
           contextItems={contextItems}
+          contextDocs={contextDocs}
           currentUserRole={user.role}
         />
 
@@ -145,6 +150,10 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           </Card>
         </div>
       </div>
+
+      {/* ChatbotWidget is placed here — outside the grid — so position:fixed is
+          never trapped by grid/tab/overflow ancestors */}
+      <ChatbotWidget clientId={client.id} clientName={client.name} />
     </>
   );
 }

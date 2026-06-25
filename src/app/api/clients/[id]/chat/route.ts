@@ -8,14 +8,41 @@ import {
   getClient,
   getClientReport,
   listClientCompetitors,
+  listClientContextDocs,
   listAgents,
   listJobs,
   listAssets,
   updateClient,
+  upsertClientContextDoc,
+  getClientContextDoc,
 } from "@/lib/data";
 import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
 import { sendEmail } from "@/lib/email";
 import type { BrandingGuidelines } from "@/lib/types";
+
+function brandingToContextDocContent(g: BrandingGuidelines, clientName: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const lines = [`# Branding Guidelines — ${clientName}`, `_Last updated: ${today}_`, ""];
+  if (g.primaryColor || g.secondaryColor) {
+    lines.push("## Color Palette");
+    if (g.primaryColor) lines.push(`- **Primary:** ${g.primaryColor}`);
+    if (g.secondaryColor) lines.push(`- **Secondary/Accent:** ${g.secondaryColor}`);
+    lines.push("");
+  }
+  if (g.fontHeading || g.fontBody) {
+    lines.push("## Typography");
+    if (g.fontHeading) lines.push(`- **Heading font:** ${g.fontHeading}`);
+    if (g.fontBody) lines.push(`- **Body font:** ${g.fontBody}`);
+    lines.push("");
+  }
+  if (g.toneKeywords?.length) {
+    lines.push("## Tone & Voice", `Keywords: ${g.toneKeywords.join(", ")}`, "");
+  }
+  if (g.guidelines) {
+    lines.push("## Brand Guidelines", g.guidelines, "");
+  }
+  return lines.join("\n");
+}
 
 export const maxDuration = 60;
 
@@ -36,10 +63,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const messages = (body.messages ?? []) as ModelMessage[];
 
   // Fetch all context data in parallel
-  const [client, report, competitors, agents, jobs, assets] = await Promise.all([
+  const [client, report, competitors, contextDocs, agents, jobs, assets] = await Promise.all([
     getClient(clientId),
     getClientReport(clientId),
     listClientCompetitors(clientId),
+    listClientContextDocs(clientId),
     listAgents({ status: "published" }),
     listJobs({ clientId }),
     listAssets({ clientId }),
@@ -49,7 +77,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return Response.json({ error: "Client not found" }, { status: 404 });
   }
 
-  const systemPrompt = buildCopilotSystemPrompt(client, report, competitors, agents, jobs, assets);
+  const systemPrompt = buildCopilotSystemPrompt(client, report, competitors, agents, jobs, assets, contextDocs);
 
   const result = streamText({
     model: anthropic("claude-sonnet-4-6"),
@@ -91,6 +119,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           if (args.toneKeywords !== undefined) updated.toneKeywords = args.toneKeywords;
           if (args.guidelines !== undefined) updated.guidelines = args.guidelines;
           await updateClient(clientId, { brandingGuidelines: updated });
+          // Sync branding-guidelines context doc so AI context stays consistent
+          try {
+            const existingDoc = await getClientContextDoc(clientId, "branding-guidelines");
+            await upsertClientContextDoc({
+              clientId,
+              docType: "branding-guidelines",
+              tier: existingDoc?.tier ?? "internal",
+              content: brandingToContextDocContent(updated, client.name),
+              version: (existingDoc?.version ?? 0) + 1,
+              sources: existingDoc?.sources,
+              createdAt: existingDoc?.createdAt ?? Date.now(),
+              updatedAt: Date.now(),
+            });
+          } catch {
+            // Non-fatal: branding update already succeeded
+          }
           return "Branding guidelines updated successfully.";
         },
       }),

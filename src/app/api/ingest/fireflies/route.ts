@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchFirefliesTranscript } from "@/lib/transcripts/fireflies";
-import { ingestTranscript } from "@/lib/transcripts/ingest";
+import { ingestTranscript, appendMeetingSignalToContextDoc } from "@/lib/transcripts/ingest";
+import { getTranscript } from "@/lib/data";
 
 export const maxDuration = 120;
+
+const KAROS_DOMAIN = "@karoslabs.com";
 
 /**
  * Fireflies webhook receiver.
@@ -10,6 +13,8 @@ export const maxDuration = 120;
  * Fireflies POSTs { meetingId, eventType } when a meeting finishes processing.
  * We fetch the full transcript via the Fireflies API, summarise it, auto-route it
  * to the matching client by attendee email domain, and store it.
+ *
+ * @karoslabs.com invariant: transcripts with no agency participant are dropped silently.
  *
  * Secure it by setting FIREFLIES_WEBHOOK_SECRET and configuring the webhook URL as
  *   /api/ingest/fireflies?secret=YOUR_SECRET
@@ -40,7 +45,27 @@ export async function POST(req: NextRequest) {
     if (!transcript) {
       return NextResponse.json({ error: "Transcript not found" }, { status: 404 });
     }
+
+    // @karoslabs.com invariant — drop meetings with no agency participant
+    const hasKarosParticipant = transcript.participants.some((p) =>
+      p.toLowerCase().includes(KAROS_DOMAIN),
+    );
+    if (!hasKarosParticipant) {
+      return NextResponse.json({ ok: true, skipped: true, reason: "No @karoslabs.com participant" });
+    }
+
     const result = await ingestTranscript(transcript, "fireflies");
+
+    // Append meeting signal to the matched client's intel context docs
+    if (result.clientId) {
+      try {
+        const stored = await getTranscript(result.id);
+        if (stored) {
+          await appendMeetingSignalToContextDoc(result.clientId, { ...stored, id: result.id });
+        }
+      } catch { /* Non-fatal: ingest already succeeded */ }
+    }
+
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Ingestion failed";

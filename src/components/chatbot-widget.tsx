@@ -150,20 +150,26 @@ export function ChatbotWidget({ clientId, clientName }: Props) {
 
   return (
     <>
-      {/* Floating bubble — hidden while panel is open */}
-      {!open && (
-        <button
-          onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-neon shadow-lg shadow-neon/30 transition-transform hover:scale-105 active:scale-95"
-          aria-label="Open AI Copilot"
-        >
-          <Icon name="MessageCircle" className="h-6 w-6 text-black" />
-        </button>
-      )}
+      {/* Floating bubble — always visible, icon toggles with panel state */}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "fixed bottom-6 right-6 z-[9999] pointer-events-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all hover:scale-105 active:scale-95",
+          open
+            ? "bg-surface-2 shadow-black/30 ring-1 ring-border"
+            : "bg-neon shadow-neon/30",
+        )}
+        aria-label={open ? "Close AI Copilot" : "Open AI Copilot"}
+      >
+        <Icon
+          name={open ? "X" : "MessageCircle"}
+          className={cn("h-6 w-6 transition-colors", open ? "text-foreground" : "text-black")}
+        />
+      </button>
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-6 right-6 z-50 flex h-[520px] w-[360px] flex-col overflow-hidden rounded-[20px] border border-border bg-surface shadow-2xl">
+        <div className="fixed bottom-6 right-6 z-[9998] flex h-[520px] w-[360px] flex-col overflow-hidden rounded-[20px] border border-border bg-surface shadow-2xl">
           {/* Header */}
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface-2 px-4 py-3">
             <div className="flex items-center gap-2.5">
@@ -196,14 +202,14 @@ export function ChatbotWidget({ clientId, clientName }: Props) {
                 <div>
                   <p className="text-sm font-medium">Ask me anything</p>
                   <p className="mt-1 text-xs text-muted-2">
-                    I have full context on {clientName}&apos;s report, brand, competitors, and
-                    content history.
+                    I have full context on {clientName}&apos;s brand profile, competitors, strategy
+                    documents, and content history.
                   </p>
                 </div>
                 <div className="mt-1 flex flex-wrap justify-center gap-1.5">
                   {[
-                    "What's our biggest weakness?",
-                    "Summarise the report",
+                    "What's our brand positioning?",
+                    "Who are our main competitors?",
                     "Update our primary color",
                   ].map((prompt) => (
                     <button

@@ -37,10 +37,9 @@ function compilePrompt(template: string, client: Client): string {
 
 /**
  * Run the full Intel Report pipeline for a client:
- * 1. Fetch prompt template from Firestore (falls back to DEFAULT_INTEL_PROMPT)
- * 2. Call Claude API to generate the markdown report
- * 3. Parse markdown into structured data and upsert Firestore collections
- * 4. Generate a styled HTML report and store in Firebase Storage
+ * 1. Generate the structured ClientReport (monolithic prompt, backward-compatible)
+ * 2. Run the new multi-agent onboarding pipeline in parallel to generate context docs
+ *    (onboard pipeline failure is non-fatal — report always stored regardless)
  */
 export async function runIntelReportPipeline(clientId: string): Promise<void> {
   const client = await getClient(clientId);
@@ -48,19 +47,34 @@ export async function runIntelReportPipeline(clientId: string): Promise<void> {
 
   const agent = await getSystemAgent(INTEL_AGENT_ID);
   const template = agent?.systemPrompt ?? DEFAULT_INTEL_PROMPT;
-  const compiledPrompt = compilePrompt(template, client);
+  // Use the legacy prompt only when it looks like the default or a customised version of it.
+  // If the agent has been updated to short "additional instructions" text, fall back to default.
+  const isShortInstructions = template.length < 500 && !template.includes("## SCORING METHODOLOGY");
+  const compiledPrompt = compilePrompt(
+    isShortInstructions ? DEFAULT_INTEL_PROMPT : template,
+    client,
+  );
 
-  const { text } = await generateText({
-    model: anthropic("claude-sonnet-4-6"),
-    system: compiledPrompt,
-    messages: [
-      {
-        role: "user",
-        content: `Generate the complete Karos Intel Report for ${client.name}. Output ONLY the markdown report — no preamble, no explanation. Start immediately with "# Karos Intel: ${client.name}".`,
-      },
-    ],
-    maxOutputTokens: 16000,
-  });
+  // Run both pipelines in parallel — context docs and legacy report generate concurrently
+  const [{ text }] = await Promise.all([
+    generateText({
+      model: anthropic("claude-sonnet-4-6"),
+      system: compiledPrompt,
+      messages: [
+        {
+          role: "user",
+          content: `Generate the complete Karos Intel Report for ${client.name}. Output ONLY the markdown report — no preamble, no explanation. Start immediately with "# Karos Intel: ${client.name}".`,
+        },
+      ],
+      maxOutputTokens: 16000,
+    }),
+    // New multi-agent context-doc pipeline (non-fatal if it fails)
+    import("@/lib/onboard-pipeline")
+      .then(({ runOnboardPipeline }) => runOnboardPipeline(clientId))
+      .catch((err: unknown) => {
+        console.error("[intel] Onboard pipeline failed (non-fatal):", err);
+      }),
+  ]);
 
   const parsed = parseMarkdownReport(text);
 
