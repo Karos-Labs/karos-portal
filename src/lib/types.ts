@@ -262,6 +262,12 @@ export interface BrandingGuidelines {
   logoUrl?: string;
   /** Free-form markdown guidelines text */
   guidelines?: string;
+  /**
+   * Inferred or manually set visual aesthetic.
+   * Set by the website scraper; can be overridden in the branding modal.
+   * E.g. "Minimalist" | "Dark Mode" | "High-Tech" | "Corporate" | "Vibrant" | "Luxury"
+   */
+  visualStyle?: string;
   updatedAt: number;
 }
 

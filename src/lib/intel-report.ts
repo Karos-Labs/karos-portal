@@ -11,6 +11,7 @@ import {
   replaceReportCompetitors,
 } from "@/lib/data";
 import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
+import { isBrandingEmpty, applyBrandingForClient } from "@/lib/branding";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
@@ -55,7 +56,7 @@ export async function runIntelReportPipeline(clientId: string): Promise<void> {
     client,
   );
 
-  // Run both pipelines in parallel — context docs and legacy report generate concurrently
+  // Run all three pipelines concurrently — report text, context docs, and branding bootstrap
   const [{ text }] = await Promise.all([
     generateText({
       model: anthropic("claude-sonnet-4-6"),
@@ -68,12 +69,22 @@ export async function runIntelReportPipeline(clientId: string): Promise<void> {
       ],
       maxOutputTokens: 16000,
     }),
-    // New multi-agent context-doc pipeline (non-fatal if it fails)
+    // Context-doc pipeline (non-fatal)
     import("@/lib/onboard-pipeline")
       .then(({ runOnboardPipeline }) => runOnboardPipeline(clientId))
       .catch((err: unknown) => {
         console.error("[intel] Onboard pipeline failed (non-fatal):", err);
       }),
+    // Branding bootstrap — only when colors/fonts are completely absent (non-fatal)
+    isBrandingEmpty(client) && client.website
+      ? applyBrandingForClient(clientId, client)
+          .then((r) => {
+            console.info(`[intel] Branding bootstrapped for ${client.name} (${r.source}): ${r.primaryColor ?? "no color"}`);
+          })
+          .catch((err: unknown) => {
+            console.error("[intel] Branding bootstrap failed (non-fatal):", err);
+          })
+      : Promise.resolve(),
   ]);
 
   const parsed = parseMarkdownReport(text);

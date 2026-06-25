@@ -386,18 +386,31 @@ function CompetitorTracker({
 
 /* ── Branding section ────────────────────────────────────────── */
 
+const VISUAL_STYLE_ICONS: Record<string, string> = {
+  "Dark Mode": "Moon",
+  "Minimalist": "Minus",
+  "High-Tech": "Cpu",
+  "Corporate": "Briefcase",
+  "Vibrant": "Zap",
+  "Luxury": "Crown",
+};
+
 function BrandingSection({
   guidelines,
   brandingDoc,
+  hasWebsite,
   onEdit,
   onGenerate,
   generating,
+  genFeedback,
 }: {
   guidelines?: Client["brandingGuidelines"];
   brandingDoc: ClientContextDoc | null;
+  hasWebsite: boolean;
   onEdit: () => void;
   onGenerate: () => void;
   generating: boolean;
+  genFeedback?: { source: "scraped" | "preset"; primaryColor?: string; visualStyle?: string } | null;
 }) {
   const brandInsights = brandingDoc
     ? (() => {
@@ -415,6 +428,10 @@ function BrandingSection({
       })()
     : [];
 
+  const generateLabel = hasWebsite
+    ? (generating ? "Scraping website…" : "Generate from website")
+    : (generating ? "Generating…" : "Generate automatically");
+
   if (!guidelines) {
     return (
       <Card className="border-dashed">
@@ -425,15 +442,26 @@ function BrandingSection({
           <div>
             <p className="font-medium">No branding guidelines set</p>
             <p className="mt-1 text-sm text-muted-2">
-              Add guidelines so AI agents can produce on-brand content.
+              {hasWebsite
+                ? "Karos can automatically extract colors, fonts, and visual style from the client's website."
+                : "Add guidelines so AI agents can produce on-brand content."}
             </p>
           </div>
-          <div className="flex gap-2">
+          {genFeedback && (
+            <div className="flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
+              <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
+              {genFeedback.source === "scraped"
+                ? `Scraped from website${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}`
+                : "Applied brand archetype preset"}
+            </div>
+          )}
+          <div className="flex flex-wrap justify-center gap-2">
             <Button size="sm" onClick={onEdit}>
-              <Icon name="Pencil" className="h-4 w-4" /> Set guidelines
+              <Icon name="Pencil" className="h-4 w-4" /> Set manually
             </Button>
             <Button size="sm" variant="outline" loading={generating} onClick={onGenerate}>
-              <Icon name="Sparkles" className="h-4 w-4" /> Generate automatically
+              <Icon name={hasWebsite ? "Globe" : "Sparkles"} className="h-4 w-4" />
+              {generateLabel}
             </Button>
           </div>
         </div>
@@ -443,12 +471,41 @@ function BrandingSection({
 
   return (
     <Card>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <CardTitle>Branding Guidelines</CardTitle>
-        <Button size="sm" variant="outline" onClick={onEdit}>
-          <Icon name="Pencil" className="h-3.5 w-3.5" /> Edit
-        </Button>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <CardTitle>Branding Guidelines</CardTitle>
+          {guidelines.visualStyle && (
+            <span className="flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-muted">
+              <Icon
+                name={(VISUAL_STYLE_ICONS[guidelines.visualStyle] ?? "Layers") as Parameters<typeof Icon>[0]["name"]}
+                className="h-2.5 w-2.5"
+              />
+              {guidelines.visualStyle}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {hasWebsite && (
+            <Button size="sm" variant="outline" loading={generating} onClick={onGenerate} title="Re-scrape website for updated brand colors and fonts">
+              <Icon name="RefreshCw" className="h-3.5 w-3.5" />
+              {generating ? "Scraping…" : "Re-scrape"}
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={onEdit}>
+            <Icon name="Pencil" className="h-3.5 w-3.5" /> Edit
+          </Button>
+        </div>
       </div>
+
+      {/* Scrape feedback pill */}
+      {genFeedback && (
+        <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
+          <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
+          {genFeedback.source === "scraped"
+            ? `Scraped from website${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${genFeedback.primaryColor ? ` · ${genFeedback.primaryColor}` : ""}`
+            : "Applied brand archetype preset (no website data found)"}
+        </div>
+      )}
 
       {/* Agent-usable structured data */}
       <div className="flex flex-wrap gap-4">
@@ -457,7 +514,7 @@ function BrandingSection({
             {guidelines.primaryColor && (
               <div className="flex items-center gap-2">
                 <div
-                  className="h-6 w-6 rounded-full border border-border"
+                  className="h-6 w-6 shrink-0 rounded-full border border-border"
                   style={{ background: guidelines.primaryColor }}
                 />
                 <span className="font-mono text-xs text-muted-2">{guidelines.primaryColor}</span>
@@ -466,7 +523,7 @@ function BrandingSection({
             {guidelines.secondaryColor && (
               <div className="flex items-center gap-2">
                 <div
-                  className="h-6 w-6 rounded-full border border-border"
+                  className="h-6 w-6 shrink-0 rounded-full border border-border"
                   style={{ background: guidelines.secondaryColor }}
                 />
                 <span className="font-mono text-xs text-muted-2">{guidelines.secondaryColor}</span>
@@ -544,16 +601,23 @@ export function IntelligenceTab({
   const [generating, startGenerating] = useTransition();
   const [regenerating, startRegenerate] = useTransition();
   const [regenError, setRegenError] = useState<string | null>(null);
+  const [brandingFeedback, setBrandingFeedback] = useState<{
+    source: "scraped" | "preset";
+    primaryColor?: string;
+    visualStyle?: string;
+  } | null>(null);
 
   const isStaff = currentUserRole === "admin" || currentUserRole === "employee";
 
   function handleGenerateBranding() {
+    setBrandingFeedback(null);
     startGenerating(async () => {
       try {
-        await generateBrandingAction(client.id);
+        const result = await generateBrandingAction(client.id);
+        setBrandingFeedback(result);
         router.refresh();
       } catch {
-        // silently ignore
+        // silently ignore — scraping is best-effort
       }
     });
   }
@@ -644,9 +708,11 @@ export function IntelligenceTab({
       <BrandingSection
         guidelines={client.brandingGuidelines}
         brandingDoc={brandingDoc}
+        hasWebsite={!!client.website}
         onEdit={() => setBrandingOpen(true)}
         onGenerate={handleGenerateBranding}
         generating={generating}
+        genFeedback={brandingFeedback}
       />
 
       {/* Modals */}

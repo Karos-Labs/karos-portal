@@ -37,6 +37,13 @@ import {
 } from "@/lib/data";
 import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
 import type { BrandingGuidelines, ClientCompetitor } from "@/lib/types";
+import {
+  applyBrandingForClient,
+  brandingToContextDocContent,
+  buildBrandVoiceSection,
+  injectBrandVoiceSection,
+  type BrandingGenResult,
+} from "@/lib/branding";
 import { issueAccessToken } from "@/lib/tokens";
 import { deleteObject, uploadBytes } from "@/lib/storage";
 import { startAgentRun, testRunAgent, type TestRunResult } from "@/lib/agents/run";
@@ -742,81 +749,9 @@ export async function importReportAction(
   revalidatePath(`/clients/${clientId}`);
 }
 
-/* ── Context-doc helpers ─────────────────────────────────────────────── */
-
-function brandingToContextDocContent(g: BrandingGuidelines, clientName: string): string {
-  const today = new Date().toISOString().slice(0, 10);
-  const lines = [
-    `# Branding Guidelines — ${clientName}`,
-    `_Last updated: ${today}_`,
-    "",
-  ];
-  if (g.primaryColor || g.secondaryColor) {
-    lines.push("## Color Palette");
-    if (g.primaryColor) lines.push(`- **Primary:** ${g.primaryColor}`);
-    if (g.secondaryColor) lines.push(`- **Secondary/Accent:** ${g.secondaryColor}`);
-    lines.push("");
-  }
-  if (g.fontHeading || g.fontBody) {
-    lines.push("## Typography");
-    if (g.fontHeading) lines.push(`- **Heading font:** ${g.fontHeading}`);
-    if (g.fontBody) lines.push(`- **Body font:** ${g.fontBody}`);
-    lines.push("");
-  }
-  if (g.toneKeywords?.length) {
-    lines.push("## Tone & Voice");
-    lines.push(`Keywords: ${g.toneKeywords.join(", ")}`);
-    lines.push("");
-  }
-  if (g.guidelines) {
-    lines.push("## Brand Guidelines");
-    lines.push(g.guidelines);
-    lines.push("");
-  }
-  return lines.join("\n");
-}
-
-/** Build the auto-synced block that gets injected into the brand-voice context doc. */
-function buildBrandVoiceSection(g: BrandingGuidelines): string {
-  const today = new Date().toISOString().slice(0, 10);
-  const lines = [
-    "<!-- BRAND_SYNC_START -->",
-    `## Visual & Tone Reference (auto-synced from guidelines · ${today})`,
-  ];
-  if (g.primaryColor) lines.push(`- **Primary Color:** ${g.primaryColor}`);
-  if (g.secondaryColor) lines.push(`- **Secondary Color:** ${g.secondaryColor}`);
-  if (g.fontHeading) lines.push(`- **Heading Font:** ${g.fontHeading}`);
-  if (g.fontBody) lines.push(`- **Body Font:** ${g.fontBody}`);
-  if (g.toneKeywords?.length) lines.push(`- **Tone Keywords:** ${g.toneKeywords.join(", ")}`);
-  lines.push(
-    "",
-    "_This section is auto-synced when branding guidelines are updated. Edit the guidelines UI to change it._",
-    "<!-- BRAND_SYNC_END -->",
-  );
-  return lines.join("\n");
-}
-
-/**
- * Insert or replace the BRAND_SYNC block in an existing brand-voice doc.
- * If markers exist, replace the block between them.
- * If not, inject after the YAML frontmatter (or prepend if no frontmatter).
- */
-function injectBrandVoiceSection(content: string, section: string): string {
-  const START = "<!-- BRAND_SYNC_START -->";
-  const END = "<!-- BRAND_SYNC_END -->";
-  const startIdx = content.indexOf(START);
-  const endIdx = content.indexOf(END);
-  if (startIdx !== -1 && endIdx !== -1) {
-    return content.slice(0, startIdx) + section + content.slice(endIdx + END.length);
-  }
-  // No markers yet — inject right after the frontmatter if present
-  const fmMatch = content.match(/^---[\s\S]*?---\n/);
-  if (fmMatch) {
-    const offset = fmMatch[0].length;
-    return content.slice(0, offset) + "\n" + section + "\n\n" + content.slice(offset);
-  }
-  return section + "\n\n" + content;
-}
+/* ── Context-doc helpers — imported from src/lib/branding.ts ─────────────── */
+// brandingToContextDocContent, buildBrandVoiceSection, injectBrandVoiceSection
+// are imported at the top of this file.
 
 /** Manually add a competitor to a client's tracker. */
 export async function addCompetitorAction(
@@ -969,230 +904,27 @@ export async function saveBrandingGuidelinesAction(
   revalidatePath(`/clients/${clientId}`);
 }
 
-/* ── Branding presets ─────────────────────────────────────────────────
-   Three distinct brand archetypes used as fallback when no website URL
-   is available or when scraping yields no usable tokens.              */
-const BRANDING_PRESETS: Array<Omit<BrandingGuidelines, "updatedAt">> = [
-  {
-    primaryColor: "#1E293B",
-    secondaryColor: "#6366F1",
-    fontHeading: "Inter",
-    fontBody: "Inter",
-    toneKeywords: ["Innovative", "Precise", "Scalable", "Data-driven"],
-    guidelines:
-      "## Brand Voice\nDirect and confident. Communicate with precision and remove all fluff.\n\n## Visual Identity\nClean layouts, generous whitespace, and indigo accents to signal interactivity and trust.\n\n## Do's and Don'ts\n- Do: Lead with data and specifics\n- Don't: Use buzzwords or vague claims",
-  },
-  {
-    primaryColor: "#292524",
-    secondaryColor: "#D97706",
-    fontHeading: "Playfair Display",
-    fontBody: "Georgia",
-    toneKeywords: ["Authentic", "Sustainable", "Human", "Crafted"],
-    guidelines:
-      "## Brand Voice\nWarm and personal. Speak to people, not customers. Stories over statistics.\n\n## Visual Identity\nOrganic textures, amber accents, and serif typography that convey warmth and craftsmanship.\n\n## Do's and Don'ts\n- Do: Tell the story behind the product\n- Don't: Use corporate or overly technical jargon",
-  },
-  {
-    primaryColor: "#09090B",
-    secondaryColor: "#10B981",
-    fontHeading: "Montserrat",
-    fontBody: "Open Sans",
-    toneKeywords: ["Bold", "Trustworthy", "Challenger", "Performance"],
-    guidelines:
-      "## Brand Voice\nAssertive and results-oriented. Challenge the status quo with data-backed confidence.\n\n## Visual Identity\nHigh contrast, emerald green for key actions, geometric sans-serif for authority and clarity.\n\n## Do's and Don'ts\n- Do: Use strong, active verbs and concrete metrics\n- Don't: Hedge or soften claims unnecessarily",
-  },
-];
-
-/* ── Color scraping utilities ────────────────────────────────────────── */
-
-/** Expand 3-digit hex to 6-digit, strip alpha from 8-digit. Returns null if invalid. */
-function normalizeHex(raw: string): string | null {
-  const h = raw.trim().toLowerCase();
-  if (/^#[0-9a-f]{3}$/.test(h)) return "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
-  if (/^#[0-9a-f]{6}$/.test(h)) return h;
-  if (/^#[0-9a-f]{8}$/.test(h)) return h.slice(0, 7); // drop alpha
-  return null;
-}
-
-/**
- * Reject near-black, near-white, and neutral grays — none of these are
- * meaningful brand colors when extracted via frequency analysis.
- */
-function isUsableColor(hex: string): boolean {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  const saturation = Math.max(r, g, b) - Math.min(r, g, b);
-  return luminance > 12 && luminance < 235 && saturation > 25;
-}
-
-/**
- * Extract hex colors and font families from a website's live HTML.
- *
- * Signal priority (colors):
- *   1. <meta name="theme-color"> — explicit, authoritative
- *   2. CSS custom properties matching brand/primary/accent/main/hero/key
- *   3. Frequency-ranked hex values from <style> blocks (grays/neutrals filtered)
- *
- * Signal priority (fonts):
- *   1. Google Fonts in <link> tags or @import rules
- *   2. @font-face family declarations in <style> blocks
- */
-async function scrapeWebsiteBranding(
-  url: string,
-): Promise<Omit<BrandingGuidelines, "updatedAt"> | null> {
-  try {
-    const normalized = url.startsWith("http") ? url : `https://${url}`;
-    const res = await fetch(normalized, {
-      signal: AbortSignal.timeout(8000),
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; KarosCMO/1.0; +https://karoslabs.com)" },
-    });
-    if (!res.ok) return null;
-    const html = await res.text();
-
-    // 1. <meta name="theme-color"> — most reliable explicit brand color
-    const themeColor =
-      normalizeHex(
-        html.match(/<meta[^>]+name=["']theme-color["'][^>]+content=["'](#[0-9a-fA-F]{3,8})["']/i)?.[1] ??
-        html.match(/<meta[^>]+content=["'](#[0-9a-fA-F]{3,8})["'][^>]+name=["']theme-color["']/i)?.[1] ??
-        "",
-      ) ?? undefined;
-
-    // 2. Collect all inline <style> block content for further parsing
-    const styleBlocks = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)]
-      .map((m) => m[1])
-      .join("\n");
-
-    // 3. CSS custom property colors — patterns like --primary: #xxx, --brand-color: #xxx
-    const cssVarPattern =
-      /--(?:[\w-]*(?:primary|brand|accent|main|key|hero|highlight|theme)[\w-]*):\s*(#[0-9a-fA-F]{3,8})/gi;
-    const cssVarColors: string[] = [];
-    let m: RegExpExecArray | null;
-    const cssVarPatternCopy = new RegExp(cssVarPattern.source, cssVarPattern.flags);
-    while ((m = cssVarPatternCopy.exec(styleBlocks)) !== null) {
-      const hex = normalizeHex(m[1]);
-      if (hex && isUsableColor(hex) && !cssVarColors.includes(hex)) cssVarColors.push(hex);
-    }
-
-    // 4. Frequency-rank hex colors found in <style> blocks (fallback)
-    const freqMap = new Map<string, number>();
-    const hexScan = /#([0-9a-fA-F]{3,8})\b/g;
-    while ((m = hexScan.exec(styleBlocks)) !== null) {
-      const hex = normalizeHex("#" + m[1]);
-      if (hex && isUsableColor(hex)) freqMap.set(hex, (freqMap.get(hex) ?? 0) + 1);
-    }
-    const freqColors = [...freqMap.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([c]) => c)
-      .filter((c) => !cssVarColors.includes(c)); // avoid dupes with CSS-var list
-
-    // 5. Google Fonts from <link href> tags and @import inside <style> blocks
-    const gfMatches = [
-      ...html.matchAll(/fonts\.googleapis\.com\/css2?\?family=([^"'&;>\s]+)/gi),
-      ...styleBlocks.matchAll(/fonts\.googleapis\.com\/css2?\?family=([^"'&;)\s]+)/gi),
-    ];
-    const googleFonts = gfMatches
-      .flatMap((match) =>
-        decodeURIComponent(match[1])
-          .split("|")
-          .map((f) => f.split(":")[0].replace(/\+/g, " ").trim()),
-      )
-      .filter((f, i, a) => f && a.indexOf(f) === i);
-
-    // 6. @font-face family names from inline <style> blocks
-    const fontFacePattern = /@font-face\s*\{[^}]*font-family:\s*['"]?([^;'"}{]+)/gi;
-    const localFonts: string[] = [];
-    while ((m = fontFacePattern.exec(styleBlocks)) !== null) {
-      const family = m[1].trim().replace(/^['"]|['"]$/g, "");
-      if (family && !localFonts.includes(family)) localFonts.push(family);
-    }
-
-    // 7. Assemble results — prefer explicit signals over frequency analysis
-    const colorPool = [themeColor, ...cssVarColors, ...freqColors].filter(Boolean) as string[];
-    const primaryColor = colorPool[0];
-    const secondaryColor = colorPool.find((c) => c !== primaryColor);
-    const allFonts = [...googleFonts, ...localFonts];
-
-    if (!primaryColor && allFonts.length === 0) return null;
-
-    return {
-      primaryColor: primaryColor ?? undefined,
-      secondaryColor: secondaryColor ?? undefined,
-      fontHeading: allFonts[0] ?? undefined,
-      fontBody: (allFonts[1] ?? allFonts[0]) ?? undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Auto-generate branding guidelines for a client.
- * Step A: scrape the client's website for colors + fonts.
- * Step B: if no website or scraping yields nothing, apply one of three preset archetypes.
- * Step C: sync both the branding-guidelines and brand-voice context docs so agents
- *         immediately see the new values without a full pipeline re-run.
+ * Scrapes the client's website for colors/fonts/visual style; falls back to a
+ * preset archetype if scraping yields nothing or no website is set.
+ * Syncs both context docs so agents immediately see the new values.
+ *
+ * Returns scrape result metadata for UI feedback.
  */
-export async function generateBrandingAction(clientId: string): Promise<void> {
+export async function generateBrandingAction(clientId: string): Promise<BrandingGenResult> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
   if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
 
-  const client = await getClient(clientId);
-  if (!client) throw new Error("Client not found");
-
-  let scraped: Omit<BrandingGuidelines, "updatedAt"> | null = null;
-  if (client.website) scraped = await scrapeWebsiteBranding(client.website);
-
-  const generated = scraped ?? BRANDING_PRESETS[Math.floor(Math.random() * BRANDING_PRESETS.length)];
-  const fullGuidelines: BrandingGuidelines = { ...generated, updatedAt: Date.now() };
-  const now = Date.now();
-
-  // Fetch existing context docs in parallel with the client write
-  const [, brandingDoc, voiceDoc] = await Promise.all([
-    updateClient(clientId, { brandingGuidelines: fullGuidelines }),
-    getClientContextDoc(clientId, "branding-guidelines"),
-    getClientContextDoc(clientId, "brand-voice"),
-  ]);
-
-  // Sync both context docs so agents immediately see the new values
-  await Promise.allSettled([
-    upsertClientContextDoc({
-      clientId,
-      docType: "branding-guidelines",
-      tier: brandingDoc?.tier ?? "internal",
-      content: brandingToContextDocContent(fullGuidelines, client.name),
-      version: (brandingDoc?.version ?? 0) + 1,
-      sources: brandingDoc?.sources,
-      createdAt: brandingDoc?.createdAt ?? now,
-      updatedAt: now,
-    }),
-    voiceDoc
-      ? upsertClientContextDoc({
-          clientId,
-          docType: "brand-voice",
-          tier: voiceDoc.tier,
-          content: injectBrandVoiceSection(voiceDoc.content, buildBrandVoiceSection(fullGuidelines)),
-          version: voiceDoc.version + 1,
-          sources: voiceDoc.sources,
-          createdAt: voiceDoc.createdAt,
-          updatedAt: now,
-        })
-      : Promise.resolve(),
-  ]);
-
+  const result = await applyBrandingForClient(clientId);
   revalidatePath(`/clients/${clientId}`);
+  return result;
 }
 
 /**
  * One-time retroactive backfill: scrape every client's website and sync branding
  * data + context docs for the full client list. Admin-only.
- *
- * For each client:
- *   - Attempts live website scraping; falls back to a preset if scraping fails.
- *   - Merges with existing data: colours/fonts are overwritten with scraped values;
- *     tone keywords, guidelines text, and logoUrl from prior manual edits are preserved.
- *   - Writes both the client record and both context docs atomically.
  */
 export async function backfillBrandingForAllClientsAction(): Promise<{
   total: number;
@@ -1213,56 +945,8 @@ export async function backfillBrandingForAllClientsAction(): Promise<{
 
   for (const client of clients) {
     try {
-      let scraped: Omit<BrandingGuidelines, "updatedAt"> | null = null;
-      if (client.website) scraped = await scrapeWebsiteBranding(client.website);
-
-      const generated = scraped ?? BRANDING_PRESETS[Math.floor(Math.random() * BRANDING_PRESETS.length)];
-      const status: "scraped" | "preset" = scraped ? "scraped" : "preset";
-
-      // Preserve manually curated fields; overwrite colours/fonts with scraped data
-      const existing = client.brandingGuidelines;
-      const merged: Omit<BrandingGuidelines, "updatedAt"> = {
-        ...generated,
-        toneKeywords: existing?.toneKeywords?.length ? existing.toneKeywords : generated.toneKeywords,
-        guidelines: existing?.guidelines ?? generated.guidelines,
-        logoUrl: existing?.logoUrl ?? generated.logoUrl,
-      };
-
-      const fullGuidelines: BrandingGuidelines = { ...merged, updatedAt: Date.now() };
-      const now = Date.now();
-
-      const [brandingDoc, voiceDoc] = await Promise.all([
-        getClientContextDoc(client.id, "branding-guidelines"),
-        getClientContextDoc(client.id, "brand-voice"),
-      ]);
-
-      await Promise.all([
-        updateClient(client.id, { brandingGuidelines: fullGuidelines }),
-        upsertClientContextDoc({
-          clientId: client.id,
-          docType: "branding-guidelines",
-          tier: brandingDoc?.tier ?? "internal",
-          content: brandingToContextDocContent(fullGuidelines, client.name),
-          version: (brandingDoc?.version ?? 0) + 1,
-          sources: brandingDoc?.sources,
-          createdAt: brandingDoc?.createdAt ?? now,
-          updatedAt: now,
-        }),
-        voiceDoc
-          ? upsertClientContextDoc({
-              clientId: client.id,
-              docType: "brand-voice",
-              tier: voiceDoc.tier,
-              content: injectBrandVoiceSection(voiceDoc.content, buildBrandVoiceSection(fullGuidelines)),
-              version: voiceDoc.version + 1,
-              sources: voiceDoc.sources,
-              createdAt: voiceDoc.createdAt,
-              updatedAt: now,
-            })
-          : Promise.resolve(),
-      ]);
-
-      results.push({ clientId: client.id, name: client.name, status, primaryColor: fullGuidelines.primaryColor });
+      const r = await applyBrandingForClient(client.id, client);
+      results.push({ clientId: client.id, name: client.name, status: r.source, primaryColor: r.primaryColor });
     } catch (err) {
       console.error(`[backfill] Failed for ${client.name} (${client.id}):`, err);
       results.push({ clientId: client.id, name: client.name, status: "failed" });

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
 import { Button, Label, Input, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { saveBrandingGuidelinesAction } from "@/lib/actions";
+import { saveBrandingGuidelinesAction, generateBrandingAction } from "@/lib/actions";
 import type { BrandingGuidelines } from "@/lib/types";
 
 interface Props {
@@ -13,11 +13,15 @@ interface Props {
   onClose: () => void;
   clientId: string;
   existing?: BrandingGuidelines;
+  /** When true, shows the "Generate from website" button that scrapes and pre-fills the form. */
+  hasWebsite?: boolean;
 }
 
-export function BrandingModal({ open, onClose, clientId, existing }: Props) {
+export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [genResult, setGenResult] = useState<{ source: "scraped" | "preset"; visualStyle?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState("");
 
@@ -29,10 +33,33 @@ export function BrandingModal({ open, onClose, clientId, existing }: Props) {
     toneKeywords: existing?.toneKeywords ?? [],
     logoUrl: existing?.logoUrl ?? "",
     guidelines: existing?.guidelines ?? "",
+    visualStyle: existing?.visualStyle ?? "",
   });
 
   function setField<K extends keyof typeof form>(key: K, val: (typeof form)[K]) {
     setForm((s) => ({ ...s, [key]: val }));
+  }
+
+  async function generateFromWebsite() {
+    setGenerating(true);
+    setGenResult(null);
+    setError(null);
+    try {
+      const result = await generateBrandingAction(clientId);
+      setGenResult({ source: result.source, visualStyle: result.visualStyle });
+      // Pre-fill form with scraped values so the user can review and adjust before saving
+      setForm((s) => ({
+        ...s,
+        primaryColor: result.primaryColor ?? s.primaryColor,
+        secondaryColor: result.secondaryColor ?? s.secondaryColor,
+        visualStyle: result.visualStyle ?? s.visualStyle,
+      }));
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not generate from website");
+    } finally {
+      setGenerating(false);
+    }
   }
 
   function addToken() {
@@ -72,6 +99,32 @@ export function BrandingModal({ open, onClose, clientId, existing }: Props) {
       className="max-w-xl"
     >
       <div className="space-y-4">
+        {/* Generate from website — shown when a website URL is configured */}
+        {hasWebsite && (
+          <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border bg-surface-2 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">Generate from website</p>
+              <p className="text-xs text-muted-2">
+                Karos will scrape the client's site to extract colors, fonts, and visual style.
+              </p>
+            </div>
+            <Button size="sm" variant="outline" loading={generating} onClick={generateFromWebsite}>
+              <Icon name="Globe" className="h-4 w-4" />
+              {generating ? "Scraping…" : "Run scraper"}
+            </Button>
+          </div>
+        )}
+
+        {/* Scrape result feedback */}
+        {genResult && (
+          <div className="flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
+            <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
+            {genResult.source === "scraped"
+              ? `Scraped successfully${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review the values below and save.`
+              : "No website data found — applied a brand archetype preset. Adjust as needed."}
+          </div>
+        )}
+
         {/* Colors */}
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
@@ -128,6 +181,24 @@ export function BrandingModal({ open, onClose, clientId, existing }: Props) {
               placeholder="Inter, Georgia, etc."
             />
           </div>
+        </div>
+
+        {/* Visual style */}
+        <div>
+          <Label>Visual style</Label>
+          <select
+            value={form.visualStyle ?? ""}
+            onChange={(e) => setField("visualStyle", e.target.value)}
+            className="w-full rounded-[8px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-neon"
+          >
+            <option value="">— Not set —</option>
+            <option value="Minimalist">Minimalist</option>
+            <option value="Corporate">Corporate</option>
+            <option value="Dark Mode">Dark Mode</option>
+            <option value="High-Tech">High-Tech</option>
+            <option value="Vibrant">Vibrant</option>
+            <option value="Luxury">Luxury</option>
+          </select>
         </div>
 
         {/* Logo URL */}
