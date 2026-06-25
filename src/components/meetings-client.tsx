@@ -59,6 +59,10 @@ export function MeetingsClient({ transcripts, clients, users, currentUserRole, c
       // Client filter — client role: always scoped to own client
       if (!isStaff) {
         if (currentClientId && t.clientId !== currentClientId) return false;
+      } else if (clientFilter === "__karos__") {
+        if (!t.isKarosInternal) return false;
+      } else if (clientFilter === "__unassigned__") {
+        if (t.clientId || t.isKarosInternal) return false;
       } else if (clientFilter) {
         if (t.clientId !== clientFilter) return false;
       }
@@ -121,7 +125,9 @@ export function MeetingsClient({ transcripts, clients, users, currentUserRole, c
               onChange={(e) => setClientFilter(e.target.value)}
               className="h-8 rounded-[8px] border border-border bg-surface-2 px-2.5 text-xs text-foreground outline-none focus:border-neon/50"
             >
-              <option value="">All clients</option>
+              <option value="">All</option>
+              <option value="__karos__">Karos Labs Internal</option>
+              <option value="__unassigned__">Unassigned</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
@@ -158,7 +164,7 @@ export function MeetingsClient({ transcripts, clients, users, currentUserRole, c
               key={t.id}
               transcript={t}
               isStaff={isStaff}
-              clientName={clientName(t.clientId)}
+              clientName={t.isKarosInternal ? "Karos Labs Internal" : clientName(t.clientId)}
               isArchived={!!t.archived}
             />
           ))}
@@ -206,11 +212,18 @@ function MeetingRow({
       <Link href={`/transcripts/${t.id}`} className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <p className="truncate font-medium">{t.title}</p>
-          {t.assignment === "auto" && <Badge tone="neon">Auto-matched</Badge>}
-          {t.assignment === "unassigned" && <Badge tone="warning">Unassigned</Badge>}
+          {t.isKarosInternal && <Badge tone="neutral">Karos Labs</Badge>}
+          {!t.isKarosInternal && t.assignment === "auto" && <Badge tone="neon">Auto-matched</Badge>}
+          {!t.isKarosInternal && t.assignment === "unassigned" && <Badge tone="warning">Unassigned</Badge>}
           {t.source === "fireflies" && <Badge tone="neutral">Fireflies</Badge>}
           {t.contextDocSignalAt && <Badge tone="neon">Intel</Badge>}
           {isArchived && <Badge tone="neutral">Archived</Badge>}
+          {isStaff && t.hiddenFromClient && (
+            <span className="flex items-center gap-1 rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] text-warning">
+              <Icon name="EyeOff" className="h-2.5 w-2.5" />
+              Hidden
+            </span>
+          )}
         </div>
         <p className="mt-1 line-clamp-2 text-sm text-muted">{t.summary || "Processing summary…"}</p>
         <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-2">

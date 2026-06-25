@@ -399,6 +399,16 @@ export interface Transcript {
   completedItems?: number[];
   /** True when the meeting has been archived (manually or auto when all items done). */
   archived?: boolean;
+  /**
+   * When true: completely hidden from all client-role sessions even if clientId is set.
+   * Staff (admin/employee) always see it. Admin-only toggle.
+   */
+  hiddenFromClient?: boolean;
+  /**
+   * When true: this is a Karos Labs internal meeting, not associated with any external client.
+   * Mutually exclusive with clientId — assignment sets clientId to null.
+   */
+  isKarosInternal?: boolean;
   /** Epoch millis when this transcript was last pushed as a meeting signal to clientContextDocs. */
   contextDocSignalAt?: number;
   createdAt: number;
