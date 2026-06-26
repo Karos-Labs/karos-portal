@@ -1,5 +1,6 @@
 "use server";
 
+import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentUser, startImpersonation, stopImpersonation } from "@/lib/auth";
@@ -14,6 +15,7 @@ import {
   deleteAgent,
   getAgent,
   listAgents,
+  getSystemAgent,
   updateAsset,
   getAsset,
   updateTranscript,
@@ -30,13 +32,33 @@ import {
   createClientCompetitor,
   deleteClientCompetitor,
   replaceReportCompetitors,
+  listClientCompetitors,
+  listClientContextDocs,
+  replaceClientContextDocs,
   upsertSystemAgent,
   upsertClientContextDoc,
   getClientContextDoc,
+  getClientByKeyId,
   getTranscriptByExternalId,
+  createActivityLog,
+  upsertClientIntegration,
+  deleteClientIntegration,
+  clearAssetSchedule,
+  createClientRequest,
+  updateClientRequest,
 } from "@/lib/data";
 import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
-import type { BrandingGuidelines, ClientCompetitor } from "@/lib/types";
+import type {
+  ActivityLog,
+  Agent,
+  AppUser,
+  BrandingGuidelines,
+  Client,
+  ClientCompetitor,
+  ClientRequest,
+  Role,
+  Transcript,
+} from "@/lib/types";
 import {
   applyBrandingForClient,
   brandingToContextDocContent,
@@ -57,18 +79,17 @@ import {
 } from "@/lib/agents/authoring";
 import { ingestTranscript, appendMeetingSignalToContextDoc, buildActionItemsByOwner } from "@/lib/transcripts/ingest";
 import { listFirefliesTranscripts, fetchFirefliesTranscript } from "@/lib/transcripts/fireflies";
-import type { Agent, AppUser, Client, Role, Transcript } from "@/lib/types";
 
 async function requireStaff(): Promise<AppUser> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
-  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+  if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") throw new Error("Forbidden");
   return user;
 }
 
 async function requireAdmin(): Promise<AppUser> {
   const user = await getCurrentUser();
-  if (!user || user.role !== "admin") throw new Error("Forbidden");
+  if (!user || user.role !== "KAROS_ADMIN") throw new Error("Forbidden");
   return user;
 }
 
@@ -85,6 +106,8 @@ export async function createClientAction(input: {
   assignedEmployeeIds?: string[];
 }) {
   const user = await requireStaff();
+  // Generate a cryptographically secure, unguessable join token for the new client.
+  const clientKeyId = `ck_${randomBytes(16).toString("base64url")}`;
   const id = await createClient({
     name: input.name.trim(),
     website: input.website?.trim() || "",
@@ -98,11 +121,21 @@ export async function createClientAction(input: {
     brandVoice: input.brandVoice?.trim() || "",
     assignedEmployeeIds: input.assignedEmployeeIds ?? [user.uid],
     status: "active",
+    clientKeyId,
     createdAt: Date.now(),
     createdBy: user.uid,
   });
   revalidatePath("/clients");
   return { id };
+}
+
+/** Regenerate the clientKeyId for a client. Invalidates any previous join links. */
+export async function regenerateClientKeyAction(clientId: string): Promise<{ clientKeyId: string }> {
+  await requireStaff();
+  const clientKeyId = `ck_${randomBytes(16).toString("base64url")}`;
+  await updateClient(clientId, { clientKeyId });
+  revalidatePath(`/clients/${clientId}`);
+  return { clientKeyId };
 }
 
 export async function updateClientAction(id: string, input: Partial<Client> & { domainsCsv?: string }) {
@@ -208,8 +241,8 @@ export async function updateAssetAction(id: string, patch: { content?: string; t
   if (!user || user.disabled) throw new Error("Unauthorized");
   const asset = await getAsset(id);
   if (!asset) throw new Error("Asset not found");
-  // Clients may only act on their own assets.
-  if (user.role === "client" && asset.clientId !== user.clientId) throw new Error("Forbidden");
+  // CLIENT_USER may only act on their own assets.
+  if (user.role === "CLIENT_USER" && asset.clientId !== user.clientId) throw new Error("Forbidden");
   await updateAsset(id, { ...patch, updatedAt: Date.now() });
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
@@ -344,10 +377,10 @@ export async function toggleActionItemCompletionAction(
   const t = await getTranscript(transcriptId);
   if (!t) throw new Error("Transcript not found");
 
-  // Clients may toggle items on their own client's transcripts; staff can toggle any
-  if (user.role === "client") {
+  // CLIENT_USER may toggle items on their own client's transcripts; staff can toggle any
+  if (user.role === "CLIENT_USER") {
     if (!user.clientId || t.clientId !== user.clientId) throw new Error("Forbidden");
-  } else if (user.role !== "admin" && user.role !== "employee") {
+  } else if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") {
     throw new Error("Forbidden");
   }
 
@@ -582,8 +615,8 @@ export async function createTeamMemberAction(input: {
     email,
     name: input.name.trim(),
     role: input.role,
-    clientId: input.role === "client" ? input.clientId ?? null : null,
-    assignedClientIds: input.role === "employee" ? input.assignedClientIds ?? [] : [],
+    clientId: input.role === "CLIENT_USER" ? input.clientId ?? null : null,
+    assignedClientIds: input.role === "KAROS_EMPLOYEE" ? input.assignedClientIds ?? [] : [],
     disabled: false,
     // Admin-created logins are approved on the spot — they never hit the Registrations queue.
     approvedAt: Date.now(),
@@ -624,10 +657,11 @@ export async function approveRegistrationAction(
     assignedClientIds: [],
   };
 
-  if (input.role === "client") {
+  if (input.role === "CLIENT_USER") {
     let clientId = input.clientId ?? null;
     const newName = input.newClientName?.trim();
     if (newName) {
+      const clientKeyId = `ck_${randomBytes(16).toString("base64url")}`;
       clientId = await createClient({
         name: newName,
         website: "",
@@ -639,13 +673,14 @@ export async function approveRegistrationAction(
         brandVoice: "",
         assignedEmployeeIds: [admin.uid],
         status: "active",
+        clientKeyId,
         createdAt: Date.now(),
         createdBy: admin.uid,
       });
     }
     if (!clientId) throw new Error("Pick a client or create a new one for this person.");
     patch.clientId = clientId;
-  } else if (input.role === "employee") {
+  } else if (input.role === "KAROS_EMPLOYEE") {
     patch.assignedClientIds = input.assignedClientIds ?? [];
   }
 
@@ -686,9 +721,9 @@ export async function toggleGroupAdminAction(uid: string, isGroupAdmin: boolean)
   const target = await getUser(uid);
   if (!target) throw new Error("User not found");
 
-  if (user.role === "admin") {
+  if (user.role === "KAROS_ADMIN") {
     await upsertUser({ ...target, isGroupAdmin });
-  } else if (user.role === "client" && user.isGroupAdmin) {
+  } else if (user.role === "CLIENT_USER" && user.isGroupAdmin) {
     if (target.clientId !== user.clientId) throw new Error("Forbidden — different group");
     if (target.uid === user.uid) throw new Error("Cannot change your own group admin status");
     await upsertUser({ ...target, isGroupAdmin });
@@ -722,9 +757,7 @@ export async function importReportAction(
   markdown: string,
   pdfUrl?: string,
 ): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
-  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+  const user = await requireStaff();
 
   const client = await getClient(clientId);
   if (!client) throw new Error("Client not found");
@@ -746,12 +779,18 @@ export async function importReportAction(
     })),
   );
 
+  await _logActivity({
+    clientId,
+    timestamp: now,
+    type: "INTEL_GENERATION",
+    title: "Intel Report imported",
+    description: `Markdown report parsed — score ${report.overallScore}/100 (${report.overallGrade}), ${parsed.competitorRows.length} competitors`,
+    actor: user.name,
+    actorRole: "staff",
+  });
+
   revalidatePath(`/clients/${clientId}`);
 }
-
-/* ── Context-doc helpers — imported from src/lib/branding.ts ─────────────── */
-// brandingToContextDocContent, buildBrandVoiceSection, injectBrandVoiceSection
-// are imported at the top of this file.
 
 /** Manually add a competitor to a client's tracker. */
 export async function addCompetitorAction(
@@ -770,9 +809,7 @@ export async function addCompetitorAction(
     threatLevel?: ClientCompetitor["threatLevel"];
   },
 ): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
-  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+  await requireStaff();
 
   const now = Date.now();
   await createClientCompetitor({
@@ -839,12 +876,275 @@ export async function addCompetitorAction(
 
 /** Remove a competitor from the tracker. */
 export async function deleteCompetitorAction(id: string): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
-  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
-
+  await requireStaff();
   await deleteClientCompetitor(id);
   revalidatePath("/clients");
+}
+
+/* ── Core AI analysis helper (not exported — server-only) ──────────────── */
+
+async function _analyzeCompetitors(clientId: string): Promise<void> {
+  const [client, competitors] = await Promise.all([
+    getClient(clientId),
+    listClientCompetitors(clientId),
+  ]);
+  if (!client || competitors.length === 0) return;
+
+  const { generateObject } = await import("ai");
+  const { anthropic } = await import("@ai-sdk/anthropic");
+  const { z } = await import("zod");
+
+  const schema = z.object({
+    competitors: z.array(
+      z.object({
+        company: z.string().describe(
+          "Exact competitor name as provided.",
+        ),
+        url: z.string().optional().describe(
+          "Primary website URL. Omit if unknown.",
+        ),
+        positioning: z.string().optional().describe(
+          "STRICT: 3–5 words max. Noun phrase only — NO verbs, NO sentences, NO punctuation. " +
+          "Good: 'Enterprise marketing automation' | 'AI-driven B2B outreach' | 'SMB payroll platform'. " +
+          "Bad: 'They offer a high-end automated marketing solution for enterprise clients.'",
+        ),
+        keyStrengths: z.array(z.string()).describe(
+          "STRICT: 2–3 items, each 2–4 words max. Keywords only — NO sentences, NO fluff. " +
+          "Good: ['Global brand authority', 'Massive capital runway', 'G2 Leader badge']. " +
+          "Bad: ['Having a massive budget and a very recognizable global brand presence.']",
+        ),
+        keyWeaknesses: z.array(z.string()).describe(
+          "STRICT: 2–3 items, each 2–4 words max. Keywords only — NO sentences, NO fluff. " +
+          "Good: ['Complex onboarding', 'Legacy UI/UX', 'Enterprise-only pricing']. " +
+          "Bad: ['Their software is very outdated and difficult for small teams to onboard.']",
+        ),
+        threatLevel: z.enum(["HIGH", "MEDIUM", "LOW"]).optional(),
+        marketTier: z.enum(["Leader", "Challenger", "Niche", "Other"]),
+        overlap: z.enum(["High", "Medium", "Low-Med", "Low"]),
+      }),
+    ),
+  });
+
+  const names = competitors.map((c) => c.company).join(", ");
+  const clientCtx = [
+    client.name,
+    client.website ? `(${client.website})` : "",
+    client.description ? `— ${client.description}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const { object } = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema,
+    system:
+      "You are a competitive intelligence analyst producing data for a compact UI dashboard table. " +
+      "Every text field you output is rendered directly in a table cell — long text BREAKS the layout. " +
+      "\n\nABSOLUTE FORMATTING RULES (violating these corrupts the UI):\n" +
+      "• positioning — max 5 words, noun phrase, no verbs. e.g. 'Enterprise marketing automation'\n" +
+      "• keyStrengths items — max 4 words each. e.g. 'Global brand authority'\n" +
+      "• keyWeaknesses items — max 4 words each. e.g. 'Complex onboarding'\n" +
+      "• NEVER write complete sentences, introductory phrases ('They focus on...', 'Their main strength is...'), or trailing punctuation.\n" +
+      "• NEVER use filler words: 'very', 'highly', 'extremely', 'robust', 'comprehensive', 'cutting-edge'.\n" +
+      "• Data must be specific and scannable in under 2 seconds.",
+    prompt: `Analyze these competitors for ${clientCtx}.
+
+COMPETITORS: ${names}
+
+Return one object per competitor. Field rules:
+- company: exact name as listed
+- url: primary website (omit if unknown)
+- positioning: ≤5 words, noun phrase — e.g. "AI-driven B2B outreach"
+- keyStrengths: 2–3 items, ≤4 words each — e.g. ["G2 Leader badge", "ISO enterprise compliance"]
+- keyWeaknesses: 2–3 items, ≤4 words each — e.g. ["Legacy UI/UX", "SMB pricing gap"]
+- threatLevel: HIGH (same ICP + budget) | MEDIUM (partial overlap) | LOW (adjacent only)
+- marketTier: Leader | Challenger | Niche | Other
+- overlap: High | Medium | Low-Med | Low`,
+    maxOutputTokens: 3500,
+  });
+
+  if (object.competitors.length === 0) return;
+
+  const now = Date.now();
+  await replaceReportCompetitors(
+    clientId,
+    object.competitors.map((c) => ({
+      ...c,
+      clientId,
+      deepDive: false,
+      source: "report" as const,
+      createdAt: now,
+      updatedAt: now,
+    })),
+  );
+}
+
+/** Fire-and-forget activity log writer. Never throws — never blocks the caller. */
+async function _logActivity(data: Omit<ActivityLog, "id">): Promise<void> {
+  try {
+    await createActivityLog(data);
+  } catch {
+    // Non-fatal
+  }
+}
+
+/** Add a competitor by name and trigger AI analysis for the full tracked list. */
+export async function addCompetitorAndAnalyzeAction(
+  clientId: string,
+  name: string,
+): Promise<void> {
+  const user = await requireStaff();
+  if (!name.trim()) throw new Error("Competitor name required");
+
+  // Persist the stub first so the name is immediately visible
+  await createClientCompetitor({
+    clientId,
+    company: name.trim(),
+    marketTier: "Challenger",
+    overlap: "Medium",
+    deepDive: false,
+    keyStrengths: [],
+    keyWeaknesses: [],
+    source: "manual",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  await _logActivity({
+    clientId,
+    timestamp: Date.now(),
+    type: "COMPETITOR_ADDED",
+    title: `Competitor added: ${name.trim()}`,
+    actor: user.name,
+    actorRole: "staff",
+  });
+
+  // Best-effort — if AI fails, stub is still saved for the next report generation
+  try {
+    await _analyzeCompetitors(clientId);
+    await _logActivity({
+      clientId,
+      timestamp: Date.now(),
+      type: "COMPETITOR_ANALYZED",
+      title: "Competitor intelligence updated",
+      description: "AI analyzed all tracked competitors and refreshed profiles",
+      actor: "System AI",
+      actorRole: "system",
+    });
+  } catch {
+    // Analysis failed; competitor name is saved, profiles will populate on next report run
+  }
+
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/** Discover and fully analyze top competitors from scratch (for clients with no existing data). */
+export async function backfillCompetitorsAction(clientId: string): Promise<void> {
+  await requireStaff();
+  const client = await getClient(clientId);
+  if (!client) throw new Error("Client not found");
+
+  const { generateObject } = await import("ai");
+  const { anthropic } = await import("@ai-sdk/anthropic");
+  const { z } = await import("zod");
+
+  const schema = z.object({
+    competitors: z.array(
+      z.object({
+        company: z.string().describe(
+          "Exact competitor company name.",
+        ),
+        url: z.string().optional().describe(
+          "Primary website URL. Omit if unknown.",
+        ),
+        positioning: z.string().optional().describe(
+          "STRICT: 3–5 words max. Noun phrase only — NO verbs, NO sentences, NO punctuation. " +
+          "Good: 'Enterprise marketing automation' | 'AI-driven B2B outreach' | 'SMB payroll platform'. " +
+          "Bad: 'They offer a high-end automated marketing solution for enterprise clients.'",
+        ),
+        keyStrengths: z.array(z.string()).describe(
+          "STRICT: 2–3 items, each 2–4 words max. Keywords only — NO sentences, NO fluff. " +
+          "Good: ['Global brand authority', 'Massive capital runway', 'G2 Leader badge']. " +
+          "Bad: ['Having a massive budget and a very recognizable global brand presence.']",
+        ),
+        keyWeaknesses: z.array(z.string()).describe(
+          "STRICT: 2–3 items, each 2–4 words max. Keywords only — NO sentences, NO fluff. " +
+          "Good: ['Complex onboarding', 'Legacy UI/UX', 'Enterprise-only pricing']. " +
+          "Bad: ['Their software is very outdated and difficult for small teams to onboard.']",
+        ),
+        threatLevel: z.enum(["HIGH", "MEDIUM", "LOW"]).optional(),
+        marketTier: z.enum(["Leader", "Challenger", "Niche", "Other"]),
+        overlap: z.enum(["High", "Medium", "Low-Med", "Low"]),
+      }),
+    ),
+  });
+
+  const clientCtx = [
+    `Company: ${client.name}`,
+    client.website ? `Website: ${client.website}` : "",
+    client.description ? `Description: ${client.description}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const { object } = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema,
+    system:
+      "You are a market intelligence analyst producing data for a compact UI dashboard table. " +
+      "Every text field you output is rendered directly in a table cell — long text BREAKS the layout. " +
+      "\n\nABSOLUTE FORMATTING RULES (violating these corrupts the UI):\n" +
+      "• positioning — max 5 words, noun phrase, no verbs. e.g. 'Enterprise marketing automation'\n" +
+      "• keyStrengths items — max 4 words each. e.g. 'Global brand authority'\n" +
+      "• keyWeaknesses items — max 4 words each. e.g. 'Complex onboarding'\n" +
+      "• NEVER write complete sentences, introductory phrases ('They focus on...', 'Their main strength is...'), or trailing punctuation.\n" +
+      "• NEVER use filler words: 'very', 'highly', 'extremely', 'robust', 'comprehensive', 'cutting-edge'.\n" +
+      "• Data must be specific and scannable in under 2 seconds.",
+    prompt: `${clientCtx}
+
+Identify the top 5–7 direct competitors. Discovery criteria:
+- Same or heavily overlapping target market / ICP
+- Comparable product or service category
+- Competing for the same customer budget or attention
+
+Return one object per competitor. Field rules:
+- company: exact company name
+- url: primary website (omit if unknown)
+- positioning: ≤5 words, noun phrase — e.g. "AI-driven B2B outreach"
+- keyStrengths: 2–3 items, ≤4 words each — e.g. ["G2 Leader badge", "ISO enterprise compliance"]
+- keyWeaknesses: 2–3 items, ≤4 words each — e.g. ["Legacy UI/UX", "SMB pricing gap"]
+- threatLevel: HIGH (same ICP + budget) | MEDIUM (partial overlap) | LOW (adjacent only)
+- marketTier: Leader | Challenger | Niche | Other
+- overlap: High | Medium | Low-Med | Low`,
+    maxOutputTokens: 4500,
+  });
+
+  if (object.competitors.length === 0) throw new Error("No competitors discovered — try adding names manually.");
+
+  const now = Date.now();
+  await replaceReportCompetitors(
+    clientId,
+    object.competitors.map((c) => ({
+      ...c,
+      clientId,
+      deepDive: false,
+      source: "report" as const,
+      createdAt: now,
+      updatedAt: now,
+    })),
+  );
+
+  await _logActivity({
+    clientId,
+    timestamp: now,
+    type: "COMPETITOR_ANALYZED",
+    title: "Competitors discovered & analyzed",
+    description: `AI identified and profiled ${object.competitors.length} competitors`,
+    actor: "System AI",
+    actorRole: "system",
+  });
+
+  revalidatePath(`/clients/${clientId}`);
 }
 
 /** Save or update branding guidelines for a client. Single source of truth:
@@ -855,9 +1155,7 @@ export async function saveBrandingGuidelinesAction(
   clientId: string,
   guidelines: Omit<BrandingGuidelines, "updatedAt">,
 ): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
-  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+  const user = await requireStaff();
 
   const fullGuidelines: BrandingGuidelines = { ...guidelines, updatedAt: Date.now() };
   const now = Date.now();
@@ -901,6 +1199,16 @@ export async function saveBrandingGuidelinesAction(
       : Promise.resolve(),
   ]);
 
+  await _logActivity({
+    clientId,
+    timestamp: now,
+    type: "BRANDING_UPDATED",
+    title: "Brand guidelines updated",
+    description: "Colors, fonts and tone keywords manually saved",
+    actor: user.name,
+    actorRole: "staff",
+  });
+
   revalidatePath(`/clients/${clientId}`);
 }
 
@@ -913,11 +1221,24 @@ export async function saveBrandingGuidelinesAction(
  * Returns scrape result metadata for UI feedback.
  */
 export async function generateBrandingAction(clientId: string): Promise<BrandingGenResult> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
-  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+  const user = await requireStaff();
 
   const result = await applyBrandingForClient(clientId);
+
+  await _logActivity({
+    clientId,
+    timestamp: Date.now(),
+    type: result.source === "scraped" ? "SCRAPE" : "BRANDING_UPDATED",
+    title: result.source === "scraped" ? "Brand guidelines auto-generated" : "Brand preset applied",
+    description:
+      result.source === "scraped"
+        ? `Website scraped — extracted colors${result.primaryColor ? ` (${result.primaryColor})` : ""} and typography`
+        : "Fallback brand archetype applied (website unavailable or yielded no tokens)",
+    actor: user.name,
+    actorRole: "staff",
+    metadata: { source: result.source, primaryColor: result.primaryColor },
+  });
+
   revalidatePath(`/clients/${clientId}`);
   return result;
 }
@@ -1013,9 +1334,7 @@ export async function uploadReportPdfAction(
   clientId: string,
   bytes: number[],
 ): Promise<string> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
-  if (user.role !== "admin" && user.role !== "employee") throw new Error("Forbidden");
+  await requireStaff();
 
   const buffer = Buffer.from(bytes);
   const path = `clients/${clientId}/reports/${Date.now()}_intel.pdf`;
@@ -1078,11 +1397,37 @@ export async function updateIntelPromptAction(template: string): Promise<void> {
 export async function generateIntelReportAction(clientId: string): Promise<void> {
   await requireStaff();
   // Auto-seed the agent if it hasn't been seeded yet (first-time setup)
-  const { INTEL_AGENT_ID } = await import("@/lib/intel-report");
+  const { INTEL_AGENT_ID, runIntelReportPipeline } = await import("@/lib/intel-report");
   const existing = await getAgent(INTEL_AGENT_ID);
   if (!existing) await seedIntelAgentAction();
-  const { runIntelReportPipeline } = await import("@/lib/intel-report");
   await runIntelReportPipeline(clientId);
+  await _logActivity({
+    clientId,
+    timestamp: Date.now(),
+    type: "INTEL_GENERATION",
+    title: "Intel Report generated",
+    description: "Full 5-agent competitive intelligence pipeline completed",
+    actor: "System AI",
+    actorRole: "system",
+  });
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/* ── Activity log ──────────────────────────────────────────────────────── */
+
+/** Add an internal staff note to the client's activity timeline. */
+export async function addActivityNoteAction(clientId: string, text: string): Promise<void> {
+  const user = await requireStaff();
+  if (!text.trim()) throw new Error("Note text is required");
+  await createActivityLog({
+    clientId,
+    timestamp: Date.now(),
+    type: "MANUAL_NOTE",
+    title: "Note",
+    description: text.trim(),
+    actor: user.name,
+    actorRole: "staff",
+  });
   revalidatePath(`/clients/${clientId}`);
 }
 
@@ -1094,9 +1439,7 @@ export async function generateIntelReportAction(clientId: string): Promise<void>
  */
 export async function refreshClientContextDocsAction(clientId: string): Promise<void> {
   await requireStaff();
-  const { listClientContextDocs, replaceClientContextDocs } = await import("@/lib/data");
   const { INTEL_AGENT_ID } = await import("@/lib/intel-report");
-  const { getSystemAgent, getClient } = await import("@/lib/data");
 
   const [client, agent, internalDocs] = await Promise.all([
     getClient(clientId),
@@ -1151,9 +1494,8 @@ export async function generateDocSummaryAction(
 ): Promise<string[]> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
-  if (user.role === "client" && user.clientId !== clientId) throw new Error("Forbidden");
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) throw new Error("Forbidden");
 
-  const { listClientContextDocs } = await import("@/lib/data");
   const docs = await listClientContextDocs(clientId);
   const doc =
     docs.find((d) => d.docType === docType && d.tier === tier) ??
@@ -1190,4 +1532,232 @@ export async function generateDocSummaryAction(
     .map((l) => l.replace(/^[-*\d."'\[\]]+\s*/, "").trim())
     .filter((l) => l.length > 8)
     .slice(0, 5);
+}
+
+/* ----------------------- client integrations ------------------------- */
+
+/**
+ * Save (create or overwrite) a social platform integration for a client.
+ * Empty-string values are stripped before saving to avoid persisting blank fields.
+ */
+export async function saveIntegrationAction(
+  clientId: string,
+  platform: string,
+  credentials: Record<string, string>,
+  accountName?: string,
+): Promise<void> {
+  const user = await requireStaff();
+
+  // Strip keys with empty values — they may represent unchanged password fields
+  const cleaned: Record<string, string> = {};
+  for (const [k, v] of Object.entries(credentials)) {
+    if (v.trim()) cleaned[k] = v.trim();
+  }
+
+  await upsertClientIntegration({
+    clientId,
+    platform,
+    credentials: cleaned,
+    accountName: accountName?.trim() || undefined,
+    method: "manual",
+    connectedBy: user.uid,
+    connectedAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/** Set an asset's status to "scheduled" with a future publish time and optional target platform. */
+export async function scheduleAssetAction(
+  id: string,
+  scheduledAt: number,
+  platform?: string,
+): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  const asset = await getAsset(id);
+  if (!asset) throw new Error("Asset not found");
+  if (user.role === "CLIENT_USER" && asset.clientId !== user.clientId) throw new Error("Forbidden");
+  await updateAsset(id, {
+    status: "scheduled",
+    scheduledAt,
+    ...(platform ? { scheduledPlatform: platform } : {}),
+    updatedAt: Date.now(),
+  });
+  revalidatePath("/assets");
+  revalidatePath(`/clients/${asset.clientId}`);
+}
+
+/** Revert a scheduled asset back to draft and clear its schedule. */
+export async function unscheduleAssetAction(id: string): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  const asset = await getAsset(id);
+  if (!asset) throw new Error("Asset not found");
+  if (user.role === "CLIENT_USER" && asset.clientId !== user.clientId) throw new Error("Forbidden");
+  await clearAssetSchedule(id);
+  revalidatePath("/assets");
+  revalidatePath(`/clients/${asset.clientId}`);
+}
+
+/** Remove a platform integration and all stored credentials for a client. */
+export async function deleteIntegrationAction(
+  clientId: string,
+  platform: string,
+): Promise<void> {
+  await requireStaff();
+  await deleteClientIntegration(clientId, platform);
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/* ─────────────────── Client Access Requests ────────────────────────── */
+
+/**
+ * Submit a "Request New Client Setup" form from a prospective customer who
+ * doesn't have a clientKeyId. Saves to `clientRequests` and fires a
+ * notification email to the internal Karos admin mailbox (KAROS_EMAIL env var).
+ * Public — no auth required.
+ */
+export async function submitClientRequestAction(input: {
+  companyName: string;
+  website?: string;
+  adminEmail: string;
+  useCase: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const companyName = input.companyName.trim();
+  const adminEmail = input.adminEmail.trim().toLowerCase();
+  const useCase = input.useCase.trim();
+
+  if (!companyName || !adminEmail || !useCase) {
+    return { ok: false, error: "Company name, admin email, and use case are required." };
+  }
+
+  const data: Omit<ClientRequest, "id"> = {
+    companyName,
+    website: input.website?.trim() || undefined,
+    adminEmail,
+    useCase,
+    status: "PENDING_APPROVAL",
+    submittedAt: Date.now(),
+  };
+
+  await createClientRequest(data);
+
+  // Fire-and-forget notification email to internal staff.
+  try {
+    const { sendEmail } = await import("@/lib/email");
+    const to = process.env.KAROS_EMAIL || "hello@karoslabs.com";
+    await sendEmail({
+      to,
+      subject: `[KarosCMO] New client access request — ${companyName}`,
+      html: `
+        <div style="font-family:-apple-system,Helvetica,Arial,sans-serif;background:#07090b;padding:32px;color:#e8f0ec;">
+          <h2 style="color:#2dff9e;margin:0 0 16px;">New Client Access Request</h2>
+          <table style="border-collapse:collapse;width:100%;max-width:560px;">
+            <tr><td style="padding:6px 12px 6px 0;color:#8aa2a8;white-space:nowrap;">Company</td><td style="padding:6px 0;"><strong>${companyName}</strong></td></tr>
+            <tr><td style="padding:6px 12px 6px 0;color:#8aa2a8;">Website</td><td style="padding:6px 0;">${input.website?.trim() || "—"}</td></tr>
+            <tr><td style="padding:6px 12px 6px 0;color:#8aa2a8;">Admin Email</td><td style="padding:6px 0;">${adminEmail}</td></tr>
+            <tr><td style="padding:6px 12px 6px 0;color:#8aa2a8;vertical-align:top;">Use Case</td><td style="padding:6px 0;">${useCase}</td></tr>
+          </table>
+          <p style="margin:20px 0 0;color:#5f7177;font-size:13px;">Review this request in the KarosCMO Registrations dashboard.</p>
+        </div>`,
+    });
+  } catch {
+    // Email failure is non-fatal — the request is already saved to Firestore.
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Validate an invitation key before the user completes signup.
+ * Public — no auth required. Returns the resolved role and a display label.
+ * The key is re-validated server-side in ensureUserDoc when the session is created.
+ */
+export async function validateInvitationKeyAction(key: string): Promise<
+  | { ok: true; role: "KAROS_EMPLOYEE"; label: string }
+  | { ok: true; role: "CLIENT_USER"; clientId: string; label: string }
+  | { ok: false; error: string }
+> {
+  const trimmed = key.trim();
+  if (!trimmed) return { ok: false, error: "Enter your invitation key." };
+
+  const staffKey = process.env.KAROS_STAFF_KEY;
+  if (staffKey && trimmed === staffKey) {
+    return { ok: true, role: "KAROS_EMPLOYEE", label: "Karos Labs Staff" };
+  }
+
+  const client = await getClientByKeyId(trimmed);
+  if (client) {
+    return { ok: true, role: "CLIENT_USER", clientId: client.id, label: client.name };
+  }
+
+  return { ok: false, error: "Invalid invitation key. Contact your Karos account manager." };
+}
+
+/**
+ * Approve or reject a client access request. Staff-only.
+ * On approval, the staff will then create the client manually and issue a clientKeyId.
+ */
+export async function reviewClientRequestAction(
+  id: string,
+  status: "APPROVED" | "REJECTED",
+  reviewNotes?: string,
+): Promise<void> {
+  const admin = await requireStaff();
+  await updateClientRequest(id, {
+    status,
+    reviewedAt: Date.now(),
+    reviewedBy: admin.uid,
+    reviewNotes: reviewNotes?.trim() || undefined,
+  });
+  revalidatePath("/registrations");
+}
+
+/* ------------------------------ settings ------------------------------ */
+
+/** Update the current user's display name in both Firestore and Firebase Auth. */
+export async function updateUserProfileAction(name: string): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Name cannot be empty.");
+  if (trimmed.length > 100) throw new Error("Name is too long (max 100 characters).");
+  await upsertUser({ ...user, name: trimmed });
+  await adminAuth().updateUser(user.uid, { displayName: trimmed });
+  revalidatePath("/settings");
+}
+
+/**
+ * Change the current user's password.
+ * Verifies the current password via the Firebase Auth REST API (the only server-side
+ * way to re-authenticate without a client-side credential), then updates via Admin SDK.
+ */
+export async function updatePasswordAction(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  if (newPassword.length < 6) throw new Error("New password must be at least 6 characters.");
+
+  const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+  if (!apiKey) throw new Error("Firebase API key is not configured.");
+
+  const verifyRes = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: user.email,
+        password: currentPassword,
+        returnSecureToken: false,
+      }),
+    },
+  );
+  if (!verifyRes.ok) throw new Error("Current password is incorrect.");
+
+  await adminAuth().updateUser(user.uid, { password: newPassword });
 }

@@ -11,10 +11,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   let clientUsers: AppUser[] = [];
   let clients: Client[] = [];
 
-  if (user.role === "admin") {
+  if (user.role === "KAROS_ADMIN") {
     const [allUsers, allClients] = await Promise.all([listUsers(), listClients()]);
     pendingCount = allUsers.filter((u) => u.disabled && !u.approvedAt).length;
-    clientUsers = allUsers.filter((u) => u.role === "client" && !u.disabled);
+    clientUsers = allUsers.filter((u) => u.role === "CLIENT_USER" && !u.disabled);
     clients = allClients;
   }
 

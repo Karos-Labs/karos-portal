@@ -6,7 +6,7 @@ import { Icon } from "@/components/icon";
 import { TokenManager } from "@/components/token-manager";
 
 export default async function ConnectPage() {
-  const user = await requireUser(["admin", "employee"]);
+  const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const [tokens, h] = await Promise.all([listAccessTokens(user.uid), headers()]);
 
   const host = h.get("host") ?? "localhost:3000";

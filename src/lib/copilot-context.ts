@@ -2,6 +2,22 @@ import "server-only";
 
 import type { Agent, Asset, Client, ClientCompetitor, ClientContextDoc, ClientReport, Job } from "@/lib/types";
 
+/* ── Shared helpers ──────────────────────────────────────────────────── */
+
+function roughAge(ts: number): string {
+  const secs = Math.floor((Date.now() - ts) / 1000);
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+const DONE_STATUSES = new Set<Asset["status"]>(["approved", "delivered", "published"]);
+
 const DOC_TYPE_LABELS: Record<string, string> = {
   "brand-voice": "Brand Voice",
   "market-strategy": "Market Strategy",
@@ -167,6 +183,130 @@ export function buildCopilotSystemPrompt(
     "You have two tools:",
     "- **update_branding_guidelines** — updates brand colors, fonts, or tone keywords. Confirm the specific change with the user before calling.",
     "- **send_support_email** — escalates issues to the Karos Labs team. Use when the user reports a problem.",
+  );
+
+  return parts.join("\n");
+}
+
+/* ── Agent-specific copilot prompt ──────────────────────────────────── */
+
+/**
+ * Builds the system prompt for agent-mode chat: adopts the agent's persona,
+ * injects numbered draft assets (referenced by ID for edit_draft targeting),
+ * lists published outputs, recent runs, and describes all 4 available tools.
+ */
+export function buildAgentCopilotSystemPrompt(
+  agent: Agent,
+  client: Client,
+  agentJobs: Job[],
+  agentAssets: Asset[],
+  contextDocs: ClientContextDoc[] = [],
+): string {
+  const today = new Date().toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  const draftAssets = agentAssets.filter((a) => a.status === "draft");
+  const doneAssets = agentAssets.filter((a) => DONE_STATUSES.has(a.status));
+
+  const parts: string[] = [
+    `You are the AI Copilot for the **${agent.name}** agent — managing the content pipeline for **${client.name}**.`,
+    `Today is ${today}. Be concise, specific, and action-oriented. Never hallucinate content not listed below.`,
+    "",
+    "## AGENT PERSONA",
+    agent.systemPrompt,
+    "",
+    "## YOUR COPILOT CAPABILITIES",
+    "- Discuss, review, and improve existing drafts",
+    "- Trigger new content generation runs on request (/run, 'create new', 'generate', etc.)",
+    "- Edit a specific draft's content or status inline — confirm with the user before applying",
+    "- Answer questions about this agent's performance and output history",
+    "",
+  ];
+
+  // Input fields — model needs these to collect inputs before calling run_agent
+  if (agent.fields?.length > 0) {
+    parts.push("## INPUT FIELDS (collect before triggering a run)");
+    for (const f of agent.fields) {
+      const req = f.required ? " [required]" : " [optional]";
+      const def = f.defaultValue ? ` · default: "${f.defaultValue}"` : "";
+      const hint = f.placeholder ? ` · hint: ${f.placeholder}` : "";
+      parts.push(`- **${f.label}** (key: \`${f.key}\`)${req}${def}${hint}`);
+    }
+    parts.push("");
+  }
+
+  // Client context snapshot
+  parts.push(`## CLIENT: ${client.name}`);
+  if (client.website) parts.push(`Website: ${client.website}`);
+  if (client.industry) parts.push(`Industry: ${client.industry}`);
+  if (client.description) parts.push(`About: ${client.description}`);
+  const g = client.brandingGuidelines;
+  if (g) {
+    const bits: string[] = [];
+    if (g.primaryColor) bits.push(`Primary: ${g.primaryColor}`);
+    if (g.secondaryColor) bits.push(`Accent: ${g.secondaryColor}`);
+    if (g.toneKeywords?.length) bits.push(`Tone: ${g.toneKeywords.join(", ")}`);
+    if (bits.length) parts.push(`Brand: ${bits.join(" · ")}`);
+  }
+  parts.push("");
+
+  // Brand + product context docs (most relevant to content agents)
+  const relevantDocs = contextDocs
+    .filter((d) => ["brand-voice", "product-information", "branding-guidelines"].includes(d.docType))
+    .slice(0, 2);
+  for (const doc of relevantDocs) {
+    const label = DOC_TYPE_LABELS[doc.docType] ?? doc.docType;
+    const stripped = doc.content.replace(/^---[\s\S]*?---\n?/, "").trim();
+    parts.push(`### ${label}`);
+    parts.push(stripped.slice(0, 500) + (stripped.length > 500 ? "\n[…truncated]" : ""));
+    parts.push("");
+  }
+
+  // Draft assets — numbered so the user can say "fix draft #2"
+  parts.push(`## ACTIVE DRAFTS — ${draftAssets.length} AWAITING REVIEW`);
+  if (draftAssets.length === 0) {
+    parts.push("No drafts currently pending.");
+  } else {
+    for (let i = 0; i < draftAssets.length; i++) {
+      const a = draftAssets[i];
+      const excerpt = a.content.slice(0, 300);
+      parts.push(
+        `\n**Draft #${i + 1}** — asset ID: \`${a.id}\``,
+        `Title: ${a.title}`,
+        `Content: ${excerpt}${a.content.length > 300 ? "…" : ""}`,
+        `Created: ${roughAge(a.createdAt)}`,
+      );
+    }
+  }
+  parts.push("");
+
+  // Published / done assets (read-only history)
+  if (doneAssets.length > 0) {
+    parts.push(`## PUBLISHED OUTPUTS (${doneAssets.length} total)`);
+    for (const a of doneAssets.slice(0, 5)) {
+      parts.push(`- [${a.status}] ${a.title} — ${roughAge(a.createdAt)}`);
+    }
+    parts.push("");
+  }
+
+  // Recent runs
+  if (agentJobs.length > 0) {
+    parts.push(`## RECENT RUNS (${agentJobs.length} total)`);
+    for (const j of agentJobs.slice(0, 5)) {
+      parts.push(`- ${j.title} — **${j.status}** (${roughAge(j.createdAt)})`);
+    }
+    parts.push("");
+  }
+
+  parts.push(
+    "## TOOLS",
+    "- **run_agent** — start a new generation run. Collect required field values from the user first; apply defaults for optional fields. Confirm before launching.",
+    "- **edit_draft** — update a draft's content or status. Reference drafts by their asset ID above. Always confirm the exact change with the user before calling.",
+    "- **update_branding_guidelines** — update brand colors, fonts, or tone keywords. Confirm before calling.",
+    "- **send_support_email** — escalate issues to the Karos Labs team.",
   );
 
   return parts.join("\n");

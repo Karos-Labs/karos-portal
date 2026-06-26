@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { getClientReport } from "@/lib/data";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  await requireUser(["admin", "employee", "client"]);
+  await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"]);
   const { id } = await params;
   const report = await getClientReport(id);
 

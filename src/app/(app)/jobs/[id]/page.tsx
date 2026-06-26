@@ -10,7 +10,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { formatDateTime } from "@/lib/utils";
 
 export default async function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireUser(["admin", "employee"]);
+  await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const { id } = await params;
   const job = await getJob(id);
   if (!job) notFound();

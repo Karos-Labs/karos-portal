@@ -4,7 +4,12 @@
  * for trivial JSON-serialisation between server and client components.
  */
 
-export type Role = "admin" | "employee" | "client";
+/**
+ * Platform roles stored in the `users` Firestore collection.
+ * KAROS_ADMIN / KAROS_EMPLOYEE are internal staff; CLIENT_USER is an end-client.
+ * Role assignment is purely DB-driven — no env-var bootstrap (except the very first user).
+ */
+export type Role = "KAROS_ADMIN" | "KAROS_EMPLOYEE" | "CLIENT_USER";
 
 export interface AppUser {
   uid: string;
@@ -12,18 +17,18 @@ export interface AppUser {
   name: string;
   role: Role;
   photoURL?: string | null;
-  /** For role=client — the client account this user belongs to. */
+  /** For role=CLIENT_USER — the client account this user belongs to. */
   clientId?: string | null;
-  /** For role=employee — clients this employee is assigned to. */
+  /** For role=KAROS_EMPLOYEE — clients this employee is assigned to. */
   assignedClientIds?: string[];
   disabled?: boolean;
-  /** Client users only: can manage team members within their own client group. */
+  /** CLIENT_USER only: can manage team members within their own client group. */
   isGroupAdmin?: boolean;
-  /** The role this person picked at self-signup (advisory — an admin sets the real `role`). */
-  requestedRole?: "employee" | "client";
-  /** For client self-signups — the company/brand they typed, before being linked to a real Client. */
+  /** Advisory: the role requested at self-signup (KAROS_EMPLOYEE sign-ups go to Registrations queue). */
+  requestedRole?: "KAROS_EMPLOYEE" | "CLIENT_USER";
+  /** Legacy: company name typed at signup (pre-clientKeyId era). */
   requestedClientName?: string;
-  /** Set when an admin approves the account. Absent + disabled ⇒ a pending registration. */
+  /** Set when staff approves the account. Absent + disabled ⇒ pending registration. */
   approvedAt?: number | null;
   createdAt: number;
   lastLoginAt?: number;
@@ -45,8 +50,35 @@ export interface Client {
   brandingGuidelines?: BrandingGuidelines;
   assignedEmployeeIds: string[];
   status: "active" | "paused" | "archived";
+  /**
+   * Cryptographically random join token (128-bit base64url). New CLIENT_USER accounts must
+   * supply a valid clientKeyId at signup to be auto-approved and linked to this client.
+   * Only staff with access to this client page can see / regenerate the key.
+   */
+  clientKeyId?: string;
   createdAt: number;
   createdBy: string;
+}
+
+/* ─────────────────────── Client Access Requests ────────────────────────── */
+
+/**
+ * Submitted when a prospective client does NOT have a clientKeyId and wants Karos
+ * staff to set up their account manually. Stored in the `clientRequests` collection.
+ */
+export interface ClientRequest {
+  id: string;
+  companyName: string;
+  website?: string;
+  /** Email of the person who should become the primary admin for that client. */
+  adminEmail: string;
+  useCase: string;
+  status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
+  submittedAt: number;
+  reviewedAt?: number;
+  reviewedBy?: string;
+  /** Notes left by a Karos staff member when approving/rejecting. */
+  reviewNotes?: string;
 }
 
 /** A field collected from the user before an agent runs. */
@@ -156,7 +188,11 @@ export interface Asset {
   meta?: Record<string, unknown>;
   /** Public URL of the generated visual (Vercel Blob), when one exists. */
   imageUrl?: string | null;
-  status: "draft" | "approved" | "delivered" | "published";
+  status: "draft" | "approved" | "delivered" | "published" | "scheduled";
+  /** Epoch millis — set when status is "scheduled". Cron publishes when this time passes. */
+  scheduledAt?: number;
+  /** Which platform to auto-publish to (matches ClientIntegration.platform). */
+  scheduledPlatform?: string;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -374,6 +410,51 @@ export interface ClientContextDoc {
   /** Named sources cited (for "no guessed numbers" audit trail). */
   sources?: string[];
   createdAt: number;
+  updatedAt: number;
+}
+
+/* ─────────────────────── Activity Timeline ─────────────────────────── */
+
+export type ActivityEventType =
+  | "SCRAPE"
+  | "INTEL_GENERATION"
+  | "CAMPAIGN_CREATED"
+  | "CAMPAIGN_DELIVERED"
+  | "COMPETITOR_ADDED"
+  | "COMPETITOR_ANALYZED"
+  | "CONTEXT_DOC_UPDATED"
+  | "MANUAL_NOTE"
+  | "CLIENT_CREATED"
+  | "BRANDING_UPDATED";
+
+export interface ActivityLog {
+  id: string;
+  clientId: string;
+  timestamp: number;
+  type: ActivityEventType;
+  title: string;
+  description?: string;
+  /** Display name: "System AI", "Tomer H.", etc. */
+  actor: string;
+  actorRole: "system" | "staff" | "client";
+  metadata?: Record<string, unknown>;
+}
+
+/* ─────────────────────── Social Integrations ────────────────────────── */
+
+export interface ClientIntegration {
+  id: string;
+  clientId: string;
+  /** Matches PlatformConfig.id, e.g. "instagram" */
+  platform: string;
+  /** Display name / handle of the connected account (e.g. "@karoslabs") */
+  accountName?: string;
+  /** Credential key→value pairs matching the platform's field keys */
+  credentials: Record<string, string>;
+  /** "manual" = keys pasted by a staff member; "oauth" = future OAuth flow */
+  method: "manual" | "oauth";
+  connectedBy: string;
+  connectedAt: number;
   updatedAt: number;
 }
 

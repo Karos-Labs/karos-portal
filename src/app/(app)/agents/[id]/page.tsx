@@ -5,11 +5,11 @@ import { PageHeader } from "@/components/ui";
 import { AgentBuilder } from "@/components/agent-builder";
 
 export default async function EditAgentPage({ params }: { params: Promise<{ id: string }> }) {
-  const user = await requireUser(["admin", "employee"]);
+  const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const { id } = await params;
   const [agent, clients] = await Promise.all([
     getAgent(id),
-    listClients(user.role === "employee" ? { employeeId: user.uid } : undefined),
+    listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined),
   ]);
   if (!agent) notFound();
   return (

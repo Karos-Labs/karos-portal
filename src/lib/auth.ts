@@ -3,7 +3,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { adminAuth } from "@/lib/firebase/admin";
-import { getUser, upsertUser, countUsers } from "@/lib/data";
+import { getUser, upsertUser, countUsers, getClientByKeyId } from "@/lib/data";
 import type { AppUser, Role } from "@/lib/types";
 
 export const SESSION_COOKIE = "karos_session";
@@ -12,11 +12,141 @@ export const IMPERSONATE_COOKIE = "karos_impersonate";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 14; // 14 days (seconds)
 const IMPERSONATE_MAX_AGE = 60 * 60 * 4;   // 4 hours (seconds)
 
-function adminEmails(): string[] {
-  return (process.env.ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
+/**
+ * Carries the validated invitation key from the signup form to the server.
+ * Everything is re-validated server-side in ensureUserDoc — the client's
+ * requestedRole claim is never trusted on its own.
+ */
+export interface SignupIntent {
+  requestedRole?: "KAROS_EMPLOYEE" | "CLIENT_USER";
+  /** Raw invitation key entered by the user — validated server-side. */
+  invitationKey?: string;
+}
+
+/**
+ * Ensure a Firestore user doc exists for an authenticated Firebase identity.
+ *
+ * Bootstrap rule: the very first user ever → KAROS_ADMIN (no env var required).
+ *
+ * All subsequent users need a valid invitation key:
+ *   - KAROS_STAFF_KEY env match → KAROS_EMPLOYEE, auto-approved
+ *   - Valid clientKeyId match   → CLIENT_USER, auto-linked to client
+ *   - Missing / invalid key     → lands disabled in the Registrations queue
+ */
+async function ensureUserDoc(
+  claims: { uid: string; email?: string; name?: string; picture?: string },
+  intent?: SignupIntent,
+): Promise<AppUser> {
+  const existing = await getUser(claims.uid);
+  const email = (claims.email ?? "").toLowerCase();
+
+  if (existing) {
+    if (existing.email !== email && email) {
+      await upsertUser({ ...existing, email });
+    }
+    return existing;
+  }
+
+  // ── Bootstrap: very first user in the system ──────────────────────────────
+  const isFirstUser = (await countUsers()) === 0;
+  if (isFirstUser) {
+    const user: AppUser = {
+      uid: claims.uid,
+      email,
+      name: claims.name || email.split("@")[0] || "Admin",
+      role: "KAROS_ADMIN",
+      photoURL: claims.picture ?? null,
+      clientId: null,
+      assignedClientIds: [],
+      disabled: false,
+      approvedAt: Date.now(),
+      createdAt: Date.now(),
+      lastLoginAt: Date.now(),
+    };
+    await upsertUser(user);
+    return user;
+  }
+
+  const key = intent?.invitationKey?.trim() ?? "";
+
+  // ── Staff key — auto-approve as KAROS_EMPLOYEE ────────────────────────────
+  if (intent?.requestedRole === "KAROS_EMPLOYEE") {
+    const staffKey = process.env.KAROS_STAFF_KEY;
+    const validKey = !!(staffKey && key === staffKey);
+    const user: AppUser = {
+      uid: claims.uid,
+      email,
+      name: claims.name || email.split("@")[0] || "New user",
+      role: "KAROS_EMPLOYEE",
+      photoURL: claims.picture ?? null,
+      clientId: null,
+      assignedClientIds: [],
+      requestedRole: validKey ? undefined : "KAROS_EMPLOYEE",
+      disabled: !validKey,
+      approvedAt: validKey ? Date.now() : null,
+      createdAt: Date.now(),
+      lastLoginAt: Date.now(),
+    };
+    await upsertUser(user);
+    return user;
+  }
+
+  // ── Client key — auto-approve and link ───────────────────────────────────
+  if (intent?.requestedRole === "CLIENT_USER" && key) {
+    const client = await getClientByKeyId(key);
+    if (client) {
+      const user: AppUser = {
+        uid: claims.uid,
+        email,
+        name: claims.name || email.split("@")[0] || "New user",
+        role: "CLIENT_USER",
+        photoURL: claims.picture ?? null,
+        clientId: client.id,
+        assignedClientIds: [],
+        disabled: false,
+        approvedAt: Date.now(),
+        createdAt: Date.now(),
+        lastLoginAt: Date.now(),
+      };
+      await upsertUser(user);
+      return user;
+    }
+    // Invalid key — queue for staff review.
+    const user: AppUser = {
+      uid: claims.uid,
+      email,
+      name: claims.name || email.split("@")[0] || "New user",
+      role: "CLIENT_USER",
+      photoURL: claims.picture ?? null,
+      clientId: null,
+      assignedClientIds: [],
+      requestedRole: "CLIENT_USER",
+      disabled: true,
+      approvedAt: null,
+      createdAt: Date.now(),
+      lastLoginAt: Date.now(),
+    };
+    await upsertUser(user);
+    return user;
+  }
+
+  // ── No valid key provided — Registrations queue ───────────────────────────
+  const user: AppUser = {
+    uid: claims.uid,
+    email,
+    name: claims.name || email.split("@")[0] || "New user",
+    role: "KAROS_EMPLOYEE",
+    photoURL: claims.picture ?? null,
+    clientId: null,
+    assignedClientIds: [],
+    requestedRole: "KAROS_EMPLOYEE",
+    disabled: true,
+    approvedAt: null,
+    createdAt: Date.now(),
+    lastLoginAt: Date.now(),
+  };
+  await upsertUser(user);
+  return user;
 }
 
 /** Exchange a Firebase ID token for a long-lived session cookie. */
@@ -39,66 +169,14 @@ export async function clearSession(): Promise<void> {
   store.delete(IMPERSONATE_COOKIE);
 }
 
-/** What a person selected on the self-signup form. Advisory until an admin approves. */
-export interface SignupIntent {
-  requestedRole?: "employee" | "client";
-  /** Company/brand name a client typed (used to seed a Client record on approval). */
-  clientName?: string;
-}
-
 /**
- * Ensure a Firestore user doc exists for an authenticated identity.
- * Bootstrap rule: the first-ever user, or any email in ADMIN_EMAILS, becomes an admin
- * (active immediately). Everyone else lands disabled & pending until an admin approves them
- * from the Registrations tab. `intent` (signup-form choices) only applies on first creation.
+ * Provision (or no-op for an existing) user doc immediately after signup.
+ * Returns the resulting AppUser so the session route can tell the client
+ * the final role for routing decisions.
  */
-async function ensureUserDoc(
-  claims: { uid: string; email?: string; name?: string; picture?: string },
-  intent?: SignupIntent,
-): Promise<AppUser> {
-  const existing = await getUser(claims.uid);
-  const email = (claims.email ?? "").toLowerCase();
-  if (existing) {
-    if (existing.email !== email && email) {
-      await upsertUser({ ...existing, email });
-    }
-    return existing;
-  }
-
-  const isAdminEmail = adminEmails().includes(email);
-  const isFirstUser = (await countUsers()) === 0;
-  const bootstrap = isAdminEmail || isFirstUser;
-  const requested = intent?.requestedRole;
-  const role: Role = bootstrap ? "admin" : requested ?? "employee";
-
-  const user: AppUser = {
-    uid: claims.uid,
-    email,
-    name: claims.name || email.split("@")[0] || "New user",
-    role,
-    photoURL: claims.picture ?? null,
-    clientId: null,
-    assignedClientIds: [],
-    requestedRole: bootstrap ? undefined : requested,
-    requestedClientName:
-      !bootstrap && requested === "client" ? intent?.clientName?.trim() || "" : undefined,
-    disabled: !bootstrap,
-    approvedAt: bootstrap ? Date.now() : null,
-    createdAt: Date.now(),
-    lastLoginAt: Date.now(),
-  };
-  await upsertUser(user);
-  return user;
-}
-
-/**
- * Provision (or no-op for an existing) user doc straight after signup, attaching the
- * signup-form intent. Called by the session route so the role/company choice is recorded
- * synchronously rather than racing the first `getCurrentUser()`.
- */
-export async function provisionFromSignup(idToken: string, intent: SignupIntent): Promise<void> {
+export async function provisionFromSignup(idToken: string, intent: SignupIntent): Promise<AppUser> {
   const decoded = await adminAuth().verifyIdToken(idToken);
-  await ensureUserDoc(
+  return await ensureUserDoc(
     {
       uid: decoded.uid,
       email: decoded.email,
@@ -110,9 +188,19 @@ export async function provisionFromSignup(idToken: string, intent: SignupIntent)
 }
 
 /**
- * Read and verify the real session cookie — never considers impersonation.
- * Used internally by impersonation functions to confirm the caller is an admin.
+ * Resolve a verified ID token to its Firestore user doc without provisioning.
+ * Used by the session route for login (non-signup) flows.
  */
+export async function getUserFromToken(idToken: string): Promise<AppUser | null> {
+  const decoded = await adminAuth().verifyIdToken(idToken);
+  return await ensureUserDoc({
+    uid: decoded.uid,
+    email: decoded.email,
+    name: (decoded.name as string) || undefined,
+    picture: (decoded.picture as string) || undefined,
+  });
+}
+
 async function getSessionUser(): Promise<AppUser | null> {
   const store = await cookies();
   const cookie = store.get(SESSION_COOKIE)?.value;
@@ -130,23 +218,16 @@ async function getSessionUser(): Promise<AppUser | null> {
   }
 }
 
-/**
- * Read & verify the current session. When an admin has an active impersonation cookie,
- * returns the impersonated client user instead so pages behave exactly as that user would
- * see them. Returns null when unauthenticated.
- */
 export async function getCurrentUser(): Promise<AppUser | null> {
   const realUser = await getSessionUser();
   if (!realUser) return null;
 
-  // Only admins can impersonate; check for the overlay cookie.
-  if (realUser.role === "admin") {
+  if (realUser.role === "KAROS_ADMIN") {
     const store = await cookies();
     const impUid = store.get(IMPERSONATE_COOKIE)?.value;
     if (impUid) {
       const target = await getUser(impUid);
       if (target && !target.disabled) return target;
-      // Stale or invalid cookie — clear it and fall back to real user.
       store.delete(IMPERSONATE_COOKIE);
     }
   }
@@ -154,11 +235,6 @@ export async function getCurrentUser(): Promise<AppUser | null> {
   return realUser;
 }
 
-/**
- * Returns both the effective user (impersonated when active) and the real admin behind it.
- * Use this in layout.tsx where you need to render the banner and pass context to the sidebar.
- * Handles all auth redirects internally.
- */
 export async function getViewingContext(): Promise<{
   user: AppUser;
   isImpersonating: boolean;
@@ -184,7 +260,7 @@ export async function getViewingContext(): Promise<{
   if (!realUser) redirect("/login");
   if (realUser.disabled) redirect("/pending");
 
-  if (realUser.role === "admin") {
+  if (realUser.role === "KAROS_ADMIN") {
     const impUid = store.get(IMPERSONATE_COOKIE)?.value;
     if (impUid) {
       const target = await getUser(impUid);
@@ -198,15 +274,11 @@ export async function getViewingContext(): Promise<{
   return { user: realUser, isImpersonating: false };
 }
 
-/**
- * Start impersonating a client user. Only callable when the real session is an admin.
- * Sets a short-lived (4h) httpOnly cookie alongside the existing session cookie.
- */
 export async function startImpersonation(targetUid: string): Promise<void> {
   const realUser = await getSessionUser();
-  if (!realUser || realUser.role !== "admin") throw new Error("Forbidden");
+  if (!realUser || realUser.role !== "KAROS_ADMIN") throw new Error("Forbidden");
   const target = await getUser(targetUid);
-  if (!target || target.role !== "client") throw new Error("Can only impersonate client users");
+  if (!target || target.role !== "CLIENT_USER") throw new Error("Can only impersonate CLIENT_USER accounts");
   const store = await cookies();
   store.set(IMPERSONATE_COOKIE, targetUid, {
     httpOnly: true,
@@ -217,16 +289,11 @@ export async function startImpersonation(targetUid: string): Promise<void> {
   });
 }
 
-/**
- * Clear the impersonation cookie. No auth check — clearing only benefits the caller
- * by returning them to their real session. The real session cookie is untouched.
- */
 export async function stopImpersonation(): Promise<void> {
   const store = await cookies();
   store.delete(IMPERSONATE_COOKIE);
 }
 
-/** Guard a server component / action. Redirects when not allowed. */
 export async function requireUser(roles?: Role[]): Promise<AppUser> {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
@@ -236,8 +303,8 @@ export async function requireUser(roles?: Role[]): Promise<AppUser> {
 }
 
 export function isAdmin(user: AppUser | null) {
-  return user?.role === "admin";
+  return user?.role === "KAROS_ADMIN";
 }
 export function isStaff(user: AppUser | null) {
-  return user?.role === "admin" || user?.role === "employee";
+  return user?.role === "KAROS_ADMIN" || user?.role === "KAROS_EMPLOYEE";
 }

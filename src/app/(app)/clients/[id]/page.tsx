@@ -11,30 +11,38 @@ import {
   listTranscripts,
   listJobs,
   listContextItems,
+  listClientActivityLogs,
+  listClientIntegrations,
 } from "@/lib/data";
+import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
 import { Card, CardTitle, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ClientEditor } from "@/components/client-editor";
+import { ClientKeyPanel } from "@/components/client-key-panel";
+import { ClientKeyInline } from "@/components/client-key-inline";
 import { JobStatusBadge } from "@/components/job-status";
 import { ClientDashboard } from "@/components/client-dashboard";
 import { ChatbotWidget } from "@/components/chatbot-widget";
+import { PreviewBrandButton } from "@/components/preview-brand-button";
 import { initials, relativeTime } from "@/lib/utils";
 
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const { id } = await params;
 
-  // Clients may only view their own account
-  if (user.role === "client") {
+  // CLIENT_USER may only view their own account
+  if (user.role === "CLIENT_USER") {
     if (user.clientId !== id) redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
-  } else if (user.role !== "admin" && user.role !== "employee") {
+  } else if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") {
     redirect("/dashboard");
   }
 
   const client = await getClient(id);
   if (!client) notFound();
 
-  const [agents, assets, transcripts, jobs, contextItems, report, competitors, contextDocs] = await Promise.all([
+  const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
+
+  const [agents, assets, transcripts, jobs, contextItems, report, competitors, contextDocs, activityLogs, integrations] = await Promise.all([
     listAgents({ status: "published" }),
     listAssets({ clientId: id }),
     listTranscripts({ clientId: id }),
@@ -44,6 +52,8 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     listClientCompetitors(id),
     // Fetch context docs — tier filtering happens in the UI based on user role
     listClientContextDocs(id),
+    listClientActivityLogs(id),
+    listClientIntegrations(id),
   ]);
 
   return (
@@ -56,6 +66,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       </Link>
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        {/* Left: avatar + name + meta */}
         <div className="flex items-center gap-3">
           <div
             className="flex h-14 w-14 items-center justify-center rounded-[14px] text-lg font-semibold"
@@ -76,7 +87,12 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             </p>
           </div>
         </div>
-        <Badge tone={client.status === "active" ? "neon" : "neutral"}>{client.status}</Badge>
+
+        {/* Right: preview toggle + status badge */}
+        <div className="flex items-center gap-2">
+          <PreviewBrandButton guidelines={client.brandingGuidelines} />
+          <Badge tone={client.status === "active" ? "neon" : "neutral"}>{client.status}</Badge>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
@@ -90,12 +106,20 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           assets={assets}
           contextItems={contextItems}
           contextDocs={contextDocs}
+          integrations={integrations}
+          oauthEnabledPlatforms={oauthEnabledPlatforms}
+          activityLogs={activityLogs}
           currentUserRole={user.role}
         />
 
         {/* Sidebar */}
         <div className="space-y-6">
           <ClientEditor client={client} />
+
+          {/* Client Access Key — visible to staff only so they can share it with the client */}
+          {(user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE") && (
+            <ClientKeyPanel clientId={client.id} clientKeyId={client.clientKeyId} />
+          )}
 
           <Card>
             <CardTitle className="mb-3">Recent jobs</CardTitle>
@@ -147,13 +171,22 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                 ))}
               </ul>
             )}
+
+            {/* Invite key — low-profile, shown to client users so they can onboard teammates */}
+            {user.role === "CLIENT_USER" && client.clientKeyId && (
+              <ClientKeyInline clientKeyId={client.clientKeyId} />
+            )}
           </Card>
         </div>
       </div>
 
       {/* ChatbotWidget is placed here — outside the grid — so position:fixed is
           never trapped by grid/tab/overflow ancestors */}
-      <ChatbotWidget clientId={client.id} clientName={client.name} />
+      <ChatbotWidget
+        clientId={client.id}
+        clientName={client.name}
+        agents={agents.filter((a) => a.isActive && !a.isSystem && a.id !== "intel-report-agent")}
+      />
     </>
   );
 }

@@ -5,6 +5,26 @@ import { useRouter } from "next/navigation";
 import { Card, Button, Input, Label, Select, Badge } from "@/components/ui";
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
+
+function ClientKeyCopy({ clientKeyId }: { clientKeyId: string }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard.writeText(clientKeyId).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+  return (
+    <button
+      onClick={copy}
+      title={copied ? "Copied!" : "Copy client invite key"}
+      className="mt-1 flex items-center gap-1.5 rounded-[6px] bg-surface-2 px-2 py-0.5 font-mono text-[10px] text-muted-2 transition-colors hover:text-neon"
+    >
+      <code className="truncate max-w-[220px]">{clientKeyId}</code>
+      <Icon name={copied ? "Check" : "Copy"} className="h-3 w-3 shrink-0" />
+    </button>
+  );
+}
 import {
   createTeamMemberAction,
   updateTeamMemberAction,
@@ -39,8 +59,8 @@ function UserRow({
   const [impersonatePending, startImpersonate] = useTransition();
   const clientName = (id?: string | null) => clients.find((c) => c.id === id)?.name ?? "—";
   const isSelf = u.uid === currentUid;
-  const isAdmin = currentUserRole === "admin";
-  const isGroupAdmin = currentUserRole === "client";
+  const isAdmin = currentUserRole === "KAROS_ADMIN";
+  const isGroupAdmin = currentUserRole === "CLIENT_USER";
 
   function act(fn: () => Promise<void>) {
     startAction(async () => {
@@ -73,8 +93,8 @@ function UserRow({
           </p>
           <p className="text-xs text-muted-2">
             {u.email}
-            {u.role === "client" && u.clientId && ` · ${clientName(u.clientId)}`}
-            {u.role === "employee" && u.assignedClientIds?.length
+            {u.role === "CLIENT_USER" && u.clientId && ` · ${clientName(u.clientId)}`}
+            {u.role === "KAROS_EMPLOYEE" && u.assignedClientIds?.length
               ? ` · ${u.assignedClientIds.length} client${u.assignedClientIds.length === 1 ? "" : "s"}`
               : ""}
           </p>
@@ -85,7 +105,7 @@ function UserRow({
         {u.disabled && <Badge tone="warning">Disabled</Badge>}
 
         {/* Group admin toggle — admin can toggle any client; group admin can toggle others in their group */}
-        {u.role === "client" && !isSelf && (isAdmin || isGroupAdmin) && (
+        {u.role === "CLIENT_USER" && !isSelf && (isAdmin || isGroupAdmin) && (
           <button
             onClick={() => act(() => toggleGroupAdminAction(u.uid, !u.isGroupAdmin))}
             disabled={actionPending}
@@ -106,9 +126,9 @@ function UserRow({
               className="h-8 w-32 text-xs"
               disabled={isSelf || actionPending}
             >
-              <option value="admin">Admin</option>
-              <option value="employee">Employee</option>
-              <option value="client">Client</option>
+              <option value="KAROS_ADMIN">Admin</option>
+              <option value="KAROS_EMPLOYEE">Employee</option>
+              <option value="CLIENT_USER">Client</option>
             </Select>
 
             {!isSelf && (
@@ -122,7 +142,7 @@ function UserRow({
               </Button>
             )}
 
-            {u.role === "client" && !u.disabled && (
+            {u.role === "CLIENT_USER" && !u.disabled && (
               <Button
                 size="sm"
                 variant="outline"
@@ -143,6 +163,7 @@ function UserRow({
 function SectionCard({
   title,
   subtitle,
+  clientKeyId,
   users,
   clients,
   currentUid,
@@ -151,6 +172,7 @@ function SectionCard({
 }: {
   title: string;
   subtitle?: string;
+  clientKeyId?: string;
   users: AppUser[];
   clients: Client[];
   currentUid: string;
@@ -163,6 +185,7 @@ function SectionCard({
       <div>
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
         {subtitle && <p className="text-xs text-muted-2">{subtitle}</p>}
+        {clientKeyId && <ClientKeyCopy clientKeyId={clientKeyId} />}
       </div>
       <Card className="p-0">
         <ul className="divide-y divide-border">
@@ -204,7 +227,7 @@ export function TeamManager({
     name: "",
     email: "",
     password: "",
-    role: "employee",
+    role: "KAROS_EMPLOYEE",
     clientId: clients[0]?.id ?? "",
     assigned: [],
   });
@@ -225,11 +248,11 @@ export function TeamManager({
         email: form.email,
         password: form.password,
         role: form.role,
-        clientId: form.role === "client" ? form.clientId : undefined,
-        assignedClientIds: form.role === "employee" ? form.assigned : undefined,
+        clientId: form.role === "CLIENT_USER" ? form.clientId : undefined,
+        assignedClientIds: form.role === "KAROS_EMPLOYEE" ? form.assigned : undefined,
       });
       setOpen(false);
-      setForm({ name: "", email: "", password: "", role: "employee", clientId: clients[0]?.id ?? "", assigned: [] });
+      setForm({ name: "", email: "", password: "", role: "KAROS_EMPLOYEE", clientId: clients[0]?.id ?? "", assigned: [] });
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create user");
@@ -239,16 +262,16 @@ export function TeamManager({
   }
 
   // Admin view: grouped by Staff + per-client sections
-  if (currentUserRole === "admin") {
-    const staff = users.filter((u) => u.role === "admin" || u.role === "employee");
+  if (currentUserRole === "KAROS_ADMIN") {
+    const staff = users.filter((u) => u.role === "KAROS_ADMIN" || u.role === "KAROS_EMPLOYEE");
     const clientGroups = clients
       .map((c) => ({
         client: c,
-        users: users.filter((u) => u.role === "client" && u.clientId === c.id),
+        users: users.filter((u) => u.role === "CLIENT_USER" && u.clientId === c.id),
       }))
       .filter((g) => g.users.length > 0);
     const unassignedClients = users.filter(
-      (u) => u.role === "client" && !u.clientId,
+      (u) => u.role === "CLIENT_USER" && !u.clientId,
     );
 
     return (
@@ -276,6 +299,7 @@ export function TeamManager({
               key={client.id}
               title={client.name}
               subtitle={`${groupUsers.length} user${groupUsers.length === 1 ? "" : "s"}`}
+              clientKeyId={client.clientKeyId}
               users={groupUsers}
               clients={clients}
               currentUid={currentUid}
@@ -307,9 +331,9 @@ export function TeamManager({
               <div>
                 <Label>Role</Label>
                 <Select value={form.role} onChange={(e) => setForm((s) => ({ ...s, role: e.target.value as Role }))}>
-                  <option value="employee">Employee</option>
-                  <option value="client">Client</option>
-                  <option value="admin">Admin</option>
+                  <option value="KAROS_EMPLOYEE">Employee</option>
+                  <option value="CLIENT_USER">Client</option>
+                  <option value="KAROS_ADMIN">Admin</option>
                 </Select>
               </div>
             </div>
@@ -327,7 +351,7 @@ export function TeamManager({
               />
             </div>
 
-            {form.role === "client" && (
+            {form.role === "CLIENT_USER" && (
               <div>
                 <Label>Belongs to client</Label>
                 <Select value={form.clientId} onChange={(e) => setForm((s) => ({ ...s, clientId: e.target.value }))}>
@@ -339,7 +363,7 @@ export function TeamManager({
               </div>
             )}
 
-            {form.role === "employee" && clients.length > 0 && (
+            {form.role === "KAROS_EMPLOYEE" && clients.length > 0 && (
               <div>
                 <Label>Assign clients</Label>
                 <div className="flex flex-wrap gap-1.5">

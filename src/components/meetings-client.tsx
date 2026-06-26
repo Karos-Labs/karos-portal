@@ -38,7 +38,7 @@ const TIMEFRAME_MS: Record<Exclude<Timeframe, "all">, number> = {
 /* ── Main component ──────────────────────────────────────────────── */
 
 export function MeetingsClient({ transcripts, clients, users, currentUserRole, currentClientId }: Props) {
-  const isStaff = currentUserRole !== "client";
+  const isStaff = currentUserRole !== "CLIENT_USER";
   const [tab, setTab] = useState<Tab>("active");
   const [timeframe, setTimeframe] = useState<Timeframe>("all");
   const [clientFilter, setClientFilter] = useState<string>("");

@@ -63,8 +63,9 @@ body {
 
 body {
   background-image:
-    radial-gradient(1200px 600px at 100% -10%, rgba(45, 255, 158, 0.06), transparent 60%),
-    radial-gradient(900px 500px at -10% 110%, rgba(45, 255, 158, 0.05), transparent 55%);
+    radial-gradient(ellipse 1400px 700px at 100% -5%,  rgba(45, 255, 158, 0.07),  transparent 60%),
+    radial-gradient(ellipse 1000px 600px at -5% 105%,  rgba(45, 255, 158, 0.055), transparent 55%),
+    radial-gradient(ellipse 800px  400px at 50%  120%,  rgba(93, 180, 255, 0.03),  transparent 50%);
   background-attachment: fixed;
   min-height: 100vh;
 }
@@ -91,19 +92,34 @@ body {
   background: var(--neon-dim);
 }
 
-/* Utility glow helpers */
+/* ── Utility helpers ──────────────────────────────────────────────────── */
+
 .neon-glow {
-  box-shadow: 0 0 0 1px rgba(45, 255, 158, 0.25), 0 0 24px -6px var(--neon-glow);
+  box-shadow:
+    0 0 0 1px rgba(45, 255, 158, 0.2),
+    0 0 20px -4px rgba(45, 255, 158, 0.4),
+    0 0 40px -12px rgba(45, 255, 158, 0.2);
 }
 .neon-text {
   color: var(--neon);
-  text-shadow: 0 0 18px var(--neon-glow);
+  text-shadow: 0 0 20px rgba(45, 255, 158, 0.5);
 }
+
+/* Premium card gradient — subtle inner top-edge highlight */
 .card-grad {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)) ,
+    linear-gradient(155deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 60%),
     var(--surface);
 }
+
+/* Glass surface for dropdowns / overlays — combine with border */
+.glass-surface {
+  background: rgba(13, 17, 23, 0.88);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+}
+
+/* ── Keyframes ────────────────────────────────────────────────────────── */
 
 @keyframes pulse-neon {
   0%, 100% { opacity: 1; }
@@ -118,6 +134,28 @@ body {
 
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .animate-fade-up { animation: fade-up 0.35s ease backwards; }
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-fade-in { animation: fade-in 0.2s ease forwards; }
+
+/* Skeleton shimmer — use alongside a size class (e.g. h-4 w-32) */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    var(--surface-3) 50%,
+    var(--surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}

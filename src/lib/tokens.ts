@@ -43,7 +43,7 @@ export async function userFromToken(token: string | undefined): Promise<AppUser 
   if (!record || record.revoked) return null;
   const user = await getUser(record.uid);
   if (!user || user.disabled) return null;
-  if (user.role !== "admin" && user.role !== "employee") return null;
+  if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") return null;
   // Fire-and-forget; never block auth on the write.
   updateAccessToken(record.id, { lastUsedAt: Date.now() }).catch(() => {});
   return user;

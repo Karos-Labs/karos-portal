@@ -7,8 +7,8 @@ import { CreateClientButton } from "@/components/create-client";
 import { initials } from "@/lib/utils";
 
 export default async function ClientsPage() {
-  const user = await requireUser(["admin", "employee"]);
-  const clients = await listClients(user.role === "employee" ? { employeeId: user.uid } : undefined);
+  const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
+  const clients = await listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined);
   const [assets, jobs] = await Promise.all([listAssets(), listJobs()]);
 
   return (

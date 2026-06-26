@@ -12,7 +12,7 @@ const MAX_BYTES = 4 * 1024 * 1024; // 4 MB (Vercel request-body limit)
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user || user.disabled) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role === "client") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (user.role === "CLIENT_USER") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id: clientId } = await params;
   const client = await getClient(clientId);

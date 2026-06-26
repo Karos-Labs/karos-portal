@@ -516,7 +516,7 @@ export function ContextDocsSection({
   const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const isStaff =
-    currentUserRole === "admin" || currentUserRole === "employee";
+    currentUserRole === "KAROS_ADMIN" || currentUserRole === "KAROS_EMPLOYEE";
 
   function getDoc(docType: ContextDocType): ClientContextDoc | null {
     const preferTier = isStaff ? "internal" : "client";

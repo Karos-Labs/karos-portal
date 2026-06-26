@@ -17,11 +17,11 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
   const t = await getTranscript(id);
   if (!t) notFound();
   // Client guard: hidden meetings and meetings belonging to other clients are invisible
-  if (user.role === "client") {
+  if (user.role === "CLIENT_USER") {
     if (t.hiddenFromClient || t.clientId !== user.clientId) notFound();
   }
-  const isStaff = user.role !== "client";
-  const isAdmin = user.role === "admin";
+  const isStaff = user.role !== "CLIENT_USER";
+  const isAdmin = user.role === "KAROS_ADMIN";
 
   const [clients, allUsers] = await Promise.all([
     isStaff ? listClients() : Promise.resolve([]),
@@ -35,11 +35,11 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
     ? t.clientId && !t.isKarosInternal
       ? allUsers.filter(
           (u) =>
-            u.role === "admin" ||
-            u.role === "employee" ||
-            (u.role === "client" && u.clientId === t.clientId),
+            u.role === "KAROS_ADMIN" ||
+            u.role === "KAROS_EMPLOYEE" ||
+            (u.role === "CLIENT_USER" && u.clientId === t.clientId),
         )
-      : allUsers.filter((u) => u.role === "admin" || u.role === "employee")
+      : allUsers.filter((u) => u.role === "KAROS_ADMIN" || u.role === "KAROS_EMPLOYEE")
     : [];
 
   // Resolve per-item owners: use stored actionItemOwners, or derive from actionItemsByOwner for backward-compat

@@ -9,12 +9,12 @@ import { MeetingsClient } from "@/components/meetings-client";
 
 export default async function TranscriptsPage() {
   const user = await requireUser();
-  const isStaff = user.role !== "client";
+  const isStaff = user.role !== "CLIENT_USER";
 
   const [transcripts, clients, users] = await Promise.all([
-    user.role === "client" && user.clientId
+    user.role === "CLIENT_USER" && user.clientId
       ? listTranscripts({ clientId: user.clientId, excludeHiddenFromClient: true })
-      : user.role === "client"
+      : user.role === "CLIENT_USER"
         ? Promise.resolve([])
         : listTranscripts(),
     isStaff ? listClients() : Promise.resolve([]),
@@ -67,7 +67,7 @@ export default async function TranscriptsPage() {
         clients={clients}
         users={users}
         currentUserRole={user.role}
-        currentClientId={user.role === "client" ? user.clientId : undefined}
+        currentClientId={user.role === "CLIENT_USER" ? user.clientId : undefined}
       />
     </>
   );

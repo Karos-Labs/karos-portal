@@ -5,10 +5,9 @@ import { useRouter } from "next/navigation";
 import { Card, CardTitle, Button, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn, initials } from "@/lib/utils";
-import { AddCompetitorModal } from "@/components/add-competitor-modal";
 import { BrandingModal } from "@/components/branding-modal";
+import { CompetitorManager } from "@/components/competitor-manager";
 import {
-  deleteCompetitorAction,
   generateBrandingAction,
   generateIntelReportAction,
 } from "@/lib/actions";
@@ -212,7 +211,7 @@ function QuickInsights({
       {cards.map((card) => (
         <div
           key={card.label}
-          className="flex flex-col gap-3 rounded-[14px] border border-border bg-surface p-4 transition-colors hover:border-border-strong"
+          className="card-grad flex flex-col gap-3 rounded-[14px] border border-border p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
         >
           <div className={cn("flex h-8 w-8 items-center justify-center rounded-[8px]", card.bgClass)}>
             <Icon name={card.icon} className={cn("h-4 w-4", card.iconClass)} />
@@ -260,7 +259,7 @@ function CompanyProfileSnapshot({
     : null;
 
   return (
-    <div className="rounded-[16px] border border-border bg-surface p-5">
+    <div className="card-grad rounded-[16px] border border-border p-5 shadow-[0_2px_8px_rgba(0,0,0,0.3)]">
       {/* Header */}
       <div className="mb-4 flex items-start gap-3.5">
         <div
@@ -413,124 +412,6 @@ function CompanyProfileSnapshot({
 }
 
 /* ── Competitor tracker ───────────────────────────────────────── */
-
-function CompetitorTracker({
-  competitors,
-  onAdd,
-}: {
-  competitors: ClientCompetitor[];
-  onAdd: () => void;
-  clientId: string;
-}) {
-  const router = useRouter();
-  const [deletePending, startDelete] = useTransition();
-
-  function remove(id: string) {
-    startDelete(async () => {
-      await deleteCompetitorAction(id);
-      router.refresh();
-    });
-  }
-
-  const threatBadge = (level?: string) => {
-    if (!level) return null;
-    const tone =
-      level === "HIGH" ? "danger" : level === "MEDIUM" ? "warning" : ("neutral" as const);
-    return <Badge tone={tone}>{level}</Badge>;
-  };
-
-  return (
-    <div>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <CardTitle>Competitor Tracker</CardTitle>
-        <Button size="sm" variant="outline" onClick={onAdd}>
-          <Icon name="Plus" className="h-3.5 w-3.5" />
-          Add
-        </Button>
-      </div>
-
-      {competitors.length === 0 ? (
-        <EmptyState
-          icon={<Icon name="Users" className="h-6 w-6" />}
-          title="No competitors tracked"
-          description="Generate a report or add competitors manually."
-          action={
-            <Button size="sm" onClick={onAdd}>
-              <Icon name="Plus" className="h-4 w-4" /> Add competitor
-            </Button>
-          }
-        />
-      ) : (
-        <Card className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  {["Company", "Tier", "Overlap", "Threat", "Source"].map((h) => (
-                    <th
-                      key={h}
-                      className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-2"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                  <th className="w-10 px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {competitors.map((c) => (
-                  <tr key={c.id} className="group">
-                    <td className="px-4 py-3">
-                      <p className="font-medium">{c.company}</p>
-                      {c.url && (
-                        <a
-                          href={c.url.startsWith("http") ? c.url : `https://${c.url}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-muted-2 hover:text-neon"
-                        >
-                          {c.url}
-                        </a>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge
-                        tone={
-                          c.marketTier === "Leader"
-                            ? "neon"
-                            : c.marketTier === "Challenger"
-                              ? "info"
-                              : "neutral"
-                        }
-                      >
-                        {c.marketTier}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-muted">{c.overlap}</td>
-                    <td className="px-4 py-3">{threatBadge(c.threatLevel)}</td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs text-muted-2">{c.source}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => remove(c.id)}
-                        disabled={deletePending}
-                        className="text-muted-2 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 disabled:opacity-50"
-                        aria-label="Remove"
-                      >
-                        <Icon name="Trash2" className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-    </div>
-  );
-}
 
 /* ── Branding section ────────────────────────────────────────── */
 
@@ -744,7 +625,6 @@ export function IntelligenceTab({
   currentUserRole,
 }: Props) {
   const router = useRouter();
-  const [addCompOpen, setAddCompOpen] = useState(false);
   const [brandingOpen, setBrandingOpen] = useState(false);
   const [generating, startGenerating] = useTransition();
   const [regenerating, startRegenerate] = useTransition();
@@ -755,7 +635,7 @@ export function IntelligenceTab({
     visualStyle?: string;
   } | null>(null);
 
-  const isStaff = currentUserRole === "admin" || currentUserRole === "employee";
+  const isStaff = currentUserRole === "KAROS_ADMIN" || currentUserRole === "KAROS_EMPLOYEE";
 
   function handleGenerateBranding() {
     setBrandingFeedback(null);
@@ -848,11 +728,12 @@ export function IntelligenceTab({
         />
       )}
 
-      {/* Competitor Tracker */}
-      <CompetitorTracker
+      {/* Competitor Intelligence */}
+      <CompetitorManager
         competitors={competitors}
-        onAdd={() => setAddCompOpen(true)}
         clientId={client.id}
+        hasReport={report !== null}
+        isStaff={isStaff}
       />
 
       {/* Branding Guidelines (integrates with branding context doc) */}
@@ -867,11 +748,6 @@ export function IntelligenceTab({
       />
 
       {/* Modals */}
-      <AddCompetitorModal
-        open={addCompOpen}
-        onClose={() => setAddCompOpen(false)}
-        clientId={client.id}
-      />
       <BrandingModal
         open={brandingOpen}
         onClose={() => setBrandingOpen(false)}

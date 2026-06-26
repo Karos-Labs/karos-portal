@@ -1,0 +1,541 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Button, Badge, Input, Label } from "@/components/ui";
+import { Icon } from "@/components/icon";
+import { cn } from "@/lib/utils";
+import { saveIntegrationAction, deleteIntegrationAction } from "@/lib/actions";
+import { PLATFORM_REGISTRY, OAUTH_SUPPORTED_PLATFORM_IDS, type PlatformConfig } from "@/lib/integrations/platforms";
+import type { ClientIntegration, Role } from "@/lib/types";
+
+interface Props {
+  clientId: string;
+  integrations: ClientIntegration[];
+  oauthEnabledPlatforms: string[];
+  currentUserRole: Role;
+}
+
+/* ── Official SVG logos ──────────────────────────────────────────────── */
+
+function LinkedInLogo() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
+      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+    </svg>
+  );
+}
+
+function XLogo() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+  );
+}
+
+function FacebookLogo() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
+      <path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 011.141.195v3.325a8.623 8.623 0 00-.653-.036 26.805 26.805 0 00-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 00-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647z" />
+    </svg>
+  );
+}
+
+function InstagramLogo() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
+      <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" />
+    </svg>
+  );
+}
+
+function YouTubeLogo() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
+      <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+    </svg>
+  );
+}
+
+const PLATFORM_LOGOS: Record<string, React.ReactNode> = {
+  linkedin: <LinkedInLogo />,
+  twitter: <XLogo />,
+  facebook: <FacebookLogo />,
+  instagram: <InstagramLogo />,
+  youtube: <YouTubeLogo />,
+};
+
+/* ── Branded connect button ──────────────────────────────────────────── */
+
+interface BrandButtonProps {
+  platform: PlatformConfig;
+  loading?: boolean;
+  onClick: () => void;
+}
+
+function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) {
+  const isInstagram = platform.id === "instagram";
+
+  const bgStyle = isInstagram
+    ? { background: "linear-gradient(45deg, #833AB4, #FD1D1D, #FCB045)" }
+    : { background: platform.color };
+
+  const hoverClass = {
+    linkedin: "hover:brightness-90",
+    twitter: "hover:brightness-125",
+    facebook: "hover:brightness-90",
+    instagram: "hover:brightness-110",
+    youtube: "hover:brightness-90",
+  }[platform.id] ?? "hover:brightness-90";
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      style={bgStyle}
+      className={cn(
+        "relative inline-flex w-full items-center justify-center gap-2.5 rounded-[10px] px-4 py-2.5 text-sm font-semibold text-white shadow-md transition-all duration-150",
+        hoverClass,
+        "disabled:pointer-events-none disabled:opacity-60",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40",
+      )}
+    >
+      {loading ? (
+        <svg
+          className="h-4 w-4 animate-spin"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+        >
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="white" strokeWidth="4" />
+          <path
+            className="opacity-75"
+            fill="white"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+          />
+        </svg>
+      ) : (
+        PLATFORM_LOGOS[platform.id]
+      )}
+      {loading ? "Connecting…" : `Connect with ${platform.name}`}
+    </button>
+  );
+}
+
+/* ── Platform card ───────────────────────────────────────────────────── */
+
+function PlatformCard({
+  platform,
+  integration,
+  clientId,
+  isOAuthEnabled,
+  isConnecting,
+  isAdmin,
+  onOAuthConnect,
+  onDisconnected,
+}: {
+  platform: PlatformConfig;
+  integration: ClientIntegration | undefined;
+  clientId: string;
+  isOAuthEnabled: boolean;
+  isConnecting: boolean;
+  isAdmin: boolean;
+  onOAuthConnect: () => void;
+  onDisconnected: () => void;
+}) {
+  // True when this platform has an automated OAuth flow defined (static config).
+  // Decoupled from isOAuthEnabled (env-var check) so all users can see the
+  // Connect button regardless of whether the server env vars are wired up.
+  const hasOAuthSupport = OAUTH_SUPPORTED_PLATFORM_IDS.has(platform.id);
+  const isConnected = !!integration;
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [accountName, setAccountName] = useState(integration?.accountName ?? "");
+  const [fields, setFields] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const f of platform.fields) {
+      init[f.key] = f.type === "password" ? "" : (integration?.credentials[f.key] ?? "");
+    }
+    return init;
+  });
+
+  // Re-sync form defaults when integration data changes after OAuth
+  useEffect(() => {
+    setAccountName(integration?.accountName ?? "");
+    const next: Record<string, string> = {};
+    for (const f of platform.fields) {
+      next[f.key] = f.type === "password" ? "" : (integration?.credentials[f.key] ?? "");
+    }
+    setFields(next);
+  }, [integration, platform.fields]);
+
+  function setField(key: string, value: string) {
+    setFields((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function openAdvanced() {
+    setFormError(null);
+    setAdvancedOpen(true);
+  }
+
+  async function handleManualSave() {
+    const missing = platform.fields.filter(
+      (f) => f.required && !isConnected && !fields[f.key].trim(),
+    );
+    if (missing.length > 0) {
+      setFormError(`Required: ${missing.map((f) => f.label).join(", ")}`);
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      // Merge: blank password field = keep existing value
+      const merged: Record<string, string> = { ...fields };
+      if (isConnected) {
+        for (const f of platform.fields) {
+          if (f.type === "password" && !fields[f.key].trim()) {
+            merged[f.key] = integration!.credentials[f.key] ?? "";
+          }
+        }
+      }
+      await saveIntegrationAction(clientId, platform.id, merged, accountName || undefined);
+      setAdvancedOpen(false);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "Save failed — please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    setDisconnecting(true);
+    try {
+      await deleteIntegrationAction(clientId, platform.id);
+      setAdvancedOpen(false);
+      onDisconnected();
+    } catch {
+      // revalidation corrects state
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  // ── Body ──────────────────────────────────────────────────────────────
+  return (
+    <div
+      className={cn(
+        "overflow-hidden rounded-[var(--radius)] border flex flex-col transition-colors",
+        advancedOpen ? "border-border-strong" : "border-border",
+      )}
+      style={{ background: "var(--surface)" }}
+    >
+      {/* Header */}
+      <div className="flex items-start gap-3 p-4">
+        {/* Platform icon with brand tint */}
+        <div
+          className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]"
+          style={{
+            background: platform.id === "instagram"
+              ? "linear-gradient(45deg, #833AB422, #FD1D1D22, #FCB04522)"
+              : platform.color + "22",
+            color: platform.id === "instagram" ? "#E1306C" : platform.color,
+          }}
+        >
+          <Icon name={platform.icon} className="h-5 w-5" />
+        </div>
+
+        {/* Text */}
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-semibold leading-none">{platform.name}</p>
+            {isConnected ? (
+              <Badge tone="neon">
+                <Icon name="CheckCircle2" className="h-3 w-3" />
+                Connected
+              </Badge>
+            ) : (
+              <Badge tone="neutral">Not connected</Badge>
+            )}
+          </div>
+          {isConnected && integration?.accountName ? (
+            <p className="truncate text-xs text-muted">{integration.accountName}</p>
+          ) : (
+            <p className="truncate text-xs text-muted-2">{platform.description}</p>
+          )}
+          {isConnected && (
+            <p className="text-[10px] text-muted-2">
+              {integration!.method === "oauth" ? "OAuth" : "Manual"}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Action area */}
+      <div className="px-4 pb-4 space-y-3">
+        {/* OAuth connect — available to all users when this platform supports OAuth */}
+        {!isConnected && hasOAuthSupport && (
+          <BrandedConnectButton
+            platform={platform}
+            loading={isConnecting}
+            onClick={onOAuthConnect}
+          />
+        )}
+
+        {/* Admin-only hint when OAuth flow exists but env vars aren't configured yet */}
+        {isAdmin && hasOAuthSupport && !isOAuthEnabled && (
+          <p className="text-[11px] text-amber-400/80">
+            OAuth env vars not set — the button above will fail until configured.
+          </p>
+        )}
+
+        {isConnected && (
+          <div className="flex items-center gap-2">
+            {hasOAuthSupport && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onOAuthConnect}
+                loading={isConnecting}
+                className="flex-1"
+              >
+                <Icon name="RefreshCw" className="h-3.5 w-3.5" />
+                Reconnect
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={handleDisconnect}
+              loading={disconnecting}
+              className={hasOAuthSupport ? "" : "flex-1"}
+            >
+              <Icon name="Unplug" className="h-3.5 w-3.5" />
+              Disconnect
+            </Button>
+          </div>
+        )}
+
+        {/* Admin-only: manual credentials toggle */}
+        {isAdmin && (
+          <button
+            onClick={() => setAdvancedOpen((o) => !o)}
+            className="flex w-full items-center gap-1.5 text-[11px] text-muted-2 hover:text-muted transition-colors"
+          >
+            <Icon
+              name="ChevronDown"
+              className={cn(
+                "h-3 w-3 transition-transform duration-200",
+                advancedOpen && "rotate-180",
+              )}
+            />
+            {isConnected ? "Edit credentials" : "Manual setup"}
+          </button>
+        )}
+      </div>
+
+      {/* Advanced / manual form — accordion */}
+      {isAdmin && (
+        <div
+          className={cn(
+            "grid transition-[grid-template-rows] duration-300 ease-in-out",
+            advancedOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+          )}
+        >
+          <div className="overflow-hidden">
+            <div className="space-y-3 border-t border-border px-4 pb-5 pt-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-2">
+                Manual credentials
+              </p>
+
+              <div>
+                <Label>Display name / handle <span className="text-muted-2">(optional)</span></Label>
+                <Input
+                  value={accountName}
+                  onChange={(e) => setAccountName(e.target.value)}
+                  placeholder="@yourbrand"
+                />
+              </div>
+
+              {platform.fields.map((f) => (
+                <div key={f.key}>
+                  <Label>
+                    {f.label}
+                    {f.required && <span className="ml-1 text-danger">*</span>}
+                  </Label>
+                  <Input
+                    type={f.type}
+                    value={fields[f.key] ?? ""}
+                    onChange={(e) => setField(f.key, e.target.value)}
+                    placeholder={
+                      f.type === "password" && isConnected
+                        ? "Leave blank to keep existing"
+                        : f.placeholder
+                    }
+                    autoComplete="off"
+                  />
+                  {f.hint && <p className="mt-1 text-[11px] text-muted-2">{f.hint}</p>}
+                </div>
+              ))}
+
+              {formError && (
+                <p className="rounded-[8px] border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                  {formError}
+                </p>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" onClick={handleManualSave} loading={saving}>
+                  <Icon name="Save" className="h-3.5 w-3.5" />
+                  {isConnected ? "Update" : "Save"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setAdvancedOpen(false); setFormError(null); }}
+                  disabled={saving}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Tab root ────────────────────────────────────────────────────────── */
+
+export function IntegrationsTab({
+  clientId,
+  integrations,
+  oauthEnabledPlatforms,
+  currentUserRole,
+}: Props) {
+  const router = useRouter();
+  const isAdmin = currentUserRole === "KAROS_ADMIN";
+  const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
+  const [popupError, setPopupError] = useState<string | null>(null);
+  const popupTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const connectedCount = PLATFORM_REGISTRY.filter((p) =>
+    integrations.some((i) => i.platform === p.id),
+  ).length;
+
+  // Listen for postMessage from OAuth popup
+  useEffect(() => {
+    function handleMessage(e: MessageEvent) {
+      if (e.origin !== window.location.origin) return;
+      if (e.data?.type === "karos_oauth_success") {
+        if (popupTimerRef.current) clearInterval(popupTimerRef.current);
+        setConnectingPlatform(null);
+        setPopupError(null);
+        router.refresh();
+      }
+      if (e.data?.type === "karos_oauth_error") {
+        if (popupTimerRef.current) clearInterval(popupTimerRef.current);
+        setConnectingPlatform(null);
+        setPopupError(e.data.error ?? "OAuth failed. Please try again.");
+      }
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [router]);
+
+  function openOAuthPopup(provider: string) {
+    setConnectingPlatform(provider);
+    setPopupError(null);
+
+    const w = 600, h = 720;
+    const left = Math.max(0, (screen.width - w) / 2);
+    const top = Math.max(0, (screen.height - h) / 2);
+
+    const popup = window.open(
+      `/api/auth/social/${provider}?clientId=${clientId}`,
+      `karos_oauth_${provider}`,
+      `width=${w},height=${h},left=${left},top=${top},scrollbars=yes`,
+    );
+
+    if (!popup || popup.closed) {
+      setConnectingPlatform(null);
+      setPopupError("Popup was blocked — please allow popups for this site and try again.");
+      return;
+    }
+
+    // Fallback: detect if popup closed without completing
+    if (popupTimerRef.current) clearInterval(popupTimerRef.current);
+    popupTimerRef.current = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(popupTimerRef.current!);
+        setConnectingPlatform((prev) => (prev === provider ? null : prev));
+      }
+    }, 600);
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold">Connected Channels</h2>
+          <p className="mt-0.5 text-sm text-muted-2">
+            Link your social accounts so agents can publish content automatically.
+          </p>
+        </div>
+        {connectedCount > 0 && (
+          <Badge tone="neon">
+            {connectedCount} / {PLATFORM_REGISTRY.length} connected
+          </Badge>
+        )}
+      </div>
+
+      {/* Popup error banner */}
+      {popupError && (
+        <div className="flex items-center gap-2.5 rounded-[10px] border border-danger/30 bg-danger/10 px-4 py-3">
+          <Icon name="AlertCircle" className="h-4 w-4 shrink-0 text-danger" />
+          <p className="text-sm text-danger">{popupError}</p>
+          <button
+            onClick={() => setPopupError(null)}
+            className="ml-auto text-danger/60 hover:text-danger"
+            aria-label="Dismiss"
+          >
+            <Icon name="X" className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Platform grid */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {PLATFORM_REGISTRY.map((platform) => {
+          const integration = integrations.find((i) => i.platform === platform.id);
+          const oauthEnabled = oauthEnabledPlatforms.includes(platform.id);
+          return (
+            <PlatformCard
+              key={platform.id}
+              platform={platform}
+              integration={integration}
+              clientId={clientId}
+              isOAuthEnabled={oauthEnabled}
+              isConnecting={connectingPlatform === platform.id}
+              isAdmin={isAdmin}
+              onOAuthConnect={() => openOAuthPopup(platform.id)}
+              onDisconnected={() => router.refresh()}
+            />
+          );
+        })}
+      </div>
+
+      {/* Footer note */}
+      <p className="text-xs text-muted-2">
+        Credentials are stored securely server-side and accessed only by your agents during
+        automated publishing runs. To enable OAuth for additional platforms, add the
+        corresponding environment variables (e.g.{" "}
+        <span className="font-mono text-muted">LINKEDIN_CLIENT_ID</span>) and redeploy.
+      </p>
+    </div>
+  );
+}

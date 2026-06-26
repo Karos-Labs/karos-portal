@@ -10,11 +10,11 @@ import { relativeTime } from "@/lib/utils";
 export default async function DashboardPage() {
   const user = await requireUser();
 
-  if (user.role === "client") {
+  if (user.role === "CLIENT_USER") {
     redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
   }
 
-  const employeeFilter = user.role === "employee" ? { employeeId: user.uid } : undefined;
+  const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
   const [clients, agents, jobs] = await Promise.all([
     listClients(employeeFilter),
     listAgents(),

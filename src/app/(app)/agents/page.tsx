@@ -11,12 +11,12 @@ import { INTEL_AGENT_ID } from "@/lib/intel-report";
 import { RESEARCH_ENGINE_RULES, METRICS_RULES } from "@/lib/onboard-templates";
 
 export default async function AgentsPage() {
-  const user = await requireUser(["admin", "employee"]);
+  const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const [drafts, publishedAll, clients, intelAgent] = await Promise.all([
     listAgents({ status: "draft" }),
     listAgents({ status: "published" }),
-    listClients(user.role === "employee" ? { employeeId: user.uid } : undefined),
-    user.role === "admin" ? getSystemAgent(INTEL_AGENT_ID) : Promise.resolve(null),
+    listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined),
+    user.role === "KAROS_ADMIN" ? getSystemAgent(INTEL_AGENT_ID) : Promise.resolve(null),
   ]);
   // System agents are hidden from the regular published list
   const published = publishedAll.filter((a) => !a.isSystem);
@@ -28,7 +28,7 @@ export default async function AgentsPage() {
         description="Reusable AI skills your team builds and runs for clients."
         action={
           <div className="flex items-center gap-2">
-            {user.role === "admin" && <ImportLabsSkillsButton />}
+            {user.role === "KAROS_ADMIN" && <ImportLabsSkillsButton />}
             <Link href="/agents/new">
               <Button>
                 <Icon name="Plus" className="h-4 w-4" />
@@ -64,7 +64,7 @@ export default async function AgentsPage() {
             action={
               <div className="flex flex-wrap gap-2">
                 <SeedAgentsButton />
-                {user.role === "admin" && <ImportLabsSkillsButton variant="primary" />}
+                {user.role === "KAROS_ADMIN" && <ImportLabsSkillsButton variant="primary" />}
                 <Link href="/agents/new">
                   <Button variant="outline">Build from scratch</Button>
                 </Link>
@@ -81,7 +81,7 @@ export default async function AgentsPage() {
       </section>
 
       {/* Intel Report Agent — admin only, collapsed by default */}
-      {user.role === "admin" && (
+      {user.role === "KAROS_ADMIN" && (
         <IntelAgentSection
           agent={intelAgent}
           lockedRules={{ researchEngine: RESEARCH_ENGINE_RULES, metrics: METRICS_RULES }}

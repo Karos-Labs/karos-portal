@@ -3,13 +3,16 @@ import "server-only";
 import { adminDb } from "@/lib/firebase/admin";
 import type {
   AccessToken,
+  ActivityLog,
   Agent,
   AppUser,
   Asset,
   Client,
   ClientCompetitor,
   ClientContextDoc,
+  ClientIntegration,
   ClientReport,
+  ClientRequest,
   ContextDocTier,
   ContextItem,
   Job,
@@ -35,6 +38,9 @@ const col = {
   clientReports: () => adminDb().collection("clientReports"),
   clientCompetitors: () => adminDb().collection("clientCompetitors"),
   clientContextDocs: () => adminDb().collection("clientContextDocs"),
+  clientActivityLogs: () => adminDb().collection("clientActivityLogs"),
+  clientIntegrations: () => adminDb().collection("clientIntegrations"),
+  clientRequests: () => adminDb().collection("clientRequests"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -99,6 +105,13 @@ export async function createClient(data: Omit<Client, "id">): Promise<string> {
 
 export async function updateClient(id: string, data: Partial<Client>): Promise<void> {
   await col.clients().doc(id).set(data, { merge: true });
+}
+
+/** Find a client by its join token (clientKeyId). Returns null when not found or key is falsy. */
+export async function getClientByKeyId(clientKeyId: string): Promise<Client | null> {
+  if (!clientKeyId) return null;
+  const snap = await col.clients().where("clientKeyId", "==", clientKeyId).limit(1).get();
+  return snap.empty ? null : withId<Client>(snap.docs[0]);
 }
 
 /** Find the best-matching client for a set of participant emails (by domain). */
@@ -215,6 +228,26 @@ export async function createAsset(data: Omit<Asset, "id">): Promise<string> {
 
 export async function updateAsset(id: string, data: Partial<Asset>): Promise<void> {
   await col.assets().doc(id).set(data, { merge: true });
+}
+
+/** All assets with status="scheduled" whose scheduledAt is at or before `before` (default: now). */
+export async function listScheduledAssets(opts?: { before?: number }): Promise<Asset[]> {
+  const before = opts?.before ?? Date.now();
+  const snap = await col.assets().where("status", "==", "scheduled").get();
+  return snap.docs
+    .map((d) => withId<Asset>(d))
+    .filter((a) => a.scheduledAt != null && a.scheduledAt <= before);
+}
+
+/** Clear scheduledAt + scheduledPlatform and revert status to draft. */
+export async function clearAssetSchedule(id: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.assets().doc(id).update({
+    status: "draft",
+    scheduledAt: FieldValue.delete(),
+    scheduledPlatform: FieldValue.delete(),
+    updatedAt: Date.now(),
+  });
 }
 
 /* --------------------------- transcripts --------------------------- */
@@ -341,16 +374,6 @@ export async function deleteClientCompetitor(id: string): Promise<void> {
   await col.clientCompetitors().doc(id).delete();
 }
 
-/** Delete all report-imported competitors for a client (used before re-import to prevent duplicates). */
-export async function deleteReportCompetitors(clientId: string): Promise<void> {
-  const snap = await col
-    .clientCompetitors()
-    .where("clientId", "==", clientId)
-    .where("source", "==", "report")
-    .get();
-  await Promise.all(snap.docs.map((d) => d.ref.delete()));
-}
-
 /**
  * Atomically replace all report-imported competitors for a client.
  * Uses a single Firestore write batch so a partial failure cannot leave a mix
@@ -432,4 +455,74 @@ export async function replaceClientContextDocs(
   for (const d of existing.docs) batch.delete(d.ref);
   for (const doc of docs) batch.set(col.clientContextDocs().doc(), doc);
   await batch.commit();
+}
+
+/* -------------------- client integrations --------------------------- */
+
+/** List all social/channel integrations for a client. */
+export async function listClientIntegrations(clientId: string): Promise<ClientIntegration[]> {
+  const snap = await col.clientIntegrations().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<ClientIntegration>(d))
+    .sort((a, b) => a.platform.localeCompare(b.platform));
+}
+
+/**
+ * Create or overwrite one integration (keyed on clientId + platform).
+ * Uses a deterministic doc ID so upserts are idempotent.
+ */
+export async function upsertClientIntegration(
+  data: Omit<ClientIntegration, "id">,
+): Promise<void> {
+  const docId = `${data.clientId}_${data.platform}`;
+  await col.clientIntegrations().doc(docId).set({ id: docId, ...data });
+}
+
+/** Remove a platform's credentials for a client. */
+export async function deleteClientIntegration(
+  clientId: string,
+  platform: string,
+): Promise<void> {
+  const docId = `${clientId}_${platform}`;
+  await col.clientIntegrations().doc(docId).delete();
+}
+
+/* -------------------- client activity logs -------------------------- */
+
+export async function createActivityLog(data: Omit<ActivityLog, "id">): Promise<string> {
+  const ref = await col.clientActivityLogs().add(data);
+  return ref.id;
+}
+
+export async function listClientActivityLogs(clientId: string): Promise<ActivityLog[]> {
+  const snap = await col.clientActivityLogs().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<ActivityLog>(d))
+    .sort((a, b) => b.timestamp - a.timestamp);
+}
+
+/* -------------------- client access requests ------------------------ */
+
+export async function createClientRequest(data: Omit<ClientRequest, "id">): Promise<string> {
+  const ref = await col.clientRequests().add(data);
+  return ref.id;
+}
+
+export async function listClientRequests(status?: ClientRequest["status"]): Promise<ClientRequest[]> {
+  const q = status
+    ? col.clientRequests().where("status", "==", status)
+    : col.clientRequests();
+  const snap = await q.get();
+  return snap.docs
+    .map((d) => withId<ClientRequest>(d))
+    .sort((a, b) => b.submittedAt - a.submittedAt);
+}
+
+export async function updateClientRequest(id: string, data: Partial<ClientRequest>): Promise<void> {
+  await col.clientRequests().doc(id).set(data, { merge: true });
+}
+
+export async function getClientRequest(id: string): Promise<ClientRequest | null> {
+  const doc = await col.clientRequests().doc(id).get();
+  return doc.exists ? withId<ClientRequest>(doc) : null;
 }
