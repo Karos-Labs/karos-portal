@@ -7,12 +7,18 @@
 #   builder → next build with NEXT_PUBLIC_* vars baked into the bundle
 #   runner  → minimal production image (~150 MB) from .next/standalone
 #
-# Build:
-#   docker build -t karos-cmo:latest .
+# Build (local):
+#   docker build \
+#     --build-arg NEXT_PUBLIC_FIREBASE_API_KEY=... \
+#     ... (see ARG block in builder stage) \
+#     -t karos-cmo:latest .
+#
+# Cloud Build sources the NEXT_PUBLIC_* args automatically from Secret Manager
+# via the availableSecrets block in cloudbuild.yaml — no manual --build-arg needed.
 #
 # Run locally:
 #   docker run -p 3000:3000 \
-#     --env-file .env.production \
+#     --env-file .env.local \
 #     karos-cmo:latest
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -38,17 +44,23 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # NEXT_PUBLIC_* variables are inlined into the browser bundle at compile time.
-# These are Firebase Web SDK config values — public by design (visible in every
-# user's browser). Hardcoded here so the image builds correctly in any CI
-# environment without needing --build-arg or Secret Manager access at build time.
+# They are NOT secret (they're visible in every user's browser). Cloud Build
+# sources them from Secret Manager via --build-arg (see cloudbuild.yaml).
 # Server-only secrets (ANTHROPIC_API_KEY, FIREBASE_SERVICE_ACCOUNT_KEY, etc.)
 # are injected at Cloud Run deploy time via --set-secrets — never baked in.
-ENV NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyCkdQOeRMnGjBOotzISdOHRwS1qcR3b-YQ
-ENV NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=karoscmo.firebaseapp.com
-ENV NEXT_PUBLIC_FIREBASE_PROJECT_ID=karoscmo
-ENV NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=karoscmo.firebasestorage.app
-ENV NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=42999994788
-ENV NEXT_PUBLIC_FIREBASE_APP_ID=1:42999994788:web:4c862db668a5e0d5094931
+ARG NEXT_PUBLIC_FIREBASE_API_KEY
+ARG NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+ARG NEXT_PUBLIC_FIREBASE_PROJECT_ID
+ARG NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+ARG NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+ARG NEXT_PUBLIC_FIREBASE_APP_ID
+
+ENV NEXT_PUBLIC_FIREBASE_API_KEY=$NEXT_PUBLIC_FIREBASE_API_KEY
+ENV NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+ENV NEXT_PUBLIC_FIREBASE_PROJECT_ID=$NEXT_PUBLIC_FIREBASE_PROJECT_ID
+ENV NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=$NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+ENV NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+ENV NEXT_PUBLIC_FIREBASE_APP_ID=$NEXT_PUBLIC_FIREBASE_APP_ID
 
 # Opt out of Next.js telemetry during build.
 ENV NEXT_TELEMETRY_DISABLED=1
