@@ -18,16 +18,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
     }
 
-    await createSession(idToken);
-
-    // Signup: provision the user doc with the validated invitation key.
-    // Login: fetch the existing doc for role-based routing.
+    // Signup: provision user doc first, then create session.
+    // Login: look up existing doc first — reject if not found (forces sign-up).
     const user = intent?.requestedRole
       ? await provisionFromSignup(idToken, intent)
       : await getUserFromToken(idToken);
 
+    if (!user) {
+      return NextResponse.json(
+        { error: "No account found for this email. Please sign up with an invitation key first." },
+        { status: 404 },
+      );
+    }
+
+    await createSession(idToken);
+
     // Fire-and-forget login audit log — non-blocking, never delays the response.
-    if (user && !user.disabled) {
+    if (!user.disabled) {
       const ua = req.headers.get("user-agent")?.slice(0, 200) ?? null;
       void (async () => {
         try {

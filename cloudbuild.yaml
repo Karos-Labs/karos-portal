@@ -125,7 +125,7 @@ steps:
       # Runtime secrets — mounted from Secret Manager, never in the image
       - --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest
       # Non-secret runtime env vars (not baked into image; can change without rebuild)
-      - --set-env-vars=EMAIL_FROM=Karos CMO <hello@karoslabs.com>,NODE_ENV=production
+      - --set-env-vars=EMAIL_FROM=Karos CMO <hello@karoslabs.com>,NODE_ENV=production,ADMIN_EMAILS=tomer@karoslabs.com,hello@karoslabs.com
     waitFor: [docker-push]
 
 images:

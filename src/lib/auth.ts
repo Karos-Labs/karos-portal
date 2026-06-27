@@ -23,12 +23,19 @@ export interface SignupIntent {
   invitationKey?: string;
 }
 
+/** Emails that are always promoted to KAROS_ADMIN on first login or re-login. */
+function getAdminEmails(): Set<string> {
+  const raw = process.env.ADMIN_EMAILS ?? "";
+  return new Set(raw.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean));
+}
+
 /**
  * Ensure a Firestore user doc exists for an authenticated Firebase identity.
  *
  * Bootstrap rule: the very first user ever → KAROS_ADMIN (no env var required).
+ * ADMIN_EMAILS env var: comma-separated list of emails that are always admin.
  *
- * All subsequent users need a valid invitation key:
+ * All other new users need a valid invitation key:
  *   - KAROS_STAFF_KEY env match → KAROS_EMPLOYEE, auto-approved
  *   - Valid clientKeyId match   → CLIENT_USER, auto-linked to client
  *   - Missing / invalid key     → lands disabled in the Registrations queue
@@ -39,17 +46,25 @@ async function ensureUserDoc(
 ): Promise<AppUser> {
   const existing = await getUser(claims.uid);
   const email = (claims.email ?? "").toLowerCase();
+  const adminEmails = getAdminEmails();
 
   if (existing) {
+    // Auto-promote / re-enable if this email is now in the admin list.
+    if (email && adminEmails.has(email) && (existing.disabled || existing.role !== "KAROS_ADMIN")) {
+      const promoted: AppUser = { ...existing, role: "KAROS_ADMIN", disabled: false, approvedAt: Date.now() };
+      await upsertUser(promoted);
+      return promoted;
+    }
     if (existing.email !== email && email) {
       await upsertUser({ ...existing, email });
     }
     return existing;
   }
 
-  // ── Bootstrap: very first user in the system ──────────────────────────────
+  // ── Bootstrap: very first user OR a designated admin email ────────────────
   const isFirstUser = (await countUsers()) === 0;
-  if (isFirstUser) {
+  const isAdminEmail = email ? adminEmails.has(email) : false;
+  if (isFirstUser || isAdminEmail) {
     const user: AppUser = {
       uid: claims.uid,
       email,
@@ -188,17 +203,53 @@ export async function provisionFromSignup(idToken: string, intent: SignupIntent)
 }
 
 /**
- * Resolve a verified ID token to its Firestore user doc without provisioning.
- * Used by the session route for login (non-signup) flows.
+ * Resolve a verified ID token to its Firestore user doc for the login flow.
+ *
+ * Unlike ensureUserDoc, this DOES NOT create a doc for users who haven't
+ * signed up. It returns null for those users so the session route can respond
+ * with "please sign up first." Exceptions: admin emails and the first user
+ * ever are created on-the-spot (same bootstrap rules as ensureUserDoc).
  */
 export async function getUserFromToken(idToken: string): Promise<AppUser | null> {
   const decoded = await adminAuth().verifyIdToken(idToken);
-  return await ensureUserDoc({
-    uid: decoded.uid,
-    email: decoded.email,
-    name: (decoded.name as string) || undefined,
-    picture: (decoded.picture as string) || undefined,
-  });
+  const uid = decoded.uid;
+  const email = (decoded.email ?? "").toLowerCase();
+
+  // Return existing doc with optional admin auto-promote.
+  const existing = await getUser(uid);
+  if (existing) {
+    const adminEmails = getAdminEmails();
+    if (email && adminEmails.has(email) && (existing.disabled || existing.role !== "KAROS_ADMIN")) {
+      const promoted: AppUser = { ...existing, role: "KAROS_ADMIN", disabled: false, approvedAt: Date.now() };
+      await upsertUser(promoted);
+      return promoted;
+    }
+    return existing;
+  }
+
+  // Allow admin emails and the very first user to log in without a prior signup.
+  const adminEmails = getAdminEmails();
+  const isAdminEmail = email ? adminEmails.has(email) : false;
+  const isFirstUser = !isAdminEmail && (await countUsers()) === 0;
+  if (!isAdminEmail && !isFirstUser) {
+    return null; // No account — session route will tell the user to sign up.
+  }
+
+  const user: AppUser = {
+    uid,
+    email,
+    name: (decoded.name as string) || email.split("@")[0] || "Admin",
+    role: "KAROS_ADMIN",
+    photoURL: (decoded.picture as string) ?? null,
+    clientId: null,
+    assignedClientIds: [],
+    disabled: false,
+    approvedAt: Date.now(),
+    createdAt: Date.now(),
+    lastLoginAt: Date.now(),
+  };
+  await upsertUser(user);
+  return user;
 }
 
 async function getSessionUser(): Promise<AppUser | null> {
