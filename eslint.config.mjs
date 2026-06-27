@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Legacy sub-project — excluded from tsc and ESLint alike
+    "karolabs-data/**",
   ]),
 ]);
 
