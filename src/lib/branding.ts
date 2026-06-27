@@ -1,5 +1,8 @@
 import "server-only";
 
+import { generateObject } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
+import { z } from "zod";
 import {
   getClient,
   getClientContextDoc,
@@ -9,7 +12,7 @@ import {
 import type { BrandingGuidelines, Client } from "@/lib/types";
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Color helpers
+   Color helper
    ──────────────────────────────────────────────────────────────────────── */
 
 /** Expand 3-digit hex to 6-digit, strip alpha from 8-digit. Returns null if invalid. */
@@ -21,102 +24,6 @@ export function normalizeHex(raw: string): string | null {
   return null;
 }
 
-/** Perceived luminance (0–255). */
-function getLuminance(hex: string): number {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-/** Max-min channel spread — proxy for perceptual saturation. */
-function getSaturation(hex: string): number {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return Math.max(r, g, b) - Math.min(r, g, b);
-}
-
-/**
- * Reject near-black, near-white, and neutral grays — these are not
- * meaningful brand colors when extracted by frequency analysis.
- */
-export function isUsableColor(hex: string): boolean {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  const saturation = Math.max(r, g, b) - Math.min(r, g, b);
-  return luminance > 12 && luminance < 235 && saturation > 25;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Visual style classifier
-   ──────────────────────────────────────────────────────────────────────── */
-
-const SERIF_RE = /Playfair|Garamond|Georgia|Cormorant|Lora|Baskerville|Merriweather|EB Garamond|Libre Baskerville/i;
-const MONO_RE = /\bMono\b|Code|Consolas|Courier|Space Mono|Fira Code|JetBrains|Inconsolata/i;
-
-function classifyVisualStyle(
-  colorPool: string[],
-  fonts: string[],
-  hasDarkBg: boolean,
-  usableColorCount: number,
-): string {
-  if (hasDarkBg) return "Dark Mode";
-  if (fonts.some((f) => MONO_RE.test(f))) return "High-Tech";
-
-  const dominant = colorPool[0];
-  if (!dominant) {
-    return fonts.some((f) => SERIF_RE.test(f)) ? "Luxury" : "Minimalist";
-  }
-
-  const r = parseInt(dominant.slice(1, 3), 16);
-  const g = parseInt(dominant.slice(3, 5), 16);
-  const b = parseInt(dominant.slice(5, 7), 16);
-  const maxC = Math.max(r, g, b);
-  const minC = Math.min(r, g, b);
-  const saturation = maxC - minC;
-
-  const isBluePurple = b > r * 1.2 && b > g * 0.9 && saturation > 50;
-  const isGold = r > 155 && g > 105 && b < 85 && saturation > 80;
-  const isHighSat = saturation > 90;
-
-  if (isGold && fonts.some((f) => SERIF_RE.test(f))) return "Luxury";
-  if (usableColorCount >= 4 && isHighSat && !isBluePurple) return "Vibrant";
-  if (isBluePurple) return "High-Tech";
-  if (saturation < 40) return fonts.some((f) => SERIF_RE.test(f)) ? "Corporate" : "Minimalist";
-  if (isHighSat && r > b && r > g) return "Vibrant";
-  return "Corporate";
-}
-
-/** Check whether body/root CSS or canvas CSS variables signal a dark background. */
-function detectDarkBackground(html: string, styleBlocks: string): boolean {
-  // 1. Explicit dark-mode declarations
-  if (/color-scheme\s*:\s*dark/i.test(styleBlocks)) return true;
-  if (/<(?:html|body)[^>]+(?:data-theme=["']dark["']|class=["'][^"']*\bdark\b)/i.test(html)) return true;
-
-  let m: RegExpExecArray | null;
-
-  // 2. body/html/:root background(-color) set to a very dark hex
-  const bgSelectorPat = /(?:body|html|:root)\s*\{[^}]*background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8})/gi;
-  while ((m = bgSelectorPat.exec(styleBlocks)) !== null) {
-    const hex = normalizeHex(m[1]);
-    if (hex && getLuminance(hex) < 30) return true;
-  }
-
-  // 3. CSS variables named for background/canvas/surface pointing to dark hex
-  //    Catches --background: #0A0A0A, --bg: #050505, --surface: #111, etc.
-  const bgVarPat =
-    /--(?:background|bg|canvas|surface|base|color-bg|color-background)[\w-]*\s*:\s*(#[0-9a-fA-F]{3,8})/gi;
-  while ((m = bgVarPat.exec(styleBlocks)) !== null) {
-    const hex = normalizeHex(m[1]);
-    if (hex && getLuminance(hex) < 30) return true;
-  }
-
-  return false;
-}
-
 /* ─────────────────────────────────────────────────────────────────────────
    Context-doc builders (used by saveBrandingGuidelinesAction too)
    ──────────────────────────────────────────────────────────────────────── */
@@ -124,11 +31,13 @@ function detectDarkBackground(html: string, styleBlocks: string): boolean {
 export function brandingToContextDocContent(g: BrandingGuidelines, clientName: string): string {
   const today = new Date().toISOString().slice(0, 10);
   const lines = [`# Branding Guidelines — ${clientName}`, `_Last updated: ${today}_`, ""];
-  if (g.visualStyle) lines.push(`## Visual Style`, `${g.visualStyle}`, "");
-  if (g.primaryColor || g.secondaryColor) {
+  if (g.visualStyle) lines.push("## Visual Style", g.visualStyle, "");
+  if (g.primaryColor || g.secondaryColor || g.uiBackground || g.uiText) {
     lines.push("## Color Palette");
-    if (g.primaryColor) lines.push(`- **Primary:** ${g.primaryColor}`);
-    if (g.secondaryColor) lines.push(`- **Secondary/Accent:** ${g.secondaryColor}`);
+    if (g.primaryColor) lines.push(`- **Brand Accent:** ${g.primaryColor}`);
+    if (g.secondaryColor) lines.push(`- **Secondary:** ${g.secondaryColor}`);
+    if (g.uiBackground) lines.push(`- **UI Background:** ${g.uiBackground}`);
+    if (g.uiText) lines.push(`- **UI Text:** ${g.uiText}`);
     lines.push("");
   }
   if (g.fontHeading || g.fontBody) {
@@ -151,7 +60,9 @@ export function buildBrandVoiceSection(g: BrandingGuidelines): string {
     `## Visual & Tone Reference (auto-synced from guidelines · ${today})`,
   ];
   if (g.visualStyle) lines.push(`- **Visual Style:** ${g.visualStyle}`);
-  if (g.primaryColor) lines.push(`- **Primary Color:** ${g.primaryColor}`);
+  if (g.primaryColor) lines.push(`- **Brand Accent:** ${g.primaryColor}`);
+  if (g.uiBackground) lines.push(`- **UI Background:** ${g.uiBackground}`);
+  if (g.uiText) lines.push(`- **UI Text:** ${g.uiText}`);
   if (g.secondaryColor) lines.push(`- **Secondary Color:** ${g.secondaryColor}`);
   if (g.fontHeading) lines.push(`- **Heading Font:** ${g.fontHeading}`);
   if (g.fontBody) lines.push(`- **Body Font:** ${g.fontBody}`);
@@ -181,461 +92,7 @@ export function injectBrandVoiceSection(content: string, section: string): strin
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Brand archetype presets (fallback when scraping yields nothing)
-   ──────────────────────────────────────────────────────────────────────── */
-
-export const BRANDING_PRESETS: Array<Omit<BrandingGuidelines, "updatedAt">> = [
-  {
-    primaryColor: "#1E293B",
-    secondaryColor: "#6366F1",
-    fontHeading: "Inter",
-    fontBody: "Inter",
-    visualStyle: "High-Tech",
-    toneKeywords: ["Innovative", "Precise", "Scalable", "Data-driven"],
-    guidelines:
-      "## Brand Voice\nDirect and confident. Communicate with precision and remove all fluff.\n\n## Visual Identity\nClean layouts, generous whitespace, and indigo accents to signal interactivity and trust.\n\n## Do's and Don'ts\n- Do: Lead with data and specifics\n- Don't: Use buzzwords or vague claims",
-  },
-  {
-    primaryColor: "#292524",
-    secondaryColor: "#D97706",
-    fontHeading: "Playfair Display",
-    fontBody: "Georgia",
-    visualStyle: "Luxury",
-    toneKeywords: ["Authentic", "Sustainable", "Human", "Crafted"],
-    guidelines:
-      "## Brand Voice\nWarm and personal. Speak to people, not customers. Stories over statistics.\n\n## Visual Identity\nOrganic textures, amber accents, and serif typography that convey warmth and craftsmanship.\n\n## Do's and Don'ts\n- Do: Tell the story behind the product\n- Don't: Use corporate or overly technical jargon",
-  },
-  {
-    primaryColor: "#09090B",
-    secondaryColor: "#10B981",
-    fontHeading: "Montserrat",
-    fontBody: "Open Sans",
-    visualStyle: "Dark Mode",
-    toneKeywords: ["Bold", "Trustworthy", "Challenger", "Performance"],
-    guidelines:
-      "## Brand Voice\nAssertive and results-oriented. Challenge the status quo with data-backed confidence.\n\n## Visual Identity\nHigh contrast, emerald green for key actions, geometric sans-serif for authority and clarity.\n\n## Do's and Don'ts\n- Do: Use strong, active verbs and concrete metrics\n- Don't: Hedge or soften claims unnecessarily",
-  },
-];
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Scraper — internal helpers + public API
-   ──────────────────────────────────────────────────────────────────────── */
-
-export type ScrapedBranding = Omit<BrandingGuidelines, "updatedAt">;
-
-const BROWSER_UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-
-// Strings that positively identify a WAF/bot-challenge response body.
-// Cloudflare challenge pages include #a7f3d0 / teal variants in their own CSS —
-// those colors must NEVER be treated as the target site's brand palette.
-const WAF_MARKERS = [
-  "__cf_chl",
-  "cf-browser-verification",
-  "cf-challenge",
-  "challenge-error-title",
-  "jschl-answer",
-  "Checking your browser",
-  "Just a moment...",
-  "DDoS protection by",
-  "Enable JavaScript and cookies to continue",
-  "Please enable cookies",
-  "Attention Required",
-  "Access denied",
-  "Your request has been blocked",
-  "cf_clearance",
-];
-
-/** True when the HTML body is a bot/WAF challenge page, not the real site content. */
-function _isWafPage(html: string): boolean {
-  const sample = html.slice(0, 5000);
-  return WAF_MARKERS.some((marker) => sample.includes(marker));
-}
-
-/**
- * Fetch a URL with a browser UA.
- * Returns null only on hard network/DNS failure (ENOTFOUND, timeout, etc.).
- * Always returns the body even on non-2xx so inference can read page text.
- * `blocked` is true when the response is a WAF challenge — CSS must not be extracted.
- */
-async function _fetchPage(
-  normalized: string,
-): Promise<{ html: string; ok: boolean; blocked: boolean } | null> {
-  try {
-    const res = await fetch(normalized, {
-      signal: AbortSignal.timeout(12000),
-      headers: {
-        "User-Agent": BROWSER_UA,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Cache-Control": "no-cache",
-      },
-    });
-    const html = await res.text();
-    const blocked = !res.ok || _isWafPage(html);
-    console.log(
-      `[branding:fetch] ${normalized} → HTTP ${res.status} | ${html.length} chars | blocked=${blocked}` +
-        (blocked ? ` | sample: ${html.slice(0, 300).replace(/\s+/g, " ")}` : ""),
-    );
-    return { html, ok: res.ok, blocked };
-  } catch (err) {
-    console.log(`[branding:fetch] ${normalized} → network error: ${String(err)}`);
-    return null;
-  }
-}
-
-/**
- * Strip an HTML document down to its most informative text signals.
- * Used to prime the LLM inference step when CSS extraction is blocked.
- */
-function _extractPageText(html: string): string {
-  const title = html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim() ?? "";
-  const metaDesc =
-    html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']{1,300})["']/i)?.[1]?.trim() ??
-    html.match(/<meta[^>]+content=["']([^"']{1,300})["'][^>]+name=["']description["']/i)?.[1]?.trim() ??
-    "";
-  const ogDesc =
-    html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']{1,300})["']/i)?.[1]?.trim() ?? "";
-  const headings = [...html.matchAll(/<h[12][^>]*>([\s\S]*?)<\/h[12]>/gi)]
-    .map((m) => m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim())
-    .filter((h) => h.length > 2 && h.length < 200)
-    .slice(0, 8)
-    .join(" · ");
-  const bodyText = html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&[a-z#0-9]+;/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 2000);
-  return [
-    title && `Title: ${title}`,
-    metaDesc && `Meta description: ${metaDesc}`,
-    ogDesc && ogDesc !== metaDesc && `OG description: ${ogDesc}`,
-    headings && `Headings: ${headings}`,
-    bodyText && `Page text: ${bodyText}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-/**
- * Run the full CSS token-extraction pipeline on an already-fetched HTML string.
- * Returns null when no meaningful brand tokens are found (WAF challenge page, sparse HTML).
- */
-async function _extractBrandTokens(
-  html: string,
-  normalizedUrl: string,
-): Promise<ScrapedBranding | null> {
-  // Hard gate: challenge pages contain generic platform CSS (Cloudflare uses
-  // teal/green tones like #a7f3d0) that are NOT brand colors of the target site.
-  if (_isWafPage(html)) {
-    console.log("[branding:extract] WAF page detected — skipping CSS extraction");
-    return null;
-  }
-
-  // ── 1. <meta name="theme-color"> ─────────────────────────────────────────
-  const themeColor =
-    normalizeHex(
-      html.match(/<meta[^>]+name=["']theme-color["'][^>]+content=["'](#[0-9a-fA-F]{3,8})["']/i)?.[1] ??
-      html.match(/<meta[^>]+content=["'](#[0-9a-fA-F]{3,8})["'][^>]+name=["']theme-color["']/i)?.[1] ??
-      "",
-    ) ?? undefined;
-
-  // ── 2. Inline <style> blocks + same-origin external stylesheets ──────────
-  const inlineBlocks = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)]
-    .map((m) => m[1])
-    .join("\n");
-
-  const baseOrigin = new URL(normalizedUrl).origin;
-  const hrefRe1 = /<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)["']/gi;
-  const hrefRe2 = /<link[^>]+href=["']([^"']+)["'][^>]+rel=["']stylesheet["']/gi;
-  const rawHrefs: string[] = [];
-  let lm: RegExpExecArray | null;
-  while ((lm = hrefRe1.exec(html)) !== null) rawHrefs.push(lm[1]);
-  while ((lm = hrefRe2.exec(html)) !== null) rawHrefs.push(lm[1]);
-  const cssUrls = rawHrefs
-    .map((href) => {
-      try {
-        const u = new URL(href, normalizedUrl);
-        return u.origin === baseOrigin ? u.href : null;
-      } catch { return null; }
-    })
-    .filter((u): u is string => !!u)
-    .slice(0, 5);
-  const externalCss = await Promise.all(
-    cssUrls.map(async (cssUrl) => {
-      try {
-        const r = await fetch(cssUrl, {
-          signal: AbortSignal.timeout(5000),
-          headers: { "User-Agent": BROWSER_UA },
-        });
-        return r.ok ? await r.text() : "";
-      } catch { return ""; }
-    }),
-  );
-  const styleBlocks = [inlineBlocks, ...externalCss].join("\n");
-
-  const hasDarkBg = detectDarkBackground(html, styleBlocks);
-
-  let m: RegExpExecArray | null;
-
-  // ── 3a. Tier-1 CSS vars: semantically named brand / accent vars ──────────
-  const brandVarPat =
-    /--(?:[\w-]*(?:primary|brand|accent|main|key|hero|highlight|theme|color|cta|focus|active|link)[\w-]*):\s*(#[0-9a-fA-F]{3,8})/gi;
-  const brandVarColors: string[] = [];
-  while ((m = brandVarPat.exec(styleBlocks)) !== null) {
-    const hex = normalizeHex(m[1]);
-    if (hex && isUsableColor(hex) && !brandVarColors.includes(hex)) brandVarColors.push(hex);
-  }
-
-  // ── 3b. Tier-2 CSS vars: any var pointing to a high-saturation hex ───────
-  const allVarPat = /--[\w-]+\s*:\s*(#[0-9a-fA-F]{3,8})/gi;
-  const highSatVarColors: string[] = [];
-  const brandVarSet = new Set(brandVarColors);
-  while ((m = allVarPat.exec(styleBlocks)) !== null) {
-    const hex = normalizeHex(m[1]);
-    if (hex && isUsableColor(hex) && !brandVarSet.has(hex) && getSaturation(hex) > 60) {
-      if (!highSatVarColors.includes(hex)) highSatVarColors.push(hex);
-    }
-  }
-
-  // ── 4. Inline style= background/background-color attributes ─────────────
-  const inlineStyleColors: string[] = [];
-  const inlinePat = /style=["'][^"']*background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8})/gi;
-  while ((m = inlinePat.exec(html)) !== null) {
-    const hex = normalizeHex(m[1]);
-    if (hex && isUsableColor(hex) && !inlineStyleColors.includes(hex)) inlineStyleColors.push(hex);
-  }
-
-  // ── 5. Tailwind arbitrary bg-[#hex] class values ─────────────────────────
-  const tailwindColors: string[] = [];
-  const twPat = /\bbg-\[#([0-9a-fA-F]{3,8})\]/gi;
-  while ((m = twPat.exec(html)) !== null) {
-    const hex = normalizeHex("#" + m[1]);
-    if (hex && isUsableColor(hex) && !tailwindColors.includes(hex)) tailwindColors.push(hex);
-  }
-
-  // ── 6. Frequency-ranked hex scan across full CSS corpus ─────────────────
-  const freqMap = new Map<string, number>();
-  const hexScan = /#([0-9a-fA-F]{3,8})\b/g;
-  while ((m = hexScan.exec(styleBlocks)) !== null) {
-    const hex = normalizeHex("#" + m[1]);
-    if (hex && isUsableColor(hex)) freqMap.set(hex, (freqMap.get(hex) ?? 0) + 1);
-  }
-  const knownSet = new Set([...brandVarColors, ...highSatVarColors, ...tailwindColors]);
-  const freqColors = [...freqMap.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([c]) => c)
-    .filter((c) => !knownSet.has(c));
-
-  // ── 7a. Google Fonts ──────────────────────────────────────────────────────
-  const googleFonts = [
-    ...html.matchAll(/fonts\.googleapis\.com\/css2?\?family=([^"'&;>\s]+)/gi),
-    ...styleBlocks.matchAll(/fonts\.googleapis\.com\/css2?\?family=([^"'&;)\s]+)/gi),
-  ]
-    .flatMap((match) =>
-      decodeURIComponent(match[1])
-        .split("|")
-        .map((f) => f.split(":")[0].replace(/\+/g, " ").trim()),
-    )
-    .filter((f, i, a) => f && a.indexOf(f) === i);
-
-  // ── 7b. Bunny Fonts ───────────────────────────────────────────────────────
-  const bunnyFonts = [
-    ...html.matchAll(/fonts\.bunny\.net\/css\?family=([^"'&;>\s]+)/gi),
-    ...styleBlocks.matchAll(/fonts\.bunny\.net\/css\?family=([^"'&;)\s]+)/gi),
-  ]
-    .flatMap((match) =>
-      decodeURIComponent(match[1])
-        .split("|")
-        .map((f) => f.split(":")[0].replace(/\+/g, " ").trim()),
-    )
-    .filter((f, i, a) => f && a.indexOf(f) === i);
-
-  // ── 8. @font-face declarations ────────────────────────────────────────────
-  const fontFacePat = /@font-face\s*\{[^}]*font-family:\s*['"]?([^;'"}{]+)/gi;
-  const localFonts: string[] = [];
-  while ((m = fontFacePat.exec(styleBlocks)) !== null) {
-    const family = m[1].trim().replace(/^['"]|['"]$/g, "");
-    if (family && !localFonts.includes(family)) localFonts.push(family);
-  }
-
-  // ── 9. font-family from selector bodies: body, html, :root, h1, h2 ───────
-  const fontSelectorPat =
-    /(?:body|html|:root|h[1-2])\s*\{[^}]*font-family\s*:\s*['"]?([^;,'"}{]+)/gi;
-  const selectorFonts: string[] = [];
-  while ((m = fontSelectorPat.exec(styleBlocks)) !== null) {
-    const first = m[1].split(",")[0].trim().replace(/^['"]|['"]$/g, "").trim();
-    if (
-      first.length > 1 &&
-      !first.toLowerCase().startsWith("var(") &&
-      !/^(inherit|initial|unset|revert|sans-serif|serif|monospace|cursive|fantasy|system-ui|-apple-system|BlinkMacSystemFont)$/i.test(first)
-    ) {
-      selectorFonts.push(first);
-    }
-  }
-
-  // ── 10. CSS variable font declarations ────────────────────────────────────
-  const fontVarPat =
-    /--(?:font|typeface|heading|body|sans|serif|display|text)[\w-]*\s*:\s*['"]([^'"]+)['"]/gi;
-  const varFonts: string[] = [];
-  while ((m = fontVarPat.exec(styleBlocks)) !== null) {
-    const raw = m[1].trim().split(",")[0].replace(/^['"]|['"]$/g, "").trim();
-    if (raw.length > 1 && !raw.toLowerCase().startsWith("var(")) varFonts.push(raw);
-  }
-
-  // ── 11. Assemble pools ────────────────────────────────────────────────────
-  const colorPool = [
-    themeColor,
-    ...brandVarColors,
-    ...highSatVarColors,
-    ...tailwindColors,
-    ...inlineStyleColors,
-    ...freqColors,
-  ].filter((c): c is string => !!c);
-
-  const allFonts = [...googleFonts, ...bunnyFonts, ...selectorFonts, ...varFonts, ...localFonts].filter(
-    (f, i, a) => a.indexOf(f) === i,
-  );
-
-  if (!colorPool.length && allFonts.length === 0) return null;
-
-  // ── 12. Select primary + secondary colors ─────────────────────────────────
-  const primaryColor = colorPool[0];
-  let secondaryColor: string | undefined;
-  if (hasDarkBg && colorPool.length > 1) {
-    secondaryColor = colorPool
-      .filter((c) => c !== primaryColor)
-      .sort((a, b) => getSaturation(b) - getSaturation(a))[0];
-  } else {
-    secondaryColor = colorPool.find((c) => c !== primaryColor);
-  }
-
-  const visualStyle = classifyVisualStyle(
-    colorPool.filter(isUsableColor),
-    allFonts,
-    hasDarkBg,
-    colorPool.filter(isUsableColor).length,
-  );
-
-  return {
-    primaryColor: primaryColor ?? undefined,
-    secondaryColor,
-    fontHeading: allFonts[0] ?? undefined,
-    fontBody: (allFonts[1] ?? allFonts[0]) ?? undefined,
-    visualStyle,
-  };
-}
-
-/**
- * Public API: fetch a website and extract brand tokens.
- * Returns null when the fetch fails or no meaningful tokens were found.
- */
-export async function scrapeWebsiteBranding(url: string): Promise<ScrapedBranding | null> {
-  let normalized: string;
-  try {
-    normalized = url.startsWith("http") ? url : `https://${url}`;
-    new URL(normalized);
-  } catch {
-    return null;
-  }
-  const page = await _fetchPage(normalized);
-  if (!page) return null;
-  return _extractBrandTokens(page.html, normalized);
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   LLM inference fallback (when scraping is blocked or yields nothing)
-   ──────────────────────────────────────────────────────────────────────── */
-
-/**
- * Ask Claude Haiku to infer a brand visual system from actual page content
- * plus client metadata. Always receives real page text when available — never
- * guesses from domain name alone.
- *
- * @param pageText  Plain-text extracted from the page via _extractPageText().
- *                  Pass null only when the site is completely unreachable.
- */
-async function inferBrandingFromContext(
-  client: Client,
-  pageText: string | null,
-): Promise<ScrapedBranding | null> {
-  try {
-    const { generateObject } = await import("ai");
-    const { anthropic } = await import("@ai-sdk/anthropic");
-    const { z } = await import("zod");
-
-    const InferredSchema = z.object({
-      primaryColor: z.string().describe("Dominant brand color as 6-digit lowercase hex (e.g. #7c3aed)"),
-      secondaryColor: z.string().optional().describe("Accent / secondary brand color as 6-digit lowercase hex"),
-      fontHeading: z.string().optional().describe("Primary heading font name (e.g. Plus Jakarta Sans)"),
-      fontBody: z.string().optional().describe("Body text font name (e.g. Inter)"),
-      visualStyle: z
-        .enum(["Dark Mode", "High-Tech", "Luxury", "Vibrant", "Corporate", "Minimalist"])
-        .describe("Overall visual style archetype"),
-      confidence: z
-        .enum(["high", "medium", "low"])
-        .describe("Confidence level based on available evidence"),
-    });
-
-    const parts: string[] = [];
-    if (client.name) parts.push(`Company name: ${client.name}`);
-    if (client.website) parts.push(`Website URL: ${client.website}`);
-    if ((client as { industry?: string }).industry)
-      parts.push(`Industry: ${(client as { industry?: string }).industry}`);
-    if ((client as { description?: string }).description)
-      parts.push(`Internal description: ${(client as { description?: string }).description}`);
-    if (pageText) parts.push(`\n--- Scraped page content ---\n${pageText}\n--- End ---`);
-
-    const { object } = await generateObject({
-      model: anthropic("claude-haiku-4-5-20251001"),
-      schema: InferredSchema,
-      system: `You are a senior brand visual analyst. Infer the company's visual brand identity from the evidence provided.
-
-PRIORITY ORDER — apply signals in this order:
-1. Scraped page content (title, headings, body text) — most reliable
-2. Industry field
-3. Company name — least reliable, use only to break ties
-
-HARD RULES:
-- Read the page content carefully before deciding. Look for explicit visual cues: dark/light references, technology words, luxury signals, color names mentioned in copy, taglines about being bold/neon/digital.
-- If the page content is a WAF/bot-challenge (Cloudflare, "Attention Required", "Access Denied", "Just a moment") — ignore it entirely and rely on industry + name only.
-- Do NOT output "Sustainable", "Eco", or green-nature palettes unless the page/description explicitly mentions environmental work, sustainability, agriculture, or eco products.
-- When signals are ambiguous, default to "High-Tech" with a dark canvas (#09090b) and an electric indigo/purple accent (#6366f1). This is the safest neutral-tech default and correct for the majority of digital-first companies.
-
-Industry quick-reference (use when page content is unavailable or ambiguous):
-- Digital agency / creative studio / marketing / branding → "Dark Mode"; vibrant neon accent (purple #7c3aed, magenta #d946ef, or cyan #06b6d4); geometric sans-serif (Plus Jakarta Sans, Inter, Space Grotesk, Geist)
-- SaaS / AI / developer tools / software → "High-Tech"; dark slate + electric indigo/cyan; Inter or monospace-adjacent
-- Luxury / fashion / hospitality / jewelry → "Luxury"; warm black or ivory; gold #d97706 or champagne; serif heading (Playfair Display, Cormorant)
-- Finance / legal / healthcare / consulting / insurance → "Corporate"; navy/slate #1e3a5f; muted blue-grey; Inter or Open Sans
-- E-commerce / consumer retail → "Vibrant"; bright energetic primary; modern sans-serif
-
-Return hex values in 6-digit lowercase format only (#rrggbb). Font names must be real font family names.`,
-      prompt: parts.join("\n"),
-    });
-
-    // Discard low-confidence guesses made with no page content — pure hallucination risk
-    if (object.confidence === "low" && !pageText) return null;
-
-    const primary = normalizeHex(object.primaryColor);
-    if (!primary) return null;
-
-    return {
-      primaryColor: primary,
-      secondaryColor: object.secondaryColor ? (normalizeHex(object.secondaryColor) ?? undefined) : undefined,
-      fontHeading: object.fontHeading,
-      fontBody: object.fontBody ?? object.fontHeading,
-      visualStyle: object.visualStyle,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Guards
+   Guard
    ──────────────────────────────────────────────────────────────────────── */
 
 /** True when the client has no meaningful branding data (colors and fonts both absent). */
@@ -645,19 +102,150 @@ export function isBrandingEmpty(client: Client): boolean {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   AI Branding Engine — Pure Claude Haiku generation (no web scraping)
+   ──────────────────────────────────────────────────────────────────────── */
+
+const BrandingAISchema = z.object({
+  brandAccent: z
+    .string()
+    .describe(
+      "Primary brand color as 6-digit lowercase hex. " +
+        "SOURCE PRIORITY: (1) the brand's actual color from its website/logo if you know it, " +
+        "(2) the company's known brand color, " +
+        "(3) industry-standard accent only if brand is completely unknown. " +
+        "Examples of real brand colors: Magenta #e91e8c for XO Digital, Crimson #ce2127 for ONE, " +
+        "Electric blue #0057ff for Wix, Orange #ff6600 for Cloudflare.",
+    ),
+  uiBackground: z
+    .string()
+    .describe(
+      "Canvas background color derived from the brand's actual website palette. " +
+        "Dark-mode brands (agencies, SaaS, tech, luxury, digital-first): #09090b or #0a0a0a. " +
+        "Light-mode brands (corporate, healthcare, e-commerce, retail): #ffffff or #f4f4f5. " +
+        "Match what the actual website uses, not what you assume the industry uses.",
+    ),
+  uiText: z
+    .string()
+    .describe(
+      "High-contrast readable text color paired with uiBackground. " +
+        "#09090b for light canvases, #fafafa for dark canvases.",
+    ),
+  secondaryColor: z
+    .string()
+    .optional()
+    .describe(
+      "Secondary accent from the brand's actual palette as 6-digit lowercase hex. Omit if unsure.",
+    ),
+  fontHeading: z
+    .string()
+    .describe(
+      "The actual heading font the brand uses on its website, if known. " +
+        "Fallback by sector: Plus Jakarta Sans/Inter/Montserrat (tech/modern); " +
+        "Playfair Display/Cormorant Garamond (luxury/editorial); Nunito/Lato (healthcare/community).",
+    ),
+  fontBody: z
+    .string()
+    .describe(
+      "The actual body font the brand uses, if known. Fallback: Inter, Open Sans, or Source Sans 3.",
+    ),
+  visualStyle: z
+    .enum(["Dark Mode", "High-Tech", "Luxury", "Vibrant", "Corporate", "Minimalist"])
+    .describe("The most fitting visual archetype for this brand."),
+  toneKeywords: z
+    .array(z.string())
+    .min(3)
+    .max(5)
+    .describe("3–5 single-word brand personality descriptors (e.g. Bold, Innovative, Human, Crafted)."),
+  brandVoice: z
+    .string()
+    .describe(
+      "2–3 sentences describing how this brand communicates — tone, style, and copywriting guidance.",
+    ),
+  dos: z
+    .array(z.string())
+    .min(3)
+    .max(5)
+    .describe(
+      "3–5 concrete, actionable brand communication do's (e.g. 'Use data-backed claims to build credibility').",
+    ),
+  donts: z
+    .array(z.string())
+    .min(3)
+    .max(5)
+    .describe("3–5 concrete brand communication don'ts (e.g. 'Avoid corporate jargon and buzzwords')."),
+});
+
+function buildBrandingPrompt(
+  name: string,
+  domain: string | null,
+  industry?: string,
+  description?: string,
+): string {
+  const lines: string[] = [
+    "You are an expert brand strategist and visual designer with deep knowledge of global and regional brands.",
+    "",
+    "## Target brand",
+    `Company name: ${name}`,
+  ];
+  if (domain) lines.push(`Website: ${domain}`);
+  if (industry) lines.push(`Industry: ${industry}`);
+  if (description) lines.push(`Description: ${description}`);
+
+  lines.push(
+    "",
+    "## How to generate the brand profile",
+    "",
+    "STEP 1 — Website-first recall (highest priority):",
+    domain
+      ? `Recall everything you know about ${domain} from your training data. What are its actual brand colors? What fonts does it use? What is its visual style? Use this specific knowledge as your primary source.`
+      : "No website provided — skip to Step 2.",
+    "",
+    "STEP 2 — Company name recall:",
+    `If the website alone didn't surface clear visual details, recall what you know about "${name}" as a company or brand. Many brands are recognizable by name even without the domain.`,
+    "",
+    "STEP 3 — Industry inference (fallback only):",
+    "ONLY if Steps 1 and 2 yield no specific knowledge about this brand (it is genuinely unknown or too regional/niche), then apply industry-standard visual aesthetics appropriate for the sector.",
+    "",
+    "## Hard rules",
+    "- brandAccent must be the brand's real primary color when you recognize the brand. Never substitute a generic industry color for a known brand.",
+    "- uiBackground reflects the brand's actual canvas: dark for dark-mode brands (#09090b/#0a0a0a), light for light-mode brands (#ffffff/#f4f4f5).",
+    "- fontHeading/fontBody must be the actual fonts the brand uses if you know them, otherwise choose fonts that genuinely fit the sector.",
+    "- The three-part color schema (brandAccent, uiBackground, uiText) must be contrast-safe and cohesive.",
+    "- toneKeywords and brandVoice must reflect the specific brand's personality, not generic sector marketing language.",
+    "- Do's and Don'ts must be specific and actionable for content creators working on this brand.",
+  );
+
+  return lines.join("\n");
+}
+
+function buildGuidelinesMarkdown(obj: z.infer<typeof BrandingAISchema>): string {
+  return [
+    "## Brand Voice",
+    obj.brandVoice,
+    "",
+    "## Do's",
+    ...obj.dos.map((d) => `- ${d}`),
+    "",
+    "## Don'ts",
+    ...obj.donts.map((d) => `- ${d}`),
+  ].join("\n");
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
    Core generator (no auth — call from actions.ts or intel pipeline)
    ──────────────────────────────────────────────────────────────────────── */
 
 export type BrandingGenResult = {
-  source: "scraped" | "inferred" | "preset";
+  source: "ai_generated";
   primaryColor?: string;
   secondaryColor?: string;
   visualStyle?: string;
 };
 
 /**
- * Scrape the client's website for brand tokens; fall back to a preset archetype
- * if scraping yields nothing. Writes the client record and both context docs.
+ * Generate a complete brand profile using Claude Haiku's world knowledge.
+ * Passes the domain name, client name, and industry directly — no web scraping.
+ * Writes the client record and both context docs.
  *
  * No auth checks — the caller (server action or pipeline) is responsible for those.
  */
@@ -668,65 +256,41 @@ export async function applyBrandingForClient(
   const client = knownClient ?? (await getClient(clientId));
   if (!client) throw new Error(`Client not found: ${clientId}`);
 
-  let scraped: ScrapedBranding | null = null;
-  let inferred: ScrapedBranding | null = null;
-  const websiteUrl = client.website?.trim();
-
-  if (websiteUrl) {
-    let normalized = "";
+  let domain: string | null = null;
+  const rawUrl = client.website?.trim();
+  if (rawUrl) {
     try {
-      normalized = websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`;
-      new URL(normalized);
+      domain = new URL(rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`).hostname;
     } catch {
-      normalized = "";
-    }
-
-    if (normalized) {
-      // Fetch once — share the HTML between extraction and inference so nothing is discarded.
-      const page = await _fetchPage(normalized);
-      if (page) {
-        if (!page.blocked) {
-          // Real page: attempt CSS extraction.
-          scraped = await _extractBrandTokens(page.html, normalized);
-        }
-        if (!scraped) {
-          // WAF block or no extractable tokens — pass the page text to the LLM.
-          // The system prompt tells it to ignore challenge-page content and rely on metadata.
-          const pageText = _extractPageText(page.html);
-          inferred = await inferBrandingFromContext(client, pageText || null);
-        }
-      } else {
-        // Hard network failure (DNS/timeout) — infer from client metadata only.
-        inferred = await inferBrandingFromContext(client, null);
-      }
+      // Invalid URL — proceed without domain
     }
   }
 
-  const source: "scraped" | "inferred" | "preset" = scraped
-    ? "scraped"
-    : inferred
-      ? "inferred"
-      : "preset";
+  const { object } = await generateObject({
+    model: anthropic("claude-haiku-4-5-20251001"),
+    schema: BrandingAISchema,
+    prompt: buildBrandingPrompt(client.name, domain, client.industry, client.description),
+  });
 
-  // When a website was provided but both scraping and inference failed,
-  // use the High-Tech preset (index 0) — not a random one that could land
-  // on the Luxury/Sustainable archetype which is wrong for digital agencies.
-  const generated =
-    scraped ??
-    inferred ??
-    (websiteUrl ? BRANDING_PRESETS[0] : BRANDING_PRESETS[Math.floor(Math.random() * BRANDING_PRESETS.length)]);
-
-  // Destructive overwrite of all auto-generated fields so stale data from a
-  // previous run (e.g. old preset guidelines) never bleeds into a fresh scrape.
-  // logoUrl is the only field preserved — it is always manually uploaded, never generated.
   const existing = client.brandingGuidelines;
-  const merged: Omit<BrandingGuidelines, "updatedAt"> = {
-    ...generated,
-    logoUrl: existing?.logoUrl,
-  };
-
-  const fullGuidelines: BrandingGuidelines = { ...merged, updatedAt: Date.now() };
   const now = Date.now();
+
+  // Preserve only logoUrl — always manually uploaded, never generated.
+  const fullGuidelines: BrandingGuidelines = {
+    primaryColor: normalizeHex(object.brandAccent) ?? object.brandAccent,
+    uiBackground: normalizeHex(object.uiBackground) ?? object.uiBackground,
+    uiText: normalizeHex(object.uiText) ?? object.uiText,
+    secondaryColor: object.secondaryColor
+      ? (normalizeHex(object.secondaryColor) ?? object.secondaryColor)
+      : undefined,
+    fontHeading: object.fontHeading,
+    fontBody: object.fontBody,
+    visualStyle: object.visualStyle,
+    toneKeywords: object.toneKeywords,
+    guidelines: buildGuidelinesMarkdown(object),
+    logoUrl: existing?.logoUrl,
+    updatedAt: now,
+  };
 
   const [brandingDoc, voiceDoc] = await Promise.all([
     getClientContextDoc(clientId, "branding-guidelines"),
@@ -759,5 +323,10 @@ export async function applyBrandingForClient(
       : Promise.resolve(),
   ]);
 
-  return { source, primaryColor: fullGuidelines.primaryColor, secondaryColor: fullGuidelines.secondaryColor, visualStyle: fullGuidelines.visualStyle };
+  return {
+    source: "ai_generated",
+    primaryColor: fullGuidelines.primaryColor,
+    secondaryColor: fullGuidelines.secondaryColor,
+    visualStyle: fullGuidelines.visualStyle,
+  };
 }

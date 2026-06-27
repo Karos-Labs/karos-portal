@@ -11,7 +11,7 @@ import {
   replaceReportCompetitors,
 } from "@/lib/data";
 import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
-import { isBrandingEmpty, applyBrandingForClient } from "@/lib/branding";
+import { applyBrandingForClient } from "@/lib/branding";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
@@ -75,16 +75,14 @@ export async function runIntelReportPipeline(clientId: string): Promise<void> {
       .catch((err: unknown) => {
         console.error("[intel] Onboard pipeline failed (non-fatal):", err);
       }),
-    // Branding bootstrap — only when colors/fonts are completely absent (non-fatal)
-    isBrandingEmpty(client) && client.website
-      ? applyBrandingForClient(clientId, client)
-          .then((r) => {
-            console.info(`[intel] Branding bootstrapped for ${client.name} (${r.source}): ${r.primaryColor ?? "no color"}`);
-          })
-          .catch((err: unknown) => {
-            console.error("[intel] Branding bootstrap failed (non-fatal):", err);
-          })
-      : Promise.resolve(),
+    // Branding refresh — always regenerate so the brand profile stays in sync with the Intel Report (non-fatal)
+    applyBrandingForClient(clientId, client)
+      .then((r) => {
+        console.info(`[intel] Branding refreshed for ${client.name} (${r.source}): ${r.primaryColor ?? "no color"}`);
+      })
+      .catch((err: unknown) => {
+        console.error("[intel] Branding generation failed (non-fatal):", err);
+      }),
   ]);
 
   const parsed = parseMarkdownReport(text);

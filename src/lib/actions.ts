@@ -127,6 +127,25 @@ export async function createClientAction(input: {
     createdAt: Date.now(),
     createdBy: user.uid,
   });
+
+  // Kick off the full onboarding pipeline after the HTTP response is sent so the
+  // creation form returns instantly. Both branding (Haiku, ~5 s) and the Intel
+  // Report (Sonnet 5-agent pipeline, ~60 s) run concurrently in the background.
+  after(async () => {
+    const [{ applyBrandingForClient }, { runIntelReportPipeline }] = await Promise.all([
+      import("@/lib/branding"),
+      import("@/lib/intel-report"),
+    ]);
+    await Promise.all([
+      applyBrandingForClient(id).catch((err: unknown) => {
+        console.error("[onboard] Branding generation failed (non-fatal):", err);
+      }),
+      runIntelReportPipeline(id).catch((err: unknown) => {
+        console.error("[onboard] Intel Report generation failed (non-fatal):", err);
+      }),
+    ]);
+  });
+
   revalidatePath("/clients");
   return { id };
 }
@@ -1230,19 +1249,9 @@ export async function generateBrandingAction(clientId: string): Promise<Branding
   await _logActivity({
     clientId,
     timestamp: Date.now(),
-    type: result.source === "preset" ? "BRANDING_UPDATED" : "SCRAPE",
-    title:
-      result.source === "scraped"
-        ? "Brand guidelines scraped from website"
-        : result.source === "inferred"
-          ? "Brand guidelines inferred via AI"
-          : "Brand preset applied",
-    description:
-      result.source === "scraped"
-        ? `Website scraped — extracted colors${result.primaryColor ? ` (${result.primaryColor})` : ""} and typography`
-        : result.source === "inferred"
-          ? `AI inferred brand palette${result.primaryColor ? ` (${result.primaryColor})` : ""} from company context`
-          : "Fallback brand archetype applied (website unavailable or yielded no tokens)",
+    type: "BRANDING_UPDATED",
+    title: "Brand guidelines generated via AI",
+    description: `AI generated brand profile from domain knowledge${result.primaryColor ? ` · ${result.primaryColor}` : ""}${result.visualStyle ? ` · ${result.visualStyle}` : ""}`,
     actor: user.name,
     actorRole: "staff",
     metadata: { source: result.source, primaryColor: result.primaryColor },
@@ -1258,10 +1267,9 @@ export async function generateBrandingAction(clientId: string): Promise<Branding
  */
 export async function backfillBrandingForAllClientsAction(): Promise<{
   total: number;
-  scraped: number;
-  preset: number;
+  generated: number;
   failed: number;
-  results: Array<{ clientId: string; name: string; status: "scraped" | "inferred" | "preset" | "failed"; primaryColor?: string }>;
+  results: Array<{ clientId: string; name: string; status: "ai_generated" | "failed"; primaryColor?: string }>;
 }> {
   await requireAdmin();
 
@@ -1269,7 +1277,7 @@ export async function backfillBrandingForAllClientsAction(): Promise<{
   const results: Array<{
     clientId: string;
     name: string;
-    status: "scraped" | "inferred" | "preset" | "failed";
+    status: "ai_generated" | "failed";
     primaryColor?: string;
   }> = [];
 
@@ -1287,8 +1295,7 @@ export async function backfillBrandingForAllClientsAction(): Promise<{
 
   return {
     total: clients.length,
-    scraped: results.filter((r) => r.status === "scraped").length,
-    preset: results.filter((r) => r.status === "preset").length,
+    generated: results.filter((r) => r.status === "ai_generated").length,
     failed: results.filter((r) => r.status === "failed").length,
     results,
   };

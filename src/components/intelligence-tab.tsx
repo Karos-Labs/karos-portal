@@ -428,6 +428,7 @@ function BrandingSection({
   guidelines,
   brandingDoc,
   hasWebsite,
+  isStaff,
   onEdit,
   onGenerate,
   generating,
@@ -436,10 +437,11 @@ function BrandingSection({
   guidelines?: Client["brandingGuidelines"];
   brandingDoc: ClientContextDoc | null;
   hasWebsite: boolean;
+  isStaff: boolean;
   onEdit: () => void;
   onGenerate: () => void;
   generating: boolean;
-  genFeedback?: { source: "scraped" | "inferred" | "preset"; primaryColor?: string; visualStyle?: string } | null;
+  genFeedback?: { source: "ai_generated"; primaryColor?: string; visualStyle?: string } | null;
 }) {
   const brandInsights = brandingDoc
     ? (() => {
@@ -457,9 +459,7 @@ function BrandingSection({
       })()
     : [];
 
-  const generateLabel = hasWebsite
-    ? (generating ? "Scraping website…" : "Generate from website")
-    : (generating ? "Generating…" : "Generate automatically");
+  const generateLabel = generating ? "Generating…" : "Generate with AI";
 
   if (!guidelines) {
     return (
@@ -471,29 +471,25 @@ function BrandingSection({
           <div>
             <p className="font-medium">No branding guidelines set</p>
             <p className="mt-1 text-sm text-muted-2">
-              {hasWebsite
-                ? "Karos can automatically extract colors, fonts, and visual style from the client's website."
-                : "Add guidelines so AI agents can produce on-brand content."}
+              Karos uses AI domain knowledge to generate colors, fonts, and brand voice for this client.
             </p>
           </div>
           {genFeedback && (
             <div className="flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
               <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
-              {genFeedback.source === "scraped"
-                ? `Scraped from website${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}`
-                : genFeedback.source === "inferred"
-                  ? `AI-inferred brand profile${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}`
-                  : "Applied brand archetype preset"}
+              {`AI Generated from Domain Knowledge${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}`}
             </div>
           )}
           <div className="flex flex-wrap justify-center gap-2">
             <Button size="sm" onClick={onEdit}>
               <Icon name="Pencil" className="h-4 w-4" /> Set manually
             </Button>
-            <Button size="sm" variant="outline" loading={generating} onClick={onGenerate}>
-              <Icon name={hasWebsite ? "Globe" : "Sparkles"} className="h-4 w-4" />
-              {generateLabel}
-            </Button>
+            {isStaff && (
+              <Button size="sm" variant="outline" loading={generating} onClick={onGenerate}>
+                <Icon name="Sparkles" className="h-4 w-4" />
+                {generateLabel}
+              </Button>
+            )}
           </div>
         </div>
       </Card>
@@ -516,10 +512,10 @@ function BrandingSection({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {hasWebsite && (
-            <Button size="sm" variant="outline" loading={generating} onClick={onGenerate} title="Re-scrape website for updated brand colors and fonts">
+          {isStaff && (
+            <Button size="sm" variant="outline" loading={generating} onClick={onGenerate} title="Regenerate brand profile with AI">
               <Icon name="RefreshCw" className="h-3.5 w-3.5" />
-              {generating ? "Scraping…" : "Re-scrape"}
+              {generating ? "Generating…" : "Regenerate"}
             </Button>
           )}
           <Button size="sm" variant="outline" onClick={onEdit}>
@@ -528,15 +524,11 @@ function BrandingSection({
         </div>
       </div>
 
-      {/* Scrape feedback pill */}
+      {/* Generation feedback pill */}
       {genFeedback && (
         <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
           <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
-          {genFeedback.source === "scraped"
-            ? `Scraped from website${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${genFeedback.primaryColor ? ` · ${genFeedback.primaryColor}` : ""}`
-            : genFeedback.source === "inferred"
-              ? `AI-inferred brand profile${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${genFeedback.primaryColor ? ` · ${genFeedback.primaryColor}` : ""}`
-              : "Applied brand archetype preset (no website data found)"}
+          {`AI Generated from Domain Knowledge${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${genFeedback.primaryColor ? ` · ${genFeedback.primaryColor}` : ""}`}
         </div>
       )}
 
@@ -634,7 +626,7 @@ export function IntelligenceTab({
   const [regenerating, startRegenerate] = useTransition();
   const [regenError, setRegenError] = useState<string | null>(null);
   const [brandingFeedback, setBrandingFeedback] = useState<{
-    source: "scraped" | "inferred" | "preset";
+    source: "ai_generated";
     primaryColor?: string;
     visualStyle?: string;
   } | null>(null);
@@ -745,6 +737,7 @@ export function IntelligenceTab({
         guidelines={client.brandingGuidelines}
         brandingDoc={brandingDoc}
         hasWebsite={!!client.website}
+        isStaff={isStaff}
         onEdit={() => setBrandingOpen(true)}
         onGenerate={handleGenerateBranding}
         generating={generating}
@@ -757,7 +750,7 @@ export function IntelligenceTab({
         onClose={() => setBrandingOpen(false)}
         clientId={client.id}
         existing={client.brandingGuidelines}
-        hasWebsite={!!client.website}
+        hasWebsite={isStaff && !!client.website}
       />
     </div>
   );

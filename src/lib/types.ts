@@ -290,19 +290,20 @@ export interface CustomerSentimentEntry {
 }
 
 export interface BrandingGuidelines {
+  /** Vibrant brand accent color (AI-generated from domain knowledge). */
   primaryColor?: string;
+  /** Canvas background color — light (#ffffff/#f4f4f5) or dark (#09090b/#0a0a0a). */
+  uiBackground?: string;
+  /** High-contrast text color that pairs with uiBackground. */
+  uiText?: string;
   secondaryColor?: string;
   fontHeading?: string;
   fontBody?: string;
   toneKeywords?: string[];
   logoUrl?: string;
-  /** Free-form markdown guidelines text */
+  /** Free-form markdown: Brand Voice, Do's, Don'ts. */
   guidelines?: string;
-  /**
-   * Inferred or manually set visual aesthetic.
-   * Set by the website scraper; can be overridden in the branding modal.
-   * E.g. "Minimalist" | "Dark Mode" | "High-Tech" | "Corporate" | "Vibrant" | "Luxury"
-   */
+  /** Visual aesthetic archetype. E.g. "Minimalist" | "Dark Mode" | "High-Tech" | "Corporate" | "Vibrant" | "Luxury" */
   visualStyle?: string;
   updatedAt: number;
 }

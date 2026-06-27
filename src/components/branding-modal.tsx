@@ -21,7 +21,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState<{ source: "scraped" | "inferred" | "preset"; visualStyle?: string } | null>(null);
+  const [genResult, setGenResult] = useState<{ source: "ai_generated"; visualStyle?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState("");
 
@@ -105,25 +105,21 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">Generate from website</p>
               <p className="text-xs text-muted-2">
-                Karos will scrape the client's site to extract colors, fonts, and visual style.
+                Karos uses AI domain knowledge to generate colors, fonts, and brand voice.
               </p>
             </div>
             <Button size="sm" variant="outline" loading={generating} onClick={generateFromWebsite}>
-              <Icon name="Globe" className="h-4 w-4" />
-              {generating ? "Scraping…" : "Run scraper"}
+              <Icon name="Sparkles" className="h-4 w-4" />
+              {generating ? "Generating…" : "Generate with AI"}
             </Button>
           </div>
         )}
 
-        {/* Scrape result feedback */}
+        {/* Generation feedback */}
         {genResult && (
           <div className="flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
             <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
-            {genResult.source === "scraped"
-              ? `Scraped successfully${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review the values below and save.`
-              : genResult.source === "inferred"
-                ? `AI-inferred brand profile${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review and save.`
-                : "No website data found — applied a brand archetype preset. Adjust as needed."}
+            {`AI Generated from Domain Knowledge${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review the values below and save.`}
           </div>
         )}
 
