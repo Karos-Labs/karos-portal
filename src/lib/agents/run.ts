@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import {
   getAgent,
+  getAgentByLabsSkillId,
   getClient,
   listTranscripts,
   listContextItems,
@@ -114,7 +115,7 @@ type UserPart = TextPart | ImagePart | FilePart;
  * parts Claude reads natively. Returns the capped image list so the IG branch
  * can map a post's `useContextImage` index back to a URL.
  */
-async function loadClientContext(
+export async function loadClientContext(
   clientId: string,
   events: JobRunEvent[],
 ): Promise<{ text: string; mediaParts: UserPart[]; images: ContextItem[] }> {
@@ -165,7 +166,7 @@ async function loadClientContext(
 }
 
 /** Anthropic prompt-cache breakpoint marker (default 5-minute ephemeral cache). */
-const CACHE_CONTROL = { anthropic: { cacheControl: { type: "ephemeral" } } };
+export const CACHE_CONTROL = { anthropic: { cacheControl: { type: "ephemeral" } } };
 
 /**
  * Assemble a cache-friendly message set. Caching is a prefix match, so order
@@ -176,7 +177,7 @@ const CACHE_CONTROL = { anthropic: { cacheControl: { type: "ephemeral" } } };
  * (often large) brand-voice / transcript / context-library tokens at ~10% of
  * input cost.
  */
-function buildCachedMessages(args: {
+export function buildCachedMessages(args: {
   systemPrompt: string;
   stableContext: string;
   mediaParts: UserPart[];
@@ -196,7 +197,7 @@ function buildCachedMessages(args: {
 }
 
 /** Surface prompt-cache reuse/writes on the job timeline for observability. */
-function logCacheUsage(events: JobRunEvent[], meta: Record<string, unknown> | undefined) {
+export function logCacheUsage(events: JobRunEvent[], meta: Record<string, unknown> | undefined) {
   const a = meta?.anthropic as
     | { cacheReadInputTokens?: number; cacheCreationInputTokens?: number }
     | undefined;
@@ -408,6 +409,40 @@ export async function startAgentRun(params: RunParams): Promise<RunResult> {
   const { jobId, agent, client, events } = prepared;
   after(() => executeRun({ jobId, agent, client, input: params.input, actor: params.actor, events }));
   return { jobId, status: "running" };
+}
+
+/** Provenance key of the imported "full digital intelligence & competitive report" agent. */
+export const INTEL_LABS_SKILL_ID = "karos-intel";
+
+/**
+ * Kick off the onboarding intelligence report for a freshly-created client. Best-effort and
+ * never throws: resolves the imported `karos-intel` agent and starts a background run grounded
+ * on the client's website. Returns null (a no-op) when the intel agent hasn't been imported yet
+ * or the client can't be read — so it can't break the approval/creation flow that calls it.
+ */
+export async function startIntelReport(clientId: string, actor: AppUser): Promise<RunResult | null> {
+  try {
+    const [agent, client] = await Promise.all([
+      getAgentByLabsSkillId(INTEL_LABS_SKILL_ID),
+      getClient(clientId),
+    ]);
+    if (!agent || !client) return null;
+    const focus = client.website ? `${client.name} — ${client.website}` : client.name;
+    return await startAgentRun({
+      agentId: agent.id,
+      clientId: client.id,
+      input: {
+        topic: focus,
+        notes:
+          "Automated onboarding run. Produce the full digital intelligence and competitive report: " +
+          "audit the company's website and digital footprint, map competitors and positioning, and surface opportunities.",
+      },
+      actor,
+      title: `Onboarding intel · ${client.name}`,
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getClient, listAgents, listAssets, listTranscripts, listJobs, listContextItems } from "@/lib/data";
+import { getClient, listAgents, listAssets, listTranscripts, listJobs, listContextItems, getContentEngineConfig, getContentCatalog } from "@/lib/data";
 import { Card, CardTitle, Badge, EmptyState, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ClientEditor } from "@/components/client-editor";
 import { ClientContext } from "@/components/client-context";
+import { ClientCompetitors } from "@/components/client-competitors";
+import { ContentEngineLauncher } from "@/components/content-engine-launcher";
 import { AgentCard } from "@/components/agent-card";
 import { AssetCard } from "@/components/asset-card";
 import { JobStatusBadge } from "@/components/job-status";
@@ -17,14 +19,18 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const client = await getClient(id);
   if (!client) notFound();
 
-  const [agents, assets, transcripts, jobs, contextItems] = await Promise.all([
+  const [agents, assets, transcripts, jobs, contextItems, ceConfig, ceCatalog] = await Promise.all([
     listAgents({ status: "published" }),
     listAssets({ clientId: id }),
     listTranscripts({ clientId: id }),
     listJobs({ clientId: id }),
     listContextItems({ clientId: id }),
+    getContentEngineConfig(id),
+    getContentCatalog(id),
   ]);
   const activeAgents = agents.filter((a) => a.isActive);
+  // The run needs BOTH a config and a (non-empty) catalog, so only offer it then.
+  const contentEngineReady = Boolean(ceConfig && ceCatalog && ceCatalog.entries.length > 0);
 
   return (
     <>
@@ -70,8 +76,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             )}
           </div>
 
-          {/* Context library */}
+          {/* Documents (context library) + competitors */}
           <ClientContext clientId={id} items={contextItems} />
+          <ClientCompetitors clientId={id} competitors={client.competitors ?? []} />
 
           {/* Assets */}
           <div>
@@ -92,6 +99,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         </div>
 
         <div className="space-y-6">
+          {contentEngineReady && <ContentEngineLauncher clientId={id} clientName={client.name} />}
           <ClientEditor client={client} />
 
           <Card>

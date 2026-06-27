@@ -14,6 +14,8 @@ export async function POST(req: NextRequest) {
       await provisionFromSignup(idToken, {
         requestedRole: intent.requestedRole === "client" ? "client" : "employee",
         clientName: intent.clientName,
+        clientUrl: intent.clientUrl,
+        clientId: intent.clientId,
       });
     }
     return NextResponse.json({ ok: true });

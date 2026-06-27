@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { adminAuth } from "@/lib/firebase/admin";
 import {
@@ -27,7 +28,8 @@ import {
 } from "@/lib/data";
 import { issueAccessToken } from "@/lib/tokens";
 import { deleteObject } from "@/lib/storage";
-import { startAgentRun, testRunAgent, type TestRunResult } from "@/lib/agents/run";
+import { startAgentRun, startIntelReport, testRunAgent, type TestRunResult } from "@/lib/agents/run";
+import { startContentEngineRun } from "@/lib/content-engine/run";
 import {
   type DraftFields,
   createDraftAgent,
@@ -37,7 +39,7 @@ import {
   buildTestAgent,
 } from "@/lib/agents/authoring";
 import { ingestTranscript } from "@/lib/transcripts/ingest";
-import type { Agent, AppUser, Client, Role } from "@/lib/types";
+import type { Agent, AppUser, Client, Competitor, Role } from "@/lib/types";
 
 async function requireStaff(): Promise<AppUser> {
   const user = await getCurrentUser();
@@ -96,6 +98,30 @@ export async function updateClientAction(id: string, input: Partial<Client> & { 
   await updateClient(id, patch);
   revalidatePath(`/clients/${id}`);
   revalidatePath("/clients");
+}
+
+/** Add a competitor to a client's tracked list. */
+export async function addCompetitorAction(clientId: string, input: { name: string; website: string }) {
+  await requireStaff();
+  const name = input.name.trim();
+  const website = input.website.trim();
+  if (!name) throw new Error("Competitor needs a name.");
+  const client = await getClient(clientId);
+  if (!client) throw new Error("Client not found");
+  const competitor: Competitor = { id: crypto.randomUUID(), name, website };
+  await updateClient(clientId, { competitors: [...(client.competitors ?? []), competitor] });
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/** Remove a competitor from a client's tracked list. */
+export async function removeCompetitorAction(clientId: string, competitorId: string) {
+  await requireStaff();
+  const client = await getClient(clientId);
+  if (!client) throw new Error("Client not found");
+  await updateClient(clientId, {
+    competitors: (client.competitors ?? []).filter((c) => c.id !== competitorId),
+  });
+  revalidatePath(`/clients/${clientId}`);
 }
 
 /* ------------------------------- agents ------------------------------ */
@@ -173,6 +199,25 @@ export async function runAgentAction(input: {
     agentId: input.agentId,
     clientId: input.clientId,
     input: input.input,
+    actor: user,
+  });
+  revalidatePath("/jobs");
+  revalidatePath(`/clients/${input.clientId}`);
+  revalidatePath("/assets");
+  return result;
+}
+
+/**
+ * Trigger a native content-engine run for a client: picks the next on-brand
+ * topic from the client's catalog (dedupe/cooldown via the ledger), generates a
+ * QA-gated carousel, and lands it as a `review` asset. Returns immediately; the
+ * carousel + slide images are produced in the background (after()).
+ */
+export async function runContentEngineAction(input: { clientId: string; format?: string }) {
+  const user = await requireStaff();
+  const result = await startContentEngineRun({
+    clientId: input.clientId,
+    format: input.format || null,
     actor: user,
   });
   revalidatePath("/jobs");
@@ -433,6 +478,8 @@ export async function approveRegistrationAction(
     clientId?: string | null;
     /** role=client: create a brand-new client with this name instead of linking. */
     newClientName?: string;
+    /** role=client: website URL for the brand-new client (seeds the onboarding intel report). */
+    newClientUrl?: string;
     /** role=employee: clients to assign. */
     assignedClientIds?: string[];
   },
@@ -449,13 +496,17 @@ export async function approveRegistrationAction(
     assignedClientIds: [],
   };
 
+  // Set when this approval creates a brand-new company — the only case that kicks off an
+  // onboarding intel report. Linking an existing client never re-runs it.
+  let newlyCreatedClientId: string | null = null;
+
   if (input.role === "client") {
     let clientId = input.clientId ?? null;
     const newName = input.newClientName?.trim();
     if (newName) {
       clientId = await createClient({
         name: newName,
-        website: "",
+        website: input.newClientUrl?.trim() || existing.requestedClientUrl?.trim() || "",
         industry: "",
         // Seed the contact with the client's own login email so meetings/assets auto-route.
         contactEmail: existing.email,
@@ -467,6 +518,7 @@ export async function approveRegistrationAction(
         createdAt: Date.now(),
         createdBy: admin.uid,
       });
+      newlyCreatedClientId = clientId;
     }
     if (!clientId) throw new Error("Pick a client or create a new one for this person.");
     patch.clientId = clientId;
@@ -476,6 +528,17 @@ export async function approveRegistrationAction(
 
   await upsertUser({ ...existing, ...patch });
   await adminAuth().updateUser(uid, { disabled: false }).catch(() => {});
+
+  // A new company was onboarded → immediately start its intel report in the background.
+  // Deferred via after() so it never delays the approval response; best-effort (no-ops if the
+  // karos-intel agent hasn't been imported).
+  if (newlyCreatedClientId) {
+    const clientId = newlyCreatedClientId;
+    after(() => startIntelReport(clientId, admin));
+    revalidatePath("/jobs");
+    revalidatePath(`/clients/${clientId}`);
+  }
+
   revalidatePath("/registrations");
   revalidatePath("/team");
 }

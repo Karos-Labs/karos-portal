@@ -21,10 +21,23 @@ export interface AppUser {
   requestedRole?: "employee" | "client";
   /** For client self-signups — the company/brand they typed, before being linked to a real Client. */
   requestedClientName?: string;
+  /** For client self-signups of a NEW company — the website URL they entered (seeds the Client + intel report). */
+  requestedClientUrl?: string;
+  /** Set when the signup picked an already-existing company from autocomplete — the matched Client id. */
+  requestedClientId?: string | null;
   /** Set when an admin approves the account. Absent + disabled ⇒ a pending registration. */
   approvedAt?: number | null;
   createdAt: number;
   lastLoginAt?: number;
+}
+
+/** A competitor brand tracked for a client. Staff-managed; stored inline on the Client. */
+export interface Competitor {
+  /** Stable id for keying & removal. */
+  id: string;
+  name: string;
+  /** Website URL as entered (may omit protocol); favicon is derived from its host. */
+  website: string;
 }
 
 export interface Client {
@@ -40,6 +53,8 @@ export interface Client {
   brandVoice?: string;
   logoUrl?: string;
   accentColor?: string;
+  /** Competitor brands tracked for this client (staff-managed). */
+  competitors?: Competitor[];
   assignedEmployeeIds: string[];
   status: "active" | "paused" | "archived";
   createdAt: number;

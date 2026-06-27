@@ -15,6 +15,8 @@ interface RowForm {
   /** Existing client id, or NEW_CLIENT to create one. */
   clientTarget: string;
   newClientName: string;
+  /** Website for a brand-new client — seeds the onboarding intel report. */
+  newClientUrl: string;
   assigned: string[];
 }
 
@@ -27,11 +29,20 @@ export function RegistrationManager({ pending, clients }: { pending: AppUser[]; 
   // The default approval state for a user: pre-fill the role/company they requested at signup.
   function baseForm(u: AppUser): RowForm {
     const role: Role = u.requestedRole ?? "employee";
+    // If they picked an existing company at signup, default to linking it (no new client, no
+    // duplicate intel report). Otherwise default to creating a new client from what they typed.
+    const matchedExisting = u.requestedClientId && clients.some((c) => c.id === u.requestedClientId);
+    const clientTarget =
+      role !== "client"
+        ? clients[0]?.id ?? NEW_CLIENT
+        : matchedExisting
+          ? (u.requestedClientId as string)
+          : NEW_CLIENT;
     return {
       role,
-      // Clients default to creating a new client seeded with the name they typed at signup.
-      clientTarget: role === "client" ? NEW_CLIENT : clients[0]?.id ?? NEW_CLIENT,
+      clientTarget,
       newClientName: u.requestedClientName ?? "",
+      newClientUrl: u.requestedClientUrl ?? "",
       assigned: [],
     };
   }
@@ -61,6 +72,7 @@ export function RegistrationManager({ pending, clients }: { pending: AppUser[]; 
         role: f.role,
         clientId: f.role === "client" && f.clientTarget !== NEW_CLIENT ? f.clientTarget : undefined,
         newClientName: f.role === "client" && f.clientTarget === NEW_CLIENT ? f.newClientName : undefined,
+        newClientUrl: f.role === "client" && f.clientTarget === NEW_CLIENT ? f.newClientUrl : undefined,
         assignedClientIds: f.role === "employee" ? f.assigned : undefined,
       });
       router.refresh();
@@ -123,7 +135,13 @@ export function RegistrationManager({ pending, clients }: { pending: AppUser[]; 
 
             {u.requestedRole === "client" && u.requestedClientName && (
               <p className="text-xs text-muted">
-                Said they're from <span className="text-foreground">{u.requestedClientName}</span>.
+                Said they're from <span className="text-foreground">{u.requestedClientName}</span>
+                {u.requestedClientId
+                  ? " (an existing company)"
+                  : u.requestedClientUrl
+                    ? <> · <span className="text-foreground">{u.requestedClientUrl}</span></>
+                    : null}
+                .
               </p>
             )}
 
@@ -151,13 +169,23 @@ export function RegistrationManager({ pending, clients }: { pending: AppUser[]; 
             </div>
 
             {f.role === "client" && f.clientTarget === NEW_CLIENT && (
-              <div>
-                <Label>New client name</Label>
-                <Input
-                  value={f.newClientName}
-                  onChange={(e) => update(u, { newClientName: e.target.value })}
-                  placeholder="Acme Co"
-                />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <Label>New client name</Label>
+                  <Input
+                    value={f.newClientName}
+                    onChange={(e) => update(u, { newClientName: e.target.value })}
+                    placeholder="Acme Co"
+                  />
+                </div>
+                <div>
+                  <Label>Website (starts an intel report)</Label>
+                  <Input
+                    value={f.newClientUrl}
+                    onChange={(e) => update(u, { newClientUrl: e.target.value })}
+                    placeholder="acme.com"
+                  />
+                </div>
               </div>
             )}
 

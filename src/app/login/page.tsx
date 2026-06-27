@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   signInWithEmailAndPassword,
@@ -20,13 +20,47 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [joinAs, setJoinAs] = useState<"employee" | "client">("employee");
   const [companyName, setCompanyName] = useState("");
+  const [companyUrl, setCompanyUrl] = useState("");
+  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<"email" | "google" | null>(null);
+
+  // Load the existing-company directory once a client starts signing up, to power the autocomplete.
+  useEffect(() => {
+    if (mode !== "signup" || joinAs !== "client" || companies.length) return;
+    fetch("/api/clients/directory")
+      .then((r) => r.json())
+      .then((d) => setCompanies(d.clients ?? []))
+      .catch(() => {});
+  }, [mode, joinAs, companies.length]);
+
+  /** The existing company whose name the typed value matches exactly (case-insensitive). */
+  const matchedCompany = useMemo(() => {
+    const typed = companyName.trim().toLowerCase();
+    if (!typed) return null;
+    return companies.find((c) => c.name.trim().toLowerCase() === typed) ?? null;
+  }, [companyName, companies]);
 
   /** Signup-only: the role/company the new user is requesting (an admin confirms it). */
   function signupIntent() {
     if (mode !== "signup") return undefined;
-    return { requestedRole: joinAs, clientName: joinAs === "client" ? companyName.trim() : undefined };
+    if (joinAs !== "client") return { requestedRole: joinAs };
+    return {
+      requestedRole: joinAs,
+      clientName: companyName.trim(),
+      // Matched an existing company → record the link (no new client, no intel report).
+      // A new company carries its URL through so onboarding can seed the client + intel report.
+      clientId: matchedCompany?.id,
+      clientUrl: matchedCompany ? undefined : companyUrl.trim(),
+    };
+  }
+
+  /** Shared signup validation for the email + Google paths. Returns an error string, or null. */
+  function clientSignupError(): string | null {
+    if (mode !== "signup" || joinAs !== "client") return null;
+    if (!companyName.trim()) return "Tell us your company or brand name.";
+    if (!matchedCompany && !companyUrl.trim()) return "Enter your company website so we can build your intel report.";
+    return null;
   }
 
   async function establishSession() {
@@ -47,9 +81,8 @@ export default function LoginPage() {
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (mode === "signup" && joinAs === "client" && !companyName.trim()) {
-      return setError("Tell us your company or brand name.");
-    }
+    const invalid = clientSignupError();
+    if (invalid) return setError(invalid);
     setLoading("email");
     try {
       if (mode === "signup") {
@@ -67,9 +100,8 @@ export default function LoginPage() {
 
   async function handleGoogle() {
     setError(null);
-    if (mode === "signup" && joinAs === "client" && !companyName.trim()) {
-      return setError("Tell us your company or brand name.");
-    }
+    const invalid = clientSignupError();
+    if (invalid) return setError(invalid);
     setLoading("google");
     try {
       await signInWithPopup(auth, googleProvider);
@@ -136,14 +168,42 @@ export default function LoginPage() {
                   <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" />
                 </div>
                 {joinAs === "client" && (
-                  <div>
-                    <Label>Company / brand name</Label>
-                    <Input
-                      value={companyName}
-                      onChange={(e) => setCompanyName(e.target.value)}
-                      placeholder="Acme Co"
-                    />
-                  </div>
+                  <>
+                    <div>
+                      <Label>Company / brand name</Label>
+                      <Input
+                        value={companyName}
+                        onChange={(e) => setCompanyName(e.target.value)}
+                        placeholder="Acme Co"
+                        list="company-options"
+                        autoComplete="off"
+                      />
+                      <datalist id="company-options">
+                        {companies.map((c) => (
+                          <option key={c.id} value={c.name} />
+                        ))}
+                      </datalist>
+                      {matchedCompany ? (
+                        <p className="mt-1.5 text-[11px] text-neon">
+                          Joining {matchedCompany.name} — we'll connect you to the existing account.
+                        </p>
+                      ) : (
+                        <p className="mt-1.5 text-[11px] text-muted-2">
+                          New company? Add your website below and we'll start your intel report.
+                        </p>
+                      )}
+                    </div>
+                    {!matchedCompany && (
+                      <div>
+                        <Label>Company website</Label>
+                        <Input
+                          value={companyUrl}
+                          onChange={(e) => setCompanyUrl(e.target.value)}
+                          placeholder="acme.com"
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}

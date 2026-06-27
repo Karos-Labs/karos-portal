@@ -40,6 +40,10 @@ export interface SignupIntent {
   requestedRole?: "employee" | "client";
   /** Company/brand name a client typed (used to seed a Client record on approval). */
   clientName?: string;
+  /** Website URL a client typed for a NEW company (seeds the Client + onboarding intel report). */
+  clientUrl?: string;
+  /** Set when the client picked an existing company from autocomplete — the matched Client id. */
+  clientId?: string | null;
 }
 
 /**
@@ -80,6 +84,14 @@ async function ensureUserDoc(
     requestedRole: bootstrap ? undefined : requested,
     requestedClientName:
       !bootstrap && requested === "client" ? intent?.clientName?.trim() || "" : undefined,
+    // A client who matched an existing company gets that link recorded (admin defaults to it →
+    // no duplicate intel report); a new company carries its URL through to client creation.
+    requestedClientId:
+      !bootstrap && requested === "client" ? intent?.clientId || null : undefined,
+    requestedClientUrl:
+      !bootstrap && requested === "client" && !intent?.clientId
+        ? intent?.clientUrl?.trim() || ""
+        : undefined,
     // Admins are active & approved immediately; everyone else needs explicit approval.
     disabled: !bootstrap,
     approvedAt: bootstrap ? Date.now() : null,
