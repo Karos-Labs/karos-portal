@@ -164,6 +164,7 @@ function PlatformCard({
 
   // Re-sync form defaults when integration data changes after OAuth
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional re-sync when integration prop changes
     setAccountName(integration?.accountName ?? "");
     const next: Record<string, string> = {};
     for (const f of platform.fields) {

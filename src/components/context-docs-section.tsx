@@ -291,6 +291,7 @@ function DocViewer({
 
   // Auto-generate summary when doc changes and we're in summary mode
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset of derived UI state when doc changes
     setViewMode("summary");
     setOpenSet(new Set([0]));
     if (!doc) {

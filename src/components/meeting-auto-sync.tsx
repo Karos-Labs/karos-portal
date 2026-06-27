@@ -22,6 +22,7 @@ export function MeetingAutoSync() {
     lastSyncAt = now;
 
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: show syncing state immediately before the async work starts
     setState("syncing");
 
     syncFirefliesAction()

@@ -61,6 +61,7 @@ function ScheduleSection({
     compatiblePlatforms.includes(p),
   );
 
+  // eslint-disable-next-line react-hooks/purity -- initial value only; component mounts once per modal open
   const minDatetime = new Date(Date.now() + 60_000).toISOString().slice(0, 16);
   const [datetime, setDatetime] = useState(minDatetime);
   const [platform, setPlatform] = useState(availablePlatforms[0] ?? "");

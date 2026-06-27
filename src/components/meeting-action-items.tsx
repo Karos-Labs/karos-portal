@@ -51,11 +51,7 @@ export function MeetingActionItems({
   const [pendingToggle, setPendingToggle] = useState<Set<number>>(new Set());
   const [pendingAssign, setPendingAssign] = useState<Set<number>>(new Set());
 
-  if (actionItems.length === 0) {
-    return <p className="text-sm text-muted-2">None extracted.</p>;
-  }
-
-  // Group item indices by owner name for display
+  // Group item indices by owner name for display (must precede any early return — hooks must not be conditional)
   const groups = useMemo(() => {
     const map = new Map<string, number[]>();
     owners.forEach((owner, i) => {
@@ -69,6 +65,10 @@ export function MeetingActionItems({
       return a.localeCompare(b);
     });
   }, [owners]);
+
+  if (actionItems.length === 0) {
+    return <p className="text-sm text-muted-2">None extracted.</p>;
+  }
 
   async function handleToggle(index: number) {
     if (pendingToggle.has(index)) return;

@@ -21,6 +21,7 @@ export default async function DashboardPage() {
     listJobs(),
   ]);
   const activeAgents = agents.filter((a) => a.isActive);
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const weekAgo = Date.now() - 7 * 86400000;
   const jobsThisWeek = jobs.filter((j) => j.createdAt > weekAgo);
   const delivered = jobs.filter((j) => j.status === "delivered").length;

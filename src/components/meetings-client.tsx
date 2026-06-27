@@ -46,6 +46,7 @@ export function MeetingsClient({ transcripts, clients, users, currentUserRole, c
   const clientName = (id?: string | null) => clients.find((c) => c.id === id)?.name;
 
   const filtered = useMemo(() => {
+    // eslint-disable-next-line react-hooks/purity -- Date.now() intentional: filters based on current time relative to dep-driven timeframe
     const now = Date.now();
     return transcripts.filter((t) => {
       // Tab

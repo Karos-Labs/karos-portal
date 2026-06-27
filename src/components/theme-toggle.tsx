@@ -9,6 +9,7 @@ export function ThemeToggle() {
   const [mounted, setMounted] = useState(false);
   const { resolvedTheme, setTheme } = useTheme();
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- standard SSR hydration guard
   useEffect(() => setMounted(true), []);
 
   if (!mounted) return <div className="h-9 w-9 shrink-0" />;
