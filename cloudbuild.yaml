@@ -37,15 +37,11 @@
 #   # For FIREBASE_SERVICE_ACCOUNT_KEY — OR use Workload Identity (see note below).
 #   cat serviceAccount.json | gcloud secrets create FIREBASE_SERVICE_ACCOUNT_KEY --data-file=-
 #
-#   # 5. Store NEXT_PUBLIC_* build-time vars (not secret, but centralised here)
-#   echo -n "AIzaSy..." | gcloud secrets create NEXT_PUBLIC_FIREBASE_API_KEY --data-file=-
-#   echo -n "karoscmo.firebaseapp.com" | gcloud secrets create NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN --data-file=-
-#   echo -n "karoscmo" | gcloud secrets create NEXT_PUBLIC_FIREBASE_PROJECT_ID --data-file=-
-#   echo -n "karoscmo.firebasestorage.app" | gcloud secrets create NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET --data-file=-
-#   echo -n "42999994788" | gcloud secrets create NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID --data-file=-
-#   echo -n "1:42999994..." | gcloud secrets create NEXT_PUBLIC_FIREBASE_APP_ID --data-file=-
+#   # Note: NEXT_PUBLIC_FIREBASE_* are now hardcoded in the Dockerfile (they are
+#   # public Firebase Web SDK config — visible in every browser's JS bundle).
+#   # No Secret Manager secrets are needed for those 6 values.
 #
-#   # 6. Connect this cloudbuild.yaml to a Cloud Build trigger (GitHub / manual)
+#   # 5. Connect this cloudbuild.yaml to a Cloud Build trigger (GitHub / manual)
 #   gcloud builds triggers create github \
 #     --repo-name=karos-cmo \
 #     --repo-owner=<your-github-org> \
@@ -80,6 +76,8 @@ options:
 
 steps:
   # ── 1. Build the Docker image ───────────────────────────────────────────────
+  # NEXT_PUBLIC_FIREBASE_* are hardcoded in the Dockerfile — no --build-arg needed.
+  # Only server-side runtime secrets come from Secret Manager (injected at deploy).
   - id: docker-build
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
@@ -87,23 +85,10 @@ steps:
       - -c
       - |
         docker build \
-          --build-arg NEXT_PUBLIC_FIREBASE_API_KEY="$$NEXT_PUBLIC_FIREBASE_API_KEY" \
-          --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="$$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN" \
-          --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID="$$NEXT_PUBLIC_FIREBASE_PROJECT_ID" \
-          --build-arg NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="$$NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET" \
-          --build-arg NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="$$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" \
-          --build-arg NEXT_PUBLIC_FIREBASE_APP_ID="$$NEXT_PUBLIC_FIREBASE_APP_ID" \
           --cache-from ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest \
           --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA \
           --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest \
           .
-    secretEnv:
-      - NEXT_PUBLIC_FIREBASE_API_KEY
-      - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-      - NEXT_PUBLIC_FIREBASE_PROJECT_ID
-      - NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
-      - NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-      - NEXT_PUBLIC_FIREBASE_APP_ID
 
   # ── 2. Push both tags to Artifact Registry ──────────────────────────────────
   - id: docker-push
@@ -138,24 +123,6 @@ steps:
       # Non-secret runtime env vars (not baked into image; can change without rebuild)
       - --set-env-vars=EMAIL_FROM=Karos CMO <hello@karoslabs.com>,NODE_ENV=production
     waitFor: [docker-push]
-
-# ── Secret Manager bindings for the build step ─────────────────────────────────
-# Cloud Build accesses these to pass NEXT_PUBLIC_* as --build-arg.
-# Grant Cloud Build SA: roles/secretmanager.secretAccessor on each secret.
-availableSecrets:
-  secretManager:
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_API_KEY/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_API_KEY
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_PROJECT_ID/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_PROJECT_ID
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_APP_ID/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_APP_ID
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
