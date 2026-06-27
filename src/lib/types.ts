@@ -484,6 +484,10 @@ export interface Transcript {
   keywords?: string[];
   /** Indices of action items the team has marked complete (persisted to Firestore). */
   completedItems?: number[];
+  /** Per-item explicit user ID assignment, parallel to actionItems[]. Drives the notification system. */
+  actionItemAssignedUserIds?: (string | null)[];
+  /** Denormalised flat array of all unique user IDs assigned to any action item. Enables Firestore array-contains queries. */
+  assignedUserIds?: string[];
   /** True when the meeting has been archived (manually or auto when all items done). */
   archived?: boolean;
   /**
@@ -499,4 +503,34 @@ export interface Transcript {
   /** Epoch millis when this transcript was last pushed as a meeting signal to clientContextDocs. */
   contextDocSignalAt?: number;
   createdAt: number;
+}
+
+/* ─────────────────── Notification Centre ───────────────────────────── */
+
+/** A single meeting action item assigned to a user that is not yet completed. */
+export interface ActionItemNotification {
+  transcriptId: string;
+  transcriptTitle: string;
+  itemIndex: number;
+  text: string;
+  meetingDate?: number;
+  clientId?: string | null;
+}
+
+/* ─────────────────────── Login Audit Logs ───────────────────────────── */
+
+export interface LoginLog {
+  id: string;
+  uid: string | null;
+  email: string | null;
+  timestamp: number;
+  userAgent?: string | null;
+}
+
+/** An AI agent job that has generated content and is awaiting client review. */
+export interface AgentReviewNotification {
+  jobId: string;
+  title: string;
+  agentName: string;
+  updatedAt: number;
 }

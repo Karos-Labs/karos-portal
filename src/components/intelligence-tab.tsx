@@ -439,7 +439,7 @@ function BrandingSection({
   onEdit: () => void;
   onGenerate: () => void;
   generating: boolean;
-  genFeedback?: { source: "scraped" | "preset"; primaryColor?: string; visualStyle?: string } | null;
+  genFeedback?: { source: "scraped" | "inferred" | "preset"; primaryColor?: string; visualStyle?: string } | null;
 }) {
   const brandInsights = brandingDoc
     ? (() => {
@@ -481,7 +481,9 @@ function BrandingSection({
               <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
               {genFeedback.source === "scraped"
                 ? `Scraped from website${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}`
-                : "Applied brand archetype preset"}
+                : genFeedback.source === "inferred"
+                  ? `AI-inferred brand profile${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}`
+                  : "Applied brand archetype preset"}
             </div>
           )}
           <div className="flex flex-wrap justify-center gap-2">
@@ -532,7 +534,9 @@ function BrandingSection({
           <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
           {genFeedback.source === "scraped"
             ? `Scraped from website${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${genFeedback.primaryColor ? ` · ${genFeedback.primaryColor}` : ""}`
-            : "Applied brand archetype preset (no website data found)"}
+            : genFeedback.source === "inferred"
+              ? `AI-inferred brand profile${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${genFeedback.primaryColor ? ` · ${genFeedback.primaryColor}` : ""}`
+              : "Applied brand archetype preset (no website data found)"}
         </div>
       )}
 
@@ -630,7 +634,7 @@ export function IntelligenceTab({
   const [regenerating, startRegenerate] = useTransition();
   const [regenError, setRegenError] = useState<string | null>(null);
   const [brandingFeedback, setBrandingFeedback] = useState<{
-    source: "scraped" | "preset";
+    source: "scraped" | "inferred" | "preset";
     primaryColor?: string;
     visualStyle?: string;
   } | null>(null);
@@ -753,6 +757,7 @@ export function IntelligenceTab({
         onClose={() => setBrandingOpen(false)}
         clientId={client.id}
         existing={client.brandingGuidelines}
+        hasWebsite={!!client.website}
       />
     </div>
   );

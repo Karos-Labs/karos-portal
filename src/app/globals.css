@@ -119,6 +119,73 @@ body {
   -webkit-backdrop-filter: blur(18px) saturate(160%);
 }
 
+/* ── Light mode theme ─────────────────────────────────────────────────── */
+
+.light {
+  --background: #f8fafc;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --surface-3: #e2e8f0;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --foreground: #0f172a;
+  --muted: #475569;
+  --muted-2: #94a3b8;
+
+  /* Emerald palette — darker accent for legibility on light surfaces */
+  --neon: #059669;
+  --neon-bright: #10b981;
+  --neon-dim: #047857;
+  --neon-glow: rgba(5, 150, 105, 0.2);
+  --neon-soft: rgba(5, 150, 105, 0.08);
+
+  --danger: #dc2626;
+  --warning: #d97706;
+  --info: #2563eb;
+}
+
+.light body {
+  background-image:
+    radial-gradient(ellipse 1400px 700px at 100% -5%,  rgba(5, 150, 105, 0.04), transparent 60%),
+    radial-gradient(ellipse 1000px 600px at -5% 105%,  rgba(5, 150, 105, 0.03), transparent 55%);
+  background-color: var(--background);
+}
+
+/* Card gradient adapts to flat white in light mode */
+.light .card-grad {
+  background: var(--surface);
+}
+
+/* Glass surface becomes frosted white in light mode */
+.light .glass-surface {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+}
+
+/* Neon glow uses emerald shadows in light mode */
+.light .neon-glow {
+  box-shadow:
+    0 0 0 1px rgba(5, 150, 105, 0.2),
+    0 0 20px -4px rgba(5, 150, 105, 0.25),
+    0 0 40px -12px rgba(5, 150, 105, 0.12);
+}
+
+/* In light mode the accent colour is dark emerald — use white text on neon-bg elements */
+.light .bg-neon,
+.light .bg-neon-bright {
+  color: #ffffff;
+}
+
+/* Scrollbar adapts to light surfaces */
+.light ::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-color: var(--background);
+}
+.light ::-webkit-scrollbar-thumb:hover {
+  background: var(--neon-dim);
+}
+
 /* ── Keyframes ────────────────────────────────────────────────────────── */
 
 @keyframes pulse-neon {

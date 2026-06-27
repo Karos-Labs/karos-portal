@@ -3,8 +3,10 @@ import "server-only";
 import { adminDb } from "@/lib/firebase/admin";
 import type {
   AccessToken,
+  ActionItemNotification,
   ActivityLog,
   Agent,
+  AgentReviewNotification,
   AppUser,
   Asset,
   Client,
@@ -16,6 +18,7 @@ import type {
   ContextDocTier,
   ContextItem,
   Job,
+  LoginLog,
   Role,
   Transcript,
 } from "@/lib/types";
@@ -41,6 +44,7 @@ const col = {
   clientActivityLogs: () => adminDb().collection("clientActivityLogs"),
   clientIntegrations: () => adminDb().collection("clientIntegrations"),
   clientRequests: () => adminDb().collection("clientRequests"),
+  loginLogs: () => adminDb().collection("loginLogs"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -525,4 +529,64 @@ export async function updateClientRequest(id: string, data: Partial<ClientReques
 export async function getClientRequest(id: string): Promise<ClientRequest | null> {
   const doc = await col.clientRequests().doc(id).get();
   return doc.exists ? withId<ClientRequest>(doc) : null;
+}
+
+/* ─────────────────── Notification Centre queries ────────────────────── */
+
+/**
+ * Returns all incomplete action items explicitly assigned (by userId) to `userId`
+ * across non-archived transcripts. Uses the denormalised `assignedUserIds` array
+ * for an efficient single Firestore query.
+ */
+export async function listAssignedActionItems(userId: string): Promise<ActionItemNotification[]> {
+  const snap = await col.transcripts()
+    .where("assignedUserIds", "array-contains", userId)
+    .get();
+
+  const notifications: ActionItemNotification[] = [];
+  for (const doc of snap.docs) {
+    const t = withId<Transcript>(doc);
+    if (t.archived) continue;
+    const items = t.actionItems ?? [];
+    const assignedIds = t.actionItemAssignedUserIds ?? [];
+    const completed = new Set(t.completedItems ?? []);
+    items.forEach((text, i) => {
+      if (assignedIds[i] === userId && !completed.has(i)) {
+        notifications.push({
+          transcriptId: t.id,
+          transcriptTitle: t.title,
+          itemIndex: i,
+          text,
+          meetingDate: t.meetingDate,
+          clientId: t.clientId,
+        });
+      }
+    });
+  }
+  return notifications;
+}
+
+/**
+ * Returns jobs for a client that are in the `review` state — i.e. the AI has
+ * finished generating content and the client needs to approve or reject it.
+ */
+export async function listReviewJobs(clientId: string): Promise<AgentReviewNotification[]> {
+  const snap = await col.jobs()
+    .where("clientId", "==", clientId)
+    .where("status", "==", "review")
+    .get();
+  return snap.docs.map((d) => {
+    const j = withId<Job>(d);
+    return { jobId: j.id, title: j.title, agentName: j.agentName, updatedAt: j.updatedAt };
+  });
+}
+
+/* ─────────────────────── Login audit logs ───────────────────────────── */
+
+export async function listLoginLogs(opts?: { since?: number; limit?: number }): Promise<LoginLog[]> {
+  const limit = opts?.limit ?? 500;
+  let q = col.loginLogs().orderBy("timestamp", "desc") as FirebaseFirestore.Query;
+  if (opts?.since) q = q.where("timestamp", ">=", opts.since);
+  const snap = await q.limit(limit).get();
+  return snap.docs.map((d) => withId<LoginLog>(d));
 }

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listClients } from "@/lib/data";
+import { listClients, listLoginLogs } from "@/lib/data";
 import {
   getGlobalSnapshot,
   getClientSnapshot,
@@ -44,10 +44,11 @@ export default async function AnalyticsPage({
   let agentStats: AgentStat[] = [];
 
   if (range) {
-    const [rs, errs, clients] = await Promise.all([
+    const [rs, errs, clients, loginLogs] = await Promise.all([
       getRangeStats({ since, clientId }),
       listRecentErrors({ clientId, since, limit: 20 }),
       listClients(),
+      clientId ? Promise.resolve([]) : listLoginLogs({ since, limit: 500 }),
     ]);
 
     totalCostUsd      = rs.totalCostUsd;
@@ -63,11 +64,12 @@ export default async function AnalyticsPage({
       totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
       modelStats, agentStats,
       errors: errs,
+      loginCount: loginLogs.length,
     });
   }
 
   // All-time: use O(1) snapshot + recent logs for leaderboard
-  const [snapshot, errors, usageLogs, clients] = await Promise.all([
+  const [snapshot, errors, usageLogs, clients, loginLogs] = await Promise.all([
     clientId ? getClientSnapshot(clientId) : getGlobalSnapshot(),
     listRecentErrors({ clientId, limit: 20 }),
     // For leaderboard in all-time mode we still need recent usage logs
@@ -75,6 +77,7 @@ export default async function AnalyticsPage({
       m.listRecentUsageLogs({ clientId, limit: 200 }),
     ),
     listClients(),
+    clientId ? Promise.resolve([]) : listLoginLogs({ limit: 500 }),
   ]);
 
   totalCostUsd      = snapshot.totalCostUsd;
@@ -99,6 +102,7 @@ export default async function AnalyticsPage({
     totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
     modelStats, agentStats,
     errors,
+    loginCount: loginLogs.length,
   });
 }
 
@@ -117,11 +121,12 @@ function renderPage(p: {
   modelStats: ModelStat[];
   agentStats: AgentStat[];
   errors: Awaited<ReturnType<typeof listRecentErrors>>;
+  loginCount: number;
 }) {
   const {
     rangeLabel, range, clientId, clients,
     totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
-    modelStats, agentStats, errors,
+    modelStats, agentStats, errors, loginCount,
   } = p;
 
   const errorRate =
@@ -152,6 +157,15 @@ function renderPage(p: {
       value: `${errorRate}%`,
       sub: `${totalErrors} error${totalErrors === 1 ? "" : "s"}`,
     },
+    ...(clientId
+      ? []
+      : [
+          {
+            label: "User Logins",
+            value: loginCount.toLocaleString(),
+            sub: rangeLabel.toLowerCase(),
+          },
+        ]),
   ];
 
   const maxAgentRuns = agentStats[0]?.runs ?? 1;
@@ -175,7 +189,7 @@ function renderPage(p: {
       </div>
 
       {/* KPI cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className={`grid gap-4 sm:grid-cols-2 ${kpis.length === 5 ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
         {kpis.map((k) => (
           <Card key={k.label} className="space-y-1">
             <p className="text-xs font-medium uppercase tracking-widest text-muted">

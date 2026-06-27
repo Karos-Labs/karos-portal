@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useTheme } from "next-themes";
 import { Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import type { Client } from "@/lib/types";
@@ -28,10 +29,6 @@ function darken(hex: string, amt: number): string {
   return "#" + [r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("");
 }
 
-const DEFAULT_BG = "#07090b";
-const DEFAULT_SURFACE = "#0d1117";
-const DEFAULT_SURFACE2 = "#131a22";
-
 function blend(base: string, overlay: string, t: number): string {
   const b = hexToRgb(base);
   const o = hexToRgb(overlay);
@@ -40,10 +37,21 @@ function blend(base: string, overlay: string, t: number): string {
   return "#" + [r, g, ch].map((c) => (c ?? 0).toString(16).padStart(2, "0")).join("");
 }
 
+// Separate background defaults for each theme so the brand tint is always
+// layered on top of the correct surface colour, not forced dark in light mode.
+const DARK_DEFAULTS = { bg: "#07090b", surface: "#0d1117", surface2: "#131a22" };
+const LIGHT_DEFAULTS = { bg: "#f8fafc", surface: "#ffffff", surface2: "#f1f5f9" };
+
 const ACCENT_VARS = ["--neon", "--neon-bright", "--neon-dim", "--neon-glow", "--neon-soft"] as const;
 const BG_VARS = ["--background", "--surface", "--surface-2"] as const;
 
 function useBrandPreview(guidelines: Client["brandingGuidelines"], active: boolean) {
+  // resolvedTheme is the settled "dark" | "light" value from next-themes.
+  // Including it in the dependency array means the effect re-runs whenever the
+  // user flips the global theme toggle while the preview is open, so the brand
+  // tint always layers on the correct surface.
+  const { resolvedTheme } = useTheme();
+
   useEffect(() => {
     const root = document.documentElement;
 
@@ -53,27 +61,49 @@ function useBrandPreview(guidelines: Client["brandingGuidelines"], active: boole
       return;
     }
 
+    const isLight = resolvedTheme === "light";
+    const defaults = isLight ? LIGHT_DEFAULTS : DARK_DEFAULTS;
+
+    // ── Accent / neon colour system ─────────────────────────────────
     const accent = guidelines.secondaryColor || guidelines.primaryColor;
     if (accent) {
       const rgb = hexToRgb(accent);
       const rgbStr = rgb ? rgb.join(", ") : null;
-      root.style.setProperty("--neon", accent);
-      root.style.setProperty("--neon-bright", lighten(accent, 0.15));
-      root.style.setProperty("--neon-dim", darken(accent, 0.2));
-      root.style.setProperty("--neon-glow", rgbStr ? `rgba(${rgbStr}, 0.35)` : accent + "59");
-      root.style.setProperty("--neon-soft", rgbStr ? `rgba(${rgbStr}, 0.12)` : accent + "1f");
+
+      // In light mode the accent must be dark enough to clear WCAG AA against
+      // white surfaces; darken slightly so thin text stays legible.
+      const neonBase = isLight ? darken(accent, 0.12) : accent;
+
+      root.style.setProperty("--neon", neonBase);
+      root.style.setProperty("--neon-bright", isLight ? accent : lighten(accent, 0.15));
+      root.style.setProperty("--neon-dim", darken(accent, 0.22));
+      // Glow is more subdued in light mode so it doesn't bleed on white cards.
+      const glowAlpha = isLight ? 0.18 : 0.35;
+      const softAlpha = isLight ? 0.06 : 0.12;
+      root.style.setProperty("--neon-glow", rgbStr ? `rgba(${rgbStr}, ${glowAlpha})` : `${accent}${isLight ? "2e" : "59"}`);
+      root.style.setProperty("--neon-soft", rgbStr ? `rgba(${rgbStr}, ${softAlpha})` : `${accent}${isLight ? "0f" : "1f"}`);
     }
 
+    // ── Background tint ─────────────────────────────────────────────
+    // Use a lighter blend in light mode so the tint is a gentle wash rather
+    // than a colour shift that kills foreground contrast.
     const primary = guidelines.primaryColor;
     if (primary) {
-      root.style.setProperty("--background", blend(DEFAULT_BG, primary, 0.15));
-      root.style.setProperty("--surface", blend(DEFAULT_SURFACE, primary, 0.12));
-      root.style.setProperty("--surface-2", blend(DEFAULT_SURFACE2, primary, 0.10));
+      const bgAmt = isLight ? 0.06 : 0.15;
+      const srfAmt = isLight ? 0.04 : 0.12;
+      const sr2Amt = isLight ? 0.03 : 0.10;
+      root.style.setProperty("--background", blend(defaults.bg, primary, bgAmt));
+      root.style.setProperty("--surface", blend(defaults.surface, primary, srfAmt));
+      root.style.setProperty("--surface-2", blend(defaults.surface2, primary, sr2Amt));
     }
 
+    // ── Brand font ──────────────────────────────────────────────────
     const font = guidelines.fontHeading || guidelines.fontBody;
     if (font) {
-      const systemFonts = new Set(["Inter", "Arial", "Helvetica", "Georgia", "Verdana", "Times New Roman", "Open Sans", "Montserrat"]);
+      const systemFonts = new Set([
+        "Inter", "Arial", "Helvetica", "Georgia", "Verdana",
+        "Times New Roman", "Open Sans", "Montserrat",
+      ]);
       if (!systemFonts.has(font)) {
         const id = "brand-preview-font";
         if (!document.getElementById(id)) {
@@ -92,7 +122,7 @@ function useBrandPreview(guidelines: Client["brandingGuidelines"], active: boole
       root.style.removeProperty("--font-sans");
       document.getElementById("brand-preview-font")?.remove();
     };
-  }, [active, guidelines]);
+  }, [active, guidelines, resolvedTheme]);
 }
 
 /* ── Component ───────────────────────────────────────────────────── */

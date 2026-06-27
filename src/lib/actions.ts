@@ -1,6 +1,7 @@
 "use server";
 
 import { randomBytes } from "crypto";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentUser, startImpersonation, stopImpersonation } from "@/lib/auth";
@@ -79,6 +80,7 @@ import {
 } from "@/lib/agents/authoring";
 import { ingestTranscript, appendMeetingSignalToContextDoc, buildActionItemsByOwner } from "@/lib/transcripts/ingest";
 import { listFirefliesTranscripts, fetchFirefliesTranscript } from "@/lib/transcripts/fireflies";
+import { logger } from "@/services/logger";
 
 async function requireStaff(): Promise<AppUser> {
   const user = await getCurrentUser();
@@ -1228,12 +1230,19 @@ export async function generateBrandingAction(clientId: string): Promise<Branding
   await _logActivity({
     clientId,
     timestamp: Date.now(),
-    type: result.source === "scraped" ? "SCRAPE" : "BRANDING_UPDATED",
-    title: result.source === "scraped" ? "Brand guidelines auto-generated" : "Brand preset applied",
+    type: result.source === "preset" ? "BRANDING_UPDATED" : "SCRAPE",
+    title:
+      result.source === "scraped"
+        ? "Brand guidelines scraped from website"
+        : result.source === "inferred"
+          ? "Brand guidelines inferred via AI"
+          : "Brand preset applied",
     description:
       result.source === "scraped"
         ? `Website scraped — extracted colors${result.primaryColor ? ` (${result.primaryColor})` : ""} and typography`
-        : "Fallback brand archetype applied (website unavailable or yielded no tokens)",
+        : result.source === "inferred"
+          ? `AI inferred brand palette${result.primaryColor ? ` (${result.primaryColor})` : ""} from company context`
+          : "Fallback brand archetype applied (website unavailable or yielded no tokens)",
     actor: user.name,
     actorRole: "staff",
     metadata: { source: result.source, primaryColor: result.primaryColor },
@@ -1252,7 +1261,7 @@ export async function backfillBrandingForAllClientsAction(): Promise<{
   scraped: number;
   preset: number;
   failed: number;
-  results: Array<{ clientId: string; name: string; status: "scraped" | "preset" | "failed"; primaryColor?: string }>;
+  results: Array<{ clientId: string; name: string; status: "scraped" | "inferred" | "preset" | "failed"; primaryColor?: string }>;
 }> {
   await requireAdmin();
 
@@ -1260,7 +1269,7 @@ export async function backfillBrandingForAllClientsAction(): Promise<{
   const results: Array<{
     clientId: string;
     name: string;
-    status: "scraped" | "preset" | "failed";
+    status: "scraped" | "inferred" | "preset" | "failed";
     primaryColor?: string;
   }> = [];
 
@@ -1504,8 +1513,9 @@ export async function generateDocSummaryAction(
 
   const { generateText } = await import("ai");
   const { anthropic } = await import("@ai-sdk/anthropic");
-  const { text } = await generateText({
-    model: anthropic("claude-haiku-4-5-20251001"),
+  const MODEL = "claude-haiku-4-5-20251001";
+  const { text, usage } = await generateText({
+    model: anthropic(MODEL),
     system:
       "You are a strategic analyst. Distill the document into exactly 4-5 high-impact executive insights. " +
       "Return ONLY a valid JSON array of strings — no markdown, no preamble, no trailing text. " +
@@ -1518,6 +1528,19 @@ export async function generateDocSummaryAction(
     ],
     maxOutputTokens: 450,
   });
+
+  // Non-blocking token logging — deferred past the response via after()
+  after(() =>
+    logger.logUsage({
+      clientId,
+      agentId: null,
+      agentName: "Executive Summary",
+      modelName: MODEL,
+      operation: "doc_summary",
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+    }),
+  );
 
   try {
     const cleaned = text.trim().replace(/^```(?:json)?\n?|\n?```$/g, "");
@@ -1760,4 +1783,85 @@ export async function updatePasswordAction(
   if (!verifyRes.ok) throw new Error("Current password is incorrect.");
 
   await adminAuth().updateUser(user.uid, { password: newPassword });
+}
+
+/* ── Action Item Assignment & Notifications ───────────────────────────── */
+
+/**
+ * Explicitly assign (or un-assign) a meeting action item to a user by their UID.
+ * Updates both the display-name `actionItemOwners` array and the UID-keyed
+ * `actionItemAssignedUserIds` array, plus the denormalised `assignedUserIds`
+ * set used by the notification bell query.
+ *
+ * Access rules:
+ *   - Staff (admin / employee): can assign to any user in the meeting's context.
+ *   - CLIENT_USER: can only assign the item to themselves or unassign it,
+ *     and only within their own client's meetings.
+ */
+export async function assignActionItemToUserAction(
+  transcriptId: string,
+  itemIndex: number,
+  assignedUserId: string | null,
+): Promise<void> {
+  const viewer = await getCurrentUser();
+  if (!viewer || viewer.disabled) throw new Error("Unauthorized");
+
+  const t = await getTranscript(transcriptId);
+  if (!t) throw new Error("Transcript not found");
+
+  if (viewer.role === "CLIENT_USER") {
+    if (t.clientId !== viewer.clientId) throw new Error("Forbidden");
+    if (assignedUserId !== null && assignedUserId !== viewer.uid) throw new Error("Forbidden");
+  }
+
+  const items = t.actionItems ?? [];
+  const len = items.length;
+
+  const newOwners = [...(t.actionItemOwners ?? Array<null>(len).fill(null))];
+  while (newOwners.length < len) newOwners.push(null);
+
+  const newAssignedIds = [...(t.actionItemAssignedUserIds ?? Array<null>(len).fill(null))];
+  while (newAssignedIds.length < len) newAssignedIds.push(null);
+
+  if (assignedUserId === null) {
+    newOwners[itemIndex] = null;
+    newAssignedIds[itemIndex] = null;
+  } else {
+    const target = await getUser(assignedUserId);
+    newOwners[itemIndex] = target?.name ?? target?.email ?? null;
+    newAssignedIds[itemIndex] = assignedUserId;
+  }
+
+  const assignedUserIds = [...new Set(newAssignedIds.filter((id): id is string => id !== null))];
+
+  await updateTranscript(transcriptId, {
+    actionItemOwners: newOwners,
+    actionItemAssignedUserIds: newAssignedIds,
+    assignedUserIds,
+  });
+
+  revalidatePath(`/transcripts/${transcriptId}`);
+}
+
+/**
+ * Dismiss a notification item from the bell by marking the action item as complete.
+ * Only the user the item is assigned to may call this.
+ */
+export async function dismissAssignedActionItemAction(
+  transcriptId: string,
+  itemIndex: number,
+): Promise<void> {
+  const viewer = await getCurrentUser();
+  if (!viewer || viewer.disabled) throw new Error("Unauthorized");
+
+  const t = await getTranscript(transcriptId);
+  if (!t) throw new Error("Transcript not found");
+
+  if (t.actionItemAssignedUserIds?.[itemIndex] !== viewer.uid) {
+    throw new Error("Not assigned to this item");
+  }
+
+  const completed = new Set(t.completedItems ?? []);
+  completed.add(itemIndex);
+  await updateTranscript(transcriptId, { completedItems: [...completed] });
 }

@@ -3,7 +3,10 @@
 import { useState, useMemo } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { toggleActionItemCompletionAction, setActionItemOwnerAction } from "@/lib/actions";
+import {
+  toggleActionItemCompletionAction,
+  assignActionItemToUserAction,
+} from "@/lib/actions";
 import type { AppUser } from "@/lib/types";
 
 interface Props {
@@ -15,8 +18,12 @@ interface Props {
   actionItemUserMap?: Record<string, string>;
   /** Persisted completed item indices. */
   completedItems?: number[];
-  /** All system users for the owner dropdown (staff-only). */
+  /** Per-item explicit user-ID assignment, parallel to actionItems[]. */
+  actionItemAssignedUserIds?: (string | null)[];
+  /** All eligible users for the assignment dropdown. */
   users?: AppUser[];
+  /** UID of the currently logged-in user (for "Assign to me"). */
+  currentUserId?: string;
   /** Called after the meeting is auto-archived (all items done). */
   onAutoArchived?: () => void;
 }
@@ -27,19 +34,28 @@ export function MeetingActionItems({
   actionItemOwners,
   actionItemUserMap = {},
   completedItems: initialCompleted = [],
+  actionItemAssignedUserIds: initialAssignedIds = [],
   users = [],
+  currentUserId,
   onAutoArchived,
 }: Props) {
   const [completed, setCompleted] = useState<Set<number>>(new Set(initialCompleted));
+  // owners drives the visual grouping (display names)
   const [owners, setOwners] = useState<(string | null)[]>(actionItemOwners);
+  // assignedIds drives the notification system (user IDs)
+  const [assignedIds, setAssignedIds] = useState<(string | null)[]>(() => {
+    const base = [...initialAssignedIds];
+    while (base.length < actionItems.length) base.push(null);
+    return base;
+  });
   const [pendingToggle, setPendingToggle] = useState<Set<number>>(new Set());
-  const [pendingOwner, setPendingOwner] = useState<Set<number>>(new Set());
+  const [pendingAssign, setPendingAssign] = useState<Set<number>>(new Set());
 
   if (actionItems.length === 0) {
     return <p className="text-sm text-muted-2">None extracted.</p>;
   }
 
-  // Group item indices by owner for display
+  // Group item indices by owner name for display
   const groups = useMemo(() => {
     const map = new Map<string, number[]>();
     owners.forEach((owner, i) => {
@@ -47,7 +63,6 @@ export function MeetingActionItems({
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(i);
     });
-    // Sort: named owners first, Unassigned last
     return Array.from(map.entries()).sort(([a], [b]) => {
       if (a === "Unassigned") return 1;
       if (b === "Unassigned") return -1;
@@ -58,15 +73,16 @@ export function MeetingActionItems({
   async function handleToggle(index: number) {
     if (pendingToggle.has(index)) return;
     const nowDone = !completed.has(index);
-    const next = new Set(completed);
-    if (nowDone) next.add(index); else next.delete(index);
-    setCompleted(next);
+    setCompleted((prev) => {
+      const next = new Set(prev);
+      if (nowDone) next.add(index); else next.delete(index);
+      return next;
+    });
     setPendingToggle((s) => new Set(s).add(index));
     try {
       const { allDone } = await toggleActionItemCompletionAction(transcriptId, index, nowDone);
       if (allDone) onAutoArchived?.();
     } catch {
-      // Revert this item's toggle using a functional updater to avoid a stale-closure read
       setCompleted((prev) => {
         const r = new Set(prev);
         if (nowDone) r.delete(index); else r.add(index);
@@ -77,19 +93,22 @@ export function MeetingActionItems({
     }
   }
 
-  async function handleOwnerChange(index: number, ownerName: string | null) {
-    if (pendingOwner.has(index)) return;
-    const prev = [...owners];
-    const next = [...owners];
-    next[index] = ownerName;
-    setOwners(next);
-    setPendingOwner((s) => new Set(s).add(index));
+  async function handleAssign(index: number, userId: string | null) {
+    if (pendingAssign.has(index)) return;
+    // Optimistic update: resolve display name from users list
+    const targetUser = userId ? users.find((u) => u.uid === userId) : null;
+    const displayName = targetUser ? (targetUser.name ?? targetUser.email) : null;
+    setOwners((prev) => { const n = [...prev]; n[index] = displayName; return n; });
+    setAssignedIds((prev) => { const n = [...prev]; n[index] = userId; return n; });
+    setPendingAssign((s) => new Set(s).add(index));
     try {
-      await setActionItemOwnerAction(transcriptId, index, ownerName);
+      await assignActionItemToUserAction(transcriptId, index, userId);
     } catch {
-      setOwners(prev);
+      // Revert both pieces of state on failure
+      setOwners((prev) => { const n = [...prev]; n[index] = actionItemOwners[index] ?? null; return n; });
+      setAssignedIds((prev) => { const n = [...prev]; n[index] = initialAssignedIds[index] ?? null; return n; });
     } finally {
-      setPendingOwner((s) => { const n = new Set(s); n.delete(index); return n; });
+      setPendingAssign((s) => { const n = new Set(s); n.delete(index); return n; });
     }
   }
 
@@ -119,12 +138,14 @@ export function MeetingActionItems({
           actionItems={actionItems}
           completed={completed}
           owners={owners}
+          assignedIds={assignedIds}
           pendingToggle={pendingToggle}
-          pendingOwner={pendingOwner}
+          pendingAssign={pendingAssign}
           users={users}
+          currentUserId={currentUserId}
           actionItemUserMap={actionItemUserMap}
           onToggle={handleToggle}
-          onOwnerChange={handleOwnerChange}
+          onAssign={handleAssign}
         />
       ))}
     </div>
@@ -137,24 +158,28 @@ function OwnerGroup({
   actionItems,
   completed,
   owners,
+  assignedIds,
   pendingToggle,
-  pendingOwner,
+  pendingAssign,
   users,
+  currentUserId,
   actionItemUserMap,
   onToggle,
-  onOwnerChange,
+  onAssign,
 }: {
   ownerName: string;
   indices: number[];
   actionItems: string[];
   completed: Set<number>;
   owners: (string | null)[];
+  assignedIds: (string | null)[];
   pendingToggle: Set<number>;
-  pendingOwner: Set<number>;
+  pendingAssign: Set<number>;
   users: AppUser[];
+  currentUserId?: string;
   actionItemUserMap: Record<string, string>;
   onToggle: (i: number) => void;
-  onOwnerChange: (i: number, owner: string | null) => void;
+  onAssign: (i: number, uid: string | null) => void;
 }) {
   const doneCount = indices.filter((i) => completed.has(i)).length;
   const allDone = doneCount === indices.length;
@@ -186,13 +211,14 @@ function OwnerGroup({
             key={i}
             index={i}
             text={actionItems[i]}
-            currentOwner={owners[i]}
+            assignedUserId={assignedIds[i]}
             done={completed.has(i)}
             pendingToggle={pendingToggle.has(i)}
-            pendingOwner={pendingOwner.has(i)}
+            pendingAssign={pendingAssign.has(i)}
             users={users}
+            currentUserId={currentUserId}
             onToggle={onToggle}
-            onOwnerChange={onOwnerChange}
+            onAssign={onAssign}
           />
         ))}
       </ul>
@@ -203,24 +229,31 @@ function OwnerGroup({
 function ActionItem({
   index,
   text,
-  currentOwner,
+  assignedUserId,
   done,
   pendingToggle,
-  pendingOwner,
+  pendingAssign,
   users,
+  currentUserId,
   onToggle,
-  onOwnerChange,
+  onAssign,
 }: {
   index: number;
   text: string;
-  currentOwner: string | null;
+  assignedUserId: string | null;
   done: boolean;
   pendingToggle: boolean;
-  pendingOwner: boolean;
+  pendingAssign: boolean;
   users: AppUser[];
+  currentUserId?: string;
   onToggle: (i: number) => void;
-  onOwnerChange: (i: number, owner: string | null) => void;
+  onAssign: (i: number, uid: string | null) => void;
 }) {
+  // Build the dropdown options.
+  // Always show "Assign to me" if the current user isn't already in the list.
+  const options = users;
+  const showDropdown = users.length > 0 || !!currentUserId;
+
   return (
     <li className="flex min-w-0 items-start gap-2 text-sm">
       {/* Checkbox */}
@@ -250,19 +283,28 @@ function ActionItem({
         {text}
       </span>
 
-      {/* Owner dropdown — only rendered when users list is provided */}
-      {users.length > 0 && (
+      {/* Assignee dropdown — visible when there are users to choose from */}
+      {showDropdown && (
         <select
-          value={currentOwner ?? ""}
-          onChange={(e) => onOwnerChange(index, e.target.value || null)}
-          disabled={pendingOwner}
-          className="ml-1 h-6 shrink-0 rounded-[6px] border border-border bg-surface-2 px-1.5 text-[11px] text-muted outline-none focus:border-neon/50 disabled:opacity-50"
-          aria-label="Assign owner"
+          value={assignedUserId ?? ""}
+          onChange={(e) => onAssign(index, e.target.value || null)}
+          disabled={pendingAssign || done}
+          className={cn(
+            "ml-1 h-6 max-w-[130px] shrink-0 truncate rounded-[6px] border border-border",
+            "bg-surface-2 px-1.5 text-[11px] text-muted outline-none",
+            "focus:border-neon/50 disabled:opacity-50",
+            assignedUserId && "border-neon/30 text-neon",
+          )}
+          aria-label="Assign to user"
         >
           <option value="">Unassigned</option>
-          {users.map((u) => (
-            <option key={u.uid} value={u.name ?? u.email}>
-              {u.name ?? u.email}
+          {/* "Assign to me" shortcut when current user is not in the list */}
+          {currentUserId && !options.find((u) => u.uid === currentUserId) && (
+            <option value={currentUserId}>Assign to me</option>
+          )}
+          {options.map((u) => (
+            <option key={u.uid} value={u.uid}>
+              {u.uid === currentUserId ? `Me (${u.name ?? u.email})` : (u.name ?? u.email)}
             </option>
           ))}
         </select>

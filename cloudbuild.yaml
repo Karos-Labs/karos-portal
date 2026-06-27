@@ -1,0 +1,162 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Karos CMO — Google Cloud Build CI/CD pipeline
+#
+# Triggers on push to main → builds image → pushes to Artifact Registry
+# → deploys to Cloud Run.
+#
+# One-time setup (run these in your terminal before first deploy):
+#
+#   # 1. Enable required APIs
+#   gcloud services enable \
+#     run.googleapis.com \
+#     cloudbuild.googleapis.com \
+#     artifactregistry.googleapis.com \
+#     secretmanager.googleapis.com
+#
+#   # 2. Create the Artifact Registry repository
+#   gcloud artifacts repositories create karos-cmo \
+#     --repository-format=docker \
+#     --location=$_REGION
+#
+#   # 3. Grant Cloud Build permission to deploy to Cloud Run
+#   PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
+#   gcloud projects add-iam-policy-binding $PROJECT_ID \
+#     --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+#     --role="roles/run.admin"
+#   gcloud iam service-accounts add-iam-policy-binding \
+#     "${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+#     --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+#     --role="roles/iam.serviceAccountUser"
+#
+#   # 4. Store server-side runtime secrets in Secret Manager
+#   echo -n "sk_..." | gcloud secrets create KAROS_STAFF_KEY --data-file=-
+#   echo -n "sk-ant-..." | gcloud secrets create ANTHROPIC_API_KEY --data-file=-
+#   echo -n "re_..." | gcloud secrets create RESEND_API_KEY --data-file=-
+#   echo -n "..." | gcloud secrets create FIREFLIES_API_KEY --data-file=-
+#   echo -n "..." | gcloud secrets create FIREFLIES_WEBHOOK_SECRET --data-file=-
+#   # For FIREBASE_SERVICE_ACCOUNT_KEY — OR use Workload Identity (see note below).
+#   cat serviceAccount.json | gcloud secrets create FIREBASE_SERVICE_ACCOUNT_KEY --data-file=-
+#
+#   # 5. Store NEXT_PUBLIC_* build-time vars (not secret, but centralised here)
+#   echo -n "AIzaSy..." | gcloud secrets create NEXT_PUBLIC_FIREBASE_API_KEY --data-file=-
+#   echo -n "karoscmo.firebaseapp.com" | gcloud secrets create NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN --data-file=-
+#   echo -n "karoscmo" | gcloud secrets create NEXT_PUBLIC_FIREBASE_PROJECT_ID --data-file=-
+#   echo -n "karoscmo.firebasestorage.app" | gcloud secrets create NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET --data-file=-
+#   echo -n "42999994788" | gcloud secrets create NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID --data-file=-
+#   echo -n "1:42999994..." | gcloud secrets create NEXT_PUBLIC_FIREBASE_APP_ID --data-file=-
+#
+#   # 6. Connect this cloudbuild.yaml to a Cloud Build trigger (GitHub / manual)
+#   gcloud builds triggers create github \
+#     --repo-name=karos-cmo \
+#     --repo-owner=<your-github-org> \
+#     --branch-pattern="^main$" \
+#     --build-config=cloudbuild.yaml
+#
+# ── Workload Identity (recommended — avoids storing the SA key) ───────────────
+# Instead of FIREBASE_SERVICE_ACCOUNT_KEY, bind the Cloud Run service account
+# to the Firebase project. The firebase/admin.ts ADC path handles this automatically.
+#
+#   SA_EMAIL="karos-cmo-run@${PROJECT_ID}.iam.gserviceaccount.com"
+#   gcloud iam service-accounts create karos-cmo-run --display-name "Karos CMO Cloud Run"
+#   gcloud projects add-iam-policy-binding $PROJECT_ID \
+#     --member="serviceAccount:${SA_EMAIL}" \
+#     --role="roles/datastore.user"
+#   gcloud projects add-iam-policy-binding $PROJECT_ID \
+#     --member="serviceAccount:${SA_EMAIL}" \
+#     --role="roles/firebase.sdkAdminServiceAgent"
+#   # Then pass --service-account=$SA_EMAIL in the Cloud Run deploy step below
+#   # and remove FIREBASE_SERVICE_ACCOUNT_KEY from the --set-secrets list.
+# ─────────────────────────────────────────────────────────────────────────────
+
+substitutions:
+  _REGION: us-central1
+  _REPO: karos-cmo
+  _SERVICE: karos-cmo
+  # Override at trigger level: --substitutions _REGION=europe-west1,...
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8   # faster builds; Next.js compilation is CPU-bound
+
+steps:
+  # ── 1. Build the Docker image ───────────────────────────────────────────────
+  - id: docker-build
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker build \
+          --build-arg NEXT_PUBLIC_FIREBASE_API_KEY="$$NEXT_PUBLIC_FIREBASE_API_KEY" \
+          --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="$$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN" \
+          --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID="$$NEXT_PUBLIC_FIREBASE_PROJECT_ID" \
+          --build-arg NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="$$NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET" \
+          --build-arg NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="$$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" \
+          --build-arg NEXT_PUBLIC_FIREBASE_APP_ID="$$NEXT_PUBLIC_FIREBASE_APP_ID" \
+          --cache-from ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest \
+          --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA \
+          --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest \
+          .
+    secretEnv:
+      - NEXT_PUBLIC_FIREBASE_API_KEY
+      - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+      - NEXT_PUBLIC_FIREBASE_PROJECT_ID
+      - NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+      - NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+      - NEXT_PUBLIC_FIREBASE_APP_ID
+
+  # ── 2. Push both tags to Artifact Registry ──────────────────────────────────
+  - id: docker-push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}
+    waitFor: [docker-build]
+
+  # ── 3. Deploy to Cloud Run ──────────────────────────────────────────────────
+  - id: cloud-run-deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated        # remove if you add Cloud IAP / identity proxy
+      - --port=3000
+      - --min-instances=1             # keep 1 warm to avoid Firebase Admin cold-start latency
+      - --max-instances=10
+      - --memory=1Gi                  # AI SDK streaming + Firebase Admin needs headroom
+      - --cpu=1
+      - --timeout=300                 # max request timeout; AI generation can be slow
+      - --concurrency=80              # Cloud Run default; tune based on observed p99 latency
+      # Runtime secrets — mounted from Secret Manager, never in the image
+      - --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest
+      # Non-secret runtime env vars (not baked into image; can change without rebuild)
+      - --set-env-vars=EMAIL_FROM=Karos CMO <hello@karoslabs.com>,NODE_ENV=production
+    waitFor: [docker-push]
+
+# ── Secret Manager bindings for the build step ─────────────────────────────────
+# Cloud Build accesses these to pass NEXT_PUBLIC_* as --build-arg.
+# Grant Cloud Build SA: roles/secretmanager.secretAccessor on each secret.
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_API_KEY/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_API_KEY
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_PROJECT_ID/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_APP_ID/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_APP_ID
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest

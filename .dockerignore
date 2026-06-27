@@ -1,0 +1,39 @@
+# ── Version control ───────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ── Build artifacts (rebuilt inside Docker) ───────────────────────────────────
+.next
+node_modules
+
+# ── Secrets — NEVER bake into the image ──────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Local / dev-only data ─────────────────────────────────────────────────────
+karolabs-data
+
+# ── Docker files (no need to COPY them into the image) ────────────────────────
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# ── Editor & OS noise ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+*.swp
+*.swo
+
+# ── Docs ──────────────────────────────────────────────────────────────────────
+*.md
+SETUP.md
+AGENTS.md
+CLAUDE.md
+
+# ── Test / CI artifacts ───────────────────────────────────────────────────────
+coverage
+.nyc_output

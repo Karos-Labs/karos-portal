@@ -40,7 +40,8 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
             (u.role === "CLIENT_USER" && u.clientId === t.clientId),
         )
       : allUsers.filter((u) => u.role === "KAROS_ADMIN" || u.role === "KAROS_EMPLOYEE")
-    : [];
+    // CLIENT_USER: include only themselves so they can self-assign action items
+    : [user];
 
   // Resolve per-item owners: use stored actionItemOwners, or derive from actionItemsByOwner for backward-compat
   const actionItems = t.actionItems ?? [];
@@ -116,7 +117,11 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
               actionItemOwners={actionItemOwners}
               actionItemUserMap={t.actionItemUserMap ?? {}}
               completedItems={t.completedItems ?? []}
-              users={isStaff ? users : []}
+              actionItemAssignedUserIds={
+                t.actionItemAssignedUserIds ?? actionItems.map(() => null)
+              }
+              users={users}
+              currentUserId={user.uid}
             />
           </Card>
 

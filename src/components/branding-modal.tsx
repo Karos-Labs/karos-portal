@@ -21,7 +21,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState<{ source: "scraped" | "preset"; visualStyle?: string } | null>(null);
+  const [genResult, setGenResult] = useState<{ source: "scraped" | "inferred" | "preset"; visualStyle?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState("");
 
@@ -121,7 +121,9 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
             <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
             {genResult.source === "scraped"
               ? `Scraped successfully${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review the values below and save.`
-              : "No website data found — applied a brand archetype preset. Adjust as needed."}
+              : genResult.source === "inferred"
+                ? `AI-inferred brand profile${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review and save.`
+                : "No website data found — applied a brand archetype preset. Adjust as needed."}
           </div>
         )}
 
