@@ -28,7 +28,7 @@
 #     --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
 #     --role="roles/iam.serviceAccountUser"
 #
-#   # 4. Grant Cloud Build SA permission to read ALL secrets (build-time NEXT_PUBLIC_* vars)
+#   # 4. Grant Cloud Build SA permission to read secrets (for server-side runtime secrets)
 #   gcloud projects add-iam-policy-binding $PROJECT_ID \
 #     --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
 #     --role="roles/secretmanager.secretAccessor"
@@ -41,16 +41,11 @@
 #   echo -n "..." | gcloud secrets create FIREFLIES_WEBHOOK_SECRET --data-file=-
 #   cat serviceAccount.json | gcloud secrets create FIREBASE_SERVICE_ACCOUNT_KEY --data-file=-
 #
-#   # 6. Store NEXT_PUBLIC_* build-time vars in Secret Manager
-#   #    (not truly secret, but centralised here so builds always get the right values)
-#   echo -n "AIzaSy..." | gcloud secrets create NEXT_PUBLIC_FIREBASE_API_KEY --data-file=-
-#   echo -n "karoscmo.firebaseapp.com" | gcloud secrets create NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN --data-file=-
-#   echo -n "karoscmo" | gcloud secrets create NEXT_PUBLIC_FIREBASE_PROJECT_ID --data-file=-
-#   echo -n "karoscmo.firebasestorage.app" | gcloud secrets create NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET --data-file=-
-#   echo -n "42999994788" | gcloud secrets create NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID --data-file=-
-#   echo -n "1:42999994..." | gcloud secrets create NEXT_PUBLIC_FIREBASE_APP_ID --data-file=-
+#   # Note: NEXT_PUBLIC_FIREBASE_* are public Firebase Web SDK config. They live
+#   # in .env.production (committed to git) and are picked up by Next.js at build
+#   # time automatically — no Secret Manager secrets needed for them.
 #
-#   # 7. Connect this cloudbuild.yaml to a Cloud Build trigger (GitHub / manual)
+#   # 6. Connect this cloudbuild.yaml to a Cloud Build trigger (GitHub / manual)
 #   gcloud builds triggers create github \
 #     --repo-name=karos-cmo \
 #     --repo-owner=<your-github-org> \
@@ -85,9 +80,8 @@ options:
 
 steps:
   # ── 1. Build the Docker image ───────────────────────────────────────────────
-  # NEXT_PUBLIC_FIREBASE_* are pulled from Secret Manager and passed as --build-arg
-  # so Next.js bakes the correct Firebase client config into the browser bundle.
-  # Requires Cloud Build SA to have roles/secretmanager.secretAccessor (see setup step 4).
+  # NEXT_PUBLIC_FIREBASE_* come from .env.production (in the repo) — no --build-arg needed.
+  # Next.js reads .env.production automatically during `next build`.
   - id: docker-build
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
@@ -95,23 +89,10 @@ steps:
       - -c
       - |
         docker build \
-          --build-arg NEXT_PUBLIC_FIREBASE_API_KEY="$$NEXT_PUBLIC_FIREBASE_API_KEY" \
-          --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="$$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN" \
-          --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID="$$NEXT_PUBLIC_FIREBASE_PROJECT_ID" \
-          --build-arg NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="$$NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET" \
-          --build-arg NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="$$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" \
-          --build-arg NEXT_PUBLIC_FIREBASE_APP_ID="$$NEXT_PUBLIC_FIREBASE_APP_ID" \
           --cache-from ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest \
           --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA \
           --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest \
           .
-    secretEnv:
-      - NEXT_PUBLIC_FIREBASE_API_KEY
-      - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-      - NEXT_PUBLIC_FIREBASE_PROJECT_ID
-      - NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
-      - NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-      - NEXT_PUBLIC_FIREBASE_APP_ID
 
   # ── 2. Push both tags to Artifact Registry ──────────────────────────────────
   - id: docker-push
@@ -146,24 +127,6 @@ steps:
       # Non-secret runtime env vars (not baked into image; can change without rebuild)
       - --set-env-vars=EMAIL_FROM=Karos CMO <hello@karoslabs.com>,NODE_ENV=production
     waitFor: [docker-push]
-
-# ── Secret Manager bindings for the build step ─────────────────────────────────
-# Cloud Build SA must have roles/secretmanager.secretAccessor (project-wide).
-# These 6 secrets provide the NEXT_PUBLIC_* Firebase client config at build time.
-availableSecrets:
-  secretManager:
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_API_KEY/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_API_KEY
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_PROJECT_ID/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_PROJECT_ID
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_APP_ID/versions/latest
-      env: NEXT_PUBLIC_FIREBASE_APP_ID
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA

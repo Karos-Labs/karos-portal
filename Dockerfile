@@ -8,13 +8,10 @@
 #   runner  → minimal production image (~150 MB) from .next/standalone
 #
 # Build (local):
-#   docker build \
-#     --build-arg NEXT_PUBLIC_FIREBASE_API_KEY=... \
-#     ... (see ARG block in builder stage) \
-#     -t karos-cmo:latest .
+#   docker build -t karos-cmo:latest .
 #
-# Cloud Build sources the NEXT_PUBLIC_* args automatically from Secret Manager
-# via the availableSecrets block in cloudbuild.yaml — no manual --build-arg needed.
+# NEXT_PUBLIC_FIREBASE_* values are read from .env.production by Next.js at
+# build time — no --build-arg or Secret Manager needed for these public values.
 #
 # Run locally:
 #   docker run -p 3000:3000 \
@@ -43,24 +40,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# NEXT_PUBLIC_* variables are inlined into the browser bundle at compile time.
-# They are NOT secret (they're visible in every user's browser). Cloud Build
-# sources them from Secret Manager via --build-arg (see cloudbuild.yaml).
-# Server-only secrets (ANTHROPIC_API_KEY, FIREBASE_SERVICE_ACCOUNT_KEY, etc.)
-# are injected at Cloud Run deploy time via --set-secrets — never baked in.
-ARG NEXT_PUBLIC_FIREBASE_API_KEY
-ARG NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-ARG NEXT_PUBLIC_FIREBASE_PROJECT_ID
-ARG NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
-ARG NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-ARG NEXT_PUBLIC_FIREBASE_APP_ID
-
-ENV NEXT_PUBLIC_FIREBASE_API_KEY=$NEXT_PUBLIC_FIREBASE_API_KEY
-ENV NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-ENV NEXT_PUBLIC_FIREBASE_PROJECT_ID=$NEXT_PUBLIC_FIREBASE_PROJECT_ID
-ENV NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=$NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
-ENV NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-ENV NEXT_PUBLIC_FIREBASE_APP_ID=$NEXT_PUBLIC_FIREBASE_APP_ID
+# NEXT_PUBLIC_FIREBASE_* values come from .env.production (committed, public config).
+# Next.js loads it automatically during `next build` (NODE_ENV=production).
+# Server-only secrets are injected at Cloud Run deploy time — never baked in.
 
 # Opt out of Next.js telemetry during build.
 ENV NEXT_TELEMETRY_DISABLED=1

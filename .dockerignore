@@ -11,6 +11,9 @@ node_modules
 .env
 .env.*
 !.env.example
+# .env.production contains only public NEXT_PUBLIC_FIREBASE_* values (safe to include).
+# next build reads it automatically when NODE_ENV=production.
+!.env.production
 
 # ── Local / dev-only data ─────────────────────────────────────────────────────
 karolabs-data
