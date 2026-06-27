@@ -56,6 +56,15 @@ export interface Client {
    * Only staff with access to this client page can see / regenerate the key.
    */
   clientKeyId?: string;
+  /**
+   * Tracks the background onboarding pipeline kicked off by createClientAction.
+   * Absent on legacy clients (created before this field was added).
+   *   pending  — pipeline queued but not yet started
+   *   running  — at least one pipeline stage is executing
+   *   done     — all stages completed successfully
+   *   failed   — one or more stages threw; check server logs for details
+   */
+  onboardingStatus?: "pending" | "running" | "done" | "failed";
   createdAt: number;
   createdBy: string;
 }
@@ -452,8 +461,15 @@ export interface ClientIntegration {
   accountName?: string;
   /** Credential key→value pairs matching the platform's field keys */
   credentials: Record<string, string>;
-  /** "manual" = keys pasted by a staff member; "oauth" = future OAuth flow */
+  /** "manual" = keys pasted by a staff member; "oauth" = OAuth flow */
   method: "manual" | "oauth";
+  /**
+   * "active" (default / absent) — credentials are valid and operational.
+   * "expired" — the publish cron received a 401/403; re-connect required.
+   */
+  status?: "active" | "expired";
+  /** Epoch millis when the cron first detected the token had expired. */
+  expiredAt?: number;
   connectedBy: string;
   connectedAt: number;
   updatedAt: number;
@@ -534,4 +550,14 @@ export interface AgentReviewNotification {
   title: string;
   agentName: string;
   updatedAt: number;
+}
+
+/**
+ * Emitted by the publish cron when a platform returns HTTP 401/403.
+ * Surfaces in the notification bell so staff can prompt the client to re-connect.
+ */
+export interface IntegrationExpiredNotification {
+  clientId: string;
+  platform: string;
+  expiredAt: number;
 }

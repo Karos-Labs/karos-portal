@@ -1,6 +1,20 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { listScheduledAssets, listClientIntegrations, updateAsset } from "@/lib/data";
+import { listScheduledAssets, listClientIntegrations, updateAsset, markIntegrationExpired } from "@/lib/data";
 import type { Asset, ClientIntegration } from "@/lib/types";
+
+/* ── Token expiry sentinel ───────────────────────────────────────────── */
+
+/**
+ * Thrown by a platform publisher when the API returns HTTP 401 or 403.
+ * The cron handler catches this specifically to mark the integration expired
+ * rather than retrying indefinitely with a dead token.
+ */
+class TokenExpiredError extends Error {
+  constructor(platform: string, httpStatus: number) {
+    super(`${platform} token expired or revoked (HTTP ${httpStatus})`);
+    this.name = "TokenExpiredError";
+  }
+}
 
 /* ── Platform → asset type mapping ──────────────────────────────────── */
 
@@ -31,6 +45,7 @@ async function publishToInstagram(
   const pagesRes = await fetch(
     `https://graph.facebook.com/v20.0/me/accounts?access_token=${encodeURIComponent(token)}`,
   );
+  if (pagesRes.status === 401 || pagesRes.status === 403) throw new TokenExpiredError("instagram", pagesRes.status);
   if (!pagesRes.ok) throw new Error(`Failed to fetch pages: ${pagesRes.status}`);
   const pagesData = (await pagesRes.json()) as { data: Array<{ id: string; access_token: string }> };
   if (!pagesData.data?.length) throw new Error("No Facebook pages found on this account");
@@ -63,6 +78,7 @@ async function publishToInstagram(
     `https://graph.facebook.com/v20.0/${igUserId}/media`,
     { method: "POST", body: containerParams },
   );
+  if (containerRes.status === 401 || containerRes.status === 403) throw new TokenExpiredError("instagram", containerRes.status);
   if (!containerRes.ok) {
     const err = (await containerRes.json()) as { error?: { message?: string } };
     throw new Error(`Media container failed: ${err.error?.message ?? containerRes.status}`);
@@ -75,6 +91,7 @@ async function publishToInstagram(
     `https://graph.facebook.com/v20.0/${igUserId}/media_publish`,
     { method: "POST", body: publishParams },
   );
+  if (publishRes.status === 401 || publishRes.status === 403) throw new TokenExpiredError("instagram", publishRes.status);
   if (!publishRes.ok) {
     const err = (await publishRes.json()) as { error?: { message?: string } };
     throw new Error(`Publish failed: ${err.error?.message ?? publishRes.status}`);
@@ -93,6 +110,7 @@ async function publishToFacebook(
   const pagesRes = await fetch(
     `https://graph.facebook.com/v20.0/me/accounts?access_token=${encodeURIComponent(token)}`,
   );
+  if (pagesRes.status === 401 || pagesRes.status === 403) throw new TokenExpiredError("facebook", pagesRes.status);
   if (!pagesRes.ok) throw new Error(`Failed to fetch pages: ${pagesRes.status}`);
   const pagesData = (await pagesRes.json()) as {
     data: Array<{ id: string; access_token: string; name: string }>;
@@ -107,6 +125,7 @@ async function publishToFacebook(
     `https://graph.facebook.com/v20.0/${page.id}/feed`,
     { method: "POST", body: params },
   );
+  if (postRes.status === 401 || postRes.status === 403) throw new TokenExpiredError("facebook", postRes.status);
   if (!postRes.ok) {
     const err = (await postRes.json()) as { error?: { message?: string } };
     throw new Error(`Post failed: ${err.error?.message ?? postRes.status}`);
@@ -126,6 +145,7 @@ async function publishToLinkedIn(
   const infoRes = await fetch("https://api.linkedin.com/v2/userinfo", {
     headers: { Authorization: `Bearer ${token}` },
   });
+  if (infoRes.status === 401 || infoRes.status === 403) throw new TokenExpiredError("linkedin", infoRes.status);
   if (!infoRes.ok) throw new Error(`Failed to fetch LinkedIn profile: ${infoRes.status}`);
   const info = (await infoRes.json()) as { sub?: string };
   const personUrn = info.sub ?? "";
@@ -158,6 +178,7 @@ async function publishToLinkedIn(
     body: JSON.stringify(body),
   });
 
+  if (postRes.status === 401 || postRes.status === 403) throw new TokenExpiredError("linkedin", postRes.status);
   if (!postRes.ok) {
     const err = (await postRes.json()) as { message?: string };
     throw new Error(`LinkedIn post failed: ${err.message ?? postRes.status}`);
@@ -185,6 +206,7 @@ async function publishToTwitter(
     body: JSON.stringify({ text }),
   });
 
+  if (postRes.status === 401 || postRes.status === 403) throw new TokenExpiredError("twitter", postRes.status);
   if (!postRes.ok) {
     const err = (await postRes.json()) as { detail?: string; title?: string };
     throw new Error(`Tweet failed: ${err.detail ?? err.title ?? postRes.status}`);
@@ -226,63 +248,103 @@ export async function GET(req: NextRequest) {
   }
 
   const now = Date.now();
-  const dueAssets = await listScheduledAssets({ before: now });
+  // Limit to 50 assets per cron tick — prevents timeouts on large backlogs.
+  // Older-scheduled assets are processed first (sorted by scheduledAt asc).
+  const dueAssets = await listScheduledAssets({ before: now, limit: 50 });
 
   if (dueAssets.length === 0) {
     return NextResponse.json({ processed: 0, results: [] });
   }
 
-  const results: Array<{
+  // Deduplicate integration fetches: one Firestore read per unique client,
+  // not one per asset. Fetched in parallel before the publish loop.
+  const uniqueClientIds = [...new Set(dueAssets.map((a) => a.clientId))];
+  const integrationsByClient = new Map(
+    await Promise.all(
+      uniqueClientIds.map(async (clientId) => {
+        const integrations = await listClientIntegrations(clientId);
+        return [clientId, integrations] as const;
+      }),
+    ),
+  );
+
+  type PublishResult = {
     assetId: string;
     platform: string;
-    status: "published" | "failed" | "skipped";
+    status: "published" | "failed" | "skipped" | "expired";
     error?: string;
-  }> = [];
+  };
 
-  for (const asset of dueAssets) {
-    const integrations = await listClientIntegrations(asset.clientId);
-    const connectedPlatforms = integrations.map((i) => i.platform);
+  // Publish all due assets concurrently. allSettled so one failure never
+  // prevents other assets from being processed in the same cron tick.
+  const settled = await Promise.allSettled(
+    dueAssets.map(async (asset): Promise<PublishResult> => {
+      const integrations = integrationsByClient.get(asset.clientId) ?? [];
+      const connectedPlatforms = integrations
+        .filter((i) => i.status !== "expired")
+        .map((i) => i.platform);
 
-    const platform =
-      asset.scheduledPlatform ??
-      inferPlatform(asset.type, connectedPlatforms);
+      const platform =
+        asset.scheduledPlatform ??
+        inferPlatform(asset.type, connectedPlatforms);
 
-    if (!platform) {
-      results.push({
-        assetId: asset.id,
-        platform: "none",
-        status: "skipped",
-        error: "No compatible platform connected",
-      });
-      continue;
-    }
+      if (!platform) {
+        return {
+          assetId: asset.id,
+          platform: "none",
+          status: "skipped",
+          error: "No compatible platform connected",
+        };
+      }
 
-    const integration = integrations.find((i) => i.platform === platform);
-    if (!integration) {
-      results.push({
-        assetId: asset.id,
-        platform,
-        status: "skipped",
-        error: `Integration for ${platform} not found`,
-      });
-      continue;
-    }
+      const integration = integrations.find((i) => i.platform === platform);
+      if (!integration) {
+        return {
+          assetId: asset.id,
+          platform,
+          status: "skipped",
+          error: `Integration for ${platform} not found`,
+        };
+      }
 
-    try {
-      await publishAsset(platform, integration, asset);
-      await updateAsset(asset.id, { status: "published", updatedAt: Date.now() });
-      results.push({ assetId: asset.id, platform, status: "published" });
-    } catch (e) {
-      const error = e instanceof Error ? e.message : "Unknown error";
-      results.push({ assetId: asset.id, platform, status: "failed", error });
-      // Leave as "scheduled" so the next cron tick retries
-    }
-  }
+      try {
+        await publishAsset(platform, integration, asset);
+        await updateAsset(asset.id, { status: "published", updatedAt: Date.now() });
+        return { assetId: asset.id, platform, status: "published" };
+      } catch (e) {
+        if (e instanceof TokenExpiredError) {
+          // Mark the integration expired so the UI surfaces it and the next
+          // cron tick skips the dead token rather than retrying indefinitely.
+          await markIntegrationExpired(asset.clientId, platform).catch(() => {});
+          return {
+            assetId: asset.id,
+            platform,
+            status: "expired",
+            error: e.message,
+          };
+        }
+        // Transient error — leave as "scheduled" so the next cron tick retries.
+        return {
+          assetId: asset.id,
+          platform,
+          status: "failed",
+          error: e instanceof Error ? e.message : "Unknown error",
+        };
+      }
+    }),
+  );
+
+  const results: PublishResult[] = settled.map((r) =>
+    r.status === "fulfilled"
+      ? r.value
+      : { assetId: "unknown", platform: "unknown", status: "failed", error: "Unexpected rejection" },
+  );
 
   return NextResponse.json({
     processed: dueAssets.length,
     published: results.filter((r) => r.status === "published").length,
     failed: results.filter((r) => r.status === "failed").length,
+    expired: results.filter((r) => r.status === "expired").length,
     results,
   });
 }

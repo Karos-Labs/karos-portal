@@ -234,13 +234,19 @@ export async function updateAsset(id: string, data: Partial<Asset>): Promise<voi
   await col.assets().doc(id).set(data, { merge: true });
 }
 
-/** All assets with status="scheduled" whose scheduledAt is at or before `before` (default: now). */
-export async function listScheduledAssets(opts?: { before?: number }): Promise<Asset[]> {
+/**
+ * All assets with status="scheduled" whose scheduledAt is at or before `before` (default: now).
+ * Sorted oldest-first so the cron processes in chronological order.
+ * Pass `limit` to cap the batch size and bound each cron tick's execution time.
+ */
+export async function listScheduledAssets(opts?: { before?: number; limit?: number }): Promise<Asset[]> {
   const before = opts?.before ?? Date.now();
   const snap = await col.assets().where("status", "==", "scheduled").get();
-  return snap.docs
+  const due = snap.docs
     .map((d) => withId<Asset>(d))
-    .filter((a) => a.scheduledAt != null && a.scheduledAt <= before);
+    .filter((a) => a.scheduledAt != null && a.scheduledAt <= before)
+    .sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0));
+  return opts?.limit != null ? due.slice(0, opts.limit) : due;
 }
 
 /** Clear scheduledAt + scheduledPlatform and revert status to draft. */
@@ -480,6 +486,18 @@ export async function upsertClientIntegration(
 ): Promise<void> {
   const docId = `${data.clientId}_${data.platform}`;
   await col.clientIntegrations().doc(docId).set({ id: docId, ...data });
+}
+
+/**
+ * Mark a platform integration as expired (token revoked / 401 from the platform API).
+ * Uses merge so credentials are preserved — reconnect flow can overwrite them.
+ */
+export async function markIntegrationExpired(clientId: string, platform: string): Promise<void> {
+  const docId = `${clientId}_${platform}`;
+  await col.clientIntegrations().doc(docId).set(
+    { status: "expired", expiredAt: Date.now() },
+    { merge: true },
+  );
 }
 
 /** Remove a platform's credentials for a client. */
