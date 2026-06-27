@@ -48,6 +48,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
       const result = await generateBrandingAction(clientId);
       setGenResult({ source: result.source, visualStyle: result.visualStyle });
       // Pre-fill form with scraped values so the user can review and adjust before saving
+      // Pre-fill form with AI-generated values so the user can review and adjust before saving.
       setForm((s) => ({
         ...s,
         primaryColor: result.primaryColor ?? s.primaryColor,

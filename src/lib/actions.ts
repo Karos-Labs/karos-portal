@@ -106,7 +106,7 @@ export async function createClientAction(input: {
   description?: string;
   brandVoice?: string;
   assignedEmployeeIds?: string[];
-}) {
+}): Promise<{ id: string }> {
   const user = await requireStaff();
   // Generate a cryptographically secure, unguessable join token for the new client.
   const clientKeyId = `ck_${randomBytes(16).toString("base64url")}`;
@@ -132,10 +132,10 @@ export async function createClientAction(input: {
   // creation form returns instantly. Both branding (Haiku, ~5 s) and the Intel
   // Report (Sonnet 5-agent pipeline, ~60 s) run concurrently in the background.
   after(async () => {
-    const [{ applyBrandingForClient }, { runIntelReportPipeline }] = await Promise.all([
-      import("@/lib/branding"),
-      import("@/lib/intel-report"),
-    ]);
+    // applyBrandingForClient is already statically imported — use it directly.
+    // runIntelReportPipeline is dynamically imported to avoid eagerly loading the
+    // heavy 5-agent pipeline bundle at action startup time.
+    const { runIntelReportPipeline } = await import("@/lib/intel-report");
     await Promise.all([
       applyBrandingForClient(id).catch((err: unknown) => {
         console.error("[onboard] Branding generation failed (non-fatal):", err);
@@ -1234,12 +1234,12 @@ export async function saveBrandingGuidelinesAction(
 }
 
 /**
- * Auto-generate branding guidelines for a client.
- * Scrapes the client's website for colors/fonts/visual style; falls back to a
- * preset archetype if scraping yields nothing or no website is set.
- * Syncs both context docs so agents immediately see the new values.
+ * AI-generate branding guidelines for a client via Claude Haiku world knowledge.
+ * Generates colors, fonts, visual style, tone keywords, and brand voice from domain
+ * name and industry — no web scraping. Syncs the client record and both context docs
+ * so agents immediately see the updated values.
  *
- * Returns scrape result metadata for UI feedback.
+ * Returns generation metadata for UI feedback (source, primaryColor, visualStyle).
  */
 export async function generateBrandingAction(clientId: string): Promise<BrandingGenResult> {
   const user = await requireStaff();
@@ -1262,8 +1262,9 @@ export async function generateBrandingAction(clientId: string): Promise<Branding
 }
 
 /**
- * One-time retroactive backfill: scrape every client's website and sync branding
- * data + context docs for the full client list. Admin-only.
+ * One-time retroactive backfill: AI-generate branding guidelines for every client
+ * and sync data + context docs across the full client list. Admin-only.
+ * Runs sequentially to stay within Anthropic API rate limits.
  */
 export async function backfillBrandingForAllClientsAction(): Promise<{
   total: number;

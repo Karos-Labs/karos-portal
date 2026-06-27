@@ -443,21 +443,18 @@ function BrandingSection({
   generating: boolean;
   genFeedback?: { source: "ai_generated"; primaryColor?: string; visualStyle?: string } | null;
 }) {
-  const brandInsights = brandingDoc
-    ? (() => {
-        const stripped = brandingDoc.content.replace(/^---[\s\S]*?---\n?/, "");
-        const chips: string[] = [];
-        for (const line of stripped.split("\n")) {
-          const m = line.match(/^[-*+]\s+(.+)/);
-          if (m?.[1]) {
-            const text = m[1].replace(/\*\*/g, "").replace(/\*/g, "").trim();
-            if (text.length >= 15 && text.length <= 100) chips.push(text);
-          }
-          if (chips.length >= 3) break;
-        }
-        return chips;
-      })()
-    : [];
+  const brandInsights: string[] = [];
+  if (brandingDoc) {
+    const stripped = brandingDoc.content.replace(/^---[\s\S]*?---\n?/, "");
+    for (const line of stripped.split("\n")) {
+      const m = line.match(/^[-*+]\s+(.+)/);
+      if (m?.[1]) {
+        const text = m[1].replace(/\*\*/g, "").replace(/\*/g, "").trim();
+        if (text.length >= 15 && text.length <= 100) brandInsights.push(text);
+      }
+      if (brandInsights.length >= 3) break;
+    }
+  }
 
   const generateLabel = generating ? "Generating…" : "Generate with AI";
 

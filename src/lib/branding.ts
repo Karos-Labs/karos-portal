@@ -92,16 +92,6 @@ export function injectBrandVoiceSection(content: string, section: string): strin
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Guard
-   ──────────────────────────────────────────────────────────────────────── */
-
-/** True when the client has no meaningful branding data (colors and fonts both absent). */
-export function isBrandingEmpty(client: Client): boolean {
-  const g = client.brandingGuidelines;
-  return !g || (!g.primaryColor && !g.secondaryColor && !g.fontHeading && !g.fontBody);
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
    AI Branding Engine — Pure Claude Haiku generation (no web scraping)
    ──────────────────────────────────────────────────────────────────────── */
 
@@ -175,21 +165,30 @@ const BrandingAISchema = z.object({
     .describe("3–5 concrete brand communication don'ts (e.g. 'Avoid corporate jargon and buzzwords')."),
 });
 
+// Hard limits prevent token bloat and narrow prompt-injection surface.
+// name: 100 chars — long enough for any real brand name.
+// description: 400 chars — one meaningful paragraph.
+const MAX_NAME_LEN = 100;
+const MAX_DESC_LEN = 400;
+
 function buildBrandingPrompt(
   name: string,
   domain: string | null,
   industry?: string,
   description?: string,
 ): string {
+  const safeName = name.slice(0, MAX_NAME_LEN);
+  const safeDesc = description?.slice(0, MAX_DESC_LEN);
+
   const lines: string[] = [
     "You are an expert brand strategist and visual designer with deep knowledge of global and regional brands.",
     "",
     "## Target brand",
-    `Company name: ${name}`,
+    `Company name: ${safeName}`,
   ];
   if (domain) lines.push(`Website: ${domain}`);
   if (industry) lines.push(`Industry: ${industry}`);
-  if (description) lines.push(`Description: ${description}`);
+  if (safeDesc) lines.push(`Description: ${safeDesc}`);
 
   lines.push(
     "",
