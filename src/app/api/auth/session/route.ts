@@ -31,7 +31,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await createSession(idToken);
+    // Derive whether the request arrived over HTTPS so we set the Secure
+    // cookie flag only when the transport actually supports it. Checking the
+    // forwarded proto handles deployments behind a TLS-terminating proxy.
+    const proto = req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(":", "");
+    const isSecure = proto === "https";
+    await createSession(idToken, isSecure);
 
     // Fire-and-forget login audit log — non-blocking, never delays the response.
     if (!user.disabled) {

@@ -156,13 +156,16 @@ async function ensureUserDoc(
 }
 
 /** Exchange a Firebase ID token for a long-lived session cookie. */
-export async function createSession(idToken: string): Promise<void> {
+export async function createSession(idToken: string, secure?: boolean): Promise<void> {
   const expiresIn = SESSION_MAX_AGE * 1000;
   const sessionCookie = await adminAuth().createSessionCookie(idToken, { expiresIn });
+  // Use caller-supplied flag when available (derived from x-forwarded-proto so
+  // HTTP deployments don't silently drop the cookie). Fall back to NODE_ENV.
+  const useSecure = secure ?? (process.env.NODE_ENV === "production");
   const store = await cookies();
   store.set(SESSION_COOKIE, sessionCookie, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: useSecure,
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE,

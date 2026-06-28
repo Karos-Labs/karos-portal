@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   getRedirectResult,
   GoogleAuthProvider,
 } from "firebase/auth";
@@ -65,19 +66,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<"email" | "google" | "apple" | null>(null);
-
-  // Catch redirect-based auth results (e.g. Apple on some browsers/platforms).
-  useEffect(() => {
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result) establishSession();
-      })
-      .catch((err) => {
-        const msg = friendly(err);
-        if (msg) setError(msg);
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // True while processing a returning Google redirect — shows spinner on the Google button.
+  const [googleRedirectPending, setGoogleRedirectPending] = useState(true);
 
   // Posts the Firebase ID token to the session endpoint and returns the
   // server-assigned role/clientId. Does NOT navigate — callers decide when.
@@ -95,11 +85,39 @@ export default function LoginPage() {
     return res.json();
   }
 
-  async function establishSession() {
-    const { role, clientId, disabled } = await createSession();
-    router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
-    router.refresh();
-  }
+  // On mount: check if the user just returned from the Google redirect flow.
+  // Also handles the legacy redirect path that Apple uses on some browsers.
+  useEffect(() => {
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (!result) {
+          setGoogleRedirectPending(false);
+          return;
+        }
+
+        // Extract Google OAuth access token available in the redirect result.
+        let googleAccessToken: string | null = null;
+        if (result.providerId === "google.com") {
+          const cred = GoogleAuthProvider.credentialFromResult(result);
+          googleAccessToken = cred?.accessToken ?? null;
+        }
+
+        const { role, clientId, disabled } = await createSession();
+
+        if (googleAccessToken) {
+          await saveGoogleOAuthTokenAction(googleAccessToken).catch(() => {});
+        }
+
+        router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
+        router.refresh();
+      })
+      .catch((err) => {
+        const msg = friendly(err);
+        if (msg) setError(msg);
+        setGoogleRedirectPending(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
@@ -107,7 +125,9 @@ export default function LoginPage() {
     setLoading("email");
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      await establishSession();
+      const { role, clientId, disabled } = await createSession();
+      router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
+      router.refresh();
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);
@@ -119,30 +139,19 @@ export default function LoginPage() {
     setError(null);
     setLoading(provider);
     try {
-      const result = await signInWithPopup(
-        auth,
-        provider === "google" ? googleProvider : appleProvider,
-      );
-
-      // Extract the raw Google OAuth2 access token before any navigation.
-      // credentialFromResult returns the Google-issued token (not a Firebase ID token).
-      let googleAccessToken: string | null = null;
       if (provider === "google") {
-        const cred = GoogleAuthProvider.credentialFromResult(result);
-        googleAccessToken = cred?.accessToken ?? null;
+        // Use full-page redirect instead of a popup.
+        // Popups can hang indefinitely when postMessage is blocked (HTTP origin,
+        // restrictive CSP, or certain mobile browsers). The redirect flow is
+        // unconditionally reliable — useEffect picks up the result on return.
+        await signInWithRedirect(auth, googleProvider);
+        return; // page navigates away; loading state is irrelevant after this
       }
 
-      // Create the session first — this sets the session cookie that
-      // saveGoogleOAuthTokenAction needs to authenticate on the server.
+      // Apple: keep popup (redirect flow is more complex for Apple Sign-In)
+      const result = await signInWithPopup(auth, appleProvider);
+      if (!result) return;
       const { role, clientId, disabled } = await createSession();
-
-      // Await the token save BEFORE calling router.push(). If we navigate
-      // first, the browser can abort the in-flight server-action fetch,
-      // leaving clientIntegrations empty and breaking Gmail scanning.
-      if (googleAccessToken) {
-        await saveGoogleOAuthTokenAction(googleAccessToken).catch(() => {});
-      }
-
       router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
       router.refresh();
     } catch (err) {
@@ -152,7 +161,7 @@ export default function LoginPage() {
     }
   }
 
-  const busy = loading !== null;
+  const busy = loading !== null || googleRedirectPending;
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
@@ -222,7 +231,7 @@ export default function LoginPage() {
               variant="subtle"
               className="w-full"
               onClick={() => handleSocial("google")}
-              loading={loading === "google"}
+              loading={loading === "google" || googleRedirectPending}
               disabled={busy}
             >
               <GoogleLogo />
