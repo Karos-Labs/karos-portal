@@ -64,6 +64,17 @@ export interface SlidesConfig {
   bannedTypes: string[];
 }
 
+/** Web image-sourcing rules (was config.sourcing + media.image). */
+export interface SourcingConfig {
+  /** Minimum long-edge px a candidate photo must have. */
+  minLongEdge: number;
+  /** Acceptable width/height ratio window. */
+  aspectMin: number;
+  aspectMax: number;
+  /** Domains to reject (watermark/stock sites). Defensive — clean providers won't hit these. */
+  blockedDomains: string[];
+}
+
 /** Lintable voice rules QA enforces (was config.voice). */
 export interface VoiceConfig {
   tone?: string;
@@ -95,11 +106,12 @@ export interface ContentEngineConfig {
   selection: SelectionConfig;
   slides: SlidesConfig;
   voice: VoiceConfig;
+  sourcing?: SourcingConfig;
   canvas?: { w: number; h: number; ratio?: string };
   /**
-   * Brand stance: real photography only — AI-generated imagery violates the
-   * brand (XO: media.real_only). When true, the native Segmind image step still
-   * runs (it's karosCMO's only image path) but records a loud QA warning.
+   * Brand stance: real photography only — no AI-generated imagery (XO:
+   * media.real_only). The engine sources real web photos (Pexels), so this is
+   * satisfied; it's surfaced for the operator and future provider choices.
    */
   realImageryOnly?: boolean;
   updatedAt: number;
@@ -120,10 +132,12 @@ export interface CarouselSlide {
   headline: string;
   /** Supporting body copy, or null for a pure-headline slide. */
   body: string | null;
-  /** Art-direction brief fed to the image generator — NOT published copy. */
-  imageConcept: string;
-  /** Resolved image URL once generated (Segmind → Firebase Storage). */
+  /** Concise search keywords for a REAL photo to pull from the web — NOT published copy. */
+  imageQuery: string;
+  /** Resolved image URL once sourced (web photo → Firebase Storage). */
   imageUrl?: string | null;
+  /** Credit line for the sourced photo (e.g. "Photo by … on Pexels"). */
+  attribution?: string | null;
 }
 
 /** The picker's choice. */

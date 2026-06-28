@@ -14,8 +14,8 @@
  *  - one_number_per_post: at most one distinct number, disclaimer numbers exempt.
  *
  * ADAPTATION: "posted copy" = caption + each slide's headline/body. The slide
- * `imageConcept` is art direction (analogous to qa.py's excluded sourcing keys),
- * so it is NOT voice-scanned. Collects ALL failures (qa.py fails on the first)
+ * `imageQuery` is image-search input (analogous to qa.py's excluded sourcing
+ * keys), so it is NOT voice-scanned. Collects ALL failures (qa.py fails on first)
  * so the run can surface them and feed them into a single regeneration pass —
  * never silent-fail.
  */

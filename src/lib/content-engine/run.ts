@@ -22,10 +22,10 @@ import {
   buildCachedMessages,
   logCacheUsage,
 } from "@/lib/agents/run";
-import { generatePostImage, imageGenConfigured } from "@/lib/images";
 import type { AppUser, Client, Job, JobRunEvent } from "@/lib/types";
 import { pickNext } from "./picker";
 import { runQa } from "./qa";
+import { sourceSlideImage, imageSourcingConfigured } from "./sourcing";
 import type { CarouselSlide, ContentEngineConfig, PickResult, VoiceConfig } from "./types";
 
 export interface ContentEngineRunResult {
@@ -105,10 +105,10 @@ function carouselSchema(config: ContentEngineConfig) {
           role: z.string().describe(`Slide role — MUST be one of: ${roles.join(", ")}.`),
           headline: z.string().describe("Short, on-brand headline / hook for this slide (published copy)."),
           body: z.string().nullable().optional().describe("Supporting body copy, or null for a headline-only slide."),
-          imageConcept: z
+          imageQuery: z
             .string()
             .describe(
-              "Art-direction brief for this slide's image — concrete subject, setting, composition, lighting, mood; photographic and on-brand; no text overlays, logos, or watermarks.",
+              "Concise English search keywords (2-6 words) for a REAL stock photo that fits this slide — concrete subject + setting, photographic and on-brand (e.g. 'brazilian real banknotes close up', 'analyst reviewing financial charts'). No brand names, no on-image text. English yields the best stock results even for a non-English brand.",
             ),
         }),
       )
@@ -183,7 +183,7 @@ function postStatesNumber(carousel: Carousel, hashtags: string[], voice: VoiceCo
 
 /** Normalize a freshly generated carousel: null-safe slides, clean hashtags, conditional disclaimer. */
 function normalizeCarousel(carousel: Carousel, config: ContentEngineConfig): { slides: CarouselSlide[]; caption: string; hashtags: string[] } {
-  const slides: CarouselSlide[] = carousel.slides.map((s) => ({ ...s, body: s.body ?? null, imageUrl: null }));
+  const slides: CarouselSlide[] = carousel.slides.map((s) => ({ ...s, body: s.body ?? null, imageUrl: null, attribution: null }));
   const hashtags = normalizeHashtags(carousel.hashtags);
   const caption = withDisclaimer(carousel.caption, config.voice, postStatesNumber(carousel, hashtags, config.voice));
   return { slides, caption, hashtags };
@@ -285,28 +285,31 @@ async function executeContentEngineRun(args: {
       events.push({ at: Date.now(), level: "error", message: `QA still failing — saved for review, NOT added to the ledger: ${qa.failures.join(" | ")}` });
     }
 
-    // 3) images (Segmind). XO forbids AI imagery — generate but warn loudly.
-    const imagesOn = imageGenConfigured();
+    // 3) images: pull REAL photos from the web (Pexels) per slide — never AI-generated.
+    const imagesOn = imageSourcingConfigured();
     let imagesMade = 0;
     if (imagesOn) {
-      if (config.realImageryOnly) {
-        events.push({ at: Date.now(), level: "error", message: "Brand stance is real photography only (media.real_only) — AI-generated slide images VIOLATE the brand. Generating anyway for the preview; replace before publishing." });
-      }
       for (let i = 0; i < slides.length; i++) {
         try {
-          slides[i].imageUrl = await generatePostImage({ concept: slides[i].imageConcept, key: `${jobId}-slide-${i}` });
+          const sourced = await sourceSlideImage({ query: slides[i].imageQuery, key: `${jobId}-slide-${i}`, config });
+          if (sourced) {
+            slides[i].imageUrl = sourced.url;
+            slides[i].attribution = sourced.attribution;
+          } else {
+            events.push({ at: Date.now(), level: "info", message: `Slide ${i + 1}: no real photo matched "${slides[i].imageQuery}"` });
+          }
         } catch (e) {
-          events.push({ at: Date.now(), level: "error", message: `Slide ${i + 1} image failed: ${e instanceof Error ? e.message : "unknown"}` });
+          events.push({ at: Date.now(), level: "error", message: `Slide ${i + 1} image search failed: ${e instanceof Error ? e.message : "unknown"}` });
         }
       }
       imagesMade = slides.filter((s) => s.imageUrl).length;
       if (imagesMade === 0) {
-        events.push({ at: Date.now(), level: "error", message: `All ${slides.length} slide images failed — total image outage; not advancing the ledger so the topic can be retried` });
+        events.push({ at: Date.now(), level: "error", message: "No real photos matched any slide — not advancing the ledger so the topic can be retried" });
       } else {
-        events.push({ at: Date.now(), level: "success", message: `${imagesMade}/${slides.length} slide images generated` });
+        events.push({ at: Date.now(), level: "success", message: `${imagesMade}/${slides.length} slides matched a real photo (Pexels)` });
       }
     } else {
-      events.push({ at: Date.now(), level: "info", message: "SEGMIND_API_KEY not set — slides have art-direction briefs but no images" });
+      events.push({ at: Date.now(), level: config.realImageryOnly ? "error" : "info", message: "PEXELS_API_KEY not set — cannot source real imagery; saved with copy + image queries but no photos" });
     }
 
     // 4) save one carousel Asset (reuses the instagram_post type/UI)
@@ -325,7 +328,15 @@ async function executeContentEngineRun(args: {
         viability: pick.viability,
         hashtags,
         disclaimer: config.voice.requiredDisclaimer ?? null,
-        slides: slides.map((s) => ({ role: s.role, headline: s.headline, body: s.body, imageUrl: s.imageUrl ?? null })),
+        slides: slides.map((s) => ({
+          role: s.role,
+          headline: s.headline,
+          body: s.body,
+          imageUrl: s.imageUrl ?? null,
+          imageQuery: s.imageQuery,
+          attribution: s.attribution ?? null,
+        })),
+        imageCredits: slides.map((s) => s.attribution).filter(Boolean),
         qa: { pass: qa.pass, failures: qa.failures },
       },
       imageUrl: cover,
@@ -336,10 +347,12 @@ async function executeContentEngineRun(args: {
     });
     events.push({ at: Date.now(), level: "info", message: "Saved carousel asset to the library" });
 
-    // 5) advance the ledger ONLY on a clean pass AND (if images are on) at least
-    // one image — a failed/degenerate draft stays retriable (topic not consumed).
-    const imagesOk = !imagesOn || imagesMade > 0;
-    if (qa.pass && imagesOk) {
+    // 5) advance the ledger ONLY on a clean pass AND adequate imagery — a
+    // failed/imageless draft stays retriable (topic not consumed). Imagery is
+    // adequate when at least one real photo was sourced, OR when no source is
+    // configured and the brand doesn't require real imagery.
+    const imagesAdequate = imagesMade > 0 || (!imagesOn && !config.realImageryOnly);
+    if (qa.pass && imagesAdequate) {
       await appendLedger({
         clientId: client.id,
         subjectKey: pick.subjectKey,

@@ -93,6 +93,8 @@ function mapConfig(clientId: string, cfg: Record<string, unknown>): ContentEngin
   const hashtags = (voice.hashtags ?? {}) as Record<string, unknown>;
   const slides = (cfg.slides ?? {}) as Record<string, unknown>;
   const selection = (cfg.selection ?? {}) as Record<string, unknown>;
+  const sourcing = (cfg.sourcing ?? {}) as Record<string, unknown>;
+  const blocklists = (sourcing.blocklists ?? {}) as Record<string, unknown>;
   const canvasDefault = ((cfg.canvas ?? {}) as Record<string, unknown>).default as Record<string, unknown> | undefined;
   const mediaImage = ((cfg.media ?? {}) as Record<string, unknown>).image as Record<string, unknown> | undefined;
 
@@ -129,6 +131,12 @@ function mapConfig(clientId: string, cfg: Record<string, unknown>): ContentEngin
       // qa.require_disclaimer_on_number lives under the `qa` block in config.yaml.
       requireDisclaimerOnNumber: pick(qa, "require_disclaimer_on_number", false),
       oneNumberPerPost: pick(voice, "one_number_per_post", false),
+    },
+    sourcing: {
+      minLongEdge: pick(sourcing, "min_long_edge", pick(mediaImage ?? {}, "min_long_edge", 1080)),
+      aspectMin: pick(sourcing, "aspect_min", 0.55),
+      aspectMax: pick(sourcing, "aspect_max", 2.2),
+      blockedDomains: pick<string[]>(blocklists, "watermark_domains", []),
     },
     canvas: canvasDefault
       ? { w: pick(canvasDefault, "w", 1080), h: pick(canvasDefault, "h", 1440), ratio: pick(canvasDefault, "ratio", "3:4") }
@@ -226,6 +234,7 @@ async function main() {
   console.log(`Seeded contentEngineConfigs/${clientId} — formats: ${config.formats.join(", ")}`);
   console.log(`Seeded contentCatalogs/${clientId} — ${catalog.entries.length} topics`);
   console.log(`realImageryOnly=${config.realImageryOnly} · disclaimer ${config.voice.requiredDisclaimer ? "set" : "none"} · hashtags ${config.voice.hashtags.count}/${config.voice.hashtags.case}`);
+  console.log(`image sourcing: real web photos (Pexels) · minLongEdge ${config.sourcing?.minLongEdge} · ${config.sourcing?.blockedDomains.length ?? 0} blocked domains`);
   console.log("Done. Open the client in the app and click “Run content engine”.");
 }
 
