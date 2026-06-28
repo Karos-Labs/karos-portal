@@ -51,8 +51,11 @@ Re-running is safe. Agents are keyed by `labsSkillId`:
 ## Important limitation — this imports the *methodology*, not the *pipeline*
 
 A karos-labs skill, in its home repo, is more than a prompt: the content-engine skills also run a
-render/sourcing/QA toolchain and write deliverables to Supabase + a client portal. karosCMO has no
-host for that machinery — an Agent here is a single Claude call.
+render/sourcing/QA toolchain and write deliverables to an external backend + client portal.
+karosCMO has no host for that machinery — an Agent here is a single Claude call. Those
+infrastructure/pipeline/ledger/delivery references are **stripped** from every imported system
+prompt by `sanitizeRunbook` (see `labs-import.ts`), so the prompts carry only the
+strategy/voice/format/quality rules and name no external system.
 
 So an imported agent produces the **text/copy** the skill describes:
 

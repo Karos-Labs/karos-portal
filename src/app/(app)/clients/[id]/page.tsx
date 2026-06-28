@@ -13,13 +13,18 @@ import {
   listContextItems,
   listClientActivityLogs,
   listClientIntegrations,
+  getContentEngineConfig,
+  getContentCatalog,
+  getNewsletterConfig,
 } from "@/lib/data";
+import { missingBrandFields } from "@/lib/newsletter/brand";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
-import { Card, CardTitle, Badge } from "@/components/ui";
+import { Card, CardTitle, Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ClientEditor } from "@/components/client-editor";
 import { ClientKeyPanel } from "@/components/client-key-panel";
 import { ClientKeyInline } from "@/components/client-key-inline";
+import { ContentEngineLauncher } from "@/components/content-engine-launcher";
 import { JobStatusBadge } from "@/components/job-status";
 import { ClientDashboard } from "@/components/client-dashboard";
 import { ChatbotWidget } from "@/components/chatbot-widget";
@@ -42,7 +47,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
 
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
-  const [agents, assets, transcripts, jobs, contextItems, report, competitors, contextDocs, activityLogs, integrations] = await Promise.all([
+  const [agents, assets, transcripts, jobs, contextItems, report, competitors, contextDocs, activityLogs, integrations, ceConfig, ceCatalog, nlConfig] = await Promise.all([
     listAgents({ status: "published" }),
     listAssets({ clientId: id }),
     listTranscripts({ clientId: id }),
@@ -54,7 +59,18 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     listClientContextDocs(id),
     listClientActivityLogs(id),
     listClientIntegrations(id),
+    getContentEngineConfig(id),
+    getContentCatalog(id),
+    getNewsletterConfig(id),
   ]);
+  // The run needs BOTH a config and a (non-empty) catalog, so only offer it then.
+  const contentEngineReady = Boolean(ceConfig && ceCatalog && ceCatalog.entries.length > 0);
+  // Newsletter onboarding status: no doc → Not started; required brand fields filled → Ready.
+  const newsletterStatus = !nlConfig
+    ? "Not started"
+    : missingBrandFields(nlConfig.brand).length === 0
+      ? "Ready"
+      : "Draft";
 
   return (
     <>
@@ -114,6 +130,31 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
 
         {/* Sidebar */}
         <div className="space-y-6">
+          {contentEngineReady && <ContentEngineLauncher clientId={id} clientName={client.name} />}
+
+          <Card>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <CardTitle>Newsletter &amp; blog</CardTitle>
+              <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">e11</span>
+            </div>
+            <div className="mb-3 flex items-center gap-2">
+              <Badge tone={newsletterStatus === "Ready" ? "neon" : newsletterStatus === "Draft" ? "warning" : "neutral"}>
+                {newsletterStatus}
+              </Badge>
+              {nlConfig?.optIn && <Badge tone="info">Weekly opt-in</Badge>}
+            </div>
+            <p className="mb-3 text-sm text-muted-2">
+              Onboarding intake for the weekly newsletter + companion blog: brand, editorial
+              foundation, and voice-anchor uploads.
+            </p>
+            <Link href={`/clients/${id}/newsletter`}>
+              <Button size="sm" variant="outline">
+                <Icon name="Newspaper" className="h-4 w-4" />
+                {newsletterStatus === "Not started" ? "Start setup" : "Open setup"}
+              </Button>
+            </Link>
+          </Card>
+
           <ClientEditor client={client} />
 
           {/* Client Access Key — visible to staff only so they can share it with the client */}

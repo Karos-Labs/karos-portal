@@ -12,3 +12,4 @@ export * from "./competitor-actions";
 export * from "./user-actions";
 export * from "./integration-actions";
 export * from "./request-actions";
+export * from "./content-actions";

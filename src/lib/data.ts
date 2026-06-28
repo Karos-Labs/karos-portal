@@ -22,6 +22,8 @@ import type {
   Role,
   Transcript,
 } from "@/lib/types";
+import type { ContentCatalog, ContentEngineConfig, LedgerEntry } from "@/lib/content-engine/types";
+import type { NewsletterConfig } from "@/lib/newsletter/types";
 
 /* ----------------------------- helpers ----------------------------- */
 
@@ -45,6 +47,13 @@ const col = {
   clientIntegrations: () => adminDb().collection("clientIntegrations"),
   clientRequests: () => adminDb().collection("clientRequests"),
   loginLogs: () => adminDb().collection("loginLogs"),
+  // Content Engine (native e12 port). Catalog + config are keyed by clientId
+  // (one doc per client); the ledger is an append-only collection.
+  contentCatalogs: () => adminDb().collection("contentCatalogs"),
+  contentEngineConfigs: () => adminDb().collection("contentEngineConfigs"),
+  contentLedger: () => adminDb().collection("contentLedger"),
+  // Newsletter + Blog Engine (native e11 port). Brand + content-foundation, one doc per client.
+  newsletterConfigs: () => adminDb().collection("newsletterConfigs"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -142,6 +151,12 @@ export async function listAgents(opts?: { status?: Agent["status"] }): Promise<A
 export async function getAgent(id: string): Promise<Agent | null> {
   const doc = await col.agents().doc(id).get();
   return doc.exists ? withId<Agent>(doc) : null;
+}
+
+/** Resolve an imported karos-labs agent by its provenance key (e.g. "karos-intel"). */
+export async function getAgentByLabsSkillId(labsSkillId: string): Promise<Agent | null> {
+  const snap = await col.agents().where("labsSkillId", "==", labsSkillId).limit(1).get();
+  return snap.empty ? null : withId<Agent>(snap.docs[0]);
 }
 
 export async function createAgent(data: Omit<Agent, "id">): Promise<string> {
@@ -347,6 +362,53 @@ export async function findAccessTokenByHash(tokenHash: string): Promise<AccessTo
 
 export async function updateAccessToken(id: string, data: Partial<AccessToken>): Promise<void> {
   await col.accessTokens().doc(id).set(data, { merge: true });
+}
+
+/* ------------------------- content engine -------------------------- */
+
+/** A client's topic catalog (one doc, keyed by clientId). */
+export async function getContentCatalog(clientId: string): Promise<ContentCatalog | null> {
+  const doc = await col.contentCatalogs().doc(clientId).get();
+  return doc.exists ? (doc.data() as ContentCatalog) : null;
+}
+
+export async function upsertContentCatalog(catalog: ContentCatalog): Promise<void> {
+  await col.contentCatalogs().doc(catalog.clientId).set(catalog, { merge: true });
+}
+
+/** A client's content-engine config (voice/qa rules + picker selection; keyed by clientId). */
+export async function getContentEngineConfig(clientId: string): Promise<ContentEngineConfig | null> {
+  const doc = await col.contentEngineConfigs().doc(clientId).get();
+  return doc.exists ? (doc.data() as ContentEngineConfig) : null;
+}
+
+export async function upsertContentEngineConfig(config: ContentEngineConfig): Promise<void> {
+  await col.contentEngineConfigs().doc(config.clientId).set(config, { merge: true });
+}
+
+/** The client's ledger, oldest→newest (order matters: the picker reads the last entry's format). */
+export async function listLedger(opts: { clientId: string }): Promise<LedgerEntry[]> {
+  const snap = await col.contentLedger().where("clientId", "==", opts.clientId).get();
+  return snap.docs
+    .map((d) => d.data() as LedgerEntry & { clientId: string })
+    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || (a.vol ?? 0) - (b.vol ?? 0));
+}
+
+export async function appendLedger(entry: LedgerEntry & { clientId: string }): Promise<string> {
+  const ref = await col.contentLedger().add(entry);
+  return ref.id;
+}
+
+/* ------------------------ newsletter + blog ------------------------ */
+
+/** A client's newsletter/blog config (brand + content foundation; keyed by clientId). */
+export async function getNewsletterConfig(clientId: string): Promise<NewsletterConfig | null> {
+  const doc = await col.newsletterConfigs().doc(clientId).get();
+  return doc.exists ? (doc.data() as NewsletterConfig) : null;
+}
+
+export async function upsertNewsletterConfig(config: Partial<NewsletterConfig> & { clientId: string }): Promise<void> {
+  await col.newsletterConfigs().doc(config.clientId).set(config, { merge: true });
 }
 
 /* ----------------------- intelligence reports ----------------------- */

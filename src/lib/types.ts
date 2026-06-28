@@ -226,6 +226,12 @@ export interface ContextItem {
   url: string;
   /** Optional employee description to guide the agent ("primary product shot"). */
   note?: string;
+  /**
+   * What this file is for, when it was attached for a specific engine. Absent ⇒ general
+   * agent context. The newsletter engine uses these to find voice anchors vs hero images:
+   * `newsletter_reference` = a past newsletter (voice match); `image_pool` = a hero image.
+   */
+  purpose?: "newsletter_reference" | "image_pool";
   createdBy: string;
   createdAt: number;
 }

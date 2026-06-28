@@ -2,11 +2,12 @@
  * Maps the karos-labs skill library into karosCMO Agent specs.
  *
  * A karos-labs "skill" is a SKILL.md file (frontmatter + a long runbook body) that, in its
- * home repo, is executed by a Supabase edge function plus a local render/sourcing toolchain.
+ * home repo, runs on a separate execution backend plus a local render/sourcing toolchain.
  * karosCMO has no host for that machinery — an Agent here is a single Claude call whose system
  * prompt is `systemPrompt`. So we import each skill as an Agent whose system prompt is the
- * SKILL.md body (with an operating preamble that tells the model to ignore the parts of the
- * runbook that assume the other environment), and pick the best-fit `outputKind`/capabilities.
+ * SKILL.md body, SANITIZED to remove the infrastructure/pipeline/ledger/delivery steps that
+ * assume the other environment (see `sanitizeRunbook`), and pick the best-fit
+ * `outputKind`/capabilities.
  *
  * Source data is the build artifacts copied from karos-labs/karos-ops/src/data:
  *   - labs-skills-catalog.json  — library metadata (clean name/desc), `skills/karos/*` only.
@@ -70,19 +71,56 @@ const PARENT_BODY_CAP = 12_000;
 
 /**
  * Tells the model how to read a runbook written for a different runtime: follow the
- * strategy/voice/format/quality rules, but produce the deliverable as content here and ignore
- * any step that assumes files, pipelines, ledgers, or database/portal writes it cannot perform.
+ * strategy/voice/format/quality rules and produce the deliverable as content here. The
+ * infrastructure/pipeline/delivery steps are stripped from the body by `sanitizeRunbook`, so
+ * this preamble just sets the output contract — no need to name any external system.
  */
 const OPERATING_PREAMBLE = [
   "You are running as an agent inside karosCMO, a marketing-agency content tool. The playbook",
-  "below was authored for a different execution environment. Follow its STRATEGY, VOICE, FORMAT,",
-  "and QUALITY rules precisely, but adapt the OUTPUT to this tool: produce the requested content",
-  "as text (for Instagram, as structured posts with a caption and an image concept). IGNORE any",
-  "instructions about repository paths, folders, rendering or video pipelines (ffmpeg, Playwright,",
-  "yt-dlp), ledgers, approval queues, schedules, or database / Supabase / portal writes — those",
-  "steps happen outside this tool and you cannot perform them here. Do not output code or shell",
-  "commands. Ground everything in the client's brand voice and the request details provided.",
+  "below was authored for a different execution environment; its infrastructure and delivery",
+  "steps have been removed. Follow its STRATEGY, VOICE, FORMAT, and QUALITY rules precisely, and",
+  "produce the requested content as text (for Instagram, as structured posts with a caption and",
+  "an image concept). Do not output code or shell commands, and do not reference files, folders,",
+  "pipelines, or any external system. Ground everything in the client's brand voice and the",
+  "request details provided.",
 ].join(" ");
+
+/**
+ * Strip the karos-labs execution machinery from a runbook before it becomes an Agent system
+ * prompt. The skills assume a backend + render/sourcing toolchain karosCMO doesn't have, and the
+ * product decision is to carry ZERO such references (no infra, pipelines, ledgers, or external
+ * services). We remove fenced code blocks (shell/python/SQL) and any line that names that
+ * machinery, then collapse the gaps — leaving only the strategy/voice/format/quality prose.
+ */
+const INFRA_LINE = new RegExp(
+  [
+    // external systems / services
+    "supabase", "content_engine_runs", "content_ledger", "edge function", "edge fn",
+    "service[- ]role", "functions/v1", "anon key", "\\bportal\\b", "apify", "\\bAPIFY",
+    "\\binfra\\b", "\\bdatabase\\b", "\\bDB row\\b",
+    // render / sourcing toolchain
+    "image_sourcing", "clip_video", "ffmpeg", "ffprobe", "yt-dlp", "imagemagick",
+    "\\bmagick\\b", "tesseract", "playwright",
+    // pipeline mechanics
+    "\\bledger\\b", "\\bqueue\\b", "commit-deliverable", "push[- ]to[- ](client|portal)",
+    "\\bcrons?\\b", "\\bschedule[sd]?\\b", "schedule fires",
+    // any file / path / script reference (catches render.mjs, qa.py, *.html, *.yaml,
+    // *.json, repo paths) — these all assume the other filesystem.
+    "[\\w-]+\\.(json|ya?ml|html|mjs|py|md|sh)\\b",
+    "clients/[^\\s)`]+", "skills/[^\\s)`]+", "content-engine/", "/engine\\b", "templates?/",
+    "references/", "--content-type", "--template", "\\?data=", "&export=",
+  ].join("|"),
+  "i",
+);
+
+export function sanitizeRunbook(md: string): string {
+  const noCode = md.replace(/```[\s\S]*?```/g, ""); // drop shell/python/SQL command blocks
+  const kept = noCode
+    .split(/\r?\n/)
+    .filter((l) => !INFRA_LINE.test(l)) // drop lines that name the external machinery
+    .join("\n");
+  return kept.replace(/\n{3,}/g, "\n\n").trim(); // collapse the resulting gaps
+}
 
 /* ------------------------------ scope filter ------------------------------ */
 
@@ -253,18 +291,13 @@ function fieldsFor(outputKind: Agent["outputKind"], single: boolean): AgentField
 
 function buildSystemPrompt(name: string, ownBody: string, parentName: string, parentBody: string): string {
   const sections = [OPERATING_PREAMBLE];
-  if (parentBody) {
-    sections.push(
-      `===== INHERITED PLAYBOOK: ${parentName} =====\n${truncate(collapseBlank(parentBody), PARENT_BODY_CAP)}`,
-    );
+  // Sanitize BEFORE truncating so the length cap applies to clean strategy prose, not infra noise.
+  const cleanParent = parentBody ? sanitizeRunbook(parentBody) : "";
+  if (cleanParent) {
+    sections.push(`===== INHERITED PLAYBOOK: ${parentName} =====\n${truncate(cleanParent, PARENT_BODY_CAP)}`);
   }
-  sections.push(`===== SKILL: ${name} =====\n${truncate(collapseBlank(ownBody), OWN_BODY_CAP)}`);
+  sections.push(`===== SKILL: ${name} =====\n${truncate(sanitizeRunbook(ownBody), OWN_BODY_CAP)}`);
   return sections.join("\n\n");
-}
-
-/** Trim leading/trailing blank lines without collapsing internal structure. */
-function collapseBlank(s: string): string {
-  return s.replace(/^\s*\n/, "").trimEnd();
 }
 
 /* -------------------------------- builder --------------------------------- */

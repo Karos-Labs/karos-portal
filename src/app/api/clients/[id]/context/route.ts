@@ -21,6 +21,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const form = await req.formData();
   const file = form.get("file");
   const note = (form.get("note") as string | null)?.trim() || undefined;
+  const rawPurpose = (form.get("purpose") as string | null)?.trim();
+  const purpose =
+    rawPurpose === "newsletter_reference" || rawPurpose === "image_pool" ? rawPurpose : undefined;
 
   if (!(file instanceof File)) return NextResponse.json({ error: "No file provided" }, { status: 400 });
   if (file.size === 0) return NextResponse.json({ error: "Empty file" }, { status: 400 });
@@ -44,6 +47,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     storagePath,
     url,
     note,
+    ...(purpose ? { purpose } : {}),
     createdBy: user.uid,
     createdAt: Date.now(),
   });
