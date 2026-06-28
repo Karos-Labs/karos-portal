@@ -26,6 +26,13 @@ export function AssetCard({ asset, canApprove }: { asset: Asset; canApprove?: bo
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
 
+  // Content-engine carousels carry their slides (each with its own photo) in
+  // meta.slides; a plain post has only the single cover `asset.imageUrl`.
+  type SlideMeta = { role?: string; headline?: string; body?: string | null; imageUrl?: string | null; attribution?: string | null };
+  const slides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
+  const isCarousel = slides.length > 0;
+  const photoCount = slides.filter((s) => s.imageUrl).length;
+
   async function setStatus(status: Asset["status"]) {
     setBusy(true);
     try {
@@ -60,21 +67,60 @@ export function AssetCard({ asset, canApprove }: { asset: Asset; canApprove?: bo
           </div>
           <p className={`mt-1 whitespace-pre-wrap text-sm text-muted ${open ? "" : "line-clamp-2"}`}>{asset.content}</p>
 
-          {asset.imageUrl && (
+          {isCarousel ? (
+            <div className="mt-2">
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {slides.map((s, i) => (
+                  <div key={i} className="w-28 shrink-0">
+                    {s.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={s.imageUrl} alt={s.headline ?? `Slide ${i + 1}`} className="h-36 w-28 rounded-lg border border-border object-cover" />
+                    ) : (
+                      <div className="flex h-36 w-28 items-center justify-center rounded-lg border border-dashed border-border text-center text-[10px] text-muted-2">
+                        no photo
+                      </div>
+                    )}
+                    <p className="mt-1 line-clamp-2 text-[10px] text-muted-2">{i + 1}. {s.headline}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-1 text-[10px] text-muted-2">{slides.length} slides · {photoCount} with photos</p>
+            </div>
+          ) : asset.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={asset.imageUrl}
               alt={asset.title}
               className="mt-2 w-full max-w-sm rounded-lg border border-border"
             />
-          )}
+          ) : null}
 
           {open && (
             <>
               {hashtags.length > 0 && (
                 <p className="mt-2 text-xs text-neon-dim">{hashtags.map((h) => "#" + h).join(" ")}</p>
               )}
-              {imageConcept && (
+              {isCarousel && (
+                <div className="mt-2 space-y-2">
+                  {slides.map((s, i) => (
+                    <div key={i} className="flex gap-2 rounded-lg bg-surface-2 p-2">
+                      {s.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={s.imageUrl} alt="" className="h-24 w-20 shrink-0 rounded border border-border object-cover" />
+                      ) : null}
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium">
+                          {i + 1}. {s.headline}
+                          {s.role ? <span className="text-muted-2"> · {s.role}</span> : null}
+                        </p>
+                        {s.body ? <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted">{s.body}</p> : null}
+                        {s.attribution ? <p className="mt-1 text-[10px] text-muted-2">{s.attribution}</p> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!isCarousel && imageConcept && (
                 <p className="mt-2 rounded-lg bg-surface-2 p-2 text-xs text-muted">
                   <span className="font-medium text-foreground">Visual: </span>
                   {imageConcept}
