@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import type { Agent } from "@/lib/types";
+import type { Agent, Client, ClientReport } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
 
@@ -18,6 +18,58 @@ type CopilotMode =
   | { type: "general" }
   | { type: "agent"; agent: Agent };
 
+/* ── Proactive action chip definitions ───────────────────────────────── */
+
+interface ProactiveAction {
+  id: string;
+  icon: string;
+  label: string;
+  sublabel: string;
+  trigger: string;
+  color: string;
+}
+
+function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[] {
+  return [
+    {
+      id: "scan_inbox",
+      icon: hasGoogleIntegration ? "Globe" : "ListTodo",
+      label: "Refresh Task Map",
+      sublabel: "Scan market footprint & surface operational priorities",
+      trigger:
+        "Scan the web and analyze our market footprint for operational action items. Build a comprehensive task map covering website optimizations, content opportunities, and strategic priorities.",
+      color: "#2dff9e",
+    },
+    {
+      id: "competitor_research",
+      icon: "TrendingUp",
+      label: "Competitor Deep-Dive",
+      sublabel: "Generate intel brief + counter-strategy tasks",
+      trigger:
+        "Help me research a competitor. I'll give you their URL or company name — start by asking me which competitor to focus on.",
+      color: "#5db4ff",
+    },
+    {
+      id: "brand_audit",
+      icon: "Search",
+      label: "Brand Visibility Audit",
+      sublabel: "Surface presence gaps and push optimization tasks",
+      trigger:
+        "Run a brand visibility and market presence audit. Identify gaps in our brand positioning and generate specific optimization action items.",
+      color: "#ffcf5d",
+    },
+    {
+      id: "content_dispatch",
+      icon: "Zap",
+      label: "AI Content Dispatch",
+      sublabel: "Propose & queue AI agent content runs for this week",
+      trigger:
+        "Propose which AI marketing agents to dispatch for content creation this week. Review our active agents and suggest a concrete content plan.",
+      color: "#ff5d6c",
+    },
+  ];
+}
+
 /* ── Copilot hook ────────────────────────────────────────────────────── */
 
 function useCopilot(
@@ -25,6 +77,7 @@ function useCopilot(
   agentId: string | null,
   onBrandingChange: () => void,
   onJobStarted: () => void,
+  onTasksCreated: () => void,
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -76,6 +129,7 @@ function useCopilot(
         let accumulated = "";
         let brandingUpdated = false;
         let jobStarted = false;
+        let tasksCreated = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -83,6 +137,7 @@ function useCopilot(
           const chunk = decoder.decode(value, { stream: true });
           if (chunk.includes("Branding guidelines updated")) brandingUpdated = true;
           if (chunk.includes("Run started successfully")) jobStarted = true;
+          if (chunk.includes("Created") && chunk.includes("task")) tasksCreated = true;
           accumulated += chunk;
           setMessages((prev) =>
             prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m)),
@@ -91,6 +146,7 @@ function useCopilot(
 
         if (brandingUpdated) onBrandingChange();
         if (jobStarted) onJobStarted();
+        if (tasksCreated) onTasksCreated();
       } catch (e) {
         if ((e as Error).name === "AbortError") {
           setMessages((prev) => prev.filter((m) => m.id !== assistantId));
@@ -102,7 +158,7 @@ function useCopilot(
         setStreaming(false);
       }
     },
-    [clientId, agentId, messages, streaming, onBrandingChange, onJobStarted],
+    [clientId, agentId, messages, streaming, onBrandingChange, onJobStarted, onTasksCreated],
   );
 
   return { messages, input, setInput, send, streaming, error, reset };
@@ -157,7 +213,6 @@ function ModeSelector({
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-2 px-4 py-2 text-left transition-colors hover:bg-surface-2"
       >
-        {/* Mode icon */}
         {isAgent ? (
           <span
             className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px]"
@@ -170,9 +225,7 @@ function ModeSelector({
             <Icon name="Bot" className="h-3 w-3 text-neon" />
           </span>
         )}
-
         <span className="flex-1 truncate text-xs font-medium text-muted">{label}</span>
-
         <span className="text-[10px] text-muted-2 shrink-0 mr-1">Mode</span>
         <Icon
           name="ChevronDown"
@@ -183,10 +236,8 @@ function ModeSelector({
         />
       </button>
 
-      {/* Dropdown — opens into the messages area; z-50 so it overlays */}
       {open && (
         <div className="absolute left-0 right-0 top-full z-50 border-b border-border bg-surface shadow-xl animate-fade-up">
-          {/* General */}
           <button
             className={cn(
               "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-xs transition-colors hover:bg-surface-2",
@@ -200,8 +251,6 @@ function ModeSelector({
             <span className="flex-1">General Client Assistant</span>
             {mode.type === "general" && <Icon name="Check" className="h-3 w-3 shrink-0 text-neon" />}
           </button>
-
-          {/* Agent options */}
           {agents.length > 0 && <div className="mx-3 h-px bg-border" />}
           {agents.map((agent) => {
             const color = agent.color ?? "#2dff9e";
@@ -232,7 +281,91 @@ function ModeSelector({
   );
 }
 
-/* ── Empty state ─────────────────────────────────────────────────────── */
+/* ── Proactive welcome (CLIENT_USER initial view) ────────────────────── */
+
+function ProactiveWelcome({
+  clientName,
+  userName,
+  hasGoogleIntegration,
+  send,
+}: {
+  clientName: string;
+  userName?: string;
+  hasGoogleIntegration: boolean;
+  send: (t: string) => void;
+}) {
+  const actions = buildProactiveActions(hasGoogleIntegration);
+  const greeting = userName
+    ? `Hi ${userName.split(" ")[0]}! 👋`
+    : `Welcome back!`;
+
+  return (
+    <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+      {/* Greeting */}
+      <div className="flex items-start gap-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neon-soft text-neon">
+          <Icon name="Sparkles" className="h-4 w-4" />
+        </div>
+        <div className="rounded-[14px] border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
+          <p className="font-medium">{greeting} I&apos;m your AI Copilot for <strong>{clientName}</strong>.</p>
+          <p className="mt-1 text-xs text-muted">
+            Choose an action below or type anything to start a conversation.
+          </p>
+        </div>
+      </div>
+
+      {/* Action chips */}
+      <div className="flex flex-col gap-2">
+        {actions.map((action) => (
+          <button
+            key={action.id}
+            onClick={() => send(action.trigger)}
+            className="group flex items-center gap-3 rounded-[12px] border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150 hover:border-border-strong hover:bg-surface-3 active:scale-[0.98]"
+          >
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] transition-all duration-150 group-hover:scale-105"
+              style={{ background: action.color + "1f", color: action.color }}
+            >
+              <Icon name={action.icon} className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-foreground">{action.label}</p>
+              <p className="text-[11px] text-muted truncate">{action.sublabel}</p>
+            </div>
+            <Icon
+              name="ArrowRight"
+              className="h-3.5 w-3.5 shrink-0 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100"
+            />
+          </button>
+        ))}
+      </div>
+
+      {/* Divider with "or ask anything" */}
+      <div className="flex items-center gap-2 px-1">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-[10px] text-muted-2">or ask anything</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+
+      {/* Quick text suggestions */}
+      <div className="flex flex-wrap gap-1.5">
+        {["What's our brand positioning?", "Show recent drafts", "Who are our competitors?"].map(
+          (prompt) => (
+            <button
+              key={prompt}
+              onClick={() => send(prompt)}
+              className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-neon/40 hover:text-foreground"
+            >
+              {prompt}
+            </button>
+          ),
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Standard empty state (non-proactive) ────────────────────────────── */
 
 const GENERAL_SUGGESTIONS = [
   "What's our brand positioning?",
@@ -299,19 +432,39 @@ function ChatEmptyState({
 interface Props {
   clientId: string;
   clientName: string;
-  /** Active, non-system agents — shown as selectable modes in the dropdown. */
+  /** Active, non-system agents shown as selectable modes. */
   agents: Agent[];
+  /** When true the chat panel opens automatically on mount (CLIENT_USER login). */
+  defaultOpen?: boolean;
+  /** Display name of the currently logged-in user (for personalised greeting). */
+  userName?: string;
+  /** Whether this client has an active Google integration (shows Gmail chip). */
+  hasGoogleIntegration?: boolean;
+  /** Minimal client snapshot injected into the proactive welcome context. */
+  client?: Pick<Client, "name" | "website" | "industry">;
+  /** Latest intel report headline data for greeting context. */
+  report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
 }
 
-export function ChatbotWidget({ clientId, clientName, agents }: Props) {
+export function ChatbotWidget({
+  clientId,
+  clientName,
+  agents,
+  defaultOpen = false,
+  userName,
+  hasGoogleIntegration = false,
+  client: _client,
+  report: _report,
+}: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [mode, setMode] = useState<CopilotMode>({ type: "general" });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const onBrandingChange = useCallback(() => router.refresh(), [router]);
   const onJobStarted = useCallback(() => router.refresh(), [router]);
+  const onTasksCreated = useCallback(() => router.refresh(), [router]);
 
   const agentId = mode.type === "agent" ? mode.agent.id : null;
   const agentColor = mode.type === "agent" ? (mode.agent.color ?? "#2dff9e") : null;
@@ -321,7 +474,12 @@ export function ChatbotWidget({ clientId, clientName, agents }: Props) {
     agentId,
     onBrandingChange,
     onJobStarted,
+    onTasksCreated,
   );
+
+  // Whether to show the proactive welcome instead of the standard empty state
+  const isProactiveMode = defaultOpen && mode.type === "general";
+  const showProactiveWelcome = isProactiveMode && messages.length === 0;
 
   function handleModeChange(newMode: CopilotMode) {
     reset();
@@ -374,11 +532,15 @@ export function ChatbotWidget({ clientId, clientName, agents }: Props) {
           name={open ? "X" : mode.type === "agent" ? mode.agent.icon : "MessageCircle"}
           className={cn("h-6 w-6 transition-colors", open ? "text-foreground" : "text-black")}
         />
+        {/* Pulse ring when defaultOpen and first time showing */}
+        {!open && defaultOpen && messages.length === 0 && (
+          <span className="absolute inset-0 rounded-full animate-ping opacity-30 bg-neon" />
+        )}
       </button>
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-6 right-6 z-[9998] flex h-[580px] w-[360px] flex-col overflow-hidden rounded-[20px] border border-border bg-surface shadow-2xl">
+        <div className="fixed bottom-6 right-6 z-[9998] flex h-[600px] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border bg-surface shadow-2xl">
 
           {/* Header */}
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface-2 px-4 py-3">
@@ -400,24 +562,45 @@ export function ChatbotWidget({ clientId, clientName, agents }: Props) {
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              className="flex h-7 w-7 items-center justify-center rounded-full text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
-              aria-label="Close"
-            >
-              <Icon name="X" className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              {messages.length > 0 && (
+                <button
+                  onClick={() => reset()}
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
+                  aria-label="Clear conversation"
+                  title="Clear conversation"
+                >
+                  <Icon name="RotateCcw" className="h-3.5 w-3.5" />
+                </button>
+              )}
+              <button
+                onClick={() => setOpen(false)}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
+                aria-label="Close"
+              >
+                <Icon name="X" className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           {/* Mode selector bar */}
           <ModeSelector mode={mode} agents={agents} onChange={handleModeChange} />
 
-          {/* Messages */}
-          <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
-            {messages.length === 0 ? (
-              <ChatEmptyState mode={mode} clientName={clientName} send={send} />
+          {/* Messages / Welcome */}
+          {messages.length === 0 ? (
+            showProactiveWelcome ? (
+              <ProactiveWelcome
+                clientName={clientName}
+                userName={userName}
+                hasGoogleIntegration={hasGoogleIntegration}
+                send={send}
+              />
             ) : (
-              messages.map((msg) => (
+              <ChatEmptyState mode={mode} clientName={clientName} send={send} />
+            )
+          ) : (
+            <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
+              {messages.map((msg) => (
                 <div
                   key={msg.id}
                   className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}
@@ -442,10 +625,10 @@ export function ChatbotWidget({ clientId, clientName, agents }: Props) {
                     )}
                   </div>
                 </div>
-              ))
-            )}
-            <div ref={messagesEndRef} />
-          </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
 
           {/* Error banner */}
           {error && (
@@ -468,7 +651,9 @@ export function ChatbotWidget({ clientId, clientName, agents }: Props) {
               placeholder={
                 mode.type === "agent"
                   ? "Ask about drafts, type /run to generate…"
-                  : "Ask about performance, brand, competitors…"
+                  : showProactiveWelcome
+                    ? "Or type your own question…"
+                    : "Ask about performance, brand, competitors…"
               }
               disabled={streaming}
               className="flex-1 rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50 focus:ring-1 focus:ring-neon/30 disabled:opacity-50"

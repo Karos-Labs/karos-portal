@@ -21,6 +21,11 @@ export const auth = getAuth(firebaseApp);
 export const db = getFirestore(firebaseApp);
 export const storage = getStorage(firebaseApp);
 export const googleProvider = new GoogleAuthProvider();
+// Request Gmail read-only scope so we can scan the inbox for proactive task extraction.
+// Users see a Google consent screen listing this permission on first sign-in.
+googleProvider.addScope("https://www.googleapis.com/auth/gmail.readonly");
+// Prompt the consent screen every time so we always receive a fresh access_token.
+googleProvider.setCustomParameters({ access_type: "offline", prompt: "consent" });
 
 export const appleProvider = new OAuthProvider("apple.com");
 appleProvider.addScope("email");

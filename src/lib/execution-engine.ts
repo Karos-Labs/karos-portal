@@ -1,0 +1,178 @@
+/**
+ * Karos Task Execution Engine — server-side only.
+ * Contains the actual AI generation logic without auth guards.
+ * Called by execution-actions.ts (with auth) and settings-actions.ts (via after()).
+ */
+import "server-only";
+
+import { revalidatePath } from "next/cache";
+import { generateText } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
+import {
+  getClientTask,
+  getClient,
+  updateClientTask,
+  listClientTasks,
+} from "@/lib/data";
+import { sendEmail } from "@/lib/email";
+import { buildArtifactGenerationPrompt } from "@/lib/ai/prompts/proactive-assistant";
+import type { ClientTask, TaskOwner } from "@/lib/types";
+
+/* ── Constants ───────────────────────────────────────────────────── */
+
+const SONNET = anthropic("claude-sonnet-4-6");
+const HAIKU = anthropic("claude-haiku-4-5-20251001");
+
+/* ── Internal helpers ────────────────────────────────────────────── */
+
+export function inferOwnerEngine(task: ClientTask): TaskOwner {
+  return task.owner ?? (task.source === "manual" ? "client_managed" : "karos_managed");
+}
+
+export function resolveTaskType(task: ClientTask): "content_generation" | "integration_action" {
+  const explicit = task.metadata?.type as string | undefined;
+  if (explicit === "integration_action") return "integration_action";
+  if (explicit === "content_generation") return "content_generation";
+
+  // Heuristic: Gmail-sourced tasks whose title suggests external dispatch
+  if (task.source === "gmail") {
+    const dispatch = ["send", "deliver", "dispatch", "submit", "forward", "notify", "reply"];
+    const title = task.title.toLowerCase();
+    if (dispatch.some((kw) => title.includes(kw))) return "integration_action";
+  }
+  return "content_generation";
+}
+
+function selectModel(task: ClientTask) {
+  if (task.source === "content_dispatch" || task.priority === "high") return SONNET;
+  return HAIKU;
+}
+
+/* ── Core single-task runner ─────────────────────────────────────── */
+
+/**
+ * Executes a single karos_managed task via Claude:
+ * - Generates an artifact (Flow A: content; Flow B: email/publish draft)
+ * - Advances status to review_pending on success
+ * - Records error in metadata on failure (status stays in_progress)
+ */
+export async function runTaskExecution(clientId: string, taskId: string): Promise<void> {
+  const [task, client] = await Promise.all([getClientTask(taskId), getClient(clientId)]);
+  if (!task || !client) return;
+
+  const taskType = resolveTaskType(task);
+  const adjustmentFeedback = task.metadata?.adjustmentFeedback as string | undefined;
+
+  try {
+    const { text } = await generateText({
+      model: selectModel(task),
+      prompt: buildArtifactGenerationPrompt(
+        task.title,
+        task.description,
+        task.source,
+        task.priority,
+        taskType,
+        client.name,
+        client.industry,
+        client.website,
+        client.brandVoice,
+        adjustmentFeedback,
+      ),
+    });
+
+    await updateClientTask(taskId, {
+      status: "review_pending",
+      metadata: {
+        ...(task.metadata ?? {}),
+        executing: false,
+        type: taskType,
+        artifact: text,
+        adjustmentFeedback: null,
+        executionError: null,
+      },
+      updatedAt: Date.now(),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown execution error";
+    await updateClientTask(taskId, {
+      metadata: {
+        ...(task.metadata ?? {}),
+        executing: false,
+        executionError: message,
+      },
+      updatedAt: Date.now(),
+    });
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/* ── Autopilot batch runner ──────────────────────────────────────── */
+
+/**
+ * Picks up all pending karos_managed tasks for a client and executes them
+ * sequentially. Capped at 5 tasks per invocation to respect after() time budget.
+ */
+export async function runAutopilotBatch(clientId: string): Promise<void> {
+  const allTasks = await listClientTasks({ clientId, status: "pending", limit: 10 });
+  const pendingKaros = allTasks
+    .filter((t) => inferOwnerEngine(t) === "karos_managed")
+    .slice(0, 5);
+
+  if (pendingKaros.length === 0) return;
+
+  const now = Date.now();
+  await Promise.all(
+    pendingKaros.map((t) =>
+      updateClientTask(t.id, {
+        status: "in_progress",
+        metadata: { ...(t.metadata ?? {}), executing: true, executionError: null },
+        updatedAt: now,
+      }),
+    ),
+  );
+
+  revalidatePath("/tasks");
+
+  for (const t of pendingKaros) {
+    await runTaskExecution(clientId, t.id).catch(console.error);
+  }
+}
+
+/* ── Integration publish helper ──────────────────────────────────── */
+
+/**
+ * Sends a task artifact via Resend to the specified recipient.
+ * Returns success/failure so the caller can update Firestore accordingly.
+ */
+export async function dispatchArtifactEmail(
+  task: ClientTask,
+  clientName: string,
+  recipient: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const artifact = task.metadata?.artifact as string | undefined;
+  if (!artifact) return { ok: false, error: "No artifact to dispatch" };
+
+  const subjectMatch = artifact.match(/^Subject:\s*(.+)$/im);
+  const subject = subjectMatch?.[1]?.trim() ?? task.title;
+  const body = subjectMatch
+    ? artifact.slice(artifact.indexOf("\n", artifact.search(/^Subject:/im)) + 1).trim()
+    : artifact;
+
+  const safeBody = body.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = `
+    <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#07090b;padding:32px;color:#e8f0ec;">
+      <div style="max-width:600px;margin:0 auto;background:#0d1117;border:1px solid #20303a;border-radius:16px;overflow:hidden;">
+        <div style="padding:20px 28px;border-bottom:1px solid #20303a;">
+          <span style="color:#2dff9e;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos<span style="color:#e8f0ec;">CMO</span></span>
+        </div>
+        <div style="padding:28px;">
+          <p style="color:#8aa2a8;font-size:13px;margin:0 0 12px;">Delivered by Karos on behalf of ${clientName}</p>
+          <div style="background:#131a22;border:1px solid #20303a;border-radius:12px;padding:20px;font-size:15px;line-height:1.7;white-space:pre-wrap;color:#e8f0ec;">${safeBody}</div>
+        </div>
+      </div>
+    </div>`;
+
+  return sendEmail({ to: recipient, subject, html });
+}

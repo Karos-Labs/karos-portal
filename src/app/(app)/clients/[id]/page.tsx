@@ -227,6 +227,15 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         clientId={client.id}
         clientName={client.name}
         agents={agents.filter((a) => a.isActive && !a.isSystem && a.id !== "intel-report-agent")}
+        defaultOpen={user.role === "CLIENT_USER"}
+        userName={user.name}
+        hasGoogleIntegration={integrations.some(
+          (i) => i.platform === "google" && i.status === "active",
+        )}
+        client={{ name: client.name, website: client.website, industry: client.industry }}
+        report={
+          report ? { overallGrade: report.overallGrade, overallScore: report.overallScore } : null
+        }
       />
     </>
   );

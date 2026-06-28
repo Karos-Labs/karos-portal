@@ -1,0 +1,217 @@
+"use server";
+
+import { after } from "next/server";
+import { revalidatePath } from "next/cache";
+import { requireUser } from "@/lib/auth";
+import {
+  getClientTask,
+  getClient,
+  updateClientTask,
+  createTaskComment,
+} from "@/lib/data";
+import { sendEmail } from "@/lib/email";
+import {
+  runTaskExecution,
+  inferOwnerEngine,
+  dispatchArtifactEmail,
+} from "@/lib/execution-engine";
+
+const ALERT_EMAIL = "hello@karoslabs.com";
+
+/* ── Trigger: manual drag Pending → In Progress ──────────────────── */
+
+/**
+ * Called when a user drags a karos_managed card from Pending to In Progress.
+ * Marks the task executing immediately and schedules background AI generation
+ * so the response returns before the (potentially slow) model call begins.
+ */
+export async function startTaskExecutionAction(
+  taskId: string,
+  clientId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const user = await requireUser();
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return { ok: false, error: "Forbidden" };
+  }
+
+  const task = await getClientTask(taskId);
+  if (!task) return { ok: false, error: "Task not found" };
+  if (inferOwnerEngine(task) !== "karos_managed") {
+    return { ok: false, error: "Task is not karos_managed" };
+  }
+
+  await updateClientTask(taskId, {
+    status: "in_progress",
+    metadata: { ...(task.metadata ?? {}), executing: true, executionError: null },
+    updatedAt: Date.now(),
+  });
+
+  after(() => runTaskExecution(clientId, taskId).catch(console.error));
+  return { ok: true };
+}
+
+/* ── Approve ─────────────────────────────────────────────────────── */
+
+/**
+ * Client or staff approves a review_pending artifact → completed.
+ */
+export async function approveTaskArtifactAction(
+  taskId: string,
+  clientId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const user = await requireUser();
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return { ok: false, error: "Forbidden" };
+  }
+
+  const task = await getClientTask(taskId);
+  if (!task || task.status !== "review_pending") {
+    return { ok: false, error: "Task is not in review_pending state" };
+  }
+
+  await updateClientTask(taskId, {
+    status: "completed",
+    completedAt: Date.now(),
+    metadata: { ...(task.metadata ?? {}), failedUpload: null },
+    updatedAt: Date.now(),
+  });
+
+  revalidatePath("/tasks");
+  revalidatePath(`/clients/${clientId}`);
+  return { ok: true };
+}
+
+/* ── Request Adjustments ─────────────────────────────────────────── */
+
+/**
+ * Client rejects the artifact with textual feedback.
+ * The task returns to in_progress and Claude re-generates with the feedback injected.
+ */
+export async function requestAdjustmentsAction(
+  taskId: string,
+  clientId: string,
+  feedback: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const user = await requireUser();
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return { ok: false, error: "Forbidden" };
+  }
+
+  const trimmed = feedback.trim();
+  if (!trimmed) return { ok: false, error: "Feedback cannot be empty" };
+
+  const task = await getClientTask(taskId);
+  if (!task || task.status !== "review_pending") {
+    return { ok: false, error: "Task is not in review_pending state" };
+  }
+
+  // Persist feedback as comment for audit trail
+  await createTaskComment({
+    taskId,
+    clientId,
+    content: `[Adjustment Request] ${trimmed}`,
+    authorName: user.name,
+    authorRole: user.role,
+    createdAt: Date.now(),
+  });
+
+  await updateClientTask(taskId, {
+    status: "in_progress",
+    metadata: {
+      ...(task.metadata ?? {}),
+      executing: true,
+      adjustmentFeedback: trimmed,
+      executionError: null,
+    },
+    updatedAt: Date.now(),
+  });
+
+  after(() => runTaskExecution(clientId, taskId).catch(console.error));
+  revalidatePath("/tasks");
+  return { ok: true };
+}
+
+/* ── Publish / Send (Flow B) ─────────────────────────────────────── */
+
+/**
+ * Flow B: dispatches the generated artifact externally via Resend.
+ * Success → completed. Failure → failedUpload badge + internal alert to Karos.
+ */
+export async function publishIntegrationAction(
+  taskId: string,
+  clientId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const user = await requireUser();
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return { ok: false, error: "Forbidden" };
+  }
+
+  const [task, client] = await Promise.all([getClientTask(taskId), getClient(clientId)]);
+  if (!task) return { ok: false, error: "Task not found" };
+  if (task.status !== "review_pending") {
+    return { ok: false, error: "Task is not in review_pending state" };
+  }
+  if (!task.metadata?.artifact) {
+    return { ok: false, error: "No artifact to publish" };
+  }
+
+  const recipient =
+    (task.metadata.recipient as string | undefined) ?? client?.contactEmail;
+
+  if (!recipient) {
+    return {
+      ok: false,
+      error: "No recipient email — add a contact email to the client profile.",
+    };
+  }
+
+  const result = await dispatchArtifactEmail(task, client?.name ?? "Your Team", recipient);
+
+  if (!result.ok) {
+    await updateClientTask(taskId, {
+      metadata: {
+        ...(task.metadata ?? {}),
+        failedUpload: true,
+        failedUploadError: result.error,
+        failedUploadAt: Date.now(),
+      },
+      updatedAt: Date.now(),
+    });
+
+    const alertHtml = `
+      <p style="font-family:sans-serif;"><strong>Karos — Task Publish Failure</strong></p>
+      <table style="border-collapse:collapse;font-family:sans-serif;font-size:14px;">
+        <tr><td style="padding:4px 16px 4px 0;color:#8aa2a8;">Task ID</td><td>${taskId}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#8aa2a8;">Task Title</td><td>${task.title}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#8aa2a8;">Client</td><td>${client?.name ?? "—"} (${clientId})</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#8aa2a8;">Recipient</td><td>${recipient}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#8aa2a8;">Error</td><td>${result.error}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#8aa2a8;">Triggered by</td><td>${user.name} &lt;${user.email}&gt;</td></tr>
+      </table>`;
+
+    await sendEmail({
+      to: ALERT_EMAIL,
+      subject: `[Karos Alert] Publish failure — ${task.title.slice(0, 60)}`,
+      html: alertHtml,
+    });
+
+    revalidatePath("/tasks");
+    return { ok: false, error: result.error };
+  }
+
+  await updateClientTask(taskId, {
+    status: "completed",
+    completedAt: Date.now(),
+    metadata: {
+      ...(task.metadata ?? {}),
+      failedUpload: null,
+      publishedAt: Date.now(),
+      publishedTo: recipient,
+    },
+    updatedAt: Date.now(),
+  });
+
+  revalidatePath("/tasks");
+  revalidatePath(`/clients/${clientId}`);
+  return { ok: true };
+}

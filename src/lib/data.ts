@@ -15,11 +15,15 @@ import type {
   ClientIntegration,
   ClientReport,
   ClientRequest,
+  ClientSettings,
+  ClientTask,
   ContextDocTier,
   ContextItem,
   Job,
   LoginLog,
   Role,
+  TaskComment,
+  TaskStatus,
   Transcript,
 } from "@/lib/types";
 import type { ContentCatalog, ContentEngineConfig, LedgerEntry } from "@/lib/content-engine/types";
@@ -54,6 +58,9 @@ const col = {
   contentLedger: () => adminDb().collection("contentLedger"),
   // Newsletter + Blog Engine (native e11 port). Brand + content-foundation, one doc per client.
   newsletterConfigs: () => adminDb().collection("newsletterConfigs"),
+  clientTasks: () => adminDb().collection("clientTasks"),
+  taskComments: () => adminDb().collection("taskComments"),
+  clientSettings: () => adminDb().collection("clientSettings"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -669,4 +676,94 @@ export async function listLoginLogs(opts?: { since?: number; limit?: number }): 
   if (opts?.since) q = q.where("timestamp", ">=", opts.since);
   const snap = await q.limit(limit).get();
   return snap.docs.map((d) => withId<LoginLog>(d));
+}
+
+/* ─────────────────────── Proactive Task Board ───────────────────────── */
+
+export async function listClientTasks(opts: {
+  clientId?: string;
+  status?: TaskStatus;
+  limit?: number;
+}): Promise<ClientTask[]> {
+  // Avoid composite-index requirement by filtering in JS after a simple query.
+  let q = col.clientTasks() as FirebaseFirestore.Query;
+  if (opts.clientId) q = q.where("clientId", "==", opts.clientId);
+  if (opts.status) q = q.where("status", "==", opts.status);
+  const snap = await q.get();
+  return snap.docs
+    .map((d) => withId<ClientTask>(d))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, opts.limit ?? 200);
+}
+
+export async function getClientTask(id: string): Promise<ClientTask | null> {
+  const doc = await col.clientTasks().doc(id).get();
+  return doc.exists ? withId<ClientTask>(doc) : null;
+}
+
+export async function createClientTask(data: Omit<ClientTask, "id">): Promise<string> {
+  const ref = await col.clientTasks().add(data);
+  return ref.id;
+}
+
+export async function updateClientTask(id: string, data: Partial<ClientTask>): Promise<void> {
+  await col.clientTasks().doc(id).set(data, { merge: true });
+}
+
+export async function deleteClientTask(id: string): Promise<void> {
+  await col.clientTasks().doc(id).delete();
+}
+
+/* ─────────────────────── Task Comments ─────────────────────────── */
+
+export async function listTaskComments(taskId: string): Promise<TaskComment[]> {
+  const snap = await col.taskComments().where("taskId", "==", taskId).get();
+  return snap.docs
+    .map((d) => withId<TaskComment>(d))
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function createTaskComment(data: Omit<TaskComment, "id">): Promise<string> {
+  const ref = await col.taskComments().add(data);
+  return ref.id;
+}
+
+/* ─────────────────────── Client Settings ───────────────────────── */
+
+export async function getClientSettings(clientId: string): Promise<ClientSettings | null> {
+  const doc = await col.clientSettings().doc(clientId).get();
+  return doc.exists ? (doc.data() as ClientSettings) : null;
+}
+
+export async function upsertClientSettings(
+  clientId: string,
+  patch: Partial<Omit<ClientSettings, "clientId">>,
+): Promise<void> {
+  await col.clientSettings().doc(clientId).set(
+    { clientId, ...patch },
+    { merge: true },
+  );
+}
+
+/* ─────────────────────── Deduplication helper ───────────────────── */
+
+/** Normalize a task title to a canonical form for dedup comparison. */
+export function normalizeTitleForDedup(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^\w\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Returns true when an existing task for this client has a normalized title
+ * that exactly matches the given normalized title.
+ */
+export async function taskTitleExists(
+  clientId: string,
+  normalizedTitle: string,
+): Promise<boolean> {
+  const existing = await listClientTasks({ clientId, limit: 500 });
+  return existing.some((t) => normalizeTitleForDedup(t.title) === normalizedTitle);
 }

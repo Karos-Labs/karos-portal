@@ -7,8 +7,10 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   getRedirectResult,
+  GoogleAuthProvider,
 } from "firebase/auth";
 import { auth, googleProvider, appleProvider } from "@/lib/firebase/client";
+import { saveGoogleOAuthTokenAction } from "@/lib/actions";
 import { Button, Input, Label } from "@/components/ui";
 import { Icon } from "@/components/icon";
 
@@ -77,18 +79,24 @@ export default function LoginPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function establishSession() {
+  // Posts the Firebase ID token to the session endpoint and returns the
+  // server-assigned role/clientId. Does NOT navigate — callers decide when.
+  async function createSession(): Promise<{ role: string; clientId: string | null; disabled: boolean }> {
     const idToken = await auth.currentUser!.getIdToken(true);
     const res = await fetch("/api/auth/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken }), // no intent = login flow
+      body: JSON.stringify({ idToken }),
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       throw new Error(j.error || "Could not establish session.");
     }
-    const { role, clientId, disabled } = await res.json();
+    return res.json();
+  }
+
+  async function establishSession() {
+    const { role, clientId, disabled } = await createSession();
     router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
     router.refresh();
   }
@@ -111,8 +119,32 @@ export default function LoginPage() {
     setError(null);
     setLoading(provider);
     try {
-      await signInWithPopup(auth, provider === "google" ? googleProvider : appleProvider);
-      await establishSession();
+      const result = await signInWithPopup(
+        auth,
+        provider === "google" ? googleProvider : appleProvider,
+      );
+
+      // Extract the raw Google OAuth2 access token before any navigation.
+      // credentialFromResult returns the Google-issued token (not a Firebase ID token).
+      let googleAccessToken: string | null = null;
+      if (provider === "google") {
+        const cred = GoogleAuthProvider.credentialFromResult(result);
+        googleAccessToken = cred?.accessToken ?? null;
+      }
+
+      // Create the session first — this sets the session cookie that
+      // saveGoogleOAuthTokenAction needs to authenticate on the server.
+      const { role, clientId, disabled } = await createSession();
+
+      // Await the token save BEFORE calling router.push(). If we navigate
+      // first, the browser can abort the in-flight server-action fetch,
+      // leaving clientIntegrations empty and breaking Gmail scanning.
+      if (googleAccessToken) {
+        await saveGoogleOAuthTokenAction(googleAccessToken).catch(() => {});
+      }
+
+      router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
+      router.refresh();
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);

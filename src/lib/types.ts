@@ -567,3 +567,57 @@ export interface IntegrationExpiredNotification {
   platform: string;
   expiredAt: number;
 }
+
+/* ─────────────────── Proactive Task Board ───────────────────────── */
+
+export type TaskStatus = "pending" | "in_progress" | "review_pending" | "completed";
+export type TaskPriority = "high" | "medium" | "low";
+export type TaskSource =
+  | "gmail"
+  | "competitor_research"
+  | "brand_audit"
+  | "content_dispatch"
+  | "copilot"
+  | "manual";
+
+/**
+ * "karos_managed" — executed by Karos AI agents or staff (content, drafting, research).
+ * "client_managed" — must be executed by the client (website changes, OAuth connects, approvals).
+ */
+export type TaskOwner = "karos_managed" | "client_managed";
+
+export interface ClientTask {
+  id: string;
+  clientId: string;
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  source: TaskSource;
+  /** Which party is responsible for executing this task. Defaults to source-based inference. */
+  owner?: TaskOwner;
+  sourceLabel?: string;
+  metadata?: Record<string, unknown>;
+  completedAt?: number | null;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** A comment thread entry on a task ticket. Stored flat in `taskComments` collection. */
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  clientId: string;
+  content: string;
+  authorName: string;
+  authorRole: Role;
+  createdAt: number;
+}
+
+/** Per-client operational settings (e.g. Autopilot mode). Stored in `clientSettings` collection. */
+export interface ClientSettings {
+  clientId: string;
+  autopilot: boolean;
+  updatedAt: number;
+}

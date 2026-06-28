@@ -1,4 +1,5 @@
-import { streamText, tool, isLoopFinished, stepCountIs } from "ai";
+import { after } from "next/server";
+import { streamText, tool, generateObject, isLoopFinished, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import type { ModelMessage } from "ai";
@@ -12,18 +13,31 @@ import {
   listAgents,
   listJobs,
   listAssets,
+  listClientTasks,
   updateClient,
   updateAsset,
   upsertClientContextDoc,
   getClientContextDoc,
+  listClientIntegrations,
+  markIntegrationExpired,
+  createClientTask,
+  normalizeTitleForDedup,
 } from "@/lib/data";
 import { buildCopilotSystemPrompt, buildAgentCopilotSystemPrompt } from "@/lib/copilot-context";
+import { PROACTIVE_SYSTEM_APPENDIX, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
 import { startAgentRun } from "@/lib/agents/run";
 import { sendEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
-import type { Agent, Asset, BrandingGuidelines } from "@/lib/types";
+import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
+import { logger } from "@/services/logger";
+import type { Agent, Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
 
 export const maxDuration = 60;
+
+const MODEL_ID = "claude-sonnet-4-6";
+const HAIKU_MODEL_ID = "claude-haiku-4-5-20251001";
+const MODEL = anthropic(MODEL_ID);
+const STOP_WHEN = [isLoopFinished(), stepCountIs(6)];
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -44,22 +58,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const messages = (body.messages ?? []) as ModelMessage[];
   const requestedAgentId = body.agentId ?? null;
 
-  // Fetch all context data in parallel
-  const [client, report, competitors, contextDocs, allAgents, jobs, assets] = await Promise.all([
-    getClient(clientId),
-    getClientReport(clientId),
-    listClientCompetitors(clientId),
-    listClientContextDocs(clientId),
-    listAgents({ status: "published" }),
-    listJobs({ clientId }),
-    listAssets({ clientId }),
-  ]);
+  const [client, report, competitors, contextDocs, allAgents, jobs, assets, integrations] =
+    await Promise.all([
+      getClient(clientId),
+      getClientReport(clientId),
+      listClientCompetitors(clientId),
+      listClientContextDocs(clientId),
+      listAgents({ status: "published" }),
+      listJobs({ clientId }),
+      listAssets({ clientId }),
+      listClientIntegrations(clientId),
+    ]);
 
   if (!client) {
     return Response.json({ error: "Client not found" }, { status: 404 });
   }
 
-  // Resolve agent-specific mode — exclude system agents for safety
+  // Resolve agent-specific mode
   let focusedAgent: Agent | null = null;
   let agentJobs = jobs;
   let agentAssets: Asset[] = [];
@@ -72,11 +87,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  const systemPrompt = focusedAgent
+  const baseSystemPrompt = focusedAgent
     ? buildAgentCopilotSystemPrompt(focusedAgent, client, agentJobs, agentAssets, contextDocs)
     : buildCopilotSystemPrompt(client, report, competitors, allAgents, jobs, assets, contextDocs);
 
-  /* ── Shared tools (always available) ────────────────────────────────── */
+  // Append proactive-assistant instructions so the AI knows how to handle
+  // the four action chips and when to call the task-creation tool.
+  const systemPrompt = `${baseSystemPrompt}\n\n${PROACTIVE_SYSTEM_APPENDIX}`;
+
+  /* ── Shared Google integration lookup ────────────────────────────── */
+  const googleIntegration = integrations.find(
+    (i) => i.platform === "google" && i.status === "active",
+  );
+
+  /* ── Shared tools ─────────────────────────────────────────────────── */
 
   const updateBrandingTool = tool({
     description:
@@ -151,13 +175,223 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     },
   });
 
-  /* ── Stream — branch on mode so each tools object is fully typed ─────── */
+  /* ── Proactive tool: fetch Gmail context ─────────────────────────── */
 
-  const MODEL = anthropic("claude-sonnet-4-6");
-  const STOP_WHEN = [isLoopFinished(), stepCountIs(3)];
+  const fetchGmailContextTool = tool({
+    description:
+      "Fetch recent unread business emails from the client's Gmail inbox and extract actionable task candidates using Claude Haiku. " +
+      "Call when the user asks to scan their inbox, refresh their task map, or sync emails. " +
+      "Do NOT call for any other purpose.",
+    inputSchema: z.object({
+      maxEmails: z.number().int().min(5).max(25).default(15).describe(
+        "Maximum number of emails to retrieve (5–25).",
+      ),
+    }),
+    execute: async ({ maxEmails }) => {
+      if (!googleIntegration) {
+        return (
+          "No Google Workspace integration found for this account. " +
+          "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab) — " +
+          "you will be prompted to grant Gmail read access. " +
+          "In the meantime, I can still build a task map from your meetings and context documents."
+        );
+      }
+
+      const accessToken = googleIntegration.credentials.access_token;
+      if (!accessToken) {
+        return "Google access token missing. Please sign in with Google again to refresh your credentials.";
+      }
+
+      let emails;
+      try {
+        emails = await fetchGmailMessages(accessToken, maxEmails);
+      } catch (err) {
+        if (err instanceof GmailTokenExpiredError) {
+          await markIntegrationExpired(clientId, "google").catch(() => {});
+          if (err.reason === "insufficient_scope") {
+            return (
+              "Gmail access was denied — the gmail.readonly permission wasn't granted during sign-in, " +
+              "or the Gmail API isn't enabled for this integration. " +
+              "Please sign out and sign back in with Google, and make sure to approve the Gmail permission on the consent screen. " +
+              "I can still work from your meetings and context documents in the meantime."
+            );
+          }
+          return (
+            "Your Google access token has expired. " +
+            "Please sign out and sign back in with Google to restore Gmail access. " +
+            "I can still build a task map from your existing context — just let me know."
+          );
+        }
+        return "Failed to connect to Gmail. Check your network and try again.";
+      }
+
+      if (emails.length === 0) {
+        return "No unread primary-inbox signals found. Your operational queue looks clear!";
+      }
+
+      // Run Claude Haiku to extract structured tasks from the operational signals
+      const taskSchema = z.object({
+        tasks: z.array(
+          z.object({
+            title: z.string().max(120),
+            description: z.string().max(500),
+            priority: z.enum(["high", "medium", "low"]),
+            owner: z.enum(["karos_managed", "client_managed"]).default("karos_managed"),
+          }),
+        ),
+      });
+
+      const haiku = anthropic(HAIKU_MODEL_ID);
+      const extractionPrompt = buildGmailExtractionPrompt(
+        emails,
+        client.name,
+        client.industry ?? "business",
+      );
+
+      const { object: extracted, usage: haikuUsage } = await generateObject({
+        model: haiku,
+        schema: taskSchema,
+        prompt: extractionPrompt,
+      });
+
+      // Log Haiku token usage against this client
+      after(() =>
+        logger.logUsage({
+          clientId,
+          agentId: null,
+          agentName: "proactive_signal_extractor",
+          modelName: HAIKU_MODEL_ID,
+          operation: "operational_signal_extraction",
+          inputTokens: haikuUsage.inputTokens ?? 0,
+          outputTokens: haikuUsage.outputTokens ?? 0,
+        }),
+      );
+
+      if (extracted.tasks.length === 0) {
+        return `Analyzed ${emails.length} operational signals — no actionable items detected. Your queue looks clear for now.`;
+      }
+
+      // Dedup: skip tasks whose normalized title already exists for this client
+      const existingTasks = await listClientTasks({ clientId, limit: 500 });
+      const existingNorm = new Set(existingTasks.map((t) => normalizeTitleForDedup(t.title)));
+      const freshTasks = extracted.tasks.filter(
+        (t) => !existingNorm.has(normalizeTitleForDedup(t.title)),
+      );
+      const skipped = extracted.tasks.length - freshTasks.length;
+
+      if (freshTasks.length === 0) {
+        return `Analyzed ${emails.length} operational signals — all extracted items already exist in your task board (${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped).`;
+      }
+
+      const now = Date.now();
+      await Promise.all(
+        freshTasks.map((t) =>
+          createClientTask({
+            clientId,
+            title: t.title,
+            description: t.description,
+            status: "pending",
+            priority: t.priority as TaskPriority,
+            source: "gmail" as TaskSource,
+            owner: t.owner as TaskOwner,
+            sourceLabel: "Operational Intelligence",
+            createdBy: user.uid,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        ),
+      );
+
+      const skipNote = skipped > 0 ? ` (${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped)` : "";
+      return (
+        `Analyzed ${emails.length} operational signals and created ${freshTasks.length} task${freshTasks.length !== 1 ? "s" : ""}${skipNote}:\n` +
+        freshTasks.map((t, i) => `${i + 1}. [${t.priority.toUpperCase()}] ${t.title}`).join("\n")
+      );
+    },
+  });
+
+  /* ── Proactive tool: create tasks ────────────────────────────────── */
+
+  const createTasksTool = tool({
+    description:
+      "Persist one or more structured tasks to the client's task board after you have completed your analysis. " +
+      "Call this AFTER writing your analysis response text, not before. " +
+      "Use for competitor research, brand audits, content dispatch plans, or any other actionable output. " +
+      "Set owner='karos_managed' for tasks Karos AI or staff will execute; 'client_managed' for tasks the client must do themselves.",
+    inputSchema: z.object({
+      tasks: z
+        .array(
+          z.object({
+            title: z.string().max(200).describe("Short, action-verb task title"),
+            description: z.string().max(800).describe("Context and rationale for this task"),
+            priority: z.enum(["high", "medium", "low"]),
+            source: z
+              .enum(["gmail", "competitor_research", "brand_audit", "content_dispatch", "copilot"])
+              .describe("Which proactive action generated this task"),
+            owner: z
+              .enum(["karos_managed", "client_managed"])
+              .describe("karos_managed = Karos AI/staff executes; client_managed = client must do it"),
+          }),
+        )
+        .min(1)
+        .max(10),
+    }),
+    execute: async ({ tasks }) => {
+      // Dedup: skip tasks whose normalized title already exists for this client
+      const existingTasks = await listClientTasks({ clientId, limit: 500 });
+      const existingNorm = new Set(existingTasks.map((t) => normalizeTitleForDedup(t.title)));
+      const freshTasks = tasks.filter(
+        (t) => !existingNorm.has(normalizeTitleForDedup(t.title)),
+      );
+      const skipped = tasks.length - freshTasks.length;
+
+      if (freshTasks.length === 0) {
+        return `All ${tasks.length} proposed task${tasks.length !== 1 ? "s" : ""} already exist in the task board — skipped to prevent duplicates.`;
+      }
+
+      const now = Date.now();
+      await Promise.all(
+        freshTasks.map((t) =>
+          createClientTask({
+            clientId,
+            title: t.title,
+            description: t.description,
+            status: "pending",
+            priority: t.priority as TaskPriority,
+            source: t.source as TaskSource,
+            owner: t.owner as TaskOwner,
+            createdBy: user.uid,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        ),
+      );
+
+      const count = freshTasks.length;
+      const skipNote = skipped > 0 ? ` (${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped)` : "";
+      return `Created ${count} task${count !== 1 ? "s" : ""} in your task board${skipNote}.`;
+    },
+  });
+
+  /* ── onFinish: log copilot token usage ───────────────────────────── */
+
+  function logCopilotUsage(usage: { inputTokens?: number; outputTokens?: number }) {
+    after(() =>
+      logger.logUsage({
+        clientId,
+        agentId: requestedAgentId,
+        agentName: focusedAgent?.name ?? "chat_copilot",
+        modelName: MODEL_ID,
+        operation: "chat_copilot",
+        inputTokens: usage.inputTokens ?? 0,
+        outputTokens: usage.outputTokens ?? 0,
+      }),
+    );
+  }
+
+  /* ── Stream — branch on agent mode ─────────────────────────────── */
 
   if (focusedAgent) {
-    // Capture non-null reference so closures below are narrowed
     const agent = focusedAgent;
 
     const runAgentTool = tool({
@@ -174,7 +408,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ),
       }),
       execute: async ({ fieldValues }) => {
-        // Merge provided values with defaults from the agent's field definitions
         const input: Record<string, string> = {};
         for (const f of agent.fields ?? []) {
           input[f.key] = fieldValues[f.key] ?? f.defaultValue ?? "";
@@ -209,7 +442,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           .describe("New status to assign (e.g. 'approved' to approve the draft)"),
       }),
       execute: async ({ assetId, content, status }) => {
-        // Validate asset belongs to this agent — prevents cross-agent edits
         const target = agentAssets.find((a) => a.id === assetId);
         if (!target) return "Asset not found or doesn't belong to this agent's pipeline.";
         const patch: Partial<Asset> = { updatedAt: Date.now() };
@@ -229,15 +461,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       tools: {
         update_branding_guidelines: updateBrandingTool,
         send_support_email: sendSupportEmailTool,
+        fetch_gmail_context: fetchGmailContextTool,
+        create_tasks: createTasksTool,
         run_agent: runAgentTool,
         edit_draft: editDraftTool,
       },
+      onFinish: ({ usage }) => logCopilotUsage(usage),
     });
 
     return result.toTextStreamResponse();
   }
 
-  // General mode — no agent tools
+  // General mode
   const result = streamText({
     model: MODEL,
     system: systemPrompt,
@@ -246,7 +481,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     tools: {
       update_branding_guidelines: updateBrandingTool,
       send_support_email: sendSupportEmailTool,
+      fetch_gmail_context: fetchGmailContextTool,
+      create_tasks: createTasksTool,
     },
+    onFinish: ({ usage }) => logCopilotUsage(usage),
   });
 
   return result.toTextStreamResponse();
