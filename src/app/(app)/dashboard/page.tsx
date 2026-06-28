@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listClients, listAgents, listJobs, listAssets, listTranscripts } from "@/lib/data";
 import { Card, CardTitle, StatCard, Badge, EmptyState, Button, PageHeader } from "@/components/ui";
@@ -9,15 +10,18 @@ import { relativeTime } from "@/lib/utils";
 export default async function DashboardPage() {
   const user = await requireUser();
 
-  if (user.role === "client") return <ClientDashboard clientId={user.clientId ?? ""} name={user.name} />;
+  if (user.role === "CLIENT_USER") {
+    redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
+  }
 
-  const employeeFilter = user.role === "employee" ? { employeeId: user.uid } : undefined;
+  const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
   const [clients, agents, jobs] = await Promise.all([
     listClients(employeeFilter),
     listAgents(),
     listJobs(),
   ]);
   const activeAgents = agents.filter((a) => a.isActive);
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const weekAgo = Date.now() - 7 * 86400000;
   const jobsThisWeek = jobs.filter((j) => j.createdAt > weekAgo);
   const delivered = jobs.filter((j) => j.status === "delivered").length;

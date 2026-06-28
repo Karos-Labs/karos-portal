@@ -30,7 +30,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         disabled={disabled || loading}
         className={cn(
-          "inline-flex items-center justify-center rounded-[10px] transition-all duration-150 disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40 cursor-pointer",
+          "inline-flex items-center justify-center rounded-[10px] transition-all duration-150 active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40 cursor-pointer",
           variants[variant],
           sizes[size],
           className,
@@ -51,7 +51,7 @@ export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
   return (
     <div
       className={cn(
-        "card-grad rounded-[var(--radius)] border border-border p-5 transition-colors",
+        "card-grad rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:border-border-strong shadow-[0_1px_6px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.03)]",
         className,
       )}
       {...props}
@@ -131,10 +131,10 @@ export function Badge({
 }) {
   const tones: Record<string, string> = {
     neutral: "bg-surface-3 text-muted border-border",
-    neon: "bg-neon-soft text-neon border-neon/30",
+    neon:    "bg-neon-soft text-neon border-neon/30 shadow-[0_0_10px_-3px_rgba(45,255,158,0.35)]",
     warning: "bg-warning/10 text-warning border-warning/30",
-    danger: "bg-danger/10 text-danger border-danger/30",
-    info: "bg-info/10 text-info border-info/30",
+    danger:  "bg-danger/10 text-danger border-danger/30",
+    info:    "bg-info/10 text-info border-info/30",
   };
   return (
     <span
@@ -158,6 +158,17 @@ export function Spinner({ className }: { className?: string }) {
         "inline-block rounded-full border-2 border-current border-t-transparent animate-spin-slow",
         className,
       )}
+    />
+  );
+}
+
+/* ------------------------------ Skeleton -------------------------------- */
+
+export function Skeleton({ className }: { className?: string }) {
+  return (
+    <div
+      className={cn("animate-shimmer rounded-[8px]", className)}
+      aria-hidden="true"
     />
   );
 }
@@ -206,7 +217,7 @@ export function StatCard({
         {hint && <p className="mt-1 text-xs text-muted-2">{hint}</p>}
       </div>
       {icon && (
-        <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-neon-soft text-neon">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-neon-soft text-neon shadow-[0_0_14px_-4px_rgba(45,255,158,0.4)]">
           {icon}
         </div>
       )}

@@ -9,9 +9,9 @@ export default async function PendingPage() {
   if (!user.disabled) redirect("/dashboard");
 
   const requested =
-    user.requestedRole === "client"
+    user.requestedRole === "CLIENT_USER"
       ? `as a client${user.requestedClientName ? ` for ${user.requestedClientName}` : ""}`
-      : user.requestedRole === "employee"
+      : user.requestedRole === "KAROS_EMPLOYEE"
         ? "as agency staff"
         : "";
 

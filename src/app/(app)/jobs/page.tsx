@@ -7,13 +7,13 @@ import { JobStatusBadge } from "@/components/job-status";
 import { relativeTime } from "@/lib/utils";
 
 export default async function JobsPage() {
-  const user = await requireUser(["admin", "employee"]);
+  const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const [jobs, clients] = await Promise.all([
     listJobs(),
-    listClients(user.role === "employee" ? { employeeId: user.uid } : undefined),
+    listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined),
   ]);
   const allowed = new Set(clients.map((c) => c.id));
-  const visible = user.role === "employee" ? jobs.filter((j) => allowed.has(j.clientId)) : jobs;
+  const visible = user.role === "KAROS_EMPLOYEE" ? jobs.filter((j) => allowed.has(j.clientId)) : jobs;
   const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "—";
 
   return (

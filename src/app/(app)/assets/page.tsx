@@ -7,7 +7,7 @@ import { AssetCard } from "@/components/asset-card";
 export default async function AssetsPage() {
   const user = await requireUser();
 
-  if (user.role === "client") {
+  if (user.role === "CLIENT_USER") {
     const assets = user.clientId ? await listAssets({ clientId: user.clientId }) : [];
     return (
       <>
@@ -25,10 +25,10 @@ export default async function AssetsPage() {
     );
   }
 
-  const employeeFilter = user.role === "employee" ? { employeeId: user.uid } : undefined;
+  const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
   const [allAssets, clients] = await Promise.all([listAssets(), listClients(employeeFilter)]);
   const clientIds = new Set(clients.map((c) => c.id));
-  const assets = user.role === "employee" ? allAssets.filter((a) => clientIds.has(a.clientId)) : allAssets;
+  const assets = user.role === "KAROS_EMPLOYEE" ? allAssets.filter((a) => clientIds.has(a.clientId)) : allAssets;
   const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "Unknown";
 
   return (

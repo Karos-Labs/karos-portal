@@ -13,7 +13,7 @@ import { NewsletterQuestionnaire } from "@/components/newsletter-questionnaire";
  * into the existing ContextItem collection, tagged by purpose.
  */
 export default async function NewsletterOnboardingPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireUser(["admin", "employee"]);
+  await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const { id } = await params;
   const client = await getClient(id);
   if (!client) notFound();

@@ -4,45 +4,43 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, Button, Input, Label, Select, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { approveRegistrationAction, rejectRegistrationAction } from "@/lib/actions";
+import {
+  approveRegistrationAction,
+  rejectRegistrationAction,
+  reviewClientRequestAction,
+} from "@/lib/actions";
 import { initials, relativeTime } from "@/lib/utils";
-import type { AppUser, Client, Role } from "@/lib/types";
+import type { AppUser, Client, ClientRequest, Role } from "@/lib/types";
 
 const NEW_CLIENT = "__new__";
 
 interface RowForm {
   role: Role;
-  /** Existing client id, or NEW_CLIENT to create one. */
   clientTarget: string;
   newClientName: string;
-  /** Website for a brand-new client — seeds the onboarding intel report. */
-  newClientUrl: string;
   assigned: string[];
 }
 
-export function RegistrationManager({ pending, clients }: { pending: AppUser[]; clients: Client[] }) {
+/* ─────────────────── Pending self-signup registrations ─────────────────── */
+
+export function RegistrationManager({
+  pending,
+  clients,
+}: {
+  pending: AppUser[];
+  clients: Client[];
+}) {
   const router = useRouter();
   const [forms, setForms] = useState<Record<string, RowForm>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // The default approval state for a user: pre-fill the role/company they requested at signup.
   function baseForm(u: AppUser): RowForm {
-    const role: Role = u.requestedRole ?? "employee";
-    // If they picked an existing company at signup, default to linking it (no new client, no
-    // duplicate intel report). Otherwise default to creating a new client from what they typed.
-    const matchedExisting = u.requestedClientId && clients.some((c) => c.id === u.requestedClientId);
-    const clientTarget =
-      role !== "client"
-        ? clients[0]?.id ?? NEW_CLIENT
-        : matchedExisting
-          ? (u.requestedClientId as string)
-          : NEW_CLIENT;
+    const role: Role = u.requestedRole ?? "KAROS_EMPLOYEE";
     return {
       role,
-      clientTarget,
+      clientTarget: role === "CLIENT_USER" ? NEW_CLIENT : clients[0]?.id ?? NEW_CLIENT,
       newClientName: u.requestedClientName ?? "",
-      newClientUrl: u.requestedClientUrl ?? "",
       assigned: [],
     };
   }
@@ -58,7 +56,7 @@ export function RegistrationManager({ pending, clients }: { pending: AppUser[]; 
   async function approve(u: AppUser) {
     const f = formFor(u);
     setError(null);
-    if (f.role === "client") {
+    if (f.role === "CLIENT_USER") {
       if (f.clientTarget === NEW_CLIENT && !f.newClientName.trim()) {
         return setError("Enter a name for the new client.");
       }
@@ -70,10 +68,9 @@ export function RegistrationManager({ pending, clients }: { pending: AppUser[]; 
     try {
       await approveRegistrationAction(u.uid, {
         role: f.role,
-        clientId: f.role === "client" && f.clientTarget !== NEW_CLIENT ? f.clientTarget : undefined,
-        newClientName: f.role === "client" && f.clientTarget === NEW_CLIENT ? f.newClientName : undefined,
-        newClientUrl: f.role === "client" && f.clientTarget === NEW_CLIENT ? f.newClientUrl : undefined,
-        assignedClientIds: f.role === "employee" ? f.assigned : undefined,
+        clientId: f.role === "CLIENT_USER" && f.clientTarget !== NEW_CLIENT ? f.clientTarget : undefined,
+        newClientName: f.role === "CLIENT_USER" && f.clientTarget === NEW_CLIENT ? f.newClientName : undefined,
+        assignedClientIds: f.role === "KAROS_EMPLOYEE" ? f.assigned : undefined,
       });
       router.refresh();
     } catch (e) {
@@ -127,21 +124,15 @@ export function RegistrationManager({ pending, clients }: { pending: AppUser[]; 
                 <Badge tone="warning">Pending</Badge>
                 {u.requestedRole && (
                   <Badge tone="neutral">
-                    Requested: {u.requestedRole === "client" ? "Client" : "Agency staff"}
+                    Requested: {u.requestedRole === "CLIENT_USER" ? "Client" : "Agency staff"}
                   </Badge>
                 )}
               </div>
             </div>
 
-            {u.requestedRole === "client" && u.requestedClientName && (
+            {u.requestedRole === "CLIENT_USER" && u.requestedClientName && (
               <p className="text-xs text-muted">
-                Said they're from <span className="text-foreground">{u.requestedClientName}</span>
-                {u.requestedClientId
-                  ? " (an existing company)"
-                  : u.requestedClientUrl
-                    ? <> · <span className="text-foreground">{u.requestedClientUrl}</span></>
-                    : null}
-                .
+                Said they&apos;re from <span className="text-foreground">{u.requestedClientName}</span>.
               </p>
             )}
 
@@ -149,13 +140,13 @@ export function RegistrationManager({ pending, clients }: { pending: AppUser[]; 
               <div>
                 <Label>Approve as</Label>
                 <Select value={f.role} onChange={(e) => update(u, { role: e.target.value as Role })}>
-                  <option value="employee">Employee</option>
-                  <option value="client">Client</option>
-                  <option value="admin">Admin</option>
+                  <option value="KAROS_EMPLOYEE">Employee</option>
+                  <option value="CLIENT_USER">Client</option>
+                  <option value="KAROS_ADMIN">Admin</option>
                 </Select>
               </div>
 
-              {f.role === "client" && (
+              {f.role === "CLIENT_USER" && (
                 <div>
                   <Label>Client account</Label>
                   <Select value={f.clientTarget} onChange={(e) => update(u, { clientTarget: e.target.value })}>
@@ -168,28 +159,18 @@ export function RegistrationManager({ pending, clients }: { pending: AppUser[]; 
               )}
             </div>
 
-            {f.role === "client" && f.clientTarget === NEW_CLIENT && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <Label>New client name</Label>
-                  <Input
-                    value={f.newClientName}
-                    onChange={(e) => update(u, { newClientName: e.target.value })}
-                    placeholder="Acme Co"
-                  />
-                </div>
-                <div>
-                  <Label>Website (starts an intel report)</Label>
-                  <Input
-                    value={f.newClientUrl}
-                    onChange={(e) => update(u, { newClientUrl: e.target.value })}
-                    placeholder="acme.com"
-                  />
-                </div>
+            {f.role === "CLIENT_USER" && f.clientTarget === NEW_CLIENT && (
+              <div>
+                <Label>New client name</Label>
+                <Input
+                  value={f.newClientName}
+                  onChange={(e) => update(u, { newClientName: e.target.value })}
+                  placeholder="Acme Co"
+                />
               </div>
             )}
 
-            {f.role === "employee" && clients.length > 0 && (
+            {f.role === "KAROS_EMPLOYEE" && clients.length > 0 && (
               <div>
                 <Label>Assign clients</Label>
                 <div className="flex flex-wrap gap-1.5">
@@ -228,6 +209,101 @@ export function RegistrationManager({ pending, clients }: { pending: AppUser[]; 
           </Card>
         );
       })}
+    </div>
+  );
+}
+
+/* ─────────────────── Client access request reviews ─────────────────── */
+
+export function ClientRequestManager({ requests }: { requests: ClientRequest[] }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+
+  async function review(id: string, status: "APPROVED" | "REJECTED") {
+    setError(null);
+    setBusy(id);
+    try {
+      await reviewClientRequestAction(id, status, notes[id]);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update request");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (requests.length === 0) {
+    return (
+      <EmptyState
+        icon={<Icon name="Building2" className="h-7 w-7" />}
+        title="No pending access requests"
+        description="Prospective clients who submitted the request form will show up here."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {error && <p className="text-xs text-danger">{error}</p>}
+      {requests.map((r) => (
+        <Card key={r.id} className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-neon-soft text-neon">
+                <Icon name="Building2" className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">{r.companyName}</p>
+                <p className="text-xs text-muted-2">
+                  {r.adminEmail}
+                  {r.website && <> · <a href={r.website} target="_blank" rel="noopener" className="text-neon hover:underline">{r.website}</a></>}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge tone="warning">Pending</Badge>
+              <span className="text-xs text-muted-2">{relativeTime(r.submittedAt)}</span>
+            </div>
+          </div>
+
+          <div className="rounded-[10px] bg-surface-2 px-4 py-3">
+            <p className="text-xs font-medium text-muted mb-1">Use case</p>
+            <p className="text-sm">{r.useCase}</p>
+          </div>
+
+          <div>
+            <Label>Review notes (optional)</Label>
+            <Input
+              value={notes[r.id] ?? ""}
+              onChange={(e) => setNotes((s) => ({ ...s, [r.id]: e.target.value }))}
+              placeholder="e.g. Approved — create client and send key"
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={busy === r.id}
+              loading={busy === r.id}
+              onClick={() => review(r.id, "REJECTED")}
+            >
+              Reject
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy === r.id}
+              loading={busy === r.id}
+              onClick={() => review(r.id, "APPROVED")}
+            >
+              <Icon name="Check" className="h-4 w-4" />
+              Approve
+            </Button>
+          </div>
+        </Card>
+      ))}
     </div>
   );
 }

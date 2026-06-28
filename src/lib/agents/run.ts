@@ -19,6 +19,7 @@ import {
 import { sendEmail, emailShell } from "@/lib/email";
 import { generatePostImage, imageGenConfigured } from "@/lib/images";
 import { CONTEXT_CAPS } from "@/lib/context";
+import { logger } from "@/services/logger";
 import type { Agent, AppUser, Client, ContextItem, Job, JobRunEvent } from "@/lib/types";
 import type { ImagePart, FilePart, TextPart, ModelMessage } from "@ai-sdk/provider-utils";
 
@@ -105,6 +106,7 @@ interface GeneratedContent {
   /** Aligned to `posts`; entries are null when an image failed or images were off. */
   images: (string | null)[];
   text?: string;
+  usage: { inputTokens: number; outputTokens: number };
 }
 
 type UserPart = TextPart | ImagePart | FilePart;
@@ -229,22 +231,23 @@ async function generateContent(args: {
 }): Promise<GeneratedContent> {
   const { agent, client, input, withImages, imageKeyPrefix, events } = args;
 
-  let transcriptText = "";
-  if (agent.capabilities.includes("use_transcripts")) {
-    const transcripts = await listTranscripts({ clientId: client.id });
-    transcriptText = transcripts
-      .slice(0, 3)
-      .map((t) => `## ${t.title}\nSummary: ${t.summary ?? "(none)"}\nAction items: ${(t.actionItems ?? []).join("; ")}`)
-      .join("\n\n");
-  }
-
-  const ctx = await loadClientContext(client.id, events);
+  const needsTranscripts = agent.capabilities.includes("use_transcripts");
+  const [rawTranscripts, ctx] = await Promise.all([
+    needsTranscripts ? listTranscripts({ clientId: client.id }) : Promise.resolve([]),
+    loadClientContext(client.id, events),
+  ]);
+  const transcriptText = needsTranscripts
+    ? rawTranscripts
+        .slice(0, 3)
+        .map((t) => `## ${t.title}\nSummary: ${t.summary ?? "(none)"}\nAction items: ${(t.actionItems ?? []).join("; ")}`)
+        .join("\n\n")
+    : "";
   const stableContext = `${buildContext(client, agent, transcriptText)}${ctx.text}`;
   const requestDetails = buildRequestDetails(input);
   const model = anthropic(agent.model || DEFAULT_MODEL);
 
   if (agent.outputKind === "instagram_posts") {
-    const { object, providerMetadata } = await generateObject({
+    const { object, usage: igUsage, providerMetadata } = await generateObject({
       model,
       schema: igSchema,
       messages: buildCachedMessages({
@@ -289,11 +292,11 @@ async function generateContent(args: {
     const generatedCount = images.filter(Boolean).length;
     if (generatedCount > 0) events.push({ at: Date.now(), level: "success", message: `${generatedCount} post${generatedCount === 1 ? "" : "s"} have a visual` });
 
-    return { rawOutput: JSON.stringify(object, null, 2), posts: object.posts, images };
+    return { rawOutput: JSON.stringify(object, null, 2), posts: object.posts, images, usage: { inputTokens: igUsage.inputTokens ?? 0, outputTokens: igUsage.outputTokens ?? 0 } };
   }
 
   // Freeform / text outputs (articles, emails, social posts)
-  const { text, providerMetadata } = await generateText({
+  const { text, usage: textUsage, providerMetadata } = await generateText({
     model,
     messages: buildCachedMessages({
       systemPrompt: agent.systemPrompt,
@@ -304,7 +307,7 @@ async function generateContent(args: {
   });
   logCacheUsage(events, providerMetadata);
   events.push({ at: Date.now(), level: "success", message: "Generated content" });
-  return { rawOutput: text, text, images: [] };
+  return { rawOutput: text, text, images: [], usage: { inputTokens: textUsage.inputTokens ?? 0, outputTokens: textUsage.outputTokens ?? 0 } };
 }
 
 export interface TestRunResult {
@@ -469,6 +472,7 @@ async function executeRun(args: {
   const { jobId, agent, client, input, actor, events } = args;
   const agentId = agent.id;
   const clientId = client.id;
+  const runStart = Date.now();
 
   try {
     const wantsImages = agent.capabilities.includes("generate_images");
@@ -483,6 +487,18 @@ async function executeRun(args: {
       withImages: wantsImages && imageGenConfigured(),
       imageKeyPrefix: jobId,
       events,
+    });
+
+    logger.logUsage({
+      clientId,
+      agentId,
+      agentName: agent.name,
+      modelName: agent.model || DEFAULT_MODEL,
+      operation: "agent_run",
+      inputTokens: generated.usage.inputTokens,
+      outputTokens: generated.usage.outputTokens,
+      jobId,
+      durationMs: Date.now() - runStart,
     });
 
     const rawOutput = generated.rawOutput;
@@ -613,6 +629,14 @@ async function executeRun(args: {
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
     events.push({ at: Date.now(), level: "error", message: `Run failed: ${message}` });
+    logger.logError({
+      clientId,
+      agentId,
+      operation: "agent_run",
+      errorMessage: message,
+      stackTrace: e instanceof Error ? e.stack : undefined,
+      severity: "ERROR",
+    });
     await updateJob(jobId, { status: "failed", error: message, events, updatedAt: Date.now() });
     return { jobId, status: "failed" };
   }

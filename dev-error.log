@@ -1,0 +1,14 @@
+
+> karos-cmo@0.1.0 dev
+> next dev
+
+⚠ Port 3000 is in use by process 34196, using available port 3001 instead.
+▲ Next.js 16.2.9 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://172.20.10.3:3001
+- Environments: .env.local
+✓ Ready in 1483ms
+- Experiments (use with caution):
+  · serverActions
+
+[?25h

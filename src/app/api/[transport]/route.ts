@@ -85,7 +85,7 @@ const handler = createMcpHandler(
       },
       async (_args, extra) => {
         const user = actor(extra);
-        const clients = await listClients(user.role === "employee" ? { employeeId: user.uid } : undefined);
+        const clients = await listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined);
         return text(
           clients.map((c) => ({
             id: c.id,

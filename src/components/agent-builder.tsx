@@ -73,6 +73,7 @@ export function AgentBuilder({ agent, clients }: { agent?: Agent; clients: Clien
   const config: DraftFields = { name, description, icon, color, model, outputKind, systemPrompt, capabilities, fields, shared };
   const configKey = JSON.stringify(config);
   const idRef = useRef(id);
+  // eslint-disable-next-line react-hooks/refs -- intentional: keeps ref in sync with latest id to avoid stale closures in async callbacks
   idRef.current = id;
   const firstRender = useRef(true);
 

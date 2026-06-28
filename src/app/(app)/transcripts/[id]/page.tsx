@@ -1,20 +1,56 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getTranscript, listClients } from "@/lib/data";
-import { Card, CardTitle, Badge } from "@/components/ui";
+import { getTranscript, listClients, listUsers } from "@/lib/data";
+import { Card, CardTitle, Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { TranscriptAssign } from "@/components/transcript-tools";
+import { TranscriptAssign, TranscriptSignalButton, HideFromClientToggle } from "@/components/transcript-tools";
+import { MeetingActionItems } from "@/components/meeting-action-items";
+import { ArchiveButton } from "@/components/archive-button";
 import { formatDateTime } from "@/lib/utils";
+import { deriveActionItemOwners } from "@/lib/transcripts/ingest";
+import type { AppUser } from "@/lib/types";
 
 export default async function TranscriptDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const { id } = await params;
   const t = await getTranscript(id);
   if (!t) notFound();
-  if (user.role === "client" && t.clientId !== user.clientId) notFound();
-  const isStaff = user.role !== "client";
-  const clients = isStaff ? await listClients() : [];
+  // Client guard: hidden meetings and meetings belonging to other clients are invisible
+  if (user.role === "CLIENT_USER") {
+    if (t.hiddenFromClient || t.clientId !== user.clientId) notFound();
+  }
+  const isStaff = user.role !== "CLIENT_USER";
+  const isAdmin = user.role === "KAROS_ADMIN";
+
+  const [clients, allUsers] = await Promise.all([
+    isStaff ? listClients() : Promise.resolve([]),
+    isStaff ? listUsers() : Promise.resolve([]),
+  ]);
+
+  // Scope the users shown in action-item assignment dropdowns based on the meeting's client association.
+  // Scenario A — meeting is associated with a client: admins + employees + that client's users.
+  // Scenario B — unassociated or Karos Internal: admins + employees only.
+  const users: AppUser[] = isStaff
+    ? t.clientId && !t.isKarosInternal
+      ? allUsers.filter(
+          (u) =>
+            u.role === "KAROS_ADMIN" ||
+            u.role === "KAROS_EMPLOYEE" ||
+            (u.role === "CLIENT_USER" && u.clientId === t.clientId),
+        )
+      : allUsers.filter((u) => u.role === "KAROS_ADMIN" || u.role === "KAROS_EMPLOYEE")
+    // CLIENT_USER: include only themselves so they can self-assign action items
+    : [user];
+
+  // Resolve per-item owners: use stored actionItemOwners, or derive from actionItemsByOwner for backward-compat
+  const actionItems = t.actionItems ?? [];
+  const actionItemOwners: (string | null)[] =
+    t.actionItemOwners?.length === actionItems.length
+      ? t.actionItemOwners
+      : t.actionItemsByOwner && actionItems.length
+        ? deriveActionItemOwners(actionItems, t.actionItemsByOwner)
+        : actionItems.map(() => null);
 
   return (
     <>
@@ -24,9 +60,13 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
 
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">{t.title}</h1>
             {t.source === "fireflies" && <Badge tone="neutral">Fireflies</Badge>}
+            {t.isKarosInternal && <Badge tone="neutral">Karos Labs Internal</Badge>}
+            {t.archived && <Badge tone="neutral">Archived</Badge>}
+            {t.hiddenFromClient && isStaff && <Badge tone="warning">Hidden from client</Badge>}
+            {t.contextDocSignalAt && <Badge tone="neon">Intel</Badge>}
           </div>
           <p className="mt-1 text-sm text-muted">
             {formatDateTime(t.meetingDate ?? t.createdAt)}
@@ -34,10 +74,29 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
             {t.participants.length > 0 ? ` · ${t.participants.join(", ")}` : ""}
           </p>
         </div>
-        {isStaff && <TranscriptAssign transcriptId={t.id} clients={clients} current={t.clientId} />}
+        <div className="flex flex-wrap items-center gap-2">
+          {isStaff && t.clientId && !t.contextDocSignalAt && (
+            <TranscriptSignalButton transcriptId={t.id} clientId={t.clientId} />
+          )}
+          {/* Hide-from-client toggle — admin only */}
+          {isAdmin && (
+            <HideFromClientToggle transcriptId={t.id} hiddenFromClient={!!t.hiddenFromClient} />
+          )}
+          {isStaff && (
+            <ArchiveButton transcriptId={t.id} archived={!!t.archived} />
+          )}
+          {isStaff && (
+            <TranscriptAssign
+              transcriptId={t.id}
+              clients={clients}
+              current={t.clientId}
+              isKarosInternal={!!t.isKarosInternal}
+            />
+          )}
+        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <div className="space-y-6">
           <Card>
             <CardTitle className="mb-2">Summary</CardTitle>
@@ -52,19 +111,20 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
         <div className="space-y-6">
           <Card>
             <CardTitle className="mb-3">Action items</CardTitle>
-            {(t.actionItems ?? []).length === 0 ? (
-              <p className="text-sm text-muted-2">None extracted.</p>
-            ) : (
-              <ul className="space-y-2">
-                {t.actionItems!.map((a, i) => (
-                  <li key={i} className="flex gap-2 text-sm">
-                    <Icon name="SquareCheck" className="mt-0.5 h-4 w-4 shrink-0 text-neon" />
-                    <span className="text-muted">{a}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <MeetingActionItems
+              transcriptId={t.id}
+              actionItems={actionItems}
+              actionItemOwners={actionItemOwners}
+              actionItemUserMap={t.actionItemUserMap ?? {}}
+              completedItems={t.completedItems ?? []}
+              actionItemAssignedUserIds={
+                t.actionItemAssignedUserIds ?? actionItems.map(() => null)
+              }
+              users={users}
+              currentUserId={user.uid}
+            />
           </Card>
+
           {(t.keywords ?? []).length > 0 && (
             <Card>
               <CardTitle className="mb-3">Topics</CardTitle>
