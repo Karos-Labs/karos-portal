@@ -13,6 +13,7 @@ import type {
   Transcript,
 } from "@/lib/types";
 import type { ContentCatalog, ContentEngineConfig, LedgerEntry } from "@/lib/content-engine/types";
+import type { NewsletterConfig } from "@/lib/newsletter/types";
 
 /* ----------------------------- helpers ----------------------------- */
 
@@ -34,6 +35,8 @@ const col = {
   contentCatalogs: () => adminDb().collection("contentCatalogs"),
   contentEngineConfigs: () => adminDb().collection("contentEngineConfigs"),
   contentLedger: () => adminDb().collection("contentLedger"),
+  // Newsletter + Blog Engine (native e11 port). Brand + content-foundation, one doc per client.
+  newsletterConfigs: () => adminDb().collection("newsletterConfigs"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -321,4 +324,16 @@ export async function listLedger(opts: { clientId: string }): Promise<LedgerEntr
 export async function appendLedger(entry: LedgerEntry & { clientId: string }): Promise<string> {
   const ref = await col.contentLedger().add(entry);
   return ref.id;
+}
+
+/* ------------------------ newsletter + blog ------------------------ */
+
+/** A client's newsletter/blog config (brand + content foundation; keyed by clientId). */
+export async function getNewsletterConfig(clientId: string): Promise<NewsletterConfig | null> {
+  const doc = await col.newsletterConfigs().doc(clientId).get();
+  return doc.exists ? (doc.data() as NewsletterConfig) : null;
+}
+
+export async function upsertNewsletterConfig(config: Partial<NewsletterConfig> & { clientId: string }): Promise<void> {
+  await col.newsletterConfigs().doc(config.clientId).set(config, { merge: true });
 }

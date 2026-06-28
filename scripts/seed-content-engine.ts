@@ -234,7 +234,7 @@ async function main() {
   console.log(`Seeded contentEngineConfigs/${clientId} — formats: ${config.formats.join(", ")}`);
   console.log(`Seeded contentCatalogs/${clientId} — ${catalog.entries.length} topics`);
   console.log(`realImageryOnly=${config.realImageryOnly} · disclaimer ${config.voice.requiredDisclaimer ? "set" : "none"} · hashtags ${config.voice.hashtags.count}/${config.voice.hashtags.case}`);
-  console.log(`image sourcing: real web photos (Pexels) · minLongEdge ${config.sourcing?.minLongEdge} · ${config.sourcing?.blockedDomains.length ?? 0} blocked domains`);
+  console.log(`image sourcing: real web photos (Apify) · minLongEdge ${config.sourcing?.minLongEdge} · ${config.sourcing?.blockedDomains.length ?? 0} blocked domains`);
   console.log("Done. Open the client in the app and click “Run content engine”.");
 }
 

@@ -110,7 +110,7 @@ export interface ContentEngineConfig {
   canvas?: { w: number; h: number; ratio?: string };
   /**
    * Brand stance: real photography only — no AI-generated imagery (XO:
-   * media.real_only). The engine sources real web photos (Pexels), so this is
+   * media.real_only). The engine sources real web photos (Apify), so this is
    * satisfied; it's surfaced for the operator and future provider choices.
    */
   realImageryOnly?: boolean;
@@ -136,7 +136,7 @@ export interface CarouselSlide {
   imageQuery: string;
   /** Resolved image URL once sourced (web photo → Firebase Storage). */
   imageUrl?: string | null;
-  /** Credit line for the sourced photo (e.g. "Photo by … on Pexels"). */
+  /** Credit line for the sourced photo (e.g. "Photo via example.com"). */
   attribution?: string | null;
 }
 

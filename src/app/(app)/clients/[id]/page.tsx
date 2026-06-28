@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getClient, listAgents, listAssets, listTranscripts, listJobs, listContextItems, getContentEngineConfig, getContentCatalog } from "@/lib/data";
+import { getClient, listAgents, listAssets, listTranscripts, listJobs, listContextItems, getContentEngineConfig, getContentCatalog, getNewsletterConfig } from "@/lib/data";
+import { missingBrandFields } from "@/lib/newsletter/brand";
 import { Card, CardTitle, Badge, EmptyState, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ClientEditor } from "@/components/client-editor";
@@ -19,7 +20,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const client = await getClient(id);
   if (!client) notFound();
 
-  const [agents, assets, transcripts, jobs, contextItems, ceConfig, ceCatalog] = await Promise.all([
+  const [agents, assets, transcripts, jobs, contextItems, ceConfig, ceCatalog, nlConfig] = await Promise.all([
     listAgents({ status: "published" }),
     listAssets({ clientId: id }),
     listTranscripts({ clientId: id }),
@@ -27,10 +28,17 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     listContextItems({ clientId: id }),
     getContentEngineConfig(id),
     getContentCatalog(id),
+    getNewsletterConfig(id),
   ]);
   const activeAgents = agents.filter((a) => a.isActive);
   // The run needs BOTH a config and a (non-empty) catalog, so only offer it then.
   const contentEngineReady = Boolean(ceConfig && ceCatalog && ceCatalog.entries.length > 0);
+  // Newsletter onboarding status: no doc → Not started; required brand fields filled → Ready.
+  const newsletterStatus = !nlConfig
+    ? "Not started"
+    : missingBrandFields(nlConfig.brand).length === 0
+      ? "Ready"
+      : "Draft";
 
   return (
     <>
@@ -100,6 +108,30 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
 
         <div className="space-y-6">
           {contentEngineReady && <ContentEngineLauncher clientId={id} clientName={client.name} />}
+
+          <Card>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <CardTitle>Newsletter &amp; blog</CardTitle>
+              <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">e11</span>
+            </div>
+            <div className="mb-3 flex items-center gap-2">
+              <Badge tone={newsletterStatus === "Ready" ? "neon" : newsletterStatus === "Draft" ? "warning" : "neutral"}>
+                {newsletterStatus}
+              </Badge>
+              {nlConfig?.optIn && <Badge tone="info">Weekly opt-in</Badge>}
+            </div>
+            <p className="mb-3 text-sm text-muted-2">
+              Onboarding intake for the weekly newsletter + companion blog: brand, editorial
+              foundation, and voice-anchor uploads.
+            </p>
+            <Link href={`/clients/${id}/newsletter`}>
+              <Button size="sm" variant="outline">
+                <Icon name="Newspaper" className="h-4 w-4" />
+                {newsletterStatus === "Not started" ? "Start setup" : "Open setup"}
+              </Button>
+            </Link>
+          </Card>
+
           <ClientEditor client={client} />
 
           <Card>

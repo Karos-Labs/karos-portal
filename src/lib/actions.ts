@@ -25,6 +25,7 @@ import {
   getContextItem,
   updateContextItem,
   deleteContextItem,
+  upsertNewsletterConfig,
 } from "@/lib/data";
 import { issueAccessToken } from "@/lib/tokens";
 import { deleteObject } from "@/lib/storage";
@@ -40,6 +41,7 @@ import {
 } from "@/lib/agents/authoring";
 import { ingestTranscript } from "@/lib/transcripts/ingest";
 import type { Agent, AppUser, Client, Competitor, Role } from "@/lib/types";
+import type { ContentFoundation, NewsletterBrand } from "@/lib/newsletter/types";
 
 async function requireStaff(): Promise<AppUser> {
   const user = await getCurrentUser();
@@ -224,6 +226,41 @@ export async function runContentEngineAction(input: { clientId: string; format?:
   revalidatePath(`/clients/${input.clientId}`);
   revalidatePath("/assets");
   return result;
+}
+
+/* ---------------------------- newsletter ----------------------------- */
+
+/**
+ * Save the onboarding questionnaire for a client: the brand (Bucket A) + the editorial
+ * content foundation (Bucket B), as one merged `newsletterConfigs/{clientId}` doc. The
+ * questionnaire sends the complete brand + foundation each save, so this is a full upsert.
+ * Whether the config is "ready" is derived (missingBrandFields), not stored.
+ */
+export async function saveNewsletterConfigAction(
+  clientId: string,
+  input: { brand: NewsletterBrand; foundation: ContentFoundation },
+) {
+  await requireStaff();
+  const client = await getClient(clientId);
+  if (!client) throw new Error("Client not found");
+  await upsertNewsletterConfig({
+    clientId,
+    brand: input.brand,
+    foundation: input.foundation,
+    updatedAt: Date.now(),
+  });
+  revalidatePath(`/clients/${clientId}/newsletter`);
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/** G0 cost guard — only opted-in clients are ever run by the weekly job. */
+export async function setNewsletterOptInAction(clientId: string, optIn: boolean) {
+  await requireStaff();
+  const client = await getClient(clientId);
+  if (!client) throw new Error("Client not found");
+  await upsertNewsletterConfig({ clientId, optIn, updatedAt: Date.now() });
+  revalidatePath(`/clients/${clientId}/newsletter`);
+  revalidatePath(`/clients/${clientId}`);
 }
 
 /* ------------------------------- assets ------------------------------ */

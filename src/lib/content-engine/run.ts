@@ -285,7 +285,7 @@ async function executeContentEngineRun(args: {
       events.push({ at: Date.now(), level: "error", message: `QA still failing — saved for review, NOT added to the ledger: ${qa.failures.join(" | ")}` });
     }
 
-    // 3) images: pull REAL photos from the web (Pexels) per slide — never AI-generated.
+    // 3) images: pull REAL photos from the web (Apify / Google Images) per slide — never AI-generated.
     const imagesOn = imageSourcingConfigured();
     let imagesMade = 0;
     if (imagesOn) {
@@ -306,10 +306,10 @@ async function executeContentEngineRun(args: {
       if (imagesMade === 0) {
         events.push({ at: Date.now(), level: "error", message: "No real photos matched any slide — not advancing the ledger so the topic can be retried" });
       } else {
-        events.push({ at: Date.now(), level: "success", message: `${imagesMade}/${slides.length} slides matched a real photo (Pexels)` });
+        events.push({ at: Date.now(), level: "success", message: `${imagesMade}/${slides.length} slides matched a real photo (Apify)` });
       }
     } else {
-      events.push({ at: Date.now(), level: config.realImageryOnly ? "error" : "info", message: "PEXELS_API_KEY not set — cannot source real imagery; saved with copy + image queries but no photos" });
+      events.push({ at: Date.now(), level: config.realImageryOnly ? "error" : "info", message: "APIFY_TOKEN not set — cannot source real imagery; saved with copy + image queries but no photos" });
     }
 
     // 4) save one carousel Asset (reuses the instagram_post type/UI)
