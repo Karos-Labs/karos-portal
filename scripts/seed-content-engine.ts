@@ -65,6 +65,17 @@ function readYaml(file: string): Record<string, unknown> {
   return (parseYaml(readFileSync(file, "utf8")) as Record<string, unknown>) ?? {};
 }
 
+/** Best-effort read for a SUPPLEMENTARY file: a missing or malformed file is skipped, not fatal. */
+function tryReadYaml(file: string): Record<string, unknown> {
+  if (!existsSync(file)) return {};
+  try {
+    return readYaml(file);
+  } catch (e) {
+    console.warn(`(skipping ${path.basename(file)} — could not parse: ${e instanceof Error ? e.message.split("\n")[0] : e})`);
+    return {};
+  }
+}
+
 function pick<T>(obj: unknown, key: string, fallback: T): T {
   if (obj && typeof obj === "object" && key in (obj as Record<string, unknown>)) {
     const v = (obj as Record<string, unknown>)[key];
@@ -155,7 +166,9 @@ async function main() {
 
   const cfg = readYaml(path.join(ceRoot, "config.yaml"));
   const catalogRaw = readYaml(path.join(ceRoot, "research", "catalog.yaml"));
-  const brand = existsSync(path.join(ceRoot, "brand", "brand.yaml")) ? readYaml(path.join(ceRoot, "brand", "brand.yaml")) : {};
+  // brand.yaml is supplementary — the brand fields also live in config.yaml's `brand:` block,
+  // so a missing/malformed brand.yaml is non-fatal (XO's has an invalid compact mapping).
+  const brand = tryReadYaml(path.join(ceRoot, "brand", "brand.yaml"));
 
   const brandBlock = (brand.brand ?? cfg.brand ?? {}) as Record<string, unknown>;
   const clientName = (pick(brandBlock, "name", "") as string) || "XO Digital";
