@@ -398,17 +398,21 @@ export function TasksBoard({
   const canDelete =
     currentUserRole === "KAROS_ADMIN" || currentUserRole === "KAROS_EMPLOYEE";
 
+  // Sync local state when the server re-fetches tasks (e.g., after router.refresh()).
+  // Uses the "store previous prop" pattern (react.dev/learn/you-might-not-need-an-effect)
+  // to avoid calling setState inside a useEffect body, which triggers cascading renders.
+  const [prevTasksProp, setPrevTasksProp] = useState(tasks);
+  if (prevTasksProp !== tasks) {
+    setPrevTasksProp(tasks);
+    setLocalTasks(tasks);
+  }
+
   const karosTasks = localTasks.filter((t) => inferOwner(t) === "karos_managed");
   const clientTasks = localTasks.filter((t) => inferOwner(t) === "client_managed");
   const visibleTasks = activeTab === "karos" ? karosTasks : clientTasks;
   const selectedTask = selectedTaskId
     ? localTasks.find((t) => t.id === selectedTaskId) ?? null
     : null;
-
-  // Sync local state when server data changes (e.g., after router.refresh())
-  useEffect(() => {
-    setLocalTasks(tasks);
-  }, [tasks]);
 
   // Poll while any tasks are executing — triggers router.refresh() every 4s
   const hasExecuting = localTasks.some((t) => t.metadata?.executing === true);

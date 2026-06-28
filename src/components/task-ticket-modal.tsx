@@ -7,7 +7,6 @@ import {
   getTaskCommentsAction,
   addTaskCommentAction,
   generateTaskPlanAction,
-  updateTaskStatusAction,
   approveTaskArtifactAction,
   requestAdjustmentsAction,
   publishIntegrationAction,
@@ -104,7 +103,6 @@ function ReviewPanel({
   failedUploadError,
   onApprove,
   onAdjust,
-  onPublish,
 }: {
   taskId: string;
   clientId: string;
@@ -113,7 +111,6 @@ function ReviewPanel({
   failedUploadError?: string;
   onApprove: () => void;
   onAdjust: (feedback: string) => void;
-  onPublish: () => void;
 }) {
   const [showAdjustForm, setShowAdjustForm] = useState(false);
   const [feedback, setFeedback] = useState("");
@@ -313,13 +310,13 @@ function CommentsSection({
   clientId: string;
 }) {
   const [comments, setComments] = useState<TaskComment[]>([]);
+  // Start as true so the spinner shows immediately on mount — no synchronous setState in effect.
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
   const [isPending, startTransition] = useTransition();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setLoading(true);
     getTaskCommentsAction(taskId, clientId).then((res) => {
       setComments(res.comments ?? []);
       setLoading(false);
@@ -582,7 +579,6 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
               failedUploadError={failedUploadError}
               onApprove={handleApprove}
               onAdjust={handleAdjust}
-              onPublish={handleApprove}
             />
           )}
 
