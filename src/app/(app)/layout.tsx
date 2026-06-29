@@ -4,11 +4,12 @@ import {
   listClients,
   listAssignedActionItems,
   listReviewJobs,
+  listClientTasks,
 } from "@/lib/data";
 import { Sidebar } from "@/components/sidebar";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { AppHeader } from "@/components/app-header";
-import type { ActionItemNotification, AgentReviewNotification, AppUser, Client } from "@/lib/types";
+import type { ActionItemNotification, AgentReviewNotification, AppUser, Client, ClientTask } from "@/lib/types";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, isImpersonating, realAdmin } = await getViewingContext();
@@ -18,7 +19,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   let clients: Client[] = [];
 
   // Fetch sidebar data + notification data concurrently
-  const [adminData, actionItems, reviewJobs] = await Promise.all([
+  const [adminData, actionItems, reviewJobs, taskAlerts] = await Promise.all([
     user.role === "KAROS_ADMIN"
       ? Promise.all([listUsers(), listClients()]).then(([allUsers, allClients]) => ({
           allUsers,
@@ -29,6 +30,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     user.role === "CLIENT_USER" && user.clientId
       ? listReviewJobs(user.clientId)
       : Promise.resolve([] as AgentReviewNotification[]),
+    // Task alerts: pending and review_pending tasks for the active client user
+    user.role === "CLIENT_USER" && user.clientId
+      ? listClientTasks({
+          clientId: user.clientId,
+          status: ["pending", "review_pending"],
+          limit: 50,
+        })
+      : Promise.resolve([] as ClientTask[]),
   ]);
 
   if (adminData) {
@@ -53,6 +62,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <AppHeader
           actionItems={actionItems as ActionItemNotification[]}
           reviewJobs={reviewJobs}
+          taskAlerts={taskAlerts}
         />
         <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
           <div className="mx-auto w-full max-w-6xl animate-fade-up">{children}</div>

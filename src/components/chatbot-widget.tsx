@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
+import { ingestCustomUserTaskAction } from "@/lib/actions";
 import type { Agent, Client, ClientReport } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -284,20 +285,49 @@ function ModeSelector({
 /* ── Proactive welcome (CLIENT_USER initial view) ────────────────────── */
 
 function ProactiveWelcome({
+  clientId,
   clientName,
   userName,
   hasGoogleIntegration,
   send,
+  onTasksCreated,
 }: {
+  clientId: string;
   clientName: string;
   userName?: string;
   hasGoogleIntegration: boolean;
   send: (t: string) => void;
+  onTasksCreated: () => void;
 }) {
   const actions = buildProactiveActions(hasGoogleIntegration);
-  const greeting = userName
-    ? `Hi ${userName.split(" ")[0]}! 👋`
-    : `Welcome back!`;
+  const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
+
+  const [taskText, setTaskText] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const [taskFeedback, setTaskFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  function handleTaskSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = taskText.trim();
+    if (!trimmed || isPending) return;
+    setTaskFeedback(null);
+    startTransition(async () => {
+      const result = await ingestCustomUserTaskAction(clientId, trimmed);
+      if (result.ok) {
+        const label =
+          result.owner === "karos_managed" ? "AI-managed task added" : "Action item added";
+        setTaskFeedback({ type: "success", message: label });
+        setTaskText("");
+        onTasksCreated();
+        setTimeout(() => setTaskFeedback(null), 3000);
+      } else {
+        setTaskFeedback({ type: "error", message: result.error ?? "Failed to add task" });
+      }
+    });
+  }
 
   return (
     <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
@@ -309,9 +339,63 @@ function ProactiveWelcome({
         <div className="rounded-[14px] border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
           <p className="font-medium">{greeting} I&apos;m your AI Copilot for <strong>{clientName}</strong>.</p>
           <p className="mt-1 text-xs text-muted">
-            Choose an action below or type anything to start a conversation.
+            Choose an action below or describe a task to add it directly.
           </p>
         </div>
+      </div>
+
+      {/* Quick task ingestion */}
+      <form onSubmit={handleTaskSubmit} className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2 rounded-[10px] border border-border bg-surface-2 px-2.5 py-2 transition-colors focus-within:border-neon/50 focus-within:ring-1 focus-within:ring-neon/20">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] bg-purple-500/10 text-purple-400">
+            <Icon name="Plus" className="h-3 w-3" />
+          </span>
+          <input
+            value={taskText}
+            onChange={(e) => setTaskText(e.target.value)}
+            placeholder="Describe a task you need done…"
+            disabled={isPending}
+            maxLength={1000}
+            className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-2 outline-none disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={!taskText.trim() || isPending}
+            className="flex h-6 items-center gap-1 rounded-[6px] bg-neon px-2 text-[10px] font-semibold text-black transition-opacity disabled:opacity-40"
+          >
+            {isPending ? (
+              <Icon name="Loader" className="h-3 w-3 animate-spin" />
+            ) : (
+              <>
+                <Icon name="Sparkles" className="h-2.5 w-2.5" />
+                Add
+              </>
+            )}
+          </button>
+        </div>
+        {taskFeedback && (
+          <div
+            className={cn(
+              "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[10px]",
+              taskFeedback.type === "success"
+                ? "border border-neon/20 bg-neon/5 text-neon"
+                : "border border-red-500/20 bg-red-500/5 text-red-400",
+            )}
+          >
+            <Icon
+              name={taskFeedback.type === "success" ? "CheckCircle" : "TriangleAlert"}
+              className="h-3 w-3 shrink-0"
+            />
+            {taskFeedback.message}
+          </div>
+        )}
+      </form>
+
+      {/* Divider */}
+      <div className="flex items-center gap-2 px-1">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-[10px] text-muted-2">or run an AI action</span>
+        <div className="h-px flex-1 bg-border" />
       </div>
 
       {/* Action chips */}
@@ -340,14 +424,12 @@ function ProactiveWelcome({
         ))}
       </div>
 
-      {/* Divider with "or ask anything" */}
+      {/* Quick text suggestions */}
       <div className="flex items-center gap-2 px-1">
         <div className="h-px flex-1 bg-border" />
         <span className="text-[10px] text-muted-2">or ask anything</span>
         <div className="h-px flex-1 bg-border" />
       </div>
-
-      {/* Quick text suggestions */}
       <div className="flex flex-wrap gap-1.5">
         {["What's our brand positioning?", "Show recent drafts", "Who are our competitors?"].map(
           (prompt) => (
@@ -590,10 +672,12 @@ export function ChatbotWidget({
           {messages.length === 0 ? (
             showProactiveWelcome ? (
               <ProactiveWelcome
+                clientId={clientId}
                 clientName={clientName}
                 userName={userName}
                 hasGoogleIntegration={hasGoogleIntegration}
                 send={send}
+                onTasksCreated={onTasksCreated}
               />
             ) : (
               <ChatEmptyState mode={mode} clientName={clientName} send={send} />

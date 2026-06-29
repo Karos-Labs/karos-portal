@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listClientTasks, listClients, getClientSettings } from "@/lib/data";
 import { TasksBoard } from "@/components/tasks-board";
+import { QuickAddTaskBar } from "@/components/quick-add-task-bar";
 import { PageHeader } from "@/components/ui";
 import type { ClientTask } from "@/lib/types";
 
@@ -23,6 +24,9 @@ export default async function TasksPage() {
           title="Task Board"
           description="Your AI-generated and operational tasks, organized by priority and ownership."
         />
+        <div className="mb-4">
+          <QuickAddTaskBar clientId={user.clientId} />
+        </div>
         <TasksBoard
           tasks={tasks}
           currentUserRole={user.role}

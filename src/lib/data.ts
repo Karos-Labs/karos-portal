@@ -682,18 +682,46 @@ export async function listLoginLogs(opts?: { since?: number; limit?: number }): 
 
 export async function listClientTasks(opts: {
   clientId?: string;
-  status?: TaskStatus;
+  /** Single status or array of statuses — filtered in JS to avoid composite indexes. */
+  status?: TaskStatus | TaskStatus[];
   limit?: number;
 }): Promise<ClientTask[]> {
   // Avoid composite-index requirement by filtering in JS after a simple query.
   let q = col.clientTasks() as FirebaseFirestore.Query;
   if (opts.clientId) q = q.where("clientId", "==", opts.clientId);
-  if (opts.status) q = q.where("status", "==", opts.status);
+  // Single-status Firestore filter for efficiency; multi-status done in JS below.
+  if (typeof opts.status === "string") q = q.where("status", "==", opts.status);
   const snap = await q.get();
-  return snap.docs
-    .map((d) => withId<ClientTask>(d))
+  let results = snap.docs.map((d) => withId<ClientTask>(d));
+  if (Array.isArray(opts.status) && opts.status.length > 0) {
+    const allowed = new Set<TaskStatus>(opts.status);
+    results = results.filter((t) => allowed.has(t.status));
+  }
+  return results
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, opts.limit ?? 200);
+}
+
+/**
+ * Delete ALL tasks for a client in batched Firestore writes.
+ * Used by the Scan & Refresh flow to clear stale tasks before generating a fresh map.
+ * Returns the number of documents deleted.
+ */
+export async function deleteAllClientTasks(clientId: string): Promise<number> {
+  const snap = await col.clientTasks().where("clientId", "==", clientId).get();
+  if (snap.empty) return 0;
+
+  const db = adminDb();
+  const CHUNK = 400; // stay well under Firestore's 500-write limit
+  const docs = snap.docs;
+
+  for (let i = 0; i < docs.length; i += CHUNK) {
+    const batch = db.batch();
+    docs.slice(i, i + CHUNK).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  return docs.length;
 }
 
 export async function getClientTask(id: string): Promise<ClientTask | null> {

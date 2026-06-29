@@ -23,6 +23,7 @@ const SOURCE_META: Record<TaskSource, { label: string; icon: string; color: stri
   content_dispatch:    { label: "Content",           icon: "Zap",        color: "#ff5d6c" },
   copilot:             { label: "AI Copilot",        icon: "Bot",        color: "#2dff9e" },
   manual:              { label: "Manual",            icon: "PenLine",    color: "#8aa2a8" },
+  custom:              { label: "Quick Add",         icon: "Plus",       color: "#a78bfa" },
 };
 
 const PRIORITY_BADGE: Record<string, { tone: "danger" | "warning" | "neon" | "neutral" }> = {
@@ -444,6 +445,8 @@ export function TasksBoard({
       );
       startTransition(async () => {
         await startTaskExecutionAction(id, cid);
+        // Refresh layout so notification bell reflects updated task counts.
+        router.refresh();
       });
     } else {
       setLocalTasks((prev) =>
@@ -455,6 +458,8 @@ export function TasksBoard({
       );
       startTransition(async () => {
         await updateTaskStatusAction(id, status, cid);
+        // Refresh layout so notification bell reflects updated task counts.
+        router.refresh();
       });
     }
   }
@@ -463,6 +468,7 @@ export function TasksBoard({
     setLocalTasks((prev) => prev.filter((t) => t.id !== id));
     startTransition(async () => {
       await deleteTaskAction(id, cid);
+      router.refresh();
     });
   }
 

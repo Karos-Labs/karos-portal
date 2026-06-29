@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { generateText } from "ai";
+import { generateText, generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import {
   createClientTask,
@@ -12,9 +13,15 @@ import {
   getClientTask,
   listTaskComments,
   createTaskComment,
+  listAgents,
+  normalizeTitleForDedup,
+  taskTitleExists,
 } from "@/lib/data";
-import { buildTaskExecutionPlanPrompt } from "@/lib/ai/prompts/proactive-assistant";
-import type { TaskStatus, ClientTask, TaskComment } from "@/lib/types";
+import {
+  buildTaskExecutionPlanPrompt,
+  buildTaskIngestionRoutingPrompt,
+} from "@/lib/ai/prompts/proactive-assistant";
+import type { TaskStatus, ClientTask, TaskComment, TaskOwner } from "@/lib/types";
 
 /** Update a task's status. Accessible to the owning client user and staff. */
 export async function updateTaskStatusAction(
@@ -164,6 +171,81 @@ export async function generateTaskPlanAction(
 
   revalidatePath("/tasks");
   return { plan: text };
+}
+
+/**
+ * Ingest a free-text task description from the user, classify it with Claude Haiku,
+ * route it to the correct owner (karos_managed vs client_managed), and persist it.
+ * Respects normalizeTitleForDedup() to prevent duplicates.
+ */
+export async function ingestCustomUserTaskAction(
+  clientId: string,
+  text: string,
+): Promise<{ ok: boolean; taskId?: string; owner?: TaskOwner; error?: string }> {
+  const user = await requireUser();
+
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return { ok: false, error: "Forbidden" };
+  }
+
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: false, error: "Task description cannot be empty" };
+  if (trimmed.length > 1000) return { ok: false, error: "Task description is too long" };
+
+  const [client, agents] = await Promise.all([
+    getClient(clientId),
+    listAgents({ status: "published" }),
+  ]);
+  if (!client) return { ok: false, error: "Client not found" };
+
+  // Build a brief agent capability summary for the routing prompt
+  const agentSummary = agents
+    .filter((a) => !a.isSystem && a.isActive)
+    .map((a) => `${a.name} (${a.outputKind})`)
+    .join(", ") || "none configured";
+
+  const routingSchema = z.object({
+    title: z.string().max(120).describe("Short, action-verb task title"),
+    description: z.string().max(400).describe("Context and acceptance criteria"),
+    priority: z.enum(["high", "medium", "low"]),
+    owner: z.enum(["karos_managed", "client_managed"]),
+  });
+
+  const { object: parsed } = await generateObject({
+    model: anthropic("claude-haiku-4-5-20251001"),
+    schema: routingSchema,
+    prompt: buildTaskIngestionRoutingPrompt(
+      trimmed,
+      client.name,
+      client.industry ?? "marketing",
+      agentSummary,
+    ),
+  });
+
+  // Dedup check against the AI-extracted title
+  const normalizedTitle = normalizeTitleForDedup(parsed.title);
+  const exists = await taskTitleExists(clientId, normalizedTitle);
+  if (exists) {
+    return { ok: false, error: "A similar task already exists on your board" };
+  }
+
+  const now = Date.now();
+  const taskId = await createClientTask({
+    clientId,
+    title: parsed.title,
+    description: parsed.description,
+    status: "pending",
+    priority: parsed.priority,
+    source: "custom",
+    owner: parsed.owner,
+    createdBy: user.uid,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  revalidatePath("/tasks");
+  revalidatePath(`/clients/${clientId}`);
+  return { ok: true, taskId, owner: parsed.owner };
 }
 
 /** Save Google OAuth access token for a CLIENT_USER after Google sign-in. */

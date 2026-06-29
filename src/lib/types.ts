@@ -578,7 +578,8 @@ export type TaskSource =
   | "brand_audit"
   | "content_dispatch"
   | "copilot"
-  | "manual";
+  | "manual"
+  | "custom";
 
 /**
  * "karos_managed" — executed by Karos AI agents or staff (content, drafting, research).

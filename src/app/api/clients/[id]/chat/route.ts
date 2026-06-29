@@ -21,10 +21,11 @@ import {
   listClientIntegrations,
   markIntegrationExpired,
   createClientTask,
+  deleteAllClientTasks,
   normalizeTitleForDedup,
 } from "@/lib/data";
 import { buildCopilotSystemPrompt, buildAgentCopilotSystemPrompt } from "@/lib/copilot-context";
-import { PROACTIVE_SYSTEM_APPENDIX, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
+import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
 import { startAgentRun } from "@/lib/agents/run";
 import { sendEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
@@ -91,14 +92,37 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ? buildAgentCopilotSystemPrompt(focusedAgent, client, agentJobs, agentAssets, contextDocs)
     : buildCopilotSystemPrompt(client, report, competitors, allAgents, jobs, assets, contextDocs);
 
-  // Append proactive-assistant instructions so the AI knows how to handle
-  // the four action chips and when to call the task-creation tool.
-  const systemPrompt = `${baseSystemPrompt}\n\n${PROACTIVE_SYSTEM_APPENDIX}`;
-
   /* ── Shared Google integration lookup ────────────────────────────── */
   const googleIntegration = integrations.find(
     (i) => i.platform === "google" && i.status === "active",
   );
+
+  // Build dynamic proactive appendix with live agent catalog, social integrations,
+  // calendar state, and Gmail status so the AI follows the correct scenario rules.
+  const agentCatalog = allAgents
+    .filter((a) => !a.isSystem && a.isActive && a.status === "published")
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      outputKind: a.outputKind,
+      description: a.description,
+      capabilities: a.capabilities as string[],
+    }));
+
+  const linkedSocialPlatforms = integrations
+    .filter((i) => i.platform !== "google" && (i.status ?? "active") === "active")
+    .map((i) => i.platform);
+
+  const hasScheduledContent = assets.some((a) => a.status === "scheduled");
+
+  const systemPrompt =
+    `${baseSystemPrompt}\n\n` +
+    buildProactiveSystemAppendix({
+      agents: agentCatalog,
+      linkedSocialPlatforms,
+      hasGmailIntegration: !!googleIntegration,
+      hasScheduledContent,
+    });
 
   /* ── Shared tools ─────────────────────────────────────────────────── */
 
@@ -172,6 +196,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         console.log("[copilot] Support email (ADMIN_EMAIL not set):", { subject, message, clientId });
       }
       return "Support email sent to the Karos Labs team.";
+    },
+  });
+
+  /* ── Proactive tool: purge task board ───────────────────────────── */
+
+  const purgeTaskBoardTool = tool({
+    description:
+      "Delete ALL existing tasks in the client's task board to create a clean slate before a Scan & Refresh. " +
+      "Call this ONLY at the very start of Action 1 (Scan & Refresh Task Map), before any other tools. " +
+      "Do NOT call for competitor research, brand audits, or content dispatch actions.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      const deleted = await deleteAllClientTasks(clientId);
+      return deleted > 0
+        ? `Task board cleared — ${deleted} stale task${deleted !== 1 ? "s" : ""} removed. Generating fresh task map now.`
+        : "Task board was already empty. Generating fresh task map now.";
     },
   });
 
@@ -271,7 +311,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return `Analyzed ${emails.length} operational signals — no actionable items detected. Your queue looks clear for now.`;
       }
 
-      // Dedup: skip tasks whose normalized title already exists for this client
+      // Dedup against ALL existing tasks (every status: pending, in_progress,
+      // review_pending, completed) so we never recreate work that is already
+      // tracked or was recently finished.
       const existingTasks = await listClientTasks({ clientId, limit: 500 });
       const existingNorm = new Set(existingTasks.map((t) => normalizeTitleForDedup(t.title)));
       const freshTasks = extracted.tasks.filter(
@@ -326,7 +368,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             description: z.string().max(800).describe("Context and rationale for this task"),
             priority: z.enum(["high", "medium", "low"]),
             source: z
-              .enum(["gmail", "competitor_research", "brand_audit", "content_dispatch", "copilot"])
+              .enum(["gmail", "competitor_research", "brand_audit", "content_dispatch", "copilot", "custom"])
               .describe("Which proactive action generated this task"),
             owner: z
               .enum(["karos_managed", "client_managed"])
@@ -337,7 +379,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .max(10),
     }),
     execute: async ({ tasks }) => {
-      // Dedup: skip tasks whose normalized title already exists for this client
+      // Dedup against ALL existing tasks (every status: pending, in_progress,
+      // review_pending, completed) so we never recreate work that is already
+      // tracked or was recently finished.
       const existingTasks = await listClientTasks({ clientId, limit: 500 });
       const existingNorm = new Set(existingTasks.map((t) => normalizeTitleForDedup(t.title)));
       const freshTasks = tasks.filter(
