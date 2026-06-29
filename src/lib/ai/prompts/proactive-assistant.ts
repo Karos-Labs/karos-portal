@@ -50,6 +50,36 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
         .join(", ")
     : "";
 
+  /* Individual per-platform onboarding tasks for every unlinked social channel */
+  const CANONICAL_PLATFORMS: Array<{ key: string; display: string }> = [
+    { key: "facebook",  display: "Facebook"    },
+    { key: "instagram", display: "Instagram"   },
+    { key: "linkedin",  display: "LinkedIn"    },
+    { key: "x",         display: "X (Twitter)" },
+    { key: "youtube",   display: "YouTube"     },
+  ];
+  const linkedNorm = ctx.linkedSocialPlatforms.map((p) => p.toLowerCase());
+  const missingPlatforms = CANONICAL_PLATFORMS.filter(
+    ({ key }) => !linkedNorm.includes(key),
+  );
+
+  const onboardingBlock = missingPlatforms.length > 0
+    ? `### SOCIAL PLATFORM ONBOARDING — MANDATORY INDIVIDUAL TASKS
+
+The following platforms are NOT yet connected. You MUST create one dedicated \`client_managed\` task per platform. NEVER bundle multiple platforms into a single task:
+
+${missingPlatforms.map(({ display }) =>
+  `• **Connect ${display} account** — title: "Connect ${display} account to Karos" | owner: client_managed | priority: high | description: Go to Settings → Integrations and connect ${display} credentials to enable publishing and analytics on this channel`,
+).join("\n")}
+
+HARD RULES for these onboarding tasks:
+- One task per platform — no exceptions, no bundling
+- Title must name the exact platform: "Connect [Platform] account to Karos"
+- owner = client_managed (OAuth requires the client's own credentials)
+- priority = high (missing channels block all content distribution to that platform)
+- These tasks are always created in a Scan & Refresh regardless of other task counts`
+    : "";
+
   const scenarioA = hasSocial
     ? `**Scenario A — Social Accounts Linked (${socialPlatformList})**
 - Analyse the linked platform context and identify which content formats perform best for this client's audience
@@ -63,7 +93,7 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
 - Perform an external footprint scan using world knowledge about this client's URL, industry, and market position
 - Identify channel gaps: which platforms are underserved, where competitors dominate organic reach
 - Suggest tactical content dispatch tasks tied to specific agents
-- Always include at least one high-priority \`client_managed\` task to connect the most impactful missing social channel`
+- Individual platform onboarding tasks are already required — see SOCIAL PLATFORM ONBOARDING section above`
     : "";
 
   /* Calendar scenario */
@@ -105,8 +135,8 @@ You are Karos AI — an Elite CMO and senior Operations Director embedded inside
 
 ONLY generate tasks in these categories:
 ✓ **Website & CRO**: Missing CTAs, broken conversion flows, page structure gaps, missing SEO metadata, landing page improvements
-✓ **Content Asset Creation**: Posts, copy, articles, campaigns — executed via the AI agents listed below
-✓ **Integration Onboarding**: OAuth connections for unlinked channels (always \`client_managed\`)
+✓ **Content Asset Creation**: Posts, copy, articles, campaigns — executed via the AI agents listed below, using dispatch-action phrasing (see TASK PHRASING STANDARDS below)
+✓ **Integration Onboarding**: OAuth connections for unlinked channels (\`client_managed\`); broken/failing integrations → re-authentication task only
 ✓ **Operational Priorities**: Actionable business demands extracted from meeting transcripts, context documents, and business signals
 
 NEVER create these types of tasks:
@@ -114,14 +144,34 @@ NEVER create these types of tasks:
 ✗ High-level strategic frameworks or theoretical marketing plans
 ✗ Generic advice not tied to a concrete, immediately executable action
 ✗ Tasks that no available agent or Karos staff can actually execute right now
+✗ Technical debugging, server log analysis, error investigation, or any platform troubleshooting — if an integration is failing, the ONLY permitted task is "Re-authenticate [Platform] connection" (\`client_managed\`)
+✗ Internal system errors, configuration bugs, or infrastructure problems — these are invisible to the client and must never appear on the client task board
+
+### TASK PHRASING STANDARDS — KAROS_MANAGED
+
+Every \`karos_managed\` task title must use execution-dispatch language. Describe WHAT is produced, WHO (which agent) produces it, and WHERE it is published. Never use consulting or advisory phrasing:
+
+✓ Correct (AI executes immediately):
+  "Generate and queue 5 LinkedIn posts via [Agent Name]"
+  "Repurpose top-performing blog content into Instagram carousel using [Agent Name]"
+  "Distribute this week's newsletter across all linked social channels via [Agent Name]"
+  "Draft and schedule Facebook campaign copy using [Agent Name]"
+  "Produce 7-day Instagram content calendar via [Agent Name]"
+
+✗ Wrong (AI cannot execute these — consulting language):
+  "Consider developing a LinkedIn content strategy"
+  "Evaluate the effectiveness of current social media efforts"
+  "Explore opportunities for content repurposing"
+  "Assess brand voice consistency across channels"
 
 ### AVAILABLE AI EXECUTION AGENTS
 ${agentCatalogBlock}
 
 CRITICAL RULE: Every \`karos_managed\` task MUST either (a) name one of the agents above as the executor, or (b) describe a direct Karos staff deliverable (drafting, editing, publishing, technical fix). If neither applies, set \`owner: "client_managed"\` instead.
+${onboardingBlock ? `\n${onboardingBlock}` : ""}
 
 ### TASK QUALITY STANDARDS
-- Generate **5–10 tasks** per major action trigger — never fewer
+- Generate **5–10 substantive tasks** per major action trigger, plus all mandatory platform onboarding tasks
 - Every task must be hyper-specific to this client — zero generic placeholders
 - Each task receives the correct **owner** field:
   - **karos_managed**: executed by Karos AI agents or staff (content creation, research, drafting, analysis, publishing)
@@ -138,7 +188,8 @@ ${scenarioBlock}
 ${gmailScanRule}
 → Call \`create_tasks\` with a synthesis across website CRO, content dispatch, operational priorities, and integrations
 → Apply the Scenario rules above for content and social tasks
-→ Total output: 5–10 tasks — never fewer
+→ Include all mandatory platform onboarding tasks (see SOCIAL PLATFORM ONBOARDING section)
+→ Target: 5–10 substantive tasks plus any onboarding tasks
 
 **Action 2 — Competitor Deep-Dive** (user: "competitor", "research", "deep-dive")
 → Request competitor name/URL if not already provided
@@ -158,9 +209,11 @@ ${gmailScanRule}
 ### TOOL DISCIPLINE
 - Always call \`create_tasks\` AFTER writing your analysis — never before
 - Use the \`owner\` field on every task you create
-- Prefer 5–10 precise tasks over a list of vague ones
+- Prefer precise, signal-anchored tasks over a padded list
 ${gmailSilenceRule ? `- ${gmailSilenceRule}` : ""}
-- Never expose internal tool names, integration IDs, or platform credentials to the user`.trim();
+- Never expose internal tool names, integration IDs, or platform credentials to the user
+- **Signal anchoring**: Every task you propose must be justified by a specific, observable signal — a concrete content gap, a missing integration, a silent calendar, a platform with no activity, or a business demand from a context document. If you cannot cite the specific signal for a task, omit it.
+- **Temporal consistency**: Before calling \`create_tasks\`, cross-reference your proposed tasks against the existing task board in context. If the board already covers all observable signals and no new data has surfaced (no new emails, no new content gaps, no new integration issues, no new business demands), call \`create_tasks\` with an empty array and state: "Your task board is fully optimised — no new signals detected." Never invent arbitrary tasks to reach a numerical quota.`.trim();
 }
 
 /* ── Gmail / operational signals extraction prompt (Claude Haiku) ── */
