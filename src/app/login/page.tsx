@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -61,7 +60,6 @@ function friendly(err: unknown): string {
 /* ── Page ────────────────────────────────────────────────────────── */
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -90,8 +88,7 @@ export default function LoginPage() {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       const { role, clientId, disabled } = await createSession();
-      router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
-      router.refresh();
+      window.location.href = disabled ? "/pending" : routeAfterAuth(role, clientId);
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);
@@ -125,8 +122,7 @@ export default function LoginPage() {
         await saveGoogleOAuthTokenAction(googleAccessToken).catch(() => {});
       }
 
-      router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
-      router.refresh();
+      window.location.href = disabled ? "/pending" : routeAfterAuth(role, clientId);
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);
