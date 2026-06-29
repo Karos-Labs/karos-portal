@@ -1,16 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   signInWithEmailAndPassword,
   signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult,
   GoogleAuthProvider,
 } from "firebase/auth";
-import { auth, googleProvider, appleProvider } from "@/lib/firebase/client";
+import { auth, googleAuthProvider, appleProvider } from "@/lib/firebase/client";
 import { saveGoogleOAuthTokenAction } from "@/lib/actions";
 import { Button, Input, Label } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -46,14 +44,16 @@ function routeAfterAuth(role: string | null, clientId: string | null): string {
 function friendly(err: unknown): string {
   const code = (err as { code?: string })?.code ?? "";
   const map: Record<string, string> = {
-    "auth/invalid-credential":      "Incorrect email or password.",
-    "auth/user-not-found":          "No account with that email.",
-    "auth/wrong-password":          "Incorrect password.",
-    "auth/too-many-requests":       "Too many attempts — wait a moment and try again.",
-    "auth/popup-closed-by-user":    "Sign-in cancelled.",
-    "auth/popup-blocked":           "Popup blocked — allow popups for this site and try again.",
-    "auth/cancelled-popup-request": "",
-    "auth/invalid-api-key":         "Firebase isn't configured. Add your keys to .env.local.",
+    "auth/invalid-credential":                   "Incorrect email or password.",
+    "auth/user-not-found":                       "No account with that email.",
+    "auth/wrong-password":                       "Incorrect password.",
+    "auth/too-many-requests":                    "Too many attempts — wait a moment and try again.",
+    "auth/popup-closed-by-user":                 "Sign-in cancelled.",
+    "auth/popup-blocked":                        "Popup blocked — allow popups for this site and try again.",
+    "auth/cancelled-popup-request":              "",
+    "auth/invalid-api-key":                      "Firebase isn't configured. Add your keys to .env.local.",
+    "auth/unauthorized-domain":                  "This domain isn't authorised for Google sign-in. Add it to Firebase Console → Authentication → Authorised Domains.",
+    "auth/account-exists-with-different-credential": "An account with this email already exists. Try signing in with email and password.",
   };
   return map[code] ?? (err instanceof Error ? err.message : "Something went wrong.");
 }
@@ -66,8 +66,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<"email" | "google" | "apple" | null>(null);
-  // True while processing a returning Google redirect — shows spinner on the Google button.
-  const [googleRedirectPending, setGoogleRedirectPending] = useState(true);
 
   // Posts the Firebase ID token to the session endpoint and returns the
   // server-assigned role/clientId. Does NOT navigate — callers decide when.
@@ -84,40 +82,6 @@ export default function LoginPage() {
     }
     return res.json();
   }
-
-  // On mount: check if the user just returned from the Google redirect flow.
-  // Also handles the legacy redirect path that Apple uses on some browsers.
-  useEffect(() => {
-    getRedirectResult(auth)
-      .then(async (result) => {
-        if (!result) {
-          setGoogleRedirectPending(false);
-          return;
-        }
-
-        // Extract Google OAuth access token available in the redirect result.
-        let googleAccessToken: string | null = null;
-        if (result.providerId === "google.com") {
-          const cred = GoogleAuthProvider.credentialFromResult(result);
-          googleAccessToken = cred?.accessToken ?? null;
-        }
-
-        const { role, clientId, disabled } = await createSession();
-
-        if (googleAccessToken) {
-          await saveGoogleOAuthTokenAction(googleAccessToken).catch(() => {});
-        }
-
-        router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
-        router.refresh();
-      })
-      .catch((err) => {
-        const msg = friendly(err);
-        if (msg) setError(msg);
-        setGoogleRedirectPending(false);
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
@@ -139,29 +103,39 @@ export default function LoginPage() {
     setError(null);
     setLoading(provider);
     try {
+      // googleAuthProvider uses the standard implicit-grant flow (no offline access,
+      // no Gmail scope). This is intentional: access_type:"offline" forces a code-grant
+      // response that Firebase's popup handler cannot process, causing a silent hang.
+      const result = await signInWithPopup(
+        auth,
+        provider === "google" ? googleAuthProvider : appleProvider,
+      );
+
+      let googleAccessToken: string | null = null;
       if (provider === "google") {
-        // Use full-page redirect instead of a popup.
-        // Popups can hang indefinitely when postMessage is blocked (HTTP origin,
-        // restrictive CSP, or certain mobile browsers). The redirect flow is
-        // unconditionally reliable — useEffect picks up the result on return.
-        await signInWithRedirect(auth, googleProvider);
-        return; // page navigates away; loading state is irrelevant after this
+        const cred = GoogleAuthProvider.credentialFromResult(result);
+        googleAccessToken = cred?.accessToken ?? null;
       }
 
-      // Apple: keep popup (redirect flow is more complex for Apple Sign-In)
-      const result = await signInWithPopup(auth, appleProvider);
-      if (!result) return;
       const { role, clientId, disabled } = await createSession();
+
+      // Save the Google access token before navigating — if the browser navigates
+      // first, the in-flight server-action fetch can be aborted.
+      if (googleAccessToken) {
+        await saveGoogleOAuthTokenAction(googleAccessToken).catch(() => {});
+      }
+
       router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
       router.refresh();
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);
+    } finally {
       setLoading(null);
     }
   }
 
-  const busy = loading !== null || googleRedirectPending;
+  const busy = loading !== null;
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
@@ -231,7 +205,7 @@ export default function LoginPage() {
               variant="subtle"
               className="w-full"
               onClick={() => handleSocial("google")}
-              loading={loading === "google" || googleRedirectPending}
+              loading={loading === "google"}
               disabled={busy}
             >
               <GoogleLogo />

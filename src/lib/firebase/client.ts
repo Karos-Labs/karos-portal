@@ -20,11 +20,15 @@ export const firebaseApp = getApps().length ? getApp() : initializeApp(firebaseC
 export const auth = getAuth(firebaseApp);
 export const db = getFirestore(firebaseApp);
 export const storage = getStorage(firebaseApp);
+// Auth-only provider: standard implicit-grant flow — no extra scopes, no offline.
+// access_type:"offline" forces the code-grant flow which Firebase's redirect handler
+// cannot process, causing signInWithRedirect to return null and signInWithPopup to hang.
+export const googleAuthProvider = new GoogleAuthProvider();
+
+// Gmail-scoped provider: used by the post-login OAuth integration flow to request
+// inbox read access and a refresh token. NOT for initial sign-in.
 export const googleProvider = new GoogleAuthProvider();
-// Request Gmail read-only scope so we can scan the inbox for proactive task extraction.
-// Users see a Google consent screen listing this permission on first sign-in.
 googleProvider.addScope("https://www.googleapis.com/auth/gmail.readonly");
-// Prompt the consent screen every time so we always receive a fresh access_token.
 googleProvider.setCustomParameters({ access_type: "offline", prompt: "consent" });
 
 export const appleProvider = new OAuthProvider("apple.com");
