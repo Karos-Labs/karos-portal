@@ -28,16 +28,40 @@ export function normalizeHex(raw: string): string | null {
    Context-doc builders (used by saveBrandingGuidelinesAction too)
    ──────────────────────────────────────────────────────────────────────── */
 
+/** Returns the effective primary accent — new field first, legacy fallback. */
+export function effectivePrimaryAccent(g: BrandingGuidelines): string | undefined {
+  return g.primaryAccent ?? g.primaryColor;
+}
+
+/** Returns the effective secondary accent — new field first, legacy fallback. */
+export function effectiveSecondaryAccent(g: BrandingGuidelines): string | undefined {
+  return g.secondaryAccent ?? g.secondaryColor;
+}
+
+/** Returns the effective neutral dark — new field first, legacy fallbacks. */
+export function effectiveNeutralDark(g: BrandingGuidelines): string | undefined {
+  return g.brandNeutralDark ?? g.uiBackground ?? g.uiText;
+}
+
+/** Returns the effective neutral light — new field first, legacy fallback. */
+export function effectiveNeutralLight(g: BrandingGuidelines): string | undefined {
+  return g.brandNeutralLight ?? g.uiText ?? g.uiBackground;
+}
+
 export function brandingToContextDocContent(g: BrandingGuidelines, clientName: string): string {
   const today = new Date().toISOString().slice(0, 10);
   const lines = [`# Branding Guidelines — ${clientName}`, `_Last updated: ${today}_`, ""];
   if (g.visualStyle) lines.push("## Visual Style", g.visualStyle, "");
-  if (g.primaryColor || g.secondaryColor || g.uiBackground || g.uiText) {
+  const pa = effectivePrimaryAccent(g);
+  const sa = effectiveSecondaryAccent(g);
+  const nd = g.brandNeutralDark ?? g.uiBackground;
+  const nl = g.brandNeutralLight ?? g.uiText;
+  if (pa || sa || nd || nl) {
     lines.push("## Color Palette");
-    if (g.primaryColor) lines.push(`- **Brand Accent:** ${g.primaryColor}`);
-    if (g.secondaryColor) lines.push(`- **Secondary:** ${g.secondaryColor}`);
-    if (g.uiBackground) lines.push(`- **UI Background:** ${g.uiBackground}`);
-    if (g.uiText) lines.push(`- **UI Text:** ${g.uiText}`);
+    if (pa) lines.push(`- **Primary Accent:** ${pa}`);
+    if (sa) lines.push(`- **Secondary Accent:** ${sa}`);
+    if (nd) lines.push(`- **Neutral Dark:** ${nd}`);
+    if (nl) lines.push(`- **Neutral Light:** ${nl}`);
     lines.push("");
   }
   if (g.fontHeading || g.fontBody) {
@@ -60,10 +84,14 @@ export function buildBrandVoiceSection(g: BrandingGuidelines): string {
     `## Visual & Tone Reference (auto-synced from guidelines · ${today})`,
   ];
   if (g.visualStyle) lines.push(`- **Visual Style:** ${g.visualStyle}`);
-  if (g.primaryColor) lines.push(`- **Brand Accent:** ${g.primaryColor}`);
-  if (g.uiBackground) lines.push(`- **UI Background:** ${g.uiBackground}`);
-  if (g.uiText) lines.push(`- **UI Text:** ${g.uiText}`);
-  if (g.secondaryColor) lines.push(`- **Secondary Color:** ${g.secondaryColor}`);
+  const pa = effectivePrimaryAccent(g);
+  const sa = effectiveSecondaryAccent(g);
+  const nd = g.brandNeutralDark ?? g.uiBackground;
+  const nl = g.brandNeutralLight ?? g.uiText;
+  if (pa) lines.push(`- **Primary Accent:** ${pa}`);
+  if (sa) lines.push(`- **Secondary Accent:** ${sa}`);
+  if (nd) lines.push(`- **Neutral Dark:** ${nd}`);
+  if (nl) lines.push(`- **Neutral Light:** ${nl}`);
   if (g.fontHeading) lines.push(`- **Heading Font:** ${g.fontHeading}`);
   if (g.fontBody) lines.push(`- **Body Font:** ${g.fontBody}`);
   if (g.toneKeywords?.length) lines.push(`- **Tone Keywords:** ${g.toneKeywords.join(", ")}`);
@@ -96,56 +124,80 @@ export function injectBrandVoiceSection(content: string, section: string): strin
    ──────────────────────────────────────────────────────────────────────── */
 
 const BrandingAISchema = z.object({
-  brandAccent: z
+  primaryAccent: z
     .string()
     .describe(
-      "Primary brand color as 6-digit lowercase hex. " +
-        "SOURCE PRIORITY: (1) the brand's actual color from its website/logo if you know it, " +
-        "(2) the company's known brand color, " +
-        "(3) industry-standard accent only if brand is completely unknown. " +
-        "Examples of real brand colors: Magenta #e91e8c for XO Digital, Crimson #ce2127 for ONE, " +
-        "Electric blue #0057ff for Wix, Orange #ff6600 for Cloudflare.",
+      "The brand's single most dominant accent color as a 6-digit lowercase hex. " +
+        "EXTRACTION PRIORITY: (1) Logo SVG/image — the most saturated or unique color in the mark. " +
+        "(2) Header navigation bar fill or primary CTA button background. " +
+        "(3) The company's known brand color from training data. " +
+        "(4) Industry-standard accent ONLY if the brand is completely unknown. " +
+        "Never substitute a generic 'average tech blue' for a recognizable brand. " +
+        "Examples: #e91e8c (XO Digital magenta), #ff6600 (Cloudflare orange), " +
+        "#0057ff (Wix electric blue), #ce2127 (ONE crimson), #7c3aed (Twitch purple).",
     ),
-  uiBackground: z
+  secondaryAccent: z
     .string()
     .describe(
-      "Canvas background color derived from the brand's actual website palette. " +
-        "Dark-mode brands (agencies, SaaS, tech, luxury, digital-first): #09090b or #0a0a0a. " +
-        "Light-mode brands (corporate, healthcare, e-commerce, retail): #ffffff or #f4f4f5. " +
-        "Match what the actual website uses, not what you assume the industry uses.",
+      "The supporting contrast/action color used for hover states, secondary CTAs, or icon fills. " +
+        "Must be visually distinct from primaryAccent. " +
+        "Derive from: the brand's second most prominent palette color (e.g. a complementary or analogous hue), " +
+        "or a tinted variant of the primary if the brand is monochromatic. " +
+        "Return as 6-digit lowercase hex.",
     ),
-  uiText: z
+  brandNeutralDark: z
     .string()
     .describe(
-      "High-contrast readable text color paired with uiBackground. " +
-        "#09090b for light canvases, #fafafa for dark canvases.",
+      "The foundational dark shade — the darkest neutral in the brand's palette. " +
+        "For dark-mode / digital-first brands: near-black like #09090b, #0a0a0a, #111111. " +
+        "For light-mode brands: the dark heading or body text color, e.g. #1a1a2e, #0d1117, #1e293b. " +
+        "Never pick a color lighter than #333333 for this field. Return as 6-digit lowercase hex.",
     ),
-  secondaryColor: z
+  brandNeutralLight: z
     .string()
-    .optional()
     .describe(
-      "Secondary accent from the brand's actual palette as 6-digit lowercase hex. Omit if unsure.",
+      "The foundational light shade — the lightest neutral in the brand's palette. " +
+        "For light-mode brands: the canvas background, e.g. #ffffff, #f8fafc, #fafafa, #f4f4f5. " +
+        "For dark-mode brands: the lightest text or surface color, e.g. #e2e8f0, #f1f5f9, #fafafa. " +
+        "Never pick a color darker than #cccccc for this field. Return as 6-digit lowercase hex.",
     ),
   fontHeading: z
     .string()
     .describe(
-      "The actual heading font the brand uses on its website, if known. " +
-        "Fallback by sector: Plus Jakarta Sans/Inter/Montserrat (tech/modern); " +
-        "Playfair Display/Cormorant Garamond (luxury/editorial); Nunito/Lato (healthcare/community).",
+      "The exact heading font the brand uses on its website, if known. " +
+        "Inspect <h1>, <h2>, and nav brand mark for font-family. " +
+        "Fallback by visual archetype: Space Grotesk / Syne (High-Tech, Dark Mode); " +
+        "Plus Jakarta Sans / Inter (tech/modern Minimalist); " +
+        "Playfair Display / Cormorant Garamond (Luxury/editorial); " +
+        "Nunito / Lato (healthcare/community Corporate).",
     ),
   fontBody: z
     .string()
     .describe(
-      "The actual body font the brand uses, if known. Fallback: Inter, Open Sans, or Source Sans 3.",
+      "The exact body text font the brand uses, if known. " +
+        "Fallback: Inter, Geist, Open Sans, or Source Sans 3 based on brand tone.",
     ),
   visualStyle: z
     .enum(["Dark Mode", "High-Tech", "Luxury", "Vibrant", "Corporate", "Minimalist"])
-    .describe("The most fitting visual archetype for this brand."),
+    .describe(
+      "The most fitting visual archetype. Must align with the extracted palette: " +
+        "Dark Mode → near-black neutrals + vivid accent; " +
+        "High-Tech → high contrast + electric/neon accent; " +
+        "Luxury → muted or deep neutrals + gold/silver/rich accent; " +
+        "Vibrant → saturated multi-hue palette; " +
+        "Corporate → conservative neutrals + safe accent; " +
+        "Minimalist → near-white/near-black with single restrained accent.",
+    ),
   toneKeywords: z
     .array(z.string())
     .min(3)
     .max(5)
-    .describe("3–5 single-word brand personality descriptors (e.g. Bold, Innovative, Human, Crafted)."),
+    .describe(
+      "3–5 single-word brand personality descriptors. " +
+        "Must align with visualStyle: High-Tech/Dark Mode → Disruptive, Precise, Innovative; " +
+        "Luxury → Refined, Exclusive, Elevated; Vibrant → Energetic, Bold, Playful. " +
+        "Never use generic descriptors like 'Professional' or 'Reliable' for dynamic brands.",
+    ),
   brandVoice: z
     .string()
     .describe(
@@ -192,25 +244,26 @@ function buildBrandingPrompt(
 
   lines.push(
     "",
-    "## How to generate the brand profile",
+    "## How to extract the brand profile",
     "",
-    "STEP 1 — Website-first recall (highest priority):",
+    "STEP 1 — Logo & asset inspection (highest priority):",
     domain
-      ? `Recall everything you know about ${domain} from your training data. What are its actual brand colors? What fonts does it use? What is its visual style? Use this specific knowledge as your primary source.`
+      ? `Recall everything you know about ${domain} from training data. Examine the logo SVG/image first — extract the most saturated or unique hex from the mark. Then check header navigation and primary CTA buttons for accent colors.`
       : "No website provided — skip to Step 2.",
     "",
     "STEP 2 — Company name recall:",
-    `If the website alone didn't surface clear visual details, recall what you know about "${name}" as a company or brand. Many brands are recognizable by name even without the domain.`,
+    `If Step 1 didn't surface clear visual details, recall what you know about "${name}" as a brand. Many brands are instantly recognizable by name.`,
     "",
-    "STEP 3 — Industry inference (fallback only):",
-    "ONLY if Steps 1 and 2 yield no specific knowledge about this brand (it is genuinely unknown or too regional/niche), then apply industry-standard visual aesthetics appropriate for the sector.",
+    "STEP 3 — Industry inference (last resort):",
+    "ONLY if Steps 1 and 2 yield zero specific knowledge, apply industry-standard visual aesthetics for the sector.",
     "",
-    "## Hard rules",
-    "- brandAccent must be the brand's real primary color when you recognize the brand. Never substitute a generic industry color for a known brand.",
-    "- uiBackground reflects the brand's actual canvas: dark for dark-mode brands (#09090b/#0a0a0a), light for light-mode brands (#ffffff/#f4f4f5).",
-    "- fontHeading/fontBody must be the actual fonts the brand uses if you know them, otherwise choose fonts that genuinely fit the sector.",
-    "- The three-part color schema (brandAccent, uiBackground, uiText) must be contrast-safe and cohesive.",
-    "- toneKeywords and brandVoice must reflect the specific brand's personality, not generic sector marketing language.",
+    "## Hard rules for the 4-color palette",
+    "- primaryAccent: the single most distinctive color from the brand's logo or primary CTA. Never use a generic blue (#2563eb) for a brand that has its own signature color.",
+    "- secondaryAccent: visually distinct from primaryAccent — a complementary hue, not a tint/shade of it.",
+    "- brandNeutralDark: the darkest neutral in the palette (#333333 or darker). Must be near-black for dark-mode brands.",
+    "- brandNeutralLight: the lightest neutral in the palette (#cccccc or lighter). Must be near-white for light-mode brands.",
+    "- fontHeading/fontBody must be the actual fonts the brand uses if you know them; otherwise choose fonts that fit the visualStyle archetype.",
+    "- visualStyle, toneKeywords, and brandVoice must be mathematically consistent — a High-Tech palette must pair with Disruptive/Innovative/Precise tone, not generic Corporate descriptors.",
     "- Do's and Don'ts must be specific and actionable for content creators working on this brand.",
   );
 
@@ -236,9 +289,15 @@ function buildGuidelinesMarkdown(obj: z.infer<typeof BrandingAISchema>): string 
 
 export type BrandingGenResult = {
   source: "ai_generated";
-  primaryColor?: string;
-  secondaryColor?: string;
+  primaryAccent?: string;
+  secondaryAccent?: string;
+  brandNeutralDark?: string;
+  brandNeutralLight?: string;
   visualStyle?: string;
+  /** @deprecated Use primaryAccent */
+  primaryColor?: string;
+  /** @deprecated Use secondaryAccent */
+  secondaryColor?: string;
 };
 
 /**
@@ -276,12 +335,10 @@ export async function applyBrandingForClient(
 
   // Preserve only logoUrl — always manually uploaded, never generated.
   const fullGuidelines: BrandingGuidelines = {
-    primaryColor: normalizeHex(object.brandAccent) ?? object.brandAccent,
-    uiBackground: normalizeHex(object.uiBackground) ?? object.uiBackground,
-    uiText: normalizeHex(object.uiText) ?? object.uiText,
-    secondaryColor: object.secondaryColor
-      ? (normalizeHex(object.secondaryColor) ?? object.secondaryColor)
-      : undefined,
+    primaryAccent: normalizeHex(object.primaryAccent) ?? object.primaryAccent,
+    secondaryAccent: normalizeHex(object.secondaryAccent) ?? object.secondaryAccent,
+    brandNeutralDark: normalizeHex(object.brandNeutralDark) ?? object.brandNeutralDark,
+    brandNeutralLight: normalizeHex(object.brandNeutralLight) ?? object.brandNeutralLight,
     fontHeading: object.fontHeading,
     fontBody: object.fontBody,
     visualStyle: object.visualStyle,
@@ -324,8 +381,13 @@ export async function applyBrandingForClient(
 
   return {
     source: "ai_generated",
-    primaryColor: fullGuidelines.primaryColor,
-    secondaryColor: fullGuidelines.secondaryColor,
+    primaryAccent: fullGuidelines.primaryAccent,
+    secondaryAccent: fullGuidelines.secondaryAccent,
+    brandNeutralDark: fullGuidelines.brandNeutralDark,
+    brandNeutralLight: fullGuidelines.brandNeutralLight,
     visualStyle: fullGuidelines.visualStyle,
+    // Legacy aliases for callers still reading old field names
+    primaryColor: fullGuidelines.primaryAccent,
+    secondaryColor: fullGuidelines.secondaryAccent,
   };
 }

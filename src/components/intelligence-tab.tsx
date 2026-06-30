@@ -441,7 +441,7 @@ function BrandingSection({
   onEdit: () => void;
   onGenerate: () => void;
   generating: boolean;
-  genFeedback?: { source: "ai_generated"; primaryColor?: string; visualStyle?: string } | null;
+  genFeedback?: { source: "ai_generated"; primaryAccent?: string; visualStyle?: string } | null;
 }) {
   const brandInsights: string[] = [];
   if (brandingDoc) {
@@ -525,34 +525,41 @@ function BrandingSection({
       {genFeedback && (
         <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
           <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
-          {`AI Generated from Domain Knowledge${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${genFeedback.primaryColor ? ` · ${genFeedback.primaryColor}` : ""}`}
+          {`AI Generated from Domain Knowledge${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${genFeedback.primaryAccent ? ` · ${genFeedback.primaryAccent}` : ""}`}
         </div>
       )}
 
       {/* Agent-usable structured data */}
       <div className="flex flex-wrap gap-4">
-        {(guidelines.primaryColor || guidelines.secondaryColor) && (
-          <div className="flex gap-2">
-            {guidelines.primaryColor && (
-              <div className="flex items-center gap-2">
-                <div
-                  className="h-6 w-6 shrink-0 rounded-full border border-border"
-                  style={{ background: guidelines.primaryColor }}
-                />
-                <span className="font-mono text-xs text-muted-2">{guidelines.primaryColor}</span>
-              </div>
-            )}
-            {guidelines.secondaryColor && (
-              <div className="flex items-center gap-2">
-                <div
-                  className="h-6 w-6 shrink-0 rounded-full border border-border"
-                  style={{ background: guidelines.secondaryColor }}
-                />
-                <span className="font-mono text-xs text-muted-2">{guidelines.secondaryColor}</span>
-              </div>
-            )}
-          </div>
-        )}
+        {(() => {
+          const pa = guidelines.primaryAccent ?? guidelines.primaryColor;
+          const sa = guidelines.secondaryAccent ?? guidelines.secondaryColor;
+          const nd = guidelines.brandNeutralDark ?? guidelines.uiBackground;
+          const nl = guidelines.brandNeutralLight ?? guidelines.uiText;
+          const swatches = [
+            { color: pa, label: "Primary" },
+            { color: sa, label: "Secondary" },
+            { color: nd, label: "Dark" },
+            { color: nl, label: "Light" },
+          ].filter((s): s is { color: string; label: string } => !!s.color);
+          return swatches.length > 0 ? (
+            <div className="flex flex-wrap gap-3">
+              {swatches.map(({ color, label }) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <div
+                    className="h-5 w-5 shrink-0 rounded-full border border-border"
+                    style={{ background: color }}
+                    title={label}
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-medium uppercase tracking-wider text-muted-2">{label}</span>
+                    <span className="font-mono text-xs text-muted-2">{color}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null;
+        })()}
         {(guidelines.fontHeading || guidelines.fontBody) && (
           <div className="flex gap-3 text-xs text-muted-2">
             {guidelines.fontHeading && <span>Heading: {guidelines.fontHeading}</span>}
@@ -624,7 +631,7 @@ export function IntelligenceTab({
   const [regenError, setRegenError] = useState<string | null>(null);
   const [brandingFeedback, setBrandingFeedback] = useState<{
     source: "ai_generated";
-    primaryColor?: string;
+    primaryAccent?: string;
     visualStyle?: string;
   } | null>(null);
 

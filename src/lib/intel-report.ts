@@ -78,7 +78,7 @@ export async function runIntelReportPipeline(clientId: string): Promise<void> {
     // Branding refresh — always regenerate so the brand profile stays in sync with the Intel Report (non-fatal)
     applyBrandingForClient(clientId, client)
       .then((r) => {
-        console.info(`[intel] Branding refreshed for ${client.name} (${r.source}): ${r.primaryColor ?? "no color"}`);
+        console.info(`[intel] Branding refreshed for ${client.name} (${r.source}): ${r.primaryAccent ?? "no color"}`);
       })
       .catch((err: unknown) => {
         console.error("[intel] Branding generation failed (non-fatal):", err);

@@ -91,10 +91,10 @@ export async function generateBrandingAction(clientId: string): Promise<Branding
     timestamp: Date.now(),
     type: "BRANDING_UPDATED",
     title: "Brand guidelines generated via AI",
-    description: `AI generated brand profile from domain knowledge${result.primaryColor ? ` · ${result.primaryColor}` : ""}${result.visualStyle ? ` · ${result.visualStyle}` : ""}`,
+    description: `AI generated brand profile from domain knowledge${result.primaryAccent ? ` · ${result.primaryAccent}` : ""}${result.visualStyle ? ` · ${result.visualStyle}` : ""}`,
     actor: user.name,
     actorRole: "staff",
-    metadata: { source: result.source, primaryColor: result.primaryColor },
+    metadata: { source: result.source, primaryAccent: result.primaryAccent },
   });
 
   revalidatePath(`/clients/${clientId}`);
@@ -109,7 +109,7 @@ export async function backfillBrandingForAllClientsAction(): Promise<{
   total: number;
   generated: number;
   failed: number;
-  results: Array<{ clientId: string; name: string; status: "ai_generated" | "failed"; primaryColor?: string }>;
+  results: Array<{ clientId: string; name: string; status: "ai_generated" | "failed"; primaryAccent?: string }>;
 }> {
   await requireAdmin();
 
@@ -118,13 +118,13 @@ export async function backfillBrandingForAllClientsAction(): Promise<{
     clientId: string;
     name: string;
     status: "ai_generated" | "failed";
-    primaryColor?: string;
+    primaryAccent?: string;
   }> = [];
 
   for (const client of clients) {
     try {
       const r = await applyBrandingForClient(client.id, client);
-      results.push({ clientId: client.id, name: client.name, status: r.source, primaryColor: r.primaryColor });
+      results.push({ clientId: client.id, name: client.name, status: r.source, primaryAccent: r.primaryAccent });
     } catch (err) {
       console.error(`[backfill] Failed for ${client.name} (${client.id}):`, err);
       results.push({ clientId: client.id, name: client.name, status: "failed" });

@@ -65,7 +65,9 @@ function useBrandPreview(guidelines: Client["brandingGuidelines"], active: boole
     const defaults = isLight ? LIGHT_DEFAULTS : DARK_DEFAULTS;
 
     // ── Accent / neon colour system ─────────────────────────────────
-    const accent = guidelines.secondaryColor || guidelines.primaryColor;
+    const accent =
+      guidelines.secondaryAccent ?? guidelines.secondaryColor ??
+      guidelines.primaryAccent ?? guidelines.primaryColor;
     if (accent) {
       const rgb = hexToRgb(accent);
       const rgbStr = rgb ? rgb.join(", ") : null;
@@ -87,7 +89,7 @@ function useBrandPreview(guidelines: Client["brandingGuidelines"], active: boole
     // ── Background tint ─────────────────────────────────────────────
     // Use a lighter blend in light mode so the tint is a gentle wash rather
     // than a colour shift that kills foreground contrast.
-    const primary = guidelines.primaryColor;
+    const primary = guidelines.primaryAccent ?? guidelines.primaryColor;
     if (primary) {
       const bgAmt = isLight ? 0.06 : 0.15;
       const srfAmt = isLight ? 0.04 : 0.12;
@@ -133,7 +135,9 @@ export function PreviewBrandButton({
   guidelines: Client["brandingGuidelines"];
 }) {
   const [active, setActive] = useState(false);
-  const canPreview = !!(guidelines?.primaryColor || guidelines?.fontHeading);
+  const canPreview = !!(
+    guidelines?.primaryAccent ?? guidelines?.primaryColor ?? guidelines?.fontHeading
+  );
 
   useBrandPreview(guidelines, active);
 

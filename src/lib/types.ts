@@ -305,13 +305,23 @@ export interface CustomerSentimentEntry {
 }
 
 export interface BrandingGuidelines {
-  /** Vibrant brand accent color (AI-generated from domain knowledge). */
+  /** Main dominant brand accent color (e.g. signature vibrant hue from logo/CTA). */
+  primaryAccent?: string;
+  /** Supporting contrast/action color (e.g. hover states, secondary CTAs). */
+  secondaryAccent?: string;
+  /** Foundational dark shade — deep background or heavy text/header color. */
+  brandNeutralDark?: string;
+  /** Foundational light shade — crisp background or clean body text color. */
+  brandNeutralLight?: string;
+  // Legacy aliases — kept for backward compatibility with existing Firestore documents.
+  /** @deprecated Use primaryAccent */
   primaryColor?: string;
-  /** Canvas background color — light (#ffffff/#f4f4f5) or dark (#09090b/#0a0a0a). */
-  uiBackground?: string;
-  /** High-contrast text color that pairs with uiBackground. */
-  uiText?: string;
+  /** @deprecated Use secondaryAccent */
   secondaryColor?: string;
+  /** @deprecated Use brandNeutralDark / brandNeutralLight */
+  uiBackground?: string;
+  /** @deprecated Use brandNeutralDark / brandNeutralLight */
+  uiText?: string;
   fontHeading?: string;
   fontBody?: string;
   toneKeywords?: string[];

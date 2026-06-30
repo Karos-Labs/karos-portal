@@ -26,8 +26,10 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
   const [tokenInput, setTokenInput] = useState("");
 
   const [form, setForm] = useState<Omit<BrandingGuidelines, "updatedAt">>({
-    primaryColor: existing?.primaryColor ?? "",
-    secondaryColor: existing?.secondaryColor ?? "",
+    primaryAccent: existing?.primaryAccent ?? existing?.primaryColor ?? "",
+    secondaryAccent: existing?.secondaryAccent ?? existing?.secondaryColor ?? "",
+    brandNeutralDark: existing?.brandNeutralDark ?? existing?.uiBackground ?? "",
+    brandNeutralLight: existing?.brandNeutralLight ?? existing?.uiText ?? "",
     fontHeading: existing?.fontHeading ?? "",
     fontBody: existing?.fontBody ?? "",
     toneKeywords: existing?.toneKeywords ?? [],
@@ -51,8 +53,10 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
       // Pre-fill form with AI-generated values so the user can review and adjust before saving.
       setForm((s) => ({
         ...s,
-        primaryColor: result.primaryColor ?? s.primaryColor,
-        secondaryColor: result.secondaryColor ?? s.secondaryColor,
+        primaryAccent: result.primaryAccent ?? s.primaryAccent,
+        secondaryAccent: result.secondaryAccent ?? s.secondaryAccent,
+        brandNeutralDark: result.brandNeutralDark ?? s.brandNeutralDark,
+        brandNeutralLight: result.brandNeutralLight ?? s.brandNeutralLight,
         visualStyle: result.visualStyle ?? s.visualStyle,
       }));
       router.refresh();
@@ -124,38 +128,76 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
           </div>
         )}
 
-        {/* Colors */}
+        {/* Colors — 4-color brand palette */}
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <Label>Primary color</Label>
+            <Label>Primary accent</Label>
+            <p className="mb-1 text-[10px] text-muted-2">Main brand color (logo, CTA)</p>
             <div className="flex items-center gap-2">
               <input
                 type="color"
-                value={form.primaryColor || "#2dff9e"}
-                onChange={(e) => setField("primaryColor", e.target.value)}
+                value={form.primaryAccent || "#2dff9e"}
+                onChange={(e) => setField("primaryAccent", e.target.value)}
                 className="h-9 w-12 cursor-pointer rounded-[8px] border border-border bg-surface-2 p-1"
               />
               <Input
-                value={form.primaryColor ?? ""}
-                onChange={(e) => setField("primaryColor", e.target.value)}
+                value={form.primaryAccent ?? ""}
+                onChange={(e) => setField("primaryAccent", e.target.value)}
                 placeholder="#2dff9e"
                 className="flex-1 font-mono text-sm"
               />
             </div>
           </div>
           <div>
-            <Label>Secondary color</Label>
+            <Label>Secondary accent</Label>
+            <p className="mb-1 text-[10px] text-muted-2">Supporting / hover / action color</p>
             <div className="flex items-center gap-2">
               <input
                 type="color"
-                value={form.secondaryColor || "#ffffff"}
-                onChange={(e) => setField("secondaryColor", e.target.value)}
+                value={form.secondaryAccent || "#00ccff"}
+                onChange={(e) => setField("secondaryAccent", e.target.value)}
                 className="h-9 w-12 cursor-pointer rounded-[8px] border border-border bg-surface-2 p-1"
               />
               <Input
-                value={form.secondaryColor ?? ""}
-                onChange={(e) => setField("secondaryColor", e.target.value)}
-                placeholder="#ffffff"
+                value={form.secondaryAccent ?? ""}
+                onChange={(e) => setField("secondaryAccent", e.target.value)}
+                placeholder="#00ccff"
+                className="flex-1 font-mono text-sm"
+              />
+            </div>
+          </div>
+          <div>
+            <Label>Neutral dark</Label>
+            <p className="mb-1 text-[10px] text-muted-2">Deep background or heavy text</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={form.brandNeutralDark || "#09090b"}
+                onChange={(e) => setField("brandNeutralDark", e.target.value)}
+                className="h-9 w-12 cursor-pointer rounded-[8px] border border-border bg-surface-2 p-1"
+              />
+              <Input
+                value={form.brandNeutralDark ?? ""}
+                onChange={(e) => setField("brandNeutralDark", e.target.value)}
+                placeholder="#09090b"
+                className="flex-1 font-mono text-sm"
+              />
+            </div>
+          </div>
+          <div>
+            <Label>Neutral light</Label>
+            <p className="mb-1 text-[10px] text-muted-2">Crisp background or clean body text</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={form.brandNeutralLight || "#fafafa"}
+                onChange={(e) => setField("brandNeutralLight", e.target.value)}
+                className="h-9 w-12 cursor-pointer rounded-[8px] border border-border bg-surface-2 p-1"
+              />
+              <Input
+                value={form.brandNeutralLight ?? ""}
+                onChange={(e) => setField("brandNeutralLight", e.target.value)}
+                placeholder="#fafafa"
                 className="flex-1 font-mono text-sm"
               />
             </div>

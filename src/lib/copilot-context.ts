@@ -136,8 +136,14 @@ export function buildCopilotSystemPrompt(
   const g = client.brandingGuidelines;
   if (g) {
     parts.push("## BRANDING GUIDELINES (Agent-Active)");
-    if (g.primaryColor) parts.push(`- **Primary Color:** ${g.primaryColor}`);
-    if (g.secondaryColor) parts.push(`- **Secondary/Accent Color:** ${g.secondaryColor}`);
+    const pa = g.primaryAccent ?? g.primaryColor;
+    const sa = g.secondaryAccent ?? g.secondaryColor;
+    const nd = g.brandNeutralDark ?? g.uiBackground;
+    const nl = g.brandNeutralLight ?? g.uiText;
+    if (pa) parts.push(`- **Primary Accent:** ${pa}`);
+    if (sa) parts.push(`- **Secondary Accent:** ${sa}`);
+    if (nd) parts.push(`- **Neutral Dark:** ${nd}`);
+    if (nl) parts.push(`- **Neutral Light:** ${nl}`);
     if (g.fontHeading) parts.push(`- **Heading Font:** ${g.fontHeading}`);
     if (g.fontBody) parts.push(`- **Body Font:** ${g.fontBody}`);
     if (g.toneKeywords?.length) parts.push(`- **Tone Keywords:** ${g.toneKeywords.join(", ")}`);
@@ -246,8 +252,10 @@ export function buildAgentCopilotSystemPrompt(
   const g = client.brandingGuidelines;
   if (g) {
     const bits: string[] = [];
-    if (g.primaryColor) bits.push(`Primary: ${g.primaryColor}`);
-    if (g.secondaryColor) bits.push(`Accent: ${g.secondaryColor}`);
+    const pa = g.primaryAccent ?? g.primaryColor;
+    const sa = g.secondaryAccent ?? g.secondaryColor;
+    if (pa) bits.push(`Primary: ${pa}`);
+    if (sa) bits.push(`Secondary: ${sa}`);
     if (g.toneKeywords?.length) bits.push(`Tone: ${g.toneKeywords.join(", ")}`);
     if (bits.length) parts.push(`Brand: ${bits.join(" · ")}`);
   }

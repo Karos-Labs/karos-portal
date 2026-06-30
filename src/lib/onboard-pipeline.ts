@@ -28,10 +28,14 @@ function clientContext(client: Client): string {
 
   // Include structured branding data so the AI never contradicts manually set values.
   const g = client.brandingGuidelines;
-  if (g && (g.primaryColor || g.fontHeading || g.toneKeywords?.length)) {
+  const pa = g?.primaryAccent ?? g?.primaryColor;
+  const sa = g?.secondaryAccent ?? g?.secondaryColor;
+  if (g && (pa || g.fontHeading || g.toneKeywords?.length)) {
     parts.push("", "Existing Branding (treat as ground truth — do not contradict or omit):");
-    if (g.primaryColor) parts.push(`  Primary Color: ${g.primaryColor}`);
-    if (g.secondaryColor) parts.push(`  Secondary Color: ${g.secondaryColor}`);
+    if (pa) parts.push(`  Primary Accent: ${pa}`);
+    if (sa) parts.push(`  Secondary Accent: ${sa}`);
+    if (g.brandNeutralDark ?? g.uiBackground) parts.push(`  Neutral Dark: ${g.brandNeutralDark ?? g.uiBackground}`);
+    if (g.brandNeutralLight ?? g.uiText) parts.push(`  Neutral Light: ${g.brandNeutralLight ?? g.uiText}`);
     if (g.fontHeading) parts.push(`  Heading Font: ${g.fontHeading}`);
     if (g.fontBody) parts.push(`  Body Font: ${g.fontBody}`);
     if (g.toneKeywords?.length) parts.push(`  Tone Keywords: ${g.toneKeywords.join(", ")}`);

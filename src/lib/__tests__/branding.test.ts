@@ -24,10 +24,10 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fullGuidelines: BrandingGuidelines = {
-  primaryColor: "#ff0000",
-  secondaryColor: "#0000ff",
-  uiBackground: "#09090b",
-  uiText: "#fafafa",
+  primaryAccent: "#ff0000",
+  secondaryAccent: "#0000ff",
+  brandNeutralDark: "#09090b",
+  brandNeutralLight: "#fafafa",
   fontHeading: "Inter",
   fontBody: "Roboto",
   toneKeywords: ["Bold", "Innovative", "Human"],
@@ -88,10 +88,10 @@ describe("brandingToContextDocContent", () => {
   it("includes a Color Palette section when colors are present", () => {
     const result = brandingToContextDocContent(fullGuidelines, "Acme");
     expect(result).toContain("## Color Palette");
-    expect(result).toContain("**Brand Accent:** #ff0000");
-    expect(result).toContain("**Secondary:** #0000ff");
-    expect(result).toContain("**UI Background:** #09090b");
-    expect(result).toContain("**UI Text:** #fafafa");
+    expect(result).toContain("**Primary Accent:** #ff0000");
+    expect(result).toContain("**Secondary Accent:** #0000ff");
+    expect(result).toContain("**Neutral Dark:** #09090b");
+    expect(result).toContain("**Neutral Light:** #fafafa");
   });
 
   it("omits Color Palette when no color fields are set", () => {
@@ -108,7 +108,7 @@ describe("brandingToContextDocContent", () => {
   });
 
   it("omits Typography section when no fonts are set", () => {
-    const noFonts: BrandingGuidelines = { primaryColor: "#ff0000", updatedAt: 0 };
+    const noFonts: BrandingGuidelines = { primaryAccent: "#ff0000", updatedAt: 0 };
     const result = brandingToContextDocContent(noFonts, "Client");
     expect(result).not.toContain("## Typography");
   });
@@ -146,9 +146,9 @@ describe("buildBrandVoiceSection", () => {
     );
   });
 
-  it("includes brand accent color", () => {
+  it("includes primary accent color", () => {
     const result = buildBrandVoiceSection(fullGuidelines);
-    expect(result).toContain("**Brand Accent:** #ff0000");
+    expect(result).toContain("**Primary Accent:** #ff0000");
   });
 
   it("includes visual style", () => {
@@ -162,11 +162,11 @@ describe("buildBrandVoiceSection", () => {
   });
 
   it("omits lines for absent optional fields", () => {
-    const sparse: BrandingGuidelines = { primaryColor: "#123456", updatedAt: 0 };
+    const sparse: BrandingGuidelines = { primaryAccent: "#123456", updatedAt: 0 };
     const result = buildBrandVoiceSection(sparse);
     expect(result).not.toContain("Visual Style");
     expect(result).not.toContain("Tone Keywords");
-    expect(result).toContain("**Brand Accent:** #123456");
+    expect(result).toContain("**Primary Accent:** #123456");
   });
 
   it("contains the auto-sync advisory note", () => {
