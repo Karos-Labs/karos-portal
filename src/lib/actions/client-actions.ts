@@ -5,7 +5,8 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { createClient, updateClient, getClientByKeyId } from "@/lib/data";
 import { applyBrandingForClient } from "@/lib/branding";
-import type { Client } from "@/lib/types";
+import { requireUser } from "@/lib/auth";
+import type { Client, SocialLinks } from "@/lib/types";
 import { requireStaff } from "./_shared";
 
 export async function createClientAction(input: {
@@ -68,6 +69,40 @@ export async function regenerateClientKeyAction(clientId: string): Promise<{ cli
   await updateClient(clientId, { clientKeyId });
   revalidatePath(`/clients/${clientId}`);
   return { clientKeyId };
+}
+
+/**
+ * Client-editable profile fields (self-service). A CLIENT_USER may update their
+ * own client's category / team size / social links / short description; staff may
+ * update any client. Deliberately narrow — no access to keys, employees, status, etc.
+ */
+export async function updateClientProfileAction(
+  id: string,
+  input: { category?: string; teamSize?: string; description?: string; socialLinks?: SocialLinks },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const user = await requireUser();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === id)) {
+    return { ok: false, error: "Not authorized to edit this profile." };
+  }
+
+  const clean = (v?: string) => (typeof v === "string" ? v.trim() : undefined);
+  const patch: Partial<Client> = {};
+  if (input.category !== undefined) patch.category = clean(input.category);
+  if (input.teamSize !== undefined) patch.teamSize = clean(input.teamSize);
+  if (input.description !== undefined) patch.description = clean(input.description);
+  if (input.socialLinks !== undefined) {
+    const links: SocialLinks = {};
+    for (const [k, val] of Object.entries(input.socialLinks)) {
+      const c = clean(val);
+      if (c) (links as Record<string, string>)[k] = c;
+    }
+    patch.socialLinks = links;
+  }
+
+  await updateClient(id, patch);
+  revalidatePath(`/clients/${id}`);
+  return { ok: true };
 }
 
 export async function updateClientAction(id: string, input: Partial<Client> & { domainsCsv?: string }) {

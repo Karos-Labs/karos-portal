@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useTransition, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Headphones, X, CheckCircle } from "lucide-react";
 import { Button, Input, Textarea, Label } from "@/components/ui";
 import { sendSupportEmailAction } from "@/lib/actions";
 
-export function ContactUsButton() {
+export function ContactUsButton({ variant = "icon" }: { variant?: "icon" | "row" }) {
   const [open, setOpen] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +29,7 @@ export function ContactUsButton() {
       document.removeEventListener("keydown", onKey);
       clearTimeout(t);
     };
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open]);
 
   function handleClose() {
     setOpen(false);
@@ -58,18 +59,29 @@ export function ContactUsButton() {
 
   return (
     <>
-      {/* Trigger button — matches ThemeToggle / NotificationBell sizing */}
-      <button
-        onClick={() => setOpen(true)}
-        className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-muted transition-all duration-150 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
-        aria-label="Contact support"
-        title="Contact us"
-      >
-        <Headphones className="h-[18px] w-[18px]" />
-      </button>
+      {/* Trigger — icon button (header) or full-width row (account menu) */}
+      {variant === "row" ? (
+        <button
+          onClick={() => setOpen(true)}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+        >
+          <Headphones className="h-4 w-4 text-muted-2" />
+          Support
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen(true)}
+          className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-muted transition-all duration-150 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
+          aria-label="Contact support"
+          title="Contact us"
+        >
+          <Headphones className="h-[18px] w-[18px]" />
+        </button>
+      )}
 
-      {/* Backdrop */}
-      {open && (
+      {/* Backdrop — portaled to <body> so the header's backdrop-blur
+          containing block doesn't offset this fixed overlay. */}
+      {open && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)" }}
@@ -183,7 +195,8 @@ export function ContactUsButton() {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

@@ -15,6 +15,8 @@ interface NavItem {
   label: string;
   icon: string;
   roles: Role[];
+  /** When true, only highlight on an exact pathname match (not sub-routes). */
+  exact?: boolean;
 }
 
 const NAV: NavItem[] = [
@@ -248,13 +250,13 @@ export function Sidebar({
 
   const clientHomePath = user.role === "CLIENT_USER" && user.clientId ? `/clients/${user.clientId}` : null;
 
-  const items = NAV.filter((n) => {
+  // Staff use the full workspace NAV. (Client users get the dedicated ClientRail,
+  // not this sidebar — this branch only runs as a fallback.)
+  const items: NavItem[] = NAV.filter((n) => {
     if (n.roles.includes(user.role)) return true;
-    // Team is also visible for isGroupAdmin CLIENT_USER accounts
     if (n.href === "/team" && user.role === "CLIENT_USER" && user.isGroupAdmin) return true;
     return false;
   }).map((n) => {
-    // Point the Dashboard link directly at the client's own page
     if (n.href === "/dashboard" && clientHomePath) return { ...n, href: clientHomePath };
     return n;
   });
@@ -262,7 +264,9 @@ export function Sidebar({
   const nav = (
     <nav className="flex flex-1 flex-col gap-1">
       {items.map((item) => {
-        const active = pathname === item.href || pathname.startsWith(item.href + "/");
+        const active = item.exact
+          ? pathname === item.href
+          : pathname === item.href || pathname.startsWith(item.href + "/");
         const badge = item.href === "/registrations" && pendingCount > 0 ? pendingCount : null;
         return (
           <Link

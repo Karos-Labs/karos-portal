@@ -34,11 +34,30 @@ export interface AppUser {
   lastLoginAt?: number;
 }
 
+/** Client-editable social handles / profile URLs. */
+export interface SocialLinks {
+  instagram?: string;
+  linkedin?: string;
+  x?: string;
+  tiktok?: string;
+  youtube?: string;
+  facebook?: string;
+  website?: string;
+}
+
 export interface Client {
   id: string;
   name: string;
   website?: string;
   industry?: string;
+  /** Client-editable market category / vertical (self-reported). */
+  category?: string;
+  /** Client-editable team-size bucket, e.g. "1–10". */
+  teamSize?: string;
+  /** AI-generated 2-sentence company brief (from context docs). Generated once, cached. */
+  brief?: string;
+  /** Client-editable social handles / profile URLs. */
+  socialLinks?: SocialLinks;
   /** Primary contact email — also used to auto-route Fireflies transcripts & deliver assets. */
   contactEmail?: string;
   /** Email domains owned by the client, used to auto-assign meeting transcripts. */

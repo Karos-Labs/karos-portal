@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import {
   getClient,
+  updateClient,
   getAgent,
   upsertSystemAgent,
   updateAgent,
@@ -16,6 +17,73 @@ import { logger } from "@/services/logger";
 import { getCurrentUser } from "@/lib/auth";
 import type { ContextDocTier } from "@/lib/types";
 import { requireStaff, requireAdmin, logActivity } from "./_shared";
+
+/**
+ * Generate a short (2-sentence) company brief from the client's context docs.
+ * Cached on `client.brief` — only regenerates when `force` is set or no brief exists.
+ * Callable by staff or the client themselves.
+ */
+export async function generateClientBriefAction(
+  clientId: string,
+  force = false,
+): Promise<{ ok: true; brief: string } | { ok: false; error: string }> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) return { ok: false, error: "Unauthorized" };
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return { ok: false, error: "Forbidden" };
+  }
+
+  const client = await getClient(clientId);
+  if (!client) return { ok: false, error: "Client not found" };
+  if (client.brief && !force) return { ok: true, brief: client.brief };
+
+  const docs = await listClientContextDocs(clientId);
+  const source = ["product-information", "brand-voice", "market-strategy"]
+    .map((dt) => docs.find((d) => d.docType === dt && d.tier === "client") ?? docs.find((d) => d.docType === dt))
+    .filter(Boolean)
+    .map((d) => d!.content.replace(/^---[\s\S]*?---\n?/, "").slice(0, 1800))
+    .join("\n\n");
+
+  if (!source.trim()) return { ok: false, error: "No documents to summarize yet." };
+
+  const { generateText } = await import("ai");
+  const { anthropic } = await import("@ai-sdk/anthropic");
+  const MODEL = "claude-haiku-4-5-20251001";
+  const { text, usage } = await generateText({
+    model: anthropic(MODEL),
+    system:
+      "Write a plain, factual company description in exactly two short sentences (about two lines total). " +
+      "Describe what the company does and who it serves. " +
+      "Do NOT use em dashes (—). Do NOT use marketing hype or adjectives like 'leading' or 'innovative'. " +
+      "Return only the description text, no preamble.",
+    messages: [{ role: "user", content: `Company: ${client.name}\n\n${source}` }],
+    maxOutputTokens: 160,
+  });
+
+  after(() =>
+    logger.logUsage({
+      clientId,
+      agentId: null,
+      agentName: "Company Brief",
+      modelName: MODEL,
+      operation: "client_brief",
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+    }),
+  );
+
+  const brief = text
+    .trim()
+    .replace(/\s*[—–]\s*/g, ", ") // strip em/en dashes
+    .replace(/^["']|["']$/g, "")
+    .slice(0, 320);
+
+  if (!brief) return { ok: false, error: "Could not generate a description." };
+
+  await updateClient(clientId, { brief });
+  revalidatePath(`/clients/${clientId}`);
+  return { ok: true, brief };
+}
 
 export async function addActivityNoteAction(clientId: string, text: string): Promise<void> {
   const user = await requireStaff();

@@ -526,6 +526,12 @@ interface Props {
   client?: Pick<Client, "name" | "website" | "industry">;
   /** Latest intel report headline data for greeting context. */
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
+  /** Render as an always-open panel filling its container (right rail) instead of a floating popup. */
+  docked?: boolean;
+  /** When provided (docked mode), shows a collapse control in the header. */
+  onCollapse?: () => void;
+  /** Position classes for the floating bubble + panel (non-docked mode). */
+  floatingPosition?: string;
 }
 
 export function ChatbotWidget({
@@ -537,9 +543,14 @@ export function ChatbotWidget({
   hasGoogleIntegration = false,
   client: _client,
   report: _report,
+  docked = false,
+  onCollapse,
+  floatingPosition = "bottom-6 right-6",
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(defaultOpen);
+  // Docked mode is permanently open and never shows the floating bubble.
+  const panelOpen = docked || open;
   const [mode, setMode] = useState<CopilotMode>({ type: "general" });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -570,13 +581,13 @@ export function ChatbotWidget({
 
   // Auto-scroll
   useEffect(() => {
-    if (open) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, open]);
+    if (panelOpen) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, panelOpen]);
 
   // Focus input on open
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 50);
-  }, [open]);
+    if (panelOpen) setTimeout(() => inputRef.current?.focus(), 50);
+  }, [panelOpen]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -592,76 +603,89 @@ export function ChatbotWidget({
 
   return (
     <>
-      {/* Floating bubble */}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className={cn(
-          "fixed bottom-6 right-6 z-[9999] pointer-events-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all hover:scale-105 active:scale-95",
-          open
-            ? "bg-surface-2 shadow-black/30 ring-1 ring-border"
-            : !agentColor
-              ? "bg-neon shadow-neon/30"
-              : "",
-        )}
-        style={
-          !open && agentColor
-            ? { background: agentColor, boxShadow: `0 0 20px ${agentColor}4d` }
-            : undefined
-        }
-        aria-label={open ? "Close AI Copilot" : "Open AI Copilot"}
-      >
-        <Icon
-          name={open ? "X" : mode.type === "agent" ? mode.agent.icon : "MessageCircle"}
-          className={cn("h-6 w-6 transition-colors", open ? "text-foreground" : "text-black")}
-        />
-        {/* Pulse ring when defaultOpen and first time showing */}
-        {!open && defaultOpen && messages.length === 0 && (
-          <span className="absolute inset-0 rounded-full animate-ping opacity-30 bg-neon" />
-        )}
-      </button>
+      {/* Floating bubble — hidden in docked mode */}
+      {!docked && (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className={cn(
+            "fixed z-[9999] pointer-events-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all hover:scale-105 active:scale-95",
+            floatingPosition,
+            open
+              ? "bg-surface-2 shadow-black/30 ring-1 ring-border"
+              : !agentColor
+                ? "bg-neon shadow-neon/30"
+                : "",
+          )}
+          style={
+            !open && agentColor
+              ? { background: agentColor, boxShadow: `0 0 20px ${agentColor}4d` }
+              : undefined
+          }
+          aria-label={open ? "Close AI Copilot" : "Open AI Copilot"}
+        >
+          <Icon
+            name={open ? "X" : mode.type === "agent" ? mode.agent.icon : "MessageCircle"}
+            className={cn("h-6 w-6 transition-colors", open ? "text-foreground" : "text-black")}
+          />
+          {/* Pulse ring when defaultOpen and first time showing */}
+          {!open && defaultOpen && messages.length === 0 && (
+            <span className="absolute inset-0 rounded-full animate-ping opacity-30 bg-neon" />
+          )}
+        </button>
+      )}
 
       {/* Chat panel */}
-      {open && (
-        <div className="fixed bottom-6 right-6 z-[9998] flex h-[600px] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border bg-surface shadow-2xl">
+      {panelOpen && (
+        <div
+          className={cn(
+            "flex flex-col overflow-hidden bg-surface",
+            docked
+              ? "h-full w-full"
+              : cn(
+                  "fixed z-[9998] h-[600px] max-h-[calc(100vh-6rem)] w-[380px] max-w-[calc(100vw-2rem)] rounded-[20px] border border-border shadow-2xl",
+                  floatingPosition,
+                ),
+          )}
+        >
 
-          {/* Header */}
+          {/* Header — single title; the identity icon lives in the mode selector below */}
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface-2 px-4 py-3">
-            <div className="flex items-center gap-2.5">
-              <div
-                className="flex h-8 w-8 items-center justify-center rounded-full transition-colors"
-                style={
-                  agentColor
-                    ? { background: agentColor + "1f", color: agentColor }
-                    : { background: "var(--neon-soft)", color: "var(--neon)" }
-                }
-              >
-                <Icon name={mode.type === "agent" ? mode.agent.icon : "Bot"} className="h-4 w-4" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold leading-none">AI Copilot</p>
-                <p className="mt-0.5 text-[10px] leading-none text-muted-2">
-                  {clientName} · Powered by Claude
-                </p>
-              </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold leading-none">AI Copilot</p>
+              <p className="mt-1 text-[10px] leading-none text-muted-2">
+                {clientName} · Powered by Claude
+              </p>
             </div>
             <div className="flex items-center gap-1">
               {messages.length > 0 && (
                 <button
                   onClick={() => reset()}
-                  className="flex h-7 w-7 items-center justify-center rounded-full text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
                   aria-label="Clear conversation"
                   title="Clear conversation"
                 >
                   <Icon name="RotateCcw" className="h-3.5 w-3.5" />
                 </button>
               )}
-              <button
-                onClick={() => setOpen(false)}
-                className="flex h-7 w-7 items-center justify-center rounded-full text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
-                aria-label="Close"
-              >
-                <Icon name="X" className="h-4 w-4" />
-              </button>
+              {onCollapse && (
+                <button
+                  onClick={onCollapse}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
+                  aria-label="Collapse copilot"
+                  title="Collapse"
+                >
+                  <Icon name="ChevronDown" className="h-4 w-4" />
+                </button>
+              )}
+              {!docked && (
+                <button
+                  onClick={() => setOpen(false)}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
+                  aria-label="Close"
+                >
+                  <Icon name="X" className="h-4 w-4" />
+                </button>
+              )}
             </div>
           </div>
 

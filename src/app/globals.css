@@ -26,7 +26,7 @@
   --warning: #ffcf5d;
   --info: #5db4ff;
 
-  --radius: 14px;
+  --radius: 10px;
 }
 
 @theme inline {
@@ -210,6 +210,12 @@ body {
   to   { opacity: 1; }
 }
 .animate-fade-in { animation: fade-in 0.2s ease forwards; }
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+.animate-slide-in-right { animation: slide-in-right 0.28s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 
 /* Skeleton shimmer — use alongside a size class (e.g. h-4 w-32) */
 @keyframes shimmer {
