@@ -74,29 +74,38 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
     maxOutputTokens: CONDENSE_MAX_TOKENS,
   });
 
-  // Detect truncation: the condensed doc should include the last ## section from the internal doc.
+  // Detect truncation/omission: the condensed doc must include both the first and last ## sections.
   const internalSections = internalContent.match(/^## .+/gm) ?? [];
+  const firstInternalSection = internalSections[0]?.replace(/^## /, "").trim();
   const lastInternalSection = internalSections[internalSections.length - 1]?.replace(/^## /, "").trim();
 
-  if (lastInternalSection && !text.includes(lastInternalSection)) {
+  const condensed = stripPreamble(text);
+  // Match the heading boundary (## prefix) to avoid substring false-positives.
+  const missingFirst = firstInternalSection && !condensed.includes(`## ${firstInternalSection}`);
+  const missingLast = lastInternalSection && !condensed.includes(`## ${lastInternalSection}`);
+
+  if (missingFirst || missingLast) {
+    // Retry as a fresh call — do not include the truncated assistant turn, which anchors
+    // the model to the incomplete first output and defeats a full-rewrite instruction.
     const { text: cont } = await generateText({
       model: anthropic(MODELS.SONNET),
       system: systemPrompt,
       messages: [
-        { role: "user", content: userMessage },
-        { role: "assistant", content: text },
         {
           role: "user",
           content:
-            "You stopped before covering all sections. Continue the condensed document from exactly where you left off. Do not repeat any content already written. Continue immediately:",
+            userMessage +
+            "\n\nCRITICAL: You MUST condense every section from the original document. Do not stop before reaching the last section.",
         },
       ],
-      maxOutputTokens: 8000,
+      maxOutputTokens: CONDENSE_MAX_TOKENS,
     });
-    return { docType, content: stripPreamble(text + cont) };
+    const rewritten = stripPreamble(cont);
+    // Fall back to the first-pass result if the rewrite returned empty content.
+    return { docType, content: rewritten.length > 0 ? rewritten : condensed };
   }
 
-  return { docType, content: stripPreamble(text) };
+  return { docType, content: condensed };
 }
 
 /**

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "@/components/icon";
 import { renderFullDoc } from "@/lib/doc-render";
@@ -36,6 +36,8 @@ function DocOverlay({
   label: string;
   onClose: () => void;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -48,6 +50,11 @@ function DocOverlay({
       document.removeEventListener("keydown", onKey);
     };
   }, [onClose]);
+
+  // Reset scroll to top whenever the displayed document changes.
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [doc.id]);
 
   return createPortal(
     <div
@@ -71,7 +78,7 @@ function DocOverlay({
         </div>
 
         {/* Body */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
           <div
             className="mx-auto w-full max-w-2xl break-words [&_code]:break-all [&_table]:min-w-0"
             dangerouslySetInnerHTML={{ __html: renderFullDoc(doc.content) }}

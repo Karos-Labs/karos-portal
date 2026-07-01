@@ -349,16 +349,11 @@ function DocViewer({
   const [fixError, setFixError] = useState<string | null>(null);
   const [fixDone, setFixDone] = useState(false);
 
-  function toggle(i: number) {
-    setOpenSet((prev) => {
-      const next = new Set(prev);
-      next.has(i) ? next.delete(i) : next.add(i);
-      return next;
-    });
-  }
-
-  // Reset to full-document view and clear correction state whenever the active doc changes
-  useEffect(() => {
+  // Reset to full-document view and clear correction state whenever the active doc changes.
+  // Adjusted during render (React docs pattern) to avoid a cascading effect-triggered re-render.
+  const [prevDocId, setPrevDocId] = useState(doc?.id);
+  if (prevDocId !== doc?.id) {
+    setPrevDocId(doc?.id);
     setViewMode("full");
     setOpenSet(new Set([0]));
     setSummaryBullets([]);
@@ -367,7 +362,15 @@ function DocViewer({
     setCorrections("");
     setFixError(null);
     setFixDone(false);
-  }, [doc?.id]);
+  }
+
+  function toggle(i: number) {
+    setOpenSet((prev) => {
+      const next = new Set(prev);
+      next.has(i) ? next.delete(i) : next.add(i);
+      return next;
+    });
+  }
 
   // Fetch or generate the summary only when the user opens the Summary tab
   useEffect(() => {
@@ -479,7 +482,7 @@ function DocViewer({
             <div className="flex items-center justify-between border-b border-border px-5 py-4">
               <div>
                 <p className="text-sm font-semibold">Fix with Review — {label}</p>
-                <p className="mt-0.5 text-xs text-muted-2">Describe what's incorrect. These facts will be applied as ground truth and override the document.</p>
+                <p className="mt-0.5 text-xs text-muted-2">Describe what&apos;s incorrect. These facts will be applied as ground truth and override the document.</p>
               </div>
               <button
                 onClick={() => setFixModalOpen(false)}
