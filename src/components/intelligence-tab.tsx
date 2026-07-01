@@ -315,7 +315,7 @@ function CompanyProfileSnapshot({
       )}
 
       {/* Stats grid */}
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         {/* Competitors */}
         <div className="rounded-[10px] border border-border bg-surface-2 p-3">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
@@ -374,38 +374,6 @@ function CompanyProfileSnapshot({
           )}
         </div>
 
-        {/* Quick facts */}
-        <div className="rounded-[10px] border border-border bg-surface-2 p-3">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-            Quick Facts
-          </p>
-          {report?.businessType || report?.founded || report?.techStack ? (
-            <div className="space-y-1">
-              {report.businessType && (
-                <p className="text-xs">
-                  <span className="text-muted-2">Type · </span>
-                  <span className="font-medium">{report.businessType}</span>
-                </p>
-              )}
-              {report.founded && (
-                <p className="text-xs">
-                  <span className="text-muted-2">Founded · </span>
-                  <span className="font-medium">{report.founded}</span>
-                </p>
-              )}
-              {report.techStack && (
-                <p className="text-xs">
-                  <span className="text-muted-2">Tech · </span>
-                  <span className="font-medium">{report.techStack}</span>
-                </p>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-2">
-              {isOnboarded ? "—" : "Generate report to see facts"}
-            </p>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -441,7 +409,7 @@ function BrandingSection({
   onEdit: () => void;
   onGenerate: () => void;
   generating: boolean;
-  genFeedback?: { source: "ai_generated"; primaryColor?: string; visualStyle?: string } | null;
+  genFeedback?: { source: "ai_generated"; dominantColors?: import("@/lib/types").BrandColor[]; primaryAccent?: string; visualStyle?: string } | null;
 }) {
   const brandInsights: string[] = [];
   if (brandingDoc) {
@@ -525,34 +493,45 @@ function BrandingSection({
       {genFeedback && (
         <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
           <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
-          {`AI Generated from Domain Knowledge${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${genFeedback.primaryColor ? ` · ${genFeedback.primaryColor}` : ""}`}
+          {(() => {
+            const topColor = genFeedback.dominantColors?.[0]?.hex ?? genFeedback.primaryAccent;
+            return `AI Generated from site/search data${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${topColor ? ` · ${topColor}` : ""}`;
+          })()}
         </div>
       )}
 
       {/* Agent-usable structured data */}
       <div className="flex flex-wrap gap-4">
-        {(guidelines.primaryColor || guidelines.secondaryColor) && (
-          <div className="flex gap-2">
-            {guidelines.primaryColor && (
-              <div className="flex items-center gap-2">
-                <div
-                  className="h-6 w-6 shrink-0 rounded-full border border-border"
-                  style={{ background: guidelines.primaryColor }}
-                />
-                <span className="font-mono text-xs text-muted-2">{guidelines.primaryColor}</span>
-              </div>
-            )}
-            {guidelines.secondaryColor && (
-              <div className="flex items-center gap-2">
-                <div
-                  className="h-6 w-6 shrink-0 rounded-full border border-border"
-                  style={{ background: guidelines.secondaryColor }}
-                />
-                <span className="font-mono text-xs text-muted-2">{guidelines.secondaryColor}</span>
-              </div>
-            )}
-          </div>
-        )}
+        {(() => {
+          const swatches: { color: string; label: string }[] = guidelines.dominantColors?.length
+            ? guidelines.dominantColors.map((c) => ({
+                color: c.hex,
+                label: c.role || `Color ${c.dominanceRank}`,
+              }))
+            : [
+                { color: guidelines.primaryAccent ?? guidelines.primaryColor, label: "Primary" },
+                { color: guidelines.secondaryAccent ?? guidelines.secondaryColor, label: "Secondary" },
+                { color: guidelines.brandNeutralDark ?? guidelines.uiBackground, label: "Dark" },
+                { color: guidelines.brandNeutralLight ?? guidelines.uiText, label: "Light" },
+              ].filter((s): s is { color: string; label: string } => !!s.color);
+          return swatches.length > 0 ? (
+            <div className="flex flex-wrap gap-3">
+              {swatches.map(({ color, label }) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <div
+                    className="h-5 w-5 shrink-0 rounded-full border border-border"
+                    style={{ background: color }}
+                    title={label}
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-medium uppercase tracking-wider text-muted-2">{label}</span>
+                    <span className="font-mono text-xs text-muted-2">{color}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null;
+        })()}
         {(guidelines.fontHeading || guidelines.fontBody) && (
           <div className="flex gap-3 text-xs text-muted-2">
             {guidelines.fontHeading && <span>Heading: {guidelines.fontHeading}</span>}
@@ -624,7 +603,8 @@ export function IntelligenceTab({
   const [regenError, setRegenError] = useState<string | null>(null);
   const [brandingFeedback, setBrandingFeedback] = useState<{
     source: "ai_generated";
-    primaryColor?: string;
+    dominantColors?: import("@/lib/types").BrandColor[];
+    primaryAccent?: string;
     visualStyle?: string;
   } | null>(null);
 

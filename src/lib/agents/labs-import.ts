@@ -22,6 +22,7 @@
 import catalogJson from "@/data/labs-skills-catalog.json";
 import contentJson from "@/data/labs-skills-content.json";
 import type { AgentCapability, AgentField, Agent } from "@/lib/types";
+import { MODELS } from "@/lib/constants";
 
 /* ----------------------------- source shapes ----------------------------- */
 
@@ -63,7 +64,7 @@ export interface LabsAgentSpec {
 }
 
 /** karosCMO's proven default model (see run.ts DEFAULT_MODEL). */
-const MODEL = "claude-sonnet-4-6";
+const MODEL = MODELS.SONNET;
 
 /** Keep system prompts bounded — leaf body + at most one inherited parent playbook. */
 const OWN_BODY_CAP = 24_000;

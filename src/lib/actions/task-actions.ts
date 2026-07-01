@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { generateText, generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { MODELS } from "@/lib/constants";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import {
@@ -152,7 +153,7 @@ export async function generateTaskPlanAction(
   if (!task) return { plan: "", error: "Task not found" };
 
   const { text } = await generateText({
-    model: anthropic("claude-haiku-4-5-20251001"),
+    model: anthropic(MODELS.HAIKU),
     prompt: buildTaskExecutionPlanPrompt(
       task.title,
       task.description,
@@ -212,7 +213,7 @@ export async function ingestCustomUserTaskAction(
   });
 
   const { object: parsed } = await generateObject({
-    model: anthropic("claude-haiku-4-5-20251001"),
+    model: anthropic(MODELS.HAIKU),
     schema: routingSchema,
     prompt: buildTaskIngestionRoutingPrompt(
       trimmed,

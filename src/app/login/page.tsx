@@ -88,7 +88,7 @@ export default function LoginPage() {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       const { role, clientId, disabled } = await createSession();
-      window.location.href = disabled ? "/pending" : routeAfterAuth(role, clientId);
+      window.location.replace(disabled ? "/pending" : routeAfterAuth(role, clientId));
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);
@@ -122,7 +122,7 @@ export default function LoginPage() {
         await saveGoogleOAuthTokenAction(googleAccessToken).catch(() => {});
       }
 
-      window.location.href = disabled ? "/pending" : routeAfterAuth(role, clientId);
+      window.location.replace(disabled ? "/pending" : routeAfterAuth(role, clientId));
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);

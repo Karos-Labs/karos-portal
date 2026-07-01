@@ -5,6 +5,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 
 import { createTranscript, getClientContextDoc, listClients, listUsers, upsertClientContextDoc } from "@/lib/data";
+import { MODELS } from "@/lib/constants";
 import type { FirefliesTranscript } from "@/lib/transcripts/fireflies";
 import type { AppUser, Client, Transcript } from "@/lib/types";
 
@@ -18,7 +19,7 @@ const analysisSchema = z.object({
 async function analyze(t: FirefliesTranscript) {
   try {
     const { object } = await generateObject({
-      model: anthropic(process.env.TRANSCRIPT_MODEL || "claude-sonnet-4-6"),
+      model: anthropic(process.env.TRANSCRIPT_MODEL || MODELS.SONNET),
       schema: analysisSchema,
       system:
         "You are an analyst for a marketing agency. Summarise client meeting transcripts and extract action items and key topics that the agency should act on.",

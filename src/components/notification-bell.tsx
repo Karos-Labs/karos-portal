@@ -20,9 +20,19 @@ interface Props {
   reviewJobs: AgentReviewNotification[];
   /** Pending + review_pending client tasks — server-fetched, refreshed via router.refresh(). */
   taskAlerts: ClientTask[];
+  /** Where the panel opens relative to the trigger. */
+  panelPlacement?: "down" | "up" | "right";
+  /** Render trigger as an icon button (default) or a full-width labeled row (account menu). */
+  variant?: "icon" | "row";
 }
 
-export function NotificationBell({ actionItems, reviewJobs, taskAlerts }: Props) {
+export function NotificationBell({
+  actionItems,
+  reviewJobs,
+  taskAlerts,
+  panelPlacement = "down",
+  variant = "icon",
+}: Props) {
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [, startTransition] = useTransition();
@@ -57,28 +67,47 @@ export function NotificationBell({ actionItems, reviewJobs, taskAlerts }: Props)
 
   return (
     <div className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]",
-          "text-muted transition-all duration-150 hover:bg-surface-2 hover:text-foreground",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40",
-          open && "bg-surface-2 text-foreground",
-        )}
-        aria-label={`Notifications${total > 0 ? ` (${total} unread)` : ""}`}
-      >
-        <Icon name="Bell" className="h-5 w-5" />
-        {total > 0 && (
-          <span
-            className={cn(
-              "absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center",
-              "rounded-full bg-neon px-1 text-[10px] font-bold neon-glow",
-            )}
-          >
-            {total > 9 ? "9+" : total}
-          </span>
-        )}
-      </button>
+      {variant === "row" ? (
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className={cn(
+            "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+            "text-muted hover:bg-surface-2 hover:text-foreground",
+            open && "bg-surface-2 text-foreground",
+          )}
+        >
+          <Icon name="Bell" className="h-4 w-4 text-muted-2" />
+          <span className="flex-1 text-left">Notifications</span>
+          {total > 0 && (
+            <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-neon px-1 text-[10px] font-bold neon-glow">
+              {total > 9 ? "9+" : total}
+            </span>
+          )}
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className={cn(
+            "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]",
+            "text-muted transition-all duration-150 hover:bg-surface-2 hover:text-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40",
+            open && "bg-surface-2 text-foreground",
+          )}
+          aria-label={`Notifications${total > 0 ? ` (${total} unread)` : ""}`}
+        >
+          <Icon name="Bell" className="h-5 w-5" />
+          {total > 0 && (
+            <span
+              className={cn(
+                "absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center",
+                "rounded-full bg-neon px-1 text-[10px] font-bold neon-glow",
+              )}
+            >
+              {total > 9 ? "9+" : total}
+            </span>
+          )}
+        </button>
+      )}
 
       {open && (
         <>
@@ -88,8 +117,13 @@ export function NotificationBell({ actionItems, reviewJobs, taskAlerts }: Props)
           {/* Panel */}
           <div
             className={cn(
-              "absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden",
-              "rounded-[14px] border border-border glass-surface shadow-2xl",
+              "absolute z-50 w-80 overflow-hidden",
+              panelPlacement === "up"
+                ? "bottom-full left-0 mb-2"
+                : panelPlacement === "right"
+                  ? "bottom-0 left-full ml-2"
+                  : "right-0 top-full mt-2",
+              "rounded-[10px] border border-border glass-surface shadow-2xl",
             )}
           >
             {/* Header */}

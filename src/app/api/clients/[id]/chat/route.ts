@@ -32,12 +32,11 @@ import { brandingToContextDocContent } from "@/lib/branding";
 import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
 import { logger } from "@/services/logger";
 import type { Agent, Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
+import { MODELS } from "@/lib/constants";
 
 export const maxDuration = 60;
 
-const MODEL_ID = "claude-sonnet-4-6";
-const HAIKU_MODEL_ID = "claude-haiku-4-5-20251001";
-const MODEL = anthropic(MODEL_ID);
+const MODEL = anthropic(MODELS.SONNET);
 const STOP_WHEN = [isLoopFinished(), stepCountIs(6)];
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -130,8 +129,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     description:
       "Update this client's branding guidelines. Call this when the user asks to change brand colors, fonts, or tone keywords. Only call after the user has confirmed the specific change.",
     inputSchema: z.object({
-      primaryColor: z.string().optional().describe("Primary brand color as a hex code e.g. #1E3A5F"),
-      secondaryColor: z.string().optional().describe("Secondary / accent color as a hex code"),
+      primaryAccent: z.string().optional().describe("Main dominant brand accent color as a hex code e.g. #e91e8c"),
+      secondaryAccent: z.string().optional().describe("Supporting contrast/action color as a hex code"),
+      brandNeutralDark: z.string().optional().describe("Foundational dark shade (deep background or heavy text) as a hex code"),
+      brandNeutralLight: z.string().optional().describe("Foundational light shade (crisp background or clean body text) as a hex code"),
       fontHeading: z.string().optional().describe("Heading font name e.g. Playfair Display"),
       fontBody: z.string().optional().describe("Body font name e.g. Inter"),
       toneKeywords: z
@@ -143,8 +144,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     execute: async (args) => {
       const current: Partial<BrandingGuidelines> = client.brandingGuidelines ?? {};
       const updated: BrandingGuidelines = { ...current, updatedAt: Date.now() };
-      if (args.primaryColor !== undefined) updated.primaryColor = args.primaryColor;
-      if (args.secondaryColor !== undefined) updated.secondaryColor = args.secondaryColor;
+      if (args.primaryAccent !== undefined) updated.primaryAccent = args.primaryAccent;
+      if (args.secondaryAccent !== undefined) updated.secondaryAccent = args.secondaryAccent;
+      if (args.brandNeutralDark !== undefined) updated.brandNeutralDark = args.brandNeutralDark;
+      if (args.brandNeutralLight !== undefined) updated.brandNeutralLight = args.brandNeutralLight;
       if (args.fontHeading !== undefined) updated.fontHeading = args.fontHeading;
       if (args.fontBody !== undefined) updated.fontBody = args.fontBody;
       if (args.toneKeywords !== undefined) updated.toneKeywords = args.toneKeywords;
@@ -281,7 +284,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ),
       });
 
-      const haiku = anthropic(HAIKU_MODEL_ID);
+      const haiku = anthropic(MODELS.HAIKU);
       const extractionPrompt = buildGmailExtractionPrompt(
         emails,
         client.name,
@@ -300,7 +303,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           clientId,
           agentId: null,
           agentName: "proactive_signal_extractor",
-          modelName: HAIKU_MODEL_ID,
+          modelName: MODELS.HAIKU,
           operation: "operational_signal_extraction",
           inputTokens: haikuUsage.inputTokens ?? 0,
           outputTokens: haikuUsage.outputTokens ?? 0,
@@ -425,7 +428,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         clientId,
         agentId: requestedAgentId,
         agentName: focusedAgent?.name ?? "chat_copilot",
-        modelName: MODEL_ID,
+        modelName: MODELS.SONNET,
         operation: "chat_copilot",
         inputTokens: usage.inputTokens ?? 0,
         outputTokens: usage.outputTokens ?? 0,

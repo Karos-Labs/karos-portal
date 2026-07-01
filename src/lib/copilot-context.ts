@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Agent, Asset, Client, ClientCompetitor, ClientContextDoc, ClientReport, Job } from "@/lib/types";
+import { effectiveDominantColors } from "@/lib/branding";
 
 /* ── Shared helpers ──────────────────────────────────────────────────── */
 
@@ -125,19 +126,23 @@ export function buildCopilotSystemPrompt(
       if (c.overlap) meta.push(`overlap: ${c.overlap}`);
       if (c.url) meta.push(c.url);
       parts.push(`- ${meta.join(" · ")}`);
-      if (c.keyStrengths) parts.push(`  Strengths: ${c.keyStrengths}`);
-      if (c.keyWeaknesses) parts.push(`  Weaknesses: ${c.keyWeaknesses}`);
+      if (c.keyStrengths?.length) parts.push(`  Strengths: ${c.keyStrengths.join(", ")}`);
+      if (c.keyWeaknesses?.length) parts.push(`  Weaknesses: ${c.keyWeaknesses.join(", ")}`);
       if (c.positioning) parts.push(`  Positioning: ${c.positioning}`);
     }
     parts.push("");
   }
 
-  // Branding
+  // Branding — always use effectiveDominantColors() to support both legacy scalar fields
+  // and the new dominantColors[] array. Never read g.primaryAccent etc. directly here.
   const g = client.brandingGuidelines;
   if (g) {
     parts.push("## BRANDING GUIDELINES (Agent-Active)");
-    if (g.primaryColor) parts.push(`- **Primary Color:** ${g.primaryColor}`);
-    if (g.secondaryColor) parts.push(`- **Secondary/Accent Color:** ${g.secondaryColor}`);
+    const colors = effectiveDominantColors(g);
+    colors.forEach((c) => {
+      const label = c.role ? `Color ${c.dominanceRank} (${c.role})` : `Color ${c.dominanceRank}`;
+      parts.push(`- **${label}:** ${c.hex}`);
+    });
     if (g.fontHeading) parts.push(`- **Heading Font:** ${g.fontHeading}`);
     if (g.fontBody) parts.push(`- **Body Font:** ${g.fontBody}`);
     if (g.toneKeywords?.length) parts.push(`- **Tone Keywords:** ${g.toneKeywords.join(", ")}`);
@@ -246,8 +251,8 @@ export function buildAgentCopilotSystemPrompt(
   const g = client.brandingGuidelines;
   if (g) {
     const bits: string[] = [];
-    if (g.primaryColor) bits.push(`Primary: ${g.primaryColor}`);
-    if (g.secondaryColor) bits.push(`Accent: ${g.secondaryColor}`);
+    const colors = effectiveDominantColors(g);
+    if (colors.length) bits.push(`Colors: ${colors.map((c) => c.hex).join(", ")}`);
     if (g.toneKeywords?.length) bits.push(`Tone: ${g.toneKeywords.join(", ")}`);
     if (bits.length) parts.push(`Brand: ${bits.join(" · ")}`);
   }

@@ -1,26 +1,31 @@
 import { requireUser } from "@/lib/auth";
-import { listAssets, listClients } from "@/lib/data";
+import { listAssets, listClients, listJobs, listAgents } from "@/lib/data";
 import { EmptyState, PageHeader, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetCard } from "@/components/asset-card";
+import { AssetsView } from "@/components/assets-view";
 
 export default async function AssetsPage() {
   const user = await requireUser();
 
   if (user.role === "CLIENT_USER") {
-    const assets = user.clientId ? await listAssets({ clientId: user.clientId }) : [];
+    if (!user.clientId) {
+      return (
+        <>
+          <PageHeader title="Your assets" description="Everything your Karos team has created for you." />
+          <EmptyState icon={<Icon name="FolderOpen" className="h-7 w-7" />} title="Nothing here yet" description="Your deliverables will show up here as your team creates them." />
+        </>
+      );
+    }
+    const [assets, jobs, agents] = await Promise.all([
+      listAssets({ clientId: user.clientId }),
+      listJobs({ clientId: user.clientId }),
+      listAgents({ status: "published" }),
+    ]);
     return (
       <>
-        <PageHeader title="Your assets" description="Everything your Karos team has created for you." />
-        {assets.length === 0 ? (
-          <EmptyState icon={<Icon name="FolderOpen" className="h-7 w-7" />} title="Nothing here yet" description="Your deliverables will show up here as your team creates them." />
-        ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {assets.map((a) => (
-              <AssetCard key={a.id} asset={a} canApprove />
-            ))}
-          </div>
-        )}
+        <PageHeader title="Library" description="Your content library and delivery calendar." />
+        <AssetsView assets={assets} jobs={jobs} agents={agents} />
       </>
     );
   }

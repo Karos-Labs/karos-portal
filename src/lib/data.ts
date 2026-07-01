@@ -503,6 +503,22 @@ export async function getClientContextDoc(
   return snap.empty ? null : withId<ClientContextDoc>(snap.docs[0]);
 }
 
+/** Get a single context doc by clientId + docType + tier. */
+export async function getClientContextDocByTier(
+  clientId: string,
+  docType: string,
+  tier: ContextDocTier,
+): Promise<ClientContextDoc | null> {
+  const snap = await col
+    .clientContextDocs()
+    .where("clientId", "==", clientId)
+    .where("docType", "==", docType)
+    .where("tier", "==", tier)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<ClientContextDoc>(snap.docs[0]);
+}
+
 /** Create or overwrite one context document (keyed on clientId + docType + tier). */
 export async function upsertClientContextDoc(
   doc: Omit<ClientContextDoc, "id">,
@@ -534,6 +550,32 @@ export async function replaceClientContextDocs(
   for (const d of existing.docs) batch.delete(d.ref);
   for (const doc of docs) batch.set(col.clientContextDocs().doc(), doc);
   await batch.commit();
+}
+
+/** Update the content of a context doc in-place and increment its version. Invalidates cached summary. */
+export async function updateContextDocContent(
+  id: string,
+  content: string,
+): Promise<void> {
+  const snap = await col.clientContextDocs().doc(id).get();
+  if (!snap.exists) throw new Error("Context doc not found");
+  const current = snap.data() as ClientContextDoc;
+  await col.clientContextDocs().doc(id).update({
+    content,
+    version: (current.version ?? 1) + 1,
+    updatedAt: Date.now(),
+    summary: [],
+    summaryVersion: 0,
+  });
+}
+
+/** Patch the cached summary on an existing context doc without touching content or version. */
+export async function updateContextDocSummary(
+  id: string,
+  summary: string[],
+  summaryVersion: number,
+): Promise<void> {
+  await col.clientContextDocs().doc(id).update({ summary, summaryVersion });
 }
 
 /* -------------------- client integrations --------------------------- */

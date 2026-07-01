@@ -22,8 +22,9 @@ import { CONTEXT_CAPS } from "@/lib/context";
 import { logger } from "@/services/logger";
 import type { Agent, AppUser, Client, ContextItem, Job, JobRunEvent } from "@/lib/types";
 import type { ImagePart, FilePart, TextPart, ModelMessage } from "@ai-sdk/provider-utils";
+import { MODELS } from "@/lib/constants";
 
-export const DEFAULT_MODEL = "claude-sonnet-4-6";
+export const DEFAULT_MODEL = MODELS.SONNET;
 
 const igSchema = z.object({
   posts: z

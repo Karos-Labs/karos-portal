@@ -56,6 +56,20 @@ function getAdminApp(): App {
 
 export const adminAuth = () => getAuth(getAdminApp());
 
+/**
+ * Returns a Google OAuth2 access token using firebase-admin's own credential
+ * (google-auth-library v10, correct token endpoint). Used to authenticate direct
+ * GCS REST API calls instead of going through @google-cloud/storage's nested
+ * google-auth-library@9 → gtoken@7 chain that hits the deprecated v4 token URL.
+ */
+export async function getAdminAccessToken(): Promise<string> {
+  const app = getAdminApp();
+  const credential = app.options.credential;
+  if (!credential) throw new Error("Firebase Admin credential is not configured");
+  const result = await credential.getAccessToken();
+  return result.access_token;
+}
+
 // Cache the configured Firestore on globalThis. Next.js evaluates this module in
 // several runtime contexts (RSC render, route handlers, server actions) and across HMR
 // reloads — each gets its own module scope but shares the Node global and the underlying

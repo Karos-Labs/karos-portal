@@ -11,6 +11,11 @@ import {
   TEMPLATES,
 } from "@/lib/onboard-templates";
 import { condenseDocs } from "@/lib/condense-pipeline";
+import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
+import { stripPreamble } from "@/lib/text-utils";
+
+// "meeting-notes" is written exclusively by appendMeetingSignalToContextDoc — not generated here.
+type PipelineDocType = Exclude<ContextDocType, "meeting-notes">;
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
@@ -26,15 +31,32 @@ function clientContext(client: Client): string {
     client.description ? `Description: ${client.description}` : "",
   ];
 
+  // Inject client-stated brand voice as the highest-authority source for voice research.
+  if (client.brandVoice?.trim()) {
+    parts.push(
+      "",
+      "Client Brand Voice (client's own words — highest authority, never contradict):",
+      client.brandVoice.trim(),
+    );
+  }
+
   // Include structured branding data so the AI never contradicts manually set values.
   const g = client.brandingGuidelines;
-  if (g && (g.primaryColor || g.fontHeading || g.toneKeywords?.length)) {
-    parts.push("", "Existing Branding (treat as ground truth — do not contradict or omit):");
-    if (g.primaryColor) parts.push(`  Primary Color: ${g.primaryColor}`);
-    if (g.secondaryColor) parts.push(`  Secondary Color: ${g.secondaryColor}`);
+  const pa = g?.primaryAccent ?? g?.primaryColor;
+  const sa = g?.secondaryAccent ?? g?.secondaryColor;
+  if (g && (pa || g.fontHeading || g.toneKeywords?.length || g.guidelines)) {
+    parts.push("", "Established Branding (extracted from live assets — treat as ground truth):");
+    if (pa) parts.push(`  Primary Accent: ${pa}`);
+    if (sa) parts.push(`  Secondary Accent: ${sa}`);
+    if (g.brandNeutralDark ?? g.uiBackground) parts.push(`  Neutral Dark: ${g.brandNeutralDark ?? g.uiBackground}`);
+    if (g.brandNeutralLight ?? g.uiText) parts.push(`  Neutral Light: ${g.brandNeutralLight ?? g.uiText}`);
     if (g.fontHeading) parts.push(`  Heading Font: ${g.fontHeading}`);
     if (g.fontBody) parts.push(`  Body Font: ${g.fontBody}`);
     if (g.toneKeywords?.length) parts.push(`  Tone Keywords: ${g.toneKeywords.join(", ")}`);
+    if (g.visualStyle) parts.push(`  Visual Style Archetype: ${g.visualStyle}`);
+    if (g.guidelines?.trim()) {
+      parts.push("  Brand Guidelines:", g.guidelines.trim().split("\n").map(l => `    ${l}`).join("\n"));
+    }
   }
 
   return parts.filter(Boolean).join("\n");
@@ -79,7 +101,7 @@ function buildMeetingSignals(
 
 async function researchSocial(client: Client, rules: string): Promise<string> {
   const { text } = await generateText({
-    model: anthropic("claude-sonnet-4-6"),
+    model: anthropic(MODELS.SONNET),
     system: `${rules}\n\nYou are a social media research analyst.`,
     messages: [
       {
@@ -107,28 +129,30 @@ Return structured markdown. Follow the no-guessed-numbers rule strictly.`,
 
 async function researchContent(client: Client, rules: string): Promise<string> {
   const { text } = await generateText({
-    model: anthropic("claude-sonnet-4-6"),
-    system: `${rules}\n\nYou are a brand messaging and content analyst.`,
+    model: anthropic(MODELS.SONNET),
+    system: `${rules}\n\nYou are a senior brand messaging and content strategist. Apply deep analytical reasoning to extract every meaningful signal from the available data.`,
     messages: [
       {
         role: "user",
         content: `Analyze the brand messaging and content strategy of ${client.name} (${client.website ?? "no website"}).
 
-Based on their website and any observable public content, analyze:
-1. Core value proposition — what do they lead with?
-2. Tone and voice — how formal, how warm, what personality?
-3. Primary CTAs — what actions do they ask for? (quote verbatim where possible)
-4. Content themes — what topics/ideas recur across their communications?
-5. Writing style — sentence length, vocabulary, use of jargon
-6. What they do NOT say (gaps, avoided topics)
+For each finding below, provide: (a) the specific evidence you based it on, and (b) the strategic implication — what does this mean for how Karos should position and create content for this brand?
 
-For each observation, note what specific evidence you based it on (website section, page URL, observed post).
-Do not guess follower counts or engagement metrics — those belong in the social research.
+Analyze:
+1. **Core value proposition** — what do they lead with on the homepage? Quote the hero headline verbatim if possible. What promise is being made?
+2. **Tone and voice** — formal/casual spectrum, warmth, personality. What specific language choices reveal this? What does their voice say about their brand archetype?
+3. **Primary CTAs** — what actions do they ask for, and in what language? (quote verbatim where possible). Are the CTAs high-friction or low-friction?
+4. **Content themes** — what topics, ideas, and narratives recur? What beliefs does the brand appear to hold?
+5. **Writing style** — sentence length, vocabulary level, use of industry jargon vs. plain language
+6. **Strategic gaps** — what do they NOT say that their audience almost certainly cares about? What positioning territory is unoccupied?
+7. **Voice coherence** — does the voice stay consistent across homepage, about, blog, and social? Where does it break down?
 
-Return detailed markdown.`,
+Do not guess follower counts or engagement metrics — those belong in the social research. Never write "data unavailable" for qualitative observations — use deep inference from observable signals.
+
+Return detailed markdown with strategic implications for each finding.`,
       },
     ],
-    maxOutputTokens: 1500,
+    maxOutputTokens: 1800,
   });
   return text;
 }
@@ -139,97 +163,122 @@ async function researchCompetitive(
   trackedCompetitors: { company: string; url?: string }[] = [],
 ): Promise<string> {
   const trackedBlock = trackedCompetitors.length
-    ? `\n\nIMPORTANT: The following competitors have been manually flagged by the client's team and MUST be included in your analysis regardless of prominence:\n${trackedCompetitors.map((c) => `- ${c.company}${c.url ? ` (${c.url})` : ""}`).join("\n")}`
+    ? `\n\nCRITICAL: The following competitors have been manually flagged by the client's team and MUST be included regardless of their prominence in the market:\n${trackedCompetitors.map((c) => `- ${c.company}${c.url ? ` (${c.url})` : ""}`).join("\n")}`
     : "";
 
   const { text } = await generateText({
-    model: anthropic("claude-sonnet-4-6"),
-    system: `${rules}\n\nYou are a competitive intelligence analyst.`,
+    model: anthropic(MODELS.SONNET),
+    system: `${rules}\n\nYou are a senior competitive intelligence analyst. You produce boardroom-grade market intelligence, not just lists of competitors. Apply Claude Sonnet's full analytical depth. For every finding, deliver the strategic implication — not just the observation. For qualitative analysis, never write "data unavailable" — use deep reasoning and industry knowledge to derive insights.`,
     messages: [
       {
         role: "user",
         content: `Research the competitive landscape for ${client.name} (${client.website ?? "no website"}) in the ${client.industry ?? "their"} industry.${trackedBlock}
 
-Identify 6-10 real, named competitors (direct, secondary, and indirect).
+Produce a comprehensive competitive intelligence brief in three layers:
+
+## LAYER 1 — MARKET OVERVIEW
+Answer these before profiling any competitors:
+- What is the nature of this competitive environment? (crowded/fragmented/dominated/emerging?)
+- What are the 2-3 macro forces shaping competition right now?
+- How do buyers in this category make decisions — what do they compare on, who decides, how long is the cycle?
+- Is this market growing, consolidating, or mature? What recent shifts matter?
+- What does the ideal market positioning look like — what territory is being fought over?
+
+## LAYER 2 — WHERE ${client.name} STANDS
+Before profiling individual competitors, synthesize:
+- What are the clearest competitive advantages ${client.name} appears to hold? (reference named competitors)
+- Where does ${client.name} visibly lag behind the field? (reference named competitors)
+- What is the single biggest strategic opportunity given this competitive picture?
+
+## LAYER 3 — COMPETITOR PROFILES
+Identify 6-10 real, named competitors (direct, secondary, indirect).
 
 For each competitor provide:
 - Company name and website URL
 - Category: direct / secondary / indirect
-- Their positioning (how they describe themselves — quote their tagline or hero copy if available)
-- 2-3 key strengths (evidence-backed — what you specifically observed)
-- 2-3 key weaknesses (gaps you observed, not scores)
-- Pricing: ONLY state pricing that is published on their website. If not published, write "not published". No estimates.
-- Approximate size/stage if publicly known (funding announcements, press, their own claims)
+- Their positioning: quote their tagline or hero copy verbatim if available — this is their market claim
+- 2-3 specific strengths (evidence-backed — what you observed on their website or in their public presence)
+- 2-3 specific weaknesses (observable gaps — not scores, not opinions, but specific things missing or done poorly)
+- Why buyers choose them over alternatives
+- Their apparent ideal customer (be specific about role, context, motivation)
+- Pricing: ONLY state pricing published on their website with the source URL. If not published, write "not published on their website". No estimates.
+- Threat level to ${client.name}: HIGH / MEDIUM / LOW — one sentence on why
+- The strategic counter: what ${client.name} must do or say to win against this specific rival
 
-Do not score competitors numerically. Do not estimate prices or revenue.
+Do not score competitors numerically. Do not estimate revenue.
 
-Return structured markdown.`,
+Return rich, structured markdown with strategic implications throughout.`,
       },
     ],
-    maxOutputTokens: 2000,
+    maxOutputTokens: 2500,
   });
   return text;
 }
 
 async function researchStrategy(client: Client, rules: string, meetingSignals = ""): Promise<string> {
   const signalsBlock = meetingSignals
-    ? `\n\n${meetingSignals}\n\nUse the meeting signals above as additional context about what the client is focusing on, their stated priorities, and any market observations from real conversations. These are firsthand signals — treat them as high-confidence qualitative data.`
+    ? `\n\n${meetingSignals}\n\nUse the meeting signals above as additional context about what the client is focusing on, their stated priorities, and any market observations from real conversations. These are firsthand signals — treat them as high-confidence qualitative data and weight them heavily.`
     : "";
 
   const { text } = await generateText({
-    model: anthropic("claude-sonnet-4-6"),
-    system: `${rules}\n\nYou are a market strategy analyst.`,
+    model: anthropic(MODELS.SONNET),
+    system: `${rules}\n\nYou are a senior market strategy analyst. For every finding, deliver the strategic implication — not just the observation. Apply Claude Sonnet's full analytical reasoning.`,
     messages: [
       {
         role: "user",
         content: `Research the market positioning and strategy of ${client.name} (${client.website ?? "no website"}) in the ${client.industry ?? "their"} industry.
 
+For each section, provide the finding AND its strategic implication for a marketing agency working with this client.
+
 Analyze:
-1. Market they compete in — what category, what buyer problem do they solve?
-2. Ideal customer profile — who is the core buyer? Be specific (demographics, context, motivation).
-3. Business model — how do they make money? (subscription, transaction, service fee, etc.)
-4. Differentiation — what makes them distinct from competitors? What do they own?
-5. Market white space — what positions or audiences are NOT served by existing players?
-6. Growth stage signals — early / growth / established? What signals suggest this?
+1. **Market category** — what specific problem does this brand solve? How do BUYERS describe the category they're searching in? What would someone type into Google to find them?
+2. **Ideal customer profile (ICP)** — who is the core buyer? Be highly specific: describe their role, context, goals, fears, and what triggers them to act. If multiple segments exist, identify the primary one.
+3. **Business model** — how do they make money? What is the unit economics structure (subscription, transaction, project fee, etc.)? Is pricing publicly stated?
+4. **Differentiation and positioning** — what makes them genuinely distinct? What do they "own" in the market that a competitor cannot easily claim? Be specific — "quality" is not differentiation.
+5. **Market white space** — what positions, audiences, or use cases are NOT served by existing players in this space? This is where the agency creates leverage.
+6. **Growth stage and signals** — early / growth / established / declining? What observable signals (content volume, LinkedIn activity, product breadth, pricing structure) support this assessment?
+7. **Strategic risks** — what market forces, competitor moves, or positioning errors could undermine this brand in the next 12-24 months?
 
-Base all observations on what you can verify from their website and publicly available information.
-Do not invent KPIs, revenue numbers, or growth rates without a source.
+Base all observations on verifiable public signals. Do not invent KPIs or revenue numbers. Never write "data unavailable" for qualitative strategic analysis — infer from observable signals and label inferences clearly ("signals suggest…", "observable pattern:").
 
-Return structured markdown.${signalsBlock}`,
+Return structured markdown with strategic implications.${signalsBlock}`,
       },
     ],
-    maxOutputTokens: 1500,
+    maxOutputTokens: 1800,
   });
   return text;
 }
 
 async function researchSentiment(client: Client, rules: string, meetingSignals = ""): Promise<string> {
   const signalsBlock = meetingSignals
-    ? `\n\n${meetingSignals}\n\nCross-reference the meeting signals with the sentiment research below. Client or prospect concerns surfaced in meetings are strong qualitative signals — factor them in directly.`
+    ? `\n\n${meetingSignals}\n\nCross-reference the meeting signals with the sentiment research below. Client or prospect concerns surfaced in meetings are firsthand qualitative signals — treat them as the highest-confidence data in this section and factor them in explicitly.`
     : "";
 
   const { text } = await generateText({
-    model: anthropic("claude-sonnet-4-6"),
-    system: `${rules}\n\nYou are a customer sentiment and UX analyst.`,
+    model: anthropic(MODELS.SONNET),
+    system: `${rules}\n\nYou are a senior customer sentiment and UX analyst. Deliver strategic implications alongside every finding — not just the observation, but what it means for how Karos should position, message, and market for this brand. Apply deep contextual reasoning.`,
     messages: [
       {
         role: "user",
-        content: `Research customer sentiment and common questions for ${client.name} (${client.website ?? "no website"}) in the ${client.industry ?? "their"} industry.
+        content: `Research customer sentiment and audience psychology for ${client.name} (${client.website ?? "no website"}) in the ${client.industry ?? "their"} industry.
+
+For each section, include: the finding + the strategic implication for messaging and positioning.
 
 Analyze:
-1. FAQ patterns — what do people in this category typically ask before buying? (from reviews, forums, their own FAQ page)
-2. Common objections — what hesitations or concerns appear repeatedly?
-3. What customers value most — what makes buyers choose in this category?
-4. Regulatory/compliance landscape — are there rules, disclaimers, or banned claims relevant to this industry?
-5. Whitespace opportunities — unmet customer needs, underserved segments, or service gaps you observe
-6. Sentiment signals — any public reviews, testimonials, or community mentions you can cite (with source)
+1. **Pre-purchase questions** — what do buyers in this category ask before committing? Draw from review platforms (G2, Capterra, Trustpilot, Reddit, forums), FAQ pages, and industry pattern knowledge. These questions are the content strategy brief.
+2. **Common objections** — what hesitations or fears appear repeatedly? What language do buyers use to describe their concerns? These are the conversion killers to address in messaging.
+3. **Purchase triggers and value drivers** — what specifically makes buyers choose in this category? What language do happy customers use in positive reviews?
+4. **Regulatory and compliance landscape** — are there rules, required disclaimers, restricted claims, or compliance obligations relevant to this industry? These are hard gates that must transfer verbatim to any content strategy.
+5. **Underserved segments and whitespace** — what buyer types, use cases, or needs are poorly served by existing players? Where is the market leaving value on the table?
+6. **Public sentiment signals** — any verifiable reviews, testimonials, or community mentions? For these only: cite the platform and indicate whether the data is measured or training-knowledge inference.
 
-Do not invent review data or ratings without a verifiable source.
+For specific review ratings or counts: only cite from named, verifiable sources — write "data unavailable" for these specific metrics only if no source exists.
+For qualitative insights about buyer psychology, objections, and category dynamics: infer confidently from industry knowledge, category patterns, and observable signals. Never write "data unavailable" for qualitative analysis.
 
-Return structured markdown.${signalsBlock}`,
+Return structured markdown with strategic implications.${signalsBlock}`,
       },
     ],
-    maxOutputTokens: 1500,
+    maxOutputTokens: 1800,
   });
   return text;
 }
@@ -244,6 +293,17 @@ interface Research {
   sentiment: string;
 }
 
+// No per-doc limits — elite, comprehensive documents require full output. 16k for all (from constants.ts).
+
+/** Returns the text of the last real ## heading in a template (used to detect truncation).
+ *  Excludes trailing meta sections (Change Log, Sources) that the model is told to omit. */
+function lastTemplateSection(template: string): string | null {
+  const SKIP = /^## (Change\s*Log|Sources)\s*$/i;
+  const matches = (template.match(/^## .+/gm) ?? []).filter((m) => !SKIP.test(m));
+  if (!matches.length) return null;
+  return matches[matches.length - 1].replace(/^## /, "").trim();
+}
+
 async function generateDoc(
   client: Client,
   docType: ContextDocType,
@@ -253,16 +313,31 @@ async function generateDoc(
   const template = TEMPLATES[docType] ?? "";
   const researchBlock = buildResearchBlock(docType, research);
 
-  const { text } = await generateText({
-    model: anthropic("claude-sonnet-4-6"),
-    system: `${rules}\n\nYou are a strategic analyst writing a living context document for ${client.name}.
-You follow the document template structure exactly.
-You only include facts you can substantiate from the research provided.
-You never guess numbers — write "data unavailable" when a metric was not measured.`,
-    messages: [
-      {
-        role: "user",
-        content: `Fill in this ${docType} document template for ${client.name} (${client.website ?? "no website"}).
+  const systemPrompt = `${rules}\n\nYou are a senior strategic analyst writing a living context document for ${client.name}. Apply Claude Sonnet's full analytical depth to every section.
+
+DATA INTEGRITY RULES:
+- For specific QUANTITATIVE METRICS (follower counts, revenue, headcount): cite only figures from a named, verifiable source. If a metric was not measured, use "—" (em dash) in table cells or omit it in prose — never write "data unavailable".
+- PRICING is a HIGH-RISK field — it changes constantly and training data is frequently wrong. Only state a price explicitly visible on the client's current website. If uncertain, write "see [website URL] for current pricing". Never state a pricing figure from training memory that you cannot confirm is currently live.
+- FOUNDING / LAUNCH DATE is a HIGH-RISK field — training data frequently confuses incorporation date, rebrand date, and actual product launch. Only state a year you confirmed on the company's own website or a primary source. If uncertain: write "[launch date — verify with client]".
+- REGULATORY DATA (CNPJ, CVM numbers, ANBIMA codes, SEC/FCA registrations, etc.) is typically on the website footer, /sobre, /legal, or compliance pages. Always capture these — they are public facts. Never omit them.
+- For QUALITATIVE ANALYSIS (voice, tone, positioning, strategy, audience, competitive gaps): NEVER write "data unavailable". Use deep contextual reasoning — infer from the research provided, website signals, industry patterns, and observable brand behavior. Omit a specific bullet silently if truly unsupportable; never placeholder it.
+- CLIENT CONTEXT is the highest-authority source for all basic company facts. It was entered directly by the client's team. If CLIENT CONTEXT states a fact, it overrides any research finding or training knowledge.
+- ZERO TOLERANCE for these phrases in qualitative sections: "N/A", "not found", "no information available", "cannot determine", "as an AI", or equivalent filler.
+
+CRITICAL OUTPUT RULES:
+- COMPLETE ALL SECTIONS. Do not truncate, skip, or abbreviate any section heading. Every section listed in the template MUST appear in the output. A truncated document is a failed document.
+- BEGIN with the YAML frontmatter \`---\`. Your FIRST character of output must be the opening \`---\`. Do NOT write anything before it — no greetings, no preamble, no analysis.
+- Output sections STRICTLY IN ORDER from section 1 to the last section. Never jump ahead. Never start mid-document. Never skip a section because you think it will be short.
+- You have 16,000 output tokens available. Use them fully if needed. A comprehensive, thorough document is the goal — do not artificially compress sections to save tokens.
+- Do NOT include the template instruction blockquotes (lines starting with \`> ...\`). Replace those with actual filled content.
+- Do NOT use \`---\` horizontal rule separators anywhere in the document body. Use blank lines between subsections instead.
+- Do NOT include a "Change Log" section or any trailing metadata after the document body.
+- DATA SOURCING LANGUAGE: Never write "a live scrape was performed" or "a live scrape was not possible". Use consistent labels only: "website-observed:" / "training knowledge:" / "industry pattern:". All documents in this run must agree on what was and wasn't accessed.
+- TABLE CELLS with missing data: Use "—" (em dash) for unknown quantitative fields. Never write "data unavailable", "N/A", or "not found" inside a table cell.
+- GOALS & KPI TABLES: Include KPIs where you can name the metric and cadence even if baseline/target are not publicly known. For baseline: write "to capture with client". For target: write "to define with client". Omit KPI rows only if the metric itself is irrelevant for this business — never use "data unavailable" in any KPI table cell.
+- If the CLIENT CONTEXT block includes brand voice or branding guidelines, those are the primary source for voice and brand sections — use them directly, not as a secondary reference.`;
+
+  const userMessage = `Fill in this ${docType} document template for ${client.name} (${client.website ?? "no website"}).
 
 ## CLIENT CONTEXT
 ${clientContext(client)}
@@ -275,17 +350,83 @@ ${fillFrontmatter(template, client, docType, "internal")}
 
 ---
 
-Fill every section of the template above using the research findings.
-Replace all <placeholder> text with real content.
-Keep all section headings exactly as written.
-Where a measurement is unavailable, write "data unavailable" — never guess.
-Update the frontmatter: set last_updated to ${todayISO()}, set client to "${client.id}".
-Return ONLY the filled markdown document. No preamble, no explanation.`,
+INSTRUCTIONS:
+- Your output MUST begin with the opening \`---\` of the YAML frontmatter and proceed section by section in the exact order shown in the template above. Do not start from the middle of the document.
+- Fill every section completely. Replace all <placeholder> text and every \`> ...\` blockquote with real, specific content.
+- Keep all section headings (## N. Heading) exactly as written.
+- For quantitative metrics without a source: use "—" (em dash) in table cells. For qualitative sections: derive and infer — never use any placeholder phrase.
+- For Goals & KPIs tables: fill the KPI name and cadence from business context; use "to capture with client" for unknown baselines and "to define with client" for unknown targets. Never use "data unavailable" in any table cell.
+- COMPLETE ALL SECTIONS — this document has ${template.match(/^## /gm)?.length ?? "multiple"} sections; every one must appear in the output.
+- Update the frontmatter: set last_updated to ${todayISO()}, set client to "${client.id}".
+- Return ONLY the filled markdown document — start immediately with \`---\`, no preamble, no Change Log.`;
+
+  const { text } = await generateText({
+    model: anthropic(MODELS.SONNET),
+    system: systemPrompt,
+    messages: [{ role: "user", content: userMessage }],
+    maxOutputTokens: DOC_MAX_TOKENS,
+  });
+
+  // Continuation pass: if the last template section is missing, the model stopped early.
+  const lastSection = lastTemplateSection(template);
+  if (lastSection && !text.includes(lastSection)) {
+    const { text: cont } = await generateText({
+      model: anthropic(MODELS.SONNET),
+      system: systemPrompt,
+      messages: [
+        { role: "user", content: userMessage },
+        { role: "assistant", content: text },
+        {
+          role: "user",
+          content:
+            "You stopped before completing all sections. Continue the document from exactly where you left off. Do not repeat any content already written. Continue immediately:",
+        },
+      ],
+      maxOutputTokens: DOC_MAX_TOKENS,
+    });
+    return stripPreamble(text + cont);
+  }
+
+  return stripPreamble(text);
+}
+
+/**
+ * Apply verified client corrections to an existing context document.
+ * Used by the "Fix with Review" feature — does NOT re-run research.
+ * Exported so the server action can call it.
+ */
+export async function applyDocCorrections(
+  client: Client,
+  docType: string,
+  currentContent: string,
+  corrections: string,
+): Promise<string> {
+  const systemPrompt = `You are applying verified client corrections to a strategy document.
+
+## VERIFIED CLIENT CORRECTIONS — ABSOLUTE GROUND TRUTH
+The following facts were confirmed directly by the client or their team. They override ALL other information — training data, research, prior document versions, and any other source. Apply them exactly as written.
+
+${corrections.trim()}
+
+## RULES
+- Apply ONLY the corrections above. Do not modify anything else.
+- Find EVERY occurrence of the corrected facts in the document and update all instances for consistency.
+- Do not re-research, invent new content, expand sections, or change anything the client did not flag.
+- Preserve all existing markdown formatting, section headings, and structure exactly.
+- Return the complete corrected document in the same format as the input — no preamble, no explanation.`;
+
+  const { text } = await generateText({
+    model: anthropic(MODELS.SONNET),
+    system: systemPrompt,
+    messages: [
+      {
+        role: "user",
+        content: `Apply the verified corrections to this ${docType} document for ${client.name}. Return the complete corrected document:\n\n${currentContent}`,
       },
     ],
-    maxOutputTokens: 4000,
+    maxOutputTokens: DOC_MAX_TOKENS,
   });
-  return text;
+  return text.trim();
 }
 
 function buildResearchBlock(docType: ContextDocType, research: Research): string {
@@ -350,13 +491,22 @@ export async function runOnboardPipeline(clientId: string): Promise<void> {
   // Pass manually-tracked competitors into competitive research so regeneration
   // always accounts for competitors the client's team has explicitly flagged.
   // Pass meeting signals into strategy/sentiment research for firsthand context.
-  const [social, content, competitive, strategy, sentiment] = await Promise.all([
+  // Promise.allSettled — one failed agent degrades output but never aborts the pipeline.
+  const researchResults = await Promise.allSettled([
     researchSocial(client, rules),
     researchContent(client, rules),
     researchCompetitive(client, rules, existingCompetitors),
     researchStrategy(client, rules, meetingSignals),
     researchSentiment(client, rules, meetingSignals),
   ]);
+  const [social, content, competitive, strategy, sentiment] = researchResults.map((r, i) => {
+    if (r.status === "rejected") {
+      const name = ["social", "content", "competitive", "strategy", "sentiment"][i];
+      console.error(`[onboard] ${name} research failed (non-fatal):`, r.reason);
+      return "";
+    }
+    return r.value;
+  });
 
   const research: Research = { social, content, competitive, strategy, sentiment };
 
@@ -383,8 +533,6 @@ export async function runOnboardPipeline(clientId: string): Promise<void> {
     ...internalOnlyDocTypes.map((dt) => generateDoc(client, dt, research, rules)),
   ]);
 
-  // "meeting-notes" is written exclusively by appendMeetingSignalToContextDoc — not generated here.
-  type PipelineDocType = Exclude<ContextDocType, "meeting-notes">;
   const internalContents: Record<PipelineDocType, string> = {
     "brand-voice": brandVoice,
     "market-strategy": marketStrategy,

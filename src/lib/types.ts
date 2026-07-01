@@ -34,11 +34,30 @@ export interface AppUser {
   lastLoginAt?: number;
 }
 
+/** Client-editable social handles / profile URLs. */
+export interface SocialLinks {
+  instagram?: string;
+  linkedin?: string;
+  x?: string;
+  tiktok?: string;
+  youtube?: string;
+  facebook?: string;
+  website?: string;
+}
+
 export interface Client {
   id: string;
   name: string;
   website?: string;
   industry?: string;
+  /** Client-editable market category / vertical (self-reported). */
+  category?: string;
+  /** Client-editable team-size bucket, e.g. "1–10". */
+  teamSize?: string;
+  /** AI-generated 2-sentence company brief (from context docs). Generated once, cached. */
+  brief?: string;
+  /** Client-editable social handles / profile URLs. */
+  socialLinks?: SocialLinks;
   /** Primary contact email — also used to auto-route Fireflies transcripts & deliver assets. */
   contactEmail?: string;
   /** Email domains owned by the client, used to auto-assign meeting transcripts. */
@@ -46,6 +65,8 @@ export interface Client {
   description?: string;
   brandVoice?: string;
   logoUrl?: string;
+  /** Firebase Storage path for the client logo — used to delete the old file on replacement. */
+  logoStoragePath?: string;
   accentColor?: string;
   brandingGuidelines?: BrandingGuidelines;
   assignedEmployeeIds: string[];
@@ -304,18 +325,51 @@ export interface CustomerSentimentEntry {
   wouldReturn?: string;
 }
 
+/**
+ * A single entry in the brand's dominant color palette.
+ * Colors are ordered strictly by visual dominance (rank 1 = most prominent).
+ */
+export interface BrandColor {
+  /** 6-digit lowercase hex, e.g. "#e91e8c". */
+  hex: string;
+  /** 1 = most dominant/signature, 2 = supporting, etc. */
+  dominanceRank: number;
+  /** Optional semantic role if unambiguous, e.g. "Logo fill", "Primary CTA". */
+  role?: string;
+}
+
 export interface BrandingGuidelines {
-  /** Vibrant brand accent color (AI-generated from domain knowledge). */
+  /**
+   * Dynamic palette: up to 4 dominant brand colors ordered strictly by visual
+   * dominance (rank 1 = most prominent). Slots left empty when a brand genuinely
+   * uses fewer colors — never padded with hallucinated values.
+   * Prefer this field over the legacy scalar color fields.
+   */
+  dominantColors?: BrandColor[];
+  // Legacy scalar color fields — kept for Firestore backward compatibility.
+  // New writes always populate dominantColors; these are mirrored from it.
+  /** @deprecated Use dominantColors[0].hex */
+  primaryAccent?: string;
+  /** @deprecated Use dominantColors[1].hex */
+  secondaryAccent?: string;
+  /** @deprecated Use dominantColors[2].hex */
+  brandNeutralDark?: string;
+  /** @deprecated Use dominantColors[3].hex */
+  brandNeutralLight?: string;
+  /** @deprecated Use primaryAccent */
   primaryColor?: string;
-  /** Canvas background color — light (#ffffff/#f4f4f5) or dark (#09090b/#0a0a0a). */
-  uiBackground?: string;
-  /** High-contrast text color that pairs with uiBackground. */
-  uiText?: string;
+  /** @deprecated Use secondaryAccent */
   secondaryColor?: string;
+  /** @deprecated Use brandNeutralDark / brandNeutralLight */
+  uiBackground?: string;
+  /** @deprecated Use brandNeutralDark / brandNeutralLight */
+  uiText?: string;
   fontHeading?: string;
   fontBody?: string;
   toneKeywords?: string[];
   logoUrl?: string;
+  /** Firebase Storage path for the uploaded logo — used to delete old files on replacement. */
+  logoStoragePath?: string;
   /** Free-form markdown: Brand Voice, Do's, Don'ts. */
   guidelines?: string;
   /** Visual aesthetic archetype. E.g. "Minimalist" | "Dark Mode" | "High-Tech" | "Corporate" | "Vibrant" | "Luxury" */
@@ -425,6 +479,10 @@ export interface ClientContextDoc {
   version: number;
   /** Named sources cited (for "no guessed numbers" audit trail). */
   sources?: string[];
+  /** Persisted executive summary bullets; generated on demand via Claude Haiku. */
+  summary?: string[] | null;
+  /** doc.version at which the summary was generated; used to detect stale cache. */
+  summaryVersion?: number | null;
   createdAt: number;
   updatedAt: number;
 }

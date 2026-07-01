@@ -14,6 +14,7 @@ import {
 import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
 import type { ClientCompetitor } from "@/lib/types";
 import { requireStaff, logActivity } from "./_shared";
+import { MODELS } from "@/lib/constants";
 
 /** Core AI competitor analysis helper — not exported. */
 async function _analyzeCompetitors(clientId: string): Promise<void> {
@@ -60,7 +61,7 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
   ].filter(Boolean).join(" ");
 
   const { object } = await generateObject({
-    model: anthropic("claude-sonnet-4-6"),
+    model: anthropic(MODELS.SONNET),
     schema,
     system:
       "You are a competitive intelligence analyst producing data for a compact UI dashboard table. " +
@@ -304,7 +305,7 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
   ].filter(Boolean).join("\n");
 
   const { object } = await generateObject({
-    model: anthropic("claude-sonnet-4-6"),
+    model: anthropic(MODELS.SONNET),
     schema,
     system:
       "You are a market intelligence analyst producing data for a compact UI dashboard table. " +

@@ -1,8 +1,15 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listClientTasks, listClients, getClientSettings } from "@/lib/data";
+import {
+  listClientTasks,
+  listClients,
+  getClientSettings,
+  listClientActivityLogs,
+  listJobs,
+  getClientReport,
+} from "@/lib/data";
 import { TasksBoard } from "@/components/tasks-board";
-import { QuickAddTaskBar } from "@/components/quick-add-task-bar";
+import { ProgressView } from "@/components/progress-view";
 import { PageHeader } from "@/components/ui";
 import type { ClientTask } from "@/lib/types";
 
@@ -11,27 +18,30 @@ export const dynamic = "force-dynamic";
 export default async function TasksPage() {
   const user = await requireUser();
 
-  // CLIENT_USER sees only their client's tasks + autopilot toggle
+  // CLIENT_USER sees only their client's tasks + activity, behind one Progress view.
   if (user.role === "CLIENT_USER") {
     if (!user.clientId) redirect("/dashboard");
-    const [tasks, settings] = await Promise.all([
+    const [tasks, settings, activityLogs, jobs, report] = await Promise.all([
       listClientTasks({ clientId: user.clientId }),
       getClientSettings(user.clientId),
+      listClientActivityLogs(user.clientId),
+      listJobs({ clientId: user.clientId }),
+      getClientReport(user.clientId),
     ]);
     return (
       <div>
         <PageHeader
-          title="Task Board"
-          description="Your AI-generated and operational tasks, organized by priority and ownership."
+          title="Progress"
+          description="Your tasks and account activity — what's next and what's done."
         />
-        <div className="mb-4">
-          <QuickAddTaskBar clientId={user.clientId} />
-        </div>
-        <TasksBoard
+        <ProgressView
           tasks={tasks}
           currentUserRole={user.role}
           clientId={user.clientId}
           autopilotEnabled={settings?.autopilot ?? false}
+          activityLogs={activityLogs}
+          jobs={jobs}
+          report={report}
         />
       </div>
     );

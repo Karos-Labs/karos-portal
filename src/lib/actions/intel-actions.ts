@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import {
   getClient,
+  updateClient,
   getAgent,
   upsertSystemAgent,
   updateAgent,
@@ -11,11 +12,82 @@ import {
   replaceClientContextDocs,
   getSystemAgent,
   getClientContextDoc,
+  getClientContextDocByTier,
+  updateContextDocSummary,
+  updateContextDocContent,
 } from "@/lib/data";
 import { logger } from "@/services/logger";
 import { getCurrentUser } from "@/lib/auth";
 import type { ContextDocTier } from "@/lib/types";
 import { requireStaff, requireAdmin, logActivity } from "./_shared";
+import { MODELS } from "@/lib/constants";
+
+/**
+ * Generate a short (2-sentence) company brief from the client's context docs.
+ * Cached on `client.brief` — only regenerates when `force` is set or no brief exists.
+ * Callable by staff or the client themselves.
+ */
+export async function generateClientBriefAction(
+  clientId: string,
+  force = false,
+): Promise<{ ok: true; brief: string } | { ok: false; error: string }> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) return { ok: false, error: "Unauthorized" };
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return { ok: false, error: "Forbidden" };
+  }
+
+  const client = await getClient(clientId);
+  if (!client) return { ok: false, error: "Client not found" };
+  if (client.brief && !force) return { ok: true, brief: client.brief };
+
+  const docs = await listClientContextDocs(clientId);
+  const source = ["product-information", "brand-voice", "market-strategy"]
+    .map((dt) => docs.find((d) => d.docType === dt && d.tier === "client") ?? docs.find((d) => d.docType === dt))
+    .filter(Boolean)
+    .map((d) => d!.content.replace(/^---[\s\S]*?---\n?/, "").slice(0, 1800))
+    .join("\n\n");
+
+  if (!source.trim()) return { ok: false, error: "No documents to summarize yet." };
+
+  const { generateText } = await import("ai");
+  const { anthropic } = await import("@ai-sdk/anthropic");
+  const MODEL = MODELS.HAIKU;
+  const { text, usage } = await generateText({
+    model: anthropic(MODEL),
+    system:
+      "Write a plain, factual company description in exactly two short sentences (about two lines total). " +
+      "Describe what the company does and who it serves. " +
+      "Do NOT use em dashes (—). Do NOT use marketing hype or adjectives like 'leading' or 'innovative'. " +
+      "Return only the description text, no preamble.",
+    messages: [{ role: "user", content: `Company: ${client.name}\n\n${source}` }],
+    maxOutputTokens: 160,
+  });
+
+  after(() =>
+    logger.logUsage({
+      clientId,
+      agentId: null,
+      agentName: "Company Brief",
+      modelName: MODEL,
+      operation: "client_brief",
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+    }),
+  );
+
+  const brief = text
+    .trim()
+    .replace(/\s*[—–]\s*/g, ", ") // strip em/en dashes
+    .replace(/^["']|["']$/g, "")
+    .slice(0, 320);
+
+  if (!brief) return { ok: false, error: "Could not generate a description." };
+
+  await updateClient(clientId, { brief });
+  revalidatePath(`/clients/${clientId}`);
+  return { ok: true, brief };
+}
 
 export async function addActivityNoteAction(clientId: string, text: string): Promise<void> {
   const user = await requireStaff();
@@ -48,7 +120,7 @@ export async function seedIntelAgentAction(): Promise<void> {
       "Automated Digital Intelligence & Competitive Report generator. Runs via Claude API — never shown to clients.",
     icon: "BarChart2",
     color: "#C8FF00",
-    model: "claude-opus-4-8",
+    model: MODELS.SONNET,
     systemPrompt: DEFAULT_INTEL_PROMPT,
     outputKind: "freeform",
     fields: [],
@@ -159,9 +231,14 @@ export async function generateDocSummaryAction(
     docs.find((d) => d.docType === docType);
   if (!doc) return [];
 
+  // Serve cached summary if the doc content hasn't changed since last generation.
+  if (doc.summary?.length && doc.summaryVersion === doc.version) {
+    return doc.summary;
+  }
+
   const { generateText } = await import("ai");
   const { anthropic } = await import("@ai-sdk/anthropic");
-  const MODEL = "claude-haiku-4-5-20251001";
+  const MODEL = MODELS.HAIKU;
   const { text, usage } = await generateText({
     model: anthropic(MODEL),
     system:
@@ -177,7 +254,25 @@ export async function generateDocSummaryAction(
     maxOutputTokens: 450,
   });
 
-  after(() =>
+  let bullets: string[];
+  try {
+    const cleaned = text.trim().replace(/^```(?:json)?\n?|\n?```$/g, "");
+    const arr = JSON.parse(cleaned);
+    bullets = Array.isArray(arr)
+      ? arr.filter((s): s is string => typeof s === "string" && s.length > 4).slice(0, 5)
+      : [];
+  } catch {
+    bullets = text
+      .split("\n")
+      .map((l) => l.replace(/^[-*\d."'\[\]]+\s*/, "").trim())
+      .filter((l) => l.length > 8)
+      .slice(0, 5);
+  }
+
+  const { id: docId, version: docVersion } = doc;
+  after(async () => {
+    // Persist summary so the next request is served from cache (no LLM call).
+    await updateContextDocSummary(docId, bullets, docVersion);
     logger.logUsage({
       clientId,
       agentId: null,
@@ -186,22 +281,59 @@ export async function generateDocSummaryAction(
       operation: "doc_summary",
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
-    }),
-  );
+    });
+  });
 
-  try {
-    const cleaned = text.trim().replace(/^```(?:json)?\n?|\n?```$/g, "");
-    const arr = JSON.parse(cleaned);
-    if (Array.isArray(arr))
-      return arr.filter((s): s is string => typeof s === "string" && s.length > 4).slice(0, 5);
-  } catch {
-    // Fallback: parse line-by-line
+  return bullets;
+}
+
+/**
+ * Apply verified client corrections to a context document (Fix with Review feature).
+ * Re-uses the document's current content without re-running the full research pipeline.
+ * Also re-condenses the client-facing version so both tiers stay in sync.
+ */
+export async function applyDocCorrectionAction(
+  clientId: string,
+  docType: string,
+  tier: string,
+  corrections: string,
+): Promise<void> {
+  const user = await requireStaff();
+  if (!corrections.trim()) throw new Error("Corrections text is required");
+
+  const [client, doc] = await Promise.all([
+    getClient(clientId),
+    getClientContextDocByTier(clientId, docType, tier as import("@/lib/types").ContextDocTier),
+  ]);
+  if (!client) throw new Error("Client not found");
+  if (!doc) throw new Error("Document not found");
+
+  const { applyDocCorrections } = await import("@/lib/onboard-pipeline");
+  const corrected = await applyDocCorrections(client, docType, doc.content, corrections);
+  await updateContextDocContent(doc.id, corrected);
+
+  // If we corrected an internal doc, apply the same corrections to the client-facing version too.
+  if (tier === "internal") {
+    const clientDoc = await getClientContextDocByTier(clientId, docType, "client");
+    if (clientDoc) {
+      const correctedClient = await applyDocCorrections(client, docType, clientDoc.content, corrections);
+      await updateContextDocContent(clientDoc.id, correctedClient);
+    }
   }
-  return text
-    .split("\n")
-    .map((l) => l.replace(/^[-*\d."'\[\]]+\s*/, "").trim())
-    .filter((l) => l.length > 8)
-    .slice(0, 5);
+
+  await logActivity({
+    clientId,
+    timestamp: Date.now(),
+    type: "CONTEXT_DOC_UPDATED",
+    title: `${docType} corrected via Fix with Review`,
+    description: corrections.length > 160
+      ? corrections.slice(0, 157) + "…"
+      : corrections,
+    actor: user.name,
+    actorRole: "staff",
+  });
+
+  revalidatePath(`/clients/${clientId}`);
 }
 
 export async function deleteContextItemAction(id: string) {

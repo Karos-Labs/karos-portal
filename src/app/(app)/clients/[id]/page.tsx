@@ -19,15 +19,14 @@ import {
 } from "@/lib/data";
 import { missingBrandFields } from "@/lib/newsletter/brand";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
-import { Card, CardTitle, Badge, Button } from "@/components/ui";
+import { Card, CardTitle, Badge, Button, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ClientEditor } from "@/components/client-editor";
 import { ClientKeyPanel } from "@/components/client-key-panel";
-import { ClientKeyInline } from "@/components/client-key-inline";
 import { ContentEngineLauncher } from "@/components/content-engine-launcher";
 import { JobStatusBadge } from "@/components/job-status";
 import { ClientDashboard } from "@/components/client-dashboard";
-import { ChatbotWidget } from "@/components/chatbot-widget";
+import { ClientAnalytics } from "@/components/client-analytics";
 import { PreviewBrandButton } from "@/components/preview-brand-button";
 import { initials, relativeTime } from "@/lib/utils";
 
@@ -45,6 +44,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const client = await getClient(id);
   if (!client) notFound();
 
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
   const [agents, assets, transcripts, jobs, contextItems, report, competitors, contextDocs, activityLogs, integrations, ceConfig, ceCatalog, nlConfig] = await Promise.all([
@@ -72,6 +72,28 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       ? "Ready"
       : "Draft";
 
+  // ── Client view: Analytics landing (real data only) ──
+  if (!isStaff) {
+    return (
+      <>
+        <PageHeader title="Analytics" description={`Performance snapshot for ${client.name}.`} />
+        {contentEngineReady && (
+          <div className="mb-6">
+            <ContentEngineLauncher clientId={client.id} clientName={client.name} />
+          </div>
+        )}
+        <ClientAnalytics
+          clientId={client.id}
+          clientName={client.name}
+          assets={assets}
+          jobs={jobs}
+          integrations={integrations}
+        />
+      </>
+    );
+  }
+
+  // ── Staff view: full tabbed dashboard with the management sidebar ──
   return (
     <>
       <Link
@@ -158,9 +180,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           <ClientEditor client={client} />
 
           {/* Client Access Key — visible to staff only so they can share it with the client */}
-          {(user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE") && (
-            <ClientKeyPanel clientId={client.id} clientKeyId={client.clientKeyId} />
-          )}
+          <ClientKeyPanel clientId={client.id} clientKeyId={client.clientKeyId} />
 
           <Card>
             <CardTitle className="mb-3">Recent jobs</CardTitle>
@@ -212,31 +232,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                 ))}
               </ul>
             )}
-
-            {/* Invite key — low-profile, shown to client users so they can onboard teammates */}
-            {user.role === "CLIENT_USER" && client.clientKeyId && (
-              <ClientKeyInline clientKeyId={client.clientKeyId} />
-            )}
           </Card>
         </div>
       </div>
-
-      {/* ChatbotWidget is placed here — outside the grid — so position:fixed is
-          never trapped by grid/tab/overflow ancestors */}
-      <ChatbotWidget
-        clientId={client.id}
-        clientName={client.name}
-        agents={agents.filter((a) => a.isActive && !a.isSystem && a.id !== "intel-report-agent")}
-        defaultOpen={user.role === "CLIENT_USER"}
-        userName={user.name}
-        hasGoogleIntegration={integrations.some(
-          (i) => i.platform === "google" && i.status === "active",
-        )}
-        client={{ name: client.name, website: client.website, industry: client.industry }}
-        report={
-          report ? { overallGrade: report.overallGrade, overallScore: report.overallScore } : null
-        }
-      />
     </>
   );
 }

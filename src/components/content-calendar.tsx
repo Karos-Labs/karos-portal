@@ -149,21 +149,7 @@ export function ContentCalendar({
   const isCurrentMonth =
     viewYear === today.getFullYear() && viewMonth === today.getMonth();
 
-  if (events.length === 0 && scheduledCount === 0) {
-    return (
-      <div className="flex items-center gap-3 rounded-[10px] border border-dashed border-border bg-surface-2/40 p-4">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-neon-soft">
-          <Icon name="Calendar" className="h-4 w-4 text-neon" />
-        </div>
-        <div>
-          <p className="text-sm font-medium">Content Calendar</p>
-          <p className="text-xs text-muted-2">
-            Approve &amp; Schedule a draft to populate the calendar.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const isEmpty = events.length === 0 && scheduledCount === 0;
 
   return (
     <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
@@ -176,6 +162,7 @@ export function ContentCalendar({
           <div>
             <p className="text-sm font-medium leading-tight">Content Calendar</p>
             <p className="text-[11px] text-muted-2">
+              {isEmpty && "Nothing scheduled yet"}
               {scheduledCount > 0 && `${scheduledCount} scheduled`}
               {scheduledCount > 0 && publishedCount > 0 && " · "}
               {publishedCount > 0 && `${publishedCount} published`}

@@ -77,7 +77,7 @@ async function ensureUserDoc(
   if (intent?.requestedRole === "KAROS_EMPLOYEE") {
     const staffKey = process.env.KAROS_STAFF_KEY;
     const validKey = !!(staffKey && key === staffKey);
-    const isCompanyAlias = email === "hello@karoslabs.com";
+    const isCompanyAlias = email === (process.env.KAROS_COMPANY_ALIAS ?? "hello@karoslabs.com");
     const role: Role = validKey && isCompanyAlias ? "KAROS_ADMIN" : "KAROS_EMPLOYEE";
     const user: AppUser = {
       uid: claims.uid,

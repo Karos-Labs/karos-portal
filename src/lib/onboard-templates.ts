@@ -7,33 +7,66 @@ import "server-only";
 export const RESEARCH_ENGINE_RULES = `
 ## RESEARCH ENGINE — CORE RULES (NON-NEGOTIABLE)
 
-ONE RULE, NO EXCEPTIONS: Never write a number you did not observe from a named, verifiable source.
+### TWO SEPARATE STANDARDS — apply them correctly
 
-### What counts as measured
-- A number pulled from a specific URL (name the URL and the date accessed)
-- A number from a tool or scrape output (name the tool + date)
-- A number the client stated explicitly (prefix with "client-stated:")
-- A number from a public filing, audit, or press release (cite document + date)
+**QUANTITATIVE METRICS** (follower counts, revenue, pricing, headcount, ratings, growth %):
+- Only cite a number you observed from a named, verifiable source
+- What counts as measured: a specific URL + date, a tool/scrape output + date, a client-stated figure (prefix "client-stated:"), a public filing or press release
+- What is NOT measured: training-knowledge estimates, industry averages without a source, extrapolated ranges, hedged approximations ("approximately", "around", "~")
+- When you cannot source a specific figure: use "—" (em dash) in table cells; in prose, omit the unsourced figure silently or note it is not publicly published
+- NEVER write "data unavailable" anywhere in a rendered document — tables, sections, or headers
 
-### What is NOT measured — never use
-- Training-knowledge estimates of audience sizes, revenue, or market share
-- Industry averages applied to this specific company without a source
-- Extrapolations or projections from partial data
-- Ranges introduced by hedging ("approximately", "around", "roughly", "~")
+**QUALITATIVE ANALYSIS** (voice, tone, positioning, strategy, audience, brand, competitive gaps, market dynamics):
+- NEVER write "data unavailable", "N/A", "not found", "cannot determine", or any placeholder
+- You have deep training knowledge across millions of brands, industries, and markets — use it
+- Use contextual reasoning, industry pattern recognition, and observable signals to derive every insight
+- When inferring rather than directly observing: label it clearly ("signals suggest…", "observable pattern:", "industry pattern:")
+- If a specific qualitative bullet genuinely cannot be supported by any signal, omit it silently — but never replace it with a placeholder phrase
 
-### When you cannot source a figure
-Write "data unavailable" — not zero, not a range, not a guess.
-The reader needs to know it is unknown, not approximated.
-
-### Social metrics (Apify-backed in production; mark as training knowledge when no live scrape available)
+### Social metrics (Apify-backed in production; label as training knowledge when no live scrape available)
 - followers: exact integer count — note source and date
 - eng_per_1k: (likes + comments) / followers × 1000, averaged over measured posts — cite the posts used
 - cadence: posts per week — count from actual post dates in a defined window
 - growth: % follower change — only if two measured data points exist, else "data unavailable"
 
-### Qualitative claims
+### Qualitative evidence standard
 Evidence-backed statements only. "Leads on Instagram" requires citing what you observed.
-"Strong brand" without evidence is not allowed. Say what you specifically found.
+"Strong brand" without evidence is not allowed. Name what you specifically found and why it signals strength.
+
+### PRICING — HIGH-RISK FIELD (training data is frequently stale or wrong)
+Pricing changes constantly. A figure from training memory may be months or years out of date.
+- ONLY state a price you are highly confident is currently on the live website
+- If there is ANY doubt, write "see [website URL] for current pricing" instead of guessing a number
+- The website always wins over training memory — never let a training-data price contradict an observed website price
+- Never state a minimum investment, subscription cost, or service fee from training memory alone without explicitly flagging it as unverified
+
+### FOUNDING / LAUNCH DATE — HIGH-RISK FIELD (training data frequently confuses registration date, rebrand date, and actual product launch)
+- Only state a specific year or date you observed on the company's own website, press release, or primary filing
+- If you are unsure or cannot confirm from a primary source, write "[launch date — verify with client]" rather than guessing
+- Never state a founding year from training memory alone — training data often uses incorporation dates (years earlier than actual launch), rebrand dates, or data that has since been corrected
+
+### HEADCOUNT / TEAM SIZE — HIGH-RISK FIELD
+- Only state headcount from a named source: LinkedIn, official filing, or press release with date
+- If not sourced: write "[team size — verify with client]" — never estimate
+
+### REVENUE / AUM / ASSETS UNDER MANAGEMENT — HIGH-RISK FIELD
+- Only state financial figures from an official source (press release, filing, news report with citation) or direct client disclosure
+- Never estimate, extrapolate, or round to a convenient number from training memory
+
+### CLIENT CONTEXT IS AUTHORITATIVE
+The CLIENT CONTEXT block passed in the prompt contains information entered directly by the client's team. This is the most reliable source for basic company facts (name, founding, website, description). If the CLIENT CONTEXT states a fact, it takes absolute precedence over any research finding, website observation, or training knowledge.
+
+### REGULATORY & COMPLIANCE DATA — always capture these
+Official registration numbers and regulatory declarations are publicly visible on regulated-industry websites (footer, about, /legal, /compliance, /quem-somos).
+- Always check for: company registration numbers (CNPJ in Brazil), regulatory declarations (CVM Ato Declaratório, ANBIMA código, SEC, FCA, CFA, etc.), compliance certifications
+- For Brazilian financial/investment companies: look specifically for CVM Ato Declaratório number, código de autorização, CNPJ, and ANBIMA registration — almost always in the site footer or legal page
+- Never mark regulatory identifiers as "data unavailable" without having explicitly checked the footer, about, and legal pages
+- These are public facts — capture them, do not skip them
+
+### DATA SOURCING LANGUAGE — must be consistent across all documents in a run
+- NEVER write "a live scrape was performed", "a live scrape was not possible", "real-time data was unavailable", or any meta-claim about your data access method
+- Use consistent labels only: "website-observed:" for things visible on the company's public site, "training knowledge:" for what you know about the company, "industry pattern:" for general market knowledge
+- One document claiming it scraped the site while another says it couldn't is a contradiction that destroys client trust
 `.trim();
 
 /**
@@ -55,8 +88,9 @@ Onboarding uses ONLY the social_content vertical. SEO/GEO and web/UX metrics are
 | competitor_outrank | null at onboarding (no baseline yet) | — |
 
 ### NULL TAXONOMY
-- "data unavailable" — no handle found, account private, or scrape blocked
-- Never write 0 to mean unknown (zero means zero followers; unknown means "data unavailable")
+- "—" (em dash) — no handle found, account private, scrape blocked, or metric not measured
+- Never write 0 to mean unknown (zero means zero followers; unknown means "—")
+- Never write "data unavailable" anywhere in the rendered document
 - Never combine a measured metric with a guessed one in the same sentence
 
 ### WINDOW ANCHORING
@@ -90,11 +124,13 @@ You are condensing an internal analyst document into a client-facing version.
 - Any content tagged internal-only (client-guidelines, action-plan)
 
 ### Hard rules
-- Target ~50% of the internal document's length
+- COMPLETE ALL SECTIONS. Every section heading from the internal doc must appear in the output. Never drop a section. A truncated document is a failed document.
+- Target ~50% of the internal document's length by condensing WITHIN sections — not by dropping sections entirely.
 - Never invent content not in the internal doc
 - Never soften or omit a hard compliance gate (those must transfer verbatim)
 - Stamp the output with: status: published, published_at: <today>
 - Never publish client-guidelines or action-plan — those are always internal-only
+- Never write "data unavailable" anywhere — use "—" for unknown quantitative fields
 `.trim();
 
 /**
@@ -241,10 +277,10 @@ consumed_by: [e10, e11, e12, e13, e14, a3, s5, s6, karos-chat]
 <Real language customers use.>
 
 ## 7. Goals & KPIs
-| Area | KPI | Baseline (measured) | Target (client goal) | Cadence |
-|------|-----|---------------------|----------------------|---------|
+> Define the recommended KPI framework for this business. Fill in KPI name, area, and cadence from your knowledge of this business type. For Baseline: use only a figure from a named, verifiable source — otherwise write "to capture with client". For Target: if the client has not stated a goal, write "to define with client". NEVER write "data unavailable" in any cell. Omit a row only if the metric is genuinely irrelevant for this business model.
 
-> Baseline = measured from a named source only. Target = a goal the client stated.
+| Area | KPI | Baseline | Target | Cadence |
+|------|-----|----------|--------|---------|
 
 ## 8. Where to play
 <Segments, channels, and niches to prioritize.>
@@ -281,44 +317,103 @@ consumed_by: [e12, e13, e14, a3, s5]
 
 # Competitor Analysis — <Client>
 
-> Who the client competes with, what each rival does well and badly, and where the open territory is.
+> Elite competitive intelligence. Starts with the market, positions the client within it, then profiles the key rivals with surgical precision. No filler, no placeholders. Every section is actionable for a senior marketing strategist.
 
-**No guessed numbers.** Every figure is either measured (Apify social metrics) or copied verbatim from the competitor's own page with the URL. No scores, no grades, no ranks, no estimated prices.
+**Quantitative data rule:** Pricing is only stated when published on the competitor's own website (cite the URL). Follower counts and engagement metrics are only cited from live measurements with source and date.
 
-## TL;DR
-<3-5 sentences: who the closest direct rivals are and the single clearest differentiator the client owns.>
+## Executive Summary
+<4-6 sentences that a CEO reads before the full briefing. Answer: what kind of market is this, who are the most dangerous rivals, what is the single clearest competitive advantage <Client> can own, and what is the most urgent strategic move. This is not a list of facts — it is a strategic judgment.>
 
-## Competitor overview table
-| Competitor | Category | Price / minimum (stated, with source) | Positioning | Key differentiator | Primary weakness |
-|------------|----------|---------------------------------------|-------------|-------------------|-----------------|
+## 1. Market Landscape
 
-## Deep dives — top direct competitors
-### 1. <Competitor> — deep dive
-- **What they do well:**
-- **Where they fall short:**
-- **Their ICP:**
-- **Voice & content:**
-- **Pricing / accessibility vs us:**
+### Market dynamics
+<What is the nature of this competitive environment? Is the market crowded with undifferentiated players, dominated by 1-2 giants with a long tail, a fragmented niche, or an emerging category? What are the 2-3 macro forces shaping competition right now (pricing pressure, commoditization, audience shifts, new technology enabling new entrants)?>
 
-### 2. <Competitor> — deep dive
+### How buyers make decisions in this market
+<What do buyers compare when evaluating options in this category? What are the top 2-3 decision drivers (price, reputation, specialization, speed, relationships)? What does a typical buying journey look like — who initiates, who approves, how long does it take?>
 
-### 3. <Competitor> — deep dive
+### Market maturity and trajectory
+<Is this market growing, consolidating, or mature? What recent competitive moves, category pivots, or new entrants are reshaping the landscape? What is happening RIGHT NOW that a strategist must account for?>
 
-## Per-platform reality (measured)
-<Social scan: who posts what, cadence, engagement, format mix.>
+## 2. Competitive Position Overview
 
-## Competitive gaps / white space
-1. **<gap>** — <why it's open and durable>
-2. **<gap>** — <>
-3. **<gap>** — <>
+| Competitor | Category | Positioning (their words) | Price (stated, with source) | Key Differentiator | Primary Weakness | Threat to <Client> |
+|------------|----------|---------------------------|-----------------------------|--------------------|-----------------|---------------------|
+<Fill all rows with real data. For price: only if published on their website with URL. Threat: HIGH / MEDIUM / LOW with one-word reason.>
 
-## Watch list
-<Emerging or fast-moving competitors to monitor.>
+## 3. Where <Client> Wins
+<The specific competitive advantages <Client> holds over the field. Name the competitor being beaten for each advantage. "Quality" and "service" are not advantages — name the observable, defensible edges that buyers actually care about.>
+
+- **<Advantage 1>** — <exactly what the advantage is> vs. <named competitor(s)> who <what they lack>. Strategic implication: <why this matters to buyers and how the agency should amplify it>.
+- **<Advantage 2>** — <evidence + competitive contrast + strategic implication>
+- **<Advantage 3>** — <evidence + competitive contrast + strategic implication>
+- **<Advantage 4 if applicable>** — <>
+
+## 4. Where <Client> Lags
+<Honest, specific gaps relative to competitors. This intelligence is what the agency needs to build a realistic strategy. Do not soften or omit these — they are as valuable as the wins.>
+
+- **<Gap 1>** — <competitor who outperforms here> does <specifically what better>. This matters because <buyer reason>. The gap manifests in <observable evidence>. Mitigation: <what <Client> could do to neutralize this gap>.
+- **<Gap 2>** — <same format>
+- **<Gap 3>** — <same format>
+- **<Gap 4 if applicable>** — <>
+
+## 5. Deep Dives — Top Direct Competitors
+
+### Competitor 1: <Name> (<domain.com>)
+**Category:** direct / secondary / indirect
+**Their positioning:** <their tagline or hero copy verbatim if available — this is what they tell the market they are>
+**Why buyers choose them:** <2-3 specific reasons — what problem they solve better than others, what their customers love>
+**Where they fall short:** <2-3 specific weaknesses — gaps in their offering, poor UX, pricing friction, voice inconsistency, underserved segments>
+**Their ideal customer:** <who specifically buys them — role, company size, context, primary motivation>
+**Voice and content style:** <tone archetype, content format mix, platform focus, cadence — observed>
+**Pricing:** <published pricing with source URL — if not published, write "not published on their website">
+**Threat level:** HIGH — <one sentence on why and specifically which part of <Client>'s market they threaten most>
+**How to beat them:** <specific strategic counter — what <Client> must do or say differently to win deals against this rival>
+
+### Competitor 2: <Name> (<domain.com>)
+**Category:** direct / secondary / indirect
+**Their positioning:** <>
+**Why buyers choose them:** <>
+**Where they fall short:** <>
+**Their ideal customer:** <>
+**Voice and content style:** <>
+**Pricing:** <>
+**Threat level:** MEDIUM — <>
+**How to beat them:** <>
+
+---
+
+### Competitor 3: <Name> (<domain.com>)
+**Category:** direct / secondary / indirect
+**Their positioning:** <>
+**Why buyers choose them:** <>
+**Where they fall short:** <>
+**Their ideal customer:** <>
+**Voice and content style:** <>
+**Pricing:** <>
+**Threat level:** MEDIUM — <>
+**How to beat them:** <>
+
+## 6. Social Presence Scan
+<For each major platform where competitors are meaningfully active: who leads, what their content approach is, and what <Client> should learn or counter. Follower counts only from live measurements with source and date — omit the count if not measured, describe the presence qualitatively instead.>
+
+## 7. Competitive White Space
+<The specific positioning territory, audience segment, or use case that NO current competitor owns effectively. This is where the agency builds sustainable leverage. Each entry must name WHY it is open and WHY <Client> is specifically positioned to claim it.>
+
+1. **<White space 1>** — <what the gap is> + <why no competitor owns it> + <why <Client> can claim it> + <what the first move looks like>
+2. **<White space 2>** — <same format>
+3. **<White space 3>** — <same format>
+
+## 8. Watch List
+<Emerging or fast-moving players to track. For each: name the signal that flags them as a rising threat and what <Client> should monitor.>
+
+- **<Company>** — <why they're on the watch list, what signal to watch>
+- **<Company>** — <>
 
 ## Sources
 
 ## Change Log
-- <date> — onboarding — initial analysis from wide-scan.`,
+- <date> — onboarding — initial analysis from market and competitive research.`,
 
   "product-information": `---
 module: product-information

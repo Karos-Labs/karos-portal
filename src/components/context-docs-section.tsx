@@ -1,11 +1,10 @@
 "use client";
 
 import { useState, useTransition, useMemo, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { Card, CardTitle, Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { refreshClientContextDocsAction, generateDocSummaryAction } from "@/lib/actions";
+import { generateDocSummaryAction, applyDocCorrectionAction } from "@/lib/actions";
 import type { ClientContextDoc, ContextDocType, Role } from "@/lib/types";
 
 /* ── Tab config ───────────────────────────────────────────────── */
@@ -20,8 +19,61 @@ const TABS: { docType: ContextDocType; label: string; icon: string }[] = [
 
 /* ── Utilities ────────────────────────────────────────────────── */
 
+/**
+ * Normalise raw stored content before any display or parsing.
+ *
+ * Handles three classes of document:
+ *   1. Freshly generated (post-fix): clean, starts directly at the first ## heading.
+ *   2. Legacy docs with a code fence: stored as ```markdown\n---\n…\n``` before the
+ *      generator fix was deployed.
+ *   3. Docs where the model added preamble text *before* the code fence or frontmatter
+ *      (e.g. "Here is the document:\n\n```markdown\n---\n…").
+ *
+ * Strips in order:
+ *   code fence (searched beyond position 0) →
+ *   YAML frontmatter (searched at the start of any line) →
+ *   H1 title →
+ *   leading instruction blockquotes (> …)
+ */
+function cleanRawContent(content: string): string {
+  let s = content.trim();
+
+  // 1. Code fence — search beyond position 0 so preamble text before the fence is removed too
+  const fenceIdx = s.search(/```[a-zA-Z]*\r?\n/);
+  if (fenceIdx !== -1) {
+    s = s.slice(fenceIdx)
+      .replace(/^```[a-zA-Z]*\r?\n/, "")
+      .replace(/\r?\n```\s*$/, "")
+      .trim();
+  }
+
+  // 2. YAML frontmatter — only search within the first 400 chars.
+  //    Using /m would match any --- line in the document body (e.g. horizontal rules between
+  //    competitor sections or personas), silently discarding the document beginning.
+  //    Restricting to 400 chars catches a short model preamble before the --- without eating body content.
+  const fmSearchWindow = s.slice(0, 400);
+  const fmStart = fmSearchWindow.search(/^---\r?\n/m);
+  if (fmStart > 0) s = s.slice(fmStart); // skip short preamble before opening ---
+  const fm = s.match(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/);
+  if (fm) {
+    s = s.slice(fm[0].length).trim();
+  } else if (s.startsWith("---")) {
+    // No closing --- found — strip just the single opening line to avoid eating body content
+    s = s.replace(/^---[ \t]*\r?\n/, "").trim();
+  }
+
+  // 3. H1 title line
+  s = s.replace(/^#[^#][^\n]*(\r?\n|$)/m, "").trim();
+
+  // 4. Leading template-instruction blockquotes (> HOW the brand speaks…)
+  //    These live right after the H1 in every template.
+  s = s.replace(/^(>\s*[^\n]*(\r?\n|$))+/, "").trim();
+
+  return s;
+}
+
 function extractKeyInsights(content: string): string[] {
-  const stripped = content.replace(/^---[\s\S]*?---\n?/, "");
+  const stripped = cleanRawContent(content);
   const insights: string[] = [];
   for (const line of stripped.split("\n")) {
     const m = line.match(/^[-*+]\s+(.+)/);
@@ -88,20 +140,24 @@ function renderSectionBody(md: string): string {
     return `<div class="overflow-x-auto my-3 rounded-[8px] border border-border"><table class="w-full border-collapse">${thead}${tbody}</table></div>\n`;
   });
 
-  // Bullet lists
-  out = out.replace(/^[-*+]\s+(.+)$/gm, "<li>$1</li>");
+  // Bullet lists — sentinel bytes \x02/\x03 isolate these items from the ordered-list pass.
+  out = out.replace(/^[-*+]\s+(.+)$/gm, "\x02$1\x03");
   out = out.replace(
-    /(<li>[\s\S]*?<\/li>\n?)+/g,
-    (block) =>
-      `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-neon/50 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${block}</ul>\n`,
+    /(\x02[\s\S]*?\x03\n?)+/g,
+    (block) => {
+      const items = block.replace(/\x02([\s\S]*?)\x03/g, "<li>$1</li>");
+      return `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-neon/50 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${items}</ul>\n`;
+    },
   );
 
-  // Numbered lists
-  out = out.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
+  // Ordered lists — sentinel bytes \x04/\x05, distinct from bullet sentinels.
+  out = out.replace(/^\d+\.\s+(.+)$/gm, "\x04$1\x05");
   out = out.replace(
-    /(<li>[\s\S]*?<\/li>\n?)+/g,
-    (block) =>
-      `<ol class="my-2 space-y-1.5 ml-4 list-decimal [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] marker:text-neon/50">${block}</ol>\n`,
+    /(\x04[\s\S]*?\x05\n?)+/g,
+    (block) => {
+      const items = block.replace(/\x04([\s\S]*?)\x05/g, "<li>$1</li>");
+      return `<ol class="my-2 space-y-1.5 ml-4 list-decimal [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] marker:text-neon/50">${items}</ol>\n`;
+    },
   );
 
   // Blockquotes
@@ -121,17 +177,24 @@ function renderSectionBody(md: string): string {
 
 /** For the PDF export only — flat single-page render (keeps existing behaviour). */
 function renderMarkdown(md: string): string {
-  const clean = md.replace(/^---[\s\S]*?---\n?/, "").replace(/^# .+\n?/m, "");
-  // Split into sections and render each body, joining with h2 labels
-  const parts = clean.split(/^##\s+(.+)$/m);
+  const clean = cleanRawContent(md);
+  const headingRe = /^##\s+(.+)$/gm;
   let out = "";
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1) {
-      out += `<h2 class="text-sm font-semibold mt-6 mb-2 text-neon/80">${parts[i]}</h2>`;
-    } else {
-      out += renderSectionBody(parts[i]);
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = headingRe.exec(clean)) !== null) {
+    if (match.index > cursor) {
+      out += renderSectionBody(clean.slice(cursor, match.index));
     }
+    out += `<h2 class="text-sm font-semibold mt-6 mb-2 text-neon/80">${match[1]}</h2>`;
+    cursor = match.index + match[0].length;
   }
+
+  if (cursor < clean.length) {
+    out += renderSectionBody(clean.slice(cursor));
+  }
+
   return out;
 }
 
@@ -237,11 +300,7 @@ interface DocSection {
 const PLACEHOLDER_RE = /\b(n\/a|unknown|not\s+provided|not\s+applicable|data\s+unavailable|tbd)\b/gi;
 
 function parseDocSections(content: string): DocSection[] {
-  // Remove YAML frontmatter and H1 title
-  const clean = content
-    .replace(/^---[\s\S]*?---\n?/, "")
-    .replace(/^#\s+.+\n?/m, "")
-    .trim();
+  const clean = cleanRawContent(content);
 
   const parts = clean.split(/^##\s+/m);
   const sections: DocSection[] = [];
@@ -250,6 +309,9 @@ function parseDocSections(content: string): DocSection[] {
     if (!part.trim()) continue;
     const nl = part.indexOf("\n");
     const heading = nl > 0 ? part.slice(0, nl).trim() : part.trim();
+    // Skip the pre-heading intro block (template instruction notes before the first ##)
+    // and the internal Change Log section at the bottom of templates.
+    if (!heading || /^change\s*log$/i.test(heading)) continue;
     const body = nl > 0 ? part.slice(nl + 1).trim() : "";
     // Skip sections whose body is empty or only placeholders
     const stripped = body.replace(PLACEHOLDER_RE, "").replace(/[|\-\s]/g, "").trim();
@@ -268,18 +330,24 @@ function DocViewer({
   doc,
   label,
   clientId,
+  isStaff,
 }: {
   doc: ClientContextDoc | null;
   label: string;
   clientId: string;
+  isStaff: boolean;
 }) {
   const sections = useMemo(() => (doc ? parseDocSections(doc.content) : []), [doc]);
   const [openSet, setOpenSet] = useState<Set<number>>(() => new Set([0]));
-  const [viewMode, setViewMode] = useState<ViewMode>("summary");
+  const [viewMode, setViewMode] = useState<ViewMode>("full");
   const [summaryStatus, setSummaryStatus] = useState<SummaryStatus>("idle");
   const [summaryBullets, setSummaryBullets] = useState<string[]>([]);
-  // Cache summaries by doc.id so tab-switching doesn't re-fetch
   const cache = useRef<Map<string, string[]>>(new Map());
+  const [fixModalOpen, setFixModalOpen] = useState(false);
+  const [corrections, setCorrections] = useState("");
+  const [fixing, startFix] = useTransition();
+  const [fixError, setFixError] = useState<string | null>(null);
+  const [fixDone, setFixDone] = useState(false);
 
   function toggle(i: number) {
     setOpenSet((prev) => {
@@ -289,16 +357,21 @@ function DocViewer({
     });
   }
 
-  // Auto-generate summary when doc changes and we're in summary mode
+  // Reset to full-document view and clear correction state whenever the active doc changes
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset of derived UI state when doc changes
-    setViewMode("summary");
+    setViewMode("full");
     setOpenSet(new Set([0]));
-    if (!doc) {
-      setSummaryBullets([]);
-      setSummaryStatus("idle");
-      return;
-    }
+    setSummaryBullets([]);
+    setSummaryStatus("idle");
+    setFixModalOpen(false);
+    setCorrections("");
+    setFixError(null);
+    setFixDone(false);
+  }, [doc?.id]);
+
+  // Fetch or generate the summary only when the user opens the Summary tab
+  useEffect(() => {
+    if (viewMode !== "summary" || !doc || summaryStatus !== "idle") return;
     const cached = cache.current.get(doc.id);
     if (cached) {
       setSummaryBullets(cached);
@@ -306,7 +379,6 @@ function DocViewer({
       return;
     }
     setSummaryStatus("loading");
-    setSummaryBullets([]);
     generateDocSummaryAction(clientId, doc.docType, doc.tier)
       .then((bullets) => {
         cache.current.set(doc.id, bullets);
@@ -314,7 +386,7 @@ function DocViewer({
         setSummaryStatus("done");
       })
       .catch(() => setSummaryStatus("error"));
-  }, [doc?.id, clientId]);
+  }, [viewMode, doc?.id, clientId, summaryStatus]);
 
   if (!doc) {
     return (
@@ -387,8 +459,97 @@ function DocViewer({
             <Icon name="FileDown" className="h-3 w-3" />
             PDF
           </button>
+          {isStaff && (
+            <button
+              onClick={() => { setFixModalOpen(true); setFixDone(false); setFixError(null); }}
+              className="flex items-center gap-1 rounded-[6px] border border-border bg-surface-2 px-2 py-1 text-[10px] text-muted-2 transition-colors hover:border-neon/40 hover:text-neon"
+              title="Apply corrections to this document"
+            >
+              <Icon name="PenLine" className="h-3 w-3" />
+              Fix with Review
+            </button>
+          )}
         </div>
       </div>
+
+      {/* ── Fix with Review modal ── */}
+      {fixModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-[14px] border border-border bg-surface shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <div>
+                <p className="text-sm font-semibold">Fix with Review — {label}</p>
+                <p className="mt-0.5 text-xs text-muted-2">Describe what's incorrect. These facts will be applied as ground truth and override the document.</p>
+              </div>
+              <button
+                onClick={() => setFixModalOpen(false)}
+                className="rounded-[6px] p-1 text-muted-2 hover:bg-surface-2 hover:text-foreground"
+              >
+                <Icon name="X" className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <textarea
+                value={corrections}
+                onChange={(e) => setCorrections(e.target.value)}
+                placeholder={`e.g. "The minimum investment is R$100 not R$500.\nWe launched in 2024, not 2019.\nOur CVM number is Ato Declaratório 23.290."`}
+                className="w-full rounded-[8px] border border-border bg-surface-2 px-3 py-2.5 text-sm text-foreground placeholder:text-muted-2 focus:border-neon/50 focus:outline-none min-h-[120px] resize-y"
+                disabled={fixing}
+              />
+              {fixError && (
+                <div className="flex items-center gap-2 rounded-[8px] border border-red-500/20 bg-red-500/10 px-3 py-2">
+                  <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-red-400" />
+                  <p className="text-xs text-red-400">{fixError}</p>
+                </div>
+              )}
+              {fixDone && (
+                <div className="flex items-center gap-2 rounded-[8px] border border-neon/20 bg-neon-soft/10 px-3 py-2">
+                  <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0 text-neon" />
+                  <p className="text-xs text-neon">Corrections applied. Reload the page to see the updated document.</p>
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setFixModalOpen(false)}
+                  className="rounded-[8px] border border-border bg-surface-2 px-4 py-2 text-xs text-muted-2 hover:text-foreground transition-colors"
+                  disabled={fixing}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (!corrections.trim() || !doc) return;
+                    setFixError(null);
+                    startFix(async () => {
+                      try {
+                        await applyDocCorrectionAction(clientId, doc.docType, doc.tier, corrections.trim());
+                        setFixDone(true);
+                        setCorrections("");
+                      } catch (err) {
+                        setFixError(err instanceof Error ? err.message : "Failed to apply corrections.");
+                      }
+                    });
+                  }}
+                  disabled={fixing || !corrections.trim()}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-neon px-4 py-2 text-xs font-semibold text-black transition-opacity disabled:opacity-50"
+                >
+                  {fixing ? (
+                    <>
+                      <div className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
+                      Applying…
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="CheckCheck" className="h-3 w-3" />
+                      Apply Corrections
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Summary view ── */}
       {viewMode === "summary" && (
@@ -511,10 +672,7 @@ export function ContextDocsSection({
   contextDocs,
   currentUserRole,
 }: Props) {
-  const router = useRouter();
   const [activeTab, setActiveTab] = useState<ContextDocType>("brand-voice");
-  const [refreshing, startRefresh] = useTransition();
-  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const isStaff =
     currentUserRole === "KAROS_ADMIN" || currentUserRole === "KAROS_EMPLOYEE";
@@ -533,20 +691,6 @@ export function ContextDocsSection({
     );
   }
 
-  function handleRefresh() {
-    setRefreshError(null);
-    startRefresh(async () => {
-      try {
-        await refreshClientContextDocsAction(clientId);
-        router.refresh();
-      } catch (e) {
-        setRefreshError(
-          e instanceof Error ? e.message : "Refresh failed. Try again.",
-        );
-      }
-    });
-  }
-
   const activeDoc = getDoc(activeTab);
   const activeTabLabel = TABS.find((t) => t.docType === activeTab)?.label ?? activeTab;
   const hasAnyDocs = contextDocs.length > 0;
@@ -563,26 +707,7 @@ export function ContextDocsSection({
               : "Your brand and strategy profile"}
           </p>
         </div>
-        {isStaff && hasAnyDocs && (
-          <Button
-            size="sm"
-            variant="outline"
-            loading={refreshing}
-            onClick={handleRefresh}
-            title="Re-condense internal docs into fresh client-facing versions"
-          >
-            <Icon name="RefreshCw" className="h-3.5 w-3.5" />
-            {refreshing ? "Refreshing…" : "Refresh client docs"}
-          </Button>
-        )}
       </div>
-
-      {refreshError && (
-        <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-red-500/30 bg-red-500/10 px-3 py-2">
-          <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-red-400" />
-          <p className="text-xs text-red-400">{refreshError}</p>
-        </div>
-      )}
 
       {/* Tab strip with status dots */}
       <div className="mb-4 flex gap-1 overflow-x-auto pb-1">
@@ -616,7 +741,7 @@ export function ContextDocsSection({
 
       {/* Doc content */}
       <Card className="min-h-[200px]">
-        <DocViewer doc={activeDoc} label={activeTabLabel} clientId={clientId} />
+        <DocViewer doc={activeDoc} label={activeTabLabel} clientId={clientId} isStaff={isStaff} />
       </Card>
     </div>
   );
