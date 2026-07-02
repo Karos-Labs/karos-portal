@@ -43,7 +43,7 @@ export async function createClientAction(input: {
 
   after(async () => {
     await updateClient(id, { onboardingStatus: "running" });
-    const { runIntelReportPipeline } = await import("@/lib/intel-report");
+    const { runIntelReportPipeline } = await import("@/lib/intel");
     const [brandingResult, intelResult] = await Promise.allSettled([
       applyBrandingForClient(id),
       runIntelReportPipeline(id),

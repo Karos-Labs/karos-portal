@@ -514,6 +514,34 @@ export interface ActivityLog {
   metadata?: Record<string, unknown>;
 }
 
+/* ─────────────────────── Agent Feedback Store ───────────────────────── */
+
+/**
+ * Generic feedback / correction log written whenever a client or staff member
+ * provides verified corrections to agent-generated content.
+ * Intentionally agent-agnostic — any agent can write rows here.
+ */
+export interface Feedback {
+  id: string;
+  /** Which agent generated the content being corrected (e.g. "intel-report-agent"). */
+  agentId: string;
+  /** The client whose generated data is being corrected. */
+  clientId: string;
+  /** The raw correction text exactly as submitted. */
+  feedbackText: string;
+  /** Optional: which context doc type the correction targets (e.g. "brand-voice"). */
+  docType?: string;
+  /**
+   * single_doc — correction applied to one specific document.
+   * global    — correction applied across all documents for this client.
+   */
+  scope: "single_doc" | "global";
+  createdAt: number;
+  /** UID of the user who submitted the correction. */
+  createdBy: string;
+  creatorRole: "staff" | "client";
+}
+
 /* ─────────────────────── Social Integrations ────────────────────────── */
 
 export interface ClientIntegration {

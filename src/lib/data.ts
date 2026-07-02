@@ -1,11 +1,13 @@
 import "server-only";
 
+import { cache } from "react";
 import { adminDb } from "@/lib/firebase/admin";
 import type {
   AccessToken,
   ActionItemNotification,
   ActivityLog,
   Agent,
+  Feedback,
   AgentReviewNotification,
   AppUser,
   Asset,
@@ -61,6 +63,7 @@ const col = {
   clientTasks: () => adminDb().collection("clientTasks"),
   taskComments: () => adminDb().collection("taskComments"),
   clientSettings: () => adminDb().collection("clientSettings"),
+  feedbacks: () => adminDb().collection("feedbacks"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -113,10 +116,10 @@ export async function listClients(opts?: { employeeId?: string }): Promise<Clien
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 }
 
-export async function getClient(id: string): Promise<Client | null> {
+export const getClient = cache(async (id: string): Promise<Client | null> => {
   const doc = await col.clients().doc(id).get();
   return doc.exists ? withId<Client>(doc) : null;
-}
+});
 
 export async function createClient(data: Omit<Client, "id">): Promise<string> {
   const ref = await col.clients().add(data);
@@ -440,6 +443,11 @@ export async function listClientCompetitors(clientId: string): Promise<ClientCom
     .sort((a, b) => (a.company ?? "").localeCompare(b.company ?? ""));
 }
 
+export async function getClientCompetitor(id: string): Promise<ClientCompetitor | null> {
+  const doc = await col.clientCompetitors().doc(id).get();
+  return doc.exists ? withId<ClientCompetitor>(doc) : null;
+}
+
 export async function createClientCompetitor(data: Omit<ClientCompetitor, "id">): Promise<string> {
   const ref = await col.clientCompetitors().add(data);
   return ref.id;
@@ -552,6 +560,14 @@ export async function replaceClientContextDocs(
   await batch.commit();
 }
 
+/** Fetch a single context doc by its Firestore document ID. */
+export async function getClientContextDocById(
+  id: string,
+): Promise<ClientContextDoc | null> {
+  const snap = await col.clientContextDocs().doc(id).get();
+  return snap.exists ? withId<ClientContextDoc>(snap) : null;
+}
+
 /** Update the content of a context doc in-place and increment its version. Invalidates cached summary. */
 export async function updateContextDocContent(
   id: string,
@@ -632,6 +648,25 @@ export async function listClientActivityLogs(clientId: string): Promise<Activity
   return snap.docs
     .map((d) => withId<ActivityLog>(d))
     .sort((a, b) => b.timestamp - a.timestamp);
+}
+
+/* -------------------- agent feedback store -------------------------- */
+
+export async function logFeedback(data: Omit<Feedback, "id">): Promise<string> {
+  const ref = await col.feedbacks().add(data);
+  return ref.id;
+}
+
+/**
+ * List feedback entries, optionally filtered by agent.
+ * Results are sorted newest-first. Pass limit to cap result size (default 200).
+ */
+export async function listFeedbacks(agentId?: string, limit = 200): Promise<Feedback[]> {
+  const q = agentId
+    ? col.feedbacks().where("agentId", "==", agentId).orderBy("createdAt", "desc")
+    : col.feedbacks().orderBy("createdAt", "desc");
+  const snap = await q.limit(limit).get();
+  return snap.docs.map((d) => withId<Feedback>(d));
 }
 
 /* -------------------- client access requests ------------------------ */

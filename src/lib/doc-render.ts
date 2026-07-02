@@ -1,8 +1,4 @@
-/**
- * Client-safe Markdown → styled HTML helpers for rendering client context docs.
- * Mirrors the renderer in context-docs-section.tsx so the read-only document
- * overlay can share the same look without pulling in that component's controls.
- */
+/** Client-safe Markdown → styled HTML helpers for rendering client context docs. */
 
 export interface DocSection {
   heading: string;

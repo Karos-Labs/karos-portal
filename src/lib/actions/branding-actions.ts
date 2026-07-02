@@ -16,7 +16,7 @@ import {
   type BrandingGenResult,
 } from "@/lib/branding";
 import type { BrandingGuidelines } from "@/lib/types";
-import { requireStaff, requireAdmin, logActivity } from "./_shared";
+import { requireStaff, requireAdmin, requireClientAccess, logActivity } from "./_shared";
 
 /** Save or update branding guidelines for a client. Single source of truth:
  *  writes the structured client field AND keeps both context docs in sync so
@@ -26,7 +26,7 @@ export async function saveBrandingGuidelinesAction(
   clientId: string,
   guidelines: Omit<BrandingGuidelines, "updatedAt">,
 ): Promise<void> {
-  const user = await requireStaff();
+  const user = await requireClientAccess(clientId);
 
   const fullGuidelines: BrandingGuidelines = { ...guidelines, updatedAt: Date.now() };
   const now = Date.now();
@@ -72,7 +72,7 @@ export async function saveBrandingGuidelinesAction(
     title: "Brand guidelines updated",
     description: "Colors, fonts and tone keywords manually saved",
     actor: user.name,
-    actorRole: "staff",
+    actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
   });
 
   revalidatePath(`/clients/${clientId}`);

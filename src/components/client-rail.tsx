@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
@@ -11,13 +11,13 @@ import { AccountMenu } from "@/components/account-menu";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { NotificationBell } from "@/components/notification-bell";
 import { ContactUsButton } from "@/components/contact-us-modal";
+import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
   AppUser,
-  BrandColor,
-  BrandingGuidelines,
   Client,
+  ClientCompetitor,
   ClientContextDoc,
   ClientTask,
 } from "@/lib/types";
@@ -27,55 +27,6 @@ interface NavItem {
   label: string;
   icon: string;
   exact?: boolean;
-}
-
-/* ── Brand color swatches ─────────────────────────────────────────────── */
-
-function BrandColorsSection({ guidelines }: { guidelines: BrandingGuidelines | undefined }) {
-  const colors: BrandColor[] = guidelines?.dominantColors?.slice(0, 4) ?? [];
-
-  // Fall back to legacy scalar fields when dominantColors is absent.
-  const effective: { hex: string; role?: string }[] =
-    colors.length > 0
-      ? colors
-      : (
-          [
-            { hex: guidelines?.primaryAccent, role: "Primary" },
-            { hex: guidelines?.secondaryAccent, role: "Secondary" },
-            { hex: guidelines?.brandNeutralDark, role: "Neutral dark" },
-            { hex: guidelines?.brandNeutralLight, role: "Neutral light" },
-          ] as { hex: string | undefined; role: string }[]
-        ).filter((c): c is { hex: string; role: string } => Boolean(c.hex));
-
-  if (effective.length === 0) return null;
-
-  return (
-    <div className="border-t border-border pt-4">
-      <p className="mb-2.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-        Brand Colors
-      </p>
-      <div className="flex items-center gap-2 px-1">
-        {effective.map((color, i) => (
-          <div key={i} className="group relative">
-            <div
-              className="h-7 w-7 rounded-full ring-1 ring-white/10 shadow-sm transition-transform group-hover:scale-110"
-              style={{ backgroundColor: color.hex }}
-              title={color.role ? `${color.role} · ${color.hex}` : color.hex}
-            />
-            {/* Hex tooltip on hover */}
-            <div className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap">
-              <div className="rounded-md border border-border bg-surface-3 px-2 py-1 text-[10px] font-mono text-foreground shadow-lg">
-                {color.hex}
-                {color.role && (
-                  <span className="ml-1 font-sans text-muted-2">· {color.role}</span>
-                )}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function isActive(pathname: string, item: NavItem): boolean {
@@ -88,6 +39,8 @@ export function ClientRail({
   user,
   client,
   contextDocs,
+  competitors,
+  isAdmin,
   actionItems,
   reviewJobs,
   taskAlerts,
@@ -95,12 +48,15 @@ export function ClientRail({
   user: AppUser;
   client: Client;
   contextDocs: ClientContextDoc[];
+  competitors: ClientCompetitor[];
+  isAdmin: boolean;
   actionItems: ActionItemNotification[];
   reviewJobs: AgentReviewNotification[];
   taskAlerts: ClientTask[];
 }) {
   const pathname = usePathname();
   const home = `/clients/${client.id}`;
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
   const primaryNav: NavItem[] = [
     { href: home, label: "Analytics", icon: "BarChart3", exact: true },
@@ -110,17 +66,16 @@ export function ClientRail({
   ];
   const settingsItem: NavItem = { href: `${home}/settings`, label: "Settings", icon: "Settings" };
 
-  // Mobile "Company" sheet (profile + docs + settings/support/theme). Close on navigation.
   const [companyOpen, setCompanyOpen] = useState(false);
-  const [prevPath, setPrevPath] = useState(pathname);
-  if (prevPath !== pathname) {
-    setPrevPath(pathname);
-    if (companyOpen) setCompanyOpen(false);
-  }
+
+  // Close the mobile company sheet on navigation.
+  useEffect(() => {
+    setCompanyOpen(false);
+  }, [pathname]);
 
   return (
     <>
-      {/* ── Desktop left rail (z-30 so its menus/panels sit above the center column) ── */}
+      {/* ── Desktop left rail ── */}
       <aside className="relative z-30 hidden w-72 shrink-0 border-r border-border bg-surface/60 md:block">
         <div className="sticky top-0 flex h-screen flex-col">
           {/* Logo */}
@@ -135,7 +90,7 @@ export function ClientRail({
             </Link>
           </div>
 
-          {/* Scrollable: primary nav + profile + documents */}
+          {/* Scrollable body */}
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
             <nav className="flex flex-col gap-0.5">
               {primaryNav.map((item) => {
@@ -153,7 +108,10 @@ export function ClientRail({
                   >
                     <Icon
                       name={item.icon}
-                      className={cn("h-4 w-4 shrink-0", active ? "text-neon" : "text-muted-2 group-hover:text-foreground")}
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        active ? "text-neon" : "text-muted-2 group-hover:text-foreground",
+                      )}
                     />
                     <span className="flex-1">{item.label}</span>
                   </Link>
@@ -164,13 +122,29 @@ export function ClientRail({
             <div className="border-t border-border pt-4">
               <ClientProfilePanel client={client} />
             </div>
+
             <div className="border-t border-border pt-4">
-              <ClientDocuments contextDocs={contextDocs} />
+              <ClientDocuments
+                contextDocs={contextDocs}
+                isAdmin={isAdmin}
+                clientId={client.id}
+              />
             </div>
-            <BrandColorsSection guidelines={client.brandingGuidelines} />
+
+            <CompetitorTrack
+              competitors={competitors}
+              clientId={client.id}
+              isStaff={isStaff}
+            />
+
+            <BrandColorsSection
+              guidelines={client.brandingGuidelines}
+              clientId={client.id}
+              hasWebsite={!!client.website}
+            />
           </div>
 
-          {/* Bottom: account menu (settings · notifications · theme · support · log out) */}
+          {/* Bottom account menu */}
           <div className="shrink-0 border-t border-border p-3">
             <AccountMenu
               user={user}
@@ -184,16 +158,18 @@ export function ClientRail({
         </div>
       </aside>
 
-      {/* ── Mobile top bar (logo + notifications only) ── */}
+      {/* ── Mobile top bar ── */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
         <Link href={home} className="flex items-center gap-2">
           <Icon name="Sparkles" className="h-5 w-5 text-neon" />
-          <span className="font-semibold">Karos<span className="text-neon">CMO</span></span>
+          <span className="font-semibold">
+            Karos<span className="text-neon">CMO</span>
+          </span>
         </Link>
         <NotificationBell actionItems={actionItems} reviewJobs={reviewJobs} taskAlerts={taskAlerts} />
       </div>
 
-      {/* ── Mobile bottom tab bar (last tab = Company sheet) ── */}
+      {/* ── Mobile bottom tab bar ── */}
       <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-border bg-surface/95 backdrop-blur-sm md:hidden">
         {primaryNav.map((item) => {
           const active = isActive(pathname, item);
@@ -239,10 +215,26 @@ export function ClientRail({
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
             <ClientProfilePanel client={client} />
+
             <div className="border-t border-border pt-4">
-              <ClientDocuments contextDocs={contextDocs} />
+              <ClientDocuments
+                contextDocs={contextDocs}
+                isAdmin={isAdmin}
+                clientId={client.id}
+              />
             </div>
-            <BrandColorsSection guidelines={client.brandingGuidelines} />
+
+            <CompetitorTrack
+              competitors={competitors}
+              clientId={client.id}
+              isStaff={isStaff}
+            />
+
+            <BrandColorsSection
+              guidelines={client.brandingGuidelines}
+              clientId={client.id}
+              hasWebsite={!!client.website}
+            />
 
             <div className="space-y-0.5 border-t border-border pt-4">
               <Link

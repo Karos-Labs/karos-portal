@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listClients, listLoginLogs } from "@/lib/data";
+import { listClients, listLoginLogs, listFeedbacks } from "@/lib/data";
 import {
   getGlobalSnapshot,
   getClientSnapshot,
@@ -17,7 +17,7 @@ import {
 } from "@/lib/data-analytics";
 import { Card, CardTitle, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { AnalyticsFilters } from "@/components/analytics-dashboard";
+import { AnalyticsFilters, FeedbackTable } from "@/components/analytics-dashboard";
 import { relativeTime } from "@/lib/utils";
 
 export default async function AnalyticsPage({
@@ -44,11 +44,12 @@ export default async function AnalyticsPage({
   let agentStats: AgentStat[] = [];
 
   if (range) {
-    const [rs, errs, clients, loginLogs] = await Promise.all([
+    const [rs, errs, clients, loginLogs, feedbacks] = await Promise.all([
       getRangeStats({ since, clientId }),
       listRecentErrors({ clientId, since, limit: 20 }),
       listClients(),
       clientId ? Promise.resolve([]) : listLoginLogs({ since, limit: 500 }),
+      listFeedbacks(),
     ]);
 
     totalCostUsd      = rs.totalCostUsd;
@@ -65,11 +66,12 @@ export default async function AnalyticsPage({
       modelStats, agentStats,
       errors: errs,
       loginCount: loginLogs.length,
+      feedbacks,
     });
   }
 
   // All-time: use O(1) snapshot + recent logs for leaderboard
-  const [snapshot, errors, usageLogs, clients, loginLogs] = await Promise.all([
+  const [snapshot, errors, usageLogs, clients, loginLogs, feedbacks] = await Promise.all([
     clientId ? getClientSnapshot(clientId) : getGlobalSnapshot(),
     listRecentErrors({ clientId, limit: 20 }),
     // For leaderboard in all-time mode we still need recent usage logs
@@ -78,6 +80,7 @@ export default async function AnalyticsPage({
     ),
     listClients(),
     clientId ? Promise.resolve([]) : listLoginLogs({ limit: 500 }),
+    listFeedbacks(),
   ]);
 
   totalCostUsd      = snapshot.totalCostUsd;
@@ -103,6 +106,7 @@ export default async function AnalyticsPage({
     modelStats, agentStats,
     errors,
     loginCount: loginLogs.length,
+    feedbacks,
   });
 }
 
@@ -122,12 +126,17 @@ function renderPage(p: {
   agentStats: AgentStat[];
   errors: Awaited<ReturnType<typeof listRecentErrors>>;
   loginCount: number;
+  feedbacks: Awaited<ReturnType<typeof listFeedbacks>>;
 }) {
   const {
     rangeLabel, range, clientId, clients,
     totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
-    modelStats, agentStats, errors, loginCount,
+    modelStats, agentStats, errors, loginCount, feedbacks,
   } = p;
+
+  const displayFeedbacks = clientId
+    ? feedbacks.filter((f) => f.clientId === clientId)
+    : feedbacks;
 
   const errorRate =
     totalRuns > 0
@@ -286,6 +295,11 @@ function renderPage(p: {
           )}
         </Card>
       </div>
+
+      {/* Agent feedback */}
+      <Card>
+        <FeedbackTable feedbacks={displayFeedbacks} clients={clients} />
+      </Card>
 
       {/* Error log feed */}
       <Card>

@@ -7,8 +7,7 @@ import { AgentCard, DraftAgentCard } from "@/components/agent-card";
 import { SeedAgentsButton } from "@/components/seed-agents";
 import { ImportLabsSkillsButton } from "@/components/import-labs-skills";
 import { IntelAgentSection } from "@/components/intel-agent-section";
-import { INTEL_AGENT_ID } from "@/lib/intel-report";
-import { RESEARCH_ENGINE_RULES, METRICS_RULES } from "@/lib/onboard-templates";
+import { INTEL_AGENT_ID, RESEARCH_ENGINE_RULES, METRICS_RULES } from "@/lib/intel";
 
 export default async function AgentsPage() {
   const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);

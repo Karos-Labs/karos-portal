@@ -4,13 +4,10 @@ import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
 import { getClient, getSystemAgent, replaceClientContextDocs, listClientCompetitors, listTranscripts } from "@/lib/data";
-import { INTEL_AGENT_ID } from "@/lib/intel-report";
-import {
-  RESEARCH_ENGINE_RULES,
-  METRICS_RULES,
-  TEMPLATES,
-} from "@/lib/onboard-templates";
-import { condenseDocs } from "@/lib/condense-pipeline";
+import { INTEL_AGENT_ID } from "./report";
+import { RESEARCH_ENGINE_RULES, METRICS_RULES } from "./brain";
+import { TEMPLATES } from "./templates";
+import { condenseDocs } from "./condense";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble } from "@/lib/text-utils";
 
@@ -62,11 +59,53 @@ function clientContext(client: Client): string {
   return parts.filter(Boolean).join("\n");
 }
 
-function coreRules(additionalInstructions: string): string {
+/**
+ * Builds the rules string injected into every research and document-generation agent.
+ * Applies the same 3-layer composition used in the main Intel prompt:
+ *   Layer A: Core operational rules (RESEARCH_ENGINE_RULES + METRICS_RULES)
+ *   Layer B: Global admin configurations fetched from the DB agent record
+ *   Layer C: Run-specific directives entered via the Regenerate modal (highest priority)
+ *
+ * Default: satisfy all layers simultaneously.
+ * Conflict resolution (only when mutually exclusive): C > B > A.
+ */
+function coreRules(additionalInstructions: string, runSpecificContext = ""): string {
+  const hasB = additionalInstructions.trim().length > 0;
+  const hasC = runSpecificContext.trim().length > 0;
+
   const parts = [RESEARCH_ENGINE_RULES, "", METRICS_RULES];
-  if (additionalInstructions.trim()) {
-    parts.push("", "## ADDITIONAL RESEARCH INSTRUCTIONS (from agent config)", additionalInstructions.trim());
+
+  if (hasB || hasC) {
+    parts.push(
+      "",
+      "## ◈ INSTRUCTION LAYER ARCHITECTURE",
+      "Merge and satisfy ALL instruction layers simultaneously. Invoke the conflict-resolution priority below ONLY when instructions are mutually exclusive:",
+      "  Priority 1 (Highest) — Layer C: Run-Specific Directives (this run only)",
+      "  Priority 2           — Layer B: Global Admin Configurations (all runs)",
+      "  Priority 3 (Lowest)  — Layer A: Core System Architecture (above)",
+    );
   }
+
+  if (hasB) {
+    parts.push(
+      "",
+      "## ◈ LAYER B — GLOBAL ADMIN CONFIGURATIONS",
+      "*(Standing instructions set by the agency administrator — apply unless Layer C supersedes on a specific point)*",
+      "",
+      additionalInstructions.trim(),
+    );
+  }
+
+  if (hasC) {
+    parts.push(
+      "",
+      "## ◈ LAYER C — RUN-SPECIFIC DIRECTIVES ⟨ PRIORITY 1 / HIGHEST ⟩",
+      "*(Temporary — applies to this single run only. Does not modify global settings. Expires after this run.)*",
+      "",
+      runSpecificContext.trim(),
+    );
+  }
+
   return parts.join("\n");
 }
 
@@ -392,8 +431,13 @@ INSTRUCTIONS:
 
 /**
  * Apply verified client corrections to an existing context document.
- * Used by the "Fix with Review" feature — does NOT re-run research.
- * Exported so the server action can call it.
+ * Used by targeted single-doc correction and global "Fix with Review".
+ * Does NOT re-run research.
+ *
+ * Guardrails built into the prompt + validated after generation:
+ *  - Section count must be preserved (same number of ## headings)
+ *  - Output length must stay within 85–115% of input length
+ * If either check fails, the caller receives the ORIGINAL content unchanged.
  */
 export async function applyDocCorrections(
   client: Client,
@@ -401,19 +445,32 @@ export async function applyDocCorrections(
   currentContent: string,
   corrections: string,
 ): Promise<string> {
-  const systemPrompt = `You are applying verified client corrections to a strategy document.
+  const inputCharCount = currentContent.length;
+  const inputSectionCount = (currentContent.match(/^## /gm) ?? []).length;
+
+  const systemPrompt = `You are a SURGICAL DOCUMENT EDITOR. Your only job is to apply a small, precise set of client corrections to an existing strategy document.
 
 ## VERIFIED CLIENT CORRECTIONS — ABSOLUTE GROUND TRUTH
-The following facts were confirmed directly by the client or their team. They override ALL other information — training data, research, prior document versions, and any other source. Apply them exactly as written.
+The client confirmed these facts directly. They override all other information.
 
 ${corrections.trim()}
 
-## RULES
-- Apply ONLY the corrections above. Do not modify anything else.
-- Find EVERY occurrence of the corrected facts in the document and update all instances for consistency.
-- Do not re-research, invent new content, expand sections, or change anything the client did not flag.
-- Preserve all existing markdown formatting, section headings, and structure exactly.
-- Return the complete corrected document in the same format as the input — no preamble, no explanation.`;
+## SURGICAL EDIT RULES (NON-NEGOTIABLE)
+
+**ONLY change what is explicitly stated above.** Every other word, sentence, heading, table, bullet, and formatting character must remain byte-for-byte identical to the input.
+
+- Find EVERY occurrence of the corrected facts and update them all for internal consistency.
+- Do NOT add new content, expand any section, rewrite any sentence that wasn't explicitly corrected, or improve phrasing.
+- Do NOT remove any content, truncate any section, or drop any heading.
+- Preserve ALL markdown: every \`##\` heading, every table, every bullet, every \`---\` divider, all YAML frontmatter.
+- The output must be the COMPLETE document — not a diff, not a summary, not a partial excerpt.
+
+## STRUCTURAL INTEGRITY CHECK
+- This document has ${inputSectionCount} section headings (lines starting with \`## \`). Your output MUST contain exactly ${inputSectionCount} such headings.
+- The input is ${inputCharCount} characters. Your output should be approximately ${inputCharCount} characters — within ±15% (${Math.round(inputCharCount * 0.85)}–${Math.round(inputCharCount * 1.15)} chars). A dramatically shorter output means you truncated the document, which is a critical failure.
+
+## OUTPUT FORMAT
+Return ONLY the corrected document. Start immediately with the first character of the document (the opening \`---\` of the YAML frontmatter, if present). No preamble, no explanation, no "Here is the corrected document:" prefix.`;
 
   const { text } = await generateText({
     model: anthropic(MODELS.SONNET),
@@ -426,7 +483,53 @@ ${corrections.trim()}
     ],
     maxOutputTokens: DOC_MAX_TOKENS,
   });
-  return text.trim();
+
+  const result = text.trim();
+
+  // Structural validation — if the LLM truncated or hallucinated sections, return original.
+  const outputSectionCount = (result.match(/^## /gm) ?? []).length;
+  const lengthRatio = result.length / inputCharCount;
+
+  if (
+    (inputSectionCount > 0 && outputSectionCount !== inputSectionCount) ||
+    lengthRatio < 0.75 ||
+    lengthRatio > 1.4
+  ) {
+    // Correction failed structural checks — attempt a continuation pass before giving up.
+    if (result.length < inputCharCount * 0.75) {
+      const { text: cont } = await generateText({
+        model: anthropic(MODELS.SONNET),
+        system: systemPrompt,
+        messages: [
+          {
+            role: "user",
+            content: `Apply the verified corrections to this ${docType} document for ${client.name}. Return the complete corrected document:\n\n${currentContent}`,
+          },
+          { role: "assistant", content: result },
+          {
+            role: "user",
+            content:
+              "Your output was truncated — the document is incomplete. Continue from exactly where you left off and complete the remaining sections. Do NOT repeat any content already written:",
+          },
+        ],
+        maxOutputTokens: DOC_MAX_TOKENS,
+      });
+      const recovered = (result + cont).trim();
+      const recoveredSections = (recovered.match(/^## /gm) ?? []).length;
+      const recoveredRatio = recovered.length / inputCharCount;
+      if (
+        (inputSectionCount === 0 || recoveredSections === inputSectionCount) &&
+        recoveredRatio >= 0.75 &&
+        recoveredRatio <= 1.4
+      ) {
+        return stripPreamble(recovered);
+      }
+    }
+    // All recovery attempts failed — return unchanged to avoid data loss.
+    return currentContent;
+  }
+
+  return stripPreamble(result);
 }
 
 function buildResearchBlock(docType: ContextDocType, research: Research): string {
@@ -470,7 +573,7 @@ function buildResearchBlock(docType: ContextDocType, research: Research): string
  * 3. condense-pipeline generates client-tier (50% condensed) versions of the 5 public docs
  * 4. All docs atomically replace existing clientContextDocs for this client
  */
-export async function runOnboardPipeline(clientId: string): Promise<void> {
+export async function runOnboardPipeline(clientId: string, runSpecificContext = ""): Promise<void> {
   const [client, agent, existingCompetitors, existingTranscripts] = await Promise.all([
     getClient(clientId),
     getSystemAgent(INTEL_AGENT_ID),
@@ -482,7 +585,7 @@ export async function runOnboardPipeline(clientId: string): Promise<void> {
   // Load additional instructions from agent config (non-fatal if missing)
   const isLegacyPrompt = agent?.systemPrompt?.startsWith("You are the Karos Intel AI");
   const additionalInstructions = (!isLegacyPrompt && agent?.systemPrompt) ? agent.systemPrompt : "";
-  const rules = coreRules(additionalInstructions);
+  const rules = coreRules(additionalInstructions, runSpecificContext);
 
   // Build meeting signals from stored transcripts for this client
   const meetingSignals = buildMeetingSignals(existingTranscripts);

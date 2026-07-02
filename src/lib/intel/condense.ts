@@ -3,7 +3,7 @@ import "server-only";
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
-import { CONDENSATION_RULES } from "@/lib/onboard-templates";
+import { CONDENSATION_RULES } from "./brain";
 import { MODELS, CONDENSE_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble } from "@/lib/text-utils";
 
