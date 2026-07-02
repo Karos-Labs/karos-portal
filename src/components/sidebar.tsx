@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase/client";
 import { Icon } from "@/components/icon";
 import { cn, initials } from "@/lib/utils";
-import { startImpersonationAction } from "@/lib/actions";
+import { useActiveClient } from "@/lib/active-client-context";
+import { ClientDocuments } from "@/components/client-documents";
+import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import type { AppUser, Client, Role } from "@/lib/types";
 
 interface NavItem {
@@ -15,7 +17,6 @@ interface NavItem {
   label: string;
   icon: string;
   roles: Role[];
-  /** When true, only highlight on an exact pathname match (not sub-routes). */
   exact?: boolean;
 }
 
@@ -33,108 +34,143 @@ const NAV: NavItem[] = [
   { href: "/admin/analytics", label: "Analytics", icon: "TrendingUp", roles: ["KAROS_ADMIN"] },
 ];
 
+// The 4 client-facing tabs shown to staff when in Client View mode
+function clientViewNav(clientId: string): NavItem[] {
+  return [
+    { href: `/clients/${clientId}`, label: "Analytics", icon: "BarChart3", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"], exact: true },
+    { href: `/clients/${clientId}/agents`, label: "AI Agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
+    { href: "/assets", label: "Library", icon: "Library", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
+    { href: "/tasks", label: "Progress", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
+  ];
+}
+
 const ROLE_LABEL: Record<Role, string> = {
   KAROS_ADMIN: "Admin",
   KAROS_EMPLOYEE: "Employee",
   CLIENT_USER: "Client",
 };
 
-function ImpersonatePicker({
-  clients,
-  clientUsers,
-}: {
-  clients: Client[];
-  clientUsers: AppUser[];
-}) {
+/* ── View-as-Client picker ───────────────────────────────────────────── */
+
+function ClientContextPicker({ clients }: { clients: Client[] }) {
+  const router = useRouter();
+  const { activeClient, setActiveClient } = useActiveClient();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [pending, startTransition] = useTransition();
-
-  function impersonate(uid: string) {
-    setOpen(false);
-    startTransition(async () => {
-      await startImpersonationAction(uid);
-    });
-  }
-
-  const grouped = clients
-    .map((c) => ({
-      client: c,
-      users: clientUsers.filter((u) => u.clientId === c.id),
-    }))
-    .filter((g) => g.users.length > 0);
 
   const filtered = query.trim()
-    ? grouped
-        .map((g) => ({
-          ...g,
-          users: g.users.filter(
-            (u) =>
-              u.name.toLowerCase().includes(query.toLowerCase()) ||
-              u.email.toLowerCase().includes(query.toLowerCase()),
-          ),
-        }))
-        .filter((g) => g.users.length > 0)
-    : grouped;
+    ? clients.filter((c) => c.name.toLowerCase().includes(query.toLowerCase()))
+    : clients;
+
+  function selectClient(client: Client) {
+    setOpen(false);
+    setQuery("");
+    // Optimistically switch the nav immediately; ClientContextSync fills in docs/competitors on load
+    setActiveClient({ client, contextDocs: [], competitors: [], isAdmin: true });
+    router.push(`/clients/${client.id}`);
+  }
+
+  function clearClient(e: React.MouseEvent) {
+    e.stopPropagation();
+    setActiveClient(null);
+    setOpen(false);
+    // Navigate away so ClientContextSync unmounts and cannot re-set the context on refresh
+    router.push("/clients");
+  }
 
   return (
     <div className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        disabled={pending}
         className={cn(
-          "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors disabled:opacity-50",
+          "flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-colors",
           open
             ? "bg-surface-2 text-foreground"
             : "text-muted hover:bg-surface-2 hover:text-foreground",
         )}
       >
         <Icon name="Eye" className="h-4 w-4 shrink-0 text-muted-2" />
-        <span className="flex-1 text-left">{pending ? "Loading..." : "View as client"}</span>
-        <Icon
-          name="ChevronDown"
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform",
-            open && "rotate-180",
-          )}
-        />
+        <span className="min-w-0 flex-1 truncate text-left">
+          {activeClient ? activeClient.client.name : "View as client"}
+        </span>
+        {activeClient ? (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={clearClient}
+            onKeyDown={(e) => e.key === "Enter" && clearClient(e as never)}
+            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-2 transition-colors hover:text-foreground"
+            aria-label="Clear client context"
+          >
+            <Icon name="X" className="h-3 w-3" />
+          </span>
+        ) : (
+          <Icon
+            name="ChevronDown"
+            className={cn(
+              "h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform",
+              open && "rotate-180",
+            )}
+          />
+        )}
       </button>
 
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 z-50 mb-1.5 w-72 overflow-hidden rounded-md border border-border bg-surface shadow-xl">
+          <div className="absolute bottom-full left-0 z-50 mb-1.5 w-72 overflow-hidden rounded-[12px] border border-border bg-surface shadow-xl">
             <div className="border-b border-border p-2">
               <input
                 type="text"
-                placeholder="Search users..."
+                placeholder="Search clients…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-full rounded-md bg-surface-2 px-3 py-1.5 text-xs outline-none placeholder:text-muted-2"
+                className="w-full rounded-[8px] bg-surface-2 px-3 py-1.5 text-xs outline-none placeholder:text-muted-2"
                 autoFocus
               />
             </div>
             <div className="max-h-64 overflow-y-auto p-1">
               {filtered.length === 0 ? (
-                <p className="px-3 py-4 text-center text-xs text-muted-2">No client users found</p>
+                <p className="px-3 py-4 text-center text-xs text-muted-2">No clients found</p>
               ) : (
-                filtered.map(({ client, users }) => (
-                  <div key={client.id}>
-                    <p className="px-3 py-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
-                      {client.name}
-                    </p>
-                    {users.map((u) => (
-                      <button
-                        key={u.uid}
-                        onClick={() => impersonate(u.uid)}
-                        className="flex w-full flex-col rounded-md px-3 py-2 text-left hover:bg-surface-2"
+                filtered.map((client) => {
+                  const isActive = activeClient?.client.id === client.id;
+                  const logoUrl = client.logoUrl || client.brandingGuidelines?.logoUrl;
+                  const accentColor = client.accentColor ?? "#2dff9e";
+                  return (
+                    <button
+                      key={client.id}
+                      onClick={() => selectClient(client)}
+                      className={cn(
+                        "flex w-full items-center gap-2.5 rounded-[8px] px-3 py-2 text-left transition-colors",
+                        isActive ? "bg-neon-soft" : "hover:bg-surface-2",
+                      )}
+                    >
+                      {logoUrl ? (
+                        <img
+                          src={logoUrl}
+                          alt=""
+                          className="h-6 w-6 shrink-0 rounded-[5px] border border-border bg-surface-2 object-contain"
+                        />
+                      ) : (
+                        <div
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-semibold"
+                          style={{ background: accentColor + "1f", color: accentColor }}
+                        >
+                          {initials(client.name)}
+                        </div>
+                      )}
+                      <span
+                        className={cn(
+                          "text-sm font-medium",
+                          isActive ? "text-neon" : "text-foreground",
+                        )}
                       >
-                        <span className="text-sm font-medium text-foreground">{u.name}</span>
-                        <span className="text-[11px] text-muted-2">{u.email}</span>
-                      </button>
-                    ))}
-                  </div>
-                ))
+                        {client.name}
+                      </span>
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>
@@ -144,13 +180,9 @@ function ImpersonatePicker({
   );
 }
 
-function UserMenu({
-  user,
-  realAdmin,
-}: {
-  user: AppUser;
-  realAdmin?: AppUser;
-}) {
+/* ── User menu ───────────────────────────────────────────────────────── */
+
+function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -172,7 +204,7 @@ function UserMenu({
       <button
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors",
+          "flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left transition-colors",
           open ? "bg-surface-2" : "hover:bg-surface-2",
         )}
       >
@@ -205,12 +237,12 @@ function UserMenu({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 overflow-hidden rounded-md border border-border bg-surface shadow-xl">
+          <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 overflow-hidden rounded-[12px] border border-border bg-surface shadow-xl">
             <div className="p-1">
               <Link
                 href="/settings"
                 onClick={() => setOpen(false)}
-                className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                className="flex items-center gap-3 rounded-[8px] px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
               >
                 <Icon name="Settings" className="h-4 w-4" />
                 Settings
@@ -219,7 +251,7 @@ function UserMenu({
               <button
                 onClick={handleLogout}
                 disabled={loggingOut}
-                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-danger disabled:opacity-50"
+                className="flex w-full items-center gap-3 rounded-[8px] px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-danger disabled:opacity-50"
               >
                 <Icon name="LogOut" className="h-4 w-4" />
                 {loggingOut ? "Signing out…" : "Sign out"}
@@ -232,27 +264,29 @@ function UserMenu({
   );
 }
 
+/* ── Sidebar ─────────────────────────────────────────────────────────── */
+
 export function Sidebar({
   user,
   pendingCount = 0,
   realAdmin,
-  clientUsers = [],
   clients = [],
 }: {
   user: AppUser;
   pendingCount?: number;
   realAdmin?: AppUser;
-  clientUsers?: AppUser[];
   clients?: Client[];
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const { activeClient } = useActiveClient();
 
-  const clientHomePath = user.role === "CLIENT_USER" && user.clientId ? `/clients/${user.clientId}` : null;
+  const clientHomePath =
+    user.role === "CLIENT_USER" && user.clientId ? `/clients/${user.clientId}` : null;
 
-  // Staff use the full workspace NAV. (Client users get the dedicated ClientRail,
-  // not this sidebar — this branch only runs as a fallback.)
-  const items: NavItem[] = NAV.filter((n) => {
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+
+  const adminItems: NavItem[] = NAV.filter((n) => {
     if (n.roles.includes(user.role)) return true;
     if (n.href === "/team" && user.role === "CLIENT_USER" && user.isGroupAdmin) return true;
     return false;
@@ -261,8 +295,12 @@ export function Sidebar({
     return n;
   });
 
+  // In Client View mode show the 4 client-facing tabs; otherwise show the full admin nav.
+  // Using (isStaff && activeClient) so TS narrows activeClient to non-null in the truthy branch.
+  const items: NavItem[] = (isStaff && activeClient) ? clientViewNav(activeClient.client.id) : adminItems;
+
   const nav = (
-    <nav className="flex flex-1 flex-col gap-1">
+    <nav className="flex flex-col gap-1">
       {items.map((item) => {
         const active = item.exact
           ? pathname === item.href
@@ -274,7 +312,7 @@ export function Sidebar({
             href={item.href}
             onClick={() => setOpen(false)}
             className={cn(
-              "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-all duration-150 active:scale-[0.97]",
+              "group flex items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-all duration-150 active:scale-[0.97]",
               active
                 ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]"
                 : "text-muted hover:bg-surface-2 hover:text-foreground",
@@ -282,11 +320,14 @@ export function Sidebar({
           >
             <Icon
               name={item.icon}
-              className={cn("h-4 w-4", active ? "text-neon" : "text-muted-2 group-hover:text-foreground")}
+              className={cn(
+                "h-4 w-4",
+                active ? "text-neon" : "text-muted-2 group-hover:text-foreground",
+              )}
             />
             <span className="flex-1">{item.label}</span>
             {badge !== null && (
-              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-neon px-1.5 text-[11px] font-semibold text-[#141414]">
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-neon px-1.5 text-[11px] font-semibold text-[#03110b]">
                 {badge}
               </span>
             )}
@@ -296,27 +337,93 @@ export function Sidebar({
     </nav>
   );
 
-  const content = (
-    <div className="flex h-full flex-col gap-4 p-4">
-      <Link href="/dashboard" className="flex items-center gap-2.5 px-2 py-1">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/brand/kairos-head-disc-dark.svg"
-          alt=""
-          className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+  // Client-context sections appended below core nav when a client is active
+  const clientSections = activeClient ? (
+    <div className="mt-2 space-y-4">
+      {/* Client header */}
+      <div className="border-t border-border pt-4">
+        <div className="mb-1 flex items-center gap-2 px-1">
+          {activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl ? (
+            <img
+              src={(activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl)!}
+              alt=""
+              className="h-6 w-6 shrink-0 rounded-[5px] border border-border bg-surface-2 object-contain"
+            />
+          ) : (
+            <div
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-semibold"
+              style={{
+                background: (activeClient.client.accentColor ?? "#2dff9e") + "1f",
+                color: activeClient.client.accentColor ?? "#2dff9e",
+              }}
+            >
+              {initials(activeClient.client.name)}
+            </div>
+          )}
+          <span className="flex-1 truncate text-sm font-semibold text-foreground">
+            {activeClient.client.name}
+          </span>
+          <Link
+            href={`/clients/${activeClient.client.id}`}
+            onClick={() => setOpen(false)}
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
+            title="Go to client dashboard"
+          >
+            <Icon name="ArrowUpRight" className="h-3 w-3" />
+          </Link>
+        </div>
+      </div>
+
+      <div className="border-t border-border pt-4">
+        <ClientDocuments
+          contextDocs={activeClient.contextDocs}
+          isAdmin={activeClient.isAdmin}
+          clientId={activeClient.client.id}
         />
-        <span className="font-serif text-xl font-normal leading-none text-foreground">
-          Karos Labs
-        </span>
-      </Link>
+      </div>
 
-      {nav}
+      <CompetitorTrack
+        competitors={activeClient.competitors}
+        clientId={activeClient.client.id}
+        isStaff={true}
+      />
 
-      <div className="mt-auto space-y-2 border-t border-border pt-3">
+      <BrandColorsSection
+        guidelines={activeClient.client.brandingGuidelines}
+        clientId={activeClient.client.id}
+        hasWebsite={!!activeClient.client.website}
+      />
+    </div>
+  ) : null;
+
+  const content = (
+    <div className="flex h-full flex-col">
+      {/* Logo — fixed top */}
+      <div className="shrink-0 px-4 pb-2 pt-4">
+        <Link href="/dashboard" className="flex items-center gap-2.5 px-2 py-1">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+          />
+          <span className="font-serif text-xl font-normal leading-none text-foreground">
+            Karos Labs
+          </span>
+        </Link>
+      </div>
+
+      {/* Scrollable body: core nav + optional client sections */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
+        {nav}
+        {clientSections}
+      </div>
+
+      {/* Bottom — fixed */}
+      <div className="shrink-0 space-y-2 border-t border-border px-4 py-3">
         {user.role === "KAROS_ADMIN" && (
-          <ImpersonatePicker clients={clients} clientUsers={clientUsers} />
+          <ClientContextPicker clients={clients} />
         )}
-
         <UserMenu user={user} realAdmin={realAdmin} />
       </div>
     </div>
@@ -333,7 +440,7 @@ export function Sidebar({
             alt=""
             className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
           />
-          <span className="font-serif text-lg font-normal leading-none text-foreground">Karos Labs</span>
+          <span className="font-serif text-xl font-normal leading-none text-foreground">Karos Labs</span>
         </Link>
         <button
           onClick={() => setOpen((o) => !o)}
@@ -348,8 +455,13 @@ export function Sidebar({
       {/* Mobile drawer */}
       {open && (
         <div className="fixed inset-0 z-40 md:hidden">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-0 h-full w-64 overflow-y-auto border-r border-border bg-surface">{content}</div>
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute left-0 top-0 h-full w-64 overflow-y-auto border-r border-border bg-surface">
+            {content}
+          </div>
         </div>
       )}
 
