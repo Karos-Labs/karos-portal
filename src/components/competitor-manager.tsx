@@ -158,7 +158,7 @@ function CompetitorRow({
       className={cn(
         "group border-b border-border transition-colors hover:bg-surface-2/40",
         deleting && "pointer-events-none opacity-40",
-        !hasProfile && "bg-surface-2/20",
+        !hasProfile && "opacity-70",
       )}
     >
       {/* Competitor name */}

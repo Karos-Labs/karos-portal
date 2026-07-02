@@ -81,9 +81,9 @@ function renderSectionBody(md: string): string {
     let tbody = "";
     if (sepIdx > 0) {
       thead = `<thead class="bg-surface-3">${rawLines.slice(0, sepIdx).map((r) => `<tr>${parseCells(r, "th")}</tr>`).join("")}</thead>`;
-      tbody = `<tbody>${rawLines.slice(sepIdx + 1).map((r) => `<tr class="hover:bg-surface-2/50">${parseCells(r, "td")}</tr>`).join("")}</tbody>`;
+      tbody = `<tbody>${rawLines.slice(sepIdx + 1).map((r) => `<tr class="hover:bg-surface-2">${parseCells(r, "td")}</tr>`).join("")}</tbody>`;
     } else {
-      tbody = `<tbody>${rawLines.filter((r) => !/^\|[-:\s|]+\|$/.test(r)).map((r) => `<tr class="hover:bg-surface-2/50">${parseCells(r, "td")}</tr>`).join("")}</tbody>`;
+      tbody = `<tbody>${rawLines.filter((r) => !/^\|[-:\s|]+\|$/.test(r)).map((r) => `<tr class="hover:bg-surface-2">${parseCells(r, "td")}</tr>`).join("")}</tbody>`;
     }
     return `<div class="overflow-x-auto my-3 rounded-md border border-border"><table class="w-full border-collapse">${thead}${tbody}</table></div>\n`;
   });
@@ -401,7 +401,7 @@ function DocViewer({
           )}
 
           {summaryStatus === "done" && summaryBullets.length > 0 && (
-            <div className="rounded-md border border-border bg-surface-2/60 p-5">
+            <div className="rounded-md border border-border bg-surface-2 p-5">
               <div className="mb-4 flex items-center gap-2">
                 <Icon name="Sparkles" className="h-4 w-4 text-foreground/70" />
                 <p className="text-xs font-mono font-medium uppercase tracking-[0.14em] text-foreground">
@@ -466,7 +466,7 @@ function DocViewer({
                       onClick={() => toggle(i)}
                       className={cn(
                         "flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors",
-                        isOpen ? "bg-surface-2" : "hover:bg-surface-2/60",
+                        isOpen ? "bg-surface-2" : "hover:bg-surface-2",
                       )}
                       aria-expanded={isOpen}
                     >

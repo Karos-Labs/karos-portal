@@ -222,7 +222,7 @@ function ModeSelector({
             <Icon name={mode.agent.icon} className="h-3 w-3" />
           </span>
         ) : (
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border border-foreground/10 bg-foreground/[0.05]">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border border-foreground/10 bg-foreground/[0.04]">
             <Icon name="Bot" className="h-3 w-3 text-foreground/70" />
           </span>
         )}
@@ -246,7 +246,7 @@ function ModeSelector({
             )}
             onClick={() => { onChange({ type: "general" }); setOpen(false); }}
           >
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border border-foreground/10 bg-foreground/[0.05]">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border border-foreground/10 bg-foreground/[0.04]">
               <Icon name="Bot" className="h-3 w-3 text-foreground/70" />
             </span>
             <span className="flex-1">General Client Assistant</span>
@@ -333,7 +333,7 @@ function ProactiveWelcome({
     <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
       {/* Greeting */}
       <div className="flex items-start gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.05] text-foreground/70">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
           <Icon name="Sparkles" className="h-4 w-4" />
         </div>
         <div className="rounded-md border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
@@ -618,18 +618,18 @@ export function ChatbotWidget({
       {panelOpen && (
         <div
           className={cn(
-            "flex flex-col overflow-hidden bg-surface",
+            "flex flex-col overflow-hidden",
             docked
-              ? "h-full w-full"
+              ? "h-full w-full bg-background"
               : cn(
-                  "fixed z-[9998] h-[600px] max-h-[calc(100vh-6rem)] w-[380px] max-w-[calc(100vw-2rem)] rounded-lg border border-border shadow-2xl",
+                  "fixed z-[9998] h-[600px] max-h-[calc(100vh-6rem)] w-[380px] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-surface shadow-2xl",
                   floatingPosition,
                 ),
           )}
         >
 
-          {/* Header — single title; the identity icon lives in the mode selector below */}
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface-2 px-4 py-3">
+          {/* Header — single title; hairline divider, no fill (surface ladder) */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
             <div className="min-w-0">
               <p className="font-serif text-base leading-none">AI Copilot</p>
               <p className="mt-1 truncate font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-muted-2">

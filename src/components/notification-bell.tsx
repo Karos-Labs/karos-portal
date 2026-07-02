@@ -168,7 +168,7 @@ export function NotificationBell({
                   {/* ── Pending tasks ── */}
                   {pendingTasks.length > 0 && (
                     <>
-                      <div className="bg-surface-2/60 px-4 py-1.5">
+                      <div className="bg-surface-2 px-4 py-1.5">
                         <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">
                           Pending tasks ({pendingTasks.length})
                         </p>
@@ -183,7 +183,7 @@ export function NotificationBell({
                   {visibleJobs.map((j) => (
                     <div
                       key={j.jobId}
-                      className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2/50"
+                      className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
                     >
                       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
                         <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
@@ -219,7 +219,7 @@ export function NotificationBell({
                   {visibleActions.map((n) => (
                     <div
                       key={`${n.transcriptId}-${n.itemIndex}`}
-                      className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2/50"
+                      className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
                     >
                       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success/10">
                         <Icon name="CheckSquare" className="h-3.5 w-3.5 text-success" />
@@ -291,7 +291,7 @@ function TaskAlertRow({ task, onClose }: { task: ClientTask; onClose: () => void
     <Link
       href="/tasks"
       onClick={onClose}
-      className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2/50"
+      className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
     >
       <div
         className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"

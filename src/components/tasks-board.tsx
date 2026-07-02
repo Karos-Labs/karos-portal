@@ -314,7 +314,7 @@ function KanbanColumn({
       <div
         className={cn(
           "flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors",
-          isTarget && "bg-foreground/[0.03]",
+          isTarget && "bg-foreground/[0.04]",
         )}
       >
         <Icon
@@ -337,7 +337,7 @@ function KanbanColumn({
       <div
         className={cn(
           "flex flex-col gap-2 min-h-[80px] rounded-md transition-all duration-150",
-          isTarget && "bg-foreground/[0.03] ring-2 ring-foreground/20 p-2",
+          isTarget && "bg-foreground/[0.04] ring-2 ring-foreground/20 p-2",
         )}
       >
         {tasks.length === 0 ? (

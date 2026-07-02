@@ -177,7 +177,7 @@ function QuickInsights({
     (() => {
       const v = extractTopChannel(report);
       return v
-        ? { icon: "TrendingUp", label: "Top Channel", value: v, iconClass: "text-foreground/70", bgClass: "bg-foreground/[0.05]" }
+        ? { icon: "TrendingUp", label: "Top Channel", value: v, iconClass: "text-foreground/70", bgClass: "bg-foreground/[0.04]" }
         : null;
     })(),
     (() => {
@@ -189,7 +189,7 @@ function QuickInsights({
     (() => {
       const v = extractOpportunity(report);
       return v
-        ? { icon: "Target", label: "Market Opportunity", value: v, iconClass: "text-foreground/70", bgClass: "bg-foreground/[0.05]" }
+        ? { icon: "Target", label: "Market Opportunity", value: v, iconClass: "text-foreground/70", bgClass: "bg-foreground/[0.04]" }
         : null;
     })(),
   ];

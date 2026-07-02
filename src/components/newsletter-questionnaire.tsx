@@ -449,7 +449,7 @@ export function NewsletterQuestionnaire({
       </Section>
 
       {/* sticky save bar */}
-      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80">
+      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-6 py-3">
           <div className="min-w-0 text-xs text-muted-2">
             {error ? (

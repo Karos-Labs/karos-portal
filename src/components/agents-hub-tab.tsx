@@ -78,7 +78,7 @@ function PublicationHistoryModal({
                   <span className="opacity-40">·</span>
                   <Link
                     href={`/jobs/${job.id}`}
-                    className="hover:text-neon hover:underline underline-offset-2"
+                    className="hover:text-foreground hover:underline underline-offset-2"
                     onClick={onClose}
                   >
                     {job.title ?? job.agentName}
@@ -230,7 +230,7 @@ function AgentAccordion({
                 </div>
 
                 {draftAssets.length === 0 ? (
-                  <div className="flex items-center gap-3 rounded-md border border-dashed border-border bg-surface-2/40 p-4">
+                  <div className="flex items-center gap-3 rounded-md border border-dashed border-border bg-surface-2 p-4">
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04]">
                       <Icon name="CheckCircle2" className="h-4 w-4 text-foreground/70" />
                     </div>

@@ -84,7 +84,7 @@ function ScheduleSection({
   }
 
   return (
-    <div className="mt-3 space-y-2.5 rounded-md border border-border bg-surface-2/50 p-3">
+    <div className="mt-3 space-y-2.5 rounded-md border border-border bg-surface-2 p-3">
       <p className="text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
         Schedule for later
       </p>
@@ -313,7 +313,7 @@ export function AssetCard({
 
           {/* Scheduled info strip */}
           {asset.status === "scheduled" && asset.scheduledAt && (
-            <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-surface-2/50 px-2.5 py-1.5">
+            <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5">
               <Icon name="Clock" className="h-3.5 w-3.5 shrink-0 text-info" />
               <p className="text-xs text-muted-2">
                 Scheduled for{" "}

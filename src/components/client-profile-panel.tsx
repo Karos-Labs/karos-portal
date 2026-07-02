@@ -88,13 +88,7 @@ export function ClientProfilePanel({ client, hasDocs }: { client: Client; hasDoc
     <div className="px-1">
       {/* Company header */}
       <div className="mb-2.5 flex items-center gap-2.5">
-        <div
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-xs font-semibold"
-          style={{
-            background: (client.accentColor ?? "#FF6B2C") + "1f",
-            color: client.accentColor ?? "#FF6B2C",
-          }}
-        >
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-xs font-semibold text-foreground/80">
           {client.name.slice(0, 2).toUpperCase()}
         </div>
         <span className="flex-1 truncate text-sm font-semibold text-foreground">{client.name}</span>
