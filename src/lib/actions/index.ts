@@ -17,3 +17,4 @@ export * from "./support-actions";
 export * from "./task-actions";
 export * from "./settings-actions";
 export * from "./execution-actions";
+export * from "./managed-agent-actions";

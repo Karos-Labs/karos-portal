@@ -4,8 +4,7 @@ import { listAgents, listClients, getSystemAgent } from "@/lib/data";
 import { Button, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AgentCard, DraftAgentCard } from "@/components/agent-card";
-import { SeedAgentsButton } from "@/components/seed-agents";
-import { ImportLabsSkillsButton } from "@/components/import-labs-skills";
+import { ManagedAgentLauncher } from "@/components/managed-agent-launcher";
 import { IntelAgentSection } from "@/components/intel-agent-section";
 import { INTEL_AGENT_ID, RESEARCH_ENGINE_RULES, METRICS_RULES } from "@/lib/intel";
 
@@ -27,7 +26,6 @@ export default async function AgentsPage() {
         description="Reusable AI skills your team builds and runs for clients."
         action={
           <div className="flex items-center gap-2">
-            {user.role === "KAROS_ADMIN" && <ImportLabsSkillsButton />}
             <Link href="/agents/new">
               <Button>
                 <Icon name="Plus" className="h-4 w-4" />
@@ -59,11 +57,9 @@ export default async function AgentsPage() {
           <EmptyState
             icon={<Icon name="Bot" className="h-7 w-7" />}
             title={drafts.length > 0 ? "No live agents yet" : "No agents yet"}
-            description="Create a custom agent from scratch, or seed the starter pack including the Instagram + email agent."
+            description="Create a custom agent from scratch."
             action={
               <div className="flex flex-wrap gap-2">
-                <SeedAgentsButton />
-                {user.role === "KAROS_ADMIN" && <ImportLabsSkillsButton variant="primary" />}
                 <Link href="/agents/new">
                   <Button variant="outline">Build from scratch</Button>
                 </Link>
@@ -77,6 +73,19 @@ export default async function AgentsPage() {
             ))}
           </div>
         )}
+      </section>
+
+      {/* Claude-platform managed agents — run for a chosen client */}
+      <section className="mt-8">
+        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-muted">
+          <Icon name="Sparkles" className="h-4 w-4" />
+          Platform agents
+        </h2>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ManagedAgentLauncher
+            clients={clients.map((c) => ({ id: c.id, name: c.name }))}
+          />
+        </div>
       </section>
 
       {/* Intel Report Agent — admin only, collapsed by default */}
