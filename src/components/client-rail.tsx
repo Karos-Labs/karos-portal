@@ -70,6 +70,7 @@ export function ClientRail({
 
   // Close the mobile company sheet on navigation.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCompanyOpen(false);
   }, [pathname]);
 

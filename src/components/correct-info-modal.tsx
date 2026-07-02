@@ -29,7 +29,9 @@ export function CorrectInfoModal({
       const t = setTimeout(() => textareaRef.current?.focus(), 60);
       return () => clearTimeout(t);
     } else {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCorrections("");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(null);
     }
   }, [open]);

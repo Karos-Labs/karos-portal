@@ -371,8 +371,11 @@ function RegenerateModal({
 
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setContext("");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(null);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRunning(false);
       // Defer focus so the portal has time to mount
       const id = setTimeout(() => textareaRef.current?.focus(), 60);

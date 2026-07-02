@@ -288,6 +288,7 @@ export function BrandColorsSection({
 
   // Reset preview whenever the active client changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPreviewActive(false);
     clearBrandPreview();
   }, [clientId]);
