@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getClient, getNewsletterConfig, listContextItems } from "@/lib/data";
+import { getClient, getClientReport, getNewsletterConfig, listContextItems } from "@/lib/data";
 import { mergeNewsletterConfig } from "@/lib/newsletter/defaults";
 import { Icon } from "@/components/icon";
 import { NewsletterQuestionnaire } from "@/components/newsletter-questionnaire";
@@ -18,11 +18,12 @@ export default async function NewsletterOnboardingPage({ params }: { params: Pro
   const client = await getClient(id);
   if (!client) notFound();
 
-  const [stored, contextItems] = await Promise.all([
+  const [stored, contextItems, report] = await Promise.all([
     getNewsletterConfig(id),
     listContextItems({ clientId: id }),
+    getClientReport(id),
   ]);
-  const config = mergeNewsletterConfig(client, stored);
+  const config = mergeNewsletterConfig(client, stored, { report });
   const references = contextItems.filter((c) => c.purpose === "newsletter_reference");
   const imagePool = contextItems.filter((c) => c.purpose === "image_pool");
 
