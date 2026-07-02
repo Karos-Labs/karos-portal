@@ -443,9 +443,11 @@ export async function applyGlobalDocCorrectionAction(
   if (user.role === "CLIENT_USER" && user.clientId !== clientId) throw new Error("Forbidden");
   if (!corrections.trim()) throw new Error("Corrections text is required");
 
+  // CLIENT_USER may only correct their own client-visible docs; staff may correct all tiers.
+  const tier = user.role === "CLIENT_USER" ? "client" : undefined;
   const [client, allDocs] = await Promise.all([
     getClient(clientId),
-    listClientContextDocs(clientId),
+    listClientContextDocs(clientId, tier),
   ]);
   if (!client) throw new Error("Client not found");
   if (!allDocs.length) throw new Error("No documents found for this client");

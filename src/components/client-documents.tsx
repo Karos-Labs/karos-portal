@@ -397,6 +397,7 @@ function RegenerateModal({
       onSuccess();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Regeneration failed. Please try again.");
+    } finally {
       setRunning(false);
     }
   }

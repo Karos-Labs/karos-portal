@@ -132,6 +132,10 @@ export async function updateClientAction(id: string, input: Partial<Client> & { 
     delete (patch as { domainsCsv?: string }).domainsCsv;
   }
   if (patch.contactEmail) patch.contactEmail = patch.contactEmail.toLowerCase();
+  // Immutable / security-sensitive fields — only dedicated actions may change these.
+  delete (patch as Partial<Client> & { clientKeyId?: string }).clientKeyId;
+  delete (patch as Partial<Client> & { createdAt?: number }).createdAt;
+  delete (patch as Partial<Client> & { createdBy?: string }).createdBy;
   await updateClient(id, patch);
   revalidatePath(`/clients/${id}`);
   revalidatePath("/clients");

@@ -544,7 +544,7 @@ async function executeRun(args: {
                 <div style="color:#FF6B2C;font-weight:600;margin-bottom:6px;">Post ${i + 1}</div>
                 ${images[i] ? `<img src="${images[i]}" alt="Post ${i + 1} visual" style="width:100%;max-width:480px;border-radius:8px;margin-bottom:10px;display:block;" />` : ""}
                 <div style="white-space:pre-wrap;margin-bottom:8px;">${escapeHtml(p.caption)}</div>
-                <div style="color:#9c9ca3;font-size:13px;">${p.hashtags.map((h) => "#" + h).join(" ")}</div>
+                <div style="color:#9c9ca3;font-size:13px;">${p.hashtags.map((h) => "#" + escapeHtml(h)).join(" ")}</div>
                 <div style="color:#5f7177;font-size:12px;margin-top:6px;"><b>Visual:</b> ${escapeHtml(p.imageConcept)}</div>
               </div>`,
             )
