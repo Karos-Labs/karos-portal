@@ -155,7 +155,7 @@ export interface Agent {
   createdAt: number;
   updatedAt: number;
   runCount?: number;
-  /** Provenance + idempotency key when seeded from the karos-labs skill library (see labs-import.ts). */
+  /** Provenance + idempotency key for system-seeded agents (e.g. the intel report agent). */
   labsSkillId?: string;
   /**
    * When true: this is an internal Karos system agent (e.g. the Intel Report Agent).
