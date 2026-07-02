@@ -67,9 +67,9 @@ function ScorePill({ score, weight }: { score?: number; weight?: number }) {
       ? "text-neon border-neon/30 bg-neon-soft"
       : score >= 50
         ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10"
-        : "text-red-400 border-red-400/30 bg-red-400/10";
+        : "text-danger border-danger/30 bg-danger/10";
   return (
-    <div className={cn("flex items-center gap-2 rounded-[10px] border px-3 py-1.5", color)}>
+    <div className={cn("flex items-center gap-2 rounded-md border px-3 py-1.5", color)}>
       <span className="text-2xl font-bold tabular-nums">{score}</span>
       <div className="text-xs">
         <p className="font-medium">/ 100</p>
@@ -84,15 +84,15 @@ function ScorePill({ score, weight }: { score?: number; weight?: number }) {
 function SwotView({ swot }: { swot: SWOTMatrix }) {
   const quadrants = [
     { label: "Strengths", items: swot.strengths, color: "text-neon", bg: "bg-neon-soft border-neon/20" },
-    { label: "Weaknesses", items: swot.weaknesses, color: "text-red-400", bg: "bg-red-400/10 border-red-400/20" },
-    { label: "Opportunities", items: swot.opportunities, color: "text-blue-400", bg: "bg-blue-400/10 border-blue-400/20" },
-    { label: "Threats", items: swot.threats, color: "text-amber-400", bg: "bg-amber-400/10 border-amber-400/20" },
+    { label: "Weaknesses", items: swot.weaknesses, color: "text-danger", bg: "bg-danger/10 border-danger/20" },
+    { label: "Opportunities", items: swot.opportunities, color: "text-info", bg: "bg-info/10 border-info/20" },
+    { label: "Threats", items: swot.threats, color: "text-warning", bg: "bg-warning/10 border-warning/20" },
   ];
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {quadrants.map((q) => (
-        <div key={q.label} className={cn("rounded-[12px] border p-4", q.bg)}>
-          <p className={cn("mb-2 text-xs font-semibold uppercase tracking-wider", q.color)}>
+        <div key={q.label} className={cn("rounded-md border p-4", q.bg)}>
+          <p className={cn("mb-2 text-xs font-mono font-medium uppercase tracking-[0.14em]", q.color)}>
             {q.label}
           </p>
           {q.items.length === 0 ? (
@@ -134,7 +134,7 @@ export function SubjectModal({ open, onClose, title, icon, score, weight, conten
         {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-neon-soft">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-neon-soft">
               <Icon name={icon} className="h-5 w-5 text-neon" />
             </div>
             <h2 className="text-lg font-semibold">{title}</h2>

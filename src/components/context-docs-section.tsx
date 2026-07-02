@@ -52,7 +52,7 @@ function renderSectionBody(md: string): string {
   // Sub-headings (###) → small label pills rather than big headings
   out = out.replace(
     /^###\s+(.+)$/gm,
-    '<p class="mt-4 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">$1</p>',
+    '<p class="mt-4 mb-1 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">$1</p>',
   );
 
   // Bold / italic / inline-code
@@ -73,7 +73,7 @@ function renderSectionBody(md: string): string {
       const cells = row.split("|").slice(1, -1).map((c) => c.replace(/\*\*/g, "").trim());
       const cls =
         tag === "th"
-          ? "px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-2 border-b border-neon/20"
+          ? "px-3 py-2 text-left text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2 border-b border-border"
           : "px-3 py-2 text-xs text-muted align-top border-b border-border last:border-0";
       return cells.map((c) => `<${tag} class="${cls}">${c}</${tag}>`).join("");
     };
@@ -85,7 +85,7 @@ function renderSectionBody(md: string): string {
     } else {
       tbody = `<tbody>${rawLines.filter((r) => !/^\|[-:\s|]+\|$/.test(r)).map((r) => `<tr class="hover:bg-surface-2/50">${parseCells(r, "td")}</tr>`).join("")}</tbody>`;
     }
-    return `<div class="overflow-x-auto my-3 rounded-[8px] border border-border"><table class="w-full border-collapse">${thead}${tbody}</table></div>\n`;
+    return `<div class="overflow-x-auto my-3 rounded-md border border-border"><table class="w-full border-collapse">${thead}${tbody}</table></div>\n`;
   });
 
   // Bullet lists
@@ -93,7 +93,7 @@ function renderSectionBody(md: string): string {
   out = out.replace(
     /(<li>[\s\S]*?<\/li>\n?)+/g,
     (block) =>
-      `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-neon/50 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${block}</ul>\n`,
+      `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-muted-2 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${block}</ul>\n`,
   );
 
   // Numbered lists
@@ -101,13 +101,13 @@ function renderSectionBody(md: string): string {
   out = out.replace(
     /(<li>[\s\S]*?<\/li>\n?)+/g,
     (block) =>
-      `<ol class="my-2 space-y-1.5 ml-4 list-decimal [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] marker:text-neon/50">${block}</ol>\n`,
+      `<ol class="my-2 space-y-1.5 ml-4 list-decimal [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] marker:text-muted-2">${block}</ol>\n`,
   );
 
   // Blockquotes
   out = out.replace(
     /^>\s+(.+)$/gm,
-    '<blockquote class="border-l-2 border-neon/30 pl-3 py-0.5 text-xs italic text-muted-2 my-2">$1</blockquote>',
+    '<blockquote class="border-l-2 border-border-strong pl-3 py-0.5 text-xs italic text-muted-2 my-2">$1</blockquote>',
   );
 
   // Plain paragraphs (lines not already wrapped in a tag)
@@ -127,7 +127,7 @@ function renderMarkdown(md: string): string {
   let out = "";
   for (let i = 0; i < parts.length; i++) {
     if (i % 2 === 1) {
-      out += `<h2 class="text-sm font-semibold mt-6 mb-2 text-neon/80">${parts[i]}</h2>`;
+      out += `<h2 class="text-sm font-semibold mt-6 mb-2 text-foreground">${parts[i]}</h2>`;
     } else {
       out += renderSectionBody(parts[i]);
     }
@@ -207,8 +207,8 @@ function SourcesDrawer({ sources }: { sources?: string[] }) {
         </span>
       </button>
       {open && (
-        <div className="mt-2 rounded-[8px] border border-border bg-surface-2 p-3">
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+        <div className="mt-2 rounded-md border border-border bg-surface-2 p-3">
+          <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
             Research Sources
           </p>
           <ol className="space-y-1">
@@ -353,13 +353,13 @@ function DocViewer({
         </div>
         <div className="flex items-center gap-2">
           {/* View mode toggle */}
-          <div className="flex items-center rounded-[8px] border border-border bg-surface-2 p-0.5">
+          <div className="flex items-center rounded-md border border-border bg-surface-2 p-0.5">
             <button
               onClick={() => setViewMode("summary")}
               className={cn(
                 "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[11px] font-medium transition-colors",
                 viewMode === "summary"
-                  ? "bg-neon text-black"
+                  ? "bg-primary text-primary-foreground"
                   : "text-muted-2 hover:text-foreground",
               )}
             >
@@ -394,24 +394,24 @@ function DocViewer({
       {viewMode === "summary" && (
         <div>
           {summaryStatus === "loading" && (
-            <div className="flex items-center gap-3 rounded-[10px] border border-border bg-surface-2 px-4 py-6">
+            <div className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-4 py-6">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-neon/30 border-t-neon" />
               <p className="text-sm text-muted-2">Generating executive summary…</p>
             </div>
           )}
 
           {summaryStatus === "done" && summaryBullets.length > 0 && (
-            <div className="rounded-[10px] border border-neon/20 bg-neon-soft/10 p-5">
+            <div className="rounded-md border border-border bg-surface-2/60 p-5">
               <div className="mb-4 flex items-center gap-2">
-                <Icon name="Sparkles" className="h-4 w-4 text-neon" />
-                <p className="text-xs font-semibold uppercase tracking-wider text-neon/80">
+                <Icon name="Sparkles" className="h-4 w-4 text-foreground/70" />
+                <p className="text-xs font-mono font-medium uppercase tracking-[0.14em] text-foreground">
                   Executive Summary
                 </p>
               </div>
               <ul className="space-y-3">
                 {summaryBullets.map((bullet, i) => (
                   <li key={i} className="flex items-start gap-3">
-                    <span className="mt-[3px] flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-neon/15 text-[10px] font-bold text-neon">
+                    <span className="mt-[3px] flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-3 text-[10px] font-bold text-foreground">
                       {i + 1}
                     </span>
                     <p className="text-sm leading-[1.65] text-foreground">{bullet}</p>
@@ -422,9 +422,9 @@ function DocViewer({
           )}
 
           {summaryStatus === "error" && (
-            <div className="flex items-center gap-2 rounded-[10px] border border-red-500/20 bg-red-500/10 px-4 py-3">
-              <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-red-400" />
-              <p className="text-xs text-red-400">
+            <div className="flex items-center gap-2 rounded-md border border-danger/20 bg-danger/10 px-4 py-3">
+              <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-danger" />
+              <p className="text-xs text-danger">
                 Could not generate summary. Switch to Full Document to read the content.
               </p>
             </div>
@@ -433,7 +433,7 @@ function DocViewer({
           {/* Key insight chips below summary */}
           {summaryStatus === "done" && insights.length > 0 && (
             <div className="mt-3">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+              <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
                 Key Signals
               </p>
               <div className="flex flex-wrap gap-1.5">
@@ -457,7 +457,7 @@ function DocViewer({
           {sections.length === 0 ? (
             <p className="py-6 text-center text-xs text-muted-2">No content sections found.</p>
           ) : (
-            <div className="divide-y divide-border overflow-hidden rounded-[10px] border border-border">
+            <div className="divide-y divide-border overflow-hidden rounded-md border border-border">
               {sections.map((sec, i) => {
                 const isOpen = openSet.has(i);
                 return (
@@ -578,9 +578,9 @@ export function ContextDocsSection({
       </div>
 
       {refreshError && (
-        <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-red-500/30 bg-red-500/10 px-3 py-2">
-          <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-red-400" />
-          <p className="text-xs text-red-400">{refreshError}</p>
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
+          <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger" />
+          <p className="text-xs text-danger">{refreshError}</p>
         </div>
       )}
 
@@ -594,9 +594,9 @@ export function ContextDocsSection({
               key={tab.docType}
               onClick={() => setActiveTab(tab.docType)}
               className={cn(
-                "flex shrink-0 items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors",
+                "flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                 activeTab === tab.docType
-                  ? "bg-neon-soft text-neon"
+                  ? "bg-surface-2 text-foreground"
                   : "text-muted-2 hover:bg-surface-2 hover:text-foreground",
               )}
             >
@@ -605,7 +605,7 @@ export function ContextDocsSection({
               <span
                 className={cn(
                   "h-1.5 w-1.5 rounded-full transition-colors",
-                  hasDoc ? "bg-neon" : "bg-border",
+                  hasDoc ? "bg-success" : "bg-border",
                 )}
                 title={hasDoc ? "Generated" : "Not generated"}
               />

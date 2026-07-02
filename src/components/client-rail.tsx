@@ -72,14 +72,17 @@ export function ClientRail({
       {/* ── Desktop left rail (z-30 so its menus/panels sit above the center column) ── */}
       <aside className="relative z-30 hidden w-72 shrink-0 border-r border-border bg-surface/60 md:block">
         <div className="sticky top-0 flex h-screen flex-col">
-          {/* Logo */}
+          {/* Wordmark lockup — head disc 26px + Spectral Regular (brand §2.2) */}
           <div className="shrink-0 px-4 pt-4">
-            <Link href={home} className="flex items-center gap-2 px-2 py-1">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neon-soft neon-glow">
-                <Icon name="Sparkles" className="h-4 w-4 text-neon" />
-              </div>
-              <span className="text-base font-semibold tracking-tight">
-                Karos<span className="text-neon">CMO</span>
+            <Link href={home} className="flex items-center gap-2.5 px-2 py-1">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/kairos-head-disc-dark.svg"
+                alt=""
+                className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+              />
+              <span className="font-serif text-xl font-normal leading-none text-foreground">
+                Karos Labs
               </span>
             </Link>
           </div>
@@ -96,13 +99,13 @@ export function ClientRail({
                     className={cn(
                       "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
                       active
-                        ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(45,255,158,0.15)]"
+                        ? "bg-surface-2 text-foreground"
                         : "text-muted hover:bg-surface-2 hover:text-foreground",
                     )}
                   >
                     <Icon
                       name={item.icon}
-                      className={cn("h-4 w-4 shrink-0", active ? "text-neon" : "text-muted-2 group-hover:text-foreground")}
+                      className={cn("h-4 w-4 shrink-0", active ? "text-foreground" : "text-muted-2 group-hover:text-foreground")}
                     />
                     <span className="flex-1">{item.label}</span>
                   </Link>
@@ -132,11 +135,16 @@ export function ClientRail({
         </div>
       </aside>
 
-      {/* ── Mobile top bar (logo + notifications only) ── */}
+      {/* ── Mobile top bar (wordmark + notifications only) ── */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
-        <Link href={home} className="flex items-center gap-2">
-          <Icon name="Sparkles" className="h-5 w-5 text-neon" />
-          <span className="font-semibold">Karos<span className="text-neon">CMO</span></span>
+        <Link href={home} className="flex items-center gap-2.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+          />
+          <span className="font-serif text-lg font-normal leading-none text-foreground">Karos Labs</span>
         </Link>
         <NotificationBell actionItems={actionItems} reviewJobs={reviewJobs} taskAlerts={taskAlerts} />
       </div>
@@ -151,7 +159,7 @@ export function ClientRail({
               href={item.href}
               className={cn(
                 "flex flex-1 flex-col items-center gap-1 py-2 text-[10px] font-medium transition-colors",
-                active ? "text-neon" : "text-muted-2 hover:text-foreground",
+                active ? "text-foreground" : "text-muted-2 hover:text-foreground",
               )}
             >
               <Icon name={item.icon} className="h-5 w-5" />
@@ -163,7 +171,7 @@ export function ClientRail({
           onClick={() => setCompanyOpen(true)}
           className={cn(
             "flex flex-1 flex-col items-center gap-1 py-2 text-[10px] font-medium transition-colors",
-            companyOpen ? "text-neon" : "text-muted-2 hover:text-foreground",
+            companyOpen ? "text-foreground" : "text-muted-2 hover:text-foreground",
           )}
         >
           <Icon name="Building2" className="h-5 w-5" />

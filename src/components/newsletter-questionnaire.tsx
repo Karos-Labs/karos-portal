@@ -114,7 +114,7 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
           value={swatch}
           onChange={(e) => onChange(e.target.value)}
           aria-label={`${label} colour picker`}
-          className="h-9 w-10 shrink-0 cursor-pointer rounded-[8px] border border-border bg-surface-2 p-0.5"
+          className="h-9 w-10 shrink-0 cursor-pointer rounded-md border border-border bg-surface-2 p-0.5"
         />
         <Input value={value} placeholder="#000000" onChange={(e) => onChange(e.target.value)} />
       </div>
@@ -207,7 +207,7 @@ function UploadGroup({
       {items.length === 0 ? (
         <p className="text-xs text-muted-2">Nothing uploaded yet.</p>
       ) : (
-        <ul className="divide-y divide-border rounded-[10px] border border-border">
+        <ul className="divide-y divide-border rounded-md border border-border">
           {items.map((it) => (
             <li key={it.id} className="flex items-center justify-between gap-2 px-3 py-2">
               <a href={it.url} target="_blank" rel="noopener noreferrer" className="flex min-w-0 items-center gap-2 text-sm hover:text-neon">
@@ -320,7 +320,7 @@ export function NewsletterQuestionnaire({
           aria-pressed={optIn}
         >
           <span className={`relative h-5 w-9 rounded-full transition-colors ${optIn ? "bg-neon" : "bg-surface-3"}`}>
-            <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${optIn ? "left-[18px]" : "left-0.5"}`} />
+            <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-primary transition-all ${optIn ? "left-[18px]" : "left-0.5"}`} />
           </span>
           <span className={optIn ? "text-foreground" : "text-muted"}>Weekly newsletter opt-in</span>
         </button>

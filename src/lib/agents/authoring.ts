@@ -47,7 +47,7 @@ export async function createDraftAgent(uid: string, initial: Partial<DraftFields
     name: initial.name ?? "",
     description: initial.description ?? "",
     icon: initial.icon ?? "Sparkles",
-    color: initial.color ?? "#2dff9e",
+    color: initial.color ?? "#FF6B2C",
     model: initial.model ?? "claude-sonnet-4-6",
     outputKind: initial.outputKind ?? "freeform",
     systemPrompt: initial.systemPrompt ?? "",

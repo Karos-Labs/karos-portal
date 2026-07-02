@@ -169,7 +169,7 @@ export default function SignupPage() {
 
         {/* Logo */}
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-neon-soft neon-glow">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md bg-neon-soft neon-glow">
             <Icon name="Sparkles" className="h-6 w-6 text-neon" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">

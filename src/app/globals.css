@@ -1,32 +1,43 @@
 @import "tailwindcss";
 
 /*
-  Karos CMO — dark theme with neon-green accents.
-  Palette is centralised here as CSS variables and exposed to Tailwind via @theme inline.
+  Karos Labs — Ember brand system (docs/brand/KAROS-BRAND-GUIDELINES.md).
+  Two inks (charcoal + paper) and ONE orange, rationed. Token names are kept
+  from the previous theme (--neon = the accent) so components stay portable;
+  the VALUES are the Ember palette.
 */
 :root {
-  --background: #07090b;
-  --surface: #0d1117;
-  --surface-2: #131a22;
-  --surface-3: #1a232e;
-  --border: #20303a;
-  --border-strong: #2c4150;
-  --foreground: #e8f0ec;
-  --muted: #8aa2a8;
-  --muted-2: #5f7177;
+  --background: #1a1a1a;   /* warm charcoal ground */
+  --surface: #242429;      /* raised surfaces, cards, panels */
+  --surface-2: #2b2b31;    /* hover states, inputs */
+  --surface-3: #323238;    /* deeper chips */
+  --surface-deep: #1c1c20; /* dark end of card gradients */
+  --border: #34343b;
+  --border-strong: #45454e;
+  --foreground: #f2f1ec;   /* warm paper white */
+  --muted: #9c9ca3;
+  --muted-2: #77777e;
 
-  /* Neon green accent system */
-  --neon: #2dff9e;
-  --neon-bright: #4dffb0;
-  --neon-dim: #1fbf78;
-  --neon-glow: rgba(45, 255, 158, 0.35);
-  --neon-soft: rgba(45, 255, 158, 0.12);
+  /* THE orange — emphasis only (markers, eyebrows, hovers, live signals) */
+  --neon: #ff6b2c;
+  --neon-bright: #ff7f47;
+  --neon-dim: #e05a1f;
+  --neon-glow: rgba(255, 107, 44, 0.3);
+  --neon-soft: rgba(255, 107, 44, 0.1);
+  --accent-ink: #141414;   /* text sitting on orange — BOTH modes */
 
-  --danger: #ff5d6c;
-  --warning: #ffcf5d;
-  --info: #5db4ff;
+  /* Primary actions are paper, not orange */
+  --primary: #f2f1ec;
+  --primary-foreground: #141414;
 
-  --radius: 10px;
+  /* Judgment scale — the ONLY non-brand colors. Good/medium/bad + one slate
+     for informational. Orange never participates in this scale. */
+  --success: #7da87b;
+  --warning: #d9a13d;
+  --danger: #d65a52;
+  --info: #8ba1b7;
+
+  --radius: 6px;           /* Ember squares things off */
 }
 
 @theme inline {
@@ -34,6 +45,7 @@
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
+  --color-surface-deep: var(--surface-deep);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
@@ -42,11 +54,23 @@
   --color-neon: var(--neon);
   --color-neon-bright: var(--neon-bright);
   --color-neon-dim: var(--neon-dim);
+  --color-accent-ink: var(--accent-ink);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-success: var(--success);
   --color-danger: var(--danger);
   --color-warning: var(--warning);
   --color-info: var(--info);
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-sans: var(--font-hanken), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --font-serif: var(--font-spectral), Georgia, "Times New Roman", serif;
+}
+
+html {
+  color-scheme: dark;
+}
+html.light {
+  color-scheme: light;
 }
 
 * {
@@ -61,18 +85,29 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Editorial serif for display type (Spectral, §5) */
+h1,
+h2,
+h3 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.012em;
+}
+
 body {
-  background-image:
-    radial-gradient(ellipse 1400px 700px at 100% -5%,  rgba(45, 255, 158, 0.07),  transparent 60%),
-    radial-gradient(ellipse 1000px 600px at -5% 105%,  rgba(45, 255, 158, 0.055), transparent 55%),
-    radial-gradient(ellipse 800px  400px at 50%  120%,  rgba(93, 180, 255, 0.03),  transparent 50%);
+  /* One warm glow per screen, subtle — no colorful ambience */
+  background-image: radial-gradient(
+    ellipse 900px 500px at 50% -10%,
+    color-mix(in srgb, var(--neon) 5%, transparent),
+    transparent 70%
+  );
   background-attachment: fixed;
   min-height: 100vh;
 }
 
 ::selection {
-  background: var(--neon-glow);
-  color: #03110b;
+  background: var(--neon);
+  color: var(--accent-ink);
 }
 
 /* Scrollbar */
@@ -89,101 +124,124 @@ body {
   border: 2px solid var(--background);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--neon-dim);
+  background: var(--muted-2);
+}
+
+/* ── The marker — signature highlight (§6) ───────────────────────────── */
+
+.hl {
+  background-image: linear-gradient(var(--neon), var(--neon));
+  background-repeat: no-repeat;
+  background-position: 0 50%;
+  background-size: 100% 1.1em;
+  color: var(--accent-ink);
+  font-style: italic;
+  padding: 0 0.26em;
+  border-radius: 0;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 /* ── Utility helpers ──────────────────────────────────────────────────── */
 
+/* Mono eyebrow label (§5) */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--neon);
+}
+
+/* Warm keyline glow — replaces the old neon glow. One per screen, subtle. */
 .neon-glow {
   box-shadow:
-    0 0 0 1px rgba(45, 255, 158, 0.2),
-    0 0 20px -4px rgba(45, 255, 158, 0.4),
-    0 0 40px -12px rgba(45, 255, 158, 0.2);
+    0 0 0 1px color-mix(in srgb, var(--neon) 22%, transparent),
+    0 0 24px -6px color-mix(in srgb, var(--neon) 28%, transparent);
 }
 .neon-text {
   color: var(--neon);
-  text-shadow: 0 0 20px rgba(45, 255, 158, 0.5);
 }
 
-/* Premium card gradient — subtle inner top-edge highlight */
+/* Card gradient — 155° accent-tinted (§3.2) */
 .card-grad {
-  background:
-    linear-gradient(155deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 60%),
-    var(--surface);
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--neon) 6%, var(--surface)) 0%,
+    var(--surface-deep) 100%
+  );
 }
 
 /* Glass surface for dropdowns / overlays — combine with border */
 .glass-surface {
-  background: rgba(13, 17, 23, 0.88);
-  backdrop-filter: blur(18px) saturate(160%);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
 }
 
-/* ── Light mode theme ─────────────────────────────────────────────────── */
+/* Text on the orange is always ink (§15) */
+.bg-neon,
+.bg-neon-bright {
+  color: var(--accent-ink);
+}
+
+/* ── Light mode (§4) — every token reverses except the orange ─────────── */
 
 .light {
-  --background: #f8fafc;
+  --background: #f2f1ec;
   --surface: #ffffff;
-  --surface-2: #f1f5f9;
-  --surface-3: #e2e8f0;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
-  --foreground: #0f172a;
-  --muted: #475569;
-  --muted-2: #94a3b8;
+  --surface-2: #eceae2;
+  --surface-3: #e9e7df;
+  --surface-deep: #f7f6f1;
+  --border: #dad6cc;
+  --border-strong: #c8c3b6;
+  --foreground: #1a1a1a;
+  --muted: #6b6a63;
+  --muted-2: #8a887f;
 
-  /* Emerald palette — darker accent for legibility on light surfaces */
-  --neon: #059669;
-  --neon-bright: #10b981;
-  --neon-dim: #047857;
-  --neon-glow: rgba(5, 150, 105, 0.2);
-  --neon-soft: rgba(5, 150, 105, 0.08);
+  /* The orange never changes between modes */
+  --neon: #ff6b2c;
+  --neon-bright: #e05a1f;
+  --neon-dim: #cc4f18;
+  --neon-glow: rgba(255, 107, 44, 0.25);
+  --neon-soft: rgba(255, 107, 44, 0.1);
 
-  --danger: #dc2626;
-  --warning: #d97706;
-  --info: #2563eb;
+  /* Primary flips: ink-on-paper */
+  --primary: #1a1a1a;
+  --primary-foreground: #f5f4ef;
+
+  /* Judgment scale darkens for contrast on paper; hues unchanged */
+  --success: #4f7d4e;
+  --warning: #a8781e;
+  --danger: #b04a43;
+  --info: #5b7186;
 }
 
 .light body {
-  background-image:
-    radial-gradient(ellipse 1400px 700px at 100% -5%,  rgba(5, 150, 105, 0.04), transparent 60%),
-    radial-gradient(ellipse 1000px 600px at -5% 105%,  rgba(5, 150, 105, 0.03), transparent 55%);
+  background-image: radial-gradient(
+    ellipse 900px 500px at 50% -10%,
+    color-mix(in srgb, var(--neon) 4%, transparent),
+    transparent 70%
+  );
   background-color: var(--background);
 }
 
-/* Card gradient adapts to flat white in light mode */
 .light .card-grad {
   background: var(--surface);
 }
 
-/* Glass surface becomes frosted white in light mode */
 .light .glass-surface {
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(18px) saturate(120%);
   -webkit-backdrop-filter: blur(18px) saturate(120%);
 }
 
-/* Neon glow uses emerald shadows in light mode */
-.light .neon-glow {
-  box-shadow:
-    0 0 0 1px rgba(5, 150, 105, 0.2),
-    0 0 20px -4px rgba(5, 150, 105, 0.25),
-    0 0 40px -12px rgba(5, 150, 105, 0.12);
-}
-
-/* In light mode the accent colour is dark emerald — use white text on neon-bg elements */
-.light .bg-neon,
-.light .bg-neon-bright {
-  color: #ffffff;
-}
-
-/* Scrollbar adapts to light surfaces */
 .light ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-color: var(--background);
 }
 .light ::-webkit-scrollbar-thumb:hover {
-  background: var(--neon-dim);
+  background: var(--muted-2);
 }
 
 /* ── Keyframes ────────────────────────────────────────────────────────── */
@@ -231,4 +289,16 @@ body {
   );
   background-size: 200% 100%;
   animation: shimmer 1.8s ease-in-out infinite;
+}
+
+/* Respect reduced motion (§13) */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-neon,
+  .animate-spin-slow,
+  .animate-fade-up,
+  .animate-fade-in,
+  .animate-slide-in-right,
+  .animate-shimmer {
+    animation: none;
+  }
 }

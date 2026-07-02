@@ -30,7 +30,7 @@ function Pill({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 focus-within:border-neon/50",
+        "flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 focus-within:border-foreground/25",
         className,
       )}
     >
@@ -91,8 +91,8 @@ export function ClientProfilePanel({ client, hasDocs }: { client: Client; hasDoc
         <div
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-xs font-semibold"
           style={{
-            background: (client.accentColor ?? "#2dff9e") + "1f",
-            color: client.accentColor ?? "#2dff9e",
+            background: (client.accentColor ?? "#FF6B2C") + "1f",
+            color: client.accentColor ?? "#FF6B2C",
           }}
         >
           {client.name.slice(0, 2).toUpperCase()}
@@ -207,7 +207,7 @@ export function ClientProfilePanel({ client, hasDocs }: { client: Client; hasDoc
             <button
               onClick={save}
               disabled={pending}
-              className="inline-flex items-center gap-1.5 rounded-md bg-neon px-3 py-1.5 text-xs font-semibold text-[#03110b] transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               <Icon name={pending ? "Loader" : "Check"} className={cn("h-3.5 w-3.5", pending && "animate-spin")} />
               {pending ? "Saving…" : "Save"}

@@ -102,7 +102,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
       <div className="space-y-4">
         {/* Generate from website — shown when a website URL is configured */}
         {hasWebsite && (
-          <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border bg-surface-2 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface-2 px-4 py-3">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">Generate from website</p>
               <p className="text-xs text-muted-2">
@@ -118,7 +118,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
 
         {/* Generation feedback */}
         {genResult && (
-          <div className="flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
+          <div className="flex items-center gap-2 rounded-md border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
             <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
             {`AI Generated from Domain Knowledge${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review the values below and save.`}
           </div>
@@ -131,14 +131,14 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
             <div className="flex items-center gap-2">
               <input
                 type="color"
-                value={form.primaryColor || "#2dff9e"}
+                value={form.primaryColor || "#FF6B2C"}
                 onChange={(e) => setField("primaryColor", e.target.value)}
-                className="h-9 w-12 cursor-pointer rounded-[8px] border border-border bg-surface-2 p-1"
+                className="h-9 w-12 cursor-pointer rounded-md border border-border bg-surface-2 p-1"
               />
               <Input
                 value={form.primaryColor ?? ""}
                 onChange={(e) => setField("primaryColor", e.target.value)}
-                placeholder="#2dff9e"
+                placeholder="#FF6B2C"
                 className="flex-1 font-mono text-sm"
               />
             </div>
@@ -150,7 +150,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
                 type="color"
                 value={form.secondaryColor || "#ffffff"}
                 onChange={(e) => setField("secondaryColor", e.target.value)}
-                className="h-9 w-12 cursor-pointer rounded-[8px] border border-border bg-surface-2 p-1"
+                className="h-9 w-12 cursor-pointer rounded-md border border-border bg-surface-2 p-1"
               />
               <Input
                 value={form.secondaryColor ?? ""}
@@ -188,7 +188,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
           <select
             value={form.visualStyle ?? ""}
             onChange={(e) => setField("visualStyle", e.target.value)}
-            className="w-full rounded-[8px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-neon"
+            className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-neon"
           >
             <option value="">— Not set —</option>
             <option value="Minimalist">Minimalist</option>

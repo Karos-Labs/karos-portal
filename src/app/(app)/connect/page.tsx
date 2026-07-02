@@ -36,13 +36,13 @@ export default async function ConnectPage() {
             <p className="text-sm text-muted">
               Run this in any project (replace <code className="text-neon">YOUR_TOKEN</code> with the token above):
             </p>
-            <pre className="overflow-auto rounded-[10px] border border-border bg-surface-2 p-3 text-[12.5px] leading-relaxed">
+            <pre className="overflow-auto rounded-md border border-border bg-surface-2 p-3 text-[12.5px] leading-relaxed">
 {`claude mcp add --transport http karos \\
   ${mcpUrl} \\
   --header "Authorization: Bearer YOUR_TOKEN"`}
             </pre>
             <p className="text-sm text-muted">Or add it by hand to your Claude Code config:</p>
-            <pre className="overflow-auto rounded-[10px] border border-border bg-surface-2 p-3 text-[12.5px] leading-relaxed">
+            <pre className="overflow-auto rounded-md border border-border bg-surface-2 p-3 text-[12.5px] leading-relaxed">
 {`{
   "mcpServers": {
     "karos": {
@@ -58,7 +58,7 @@ export default async function ConnectPage() {
           <Card className="space-y-3">
             <CardTitle>3. Build agents by chatting</CardTitle>
             <p className="text-sm text-muted">Once connected, just talk to Claude Code. For example:</p>
-            <blockquote className="rounded-[10px] border-l-2 border-neon bg-neon-soft/40 px-4 py-3 text-sm">
+            <blockquote className="rounded-md border-l-2 border-neon bg-neon-soft/40 px-4 py-3 text-sm">
               “Draft an Instagram agent for <em>Acme Co</em> focused on their summer launch. Test-run it,
               read the captions, tighten the system prompt until the hooks are punchy, then publish it.”
             </blockquote>

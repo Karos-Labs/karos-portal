@@ -177,7 +177,7 @@ function QuickInsights({
     (() => {
       const v = extractTopChannel(report);
       return v
-        ? { icon: "TrendingUp", label: "Top Channel", value: v, iconClass: "text-sky-400", bgClass: "bg-sky-400/10" }
+        ? { icon: "TrendingUp", label: "Top Channel", value: v, iconClass: "text-foreground/70", bgClass: "bg-foreground/[0.05]" }
         : null;
     })(),
     (() => {
@@ -189,7 +189,7 @@ function QuickInsights({
     (() => {
       const v = extractOpportunity(report);
       return v
-        ? { icon: "Target", label: "Market Opportunity", value: v, iconClass: "text-purple-400", bgClass: "bg-purple-400/10" }
+        ? { icon: "Target", label: "Market Opportunity", value: v, iconClass: "text-foreground/70", bgClass: "bg-foreground/[0.05]" }
         : null;
     })(),
   ];
@@ -211,13 +211,13 @@ function QuickInsights({
       {cards.map((card) => (
         <div
           key={card.label}
-          className="card-grad flex flex-col gap-3 rounded-[14px] border border-border p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
+          className="card-grad flex flex-col gap-3 rounded-md border border-border p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
         >
-          <div className={cn("flex h-8 w-8 items-center justify-center rounded-[8px]", card.bgClass)}>
+          <div className={cn("flex h-8 w-8 items-center justify-center rounded-md", card.bgClass)}>
             <Icon name={card.icon} className={cn("h-4 w-4", card.iconClass)} />
           </div>
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+            <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
               {card.label}
             </p>
             <p className="mt-1 text-sm font-medium leading-snug text-foreground">
@@ -259,14 +259,14 @@ function CompanyProfileSnapshot({
     : null;
 
   return (
-    <div className="card-grad rounded-[16px] border border-border p-5 shadow-[0_2px_8px_rgba(0,0,0,0.3)]">
+    <div className="card-grad rounded-md border border-border p-5 shadow-[0_2px_8px_rgba(0,0,0,0.3)]">
       {/* Header */}
       <div className="mb-4 flex items-start gap-3.5">
         <div
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] text-base font-bold"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md text-base font-bold"
           style={{
-            background: (client.accentColor ?? "#2dff9e") + "1f",
-            color: client.accentColor ?? "#2dff9e",
+            background: (client.accentColor ?? "#FF6B2C") + "1f",
+            color: client.accentColor ?? "#FF6B2C",
           }}
         >
           {initials(client.name)}
@@ -304,8 +304,8 @@ function CompanyProfileSnapshot({
 
       {/* Value proposition */}
       {valueProp && (
-        <div className="mb-4 rounded-[10px] border border-border bg-surface-2 px-4 py-3">
-          <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+        <div className="mb-4 rounded-md border border-border bg-surface-2 px-4 py-3">
+          <p className="mb-0.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
             Core Positioning
           </p>
           <p className="line-clamp-2 text-sm leading-relaxed text-foreground">
@@ -317,8 +317,8 @@ function CompanyProfileSnapshot({
       {/* Stats grid */}
       <div className="grid gap-3 sm:grid-cols-3">
         {/* Competitors */}
-        <div className="rounded-[10px] border border-border bg-surface-2 p-3">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+        <div className="rounded-md border border-border bg-surface-2 p-3">
+          <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
             Main Competitors
           </p>
           {topComps.length > 0 ? (
@@ -352,8 +352,8 @@ function CompanyProfileSnapshot({
         </div>
 
         {/* Channels */}
-        <div className="rounded-[10px] border border-border bg-surface-2 p-3">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+        <div className="rounded-md border border-border bg-surface-2 p-3">
+          <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
             Active Channels
           </p>
           {channels.length > 0 ? (
@@ -375,8 +375,8 @@ function CompanyProfileSnapshot({
         </div>
 
         {/* Quick facts */}
-        <div className="rounded-[10px] border border-border bg-surface-2 p-3">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+        <div className="rounded-md border border-border bg-surface-2 p-3">
+          <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
             Quick Facts
           </p>
           {report?.businessType || report?.founded || report?.techStack ? (
@@ -462,7 +462,7 @@ function BrandingSection({
     return (
       <Card className="border-dashed">
         <div className="flex flex-col items-center gap-3 py-4 text-center">
-          <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-neon-soft">
+          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-neon-soft">
             <Icon name="Palette" className="h-5 w-5 text-neon" />
           </div>
           <div>
@@ -472,7 +472,7 @@ function BrandingSection({
             </p>
           </div>
           {genFeedback && (
-            <div className="flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
+            <div className="flex items-center gap-2 rounded-md border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
               <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
               {`AI Generated from Domain Knowledge${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}`}
             </div>
@@ -523,7 +523,7 @@ function BrandingSection({
 
       {/* Generation feedback pill */}
       {genFeedback && (
-        <div className="mb-3 flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
           <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
           {`AI Generated from Domain Knowledge${genFeedback.visualStyle ? ` · ${genFeedback.visualStyle}` : ""}${genFeedback.primaryColor ? ` · ${genFeedback.primaryColor}` : ""}`}
         </div>
@@ -581,7 +581,7 @@ function BrandingSection({
       {/* Context doc insights (from new pipeline) */}
       {brandInsights.length > 0 && (
         <div className="mt-4 border-t border-border pt-4">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+          <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
             From Brand Analysis
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -696,9 +696,9 @@ export function IntelligenceTab({
           )}
         </div>
         {regenError && (
-          <div className="flex items-center gap-2 rounded-[8px] border border-red-500/30 bg-red-500/10 px-3 py-2">
-            <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-red-400" />
-            <p className="text-xs text-red-400">{regenError}</p>
+          <div className="flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
+            <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-danger" />
+            <p className="text-xs text-danger">{regenError}</p>
           </div>
         )}
       </div>

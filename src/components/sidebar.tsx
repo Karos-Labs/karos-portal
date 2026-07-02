@@ -83,7 +83,7 @@ function ImpersonatePicker({
         onClick={() => setOpen((o) => !o)}
         disabled={pending}
         className={cn(
-          "flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-colors disabled:opacity-50",
+          "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors disabled:opacity-50",
           open
             ? "bg-surface-2 text-foreground"
             : "text-muted hover:bg-surface-2 hover:text-foreground",
@@ -103,14 +103,14 @@ function ImpersonatePicker({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 z-50 mb-1.5 w-72 overflow-hidden rounded-[12px] border border-border bg-surface shadow-xl">
+          <div className="absolute bottom-full left-0 z-50 mb-1.5 w-72 overflow-hidden rounded-md border border-border bg-surface shadow-xl">
             <div className="border-b border-border p-2">
               <input
                 type="text"
                 placeholder="Search users..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-full rounded-[8px] bg-surface-2 px-3 py-1.5 text-xs outline-none placeholder:text-muted-2"
+                className="w-full rounded-md bg-surface-2 px-3 py-1.5 text-xs outline-none placeholder:text-muted-2"
                 autoFocus
               />
             </div>
@@ -120,14 +120,14 @@ function ImpersonatePicker({
               ) : (
                 filtered.map(({ client, users }) => (
                   <div key={client.id}>
-                    <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                    <p className="px-3 py-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
                       {client.name}
                     </p>
                     {users.map((u) => (
                       <button
                         key={u.uid}
                         onClick={() => impersonate(u.uid)}
-                        className="flex w-full flex-col rounded-[8px] px-3 py-2 text-left hover:bg-surface-2"
+                        className="flex w-full flex-col rounded-md px-3 py-2 text-left hover:bg-surface-2"
                       >
                         <span className="text-sm font-medium text-foreground">{u.name}</span>
                         <span className="text-[11px] text-muted-2">{u.email}</span>
@@ -172,7 +172,7 @@ function UserMenu({
       <button
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left transition-colors",
+          "flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors",
           open ? "bg-surface-2" : "hover:bg-surface-2",
         )}
       >
@@ -205,12 +205,12 @@ function UserMenu({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 overflow-hidden rounded-[12px] border border-border bg-surface shadow-xl">
+          <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 overflow-hidden rounded-md border border-border bg-surface shadow-xl">
             <div className="p-1">
               <Link
                 href="/settings"
                 onClick={() => setOpen(false)}
-                className="flex items-center gap-3 rounded-[8px] px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
               >
                 <Icon name="Settings" className="h-4 w-4" />
                 Settings
@@ -219,7 +219,7 @@ function UserMenu({
               <button
                 onClick={handleLogout}
                 disabled={loggingOut}
-                className="flex w-full items-center gap-3 rounded-[8px] px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-danger disabled:opacity-50"
+                className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-danger disabled:opacity-50"
               >
                 <Icon name="LogOut" className="h-4 w-4" />
                 {loggingOut ? "Signing out…" : "Sign out"}
@@ -274,9 +274,9 @@ export function Sidebar({
             href={item.href}
             onClick={() => setOpen(false)}
             className={cn(
-              "group flex items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-all duration-150 active:scale-[0.97]",
+              "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-all duration-150 active:scale-[0.97]",
               active
-                ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(45,255,158,0.15)]"
+                ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]"
                 : "text-muted hover:bg-surface-2 hover:text-foreground",
             )}
           >
@@ -286,7 +286,7 @@ export function Sidebar({
             />
             <span className="flex-1">{item.label}</span>
             {badge !== null && (
-              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-neon px-1.5 text-[11px] font-semibold text-[#03110b]">
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-neon px-1.5 text-[11px] font-semibold text-[#141414]">
                 {badge}
               </span>
             )}
@@ -298,12 +298,15 @@ export function Sidebar({
 
   const content = (
     <div className="flex h-full flex-col gap-4 p-4">
-      <Link href="/dashboard" className="flex items-center gap-2 px-2 py-1">
-        <div className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-neon-soft neon-glow">
-          <Icon name="Sparkles" className="h-4 w-4 text-neon" />
-        </div>
-        <span className="text-base font-semibold tracking-tight">
-          Karos<span className="text-neon">CMO</span>
+      <Link href="/dashboard" className="flex items-center gap-2.5 px-2 py-1">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/kairos-head-disc-dark.svg"
+          alt=""
+          className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+        />
+        <span className="font-serif text-xl font-normal leading-none text-foreground">
+          Karos Labs
         </span>
       </Link>
 
@@ -323,9 +326,14 @@ export function Sidebar({
     <>
       {/* Mobile top bar */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
-        <Link href="/dashboard" className="flex items-center gap-2">
-          <Icon name="Sparkles" className="h-5 w-5 text-neon" />
-          <span className="font-semibold">Karos<span className="text-neon">CMO</span></span>
+        <Link href="/dashboard" className="flex items-center gap-2.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+          />
+          <span className="font-serif text-lg font-normal leading-none text-foreground">Karos Labs</span>
         </Link>
         <button
           onClick={() => setOpen((o) => !o)}

@@ -61,10 +61,10 @@ function DocOverlay({
       <div className="flex h-full w-full max-w-[92%] flex-col border-l border-border bg-surface shadow-2xl animate-slide-in-right md:max-w-[50%]">
         {/* Minimal header — just the title + close; the doc starts where it starts */}
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-6 py-3.5">
-          <p className="text-sm font-semibold text-foreground">{label}</p>
+          <p className="font-serif text-lg text-foreground">{label}</p>
           <button
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-[8px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
             aria-label="Close document"
           >
             <Icon name="X" className="h-4 w-4" />
@@ -95,7 +95,7 @@ export function ClientDocuments({ contextDocs }: { contextDocs: ClientContextDoc
 
   return (
     <div>
-      <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+      <p className="mb-1.5 px-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-2">
         Documents
       </p>
       {available.length === 0 ? (

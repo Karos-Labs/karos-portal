@@ -75,30 +75,17 @@ interface BrandButtonProps {
 }
 
 function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) {
-  const isInstagram = platform.id === "instagram";
-
-  const bgStyle = isInstagram
-    ? { background: "linear-gradient(45deg, #833AB4, #FD1D1D, #FCB045)" }
-    : { background: platform.color };
-
-  const hoverClass = {
-    linkedin: "hover:brightness-90",
-    twitter: "hover:brightness-125",
-    facebook: "hover:brightness-90",
-    instagram: "hover:brightness-110",
-    youtube: "hover:brightness-90",
-  }[platform.id] ?? "hover:brightness-90";
-
+  /* Platform marks render monochrome in OUR palette (brand §11) — the chip
+     carries the border and hover, never the platform's own colors. */
   return (
     <button
       onClick={onClick}
       disabled={loading}
-      style={bgStyle}
       className={cn(
-        "relative inline-flex w-full items-center justify-center gap-2.5 rounded-[10px] px-4 py-2.5 text-sm font-semibold text-white shadow-md transition-all duration-150",
-        hoverClass,
+        "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md border border-border bg-foreground/[0.04] px-4 py-2.5 text-sm font-medium text-foreground/80 transition-colors duration-200",
+        "hover:border-neon/50 hover:text-neon",
         "disabled:pointer-events-none disabled:opacity-60",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
       )}
     >
       {loading ? (
@@ -108,10 +95,10 @@ function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) 
           fill="none"
           aria-hidden="true"
         >
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="white" strokeWidth="4" />
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path
             className="opacity-75"
-            fill="white"
+            fill="currentColor"
             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
           />
         </svg>
@@ -235,16 +222,8 @@ function PlatformCard({
     >
       {/* Header */}
       <div className="flex items-start gap-3 p-4">
-        {/* Platform icon with brand tint */}
-        <div
-          className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]"
-          style={{
-            background: platform.id === "instagram"
-              ? "linear-gradient(45deg, #833AB422, #FD1D1D22, #FCB04522)"
-              : platform.color + "22",
-            color: platform.id === "instagram" ? "#E1306C" : platform.color,
-          }}
-        >
+        {/* Platform icon — monochrome chip in our palette (brand §11) */}
+        <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
           <Icon name={platform.icon} className="h-5 w-5" />
         </div>
 
@@ -287,7 +266,7 @@ function PlatformCard({
 
         {/* Admin-only hint when OAuth flow exists but env vars aren't configured yet */}
         {isAdmin && hasOAuthSupport && !isOAuthEnabled && (
-          <p className="text-[11px] text-amber-400/80">
+          <p className="text-[11px] text-warning/80">
             OAuth env vars not set — the button above will fail until configured.
           </p>
         )}
@@ -347,7 +326,7 @@ function PlatformCard({
         >
           <div className="overflow-hidden">
             <div className="space-y-3 border-t border-border px-4 pb-5 pt-4">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-2">
+              <p className="text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
                 Manual credentials
               </p>
 
@@ -382,7 +361,7 @@ function PlatformCard({
               ))}
 
               {formError && (
-                <p className="rounded-[8px] border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
                   {formError}
                 </p>
               )}
@@ -496,7 +475,7 @@ export function IntegrationsTab({
 
       {/* Popup error banner */}
       {popupError && (
-        <div className="flex items-center gap-2.5 rounded-[10px] border border-danger/30 bg-danger/10 px-4 py-3">
+        <div className="flex items-center gap-2.5 rounded-md border border-danger/30 bg-danger/10 px-4 py-3">
           <Icon name="AlertCircle" className="h-4 w-4 shrink-0 text-danger" />
           <p className="text-sm text-danger">{popupError}</p>
           <button

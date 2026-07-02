@@ -69,7 +69,7 @@ export function renderSectionBody(md: string): string {
       const cells = row.split("|").slice(1, -1).map((c) => c.replace(/\*\*/g, "").trim());
       const cls =
         tag === "th"
-          ? "px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-2 border-b border-neon/20"
+          ? "px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-2 border-b border-border"
           : "px-3 py-2 text-xs text-muted align-top border-b border-border last:border-0";
       return cells.map((c) => `<${tag} class="${cls}">${c}</${tag}>`).join("");
     };
@@ -88,19 +88,19 @@ export function renderSectionBody(md: string): string {
   out = out.replace(
     /(<li>[\s\S]*?<\/li>\n?)+/g,
     (block) =>
-      `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-neon/50 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${block}</ul>\n`,
+      `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-muted-2 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${block}</ul>\n`,
   );
 
   out = out.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
   out = out.replace(
     /(<li>[\s\S]*?<\/li>\n?)+/g,
     (block) =>
-      `<ol class="my-2 space-y-1.5 ml-4 list-decimal [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] marker:text-neon/50">${block}</ol>\n`,
+      `<ol class="my-2 space-y-1.5 ml-4 list-decimal [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] marker:text-muted-2">${block}</ol>\n`,
   );
 
   out = out.replace(
     /^>\s+(.+)$/gm,
-    '<blockquote class="border-l-2 border-neon/30 pl-3 py-0.5 text-xs italic text-muted-2 my-2">$1</blockquote>',
+    '<blockquote class="border-l-2 border-border-strong pl-3 py-0.5 text-xs italic text-muted-2 my-2">$1</blockquote>',
   );
 
   out = out.replace(
@@ -118,7 +118,7 @@ export function renderFullDoc(content: string): string {
   let out = "";
   for (let i = 0; i < parts.length; i++) {
     if (i % 2 === 1) {
-      out += `<h2 class="text-base font-semibold mt-7 mb-2.5 text-neon/90">${parts[i]}</h2>`;
+      out += `<h2 class="text-base font-semibold mt-7 mb-2.5 text-foreground">${parts[i]}</h2>`;
     } else {
       out += renderSectionBody(parts[i]);
     }

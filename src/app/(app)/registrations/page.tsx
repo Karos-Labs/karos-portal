@@ -22,7 +22,7 @@ export default async function RegistrationsPage() {
       {accessRequests.length > 0 && (
         <section className="mb-10">
           <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400/20 text-amber-400 text-[10px] font-bold">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-warning/20 text-warning text-[10px] font-bold">
               {accessRequests.length}
             </span>
             New Client Access Requests

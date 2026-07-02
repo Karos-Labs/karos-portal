@@ -107,10 +107,10 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         {/* Left: avatar + name + meta */}
         <div className="flex items-center gap-3">
           <div
-            className="flex h-14 w-14 items-center justify-center rounded-[14px] text-lg font-semibold"
+            className="flex h-14 w-14 items-center justify-center rounded-md text-lg font-semibold"
             style={{
-              background: (client.accentColor ?? "#2dff9e") + "1f",
-              color: client.accentColor ?? "#2dff9e",
+              background: (client.accentColor ?? "#FF6B2C") + "1f",
+              color: client.accentColor ?? "#FF6B2C",
             }}
           >
             {initials(client.name)}
@@ -157,7 +157,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           <Card>
             <div className="mb-2 flex items-center justify-between gap-2">
               <CardTitle>Newsletter &amp; blog</CardTitle>
-              <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">e11</span>
+              <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">e11</span>
             </div>
             <div className="mb-3 flex items-center gap-2">
               <Badge tone={newsletterStatus === "Ready" ? "neon" : newsletterStatus === "Draft" ? "warning" : "neutral"}>

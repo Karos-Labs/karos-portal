@@ -92,62 +92,62 @@ const EVENT_CONFIG: Record<
 > = {
   SCRAPE: {
     icon: "Globe",
-    dotClass: "bg-neon/10",
-    iconClass: "text-neon",
+    dotClass: "bg-foreground/[0.05]",
+    iconClass: "text-foreground/70",
     label: "Website Scraped",
   },
   INTEL_GENERATION: {
     icon: "BarChart2",
-    dotClass: "bg-neon/10",
-    iconClass: "text-neon",
+    dotClass: "bg-foreground/[0.05]",
+    iconClass: "text-foreground/70",
     label: "Intel Report",
   },
   CAMPAIGN_CREATED: {
     icon: "Bot",
-    dotClass: "bg-info/10",
-    iconClass: "text-info",
+    dotClass: "bg-foreground/[0.05]",
+    iconClass: "text-foreground/70",
     label: "Campaign",
   },
   CAMPAIGN_DELIVERED: {
     icon: "Mail",
-    dotClass: "bg-info/10",
-    iconClass: "text-info",
+    dotClass: "bg-foreground/[0.05]",
+    iconClass: "text-foreground/70",
     label: "Delivered",
   },
   COMPETITOR_ADDED: {
     icon: "UserPlus",
-    dotClass: "bg-neon/10",
-    iconClass: "text-neon",
+    dotClass: "bg-foreground/[0.05]",
+    iconClass: "text-foreground/70",
     label: "Competitor Added",
   },
   COMPETITOR_ANALYZED: {
     icon: "Sparkles",
-    dotClass: "bg-neon/10",
-    iconClass: "text-neon",
+    dotClass: "bg-foreground/[0.05]",
+    iconClass: "text-foreground/70",
     label: "AI Analysis",
   },
   CONTEXT_DOC_UPDATED: {
     icon: "FileText",
-    dotClass: "bg-info/10",
-    iconClass: "text-info",
+    dotClass: "bg-foreground/[0.05]",
+    iconClass: "text-foreground/70",
     label: "Docs Updated",
   },
   MANUAL_NOTE: {
     icon: "MessageSquare",
-    dotClass: "bg-warning/10",
-    iconClass: "text-warning",
+    dotClass: "bg-foreground/[0.05]",
+    iconClass: "text-foreground/70",
     label: "Note",
   },
   CLIENT_CREATED: {
     icon: "UserCheck",
-    dotClass: "bg-info/10",
-    iconClass: "text-info",
+    dotClass: "bg-foreground/[0.05]",
+    iconClass: "text-foreground/70",
     label: "Client Created",
   },
   BRANDING_UPDATED: {
     icon: "Palette",
-    dotClass: "bg-neon/10",
-    iconClass: "text-neon",
+    dotClass: "bg-foreground/[0.05]",
+    iconClass: "text-foreground/70",
     label: "Branding",
   },
 };
@@ -201,7 +201,7 @@ function EventRow({ event, isLast }: { event: TimelineEvent; isLast: boolean }) 
       {/* Icon dot */}
       <div
         className={cn(
-          "relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px]",
+          "relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
           cfg.dotClass,
         )}
       >
@@ -220,9 +220,9 @@ function EventRow({ event, isLast }: { event: TimelineEvent; isLast: boolean }) 
           <span
             className={cn(
               "font-medium",
-              event.actorRole === "system" && "text-neon/80",
-              event.actorRole === "staff" && "text-info/80",
-              event.actorRole === "client" && "text-warning/80",
+              event.actorRole === "system" && "text-muted",
+              event.actorRole === "staff" && "text-muted",
+              event.actorRole === "client" && "text-muted",
             )}
           >
             {event.actor}
@@ -266,7 +266,7 @@ function AddNoteForm({ clientId }: { clientId: string }) {
   return (
     <div className="mb-5 space-y-1.5">
       <div className="flex gap-2">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-surface-2">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-2">
           <Icon name="MessageSquare" className="h-4 w-4 text-muted-2" />
         </div>
         <textarea
@@ -283,7 +283,7 @@ function AddNoteForm({ clientId }: { clientId: string }) {
           rows={2}
           placeholder="Add an internal note… (⌘↵ to save)"
           className={cn(
-            "flex-1 resize-none rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none transition-colors",
+            "flex-1 resize-none rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none transition-colors",
             "focus:border-neon/50 focus:ring-1 focus:ring-neon/20",
             "disabled:cursor-not-allowed disabled:opacity-50",
             error && "border-danger/50",
@@ -350,8 +350,8 @@ export function ActivityTimeline({
 
       {/* Empty state */}
       {allEvents.length === 0 && (
-        <div className="flex flex-col items-center gap-3 rounded-[12px] border border-dashed border-border py-12 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-[12px] bg-surface-2">
+        <div className="flex flex-col items-center gap-3 rounded-md border border-dashed border-border py-12 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-md bg-surface-2">
             <Icon name="History" className="h-6 w-6 text-muted-2" />
           </div>
           <div>

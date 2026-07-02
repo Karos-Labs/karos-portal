@@ -33,8 +33,8 @@ export default async function ClientsPage() {
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
                       <div
-                        className="flex h-11 w-11 items-center justify-center rounded-[12px] text-sm font-semibold"
-                        style={{ background: (c.accentColor ?? "#2dff9e") + "1f", color: c.accentColor ?? "#2dff9e" }}
+                        className="flex h-11 w-11 items-center justify-center rounded-md text-sm font-semibold"
+                        style={{ background: (c.accentColor ?? "#FF6B2C") + "1f", color: c.accentColor ?? "#FF6B2C" }}
                       >
                         {initials(c.name)}
                       </div>

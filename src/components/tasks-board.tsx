@@ -16,14 +16,16 @@ import type { ClientTask, TaskOwner, TaskStatus, TaskSource, Role } from "@/lib/
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
+/* Sources are categories, not judgments — they all render neutral. The label
+   and icon carry the meaning; color is reserved for the good/bad scale. */
 const SOURCE_META: Record<TaskSource, { label: string; icon: string; color: string }> = {
-  gmail:               { label: "Operational Intel", icon: "Globe",      color: "#5db4ff" },
-  competitor_research: { label: "Competitor",        icon: "TrendingUp", color: "#2dff9e" },
-  brand_audit:         { label: "Brand Audit",       icon: "Search",     color: "#ffcf5d" },
-  content_dispatch:    { label: "Content",           icon: "Zap",        color: "#ff5d6c" },
-  copilot:             { label: "AI Copilot",        icon: "Bot",        color: "#2dff9e" },
-  manual:              { label: "Manual",            icon: "PenLine",    color: "#8aa2a8" },
-  custom:              { label: "Quick Add",         icon: "Plus",       color: "#a78bfa" },
+  gmail:               { label: "Operational Intel", icon: "Globe",      color: "#9c9ca3" },
+  competitor_research: { label: "Competitor",        icon: "TrendingUp", color: "#9c9ca3" },
+  brand_audit:         { label: "Brand Audit",       icon: "Search",     color: "#9c9ca3" },
+  content_dispatch:    { label: "Content",           icon: "Zap",        color: "#9c9ca3" },
+  copilot:             { label: "AI Copilot",        icon: "Bot",        color: "#9c9ca3" },
+  manual:              { label: "Manual",            icon: "PenLine",    color: "#9c9ca3" },
+  custom:              { label: "Quick Add",         icon: "Plus",       color: "#9c9ca3" },
 };
 
 const PRIORITY_BADGE: Record<string, { tone: "danger" | "warning" | "neon" | "neutral" }> = {
@@ -69,11 +71,11 @@ function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boo
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-[12px] border border-border bg-surface-2 px-4 py-3">
+    <div className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-4 py-3">
       <div
         className={cn(
-          "flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] transition-colors",
-          isOn ? "bg-neon/15 text-neon" : "bg-surface-3 text-muted",
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors",
+          isOn ? "bg-success/10 text-success" : "bg-surface-3 text-muted",
         )}
       >
         <Icon name="Zap" className="h-4 w-4" />
@@ -92,13 +94,13 @@ function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boo
         aria-checked={isOn}
         role="switch"
         className={cn(
-          "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40 disabled:opacity-50",
-          isOn ? "bg-neon" : "bg-surface-3",
+          "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25 disabled:opacity-50",
+          isOn ? "bg-success" : "bg-surface-3",
         )}
       >
         <span
           className={cn(
-            "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform duration-200",
+            "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-primary shadow-md transition-transform duration-200",
             isOn ? "translate-x-5" : "translate-x-0",
           )}
         />
@@ -148,14 +150,14 @@ function TaskCard({
       onDragEnd={onDragEnd}
       onClick={onClick}
       className={cn(
-        "group relative rounded-[12px] border bg-surface p-3.5 transition-all duration-150 cursor-pointer",
+        "group relative rounded-md border bg-surface p-3.5 transition-all duration-150 cursor-pointer",
         task.status === "completed"
           ? "border-border opacity-60"
           : isReviewPending
-            ? "border-neon/30 bg-neon/[0.02] hover:border-neon/50"
+            ? "border-warning/40 bg-warning/[0.03] hover:border-warning/60"
             : "border-border hover:border-border-strong hover:shadow-[0_2px_12px_rgba(0,0,0,0.25)]",
         isDraggable && !isDragging && "cursor-grab active:cursor-grabbing",
-        isDragging && "opacity-40 cursor-grabbing ring-2 ring-neon/30",
+        isDragging && "opacity-40 cursor-grabbing ring-2 ring-foreground/25",
         isExecuting && "animate-pulse",
       )}
     >
@@ -177,9 +179,9 @@ function TaskCard({
 
       {/* Review pending badge */}
       {isReviewPending && !isExecuting && (
-        <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-neon/10 px-2 py-1">
-          <Icon name="Eye" className="h-3 w-3 text-neon" />
-          <span className="text-[10px] font-medium text-neon">Ready for review</span>
+        <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-warning/10 px-2 py-1">
+          <Icon name="Eye" className="h-3 w-3 text-warning" />
+          <span className="text-[10px] font-medium text-warning">Ready for review</span>
         </div>
       )}
 
@@ -311,16 +313,16 @@ function KanbanColumn({
       {/* Column header */}
       <div
         className={cn(
-          "flex items-center gap-2 rounded-[8px] px-1 py-0.5 transition-colors",
-          isTarget && "bg-neon/5",
+          "flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors",
+          isTarget && "bg-foreground/[0.03]",
         )}
       >
         <Icon
           name={icon}
           className={cn(
             "h-4 w-4",
-            status === "completed"      ? "text-neon"
-            : status === "review_pending" ? "text-neon"
+            status === "completed"      ? "text-success"
+            : status === "review_pending" ? "text-warning"
             : status === "in_progress"    ? "text-warning"
             : "text-muted",
           )}
@@ -334,15 +336,15 @@ function KanbanColumn({
       {/* Drop zone + cards */}
       <div
         className={cn(
-          "flex flex-col gap-2 min-h-[80px] rounded-[12px] transition-all duration-150",
-          isTarget && "bg-neon/5 ring-2 ring-neon/30 p-2",
+          "flex flex-col gap-2 min-h-[80px] rounded-md transition-all duration-150",
+          isTarget && "bg-foreground/[0.03] ring-2 ring-foreground/20 p-2",
         )}
       >
         {tasks.length === 0 ? (
           <div
             className={cn(
-              "rounded-[12px] border border-dashed py-8 text-center transition-colors",
-              isTarget ? "border-neon/40" : "border-border",
+              "rounded-md border border-dashed py-8 text-center transition-colors",
+              isTarget ? "border-foreground/30" : "border-border",
             )}
           >
             <p className="text-xs text-muted-2">
@@ -504,7 +506,7 @@ export function TasksBoard({
   if (localTasks.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-border py-20 text-center">
-        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-neon-soft text-neon">
+        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
           <Icon name="CheckSquare" className="h-6 w-6" />
         </div>
         <p className="text-sm font-medium text-foreground">No tasks yet</p>
@@ -519,11 +521,11 @@ export function TasksBoard({
   return (
     <>
       {/* Tab switcher */}
-      <div className="mb-5 flex items-center gap-1 rounded-[12px] border border-border bg-surface-2 p-1">
+      <div className="mb-5 flex items-center gap-1 rounded-md border border-border bg-surface-2 p-1">
         <button
           onClick={() => setActiveTab("karos")}
           className={cn(
-            "flex flex-1 items-center justify-center gap-2 rounded-[8px] px-4 py-2 text-sm font-medium transition-all duration-150",
+            "flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-150",
             activeTab === "karos"
               ? "bg-surface shadow-[0_1px_4px_rgba(0,0,0,0.3)] text-foreground"
               : "text-muted hover:text-foreground",
@@ -531,14 +533,14 @@ export function TasksBoard({
         >
           <Icon name="Sparkles" className="h-3.5 w-3.5" />
           Karos Managed
-          <span className="rounded-full bg-neon/15 px-1.5 py-0.5 text-[10px] font-semibold text-neon">
+          <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
             {karosTasks.length}
           </span>
         </button>
         <button
           onClick={() => setActiveTab("client")}
           className={cn(
-            "flex flex-1 items-center justify-center gap-2 rounded-[8px] px-4 py-2 text-sm font-medium transition-all duration-150",
+            "flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-150",
             activeTab === "client"
               ? "bg-surface shadow-[0_1px_4px_rgba(0,0,0,0.3)] text-foreground"
               : "text-muted hover:text-foreground",
@@ -568,7 +570,7 @@ export function TasksBoard({
 
       {/* Executing hint for karos tab */}
       {activeTab === "karos" && hasExecuting && (
-        <div className="mb-4 flex items-center gap-2 rounded-[10px] border border-neon/20 bg-neon/5 px-3 py-2">
+        <div className="mb-4 flex items-center gap-2 rounded-md border border-neon/20 bg-neon/5 px-3 py-2">
           <Icon name="Loader" className="h-3.5 w-3.5 animate-spin text-neon" />
           <p className="text-xs text-neon">
             Karos AI is generating deliverables — cards will update automatically.

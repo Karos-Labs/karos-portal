@@ -16,7 +16,7 @@ export function DraftAgentCard({ agent }: { agent: Agent }) {
     <Card className="flex flex-col hover:border-border-strong">
       <div className="flex items-start gap-3">
         <div
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] bg-neon-soft text-neon"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70"
           style={agent.color ? { color: agent.color, background: agent.color + "1f" } : undefined}
         >
           <Icon name={agent.icon} className="h-5 w-5" />
@@ -57,7 +57,7 @@ export function AgentCard({ agent, clients, canEdit }: { agent: Agent; clients: 
     <Card className="flex flex-col hover:border-border-strong">
       <div className="flex items-start gap-3">
         <div
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] bg-neon-soft text-neon"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70"
           style={agent.color ? { color: agent.color, background: agent.color + "1f" } : undefined}
         >
           <Icon name={agent.icon} className="h-5 w-5" />

@@ -60,7 +60,7 @@ function ThreatBadge({ level }: { level?: ClientCompetitor["threatLevel"] }) {
 
 function AnalyzingBanner() {
   return (
-    <div className="flex items-center gap-2.5 rounded-[10px] border border-neon/30 bg-neon-soft/10 px-4 py-3">
+    <div className="flex items-center gap-2.5 rounded-md border border-neon/30 bg-neon-soft/10 px-4 py-3">
       <div className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-neon/30 border-t-neon" />
       <div>
         <p className="text-sm font-medium text-neon">Analyzing competitors…</p>
@@ -122,7 +122,7 @@ function AddNameBar({
           disabled={isLoading}
           placeholder="Enter competitor name…"
           className={cn(
-            "flex-1 rounded-[8px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none transition-colors",
+            "flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none transition-colors",
             "focus:border-neon/50 focus:ring-1 focus:ring-neon/20",
             "disabled:cursor-not-allowed disabled:opacity-50",
             error && "border-danger/50",
@@ -287,7 +287,7 @@ export function CompetitorManager({ competitors, clientId, hasReport, isStaff }:
 
       {/* Discover error */}
       {discoverError && (
-        <div className="flex items-center gap-2 rounded-[8px] border border-danger/30 bg-danger/10 px-3 py-2">
+        <div className="flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
           <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-danger" />
           <p className="text-xs text-danger">{discoverError}</p>
         </div>
@@ -295,8 +295,8 @@ export function CompetitorManager({ competitors, clientId, hasReport, isStaff }:
 
       {/* Empty states */}
       {competitors.length === 0 && (
-        <div className="flex flex-col items-center gap-4 rounded-[12px] border border-dashed border-border py-12 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-[12px] bg-surface-2">
+        <div className="flex flex-col items-center gap-4 rounded-md border border-dashed border-border py-12 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-md bg-surface-2">
             <Icon name="Users" className="h-6 w-6 text-muted-2" />
           </div>
 
@@ -345,7 +345,7 @@ export function CompetitorManager({ competitors, clientId, hasReport, isStaff }:
                     <th
                       key={i}
                       className={cn(
-                        "px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-2",
+                        "px-4 py-3 text-left text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2",
                         i === 0 && "w-[200px]",
                         i === tableHeaders.length - 1 && isStaff && "w-10",
                       )}
