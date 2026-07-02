@@ -20,21 +20,25 @@ interface Props {
 /* ── Color entry (local form state — lighter than full BrandColor) ─────── */
 
 interface ColorEntry {
+  id: number;
   hex: string;
   role: string;
 }
 
 const MAX_COLORS = 4;
 
+let _colorIdCounter = 0;
+function nextColorId() { return ++_colorIdCounter; }
+
 /** Synthesise initial color entries from existing guidelines, preferring the new array. */
 function getInitialColors(existing?: BrandingGuidelines): ColorEntry[] {
   if (existing?.dominantColors?.length) {
-    return existing.dominantColors.map((c) => ({ hex: c.hex, role: c.role ?? "" }));
+    return existing.dominantColors.map((c) => ({ id: nextColorId(), hex: c.hex, role: c.role ?? "" }));
   }
   // Fall back to legacy scalar fields for pre-migration clients
   const entries: ColorEntry[] = [];
   const add = (hex: string | undefined, role: string) => {
-    if (hex) entries.push({ hex, role });
+    if (hex) entries.push({ id: nextColorId(), hex, role });
   };
   add(existing?.primaryAccent ?? existing?.primaryColor, "Primary accent");
   add(existing?.secondaryAccent ?? existing?.secondaryColor, "Secondary accent");
@@ -78,7 +82,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
   }
 
   function addColorSlot() {
-    if (colors.length < MAX_COLORS) setColors((prev) => [...prev, { hex: "", role: "" }]);
+    if (colors.length < MAX_COLORS) setColors((prev) => [...prev, { id: nextColorId(), hex: "", role: "" }]);
   }
 
   async function generateFromWebsite() {
@@ -91,13 +95,13 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
 
       // Pre-fill palette — prefer new array, fall back to legacy scalars
       if (result.dominantColors?.length) {
-        setColors(result.dominantColors.map((c) => ({ hex: c.hex, role: c.role ?? "" })));
+        setColors(result.dominantColors.map((c) => ({ id: nextColorId(), hex: c.hex, role: c.role ?? "" })));
       } else {
         const newColors: ColorEntry[] = [];
-        if (result.primaryAccent) newColors.push({ hex: result.primaryAccent, role: "Primary accent" });
-        if (result.secondaryAccent) newColors.push({ hex: result.secondaryAccent, role: "Secondary accent" });
-        if (result.brandNeutralDark) newColors.push({ hex: result.brandNeutralDark, role: "" });
-        if (result.brandNeutralLight) newColors.push({ hex: result.brandNeutralLight, role: "" });
+        if (result.primaryAccent) newColors.push({ id: nextColorId(), hex: result.primaryAccent, role: "Primary accent" });
+        if (result.secondaryAccent) newColors.push({ id: nextColorId(), hex: result.secondaryAccent, role: "Secondary accent" });
+        if (result.brandNeutralDark) newColors.push({ id: nextColorId(), hex: result.brandNeutralDark, role: "" });
+        if (result.brandNeutralLight) newColors.push({ id: nextColorId(), hex: result.brandNeutralLight, role: "" });
         setColors(newColors);
       }
 
@@ -192,7 +196,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
           </p>
           <div className="space-y-2">
             {colors.map((entry, idx) => (
-              <div key={idx} className="flex items-center gap-2">
+              <div key={entry.id} className="flex items-center gap-2">
                 <span className="w-5 shrink-0 text-center font-mono text-[10px] font-semibold text-muted-2">
                   {idx + 1}
                 </span>

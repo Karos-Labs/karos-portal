@@ -189,7 +189,7 @@ export function AddCompetitorModal({ open, onClose, clientId }: Props) {
               value={form.keyStrengths}
               onChange={(e) => set("keyStrengths", e.target.value)}
               placeholder={"Mobile app\nZero fees\nCentral Bank licence"}
-              className="h-24 w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm placeholder:text-muted-2 focus:outline-none focus:ring-1 focus:ring-neon/40 resize-none"
+              className="h-24 w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm placeholder:text-muted-2 focus:outline-none focus:ring-1 focus:ring-neon/40 resize-none"
             />
           </div>
           <div>
@@ -198,7 +198,7 @@ export function AddCompetitorModal({ open, onClose, clientId }: Props) {
               value={form.keyWeaknesses}
               onChange={(e) => set("keyWeaknesses", e.target.value)}
               placeholder={"No secondary market\nPoor support"}
-              className="h-24 w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm placeholder:text-muted-2 focus:outline-none focus:ring-1 focus:ring-neon/40 resize-none"
+              className="h-24 w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm placeholder:text-muted-2 focus:outline-none focus:ring-1 focus:ring-neon/40 resize-none"
             />
           </div>
         </div>

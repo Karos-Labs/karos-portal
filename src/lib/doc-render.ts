@@ -1,5 +1,9 @@
 /** Client-safe Markdown → styled HTML helpers for rendering client context docs. */
 
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 export interface DocSection {
   heading: string;
   body: string;
@@ -42,7 +46,9 @@ export function parseDocSections(content: string): DocSection[] {
 
 /** Render a single section body (no `##` headings expected inside) to HTML. */
 export function renderSectionBody(md: string): string {
-  let out = md.replace(/^---+$/gm, "");
+  // HTML-escape the raw Markdown before processing so any user-supplied < > & "
+  // in the source text cannot break out into the surrounding HTML structure.
+  let out = esc(md).replace(/^---+$/gm, "");
 
   out = out.replace(
     /^###\s+(.+)$/gm,
@@ -65,7 +71,7 @@ export function renderSectionBody(md: string): string {
       const cells = row.split("|").slice(1, -1).map((c) => c.replace(/\*\*/g, "").trim());
       const cls =
         tag === "th"
-          ? "px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-2 border-b border-neon/20"
+          ? "px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-2 border-b border-border"
           : "px-3 py-2 text-xs text-muted align-top border-b border-border last:border-0";
       return cells.map((c) => `<${tag} class="${cls}">${c}</${tag}>`).join("");
     };
@@ -105,7 +111,7 @@ export function renderSectionBody(md: string): string {
 
   out = out.replace(
     /^>\s+(.+)$/gm,
-    '<blockquote class="border-l-2 border-neon/30 pl-3 py-0.5 text-xs italic text-muted-2 my-2">$1</blockquote>',
+    '<blockquote class="border-l-2 border-border-strong pl-3 py-0.5 text-xs italic text-muted-2 my-2">$1</blockquote>',
   );
 
   out = out.replace(
@@ -129,7 +135,7 @@ export function renderFullDoc(content: string): string {
     if (match.index > cursor) {
       out += renderSectionBody(clean.slice(cursor, match.index));
     }
-    out += `<h2 class="text-base font-semibold mt-7 mb-2.5 text-neon/90">${match[1]}</h2>`;
+    out += `<h2 class="text-base font-semibold mt-7 mb-2.5 text-neon/90">${esc(match[1])}</h2>`;
     cursor = match.index + match[0].length;
   }
 

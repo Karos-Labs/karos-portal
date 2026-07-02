@@ -50,7 +50,7 @@ export function ClientKeyPanel({
 
       {currentKey ? (
         <div className="flex items-center gap-2">
-          <code className="flex-1 overflow-x-auto rounded-[10px] bg-surface-2 px-3 py-2 text-xs text-neon font-mono">
+          <code className="flex-1 overflow-x-auto rounded-md bg-surface-2 px-3 py-2 text-xs text-foreground font-mono">
             {currentKey}
           </code>
           <Button size="sm" variant="outline" onClick={copy}>

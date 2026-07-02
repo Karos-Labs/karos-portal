@@ -105,8 +105,8 @@ export default async function DashboardPage() {
                 .slice(0, 5)
                 .map((a) => (
                   <li key={a.id}>
-                    <Link href={`/agents/${a.id}`} className="flex items-center gap-3 rounded-[10px] p-2 transition-colors hover:bg-surface-2">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-neon-soft text-neon" style={a.color ? { color: a.color, background: a.color + "1f" } : undefined}>
+                    <Link href={`/agents/${a.id}`} className="flex items-center gap-3 rounded-md p-2 transition-colors hover:bg-surface-2">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-neon-soft text-neon" style={a.color ? { color: a.color, background: a.color + "1f" } : undefined}>
                         <Icon name={a.icon} className="h-4 w-4" />
                       </div>
                       <div className="min-w-0 flex-1">

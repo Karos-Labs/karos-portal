@@ -10,9 +10,9 @@ import type { ActionItemNotification, AgentReviewNotification, ClientTask } from
 /* ── Priority colours for task alerts ───────────────────────────── */
 
 const PRIORITY_COLOR: Record<string, string> = {
-  high:   "#ff5d6c",
-  medium: "#ffcf5d",
-  low:    "#8aa2a8",
+  high:   "#e5484d",
+  medium: "#d9a13d",
+  low:    "#9c9ca3",
 };
 
 interface Props {
@@ -79,7 +79,7 @@ export function NotificationBell({
           <Icon name="Bell" className="h-4 w-4 text-muted-2" />
           <span className="flex-1 text-left">Notifications</span>
           {total > 0 && (
-            <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-neon px-1 text-[10px] font-bold neon-glow">
+            <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-neon px-1 text-[10px] font-bold">
               {total > 9 ? "9+" : total}
             </span>
           )}
@@ -88,7 +88,7 @@ export function NotificationBell({
         <button
           onClick={() => setOpen((o) => !o)}
           className={cn(
-            "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]",
+            "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
             "text-muted transition-all duration-150 hover:bg-surface-2 hover:text-foreground",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40",
             open && "bg-surface-2 text-foreground",
@@ -100,7 +100,7 @@ export function NotificationBell({
             <span
               className={cn(
                 "absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center",
-                "rounded-full bg-neon px-1 text-[10px] font-bold neon-glow",
+                "rounded-full bg-neon px-1 text-[10px] font-bold",
               )}
             >
               {total > 9 ? "9+" : total}
@@ -123,14 +123,14 @@ export function NotificationBell({
                 : panelPlacement === "right"
                   ? "bottom-0 left-full ml-2"
                   : "right-0 top-full mt-2",
-              "rounded-[10px] border border-border glass-surface shadow-2xl",
+              "rounded-md border border-border glass-surface shadow-2xl",
             )}
           >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
               {total > 0 ? (
-                <span className="rounded-full bg-neon/15 px-2 py-0.5 text-[11px] font-semibold text-neon">
+                <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-semibold text-muted">
                   {total} active
                 </span>
               ) : (
@@ -142,8 +142,8 @@ export function NotificationBell({
             <div className="max-h-[480px] overflow-y-auto">
               {total === 0 ? (
                 <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-neon/10">
-                    <Icon name="CheckCircle2" className="h-6 w-6 text-neon" />
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
+                    <Icon name="CheckCircle2" className="h-6 w-6 text-success" />
                   </div>
                   <p className="text-sm font-medium text-foreground">All caught up!</p>
                   <p className="text-xs text-muted-2">No pending tasks or reviews.</p>
@@ -154,8 +154,8 @@ export function NotificationBell({
                   {/* ── Review-pending tasks (highest priority) ── */}
                   {reviewPendingTasks.length > 0 && (
                     <>
-                      <div className="bg-neon/5 px-4 py-1.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-neon">
+                      <div className="bg-warning/5 px-4 py-1.5">
+                        <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-warning">
                           Ready for review ({reviewPendingTasks.length})
                         </p>
                       </div>
@@ -169,7 +169,7 @@ export function NotificationBell({
                   {pendingTasks.length > 0 && (
                     <>
                       <div className="bg-surface-2/60 px-4 py-1.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                        <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">
                           Pending tasks ({pendingTasks.length})
                         </p>
                       </div>
@@ -191,12 +191,12 @@ export function NotificationBell({
                       <div className="min-w-0 flex-1">
                         <p className="line-clamp-2 text-xs font-medium text-foreground">
                           New content ready:{" "}
-                          <span className="text-neon">{j.title}</span>
+                          <span className="text-foreground">{j.title}</span>
                         </p>
                         <Link
                           href={`/jobs/${j.jobId}`}
                           onClick={() => setOpen(false)}
-                          className="mt-0.5 inline-block text-[10px] text-muted-2 hover:text-neon"
+                          className="mt-0.5 inline-block text-[10px] text-muted-2 hover:text-foreground"
                         >
                           {j.agentName} · Pending review · {relativeTime(j.updatedAt)}
                         </Link>
@@ -221,15 +221,15 @@ export function NotificationBell({
                       key={`${n.transcriptId}-${n.itemIndex}`}
                       className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2/50"
                     >
-                      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-neon/10">
-                        <Icon name="CheckSquare" className="h-3.5 w-3.5 text-neon" />
+                      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success/10">
+                        <Icon name="CheckSquare" className="h-3.5 w-3.5 text-success" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="line-clamp-2 text-xs font-medium text-foreground">{n.text}</p>
                         <Link
                           href={`/transcripts/${n.transcriptId}`}
                           onClick={() => setOpen(false)}
-                          className="mt-0.5 inline-block text-[10px] text-muted-2 hover:text-neon"
+                          className="mt-0.5 inline-block text-[10px] text-muted-2 hover:text-foreground"
                         >
                           {n.transcriptTitle}
                           {n.meetingDate ? ` · ${relativeTime(n.meetingDate)}` : ""}
@@ -259,7 +259,7 @@ export function NotificationBell({
                   <Link
                     href="/tasks"
                     onClick={() => setOpen(false)}
-                    className="text-[11px] text-muted-2 transition-colors hover:text-neon"
+                    className="text-[11px] text-muted-2 transition-colors hover:text-foreground"
                   >
                     View task board →
                   </Link>
@@ -267,7 +267,7 @@ export function NotificationBell({
                   <Link
                     href="/transcripts"
                     onClick={() => setOpen(false)}
-                    className="text-[11px] text-muted-2 transition-colors hover:text-neon"
+                    className="text-[11px] text-muted-2 transition-colors hover:text-foreground"
                   >
                     View all meetings →
                   </Link>
@@ -295,12 +295,12 @@ function TaskAlertRow({ task, onClose }: { task: ClientTask; onClose: () => void
     >
       <div
         className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-        style={{ background: (isReview ? "#2dff9e" : prioColor) + "1a" }}
+        style={{ background: (isReview ? "#FF6B2C" : prioColor) + "1a" }}
       >
         <Icon
           name={isReview ? "Eye" : "Circle"}
           className="h-3.5 w-3.5"
-          style={{ color: isReview ? "#2dff9e" : prioColor }}
+          style={{ color: isReview ? "#FF6B2C" : prioColor }}
         />
       </div>
       <div className="min-w-0 flex-1">

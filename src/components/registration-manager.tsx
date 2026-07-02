@@ -251,7 +251,7 @@ export function ClientRequestManager({ requests }: { requests: ClientRequest[] }
         <Card key={r.id} className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-neon-soft text-neon">
+              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-neon-soft text-neon">
                 <Icon name="Building2" className="h-5 w-5" />
               </div>
               <div>
@@ -268,7 +268,7 @@ export function ClientRequestManager({ requests }: { requests: ClientRequest[] }
             </div>
           </div>
 
-          <div className="rounded-[10px] bg-surface-2 px-4 py-3">
+          <div className="rounded-md bg-surface-2 px-4 py-3">
             <p className="text-xs font-medium text-muted mb-1">Use case</p>
             <p className="text-sm">{r.useCase}</p>
           </div>

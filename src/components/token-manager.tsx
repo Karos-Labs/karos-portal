@@ -47,7 +47,7 @@ export function TokenManager({ tokens, mcpUrl }: { tokens: AccessToken[]; mcpUrl
     <div className="space-y-4">
       {/* Newly minted token — shown once */}
       {fresh && (
-        <div className="space-y-2 rounded-[10px] border border-neon/40 bg-neon-soft p-3">
+        <div className="space-y-2 rounded-md border border-neon/40 bg-neon-soft p-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-neon">
             <Icon name="KeyRound" className="h-3.5 w-3.5" />
             Copy this token now — you won&apos;t see it again.
@@ -82,7 +82,7 @@ export function TokenManager({ tokens, mcpUrl }: { tokens: AccessToken[]; mcpUrl
       {tokens.length > 0 && (
         <div className="space-y-2">
           {tokens.map((t) => (
-            <div key={t.id} className="flex items-center justify-between gap-2 rounded-[10px] border border-border bg-surface-2 px-3 py-2">
+            <div key={t.id} className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface-2 px-3 py-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{t.name}</p>
                 <p className="text-xs text-muted-2">

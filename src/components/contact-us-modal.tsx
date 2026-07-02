@@ -71,7 +71,7 @@ export function ContactUsButton({ variant = "icon" }: { variant?: "icon" | "row"
       ) : (
         <button
           onClick={() => setOpen(true)}
-          className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-muted transition-all duration-150 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
+          className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted transition-all duration-150 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
           aria-label="Contact support"
           title="Contact us"
         >
@@ -91,7 +91,7 @@ export function ContactUsButton({ variant = "icon" }: { variant?: "icon" | "row"
         >
           {/* Dialog card */}
           <div
-            className="relative w-full max-w-[480px] rounded-[16px] border border-border bg-surface shadow-[0_12px_60px_rgba(0,0,0,0.8)]"
+            className="relative w-full max-w-[480px] rounded-md border border-border bg-surface shadow-[0_12px_60px_rgba(0,0,0,0.8)]"
             role="dialog"
             aria-modal="true"
             aria-labelledby="support-dialog-title"
@@ -99,7 +99,7 @@ export function ContactUsButton({ variant = "icon" }: { variant?: "icon" | "row"
             {/* Header */}
             <div className="flex items-center justify-between border-b border-border px-6 py-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-neon-soft text-neon shadow-[0_0_14px_-4px_rgba(45,255,158,0.4)]">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
                   <Headphones className="h-4 w-4" />
                 </div>
                 <div>
@@ -111,7 +111,7 @@ export function ContactUsButton({ variant = "icon" }: { variant?: "icon" | "row"
               </div>
               <button
                 onClick={handleClose}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
                 aria-label="Close dialog"
               >
                 <X className="h-4 w-4" />
@@ -122,7 +122,7 @@ export function ContactUsButton({ variant = "icon" }: { variant?: "icon" | "row"
             <div className="px-6 py-5">
               {success ? (
                 <div className="flex flex-col items-center gap-3 py-8 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-neon-soft text-neon shadow-[0_0_20px_-4px_rgba(45,255,158,0.4)]">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
                     <CheckCircle className="h-6 w-6" />
                   </div>
                   <p className="text-sm font-semibold text-foreground">Message sent!</p>
@@ -179,7 +179,7 @@ export function ContactUsButton({ variant = "icon" }: { variant?: "icon" | "row"
                     />
                   </div>
                   {error && (
-                    <p className="rounded-[8px] border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                    <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
                       {error}
                     </p>
                   )}

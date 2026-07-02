@@ -48,10 +48,10 @@ export function CopilotDock({ clientId, clientName, agents, userName, hasGoogleI
         ) : (
           <button
             onClick={() => setSheetOpen(true)}
-            className="fixed left-0 right-0 bottom-[54px] z-40 flex items-center justify-center gap-2 border-t border-border bg-surface/95 py-2.5 text-sm font-medium text-foreground backdrop-blur-sm transition-colors hover:bg-surface-2 md:bottom-0 md:left-72"
+            className="fixed left-0 right-0 bottom-[54px] z-40 flex items-center justify-center gap-2 border-t border-border bg-surface/95 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-foreground backdrop-blur-sm transition-colors hover:bg-surface-2 md:bottom-0 md:left-72"
             aria-label="Open AI Copilot"
           >
-            <Icon name="MessageCircle" className="h-4 w-4 text-neon" />
+            <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
             AI Copilot
             <Icon name="ChevronUp" className="h-4 w-4 text-muted-2" />
           </button>
@@ -87,8 +87,8 @@ export function CopilotDock({ clientId, clientName, agents, userName, hasGoogleI
             collapsed ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         >
-          <Icon name="MessageCircle" className="h-4 w-4 text-neon" />
-          <span className="text-[11px] font-medium tracking-wide text-muted-2 [writing-mode:vertical-rl]">
+          <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
+          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-2 [writing-mode:vertical-rl]">
             AI Copilot
           </span>
         </div>

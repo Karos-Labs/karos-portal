@@ -314,7 +314,7 @@ export function Sidebar({
             className={cn(
               "group flex items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-all duration-150 active:scale-[0.97]",
               active
-                ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(45,255,158,0.15)]"
+                ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]"
                 : "text-muted hover:bg-surface-2 hover:text-foreground",
             )}
           >
@@ -400,12 +400,15 @@ export function Sidebar({
     <div className="flex h-full flex-col">
       {/* Logo — fixed top */}
       <div className="shrink-0 px-4 pb-2 pt-4">
-        <Link href="/dashboard" className="flex items-center gap-2 px-2 py-1">
-          <div className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-neon-soft neon-glow">
-            <Icon name="Sparkles" className="h-4 w-4 text-neon" />
-          </div>
-          <span className="text-base font-semibold tracking-tight">
-            Karos<span className="text-neon">CMO</span>
+        <Link href="/dashboard" className="flex items-center gap-2.5 px-2 py-1">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+          />
+          <span className="font-serif text-xl font-normal leading-none text-foreground">
+            Karos Labs
           </span>
         </Link>
       </div>
@@ -430,11 +433,14 @@ export function Sidebar({
     <>
       {/* Mobile top bar */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
-        <Link href="/dashboard" className="flex items-center gap-2">
-          <Icon name="Sparkles" className="h-5 w-5 text-neon" />
-          <span className="font-semibold">
-            Karos<span className="text-neon">CMO</span>
-          </span>
+        <Link href="/dashboard" className="flex items-center gap-2.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+          />
+          <span className="font-serif text-xl font-normal leading-none text-foreground">Karos Labs</span>
         </Link>
         <button
           onClick={() => setOpen((o) => !o)}

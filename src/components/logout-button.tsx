@@ -28,7 +28,7 @@ export function LogoutButton({ compact }: { compact?: boolean }) {
       <button
         onClick={handle}
         className={cn(
-          "flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-danger",
+          "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-danger",
         )}
       >
         <Icon name="LogOut" className="h-4 w-4" />

@@ -211,7 +211,7 @@ const handler = createMcpHandler(
             name: "Test agent",
             description: "",
             icon: "Sparkles",
-            color: "#2dff9e",
+            color: "#FF6B2C",
             model: "claude-sonnet-4-6",
             outputKind: "freeform",
             systemPrompt: "",

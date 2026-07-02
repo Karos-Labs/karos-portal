@@ -96,6 +96,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown execution error";
     await updateClientTask(taskId, {
+      status: "pending",
       metadata: {
         ...(task.metadata ?? {}),
         executing: false,
@@ -161,15 +162,16 @@ export async function dispatchArtifactEmail(
     ? artifact.slice(artifact.indexOf("\n", artifact.search(/^Subject:/im)) + 1).trim()
     : artifact;
 
-  const safeBody = body.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const safeBody = body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const safeClientName = clientName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const html = `
     <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#07090b;padding:32px;color:#e8f0ec;">
       <div style="max-width:600px;margin:0 auto;background:#0d1117;border:1px solid #20303a;border-radius:16px;overflow:hidden;">
         <div style="padding:20px 28px;border-bottom:1px solid #20303a;">
-          <span style="color:#2dff9e;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos<span style="color:#e8f0ec;">CMO</span></span>
+          <span style="color:#FF6B2C;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos<span style="color:#e8f0ec;">CMO</span></span>
         </div>
         <div style="padding:28px;">
-          <p style="color:#8aa2a8;font-size:13px;margin:0 0 12px;">Delivered by Karos on behalf of ${clientName}</p>
+          <p style="color:#9c9ca3;font-size:13px;margin:0 0 12px;">Delivered by Karos on behalf of ${safeClientName}</p>
           <div style="background:#131a22;border:1px solid #20303a;border-radius:12px;padding:20px;font-size:15px;line-height:1.7;white-space:pre-wrap;color:#e8f0ec;">${safeBody}</div>
         </div>
       </div>

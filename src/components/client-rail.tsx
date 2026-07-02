@@ -80,12 +80,15 @@ export function ClientRail({
         <div className="sticky top-0 flex h-screen flex-col">
           {/* Logo */}
           <div className="shrink-0 px-4 pt-4">
-            <Link href={home} className="flex items-center gap-2 px-2 py-1">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neon-soft neon-glow">
-                <Icon name="Sparkles" className="h-4 w-4 text-neon" />
-              </div>
-              <span className="text-base font-semibold tracking-tight">
-                Karos<span className="text-neon">CMO</span>
+            <Link href={home} className="flex items-center gap-2.5 px-2 py-1">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/kairos-head-disc-dark.svg"
+                alt=""
+                className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+              />
+              <span className="font-serif text-xl font-normal leading-none text-foreground">
+                Karos Labs
               </span>
             </Link>
           </div>
@@ -102,7 +105,7 @@ export function ClientRail({
                     className={cn(
                       "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
                       active
-                        ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(45,255,158,0.15)]"
+                        ? "bg-surface-2 text-foreground"
                         : "text-muted hover:bg-surface-2 hover:text-foreground",
                     )}
                   >
@@ -110,7 +113,7 @@ export function ClientRail({
                       name={item.icon}
                       className={cn(
                         "h-4 w-4 shrink-0",
-                        active ? "text-neon" : "text-muted-2 group-hover:text-foreground",
+                        active ? "text-foreground" : "text-muted-2 group-hover:text-foreground",
                       )}
                     />
                     <span className="flex-1">{item.label}</span>

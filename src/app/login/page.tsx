@@ -137,15 +137,17 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm animate-fade-up">
 
-        {/* Logo mark */}
+        {/* Wordmark lockup — head disc + Spectral (brand §2.2) */}
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-neon-soft neon-glow">
-            <Icon name="Sparkles" className="h-6 w-6 text-neon" />
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Karos<span className="neon-text">CMO</span>
-          </h1>
-          <p className="mt-1 text-sm text-muted">Welcome back.</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="mx-auto mb-4 h-12 w-12 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+          />
+          <p className="eyebrow mb-2">Your AI CMO</p>
+          <h1 className="text-2xl">Karos Labs</h1>
+          <p className="mt-1.5 text-sm text-muted">Welcome back.</p>
         </div>
 
         <div className="card-grad rounded-[var(--radius)] border border-border p-6 space-y-4">

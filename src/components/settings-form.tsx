@@ -272,7 +272,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
             return (
               <div
                 key={pid}
-                className="flex items-center gap-4 rounded-[10px] border border-border bg-surface-2 px-4 py-3"
+                className="flex items-center gap-4 rounded-md border border-border bg-surface-2 px-4 py-3"
               >
                 {meta.mark}
                 <div className="min-w-0 flex-1">
@@ -285,7 +285,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
           })}
 
           {hasPassword && (
-            <div className="flex items-center gap-4 rounded-[10px] border border-border bg-surface-2 px-4 py-3">
+            <div className="flex items-center gap-4 rounded-md border border-border bg-surface-2 px-4 py-3">
               <Icon name="Mail" className="h-5 w-5 shrink-0 text-muted" />
               <div>
                 <p className="text-sm font-medium text-foreground">Email &amp; password</p>
@@ -382,7 +382,7 @@ export function SettingsForm({
       </div>
 
       {/* Tab switcher */}
-      <div className="flex gap-1 rounded-[12px] border border-border bg-surface-2 p-1">
+      <div className="flex gap-1 rounded-md border border-border bg-surface-2 p-1">
         {(
           [
             { id: "profile", label: "Profile Information", icon: "User" },
@@ -394,7 +394,7 @@ export function SettingsForm({
             type="button"
             onClick={() => setTab(id)}
             className={cn(
-              "flex flex-1 items-center justify-center gap-2 rounded-[8px] py-2.5 text-sm font-medium transition-colors",
+              "flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors",
               tab === id
                 ? "bg-surface text-foreground shadow-sm"
                 : "text-muted hover:text-foreground",

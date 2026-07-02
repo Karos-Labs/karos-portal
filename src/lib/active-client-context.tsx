@@ -53,7 +53,7 @@ export function ClientContextSync({
     // an add/delete + revalidatePath). Content changes within same count are rare and
     // will be picked up on the next navigation anyway.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client.id, contextDocs.length, competitors.length]);
+  }, [client.id, contextDocs.length, competitors.length, isAdmin]);
 
   return null;
 }

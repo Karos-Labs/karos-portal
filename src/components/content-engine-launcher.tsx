@@ -32,7 +32,7 @@ export function ContentEngineLauncher({ clientId, clientName }: { clientId: stri
     <Card>
       <div className="mb-2 flex items-center justify-between gap-2">
         <CardTitle>Content engine</CardTitle>
-        <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">e12</span>
+        <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">e12</span>
       </div>
       <p className="mb-3 text-sm text-muted-2">
         Picks the next on-brand topic for {clientName} (dedupe + cooldown via the ledger), generates a QA-gated carousel, and saves it for review.
@@ -41,7 +41,7 @@ export function ContentEngineLauncher({ clientId, clientName }: { clientId: stri
         <Icon name={busy ? "Loader" : "Sparkles"} className={`h-4 w-4 ${busy ? "animate-spin" : ""}`} />
         {busy ? "Starting…" : "Run content engine (next topic)"}
       </Button>
-      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
     </Card>
   );
 }

@@ -34,7 +34,7 @@ export function ThemeToggle() {
     <button
       onClick={toggle}
       className={cn(
-        "flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-muted",
+        "flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted",
         "transition-all duration-150 hover:bg-surface-2 hover:text-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40",
       )}
