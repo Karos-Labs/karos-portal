@@ -38,7 +38,7 @@ const CAPS: { id: AgentCapability; label: string; hint: string }[] = [
   { id: "email_client", label: "Email the client", hint: "Deliver the result to the client's inbox" },
 ];
 
-const COLORS = ["#2dff9e", "#5db4ff", "#a78bfa", "#ffcf5d", "#ff5d6c", "#ff9d5d"];
+const COLORS = ["#FF6B2C", "#6b9fd4", "#b8b8bf", "#d9a13d", "#e5484d", "#ff9d5d"];
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
@@ -55,7 +55,7 @@ export function AgentBuilder({ agent, clients }: { agent?: Agent; clients: Clien
   const [name, setName] = useState(agent?.name ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
   const [icon, setIcon] = useState(agent?.icon ?? "Sparkles");
-  const [color, setColor] = useState(agent?.color ?? "#2dff9e");
+  const [color, setColor] = useState(agent?.color ?? "#FF6B2C");
   const [model, setModel] = useState(agent?.model ?? "claude-sonnet-4-6");
   const [outputKind, setOutputKind] = useState<Agent["outputKind"]>(agent?.outputKind ?? "freeform");
   const [systemPrompt, setSystemPrompt] = useState(agent?.systemPrompt ?? "");
@@ -170,7 +170,7 @@ export function AgentBuilder({ agent, clients }: { agent?: Agent; clients: Clien
     <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
       <div className="space-y-6">
         {/* Status / save bar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-border bg-surface-2 px-4 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-surface-2 px-4 py-2.5">
           <div className="flex items-center gap-2">
             {status === "draft" ? (
               <Badge tone="warning">
@@ -218,7 +218,7 @@ export function AgentBuilder({ agent, clients }: { agent?: Agent; clients: Clien
                     type="button"
                     onClick={() => setIcon(ic)}
                     className={cn(
-                      "flex h-9 w-9 items-center justify-center rounded-[10px] border transition-colors",
+                      "flex h-9 w-9 items-center justify-center rounded-md border transition-colors",
                       icon === ic ? "border-neon bg-neon-soft text-neon" : "border-border text-muted hover:text-foreground",
                     )}
                   >
@@ -280,7 +280,7 @@ export function AgentBuilder({ agent, clients }: { agent?: Agent; clients: Clien
           </div>
           <div className="space-y-3">
             {fields.map((f, i) => (
-              <div key={i} className="rounded-[10px] border border-border bg-surface-2 p-3">
+              <div key={i} className="rounded-md border border-border bg-surface-2 p-3">
                 <div className="grid gap-2 sm:grid-cols-[1fr_1fr_120px_auto]">
                   <Input value={f.label} onChange={(e) => updateField(i, { label: e.target.value })} placeholder="Label" />
                   <Input value={f.key} onChange={(e) => updateField(i, { key: e.target.value })} placeholder="key" className="font-mono text-xs" />
@@ -325,11 +325,11 @@ export function AgentBuilder({ agent, clients }: { agent?: Agent; clients: Clien
                 type="button"
                 onClick={() => toggleCap(c.id)}
                 className={cn(
-                  "flex w-full items-start gap-3 rounded-[10px] border p-3 text-left transition-colors",
+                  "flex w-full items-start gap-3 rounded-md border p-3 text-left transition-colors",
                   on ? "border-neon/40 bg-neon-soft" : "border-border hover:border-border-strong",
                 )}
               >
-                <div className={cn("mt-0.5 flex h-5 w-5 items-center justify-center rounded-md border", on ? "border-neon bg-neon text-[#03110b]" : "border-border-strong")}>
+                <div className={cn("mt-0.5 flex h-5 w-5 items-center justify-center rounded-md border", on ? "border-neon bg-neon text-[#141414]" : "border-border-strong")}>
                   {on && <Icon name="Check" className="h-3.5 w-3.5" />}
                 </div>
                 <div>
@@ -506,7 +506,7 @@ function TestResult({ result }: { result: TestRunResult }) {
       </div>
 
       {/* Event trace */}
-      <div className="space-y-1 rounded-[10px] bg-surface-2 p-2.5">
+      <div className="space-y-1 rounded-md bg-surface-2 p-2.5">
         {result.events.map((ev, i) => (
           <p
             key={i}
@@ -526,11 +526,11 @@ function TestResult({ result }: { result: TestRunResult }) {
       {result.posts && result.posts.length > 0 && (
         <div className="space-y-3">
           {result.posts.map((p, i) => (
-            <div key={i} className="space-y-2 rounded-[10px] border border-border p-3">
+            <div key={i} className="space-y-2 rounded-md border border-border p-3">
               <p className="text-xs font-medium text-neon">Post {i + 1}</p>
               {result.images?.[i] && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={result.images[i] as string} alt={`Post ${i + 1} visual`} className="w-full rounded-[8px]" />
+                <img src={result.images[i] as string} alt={`Post ${i + 1} visual`} className="w-full rounded-md" />
               )}
               <p className="whitespace-pre-wrap text-sm">{p.caption}</p>
               <p className="text-xs text-muted">{p.hashtags.map((h) => "#" + h).join(" ")}</p>
@@ -543,7 +543,7 @@ function TestResult({ result }: { result: TestRunResult }) {
 
       {/* Text output */}
       {result.text && (
-        <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-[10px] border border-border bg-surface-2 p-3 text-[13px] leading-relaxed">{result.text}</pre>
+        <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[13px] leading-relaxed">{result.text}</pre>
       )}
     </div>
   );
@@ -557,7 +557,7 @@ function Toggle({ label, hint, value, onChange }: { label: string; hint: string;
         <p className="text-xs text-muted-2">{hint}</p>
       </div>
       <div className={cn("relative h-6 w-11 rounded-full transition-colors", value ? "bg-neon" : "bg-surface-3")}>
-        <div className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform", value ? "translate-x-5" : "translate-x-0.5")} />
+        <div className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-primary transition-transform", value ? "translate-x-5" : "translate-x-0.5")} />
       </div>
     </button>
   );

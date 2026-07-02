@@ -22,13 +22,13 @@ export function ClientKeyInline({ clientKeyId }: { clientKeyId: string }) {
         Invite key
       </p>
       <div className="flex items-center gap-2">
-        <code className="flex-1 truncate rounded-[8px] bg-surface-2 px-2.5 py-1.5 text-[11px] font-mono text-muted-2">
+        <code className="flex-1 truncate rounded-md bg-surface-2 px-2.5 py-1.5 text-[11px] font-mono text-muted-2">
           {clientKeyId}
         </code>
         <button
           onClick={copy}
           title={copied ? "Copied!" : "Copy invite key"}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-border text-muted-2 transition-colors hover:border-neon/40 hover:text-neon"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border text-muted-2 transition-colors hover:border-foreground/30 hover:text-foreground"
         >
           <Icon name={copied ? "Check" : "Copy"} className="h-3.5 w-3.5" />
         </button>

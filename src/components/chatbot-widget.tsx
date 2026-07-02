@@ -39,7 +39,7 @@ function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[]
       sublabel: "Scan market footprint & surface operational priorities",
       trigger:
         "Scan the web and analyze our market footprint for operational action items. Build a comprehensive task map covering website optimizations, content opportunities, and strategic priorities.",
-      color: "#2dff9e",
+      color: "#FF6B2C",
     },
     {
       id: "competitor_research",
@@ -48,7 +48,7 @@ function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[]
       sublabel: "Generate intel brief + counter-strategy tasks",
       trigger:
         "Help me research a competitor. I'll give you their URL or company name — start by asking me which competitor to focus on.",
-      color: "#5db4ff",
+      color: "#6b9fd4",
     },
     {
       id: "brand_audit",
@@ -57,7 +57,7 @@ function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[]
       sublabel: "Surface presence gaps and push optimization tasks",
       trigger:
         "Run a brand visibility and market presence audit. Identify gaps in our brand positioning and generate specific optimization action items.",
-      color: "#ffcf5d",
+      color: "#d9a13d",
     },
     {
       id: "content_dispatch",
@@ -66,7 +66,7 @@ function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[]
       sublabel: "Propose & queue AI agent content runs for this week",
       trigger:
         "Propose which AI marketing agents to dispatch for content creation this week. Review our active agents and suggest a concrete content plan.",
-      color: "#ff5d6c",
+      color: "#e5484d",
     },
   ];
 }
@@ -205,7 +205,7 @@ function ModeSelector({
   }, [open]);
 
   const isAgent = mode.type === "agent";
-  const agentColor = isAgent ? (mode.agent.color ?? "#2dff9e") : null;
+  const agentColor = isAgent ? (mode.agent.color ?? "#FF6B2C") : null;
   const label = isAgent ? mode.agent.name : "General Client Assistant";
 
   return (
@@ -216,14 +216,14 @@ function ModeSelector({
       >
         {isAgent ? (
           <span
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px]"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px]"
             style={{ background: agentColor! + "1f", color: agentColor! }}
           >
             <Icon name={mode.agent.icon} className="h-3 w-3" />
           </span>
         ) : (
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] bg-neon-soft">
-            <Icon name="Bot" className="h-3 w-3 text-neon" />
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border border-foreground/10 bg-foreground/[0.05]">
+            <Icon name="Bot" className="h-3 w-3 text-foreground/70" />
           </span>
         )}
         <span className="flex-1 truncate text-xs font-medium text-muted">{label}</span>
@@ -242,37 +242,37 @@ function ModeSelector({
           <button
             className={cn(
               "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-xs transition-colors hover:bg-surface-2",
-              mode.type === "general" && "text-neon",
+              mode.type === "general" && "text-foreground",
             )}
             onClick={() => { onChange({ type: "general" }); setOpen(false); }}
           >
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] bg-neon-soft">
-              <Icon name="Bot" className="h-3 w-3 text-neon" />
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border border-foreground/10 bg-foreground/[0.05]">
+              <Icon name="Bot" className="h-3 w-3 text-foreground/70" />
             </span>
             <span className="flex-1">General Client Assistant</span>
-            {mode.type === "general" && <Icon name="Check" className="h-3 w-3 shrink-0 text-neon" />}
+            {mode.type === "general" && <Icon name="Check" className="h-3 w-3 shrink-0 text-foreground/70" />}
           </button>
           {agents.length > 0 && <div className="mx-3 h-px bg-border" />}
           {agents.map((agent) => {
-            const color = agent.color ?? "#2dff9e";
+            const color = agent.color ?? "#FF6B2C";
             const selected = mode.type === "agent" && mode.agent.id === agent.id;
             return (
               <button
                 key={agent.id}
                 className={cn(
                   "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-xs transition-colors hover:bg-surface-2",
-                  selected && "text-neon",
+                  selected && "text-foreground",
                 )}
                 onClick={() => { onChange({ type: "agent", agent }); setOpen(false); }}
               >
                 <span
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px]"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px]"
                   style={{ background: color + "1f", color }}
                 >
                   <Icon name={agent.icon} className="h-3 w-3" />
                 </span>
                 <span className="flex-1 truncate">{agent.name}</span>
-                {selected && <Icon name="Check" className="h-3 w-3 shrink-0 text-neon" />}
+                {selected && <Icon name="Check" className="h-3 w-3 shrink-0 text-foreground/70" />}
               </button>
             );
           })}
@@ -333,10 +333,10 @@ function ProactiveWelcome({
     <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
       {/* Greeting */}
       <div className="flex items-start gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neon-soft text-neon">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.05] text-foreground/70">
           <Icon name="Sparkles" className="h-4 w-4" />
         </div>
-        <div className="rounded-[14px] border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
+        <div className="rounded-md border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
           <p className="font-medium">{greeting} I&apos;m your AI Copilot for <strong>{clientName}</strong>.</p>
           <p className="mt-1 text-xs text-muted">
             Choose an action below or describe a task to add it directly.
@@ -346,8 +346,8 @@ function ProactiveWelcome({
 
       {/* Quick task ingestion */}
       <form onSubmit={handleTaskSubmit} className="flex flex-col gap-1.5">
-        <div className="flex items-center gap-2 rounded-[10px] border border-border bg-surface-2 px-2.5 py-2 transition-colors focus-within:border-neon/50 focus-within:ring-1 focus-within:ring-neon/20">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] bg-purple-500/10 text-purple-400">
+        <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-2 transition-colors focus-within:border-foreground/25">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon-soft text-neon">
             <Icon name="Plus" className="h-3 w-3" />
           </span>
           <input
@@ -361,7 +361,7 @@ function ProactiveWelcome({
           <button
             type="submit"
             disabled={!taskText.trim() || isPending}
-            className="flex h-6 items-center gap-1 rounded-[6px] bg-neon px-2 text-[10px] font-semibold text-black transition-opacity disabled:opacity-40"
+            className="flex h-6 items-center gap-1 rounded-md bg-primary px-2 text-[10px] font-semibold text-primary-foreground transition-opacity disabled:opacity-40"
           >
             {isPending ? (
               <Icon name="Loader" className="h-3 w-3 animate-spin" />
@@ -376,10 +376,10 @@ function ProactiveWelcome({
         {taskFeedback && (
           <div
             className={cn(
-              "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[10px]",
+              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px]",
               taskFeedback.type === "success"
-                ? "border border-neon/20 bg-neon/5 text-neon"
-                : "border border-red-500/20 bg-red-500/5 text-red-400",
+                ? "border border-success/25 bg-success/10 text-success"
+                : "border border-danger/20 bg-danger/5 text-danger",
             )}
           >
             <Icon
@@ -404,12 +404,9 @@ function ProactiveWelcome({
           <button
             key={action.id}
             onClick={() => send(action.trigger)}
-            className="group flex items-center gap-3 rounded-[12px] border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150 hover:border-border-strong hover:bg-surface-3 active:scale-[0.98]"
+            className="group flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150 hover:border-border-strong hover:bg-surface-3 active:scale-[0.98]"
           >
-            <div
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] transition-all duration-150 group-hover:scale-105"
-              style={{ background: action.color + "1f", color: action.color }}
-            >
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70 transition-all duration-150">
               <Icon name={action.icon} className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
@@ -436,7 +433,7 @@ function ProactiveWelcome({
             <button
               key={prompt}
               onClick={() => send(prompt)}
-              className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-neon/40 hover:text-foreground"
+              className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-foreground/30 hover:text-foreground"
             >
               {prompt}
             </button>
@@ -471,7 +468,7 @@ function ChatEmptyState({
   send: (t: string) => void;
 }) {
   const isAgent = mode.type === "agent";
-  const agentColor = isAgent ? (mode.agent.color ?? "#2dff9e") : null;
+  const agentColor = isAgent ? (mode.agent.color ?? "#FF6B2C") : null;
   const title = isAgent ? `${mode.agent.name} Copilot` : "Ask me anything";
   const desc = isAgent
     ? `I can show drafts, trigger new runs, and help you edit content for the ${mode.agent.name} pipeline.`
@@ -481,12 +478,8 @@ function ChatEmptyState({
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center">
       <div
-        className="flex h-12 w-12 items-center justify-center rounded-full"
-        style={
-          agentColor
-            ? { background: agentColor + "1f", color: agentColor }
-            : { background: "var(--neon-soft)", color: "var(--neon)" }
-        }
+        className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70"
+        style={agentColor ? { background: agentColor + "1f", color: agentColor } : undefined}
       >
         <Icon name={isAgent ? mode.agent.icon : "Sparkles"} className="h-6 w-6" />
       </div>
@@ -499,7 +492,7 @@ function ChatEmptyState({
           <button
             key={prompt}
             onClick={() => send(prompt)}
-            className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-neon/40 hover:text-foreground"
+            className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-foreground/30 hover:text-foreground"
           >
             {prompt}
           </button>
@@ -560,7 +553,7 @@ export function ChatbotWidget({
   const onTasksCreated = useCallback(() => router.refresh(), [router]);
 
   const agentId = mode.type === "agent" ? mode.agent.id : null;
-  const agentColor = mode.type === "agent" ? (mode.agent.color ?? "#2dff9e") : null;
+  const agentColor = mode.type === "agent" ? (mode.agent.color ?? "#FF6B2C") : null;
 
   const { messages, input, setInput, send, streaming, error, reset } = useCopilot(
     clientId,
@@ -610,27 +603,14 @@ export function ChatbotWidget({
           className={cn(
             "fixed z-[9999] pointer-events-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all hover:scale-105 active:scale-95",
             floatingPosition,
-            open
-              ? "bg-surface-2 shadow-black/30 ring-1 ring-border"
-              : !agentColor
-                ? "bg-neon shadow-neon/30"
-                : "",
+            open ? "bg-surface-2 shadow-black/30 ring-1 ring-border" : "bg-primary",
           )}
-          style={
-            !open && agentColor
-              ? { background: agentColor, boxShadow: `0 0 20px ${agentColor}4d` }
-              : undefined
-          }
           aria-label={open ? "Close AI Copilot" : "Open AI Copilot"}
         >
           <Icon
             name={open ? "X" : mode.type === "agent" ? mode.agent.icon : "MessageCircle"}
-            className={cn("h-6 w-6 transition-colors", open ? "text-foreground" : "text-black")}
+            className={cn("h-6 w-6 transition-colors", open ? "text-foreground" : "text-primary-foreground")}
           />
-          {/* Pulse ring when defaultOpen and first time showing */}
-          {!open && defaultOpen && messages.length === 0 && (
-            <span className="absolute inset-0 rounded-full animate-ping opacity-30 bg-neon" />
-          )}
         </button>
       )}
 
@@ -642,7 +622,7 @@ export function ChatbotWidget({
             docked
               ? "h-full w-full"
               : cn(
-                  "fixed z-[9998] h-[600px] max-h-[calc(100vh-6rem)] w-[380px] max-w-[calc(100vw-2rem)] rounded-[20px] border border-border shadow-2xl",
+                  "fixed z-[9998] h-[600px] max-h-[calc(100vh-6rem)] w-[380px] max-w-[calc(100vw-2rem)] rounded-lg border border-border shadow-2xl",
                   floatingPosition,
                 ),
           )}
@@ -651,8 +631,8 @@ export function ChatbotWidget({
           {/* Header — single title; the identity icon lives in the mode selector below */}
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface-2 px-4 py-3">
             <div className="min-w-0">
-              <p className="text-sm font-semibold leading-none">AI Copilot</p>
-              <p className="mt-1 text-[10px] leading-none text-muted-2">
+              <p className="font-serif text-base leading-none">AI Copilot</p>
+              <p className="mt-1 truncate font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-muted-2">
                 {clientName} · Powered by Claude
               </p>
             </div>
@@ -715,16 +695,11 @@ export function ChatbotWidget({
                 >
                   <div
                     className={cn(
-                      "max-w-[88%] rounded-[14px] px-3.5 py-2.5 text-sm leading-relaxed",
+                      "max-w-[88%] rounded-md px-3.5 py-2.5 text-sm leading-relaxed",
                       msg.role === "user"
-                        ? "text-black"
+                        ? "bg-primary text-primary-foreground"
                         : "border border-border bg-surface-2 text-foreground",
                     )}
-                    style={
-                      msg.role === "user"
-                        ? { background: agentColor ?? "var(--neon)" }
-                        : undefined
-                    }
                   >
                     {msg.content ? (
                       <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
@@ -740,9 +715,9 @@ export function ChatbotWidget({
 
           {/* Error banner */}
           {error && (
-            <div className="mx-3 mb-2 flex items-center gap-2 rounded-[8px] border border-red-500/30 bg-red-500/10 px-3 py-2">
-              <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-red-400" />
-              <p className="text-xs text-red-400">{error}</p>
+            <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
+              <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger" />
+              <p className="text-xs text-danger">{error}</p>
             </div>
           )}
 
@@ -764,19 +739,18 @@ export function ChatbotWidget({
                     : "Ask about performance, brand, competitors…"
               }
               disabled={streaming}
-              className="flex-1 rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50 focus:ring-1 focus:ring-neon/30 disabled:opacity-50"
+              className="flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-foreground/25 disabled:opacity-50"
             />
             <button
               type="submit"
               disabled={!input.trim() || streaming}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-black transition-opacity disabled:opacity-40"
-              style={{ background: agentColor ?? "var(--neon)" }}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
               aria-label="Send"
             >
               {streaming ? (
                 <Icon name="Loader" className="h-4 w-4 animate-spin" />
               ) : (
-                <Icon name="Send" className="h-4 w-4" />
+                <Icon name="ArrowUp" className="h-4 w-4" />
               )}
             </button>
           </form>

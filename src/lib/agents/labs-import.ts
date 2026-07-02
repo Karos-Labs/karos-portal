@@ -226,11 +226,11 @@ interface Classification {
 // they never auto-email the client (deliberate: a bulk import shouldn't wire up auto-delivery for
 // dozens of agents). Enable email delivery per-agent in the builder if a skill should deliver.
 const STYLE: Record<Style, Classification> = {
-  ig: { outputKind: "instagram_posts", icon: "Camera", color: "#2dff9e", capabilities: ["generate", "use_brand_voice", "create_assets", "generate_images"] },
-  x: { outputKind: "social_posts", icon: "Share2", color: "#ffcf5d", capabilities: ["generate", "use_brand_voice", "create_assets"] },
-  email: { outputKind: "email", icon: "Mail", color: "#5db4ff", capabilities: ["generate", "use_brand_voice", "create_assets"] },
+  ig: { outputKind: "instagram_posts", icon: "Camera", color: "#FF6B2C", capabilities: ["generate", "use_brand_voice", "create_assets", "generate_images"] },
+  x: { outputKind: "social_posts", icon: "Share2", color: "#d9a13d", capabilities: ["generate", "use_brand_voice", "create_assets"] },
+  email: { outputKind: "email", icon: "Mail", color: "#6b9fd4", capabilities: ["generate", "use_brand_voice", "create_assets"] },
   // Reports/strategy benefit from meeting context, so `article` also grounds on transcripts.
-  article: { outputKind: "article", icon: "PenLine", color: "#a78bfa", capabilities: ["generate", "use_brand_voice", "create_assets", "use_transcripts"] },
+  article: { outputKind: "article", icon: "PenLine", color: "#b8b8bf", capabilities: ["generate", "use_brand_voice", "create_assets", "use_transcripts"] },
   report: { outputKind: "freeform", icon: "Sparkles", color: "#9aa7b0", capabilities: ["generate", "use_brand_voice", "create_assets", "use_transcripts"] },
 };
 

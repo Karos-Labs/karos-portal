@@ -2,7 +2,6 @@ import "server-only";
 
 import { createAgent, updateAgent } from "@/lib/data";
 import type { Agent, AgentField } from "@/lib/types";
-import { MODELS } from "@/lib/constants";
 
 /**
  * Shared agent-authoring building blocks used by BOTH the web server actions
@@ -48,8 +47,8 @@ export async function createDraftAgent(uid: string, initial: Partial<DraftFields
     name: initial.name ?? "",
     description: initial.description ?? "",
     icon: initial.icon ?? "Sparkles",
-    color: initial.color ?? "#2dff9e",
-    model: initial.model ?? MODELS.SONNET,
+    color: initial.color ?? "#FF6B2C",
+    model: initial.model ?? "claude-sonnet-4-6",
     outputKind: initial.outputKind ?? "freeform",
     systemPrompt: initial.systemPrompt ?? "",
     fields: initial.fields ? cleanFields(initial.fields) : [],

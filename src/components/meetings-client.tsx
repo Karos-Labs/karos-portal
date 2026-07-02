@@ -110,7 +110,7 @@ export function MeetingsClient({ transcripts, clients, users, currentUserRole, c
             <select
               value={timeframe}
               onChange={(e) => setTimeframe(e.target.value as Timeframe)}
-              className="h-8 rounded-[8px] border border-border bg-surface-2 px-2.5 text-xs text-foreground outline-none focus:border-neon/50"
+              className="h-8 rounded-md border border-border bg-surface-2 px-2.5 text-xs text-foreground outline-none focus:border-neon/50"
             >
               {(Object.keys(TIMEFRAME_LABELS) as Timeframe[]).map((k) => (
                 <option key={k} value={k}>{TIMEFRAME_LABELS[k]}</option>
@@ -124,7 +124,7 @@ export function MeetingsClient({ transcripts, clients, users, currentUserRole, c
             <select
               value={clientFilter}
               onChange={(e) => setClientFilter(e.target.value)}
-              className="h-8 rounded-[8px] border border-border bg-surface-2 px-2.5 text-xs text-foreground outline-none focus:border-neon/50"
+              className="h-8 rounded-md border border-border bg-surface-2 px-2.5 text-xs text-foreground outline-none focus:border-neon/50"
             >
               <option value="">All</option>
               <option value="__karos__">Karos Labs Internal</option>
@@ -139,7 +139,7 @@ export function MeetingsClient({ transcripts, clients, users, currentUserRole, c
           {(timeframe !== "all" || clientFilter) && (
             <button
               onClick={() => { setTimeframe("all"); setClientFilter(""); }}
-              className="flex h-8 items-center gap-1 rounded-[8px] border border-border px-2.5 text-xs text-muted hover:border-neon/40 hover:text-foreground"
+              className="flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-xs text-muted hover:border-neon/40 hover:text-foreground"
             >
               <Icon name="X" className="h-3 w-3" /> Clear filters
             </button>
@@ -254,7 +254,7 @@ function MeetingRow({
           onClick={handleArchiveToggle}
           disabled={archiving}
           title={isArchived ? "Unarchive" : "Archive meeting"}
-          className="flex h-8 shrink-0 items-center gap-1.5 rounded-[8px] border border-border px-2.5 text-xs text-muted transition-colors hover:border-neon/40 hover:text-foreground disabled:opacity-50"
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs text-muted transition-colors hover:border-neon/40 hover:text-foreground disabled:opacity-50"
         >
           <Icon
             name={archiving ? "Loader" : isArchived ? "ArchiveRestore" : "Archive"}

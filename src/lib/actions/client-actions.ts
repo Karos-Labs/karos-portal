@@ -78,19 +78,7 @@ export async function regenerateClientKeyAction(clientId: string): Promise<{ cli
  */
 export async function updateClientProfileAction(
   id: string,
-  input: {
-    category?: string;
-    teamSize?: string;
-    description?: string;
-    socialLinks?: SocialLinks;
-    // Brand profile fields — editable by the client's own users as well as staff.
-    brandVoice?: string;
-    contactEmail?: string;
-    website?: string;
-    industry?: string;
-    /** Comma-separated meeting domains, e.g. "company.com, sub.company.com" */
-    domainsCsv?: string;
-  },
+  input: { category?: string; teamSize?: string; description?: string; socialLinks?: SocialLinks },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const user = await requireUser();
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
@@ -103,13 +91,6 @@ export async function updateClientProfileAction(
   if (input.category !== undefined) patch.category = clean(input.category);
   if (input.teamSize !== undefined) patch.teamSize = clean(input.teamSize);
   if (input.description !== undefined) patch.description = clean(input.description);
-  if (input.brandVoice !== undefined) patch.brandVoice = clean(input.brandVoice);
-  if (input.contactEmail !== undefined) patch.contactEmail = clean(input.contactEmail)?.toLowerCase();
-  if (input.website !== undefined) patch.website = clean(input.website);
-  if (input.industry !== undefined) patch.industry = clean(input.industry);
-  if (input.domainsCsv !== undefined) {
-    patch.domains = input.domainsCsv.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
-  }
   if (input.socialLinks !== undefined) {
     const links: SocialLinks = {};
     for (const [k, val] of Object.entries(input.socialLinks)) {

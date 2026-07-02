@@ -104,7 +104,7 @@ const STARTER_AGENTS: Omit<Agent, "id" | "createdAt" | "updatedAt" | "createdBy"
     description:
       "Generates on-brand Instagram posts (caption, hashtags & visual brief) and emails the drafts straight to the client for review.",
     icon: "Camera",
-    color: "#2dff9e",
+    color: "#FF6B2C",
     model: "claude-sonnet-4-6",
     systemPrompt:
       "You are a senior social media strategist at a marketing agency. You write scroll-stopping, on-brand Instagram captions that drive engagement. Match the client's brand voice exactly. Each post must have a strong hook in the first line, a clear value or story in the body, a natural call-to-action, a tight set of relevant hashtags (mix of broad and niche, no banned/spammy tags), and a concrete art-direction brief for the accompanying visual. Never use clichés or generic filler.",
@@ -124,7 +124,7 @@ const STARTER_AGENTS: Omit<Agent, "id" | "createdAt" | "updatedAt" | "createdBy"
     name: "Writer Agent",
     description: "Drafts long-form articles, blog posts and copy tailored to the client's brand voice.",
     icon: "PenLine",
-    color: "#a78bfa",
+    color: "#b8b8bf",
     model: "claude-sonnet-4-6",
     systemPrompt:
       "You are an expert long-form content writer for a marketing agency. Write clear, engaging, well-structured articles in the client's brand voice. Use compelling headlines, scannable subheads, and a strong intro and conclusion. Avoid fluff and AI clichés.",
@@ -143,7 +143,7 @@ const STARTER_AGENTS: Omit<Agent, "id" | "createdAt" | "updatedAt" | "createdBy"
     name: "Email Campaign Agent",
     description: "Writes a complete marketing email (subject + body) and delivers it to the client to review.",
     icon: "Mail",
-    color: "#5db4ff",
+    color: "#6b9fd4",
     model: "claude-sonnet-4-6",
     systemPrompt:
       "You are an email marketing specialist. Write a high-converting marketing email in the client's brand voice. Start with the subject line on its own first line prefixed with 'Subject:'. Then write a compelling, concise body with one clear call-to-action.",
@@ -161,7 +161,7 @@ const STARTER_AGENTS: Omit<Agent, "id" | "createdAt" | "updatedAt" | "createdBy"
     name: "Social Posts Agent",
     description: "Generates a batch of short posts for X/LinkedIn from a single idea, on brand.",
     icon: "Share2",
-    color: "#ffcf5d",
+    color: "#d9a13d",
     model: "claude-sonnet-4-6",
     systemPrompt:
       "You are a social media copywriter. Produce a numbered batch of short, punchy social posts (suitable for X and LinkedIn) from the brief, in the client's brand voice. Vary the angle of each post.",

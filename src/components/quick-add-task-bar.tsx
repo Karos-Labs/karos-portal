@@ -61,9 +61,9 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
     <div className={cn("flex flex-col gap-1.5", className)}>
       <form
         onSubmit={handleSubmit}
-        className="flex items-center gap-2 rounded-[12px] border border-border bg-surface-2 px-3 py-2.5 transition-colors focus-within:border-neon/50 focus-within:ring-1 focus-within:ring-neon/20"
+        className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2.5 transition-colors focus-within:border-foreground/25"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] bg-purple-500/10 text-purple-400">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-neon-soft text-neon">
           <Icon name="Plus" className="h-3.5 w-3.5" />
         </span>
         <input
@@ -79,7 +79,7 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
         <button
           type="submit"
           disabled={!value.trim() || isPending}
-          className="flex h-7 items-center gap-1.5 rounded-[8px] bg-neon px-3 text-xs font-semibold text-black transition-opacity disabled:opacity-40 hover:opacity-90"
+          className="flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-opacity disabled:opacity-40 hover:opacity-90"
           aria-label="Add task"
         >
           {isPending ? (
@@ -96,10 +96,10 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
       {feedback && (
         <div
           className={cn(
-            "flex items-center gap-2 rounded-[8px] px-3 py-1.5 text-xs",
+            "flex items-center gap-2 rounded-md px-3 py-1.5 text-xs",
             feedback.type === "success"
-              ? "border border-neon/20 bg-neon/5 text-neon"
-              : "border border-red-500/20 bg-red-500/5 text-red-400",
+              ? "border border-success/25 bg-success/10 text-success"
+              : "border border-danger/20 bg-danger/5 text-danger",
           )}
         >
           <Icon

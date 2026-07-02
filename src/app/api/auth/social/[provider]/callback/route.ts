@@ -24,7 +24,7 @@ function esc(s: string): string {
 }
 
 function successPage(platform: string, accountName: string, origin: string): Response {
-  const body = `<div class="icon" style="background:#2dff9e22"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#2dff9e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h2>Connected!</h2><p>Closing window…</p>`;
+  const body = `<div class="icon" style="background:#FF6B2C22"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#FF6B2C" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h2>Connected!</h2><p>Closing window…</p>`;
   const script = `(function(){var o=window.opener;if(o&&!o.closed){o.postMessage({type:"karos_oauth_success",platform:${JSON.stringify(platform)},accountName:${JSON.stringify(accountName)}},${JSON.stringify(origin)});setTimeout(function(){window.close()},800)}else{document.querySelector("p").textContent="You can close this window."}})()`;
   return htmlPage(body, script);
 }

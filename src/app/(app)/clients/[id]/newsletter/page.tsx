@@ -38,7 +38,7 @@ export default async function NewsletterOnboardingPage({ params }: { params: Pro
       <div className="mb-6">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">Newsletter &amp; blog setup</h1>
-          <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">e11</span>
+          <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">e11</span>
         </div>
         <p className="mt-1 text-sm text-muted">
           The one-time onboarding intake for {client.name}. It produces the engine&apos;s three

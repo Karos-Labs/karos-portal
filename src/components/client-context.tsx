@@ -97,12 +97,12 @@ export function ClientContext({ clientId, items }: { clientId: string; items: Co
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {items.map((it) => (
-            <div key={it.id} className="group relative overflow-hidden rounded-[10px] border border-border bg-surface-2">
+            <div key={it.id} className="group relative overflow-hidden rounded-md border border-border bg-surface-2">
               {it.kind === "image" ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={it.url} alt={it.name} className="h-24 w-full object-cover" />
               ) : (
-                <a href={it.url} target="_blank" rel="noopener noreferrer" className="flex h-24 w-full items-center justify-center text-muted hover:text-neon">
+                <a href={it.url} target="_blank" rel="noopener noreferrer" className="flex h-24 w-full items-center justify-center text-muted hover:text-foreground">
                   <Icon name={KIND_ICON[it.kind]} className="h-8 w-8" />
                 </a>
               )}

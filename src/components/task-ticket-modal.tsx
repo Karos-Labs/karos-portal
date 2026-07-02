@@ -22,12 +22,12 @@ const PRIORITY_COLOR: Record<string, string> = {
 };
 
 const SOURCE_LABEL: Record<string, { label: string; color: string }> = {
-  gmail:               { label: "Operational Intel",   color: "#5db4ff" },
-  competitor_research: { label: "Competitor Research", color: "#2dff9e" },
-  brand_audit:         { label: "Brand Audit",         color: "#ffcf5d" },
-  content_dispatch:    { label: "Content Dispatch",    color: "#ff5d6c" },
-  copilot:             { label: "AI Copilot",          color: "#2dff9e" },
-  manual:              { label: "Manual",              color: "#8aa2a8" },
+  gmail:               { label: "Operational Intel",   color: "#6b9fd4" },
+  competitor_research: { label: "Competitor Research", color: "#FF6B2C" },
+  brand_audit:         { label: "Brand Audit",         color: "#d9a13d" },
+  content_dispatch:    { label: "Content Dispatch",    color: "#e5484d" },
+  copilot:             { label: "AI Copilot",          color: "#FF6B2C" },
+  manual:              { label: "Manual",              color: "#9c9ca3" },
 };
 
 const STATUS_NEXT: Record<TaskStatus, TaskStatus> = {
@@ -75,7 +75,7 @@ function ArtifactSection({
   const isEmailArtifact = taskType === "integration_action";
 
   return (
-    <div className="rounded-[12px] border border-neon/20 bg-neon/[0.03] p-4">
+    <div className="rounded-md border border-neon/20 bg-neon/[0.03] p-4">
       <div className="mb-3 flex items-center gap-2">
         <div className="flex h-6 w-6 items-center justify-center rounded-[6px] bg-neon/15 text-neon">
           <Icon name={isEmailArtifact ? "Mail" : "FileText"} className="h-3.5 w-3.5" />
@@ -84,7 +84,7 @@ function ArtifactSection({
           {isEmailArtifact ? "Draft Email" : "Generated Deliverable"}
         </p>
       </div>
-      <div className="max-h-64 overflow-y-auto rounded-[10px] border border-border bg-surface-2 p-3">
+      <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
         <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
           {artifact}
         </pre>
@@ -151,7 +151,7 @@ function ReviewPanel({
     <div className="flex flex-col gap-3">
       {/* Failed upload alert */}
       {failedUpload && (
-        <div className="flex items-start gap-2 rounded-[10px] border border-danger/25 bg-danger/10 px-3 py-2">
+        <div className="flex items-start gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
           <Icon name="AlertTriangle" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
           <div className="min-w-0">
             <p className="text-xs font-semibold text-danger">Send failed</p>
@@ -171,7 +171,7 @@ function ReviewPanel({
           <button
             onClick={publish}
             disabled={publishing || approving}
-            className="flex flex-1 items-center justify-center gap-2 rounded-[10px] bg-neon px-4 py-2.5 text-sm font-semibold text-black transition-opacity disabled:opacity-50"
+            className="flex flex-1 items-center justify-center gap-2 rounded-md bg-neon px-4 py-2.5 text-sm font-semibold text-black transition-opacity disabled:opacity-50"
           >
             {publishing ? (
               <Icon name="Loader" className="h-3.5 w-3.5 animate-spin" />
@@ -184,7 +184,7 @@ function ReviewPanel({
           <button
             onClick={approve}
             disabled={approving || adjusting}
-            className="flex flex-1 items-center justify-center gap-2 rounded-[10px] bg-neon px-4 py-2.5 text-sm font-semibold text-black transition-opacity disabled:opacity-50"
+            className="flex flex-1 items-center justify-center gap-2 rounded-md bg-neon px-4 py-2.5 text-sm font-semibold text-black transition-opacity disabled:opacity-50"
           >
             {approving ? (
               <Icon name="Loader" className="h-3.5 w-3.5 animate-spin" />
@@ -197,7 +197,7 @@ function ReviewPanel({
         <button
           onClick={() => setShowAdjustForm((v) => !v)}
           disabled={approving || adjusting || publishing}
-          className="flex items-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:border-border-strong disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:border-border-strong disabled:opacity-50"
         >
           <Icon name="MessageSquare" className="h-3.5 w-3.5" />
           Request Adjustments
@@ -212,20 +212,20 @@ function ReviewPanel({
             onChange={(e) => setFeedback(e.target.value)}
             placeholder="Describe what you'd like changed or improved…"
             rows={3}
-            className="w-full resize-none rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-xs text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50 focus:ring-1 focus:ring-neon/30"
+            className="w-full resize-none rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50 focus:ring-1 focus:ring-neon/30"
           />
           <div className="flex justify-end gap-2">
             <button
               type="button"
               onClick={() => setShowAdjustForm(false)}
-              className="rounded-[8px] border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground"
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!feedback.trim() || adjusting}
-              className="flex items-center gap-1.5 rounded-[8px] border border-neon/30 bg-neon/10 px-3 py-1.5 text-xs font-medium text-neon transition-colors hover:bg-neon/20 disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-md border border-neon/30 bg-neon/10 px-3 py-1.5 text-xs font-medium text-neon transition-colors hover:bg-neon/20 disabled:opacity-40"
             >
               {adjusting ? (
                 <Icon name="Loader" className="h-3 w-3 animate-spin" />
@@ -263,7 +263,7 @@ function AiPlanSection({
   }
 
   return (
-    <div className="rounded-[12px] border border-neon/20 bg-neon/5 p-4">
+    <div className="rounded-md border border-neon/20 bg-neon/5 p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <div className="flex h-6 w-6 items-center justify-center rounded-[6px] bg-neon/15 text-neon">
@@ -274,7 +274,7 @@ function AiPlanSection({
         {!plan && !isPending && (
           <button
             onClick={generate}
-            className="flex items-center gap-1.5 rounded-[8px] border border-neon/30 bg-neon/10 px-2.5 py-1 text-[11px] font-medium text-neon transition-colors hover:bg-neon/20"
+            className="flex items-center gap-1.5 rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1 text-[11px] font-medium text-neon transition-colors hover:bg-neon/20"
           >
             <Icon name="Wand2" className="h-3 w-3" />
             Generate Plan
@@ -379,7 +379,7 @@ function CommentsSection({
               <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-3 text-[10px] font-semibold text-muted">
                 {c.authorName.charAt(0).toUpperCase()}
               </div>
-              <div className="flex-1 rounded-[10px] border border-border bg-surface-2 px-3 py-2">
+              <div className="flex-1 rounded-md border border-border bg-surface-2 px-3 py-2">
                 <div className="mb-0.5 flex items-center gap-2">
                   <span className="text-[11px] font-medium text-foreground">{c.authorName}</span>
                   <span
@@ -407,12 +407,12 @@ function CommentsSection({
           onChange={(e) => setText(e.target.value)}
           placeholder="Add a comment…"
           disabled={isPending}
-          className="flex-1 rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-xs text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50 focus:ring-1 focus:ring-neon/30 disabled:opacity-50"
+          className="flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50 focus:ring-1 focus:ring-neon/30 disabled:opacity-50"
         />
         <button
           type="submit"
           disabled={!text.trim() || isPending}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-neon text-black transition-opacity disabled:opacity-40"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-neon text-black transition-opacity disabled:opacity-40"
         >
           {isPending ? (
             <Icon name="Loader" className="h-3.5 w-3.5 animate-spin" />
@@ -553,7 +553,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
 
           {/* Executing state */}
           {isExecuting && (
-            <div className="flex items-center gap-3 rounded-[12px] border border-neon/20 bg-neon/5 px-4 py-3">
+            <div className="flex items-center gap-3 rounded-md border border-neon/20 bg-neon/5 px-4 py-3">
               <Icon name="Loader" className="h-5 w-5 animate-spin text-neon" />
               <div>
                 <p className="text-sm font-medium text-neon">Karos AI is working on this task</p>
@@ -585,7 +585,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
           {/* Description */}
           {task.description && (
             <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-2">Description</p>
+              <p className="mb-1 text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Description</p>
               <p className="text-sm leading-relaxed text-foreground">{task.description}</p>
             </div>
           )}
@@ -616,7 +616,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
                 onClose();
               }}
               disabled={isExecuting}
-              className="flex items-center gap-1.5 rounded-[8px] border border-border bg-surface-3 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-neon/40 hover:text-neon disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-md border border-border bg-surface-3 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-neon/40 hover:text-neon disabled:opacity-40"
             >
               <Icon
                 name={

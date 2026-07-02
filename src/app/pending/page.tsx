@@ -18,7 +18,7 @@ export default async function PendingPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-md animate-fade-up text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-warning/10">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md bg-warning/10">
           <Icon name="Clock" className="h-6 w-6 text-warning" />
         </div>
         <h1 className="text-xl font-semibold">Awaiting approval</h1>

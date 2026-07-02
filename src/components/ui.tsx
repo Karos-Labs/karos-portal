@@ -1,10 +1,12 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-/* -------------------------------- Button -------------------------------- */
+/* -------------------------------- Button --------------------------------
+   Ember voices (§7): primary = paper/ink (flips in light mode), accent = the
+   one orange CTA (rationed), ghost/outline = hairline utilities. */
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "ghost" | "outline" | "danger" | "subtle";
+  variant?: "primary" | "ghost" | "outline" | "danger" | "subtle" | "accent";
   size?: "sm" | "md" | "lg" | "icon";
   loading?: boolean;
 };
@@ -13,9 +15,12 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = "primary", size = "md", loading, children, disabled, ...props }, ref) => {
     const variants: Record<string, string> = {
       primary:
-        "bg-neon text-[#03110b] font-semibold hover:bg-neon-bright shadow-[0_0_22px_-6px_var(--neon-glow)] hover:shadow-[0_0_30px_-4px_var(--neon-glow)]",
-      ghost: "text-foreground hover:bg-surface-2",
-      outline: "border border-border-strong text-foreground hover:border-neon-dim hover:text-neon",
+        "bg-primary text-primary-foreground font-semibold shadow-[0_8px_22px_-8px_color-mix(in_srgb,var(--primary)_55%,transparent)] hover:-translate-y-0.5",
+      accent:
+        "bg-neon text-accent-ink font-semibold hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_color-mix(in_srgb,var(--neon)_55%,transparent)]",
+      ghost: "text-muted hover:bg-surface-2 hover:text-foreground",
+      outline:
+        "border border-border text-foreground hover:border-foreground/30 hover:bg-foreground/[0.03]",
       subtle: "bg-surface-2 text-foreground hover:bg-surface-3 border border-border",
       danger: "bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25",
     };
@@ -30,7 +35,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         disabled={disabled || loading}
         className={cn(
-          "inline-flex items-center justify-center rounded-[10px] transition-all duration-150 active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40 cursor-pointer",
+          "inline-flex items-center justify-center rounded-md transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25 cursor-pointer",
           variants[variant],
           sizes[size],
           className,
@@ -51,7 +56,7 @@ export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
   return (
     <div
       className={cn(
-        "card-grad rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:border-border-strong shadow-[0_1px_6px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.03)]",
+        "card-grad rounded-[var(--radius)] border border-border p-5 transition-colors duration-200 hover:border-border-strong",
         className,
       )}
       {...props}
@@ -60,7 +65,7 @@ export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
 }
 
 export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h3 className={cn("text-base font-semibold text-foreground", className)} {...props} />;
+  return <h3 className={cn("text-lg text-foreground", className)} {...props} />;
 }
 
 /* -------------------------------- Inputs -------------------------------- */
@@ -79,7 +84,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
     <input
       ref={ref}
       className={cn(
-        "w-full h-10 rounded-[10px] bg-surface-2 border border-border px-3 text-sm text-foreground placeholder:text-muted-2 outline-none transition-colors focus:border-neon-dim focus:ring-2 focus:ring-neon/20",
+        "w-full h-10 rounded-md bg-foreground/[0.04] border border-foreground/15 px-3 text-sm text-foreground placeholder:text-foreground/35 outline-none transition-colors focus:border-foreground/25",
         className,
       )}
       {...props}
@@ -93,7 +98,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
     <textarea
       ref={ref}
       className={cn(
-        "w-full min-h-[96px] rounded-[10px] bg-surface-2 border border-border px-3 py-2.5 text-sm text-foreground placeholder:text-muted-2 outline-none transition-colors focus:border-neon-dim focus:ring-2 focus:ring-neon/20 resize-y",
+        "w-full min-h-[96px] rounded-md bg-foreground/[0.04] border border-foreground/15 px-3 py-2.5 text-sm text-foreground placeholder:text-foreground/35 outline-none transition-colors focus:border-foreground/25 resize-y",
         className,
       )}
       {...props}
@@ -107,7 +112,7 @@ export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttrib
     <select
       ref={ref}
       className={cn(
-        "w-full h-10 rounded-[10px] bg-surface-2 border border-border px-3 text-sm text-foreground outline-none transition-colors focus:border-neon-dim focus:ring-2 focus:ring-neon/20 cursor-pointer",
+        "w-full h-10 rounded-md bg-foreground/[0.04] border border-foreground/15 px-3 text-sm text-foreground outline-none transition-colors focus:border-foreground/25 cursor-pointer [&>option]:bg-surface",
         className,
       )}
       {...props}
@@ -118,7 +123,8 @@ export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttrib
 );
 Select.displayName = "Select";
 
-/* -------------------------------- Badge --------------------------------- */
+/* -------------------------------- Badge ---------------------------------
+   Squared chips (§8) — mono labels, hairline borders, no glow. */
 
 export function Badge({
   children,
@@ -126,12 +132,16 @@ export function Badge({
   className,
 }: {
   children: React.ReactNode;
-  tone?: "neutral" | "neon" | "warning" | "danger" | "info";
+  tone?: "neutral" | "neon" | "success" | "warning" | "danger" | "info";
   className?: string;
 }) {
+  /* Judgment scale: success green / warning amber / danger red / info slate.
+     The historical "neon" tone means "good" — it renders success green so the
+     brand orange never participates in status colors. */
   const tones: Record<string, string> = {
     neutral: "bg-surface-3 text-muted border-border",
-    neon:    "bg-neon-soft text-neon border-neon/30 shadow-[0_0_10px_-3px_rgba(45,255,158,0.35)]",
+    neon:    "bg-success/10 text-success border-success/30",
+    success: "bg-success/10 text-success border-success/30",
     warning: "bg-warning/10 text-warning border-warning/30",
     danger:  "bg-danger/10 text-danger border-danger/30",
     info:    "bg-info/10 text-info border-info/30",
@@ -139,7 +149,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium",
+        "inline-flex items-center gap-1 rounded-[4px] border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em]",
         tones[tone],
         className,
       )}
@@ -167,7 +177,7 @@ export function Spinner({ className }: { className?: string }) {
 export function Skeleton({ className }: { className?: string }) {
   return (
     <div
-      className={cn("animate-shimmer rounded-[8px]", className)}
+      className={cn("animate-shimmer rounded-md", className)}
       aria-hidden="true"
     />
   );
@@ -196,7 +206,8 @@ export function EmptyState({
   );
 }
 
-/* ------------------------------- StatCard ------------------------------- */
+/* ------------------------------- StatCard -------------------------------
+   Mono label + numeral (§5), accent icon chip (§10). */
 
 export function StatCard({
   label,
@@ -210,14 +221,14 @@ export function StatCard({
   icon?: React.ReactNode;
 }) {
   return (
-    <Card className="flex items-start justify-between">
-      <div>
-        <p className="text-xs text-muted">{label}</p>
-        <p className="mt-1 text-2xl font-semibold text-foreground">{value}</p>
+    <Card className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <p className="font-mono text-[10px] uppercase leading-snug tracking-[0.1em] text-muted">{label}</p>
+        <p className="mt-1.5 font-mono text-2xl font-medium text-foreground">{value}</p>
         {hint && <p className="mt-1 text-xs text-muted-2">{hint}</p>}
       </div>
       {icon && (
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-neon-soft text-neon shadow-[0_0_14px_-4px_rgba(45,255,158,0.4)]">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-muted">
           {icon}
         </div>
       )}
@@ -239,8 +250,8 @@ export function PageHeader({
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
-        {description && <p className="mt-1 text-sm text-muted">{description}</p>}
+        <h1 className="text-3xl text-foreground">{title}</h1>
+        {description && <p className="mt-1.5 text-sm text-muted">{description}</p>}
       </div>
       {action}
     </div>

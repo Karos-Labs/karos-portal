@@ -6,44 +6,16 @@ import { Modal } from "@/components/modal";
 import { Button, Label, Input, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { saveBrandingGuidelinesAction, generateBrandingAction } from "@/lib/actions";
-import type { BrandColor, BrandingGuidelines } from "@/lib/types";
+import type { BrandingGuidelines } from "@/lib/types";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   clientId: string;
   existing?: BrandingGuidelines;
-  /** When true, shows the "Generate from website" button that uses AI to pre-fill the form. */
+  /** When true, shows the "Generate from website" button that scrapes and pre-fills the form. */
   hasWebsite?: boolean;
 }
-
-/* ── Color entry (local form state — lighter than full BrandColor) ─────── */
-
-interface ColorEntry {
-  hex: string;
-  role: string;
-}
-
-const MAX_COLORS = 4;
-
-/** Synthesise initial color entries from existing guidelines, preferring the new array. */
-function getInitialColors(existing?: BrandingGuidelines): ColorEntry[] {
-  if (existing?.dominantColors?.length) {
-    return existing.dominantColors.map((c) => ({ hex: c.hex, role: c.role ?? "" }));
-  }
-  // Fall back to legacy scalar fields for pre-migration clients
-  const entries: ColorEntry[] = [];
-  const add = (hex: string | undefined, role: string) => {
-    if (hex) entries.push({ hex, role });
-  };
-  add(existing?.primaryAccent ?? existing?.primaryColor, "Primary accent");
-  add(existing?.secondaryAccent ?? existing?.secondaryColor, "Secondary accent");
-  add(existing?.brandNeutralDark ?? existing?.uiBackground, "");
-  add(existing?.brandNeutralLight ?? existing?.uiText, "");
-  return entries;
-}
-
-/* ── Component ───────────────────────────────────────────────────────────── */
 
 export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }: Props) {
   const router = useRouter();
@@ -53,32 +25,19 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
   const [error, setError] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState("");
 
-  // Dynamic dominance-ranked color palette
-  const [colors, setColors] = useState<ColorEntry[]>(getInitialColors(existing));
-
-  // Non-color form fields
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<Omit<BrandingGuidelines, "updatedAt">>({
+    primaryColor: existing?.primaryColor ?? "",
+    secondaryColor: existing?.secondaryColor ?? "",
     fontHeading: existing?.fontHeading ?? "",
     fontBody: existing?.fontBody ?? "",
-    toneKeywords: existing?.toneKeywords ?? [] as string[],
+    toneKeywords: existing?.toneKeywords ?? [],
+    logoUrl: existing?.logoUrl ?? "",
     guidelines: existing?.guidelines ?? "",
     visualStyle: existing?.visualStyle ?? "",
   });
 
   function setField<K extends keyof typeof form>(key: K, val: (typeof form)[K]) {
     setForm((s) => ({ ...s, [key]: val }));
-  }
-
-  function updateColor(idx: number, patch: Partial<ColorEntry>) {
-    setColors((prev) => prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
-  }
-
-  function removeColor(idx: number) {
-    setColors((prev) => prev.filter((_, i) => i !== idx));
-  }
-
-  function addColorSlot() {
-    if (colors.length < MAX_COLORS) setColors((prev) => [...prev, { hex: "", role: "" }]);
   }
 
   async function generateFromWebsite() {
@@ -88,20 +47,14 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
     try {
       const result = await generateBrandingAction(clientId);
       setGenResult({ source: result.source, visualStyle: result.visualStyle });
-
-      // Pre-fill palette — prefer new array, fall back to legacy scalars
-      if (result.dominantColors?.length) {
-        setColors(result.dominantColors.map((c) => ({ hex: c.hex, role: c.role ?? "" })));
-      } else {
-        const newColors: ColorEntry[] = [];
-        if (result.primaryAccent) newColors.push({ hex: result.primaryAccent, role: "Primary accent" });
-        if (result.secondaryAccent) newColors.push({ hex: result.secondaryAccent, role: "Secondary accent" });
-        if (result.brandNeutralDark) newColors.push({ hex: result.brandNeutralDark, role: "" });
-        if (result.brandNeutralLight) newColors.push({ hex: result.brandNeutralLight, role: "" });
-        setColors(newColors);
-      }
-
-      setForm((s) => ({ ...s, visualStyle: result.visualStyle ?? s.visualStyle }));
+      // Pre-fill form with scraped values so the user can review and adjust before saving
+      // Pre-fill form with AI-generated values so the user can review and adjust before saving.
+      setForm((s) => ({
+        ...s,
+        primaryColor: result.primaryColor ?? s.primaryColor,
+        secondaryColor: result.secondaryColor ?? s.secondaryColor,
+        visualStyle: result.visualStyle ?? s.visualStyle,
+      }));
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not generate from website");
@@ -112,36 +65,23 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
 
   function addToken() {
     const token = tokenInput.trim();
-    if (!token || form.toneKeywords.includes(token)) return;
-    setField("toneKeywords", [...form.toneKeywords, token]);
+    if (!token || form.toneKeywords?.includes(token)) return;
+    setField("toneKeywords", [...(form.toneKeywords ?? []), token]);
     setTokenInput("");
   }
 
   function removeToken(token: string) {
-    setField("toneKeywords", form.toneKeywords.filter((t) => t !== token));
+    setField(
+      "toneKeywords",
+      (form.toneKeywords ?? []).filter((t) => t !== token),
+    );
   }
 
   async function submit() {
     setError(null);
     setLoading(true);
     try {
-      const dominantColors: BrandColor[] = colors
-        .filter((c) => c.hex.trim())
-        .map((c, i) => ({
-          hex: c.hex.trim(),
-          dominanceRank: i + 1,
-          role: c.role.trim() || undefined,
-        }));
-
-      await saveBrandingGuidelinesAction(clientId, {
-        dominantColors,
-        // Mirror legacy scalar fields for backward compat
-        primaryAccent: dominantColors[0]?.hex,
-        secondaryAccent: dominantColors[1]?.hex,
-        brandNeutralDark: dominantColors[2]?.hex,
-        brandNeutralLight: dominantColors[3]?.hex,
-        ...form,
-      });
+      await saveBrandingGuidelinesAction(clientId, form);
       onClose();
       router.refresh();
     } catch (e) {
@@ -160,13 +100,13 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
       className="max-w-xl"
     >
       <div className="space-y-4">
-        {/* Generate from website */}
+        {/* Generate from website — shown when a website URL is configured */}
         {hasWebsite && (
-          <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border bg-surface-2 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface-2 px-4 py-3">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">Generate from website</p>
               <p className="text-xs text-muted-2">
-                Karos scrapes the site or searches the web to extract real colors, fonts, and brand voice.
+                Karos uses AI domain knowledge to generate colors, fonts, and brand voice.
               </p>
             </div>
             <Button size="sm" variant="outline" loading={generating} onClick={generateFromWebsite}>
@@ -178,58 +118,47 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
 
         {/* Generation feedback */}
         {genResult && (
-          <div className="flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
+          <div className="flex items-center gap-2 rounded-md border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
             <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
-            {`AI Generated from live site/search data${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review the values below and save.`}
+            {`AI Generated from Domain Knowledge${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review the values below and save.`}
           </div>
         )}
 
-        {/* Dynamic dominant color palette */}
-        <div>
-          <Label>Dominant color palette</Label>
-          <p className="mb-2 text-[10px] text-muted-2">
-            Up to 4 colors ordered by visual prominence. Color 1 = most dominant (logo, main CTA). No dark/light constraints.
-          </p>
-          <div className="space-y-2">
-            {colors.map((entry, idx) => (
-              <div key={idx} className="flex items-center gap-2">
-                <span className="w-5 shrink-0 text-center font-mono text-[10px] font-semibold text-muted-2">
-                  {idx + 1}
-                </span>
-                <input
-                  type="color"
-                  value={entry.hex || "#000000"}
-                  onChange={(e) => updateColor(idx, { hex: e.target.value })}
-                  className="h-9 w-10 shrink-0 cursor-pointer rounded-[8px] border border-border bg-surface-2 p-1"
-                />
-                <Input
-                  value={entry.hex}
-                  onChange={(e) => updateColor(idx, { hex: e.target.value })}
-                  placeholder="#000000"
-                  className="w-28 shrink-0 font-mono text-sm"
-                />
-                <Input
-                  value={entry.role}
-                  onChange={(e) => updateColor(idx, { role: e.target.value })}
-                  placeholder="Role (e.g. Logo fill, CTA)"
-                  className="flex-1 text-xs"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeColor(idx)}
-                  className="shrink-0 text-muted-2 transition-colors hover:text-danger"
-                  aria-label={`Remove color ${idx + 1}`}
-                >
-                  <Icon name="X" className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-            {colors.length < MAX_COLORS && (
-              <Button type="button" variant="outline" size="sm" onClick={addColorSlot}>
-                <Icon name="Plus" className="h-3.5 w-3.5" />
-                Add color slot
-              </Button>
-            )}
+        {/* Colors */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label>Primary color</Label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={form.primaryColor || "#FF6B2C"}
+                onChange={(e) => setField("primaryColor", e.target.value)}
+                className="h-9 w-12 cursor-pointer rounded-md border border-border bg-surface-2 p-1"
+              />
+              <Input
+                value={form.primaryColor ?? ""}
+                onChange={(e) => setField("primaryColor", e.target.value)}
+                placeholder="#FF6B2C"
+                className="flex-1 font-mono text-sm"
+              />
+            </div>
+          </div>
+          <div>
+            <Label>Secondary color</Label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={form.secondaryColor || "#ffffff"}
+                onChange={(e) => setField("secondaryColor", e.target.value)}
+                className="h-9 w-12 cursor-pointer rounded-md border border-border bg-surface-2 p-1"
+              />
+              <Input
+                value={form.secondaryColor ?? ""}
+                onChange={(e) => setField("secondaryColor", e.target.value)}
+                placeholder="#ffffff"
+                className="flex-1 font-mono text-sm"
+              />
+            </div>
           </div>
         </div>
 
@@ -238,7 +167,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
           <div>
             <Label>Heading font</Label>
             <Input
-              value={form.fontHeading}
+              value={form.fontHeading ?? ""}
               onChange={(e) => setField("fontHeading", e.target.value)}
               placeholder="Inter, Helvetica, etc."
             />
@@ -246,7 +175,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
           <div>
             <Label>Body font</Label>
             <Input
-              value={form.fontBody}
+              value={form.fontBody ?? ""}
               onChange={(e) => setField("fontBody", e.target.value)}
               placeholder="Inter, Georgia, etc."
             />
@@ -257,9 +186,9 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
         <div>
           <Label>Visual style</Label>
           <select
-            value={form.visualStyle}
+            value={form.visualStyle ?? ""}
             onChange={(e) => setField("visualStyle", e.target.value)}
-            className="w-full rounded-[8px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-neon"
+            className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-neon"
           >
             <option value="">— Not set —</option>
             <option value="Minimalist">Minimalist</option>
@@ -269,6 +198,20 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
             <option value="Vibrant">Vibrant</option>
             <option value="Luxury">Luxury</option>
           </select>
+        </div>
+
+        {/* Logo URL */}
+        <div>
+          <Label>Logo URL</Label>
+          <div className="relative">
+            <Icon name="Link" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-2" />
+            <Input
+              value={form.logoUrl ?? ""}
+              onChange={(e) => setField("logoUrl", e.target.value)}
+              placeholder="https://..."
+              className="pl-9"
+            />
+          </div>
         </div>
 
         {/* Tone keywords */}
@@ -286,9 +229,9 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
               Add
             </Button>
           </div>
-          {form.toneKeywords.length > 0 && (
+          {(form.toneKeywords ?? []).length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {form.toneKeywords.map((t) => (
+              {(form.toneKeywords ?? []).map((t) => (
                 <span
                   key={t}
                   className="flex items-center gap-1 rounded-full border border-neon/30 bg-neon-soft px-2.5 py-0.5 text-xs font-medium text-neon"
@@ -311,7 +254,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
         <div>
           <Label>Guidelines text (markdown)</Label>
           <Textarea
-            value={form.guidelines}
+            value={form.guidelines ?? ""}
             onChange={(e) => setField("guidelines", e.target.value)}
             placeholder={"## Brand Voice\nWe are bold, transparent, and challenger-focused...\n\n## Do's and Don'ts\n- Do: Lead with data and specifics\n- Don't: Use corporate jargon"}
             className="h-40 font-mono text-xs"

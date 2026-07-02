@@ -27,7 +27,7 @@ function LockedRuleBlock({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-[10px] border border-border bg-surface-2 p-3">
+    <div className="rounded-md border border-border bg-surface-2 p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-2.5">
           <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-surface-3">
@@ -59,7 +59,7 @@ function LockedRuleBlock({
         </div>
       </div>
       {open && content && (
-        <pre className="mt-3 max-h-[300px] overflow-auto rounded-[8px] border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed text-muted-2">
+        <pre className="mt-3 max-h-[300px] overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed text-muted-2">
           {content}
         </pre>
       )}
@@ -78,14 +78,14 @@ function PipelineViz() {
   ];
 
   return (
-    <div className="rounded-[10px] border border-neon/20 bg-neon-soft p-4">
-      <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-neon">
+    <div className="rounded-md border border-neon/20 bg-neon-soft p-4">
+      <p className="mb-3 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-neon">
         Pipeline Flow
       </p>
       <div className="flex flex-wrap items-center gap-2">
         {stages.map((s, i) => (
           <div key={i} className="flex items-center gap-2">
-            <div className="rounded-[8px] border border-neon/30 bg-surface px-2.5 py-1.5">
+            <div className="rounded-md border border-neon/30 bg-surface px-2.5 py-1.5">
               <div className="flex items-center gap-1.5">
                 <Icon name={s.icon} className="h-3 w-3 text-neon" />
                 <span className="text-xs font-semibold text-foreground">
@@ -153,7 +153,7 @@ export function IntelAgentSection({ agent, lockedRules }: Props) {
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-3 text-left"
       >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-neon-soft">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-neon-soft">
           <Icon name="BarChart2" className="h-4 w-4 text-neon" />
         </div>
         <div className="min-w-0 flex-1">
@@ -187,7 +187,7 @@ export function IntelAgentSection({ agent, lockedRules }: Props) {
           {!agent ? (
             /* ── Not seeded ── */
             <Card className="flex flex-col items-center gap-4 py-10 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-[16px] bg-neon-soft">
+              <div className="flex h-14 w-14 items-center justify-center rounded-md bg-neon-soft">
                 <Icon name="Zap" className="h-7 w-7 text-neon" />
               </div>
               <div>
@@ -232,7 +232,7 @@ export function IntelAgentSection({ agent, lockedRules }: Props) {
                 />
 
                 {/* Layer 3 — Custom instructions (editable) */}
-                <div className="rounded-[10px] border border-neon/40 bg-neon-soft p-3">
+                <div className="rounded-md border border-neon/40 bg-neon-soft p-3">
                   <div className="flex items-start gap-2.5">
                     <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-neon/50 bg-neon/10">
                       <Icon name="Pencil" className="h-3 w-3 text-neon" />
@@ -304,17 +304,17 @@ export function IntelAgentSection({ agent, lockedRules }: Props) {
                 </div>
 
                 {error && (
-                  <div className="flex items-center gap-2 rounded-[8px] border border-red-500/30 bg-red-500/10 px-3 py-2">
+                  <div className="flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
                     <Icon
                       name="TriangleAlert"
-                      className="h-4 w-4 shrink-0 text-red-400"
+                      className="h-4 w-4 shrink-0 text-danger"
                     />
-                    <p className="text-xs text-red-400">{error}</p>
+                    <p className="text-xs text-danger">{error}</p>
                   </div>
                 )}
 
-                <div className="rounded-[10px] border border-border bg-surface-2 px-4 py-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
+                  <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
                     Available client variables
                   </p>
                   <p className="mt-1 text-xs text-muted-2">

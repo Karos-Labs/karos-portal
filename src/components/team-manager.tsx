@@ -110,7 +110,7 @@ function UserRow({
             onClick={() => act(() => toggleGroupAdminAction(u.uid, !u.isGroupAdmin))}
             disabled={actionPending}
             title={u.isGroupAdmin ? "Remove group admin" : "Make group admin"}
-            className="flex items-center gap-1.5 rounded-[8px] border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-neon/40 hover:text-neon disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-neon/40 hover:text-neon disabled:opacity-50"
           >
             <Icon name="ShieldCheck" className="h-3.5 w-3.5" />
             {u.isGroupAdmin ? "Group admin" : "Make admin"}

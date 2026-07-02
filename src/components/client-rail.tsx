@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
@@ -11,13 +11,11 @@ import { AccountMenu } from "@/components/account-menu";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { NotificationBell } from "@/components/notification-bell";
 import { ContactUsButton } from "@/components/contact-us-modal";
-import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
   AppUser,
   Client,
-  ClientCompetitor,
   ClientContextDoc,
   ClientTask,
 } from "@/lib/types";
@@ -39,8 +37,6 @@ export function ClientRail({
   user,
   client,
   contextDocs,
-  competitors,
-  isAdmin,
   actionItems,
   reviewJobs,
   taskAlerts,
@@ -48,15 +44,12 @@ export function ClientRail({
   user: AppUser;
   client: Client;
   contextDocs: ClientContextDoc[];
-  competitors: ClientCompetitor[];
-  isAdmin: boolean;
   actionItems: ActionItemNotification[];
   reviewJobs: AgentReviewNotification[];
   taskAlerts: ClientTask[];
 }) {
   const pathname = usePathname();
   const home = `/clients/${client.id}`;
-  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
   const primaryNav: NavItem[] = [
     { href: home, label: "Analytics", icon: "BarChart3", exact: true },
@@ -66,31 +59,35 @@ export function ClientRail({
   ];
   const settingsItem: NavItem = { href: `${home}/settings`, label: "Settings", icon: "Settings" };
 
+  // Mobile "Company" sheet (profile + docs + settings/support/theme). Close on navigation.
   const [companyOpen, setCompanyOpen] = useState(false);
-
-  // Close the mobile company sheet on navigation.
-  useEffect(() => {
-    setCompanyOpen(false);
-  }, [pathname]);
+  const [prevPath, setPrevPath] = useState(pathname);
+  if (prevPath !== pathname) {
+    setPrevPath(pathname);
+    if (companyOpen) setCompanyOpen(false);
+  }
 
   return (
     <>
-      {/* ── Desktop left rail ── */}
+      {/* ── Desktop left rail (z-30 so its menus/panels sit above the center column) ── */}
       <aside className="relative z-30 hidden w-72 shrink-0 border-r border-border bg-surface/60 md:block">
         <div className="sticky top-0 flex h-screen flex-col">
-          {/* Logo */}
+          {/* Wordmark lockup — head disc 26px + Spectral Regular (brand §2.2) */}
           <div className="shrink-0 px-4 pt-4">
-            <Link href={home} className="flex items-center gap-2 px-2 py-1">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neon-soft neon-glow">
-                <Icon name="Sparkles" className="h-4 w-4 text-neon" />
-              </div>
-              <span className="text-base font-semibold tracking-tight">
-                Karos<span className="text-neon">CMO</span>
+            <Link href={home} className="flex items-center gap-2.5 px-2 py-1">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/kairos-head-disc-dark.svg"
+                alt=""
+                className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+              />
+              <span className="font-serif text-xl font-normal leading-none text-foreground">
+                Karos Labs
               </span>
             </Link>
           </div>
 
-          {/* Scrollable body */}
+          {/* Scrollable: primary nav + profile + documents */}
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
             <nav className="flex flex-col gap-0.5">
               {primaryNav.map((item) => {
@@ -102,16 +99,13 @@ export function ClientRail({
                     className={cn(
                       "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
                       active
-                        ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(45,255,158,0.15)]"
+                        ? "bg-surface-2 text-foreground"
                         : "text-muted hover:bg-surface-2 hover:text-foreground",
                     )}
                   >
                     <Icon
                       name={item.icon}
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        active ? "text-neon" : "text-muted-2 group-hover:text-foreground",
-                      )}
+                      className={cn("h-4 w-4 shrink-0", active ? "text-foreground" : "text-muted-2 group-hover:text-foreground")}
                     />
                     <span className="flex-1">{item.label}</span>
                   </Link>
@@ -120,31 +114,14 @@ export function ClientRail({
             </nav>
 
             <div className="border-t border-border pt-4">
-              <ClientProfilePanel client={client} />
+              <ClientProfilePanel client={client} hasDocs={contextDocs.length > 0} />
             </div>
-
             <div className="border-t border-border pt-4">
-              <ClientDocuments
-                contextDocs={contextDocs}
-                isAdmin={isAdmin}
-                clientId={client.id}
-              />
+              <ClientDocuments contextDocs={contextDocs} />
             </div>
-
-            <CompetitorTrack
-              competitors={competitors}
-              clientId={client.id}
-              isStaff={isStaff}
-            />
-
-            <BrandColorsSection
-              guidelines={client.brandingGuidelines}
-              clientId={client.id}
-              hasWebsite={!!client.website}
-            />
           </div>
 
-          {/* Bottom account menu */}
+          {/* Bottom: account menu (settings · notifications · theme · support · log out) */}
           <div className="shrink-0 border-t border-border p-3">
             <AccountMenu
               user={user}
@@ -158,18 +135,21 @@ export function ClientRail({
         </div>
       </aside>
 
-      {/* ── Mobile top bar ── */}
+      {/* ── Mobile top bar (wordmark + notifications only) ── */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
-        <Link href={home} className="flex items-center gap-2">
-          <Icon name="Sparkles" className="h-5 w-5 text-neon" />
-          <span className="font-semibold">
-            Karos<span className="text-neon">CMO</span>
-          </span>
+        <Link href={home} className="flex items-center gap-2.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+          />
+          <span className="font-serif text-lg font-normal leading-none text-foreground">Karos Labs</span>
         </Link>
         <NotificationBell actionItems={actionItems} reviewJobs={reviewJobs} taskAlerts={taskAlerts} />
       </div>
 
-      {/* ── Mobile bottom tab bar ── */}
+      {/* ── Mobile bottom tab bar (last tab = Company sheet) ── */}
       <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-border bg-surface/95 backdrop-blur-sm md:hidden">
         {primaryNav.map((item) => {
           const active = isActive(pathname, item);
@@ -179,7 +159,7 @@ export function ClientRail({
               href={item.href}
               className={cn(
                 "flex flex-1 flex-col items-center gap-1 py-2 text-[10px] font-medium transition-colors",
-                active ? "text-neon" : "text-muted-2 hover:text-foreground",
+                active ? "text-foreground" : "text-muted-2 hover:text-foreground",
               )}
             >
               <Icon name={item.icon} className="h-5 w-5" />
@@ -191,7 +171,7 @@ export function ClientRail({
           onClick={() => setCompanyOpen(true)}
           className={cn(
             "flex flex-1 flex-col items-center gap-1 py-2 text-[10px] font-medium transition-colors",
-            companyOpen ? "text-neon" : "text-muted-2 hover:text-foreground",
+            companyOpen ? "text-foreground" : "text-muted-2 hover:text-foreground",
           )}
         >
           <Icon name="Building2" className="h-5 w-5" />
@@ -214,27 +194,10 @@ export function ClientRail({
           </div>
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-            <ClientProfilePanel client={client} />
-
+            <ClientProfilePanel client={client} hasDocs={contextDocs.length > 0} />
             <div className="border-t border-border pt-4">
-              <ClientDocuments
-                contextDocs={contextDocs}
-                isAdmin={isAdmin}
-                clientId={client.id}
-              />
+              <ClientDocuments contextDocs={contextDocs} />
             </div>
-
-            <CompetitorTrack
-              competitors={competitors}
-              clientId={client.id}
-              isStaff={isStaff}
-            />
-
-            <BrandColorsSection
-              guidelines={client.brandingGuidelines}
-              clientId={client.id}
-              hasWebsite={!!client.website}
-            />
 
             <div className="space-y-0.5 border-t border-border pt-4">
               <Link

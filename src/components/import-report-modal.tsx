@@ -95,10 +95,10 @@ export function ImportReportModal({ open, onClose, clientId }: Props) {
         <div>
           <Label>PDF Report (optional)</Label>
           <div
-            className="flex cursor-pointer items-center gap-3 rounded-[10px] border border-dashed border-border p-3 transition-colors hover:border-neon/40 hover:bg-neon-soft"
+            className="flex cursor-pointer items-center gap-3 rounded-md border border-dashed border-border p-3 transition-colors hover:border-neon/40 hover:bg-neon-soft"
             onClick={() => fileRef.current?.click()}
           >
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-surface-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-surface-3">
               <Icon name="FileText" className="h-4 w-4 text-muted-2" />
             </div>
             <div className="min-w-0 flex-1">
@@ -139,16 +139,16 @@ export function ImportReportModal({ open, onClose, clientId }: Props) {
         </div>
 
         {uploadProgress && (
-          <div className="flex items-center gap-2 rounded-[8px] border border-neon/20 bg-neon-soft px-3 py-2">
+          <div className="flex items-center gap-2 rounded-md border border-neon/20 bg-neon-soft px-3 py-2">
             <Icon name="Loader" className="h-4 w-4 animate-spin text-neon" />
             <p className="text-xs text-neon">{uploadProgress}</p>
           </div>
         )}
 
         {error && (
-          <div className="flex items-center gap-2 rounded-[8px] border border-red-500/30 bg-red-500/10 px-3 py-2">
-            <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-red-400" />
-            <p className="text-xs text-red-400">{error}</p>
+          <div className="flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
+            <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-danger" />
+            <p className="text-xs text-danger">{error}</p>
           </div>
         )}
 

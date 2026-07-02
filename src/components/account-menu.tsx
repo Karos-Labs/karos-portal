@@ -46,11 +46,11 @@ export function AccountMenu({
   const avatar = (size: string) =>
     user.photoURL ? (
       // eslint-disable-next-line @next/next/no-img-element
-      <img src={user.photoURL} alt="" className={cn("shrink-0 rounded-md object-cover", size)} />
+      <img src={user.photoURL} alt="" className={cn("shrink-0 rounded-full object-cover", size)} />
     ) : (
       <div
         className={cn(
-          "flex shrink-0 items-center justify-center rounded-md bg-surface-3 font-semibold text-neon",
+          "flex shrink-0 items-center justify-center rounded-full bg-surface-3 font-semibold text-foreground",
           size,
         )}
       >

@@ -45,7 +45,7 @@ export default function RequestAccessPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm animate-fade-up">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-neon-soft neon-glow">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md bg-neon-soft neon-glow">
             <Icon name="Building2" className="h-6 w-6 text-neon" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">

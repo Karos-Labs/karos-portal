@@ -24,12 +24,13 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
+/* Event chips render in our palette, not platform colors (brand §11). */
 const PLATFORM_COLORS: Record<string, string> = {
-  instagram: "#E1306C",
-  facebook: "#1877F2",
-  linkedin: "#0A66C2",
-  twitter: "#000000",
-  youtube: "#FF0000",
+  instagram: "#FF6B2C",
+  facebook: "#FF6B2C",
+  linkedin: "#FF6B2C",
+  twitter: "#FF6B2C",
+  youtube: "#FF6B2C",
 };
 
 /* ── Event builder ───────────────────────────────────────────────────── */
@@ -52,7 +53,7 @@ function buildEvents(assets: Asset[], jobs: Job[], agents: Agent[]): CalendarEve
         title: a.title,
         scheduledAt: a.scheduledAt,
         status: a.status as "scheduled" | "published",
-        agentColor: platformColor ?? agent?.color ?? "#2dff9e",
+        agentColor: platformColor ?? agent?.color ?? "#FF6B2C",
         platform: a.scheduledPlatform,
       };
     })
@@ -68,26 +69,18 @@ function EventChip({ event }: { event: CalendarEvent }) {
     minute: "2-digit",
   });
 
+  /* Status is the judgment: scheduled = slate (upcoming), published = green (live). */
   return (
     <div
       className={cn(
         "flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-default",
-        isScheduled ? "border border-dashed" : "",
+        isScheduled
+          ? "border border-dashed border-info/50 bg-info/10 text-info"
+          : "bg-success/15 text-success",
       )}
-      style={{
-        borderColor: isScheduled ? event.agentColor + "70" : "transparent",
-        background: event.agentColor + (isScheduled ? "18" : "2e"),
-        color: event.agentColor,
-      }}
       title={`${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""}`}
     >
-      <div
-        className={cn(
-          "h-1.5 w-1.5 shrink-0 rounded-full",
-          isScheduled && "opacity-60",
-        )}
-        style={{ background: event.agentColor }}
-      />
+      <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{event.title}</span>
     </div>
   );
@@ -156,8 +149,8 @@ export function ContentCalendar({
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-[7px] bg-neon-soft">
-            <Icon name="Calendar" className="h-3.5 w-3.5 text-neon" />
+          <div className="flex h-7 w-7 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04]">
+            <Icon name="Calendar" className="h-3.5 w-3.5 text-foreground/70" />
           </div>
           <div>
             <p className="text-sm font-medium leading-tight">Content Calendar</p>
@@ -195,7 +188,7 @@ export function ContentCalendar({
         {DAY_LABELS.map((d) => (
           <div
             key={d}
-            className="py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-2"
+            className="py-1.5 text-center text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2"
           >
             {d}
           </div>
@@ -217,7 +210,7 @@ export function ContentCalendar({
               className={cn(
                 "min-h-[68px] border-b border-r border-border p-1",
                 !isValid && "bg-surface-2/20",
-                isToday && "bg-neon/[0.04]",
+                isToday && "bg-foreground/[0.03]",
                 isLastCol && "border-r-0",
               )}
             >
@@ -227,7 +220,7 @@ export function ContentCalendar({
                     className={cn(
                       "mb-1 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium leading-none",
                       isToday
-                        ? "bg-neon text-background font-bold"
+                        ? "bg-primary text-primary-foreground font-bold"
                         : "text-muted-2",
                     )}
                   >
@@ -257,7 +250,7 @@ export function ContentCalendar({
           Scheduled
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <div className="h-2.5 w-3.5 rounded-sm bg-neon opacity-70" />
+          <div className="h-2.5 w-3.5 rounded-sm bg-success opacity-80" />
           Published
         </div>
       </div>

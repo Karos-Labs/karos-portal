@@ -153,10 +153,10 @@ function AgentAccordion({
         >
           {/* Agent icon */}
           <div
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md"
             style={{
-              background: (agent.color ?? "#2dff9e") + "1f",
-              color: agent.color ?? "#2dff9e",
+              background: (agent.color ?? "#FF6B2C") + "1f",
+              color: agent.color ?? "#FF6B2C",
             }}
           >
             <Icon name={agent.icon} className="h-5 w-5" />
@@ -221,7 +221,7 @@ function AgentAccordion({
               {/* ② Drafts — Awaiting Review */}
               <div>
                 <div className="mb-3 flex items-center gap-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                  <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
                     Awaiting Review
                   </p>
                   {draftAssets.length > 0 && (
@@ -230,12 +230,12 @@ function AgentAccordion({
                 </div>
 
                 {draftAssets.length === 0 ? (
-                  <div className="flex items-center gap-3 rounded-[10px] border border-dashed border-border bg-surface-2/40 p-4">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-neon-soft">
-                      <Icon name="CheckCircle2" className="h-4 w-4 text-neon" />
+                  <div className="flex items-center gap-3 rounded-md border border-dashed border-border bg-surface-2/40 p-4">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04]">
+                      <Icon name="CheckCircle2" className="h-4 w-4 text-foreground/70" />
                     </div>
                     <p className="text-sm text-muted-2">
-                      All clear — no drafts pending review.
+                      All clear. No drafts pending review.
                     </p>
                   </div>
                 ) : (

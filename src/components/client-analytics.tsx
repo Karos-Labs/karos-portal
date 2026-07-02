@@ -4,12 +4,13 @@ import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
 import type { Asset, ClientIntegration, Job } from "@/lib/types";
 
+/* Judgment scale: in-progress = amber, live/done = green, in-between = slate. */
 const STATUS_META: Record<string, { label: string; color: string }> = {
-  draft: { label: "Draft", color: "#ffcf5d" },
-  approved: { label: "Approved", color: "#2dff9e" },
-  scheduled: { label: "Scheduled", color: "#5db4ff" },
-  published: { label: "Published", color: "#2dff9e" },
-  delivered: { label: "Delivered", color: "#a78bfa" },
+  draft: { label: "Draft", color: "var(--warning)" },
+  approved: { label: "Approved", color: "var(--success)" },
+  scheduled: { label: "Scheduled", color: "var(--info)" },
+  published: { label: "Published", color: "var(--success)" },
+  delivered: { label: "Delivered", color: "var(--success)" },
 };
 
 export function ClientAnalytics({
@@ -60,7 +61,7 @@ export function ClientAnalytics({
           ) : (
             <ul className="space-y-3">
               {statusRows.map(([status, count]) => {
-                const meta = STATUS_META[status] ?? { label: status, color: "#8aa2a8" };
+                const meta = STATUS_META[status] ?? { label: status, color: "#9c9ca3" };
                 return (
                   <li key={status}>
                     <div className="mb-1 flex items-center justify-between text-xs">
@@ -84,7 +85,7 @@ export function ClientAnalytics({
         <Card>
           <div className="mb-4 flex items-center justify-between">
             <CardTitle>Connected channels</CardTitle>
-            <Link href={`/clients/${clientId}/settings`} className="text-xs text-neon hover:underline">
+            <Link href={`/clients/${clientId}/settings`} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline">
               Manage
             </Link>
           </div>
@@ -120,7 +121,7 @@ export function ClientAnalytics({
       <Card>
         <div className="mb-1 flex items-center justify-between">
           <CardTitle>Agent activity</CardTitle>
-          <Link href={`/clients/${clientId}/agents`} className="text-xs text-neon hover:underline">
+          <Link href={`/clients/${clientId}/agents`} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline">
             Open AI Agents
           </Link>
         </div>

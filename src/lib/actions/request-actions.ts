@@ -45,12 +45,12 @@ export async function submitClientRequestAction(input: {
       subject: `[KarosCMO] New client access request — ${companyName}`,
       html: `
         <div style="font-family:-apple-system,Helvetica,Arial,sans-serif;background:#07090b;padding:32px;color:#e8f0ec;">
-          <h2 style="color:#2dff9e;margin:0 0 16px;">New Client Access Request</h2>
+          <h2 style="color:#FF6B2C;margin:0 0 16px;">New Client Access Request</h2>
           <table style="border-collapse:collapse;width:100%;max-width:560px;">
-            <tr><td style="padding:6px 12px 6px 0;color:#8aa2a8;white-space:nowrap;">Company</td><td style="padding:6px 0;"><strong>${companyName}</strong></td></tr>
-            <tr><td style="padding:6px 12px 6px 0;color:#8aa2a8;">Website</td><td style="padding:6px 0;">${input.website?.trim() || "—"}</td></tr>
-            <tr><td style="padding:6px 12px 6px 0;color:#8aa2a8;">Admin Email</td><td style="padding:6px 0;">${adminEmail}</td></tr>
-            <tr><td style="padding:6px 12px 6px 0;color:#8aa2a8;vertical-align:top;">Use Case</td><td style="padding:6px 0;">${useCase}</td></tr>
+            <tr><td style="padding:6px 12px 6px 0;color:#9c9ca3;white-space:nowrap;">Company</td><td style="padding:6px 0;"><strong>${companyName}</strong></td></tr>
+            <tr><td style="padding:6px 12px 6px 0;color:#9c9ca3;">Website</td><td style="padding:6px 0;">${input.website?.trim() || "—"}</td></tr>
+            <tr><td style="padding:6px 12px 6px 0;color:#9c9ca3;">Admin Email</td><td style="padding:6px 0;">${adminEmail}</td></tr>
+            <tr><td style="padding:6px 12px 6px 0;color:#9c9ca3;vertical-align:top;">Use Case</td><td style="padding:6px 0;">${useCase}</td></tr>
           </table>
           <p style="margin:20px 0 0;color:#5f7177;font-size:13px;">Review this request in the KarosCMO Registrations dashboard.</p>
         </div>`,
