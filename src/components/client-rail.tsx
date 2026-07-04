@@ -77,7 +77,7 @@ export function ClientRail({
   return (
     <>
       {/* ── Desktop left rail ── */}
-      <aside className="relative z-30 hidden w-72 shrink-0 border-r border-border bg-surface/60 md:block">
+      <aside className="relative z-30 hidden w-72 shrink-0 border-r border-border bg-background md:block">
         <div className="sticky top-0 flex h-screen flex-col">
           {/* Logo */}
           <div className="shrink-0 px-4 pt-4">
@@ -174,7 +174,7 @@ export function ClientRail({
       </div>
 
       {/* ── Mobile bottom tab bar ── */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-border bg-surface/95 backdrop-blur-sm md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-border bg-background/95 backdrop-blur-sm md:hidden">
         {primaryNav.map((item) => {
           const active = isActive(pathname, item);
           return (

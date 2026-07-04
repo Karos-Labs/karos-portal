@@ -11,7 +11,7 @@ interface Props {
 
 export function AppHeader({ actionItems, reviewJobs, taskAlerts }: Props) {
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-end gap-1 border-b border-border bg-surface/80 px-4 py-2 backdrop-blur-sm md:px-8">
+    <header className="sticky top-0 z-30 flex items-center justify-end gap-1 border-b border-border bg-background/80 px-4 py-2 backdrop-blur-sm md:px-8">
       <ContactUsButton />
       <ThemeToggle />
       <NotificationBell actionItems={actionItems} reviewJobs={reviewJobs} taskAlerts={taskAlerts} />

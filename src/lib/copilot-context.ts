@@ -25,6 +25,7 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   "competitor-analysis": "Competitor Analysis",
   "product-information": "Product Information",
   "branding-guidelines": "Branding Guidelines",
+  "target-audience": "Target Audience",
   "client-guidelines": "Client Guidelines",
   "action-plan": "Action Plan",
 };
@@ -260,7 +261,7 @@ export function buildAgentCopilotSystemPrompt(
 
   // Brand + product context docs (most relevant to content agents)
   const relevantDocs = contextDocs
-    .filter((d) => ["brand-voice", "product-information", "branding-guidelines"].includes(d.docType))
+    .filter((d) => ["brand-voice", "product-information", "branding-guidelines", "target-audience"].includes(d.docType))
     .slice(0, 2);
   for (const doc of relevantDocs) {
     const label = DOC_TYPE_LABELS[doc.docType] ?? doc.docType;

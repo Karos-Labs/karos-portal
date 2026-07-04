@@ -6,11 +6,21 @@
   from the previous theme (--neon = the accent) so components stay portable;
   the VALUES are the Ember palette.
 */
+/*
+  Surface ladder — THREE dark tones, no more:
+    1. --background  page ground AND chrome (rails/bars sit on ground, hairline-divided)
+    2. --surface     panels/cards (flat, or the accent-tinted card-grad gradient)
+    3. --surface-2   the ONE nested tone: inputs, chips, pills
+  --surface-3 exists ONLY as the transient hover of surface-2 elements.
+  --surface-deep exists ONLY as the dark end of card-grad.
+  Chip fills may also use bg-foreground/[0.04], which renders one step above
+  its parent — visually equivalent to the ladder, never a new tone.
+*/
 :root {
   --background: #1a1a1a;   /* warm charcoal ground */
   --surface: #242429;      /* raised surfaces, cards, panels */
   --surface-2: #2b2b31;    /* hover states, inputs */
-  --surface-3: #323238;    /* deeper chips */
+  --surface-3: #323238;    /* hover-of-surface-2 only */
   --surface-deep: #1c1c20; /* dark end of card gradients */
   --border: #34343b;
   --border-strong: #45454e;
@@ -95,13 +105,7 @@ h3 {
 }
 
 body {
-  /* One warm glow per screen, subtle — no colorful ambience */
-  background-image: radial-gradient(
-    ellipse 900px 500px at 50% -10%,
-    color-mix(in srgb, var(--neon) 5%, transparent),
-    transparent 70%
-  );
-  background-attachment: fixed;
+  /* Flat charcoal ground — no ambient gradients (minimal surface ladder) */
   min-height: 100vh;
 }
 
@@ -163,13 +167,10 @@ body {
   color: var(--neon);
 }
 
-/* Card gradient — 155° accent-tinted (§3.2) */
+/* Cards are flat surface — no gradient (minimal surface ladder: the class
+   name stays so components don't churn, but it renders one tone). */
 .card-grad {
-  background: linear-gradient(
-    155deg,
-    color-mix(in srgb, var(--neon) 6%, var(--surface)) 0%,
-    var(--surface-deep) 100%
-  );
+  background: var(--surface);
 }
 
 /* Glass surface for dropdowns / overlays — combine with border */
@@ -218,11 +219,6 @@ body {
 }
 
 .light body {
-  background-image: radial-gradient(
-    ellipse 900px 500px at 50% -10%,
-    color-mix(in srgb, var(--neon) 4%, transparent),
-    transparent 70%
-  );
   background-color: var(--background);
 }
 

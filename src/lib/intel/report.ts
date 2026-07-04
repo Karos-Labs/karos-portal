@@ -193,29 +193,14 @@ export async function runIntelReportPipeline(
 
   const userMessage = `Generate the complete Karos Intel Report for ${client.name}. Output ONLY the markdown report — no preamble, no explanation. Start immediately with "# Karos Intel: ${client.name}".`;
 
-  // Run all three pipelines concurrently — report text, context docs, and branding bootstrap
-  const [{ text: firstPassText }] = await Promise.all([
-    generateText({
-      model: anthropic(MODELS.SONNET),
-      system: compiledPrompt,
-      messages: [{ role: "user", content: userMessage }],
-      maxOutputTokens: DOC_MAX_TOKENS,
-    }),
-    // Context-doc pipeline (non-fatal) — forward run-specific context so all sub-agents share it
-    import("./pipeline")
-      .then(({ runOnboardPipeline }) => runOnboardPipeline(clientId, runSpecificContext))
-      .catch((err: unknown) => {
-        console.error("[intel] Onboard pipeline failed (non-fatal):", err);
-      }),
-    // Branding refresh — always regenerate so the brand profile stays in sync with the Intel Report (non-fatal)
-    applyBrandingForClient(clientId, client)
-      .then((r) => {
-        console.info(`[intel] Branding refreshed for ${client.name} (${r.source}): ${r.primaryAccent ?? "no color"}`);
-      })
-      .catch((err: unknown) => {
-        console.error("[intel] Branding generation failed (non-fatal):", err);
-      }),
-  ]);
+  // Phase A: main report — runs alone so its connection is never competing with the
+  // document pipeline's burst of parallel research agents at startup.
+  const { text: firstPassText } = await generateText({
+    model: anthropic(MODELS.SONNET),
+    system: compiledPrompt,
+    messages: [{ role: "user", content: userMessage }],
+    maxOutputTokens: DOC_MAX_TOKENS,
+  });
 
   // Detect truncation: the last real ## section in the prompt must appear in the output.
   // Excludes Change Log / Sources that the model is instructed to omit.
@@ -266,6 +251,25 @@ export async function runIntelReportPipeline(
   const reportHtml = generateReportHtml(client, parsed);
   const reportData = { ...buildClientReport(clientId, parsed, text), reportHtml };
   await upsertClientReport(reportData);
+
+  // Phase B: background pipelines — run after the report is safely stored so their
+  // concurrent connections never compete with the main report generation.
+  await Promise.all([
+    // Context-doc pipeline (non-fatal) — forward run-specific context so all sub-agents share it
+    import("./pipeline")
+      .then(({ runOnboardPipeline }) => runOnboardPipeline(clientId, runSpecificContext))
+      .catch((err: unknown) => {
+        console.error("[intel] Onboard pipeline failed (non-fatal):", err);
+      }),
+    // Branding refresh — always regenerate so the brand profile stays in sync with the Intel Report (non-fatal)
+    applyBrandingForClient(clientId, client)
+      .then((r) => {
+        console.info(`[intel] Branding refreshed for ${client.name} (${r.source}): ${r.primaryAccent ?? "no color"}`);
+      })
+      .catch((err: unknown) => {
+        console.error("[intel] Branding generation failed (non-fatal):", err);
+      }),
+  ]);
 }
 
 /* ── HTML report generator ───────────────────────────────────────── */

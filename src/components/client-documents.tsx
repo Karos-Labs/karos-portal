@@ -17,6 +17,7 @@ const DOC_TABS: { docType: ContextDocType; label: string }[] = [
   { docType: "competitor-analysis", label: "Competitor Analysis" },
   { docType: "product-information", label: "Product Information" },
   { docType: "branding-guidelines", label: "Branding Guidelines" },
+  { docType: "target-audience", label: "Target Audience" },
   { docType: "client-guidelines", label: "Guidelines" },
 ];
 

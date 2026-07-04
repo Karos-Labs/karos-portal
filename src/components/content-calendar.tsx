@@ -184,7 +184,7 @@ export function ContentCalendar({
       </div>
 
       {/* Day-of-week header row */}
-      <div className="grid grid-cols-7 border-b border-border bg-surface-2/30">
+      <div className="grid grid-cols-7 border-b border-border">
         {DAY_LABELS.map((d) => (
           <div
             key={d}
@@ -209,8 +209,8 @@ export function ContentCalendar({
               key={i}
               className={cn(
                 "min-h-[68px] border-b border-r border-border p-1",
-                !isValid && "bg-surface-2/20",
-                isToday && "bg-foreground/[0.03]",
+                !isValid && "bg-surface-deep",
+                isToday && "bg-foreground/[0.04]",
                 isLastCol && "border-r-0",
               )}
             >

@@ -211,6 +211,14 @@ Before scoring, exhaustively cross-reference every knowledge source in your trai
 - Press and news: TechCrunch, Product Hunt launches, industry publications, founder interviews, award mentions
 - App stores: Google Play / Apple App Store if a mobile product exists
 
+**Audience intelligence layers (required for Target Audience section):**
+- Client onboarding data: any ICP description, persona notes, or target-customer language entered by the client during onboarding — this is the primary source and takes absolute precedence
+- Testimonials and case studies: read the verbatim language customers use on the client's own site, G2/Capterra reviews, and Trustpilot — these are primary sources for linguistic profiling
+- Community and forum signals: Reddit threads, LinkedIn comment sections, Slack community discussions, and industry forum posts where this persona asks questions and describes frustrations — use to build the Linguistic Profile
+- Competitor positioning intelligence: what pain points do named competitors lead with in their hero copy? Their messaging reveals what this audience has already been told to care about
+- Job description language: how do companies hiring this persona describe the role? JD language reveals the KPIs and operational vocabulary of the ICP
+- Label all audience inferences that are not client-stated: "industry pattern:" — intelligent inference from known niche behavior is expected and required
+
 **Competitive signals:**
 - Social profiles: Instagram, TikTok, X/Twitter, YouTube, LinkedIn, Pinterest — content format, posting cadence, engagement quality, pinned or featured content
 - Review platforms: G2, Capterra, Trustpilot, Trustradius, Glassdoor; Reclame Aqui for Brazilian market only
@@ -257,6 +265,7 @@ Score {COMPANY_NAME} and 8-15 real competitors across 8 weighted dimensions (0-1
 10. **REGULATORY & COMPLIANCE DATA — always capture:** For any regulated industry (financial services, healthcare, legal, etc.) actively look for registration numbers in the site footer, /about, /legal pages: CNPJ, CVM Ato Declaratório, ANBIMA código, SEC/FCA registration, etc. These are public facts that must appear in the report — marking them "data unavailable" when they are on the website is an error.
 11. **DATA SOURCING CONSISTENCY:** Never write "a live scrape was performed" or "a live scrape was not possible". Use "website-observed:" / "training knowledge:" / "industry pattern:" consistently throughout.
 12. **Complete all sections:** Do not truncate the report. Every section heading in the required format must appear in the output. If space is tight, write tighter bullets — but never drop a section.
+13. **Target Audience — zero generics rule:** Every bullet in the Target Audience section must be traceable to either client-stated onboarding data or a named, observable market signal (testimonial, review platform, competitor messaging, community post, job description language). Generic persona archetypes ("busy professionals", "decision-makers", "SMB owners") are invalid without niche specificity layered on top. If client data for a sub-bullet is thin, extrapolate from named industry standards for that exact niche — label with "industry pattern:" — but never substitute category-level clichés. The Linguistic Profile sub-section must include a minimum of 6 verbatim or near-verbatim phrases the ICP uses when describing their problem or desired outcome.
 
 ---
 
@@ -390,6 +399,45 @@ Generate ONLY the markdown below. Heading names must match EXACTLY — they driv
 1. [Specific unmet customer need or market gap — substantiated from sentiment or competitive analysis with named evidence]
 2. [Another opportunity]
 3. [Another opportunity]
+
+---
+
+## Target Audience
+
+> **Document purpose:** This is the definitive ICP blueprint consumed by every downstream content agent. It must function as a self-contained behavioral and psychological reference — a content agent reading only this section should be able to write copy that resonates with the ideal customer without additional context. Every bullet must be hyper-specific, directly actionable, and derived strictly from client onboarding data and observable market signals. No generic archetypes. No filler.
+
+### ICP Persona Profile
+
+**Primary Persona: [Role title] at [Company / customer type]**
+
+[If multiple distinct buyer personas exist — e.g., a primary ICP and a secondary ICP — define each as a labeled profile block and repeat the sub-bullets for each. Otherwise, a single block is sufficient.]
+
+- **Demographics & Firmographics:** [Company size band, revenue range, industry vertical, geographic concentration. For B2C: age range, income level, lifestyle markers tied to the client's actual product positioning — not generic demography. Ground in client onboarding data or observed testimonial patterns.]
+- **Job Title & Organizational Role:** [Specific title(s), not broad categories. Where they sit in the buying committee: are they the buyer, champion, influencer, or end-user? Does this persona control budget or require sign-off?]
+- **Core Operational Pain Points:** [4-6 specific, functional problems this persona faces. Each pain point must map to something the client directly addresses in their product/service positioning, testimonials, or stated value proposition. Pain points must be granular — not "they need better efficiency" but "they lose X hours per week on [specific manual task] because [incumbent tool] does not [specific capability]."]
+- **Success Metrics They're Judged On:** [The KPIs or business outcomes this persona's performance is measured against. Derived from the client's stated value proposition, customer testimonial language, or known industry standard for this role. These are the metrics that make a headline immediately land — or fall flat.]
+
+### Tech Stack & Current Solutions
+
+- **Incumbent Tools & Methods They Currently Use:** [Named products, platforms, or methodologies — not category labels. Specific software names. Derived from the client's competitive context, integrations they advertise, or their stated positioning against named alternatives. Label source: "client-stated:", "website-observed:", or "industry pattern:"]
+- **Where Those Solutions Fall Short:** [The specific failure modes, friction points, or capability gaps in the incumbents that this client's product or service directly addresses. Each gap must map to a concrete claim or differentiator in the client's own messaging. This is the enemy narrative — name it precisely.]
+- **Switching Triggers:** [Observable events or thresholds that cause this persona to begin evaluating alternatives: end-of-contract cycles, growth milestones, compliance changes, leadership transitions, a specific pain threshold, or a failed outcome with the incumbent. Label as "industry pattern:" when not client-stated.]
+
+### Content Engagement Patterns
+
+- **Primary Channels:** [Named platforms where this persona actively consumes professional content. For B2B: specify LinkedIn (feed vs. long-form vs. DMs), specific subreddits by name (e.g., r/marketing, r/startups), named Slack communities, industry newsletters by title, podcast names. For B2C: named Instagram account types, TikTok content categories, YouTube channel archetypes, community forums. Be niche-specific — a generic list of "social media platforms" is invalid.]
+- **Content Formats That Hook Them:** [Specific formats that generate engagement from this persona: e.g., tactical how-to threads with numbered steps, benchmark reports with named percentile comparisons, case studies with hard ROI figures and named clients, short-form video demos under 60 seconds, peer comparison tools, contrarian opinion posts. Ground in the client's observed high-performing content or named competitor content strategies.]
+- **Attention-Grabbing Hooks:** [The specific headline formulas, subject line patterns, or opening hooks that reliably capture this persona's attention. Name the emotional or functional trigger each hook exploits — curiosity, fear of missing out, professional identity threat, peer validation, data specificity. Examples should feel niche-written, not generic copywriting advice.]
+- **Trust Builders:** [What makes this persona believe a claim before they act: peer logos from named reference companies, specific third-party certification bodies, named review platforms (G2, Trustpilot, Clutch), analyst coverage from named firms, case study format preferences (video vs. written, metrics-heavy vs. narrative), or social proof quantity thresholds.]
+
+### Linguistic Profile & Vocabulary
+
+> **Instructions for content agents:** Use this vocabulary to calibrate the register and word choices of every piece of copy. Copy that uses their vocabulary reads as peer-written. Copy that ignores it reads as vendor-speak and is rejected before the second sentence.
+
+- **Professional Vocabulary They Use:** [Industry jargon, acronyms, and technical terms this persona uses internally and with peers. List explicitly — minimum 8-10 distinct terms. Include the full term and its common abbreviation where both exist. These are the words that signal "this was written by someone who understands my world."]
+- **How They Describe Their Problem (Verbatim Triggers):** [Near-verbatim phrases this persona uses when searching for solutions, posting frustrations in forums, or venting to peers. These are emotional and functional language patterns — not your client's marketing language. At minimum 6 distinct phrases. Sources: observed review platform language, Reddit/community posts, competitor testimonial copy, sales call recordings referenced in client onboarding. Each phrase should be usable as a direct hook or subject line.]
+- **How They Describe Their Ideal Outcome:** [The specific language of success — what this persona says they want, in their words. Drawn from testimonials, case study quotes, community posts celebrating wins, or job description outcome language. At minimum 4 distinct phrases or sentence fragments.]
+- **Words & Phrases to Avoid in Copy:** [Terminology that triggers skepticism, signals vendor-speak, or marks copy as generic in this niche. These are usually the overused buzzwords their current vendors already abuse, category-level abstractions that feel hollow, or claims so common in the space they've lost all signal value. List at minimum 5 with a one-line explanation of why each is a trust-killer for this specific persona.]
 
 ---
 

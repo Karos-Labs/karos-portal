@@ -222,13 +222,7 @@ export function ClientProfilePanel({ client }: { client: Client }) {
             className="h-8 w-8 shrink-0 rounded-md border border-border bg-surface-2 object-contain"
           />
         ) : (
-          <div
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-xs font-semibold"
-            style={{
-              background: (client.accentColor ?? "#2dff9e") + "1f",
-              color: client.accentColor ?? "#2dff9e",
-            }}
-          >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-xs font-semibold text-foreground/80">
             {client.name.slice(0, 2).toUpperCase()}
           </div>
         )}

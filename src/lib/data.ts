@@ -130,6 +130,10 @@ export async function updateClient(id: string, data: Partial<Client>): Promise<v
   await col.clients().doc(id).set(data, { merge: true });
 }
 
+export async function deleteClient(id: string): Promise<void> {
+  await col.clients().doc(id).delete();
+}
+
 /** Find a client by its join token (clientKeyId). Returns null when not found or key is falsy. */
 export async function getClientByKeyId(clientKeyId: string): Promise<Client | null> {
   if (!clientKeyId) return null;

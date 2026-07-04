@@ -452,6 +452,7 @@ export type ContextDocType =
   | "competitor-analysis"
   | "product-information"
   | "branding-guidelines"
+  | "target-audience"
   | "client-guidelines"
   | "action-plan"
   | "meeting-notes";

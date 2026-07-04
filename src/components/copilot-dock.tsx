@@ -42,13 +42,13 @@ export function CopilotDock({ clientId, clientName, agents, userName, hasGoogleI
           stays pinned (sits above the mobile bottom tab bar on phones). */}
       <div className="lg:hidden">
         {sheetOpen ? (
-          <div className="fixed left-0 right-0 bottom-[54px] z-40 h-[35vh] border-t border-border bg-surface shadow-[0_-8px_30px_rgba(0,0,0,0.5)] md:bottom-0 md:left-72">
+          <div className="fixed left-0 right-0 bottom-[54px] z-40 h-[35vh] border-t border-border bg-background shadow-[0_-8px_30px_rgba(0,0,0,0.5)] md:bottom-0 md:left-72">
             <ChatbotWidget docked defaultOpen onCollapse={() => setSheetOpen(false)} {...widgetProps} />
           </div>
         ) : (
           <button
             onClick={() => setSheetOpen(true)}
-            className="fixed left-0 right-0 bottom-[54px] z-40 flex items-center justify-center gap-2 border-t border-border bg-surface/95 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-foreground backdrop-blur-sm transition-colors hover:bg-surface-2 md:bottom-0 md:left-72"
+            className="fixed left-0 right-0 bottom-[54px] z-40 flex items-center justify-center gap-2 border-t border-border bg-background/95 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-foreground backdrop-blur-sm transition-colors hover:bg-surface-2 md:bottom-0 md:left-72"
             aria-label="Open AI Copilot"
           >
             <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
@@ -60,7 +60,7 @@ export function CopilotDock({ clientId, clientName, agents, userName, hasGoogleI
 
       <aside
         className={cn(
-          "relative hidden shrink-0 border-l border-border bg-surface/60 transition-[width] duration-300 ease-in-out lg:block",
+          "relative hidden shrink-0 border-l border-border bg-background transition-[width] duration-300 ease-in-out lg:block",
           collapsed ? "w-12" : "w-[380px]",
         )}
       >
@@ -83,7 +83,7 @@ export function CopilotDock({ clientId, clientName, agents, userName, hasGoogleI
         {/* Collapsed strip overlay */}
         <div
           className={cn(
-            "absolute inset-0 flex flex-col items-center gap-3 bg-surface pt-16 transition-opacity duration-200",
+            "absolute inset-0 flex flex-col items-center gap-3 bg-background pt-16 transition-opacity duration-200",
             collapsed ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         >

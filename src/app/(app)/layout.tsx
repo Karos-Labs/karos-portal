@@ -18,7 +18,8 @@ import { ClientRail } from "@/components/client-rail";
 import { CopilotDock } from "@/components/copilot-dock";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { AppHeader } from "@/components/app-header";
-import type { ActionItemNotification, AgentReviewNotification, AppUser, Client, ClientTask } from "@/lib/types";
+import { StaffCopilotDock } from "@/components/staff-chatbot-widget";
+import type { ActionItemNotification, Agent, AgentReviewNotification, AppUser, Client, ClientTask } from "@/lib/types";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, isImpersonating, realAdmin } = await getViewingContext();
@@ -26,7 +27,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   let pendingCount = 0;
   let clients: Client[] = [];
 
-  const [adminData, actionItems, reviewJobs, taskAlerts] = await Promise.all([
+  const [adminData, actionItems, reviewJobs, taskAlerts, staffAgents] = await Promise.all([
     user.role === "KAROS_ADMIN"
       ? Promise.all([listUsers(), listClients()]).then(([allUsers, allClients]) => ({
           allUsers,
@@ -44,6 +45,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           limit: 50,
         })
       : Promise.resolve([] as ClientTask[]),
+    // Agents are only needed by admins (powers the CopilotDock in View-as-Client mode)
+    user.role === "KAROS_ADMIN"
+      ? listAgents({ status: "published" })
+      : Promise.resolve([] as Agent[]),
   ]);
 
   if (adminData) {
@@ -128,6 +133,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <div className="mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
           </main>
         </div>
+        {/* Docked copilot right-rail — visible when admin selects a client via "View as Client" */}
+        <StaffCopilotDock agents={staffAgents} userName={user.name} />
       </div>
     </ActiveClientProvider>
   );

@@ -123,6 +123,7 @@ export async function refreshClientCondensedDocs(
     "competitor-analysis",
     "product-information",
     "branding-guidelines",
+    "target-audience",
   ];
   return condenseDocs(client, clientVisibleDocTypes, internalDocs, rules);
 }

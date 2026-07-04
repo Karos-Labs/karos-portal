@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
-import { cn } from "@/lib/utils";
 import { BrandingModal } from "@/components/branding-modal";
 import { addCompetitorByNameAction } from "@/lib/actions";
 import type { BrandColor, BrandingGuidelines, ClientCompetitor } from "@/lib/types";
@@ -223,38 +222,6 @@ export function CompetitorTrack({
   );
 }
 
-/* ── Brand preview helpers ───────────────────────────────────────────── */
-
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : null;
-}
-
-function clampHex(n: number) {
-  return Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0");
-}
-
-function applyBrandPreview(hex: string): void {
-  const rgb = hexToRgb(hex);
-  if (!rgb) return;
-  const { r, g, b } = rgb;
-  const el = document.documentElement;
-  el.style.setProperty("--neon", hex);
-  el.style.setProperty("--neon-bright", `#${clampHex(r + 30)}${clampHex(g + 30)}${clampHex(b + 30)}`);
-  el.style.setProperty("--neon-dim", `#${clampHex(r - 30)}${clampHex(g - 30)}${clampHex(b - 30)}`);
-  el.style.setProperty("--neon-glow", `rgba(${r},${g},${b},0.35)`);
-  el.style.setProperty("--neon-soft", `rgba(${r},${g},${b},0.12)`);
-}
-
-function clearBrandPreview(): void {
-  const el = document.documentElement;
-  el.style.removeProperty("--neon");
-  el.style.removeProperty("--neon-bright");
-  el.style.removeProperty("--neon-dim");
-  el.style.removeProperty("--neon-glow");
-  el.style.removeProperty("--neon-soft");
-}
-
 /* ── Brand Colors + Branding Guidelines edit ─────────────────────────── */
 
 export function BrandColorsSection({
@@ -267,7 +234,6 @@ export function BrandColorsSection({
   hasWebsite: boolean;
 }) {
   const [brandingOpen, setBrandingOpen] = useState(false);
-  const [previewActive, setPreviewActive] = useState(false);
 
   const colors: BrandColor[] = guidelines?.dominantColors?.slice(0, 4) ?? [];
   const effective: { hex: string; role?: string }[] =
@@ -282,66 +248,20 @@ export function BrandColorsSection({
           ] as { hex: string | undefined; role: string }[]
         ).filter((c): c is { hex: string; role: string } => Boolean(c.hex));
 
-  // The color that drives the preview — first dominant or legacy primary accent
-  const primaryColor =
-    colors[0]?.hex ?? guidelines?.primaryAccent ?? null;
-
-  // Reset preview whenever the active client changes
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPreviewActive(false);
-    clearBrandPreview();
-  }, [clientId]);
-
-  // Always clean up on unmount so stale overrides never bleed into other views
-  useEffect(() => {
-    return () => clearBrandPreview();
-  }, []);
-
-  function togglePreview() {
-    if (!primaryColor) return;
-    const next = !previewActive;
-    setPreviewActive(next);
-    if (next) {
-      applyBrandPreview(primaryColor);
-    } else {
-      clearBrandPreview();
-    }
-  }
-
   return (
     <div className="border-t border-border pt-4">
       <div className="mb-2.5 flex items-center justify-between px-1">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
           Brand Colors
         </p>
-        <div className="flex items-center gap-1">
-          {/* Brand preview toggle */}
-          <button
-            onClick={togglePreview}
-            disabled={!primaryColor}
-            className={cn(
-              "flex h-5 w-5 items-center justify-center rounded-[4px] transition-colors",
-              previewActive
-                ? "bg-neon-soft text-neon"
-                : "text-muted-2 hover:bg-surface-2 hover:text-foreground",
-              !primaryColor && "cursor-not-allowed opacity-40",
-            )}
-            aria-label={previewActive ? "Exit brand preview" : "Preview brand colors"}
-            title={previewActive ? "Exit brand preview" : "Preview brand colors in the UI"}
-          >
-            <Icon name="Palette" className="h-3 w-3" />
-          </button>
-          {/* Edit branding guidelines */}
-          <button
-            onClick={() => setBrandingOpen(true)}
-            className="flex h-5 w-5 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-            aria-label="Edit branding guidelines"
-            title="Edit branding guidelines"
-          >
-            <Icon name="Pencil" className="h-3 w-3" />
-          </button>
-        </div>
+        <button
+          onClick={() => setBrandingOpen(true)}
+          className="flex h-5 w-5 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
+          aria-label="Edit branding guidelines"
+          title="Edit branding guidelines"
+        >
+          <Icon name="Pencil" className="h-3 w-3" />
+        </button>
       </div>
 
       {effective.length > 0 ? (
@@ -349,10 +269,7 @@ export function BrandColorsSection({
           {effective.map((color, i) => (
             <div key={i} className="group relative">
               <div
-                className={cn(
-                  "h-7 w-7 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110",
-                  previewActive && i === 0 && "ring-2 ring-neon/60",
-                )}
+                className="h-7 w-7 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110"
                 style={{ backgroundColor: color.hex }}
                 title={color.role ? `${color.role} · ${color.hex}` : color.hex}
               />
@@ -366,9 +283,6 @@ export function BrandColorsSection({
               </div>
             </div>
           ))}
-          {previewActive && (
-            <span className="ml-1 text-[10px] font-medium text-neon">Live</span>
-          )}
         </div>
       ) : (
         <p className="px-1 py-1 text-xs text-muted-2">No brand colors set yet.</p>

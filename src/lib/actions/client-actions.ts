@@ -3,7 +3,7 @@
 import { randomBytes } from "crypto";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createClient, updateClient, getClientByKeyId } from "@/lib/data";
+import { createClient, updateClient, deleteClient, getClientByKeyId } from "@/lib/data";
 import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
 import type { Client, SocialLinks } from "@/lib/types";
@@ -139,6 +139,19 @@ export async function updateClientAction(id: string, input: Partial<Client> & { 
   await updateClient(id, patch);
   revalidatePath(`/clients/${id}`);
   revalidatePath("/clients");
+}
+
+/**
+ * Permanently delete a client and revalidate the clients listing.
+ * Orphaned sub-documents (jobs, assets, context docs, etc.) referencing
+ * this clientId remain in Firestore but are no longer surfaced in the UI.
+ * Staff-only — admin or employee access required.
+ */
+export async function deleteClientAction(clientId: string): Promise<void> {
+  await requireStaff();
+  await deleteClient(clientId);
+  revalidatePath("/clients");
+  revalidatePath(`/clients/${clientId}`);
 }
 
 /**

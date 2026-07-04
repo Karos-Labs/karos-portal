@@ -538,25 +538,31 @@ function buildResearchBlock(docType: ContextDocType, research: Research): string
     parts.push("### Content & Messaging Research\n" + research.content);
     parts.push("### Sentiment & Customer Research\n" + research.sentiment);
   }
-  if (["market-strategy"].includes(docType)) {
+  if (docType === "market-strategy") {
     parts.push("### Strategy Research\n" + research.strategy);
     parts.push("### Sentiment Research\n" + research.sentiment);
     parts.push("### Competitive Research (for white space)\n" + research.competitive);
   }
-  if (["competitor-analysis"].includes(docType)) {
+  if (docType === "competitor-analysis") {
     parts.push("### Competitive Research\n" + research.competitive);
     parts.push("### Social Research\n" + research.social);
   }
-  if (["product-information"].includes(docType)) {
+  if (docType === "product-information") {
     parts.push("### Content & Messaging Research\n" + research.content);
     parts.push("### Strategy Research\n" + research.strategy);
     parts.push("### Sentiment Research\n" + research.sentiment);
   }
-  if (["client-guidelines"].includes(docType)) {
+  if (docType === "target-audience") {
+    parts.push("### Sentiment & Audience Psychology Research\n" + research.sentiment);
+    parts.push("### Strategy & ICP Research\n" + research.strategy);
+    parts.push("### Content & Messaging Research\n" + research.content);
+    parts.push("### Competitive Research (audience signals from competitor messaging)\n" + research.competitive);
+  }
+  if (docType === "client-guidelines") {
     parts.push("### Content Research\n" + research.content);
     parts.push("### Sentiment Research\n" + research.sentiment);
   }
-  if (["action-plan"].includes(docType)) {
+  if (docType === "action-plan") {
     parts.push("### Strategy Research\n" + research.strategy);
     parts.push("### Competitive Research\n" + research.competitive);
     parts.push("### Sentiment Research\n" + research.sentiment);
@@ -569,8 +575,8 @@ function buildResearchBlock(docType: ContextDocType, research: Research): string
 /**
  * Run the full onboarding pipeline for a client:
  * 1. 5 parallel research agents gather raw intelligence
- * 2. 7 parallel document generators fill the context doc templates
- * 3. condense-pipeline generates client-tier (50% condensed) versions of the 5 public docs
+ * 2. 8 parallel document generators fill the context doc templates
+ * 3. condense-pipeline generates client-tier (50% condensed) versions of the 6 public docs
  * 4. All docs atomically replace existing clientContextDocs for this client
  */
 export async function runOnboardPipeline(clientId: string, runSpecificContext = ""): Promise<void> {
@@ -613,13 +619,14 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
 
   const research: Research = { social, content, competitive, strategy, sentiment };
 
-  // Phase 2: 7 parallel document generators
+  // Phase 2: 8 parallel document generators
   const internalDocTypes: PipelineDocType[] = [
     "brand-voice",
     "market-strategy",
     "competitor-analysis",
     "product-information",
     "branding-guidelines",
+    "target-audience",
   ];
   const internalOnlyDocTypes: PipelineDocType[] = ["client-guidelines", "action-plan"];
 
@@ -629,6 +636,7 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
     competitorAnalysis,
     productInfo,
     brandingGuidelines,
+    targetAudience,
     clientGuidelines,
     actionPlan,
   ] = await Promise.all([
@@ -642,6 +650,7 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
     "competitor-analysis": competitorAnalysis,
     "product-information": productInfo,
     "branding-guidelines": brandingGuidelines,
+    "target-audience": targetAudience,
     "client-guidelines": clientGuidelines,
     "action-plan": actionPlan,
   };

@@ -20,7 +20,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         "bg-neon text-accent-ink font-semibold hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_color-mix(in_srgb,var(--neon)_55%,transparent)]",
       ghost: "text-muted hover:bg-surface-2 hover:text-foreground",
       outline:
-        "border border-border text-foreground hover:border-foreground/30 hover:bg-foreground/[0.03]",
+        "border border-border text-foreground hover:border-foreground/30 hover:bg-foreground/[0.04]",
       subtle: "bg-surface-2 text-foreground hover:bg-surface-3 border border-border",
       danger: "bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25",
     };
@@ -207,13 +207,13 @@ export function EmptyState({
 }
 
 /* ------------------------------- StatCard -------------------------------
-   Mono label + numeral (§5), accent icon chip (§10). */
+   Minimal: mono label over a mono numeral. No icon chip — the `icon` prop is
+   accepted for call-site compatibility but intentionally not rendered. */
 
 export function StatCard({
   label,
   value,
   hint,
-  icon,
 }: {
   label: string;
   value: React.ReactNode;
@@ -221,17 +221,12 @@ export function StatCard({
   icon?: React.ReactNode;
 }) {
   return (
-    <Card className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        <p className="font-mono text-[10px] uppercase leading-snug tracking-[0.1em] text-muted">{label}</p>
-        <p className="mt-1.5 font-mono text-2xl font-medium text-foreground">{value}</p>
-        {hint && <p className="mt-1 text-xs text-muted-2">{hint}</p>}
-      </div>
-      {icon && (
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-muted">
-          {icon}
-        </div>
-      )}
+    <Card className="min-w-0">
+      <p className="font-mono text-[10px] uppercase leading-snug tracking-[0.08em] text-muted [overflow-wrap:anywhere]">
+        {label}
+      </p>
+      <p className="mt-1.5 font-mono text-2xl font-medium text-foreground">{value}</p>
+      {hint && <p className="mt-1 text-xs text-muted-2">{hint}</p>}
     </Card>
   );
 }

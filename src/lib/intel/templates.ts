@@ -481,4 +481,137 @@ Before running any product for this client, read the rows tagged with that produ
 
 ## Change Log
 - <date> — onboarding — initial recommendations from intel run.`,
+
+  "target-audience": `---
+module: target-audience
+client: <slug>
+version: 1
+status: original
+system_of_record: source
+client_visible: true
+last_updated: <YYYY-MM-DD>
+sources: []
+consumed_by: [e10, e11, e12, e13, e14, karos-chat]
+---
+
+# Target Audience — <Client>
+
+> DEFINITIVE ICP BLUEPRINT. Every content agent and copywriter reads this document before producing a single word. Nothing here is generic. Every bullet is traceable to client onboarding data, a named review platform, a competitor's hero copy, or a clearly-labeled industry pattern. If a bullet cannot meet that standard, it is omitted silently — never replaced with a placeholder.
+
+## 1. ICP Persona Profile
+
+> Define the primary ideal customer profile. If two genuinely distinct buyer personas exist, add a "Secondary ICP" sub-section and repeat all sub-bullets. Otherwise one block is sufficient. Every field must name a specific role, context, or metric — not a category.
+
+**Primary ICP: <Role Title> at <Company / Customer Type>**
+
+### Demographics & Firmographics
+> B2B: company size band, revenue range, industry vertical, geographic concentration. B2C: age range, income tier, lifestyle markers tied to the client's actual product positioning. Ground in client onboarding data or observed testimonial patterns. No generic demography.
+- <specific detail>
+
+### Job Title & Organizational Role
+> Exact job title(s) — not "decision-makers". Where in the buying committee: buyer, champion, influencer, or end-user? Do they control budget or require sign-off?
+- <specific detail>
+
+### Core Operational Pain Points
+> 4-6 specific, functional problems this persona faces. Each maps to something the client directly addresses in their product or service positioning, testimonials, or stated value proposition. Granular is required — not "they need better efficiency" but "they lose X hours per week on [specific task] because [incumbent tool] lacks [specific capability]."
+- <pain point — grounded in client positioning or observed testimonial language>
+- <pain point>
+- <pain point>
+- <pain point>
+
+### Success Metrics They're Judged On
+> The KPIs or business outcomes this persona's performance is measured against. These are the metrics that make a headline land — or fall flat. Derived from the client's value proposition, customer testimonial language, or industry standard for this role.
+- <KPI or outcome>
+- <KPI or outcome>
+
+## 2. Tech Stack & Current Solutions
+
+> What this persona uses TODAY to solve the problems the client addresses. Named products, not category labels. Each entry must be traceable: "client-stated:", "website-observed:", or "industry pattern:". This section is the enemy narrative — name it precisely.
+
+### Incumbent Tools & Methods
+> Specific products, platforms, or methodologies — not categories. Derived from the client's competitive context, integrations they advertise, or their positioning against named alternatives.
+| Tool / Method | Category | Why They Use It | Source |
+|---------------|----------|-----------------|--------|
+| <Tool Name> | <category> | <specific reason> | <client-stated / website-observed / industry pattern> |
+| <Tool Name> | <> | <> | <> |
+
+### Where Those Solutions Fall Short
+> The specific failure modes, friction points, or capability gaps in the incumbents that this client's product or service directly addresses. Each gap maps to a concrete claim or differentiator in the client's own messaging.
+- **<Incumbent tool>:** <specific failure mode that client addresses>
+- **<Incumbent tool>:** <>
+
+### Switching Triggers
+> Observable events or thresholds that cause this persona to begin evaluating alternatives. Label as "industry pattern:" when not client-stated.
+- <specific trigger — e.g. "end of annual contract cycle", "headcount doubles past 50", "compliance deadline">
+- <trigger>
+
+## 3. Content Engagement Patterns
+
+> Where this persona spends attention professionally. Specific enough that a content agent can immediately act: named platforms, named communities, named formats. No generic lists.
+
+### Primary Channels
+> Named platforms where this persona actively consumes professional content. For B2B: specific LinkedIn content types, named subreddits, named Slack communities, named newsletters or podcasts. For B2C: named Instagram account styles, TikTok content categories, named YouTube channels. Niche-specific only.
+- **<Platform>:** <how they use it, what content types they consume there>
+- **<Platform / Community>:** <>
+
+### Content Formats That Hook Them
+> The specific formats that generate real engagement from this persona. Name the format AND what makes it work: e.g. "benchmark reports with named peer comparisons — because this persona is judged against competitors and needs external benchmarks to make the internal business case."
+- **<Format>:** <why it works for this persona specifically>
+- **<Format>:** <>
+
+### Attention-Grabbing Hooks
+> Specific headline formulas, subject line patterns, or opening hooks that reliably capture this persona's attention. Name the emotional or functional trigger each exploits. These must feel niche-written, not generic copywriting templates.
+- "<Hook formula>" — triggers: <curiosity / identity threat / peer validation / data specificity>
+- "<Hook formula>" — triggers: <>
+
+### Trust Builders
+> What makes this persona believe a claim before they act. Specific certification bodies, named review platforms, case study format preferences, social proof quantity thresholds.
+- <specific trust signal — e.g. "G2 reviews from named peer companies in their exact industry vertical">
+- <trust signal>
+
+## 4. Linguistic Profile & Vocabulary
+
+> The most direct input content agents use for calibrating copy register. Copy that uses this persona's vocabulary reads as peer-written. Copy that ignores it reads as vendor-speak and is rejected before the second sentence.
+
+### Professional Vocabulary They Use
+> Industry jargon, acronyms, and technical terms this persona uses internally and with peers. Minimum 8 distinct terms. Include full term + abbreviation where both exist.
+| Term | Full Form (if abbreviated) | When / how they use it |
+|------|---------------------------|------------------------|
+| <term> | <full form or —> | <context> |
+| <term> | <> | <> |
+| <term> | <> | <> |
+| <term> | <> | <> |
+| <term> | <> | <> |
+| <term> | <> | <> |
+| <term> | <> | <> |
+| <term> | <> | <> |
+
+### How They Describe Their Problem — Verbatim Triggers
+> Near-verbatim phrases this persona uses when searching for solutions, posting in forums, or venting to peers. NOT the client's marketing language — the raw, unfiltered voice of the audience. Minimum 6 distinct phrases. Each should be directly usable as a hook or subject line. Source each one.
+- "<phrase>" — source: <review platform / community post / competitor testimonial / onboarding data / industry pattern>
+- "<phrase>" — source: <>
+- "<phrase>" — source: <>
+- "<phrase>" — source: <>
+- "<phrase>" — source: <>
+- "<phrase>" — source: <>
+
+### How They Describe Their Ideal Outcome
+> The specific language of success — what this persona says they want, in their words. Drawn from testimonials, case study quotes, community win posts, or job description outcome language. Minimum 4 phrases.
+- "<outcome phrase>"
+- "<outcome phrase>"
+- "<outcome phrase>"
+- "<outcome phrase>"
+
+### Words & Phrases to Avoid in Copy
+> Terminology that triggers skepticism, signals vendor-speak, or marks copy as generic in this niche. These are the buzzwords their current vendors already abuse, claims so common they've lost signal value, or abstractions that feel hollow to this audience.
+| Phrase to Avoid | Why It's a Trust-Killer for This Persona |
+|-----------------|------------------------------------------|
+| "<phrase>" | <specific reason — e.g. "overused by every competitor in this space since 2019"> |
+| "<phrase>" | <> |
+| "<phrase>" | <> |
+| "<phrase>" | <> |
+| "<phrase>" | <> |
+
+## Change Log
+- <date> — onboarding — initial target audience profile from intel run.`,
 };

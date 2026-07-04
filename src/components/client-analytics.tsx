@@ -42,10 +42,10 @@ export function ClientAnalytics({
     <div className="space-y-6">
       {/* Stats */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Posts published" value={published} icon={<Icon name="Send" className="h-5 w-5" />} />
-        <StatCard label="Scheduled" value={scheduled} icon={<Icon name="CalendarClock" className="h-5 w-5" />} />
-        <StatCard label="Connected channels" value={activeChannels.length} icon={<Icon name="Plug" className="h-5 w-5" />} />
-        <StatCard label="Total deliverables" value={assets.length} icon={<Icon name="FolderOpen" className="h-5 w-5" />} />
+        <StatCard label="Published" value={published} />
+        <StatCard label="Scheduled" value={scheduled} />
+        <StatCard label="Channels" value={activeChannels.length} />
+        <StatCard label="Deliverables" value={assets.length} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

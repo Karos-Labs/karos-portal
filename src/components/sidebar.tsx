@@ -466,7 +466,7 @@ export function Sidebar({
       )}
 
       {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 border-r border-border bg-surface/60 md:block">
+      <aside className="hidden w-64 shrink-0 border-r border-border bg-background md:block">
         <div className="sticky top-0 h-screen">{content}</div>
       </aside>
     </>
