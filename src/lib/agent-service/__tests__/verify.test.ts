@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { vi, describe, expect, it } from "vitest";
+
+// Must be hoisted before any import that transitively pulls in server-only
+vi.mock("server-only", () => ({}));
+
 import { createHmac } from "node:crypto";
 import { verifyAgentServiceSignature } from "../verify";
 
