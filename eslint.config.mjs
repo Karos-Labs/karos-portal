@@ -14,6 +14,9 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Legacy sub-project — excluded from tsc and ESLint alike
     "karolabs-data/**",
+    // Standalone service with its own package.json + CI (tsc/test run there);
+    // its deps aren't installed by the platform's `npm ci`.
+    "agent-service/**",
   ]),
 ]);
 
