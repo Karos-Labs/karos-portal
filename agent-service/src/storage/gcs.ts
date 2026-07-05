@@ -1,31 +1,28 @@
 import { Storage } from "@google-cloud/storage";
-import { createReadStream } from "node:fs";
-import { appendFile, mkdir, stat } from "node:fs/promises";
-import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import type { ArtifactStore, StoredArtifact } from "./artifact-store.js";
 
 const SIGNED_URL_TTL_MS = 7 * 24 * 3600 * 1000;
+const COMPOSE_BATCH = 32;
 
 /**
- * GCS-backed store. Transcripts spool to local disk during the run (GCS has
- * no append) and upload on finalize; artifact URLs are V4 signed links.
+ * GCS-backed store. Transcript chunks are written as individual objects
+ * (GCS has no append) and composed into one file at finalize — chunks and
+ * finalize can run in different processes (API appends, worker finalizes).
+ * Artifact URLs are V4 signed links.
  */
 export class GcsArtifactStore implements ArtifactStore {
   private readonly storage = new Storage();
+  private chunkSeq = 0;
 
   constructor(
     private readonly bucketName: string,
-    private readonly spoolDir: string,
+    _spoolDir: string,
   ) {}
 
   private objectPath(jobId: string, relPath: string): string {
     return `artifacts/${jobId}/${relPath}`;
-  }
-
-  private transcriptSpoolPath(jobId: string): string {
-    return path.join(this.spoolDir, "transcripts", `${jobId}.jsonl`);
   }
 
   async put(
@@ -48,24 +45,33 @@ export class GcsArtifactStore implements ArtifactStore {
   }
 
   async appendTranscript(jobId: string, ndjsonChunk: string): Promise<void> {
-    const spool = this.transcriptSpoolPath(jobId);
-    await mkdir(path.dirname(spool), { recursive: true });
-    await appendFile(spool, ndjsonChunk.endsWith("\n") ? ndjsonChunk : `${ndjsonChunk}\n`);
+    // Zero-padded millis + per-process counter: lexicographic order ≈ arrival order.
+    const seq = `${String(Date.now()).padStart(15, "0")}-${String(this.chunkSeq++).padStart(6, "0")}`;
+    const chunk = this.storage.bucket(this.bucketName).file(`transcripts/${jobId}/chunks/${seq}.jsonl`);
+    await chunk.save(ndjsonChunk.endsWith("\n") ? ndjsonChunk : `${ndjsonChunk}\n`, {
+      resumable: false,
+      contentType: "application/x-ndjson",
+    });
   }
 
   async finalizeTranscript(jobId: string): Promise<string | undefined> {
-    const spool = this.transcriptSpoolPath(jobId);
-    try {
-      await stat(spool);
-    } catch {
-      return undefined;
+    const bucket = this.storage.bucket(this.bucketName);
+    const [chunks] = await bucket.getFiles({ prefix: `transcripts/${jobId}/chunks/` });
+    if (chunks.length === 0) return undefined;
+    chunks.sort((a, b) => a.name.localeCompare(b.name));
+
+    const final = bucket.file(`transcripts/${jobId}.jsonl`);
+    // Iterative compose: fold up to 32 sources at a time into the target.
+    let composed = 0;
+    while (composed < chunks.length) {
+      const batch = chunks.slice(composed, composed + (composed === 0 ? COMPOSE_BATCH : COMPOSE_BATCH - 1));
+      const sources = composed === 0 ? batch : [final, ...batch];
+      await bucket.combine(sources, final);
+      composed += batch.length;
     }
-    const object = this.storage.bucket(this.bucketName).file(`transcripts/${jobId}.jsonl`);
-    await pipeline(
-      createReadStream(spool),
-      object.createWriteStream({ resumable: false, metadata: { contentType: "application/x-ndjson" } }),
-    );
-    const [url] = await object.getSignedUrl({
+    await Promise.allSettled(chunks.map((c) => c.delete()));
+
+    const [url] = await final.getSignedUrl({
       version: "v4",
       action: "read",
       expires: Date.now() + SIGNED_URL_TTL_MS,

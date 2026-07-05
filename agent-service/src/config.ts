@@ -23,6 +23,8 @@ export interface ServiceConfig {
   workerConcurrency: number;
   /** proxy URL injected into job containers; empty string disables */
   jobHttpProxy?: string;
+  /** permit http:// callback_urls (local dev / compose only) */
+  allowInsecureCallbacks: boolean;
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -64,6 +66,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     maxAttempts: Number(env.JOB_MAX_ATTEMPTS ?? 2),
     jobTtlSeconds: Number(env.JOB_TTL_SECONDS ?? 30 * 24 * 3600),
     workerConcurrency: Number(env.WORKER_CONCURRENCY ?? 2),
+    allowInsecureCallbacks: env.ALLOW_INSECURE_CALLBACKS === "1",
   };
   if (env.AGENT_ARTIFACTS_BUCKET) config.gcsBucket = env.AGENT_ARTIFACTS_BUCKET;
   if (env.DOCKER_NETWORK) config.dockerNetwork = env.DOCKER_NETWORK;

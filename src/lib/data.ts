@@ -22,6 +22,7 @@ import type {
   ContextDocTier,
   ContextItem,
   Job,
+  JobStatus,
   LoginLog,
   Role,
   TaskComment,
@@ -240,6 +241,23 @@ export async function getJobByExternalServiceId(serviceJobId: string): Promise<J
   const snap = await col.jobs().where("external.serviceJobId", "==", serviceJobId).limit(1).get();
   const doc = snap.docs[0];
   return doc ? withId<Job>(doc) : null;
+}
+
+/**
+ * Atomically claims a webhook completion for an external job: flips the job
+ * out of queued/running exactly once. Returns false when another delivery
+ * already claimed it — the caller must then skip all side effects.
+ */
+export async function claimExternalJobCompletion(jobId: string, status: JobStatus): Promise<boolean> {
+  const ref = col.jobs().doc(jobId);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const job = snap.data() as Job;
+    if (job.status !== "queued" && job.status !== "running") return false;
+    tx.update(ref, { status, updatedAt: Date.now() });
+    return true;
+  });
 }
 
 /* ------------------------------ assets ----------------------------- */

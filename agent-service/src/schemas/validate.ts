@@ -69,9 +69,15 @@ function formatErrors(validate: ValidateFunction, prefix: string): string[] {
   return (validate.errors ?? []).map((e) => `${prefix}${e.instancePath || "/"} ${e.message ?? "invalid"}`);
 }
 
-export function validateJobRequest(body: unknown): ValidationResult {
+export function validateJobRequest(
+  body: unknown,
+  opts?: { allowInsecureCallbacks?: boolean },
+): ValidationResult {
   if (!validateBase(body)) return { ok: false, errors: formatErrors(validateBase, "") };
   const request = body as JobRequest;
+  if (!opts?.allowInsecureCallbacks && !request.callback_url.startsWith("https://")) {
+    return { ok: false, errors: ["/callback_url must be https (set ALLOW_INSECURE_CALLBACKS=1 for local dev)"] };
+  }
   const briefValidator = validateBrief[request.task_type];
   if (!briefValidator(request.brief)) {
     return { ok: false, errors: formatErrors(briefValidator, "/brief") };

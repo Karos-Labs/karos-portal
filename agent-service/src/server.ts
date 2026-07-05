@@ -18,13 +18,17 @@ export interface ServerDeps {
   enqueue: (record: JobRecord) => Promise<void>;
   /** returns true when the queued entry was removed before a worker picked it up */
   removeQueued: (jobId: string) => Promise<boolean>;
+  /** terminal bookkeeping (transcript + webhook) — used by the cancel-while-queued path */
+  finalize: (record: JobRecord) => Promise<void>;
 }
 
 export const MAX_ARTIFACT_FILE_BYTES = 100 * 1024 * 1024;
 export const MAX_ARTIFACT_TOTAL_BYTES = 500 * 1024 * 1024;
 
 export function createJobRecord(deps: ServerDeps, body: unknown): { record: JobRecord } | { errors: string[] } {
-  const validation = validateJobRequest(body);
+  const validation = validateJobRequest(body, {
+    allowInsecureCallbacks: deps.config.allowInsecureCallbacks,
+  });
   if (!validation.ok) return { errors: validation.errors };
   const request = validation.request;
   const taskConfig = getTaskTypeConfig(request.task_type);

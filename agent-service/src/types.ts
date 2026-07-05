@@ -52,6 +52,8 @@ export interface ArtifactEntry {
 
 export interface JobRecord {
   id: string;
+  /** optimistic-concurrency version, bumped by JobsStore.update */
+  v?: number;
   status: JobStatus;
   request: JobRequest;
   attempt: number;

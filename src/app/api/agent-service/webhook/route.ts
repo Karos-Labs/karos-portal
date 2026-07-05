@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createAsset, getJobByExternalServiceId, updateJob } from "@/lib/data";
+import { after } from "next/server";
+import {
+  claimExternalJobCompletion,
+  createAsset,
+  getJob,
+  getJobByExternalServiceId,
+  updateJob,
+} from "@/lib/data";
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -70,16 +77,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unsupported payload" }, { status: 400 });
   }
 
-  const job = await getJobByExternalServiceId(payload.job_id);
-  if (!job || !job.external) {
-    // Unknown job — acknowledge so the service does not retry forever.
-    return NextResponse.json({ ok: true, skipped: true, reason: "No matching platform job" });
+  let job = await getJobByExternalServiceId(payload.job_id);
+  if (!job) {
+    // Submission race: the action may not have persisted external.serviceJobId
+    // yet — fall back to the platform job id echoed through metadata.
+    const platformJobId = payload.metadata?.platform_job_id;
+    if (platformJobId) {
+      const candidate = await getJob(platformJobId);
+      if (
+        candidate &&
+        candidate.clientId === payload.client_id &&
+        (!candidate.external || candidate.external.serviceJobId === payload.job_id)
+      ) {
+        job = {
+          ...candidate,
+          external: candidate.external ?? { serviceJobId: payload.job_id, taskType: payload.task_type },
+        };
+      }
+    }
   }
-  if (job.status !== "queued" && job.status !== "running") {
-    return NextResponse.json({ ok: true, skipped: true, reason: "Already processed" });
+  if (!job || !job.external) {
+    // Unknown job — 404 so the service's delivery queue retries: the write
+    // race window closes long before the retry schedule runs out.
+    return NextResponse.json({ error: "No matching platform job" }, { status: 404 });
   }
 
   const status = STATUS_MAP[payload.status] ?? "failed";
+  // Atomic claim — makes redelivery (sender retries on timeout) idempotent:
+  // exactly one delivery flips the job out of queued/running and runs the
+  // side effects (asset creation, usage logging).
+  const claimed = await claimExternalJobCompletion(job.id, status);
+  if (!claimed) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "Already processed" });
+  }
   const now = Date.now();
   const events = [...job.events];
 
@@ -107,6 +137,13 @@ export async function POST(req: NextRequest) {
       if (artifact.client_facing && artifact.url && withinBudget) {
         try {
           const res = await fetch(artifact.url, { signal: AbortSignal.timeout(60_000) });
+          if (!res.ok) {
+            events.push({
+              at: Date.now(),
+              level: "error",
+              message: `Could not re-host ${artifact.name} (HTTP ${res.status}) — keeping service URL`,
+            });
+          }
           if (res.ok) {
             const bytes = Buffer.from(await res.arrayBuffer());
             rehostedTotal += bytes.length;
@@ -192,18 +229,23 @@ export async function POST(req: NextRequest) {
     updatedAt: now,
   });
 
-  for (const [modelName, usage] of Object.entries(payload.usage?.models ?? {})) {
-    logger.logUsage({
-      clientId: job.clientId,
-      agentId: "agent-service",
-      agentName: job.agentName,
-      modelName,
-      operation: "managed_job",
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      jobId: job.id,
-    });
-  }
+  const jobId = job.id;
+  const clientId = job.clientId;
+  const agentName = job.agentName;
+  after(() => {
+    for (const [modelName, usage] of Object.entries(payload.usage?.models ?? {})) {
+      logger.logUsage({
+        clientId,
+        agentId: "agent-service",
+        agentName,
+        modelName,
+        operation: "managed_job",
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        jobId,
+      });
+    }
+  });
 
   return NextResponse.json({ ok: true, job_id: job.id, status });
 }

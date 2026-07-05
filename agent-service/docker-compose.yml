@@ -13,6 +13,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       ARTIFACT_STORE: local
       ARTIFACTS_DIR: /data
+      ALLOW_INSECURE_CALLBACKS: "1"
     ports:
       - "8080:8080"
     volumes:

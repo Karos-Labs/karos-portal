@@ -16,9 +16,40 @@ function isTransientError(err: unknown): boolean {
   return /ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|50\d|overloaded|rate.?limit/i.test(message);
 }
 
+/**
+ * Environment for the SDK subprocess (and therefore every Bash child the
+ * agent spawns). Explicit allowlist: JOB_SPEC_B64 (runner token) must never
+ * reach the sandbox, and nothing beyond what tools legitimately need does.
+ * ANTHROPIC_API_KEY has to be present for the CLI itself — proxy-side key
+ * injection is the follow-up that removes it from the sandbox entirely.
+ */
+function sdkEnv(): Record<string, string> {
+  const KEEP = [
+    "PATH",
+    "HOME",
+    "LANG",
+    "TERM",
+    "NODE_USE_ENV_PROXY",
+    "ANTHROPIC_API_KEY",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+  ];
+  const env: Record<string, string> = {};
+  for (const key of KEEP) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
 async function main(): Promise<void> {
   const specB64 = process.env.JOB_SPEC_B64;
   if (!specB64) throw new Error("JOB_SPEC_B64 not set");
+  delete process.env.JOB_SPEC_B64;
   const spec = decodeJobSpec(specB64);
   const callback = new ServiceCallback(spec);
   const taskConfig = getTaskTypeConfig(spec.taskType);
@@ -69,7 +100,7 @@ async function main(): Promise<void> {
         model: taskConfig.model,
         maxTurns: taskConfig.maxTurns,
         maxBudgetUsd: taskConfig.maxBudgetUsd,
-        env: { ...process.env } as Record<string, string>,
+        env: sdkEnv(),
       },
     });
 

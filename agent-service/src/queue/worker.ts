@@ -10,15 +10,17 @@ import type { JobRecord, JobSpec, WebhookPayload } from "../types.js";
 import { DockerExecutor } from "../exec/docker-executor.js";
 import { CloudRunJobExecutor } from "../exec/cloudrun-executor.js";
 import type { ExecutionHandle, JobExecutor } from "../exec/executor.js";
-import { deliverWebhook } from "../webhooks/deliver.js";
+import { finalizeJob } from "../lifecycle/finalize.js";
 import { makeRedis } from "./connection.js";
 import { enqueueJob, QUEUE_NAME, type QueuePayload } from "./queue.js";
+import type { WebhooksQueue } from "./webhooks.js";
 
 export interface WorkerDeps {
   config: ServiceConfig;
   store: JobsStore;
   artifactStore: ArtifactStore;
   queue: Queue<QueuePayload>;
+  webhooksQueue: WebhooksQueue;
 }
 
 export function buildJobSpec(config: ServiceConfig, record: JobRecord): JobSpec {
@@ -93,7 +95,7 @@ export function resolveExitEvent(record: JobRecord, timedOut: boolean): JobEvent
 }
 
 export function startWorker(deps: WorkerDeps): Worker<QueuePayload> {
-  const { config, store, artifactStore, queue } = deps;
+  const { config, store, queue } = deps;
   const executor: JobExecutor =
     config.executor === "cloudrun" ? new CloudRunJobExecutor(config) : new DockerExecutor(config);
   const running = new Map<string, ExecutionHandle>();
@@ -104,55 +106,97 @@ export function startWorker(deps: WorkerDeps): Worker<QueuePayload> {
     if (handle) void handle.kill();
   });
 
+  async function runJob(jobId: string): Promise<void> {
+    let record = await store.get(jobId);
+    if (!record) return;
+
+    if (record.status === "running" && !running.has(jobId)) {
+      // Stalled redelivery: a previous worker died mid-run. Resolve from the
+      // runner's report if it arrived, otherwise fail transient (retry).
+      const event = resolveExitEvent(record, false);
+      const patch: Partial<JobRecord> = {};
+      if (!record.runnerReport) patch.error = "worker lost the job mid-run (stalled)";
+      const updated = await store.applyEvent(jobId, event, patch);
+      await afterExit(updated);
+      return;
+    }
+    if (record.status !== "queued") return;
+    if (record.cancelRequested) {
+      const cancelled = await store.applyEvent(jobId, { type: "cancel" });
+      await afterExit(cancelled);
+      return;
+    }
+
+    record = await store.applyEvent(jobId, { type: "start" });
+    const spec = buildJobSpec(config, record);
+    const env = buildRunnerEnv(config);
+
+    let timedOut = false;
+    let handle: ExecutionHandle;
+    try {
+      handle = await executor.start(spec, env);
+    } catch (err) {
+      const failed = await store.applyEvent(
+        jobId,
+        { type: "fail", transient: true },
+        { error: `executor start failed: ${err instanceof Error ? err.message : String(err)}` },
+      );
+      await afterExit(failed);
+      return;
+    }
+    running.set(jobId, handle);
+
+    // Close the cancel race: a cancel published before running.set had no
+    // handle to kill — re-check the flag now that the handle exists.
+    const freshRecord = await store.get(jobId);
+    if (freshRecord?.cancelRequested) void handle.kill();
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      void handle.kill();
+    }, spec.timeoutMs);
+    try {
+      // A rejected wait (Cloud Run operation failure, docker crash) is an
+      // exit like any other — never let it strand the job in "running".
+      await handle.wait.catch(() => undefined);
+    } finally {
+      clearTimeout(timer);
+      running.delete(jobId);
+    }
+
+    const exited = await store.getOrThrow(jobId);
+    const event = resolveExitEvent(exited, timedOut);
+    const patch: Partial<JobRecord> = {};
+    if (event.type === "timeout") patch.error = `timed out after ${spec.timeoutMs}ms`;
+    if (event.type === "fail" && exited.runnerReport?.error) patch.error = exited.runnerReport.error;
+    if (event.type === "fail" && !exited.runnerReport) patch.error = "job container exited without reporting";
+    const updated = await store.applyEvent(jobId, event, patch);
+    await afterExit(updated);
+  }
+
   const worker = new Worker<QueuePayload>(
     QUEUE_NAME,
     async (bullJob) => {
-      const jobId = bullJob.data.jobId;
-      let record = await store.get(jobId);
-      if (!record || record.status !== "queued") return;
-      if (record.cancelRequested) {
-        record = await store.applyEvent(jobId, { type: "cancel" });
-        await finalize(record);
-        return;
-      }
-
-      record = await store.applyEvent(jobId, { type: "start" });
-      const spec = buildJobSpec(config, record);
-      const env = buildRunnerEnv(config);
-
-      let timedOut = false;
-      let handle: ExecutionHandle;
       try {
-        handle = await executor.start(spec, env);
+        await runJob(bullJob.data.jobId);
       } catch (err) {
-        const failed = await store.applyEvent(
-          jobId,
-          { type: "fail", transient: true },
-          { error: `executor start failed: ${err instanceof Error ? err.message : String(err)}` },
-        );
-        await afterExit(failed);
-        return;
+        // Last-resort containment: never leave a record stranded in
+        // "running" because of an unexpected processor error.
+        console.error(`worker processor error for ${bullJob.data.jobId}:`, err);
+        try {
+          const record = await store.get(bullJob.data.jobId);
+          if (record && !isTerminal(record.status)) {
+            const failed = await store.applyEvent(
+              bullJob.data.jobId,
+              { type: "fail", transient: true },
+              { error: `worker error: ${err instanceof Error ? err.message : String(err)}` },
+            );
+            await afterExit(failed);
+          }
+        } catch (inner) {
+          console.error(`worker recovery failed for ${bullJob.data.jobId}:`, inner);
+        }
       }
-      running.set(jobId, handle);
-      const timer = setTimeout(() => {
-        timedOut = true;
-        void handle.kill();
-      }, spec.timeoutMs);
-      try {
-        await handle.wait;
-      } finally {
-        clearTimeout(timer);
-        running.delete(jobId);
-      }
-
-      const exited = await store.getOrThrow(jobId);
-      const event = resolveExitEvent(exited, timedOut);
-      const patch: Partial<JobRecord> = {};
-      if (event.type === "timeout") patch.error = `timed out after ${spec.timeoutMs}ms`;
-      if (event.type === "fail" && exited.runnerReport?.error) patch.error = exited.runnerReport.error;
-      if (event.type === "fail" && !exited.runnerReport) patch.error = "job container exited without reporting";
-      const updated = await store.applyEvent(jobId, event, patch);
-      await afterExit(updated);
     },
     { connection: makeRedis(config.redisUrl), concurrency: config.workerConcurrency },
   );
@@ -168,21 +212,9 @@ export function startWorker(deps: WorkerDeps): Worker<QueuePayload> {
         deadLetterReason: r.error ?? "retries exhausted",
       }));
     }
-    if (isTerminal(record.status)) await finalize(await store.getOrThrow(record.id));
-  }
-
-  async function finalize(record: JobRecord): Promise<void> {
-    let current = record;
-    const transcriptUrl = await artifactStore.finalizeTranscript(current.id);
-    if (transcriptUrl) {
-      current = await store.update(current.id, (r) => ({ ...r, transcriptUrl }));
+    if (isTerminal(record.status)) {
+      await finalizeJob(deps, await store.getOrThrow(record.id));
     }
-    const delivered = await deliverWebhook(
-      config.webhookSecret,
-      current.request.callback_url,
-      buildWebhookPayload(current),
-    );
-    await store.update(current.id, (r) => ({ ...r, webhookDelivered: delivered }));
   }
 
   worker.on("failed", (bullJob, err) => {

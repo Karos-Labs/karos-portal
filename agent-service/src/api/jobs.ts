@@ -41,6 +41,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: ServerDeps): void 
       const removed = await deps.removeQueued(record.id);
       if (removed) {
         const updated = await deps.store.applyEvent(record.id, { type: "cancel" });
+        await deps.finalize(updated);
         return reply.code(202).send({ status: updated.status });
       }
     }

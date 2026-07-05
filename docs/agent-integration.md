@@ -40,8 +40,14 @@ contract. Jobs carry **zero** platform credentials — the only way back in is t
 - Timeout defaults to 15 min, per task type in [`src/task-types.ts`](../agent-service/src/task-types.ts)
   (the worker kills the container; the runner also self-interrupts to flush the transcript).
 - Cancel: `POST /v1/jobs/:id/cancel` → Redis pub/sub → container SIGTERM → runner
-  `query.interrupt()` → partial transcript + artifacts still land.
-- Platform mapping (webhook receiver): `done → review`, everything else → `failed`.
+  `query.interrupt()` → partial transcript + artifacts still land. Cancelling a job that is
+  still queued finalizes it immediately (webhook included).
+- Webhook delivery is durable: a dedicated BullMQ queue retries with exponential backoff
+  (10 attempts over ~40 minutes); 4xx responses (bad secret) stop retrying, network/5xx keep
+  going. `GET /v1/jobs/:id` remains the polling fallback if delivery is exhausted.
+- Platform mapping (webhook receiver): `done → review`, everything else → `failed`. The
+  receiver claims each completion atomically (Firestore transaction), so sender retries and
+  duplicate deliveries cannot double-create assets or double-count usage.
 
 ## How to add a new task type
 
@@ -138,3 +144,13 @@ The mock webhook receiver verifies signatures and drops payloads in the shared v
   run history back, that's a follow-up (reverse sync or a ledger API).
 - **Proxy enforcement in Cloud Run** requires the VPC/firewall setup described above;
   the compose stack enforces it structurally today.
+- **ANTHROPIC_API_KEY is visible to the agent's Bash children.** The SDK subprocess needs the
+  key in its environment and tool subprocesses inherit it; the runner passes a minimal env
+  allowlist (the per-job runner token is stripped), but a prompt-injected agent could still
+  read the key and write it into an artifact. The clean fix is proxy-side key injection
+  (job containers get no key; the egress proxy adds the Authorization header for
+  api.anthropic.com) — recommended next step before running untrusted-content-heavy task
+  types at scale.
+- **No platform-side reconciliation loop yet**: if webhook delivery exhausts all retries, the
+  platform job stays queued/running until someone checks. A small cron that polls
+  `getAgentServiceJob` for jobs in-flight longer than their timeout would close this.

@@ -44,6 +44,14 @@ export function ManagedJobForm({
 
   function submit() {
     setError(null);
+    if (taskType === "blog_article" && !fields.topic?.trim()) {
+      setError("Topic is required.");
+      return;
+    }
+    if (taskType === "landing_page" && !fields.page_goal?.trim()) {
+      setError("Page goal is required.");
+      return;
+    }
     startTransition(async () => {
       const result = await submitManagedJobAction({
         clientId,

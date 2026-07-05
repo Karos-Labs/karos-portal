@@ -11,12 +11,21 @@ import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import type { ManagedTaskType } from "@/lib/types";
 import { logActivity, requireStaff } from "./_shared";
 
-// "use server" files may only export async functions — keep this private.
+// "use server" files may only export async functions — keep these private.
 const MANAGED_TASK_LABELS: Record<ManagedTaskType, string> = {
   social_post: "Social posts (IG/TikTok)",
   newsletter_issue: "Newsletter issue",
   blog_article: "Blog article",
   landing_page: "Landing page",
+};
+
+// Mirrors the required fields in the service's per-task-type JSON schemas so
+// invalid briefs never mint a job doc (the service would 422 them anyway).
+const REQUIRED_BRIEF_FIELDS: Record<ManagedTaskType, string[]> = {
+  social_post: [],
+  newsletter_issue: [],
+  blog_article: ["topic"],
+  landing_page: ["page_goal"],
 };
 
 /**
@@ -37,6 +46,12 @@ export async function submitManagedJobAction(input: {
   }
   const client = await getClient(input.clientId);
   if (!client) return { error: "Client not found." };
+
+  const missing = REQUIRED_BRIEF_FIELDS[input.taskType].filter((field) => {
+    const value = input.brief[field];
+    return value === undefined || value === null || String(value).trim() === "";
+  });
+  if (missing.length > 0) return { error: `Missing required field: ${missing.join(", ")}` };
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (!appUrl) return { error: "NEXT_PUBLIC_APP_URL must be set for webhook callbacks." };
@@ -76,6 +91,7 @@ export async function submitManagedJobAction(input: {
     updatedAt: now,
   });
 
+  let submittedServiceJobId: string | undefined;
   try {
     const submitted = await submitAgentServiceJob({
       task_type: input.taskType,
@@ -86,11 +102,21 @@ export async function submitManagedJobAction(input: {
       ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),
       metadata: { platform_job_id: jobId },
     });
+    submittedServiceJobId = submitted.job_id;
     await updateJob(jobId, {
       external: { serviceJobId: submitted.job_id, taskType: input.taskType },
       updatedAt: Date.now(),
     });
   } catch (e) {
+    // If the run was accepted but recording it failed, stop the run rather
+    // than leaving an orphan burning tokens against a job marked failed.
+    if (submittedServiceJobId) {
+      try {
+        await cancelAgentServiceJob(submittedServiceJobId);
+      } catch {
+        // best effort — the webhook receiver's metadata fallback still matches
+      }
+    }
     const message = e instanceof Error ? e.message : "Agent service submission failed";
     await updateJob(jobId, {
       status: "failed",

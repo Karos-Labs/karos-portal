@@ -13,12 +13,18 @@ export class DockerExecutor implements JobExecutor {
     const containerName = `agent-job-${spec.jobId}`;
     const args = ["run", "--rm", "--name", containerName, "--init"];
     if (this.config.dockerNetwork) args.push("--network", this.config.dockerNetwork);
-    for (const [key, value] of Object.entries({ ...env, JOB_SPEC_B64: encodeJobSpec(spec) })) {
-      args.push("-e", `${key}=${value}`);
+    // Name-only -e: values come from the docker client's own environment,
+    // keeping secrets out of the host-visible process table (argv).
+    const jobEnv = { ...env, JOB_SPEC_B64: encodeJobSpec(spec) };
+    for (const key of Object.keys(jobEnv)) {
+      args.push("-e", key);
     }
     args.push(this.config.runnerImage);
 
-    const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("docker", args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...jobEnv },
+    });
     child.stdout.on("data", (chunk: Buffer) => {
       process.stdout.write(`[job ${spec.jobId}] ${chunk.toString()}`);
     });

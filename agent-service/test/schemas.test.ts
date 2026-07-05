@@ -46,6 +46,13 @@ describe("job request validation", () => {
     expect(validateJobRequest(baseRequest({ callback_url: "not-a-url" })).ok).toBe(false);
   });
 
+  it("requires https callbacks unless insecure callbacks are explicitly allowed", () => {
+    const insecure = baseRequest({ callback_url: "http://internal-host/webhook" });
+    expect(validateJobRequest(insecure).ok).toBe(false);
+    expect(validateJobRequest(insecure, { allowInsecureCallbacks: true }).ok).toBe(true);
+    expect(validateJobRequest(baseRequest()).ok).toBe(true);
+  });
+
   it("enforces context file rules", () => {
     const good = baseRequest({
       context_files: [{ name: "photo.jpg", url: "https://files.example.com/p.jpg", description: "hero" }],
