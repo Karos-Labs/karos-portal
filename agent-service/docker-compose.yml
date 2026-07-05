@@ -1,0 +1,83 @@
+name: agent-service
+
+services:
+  api:
+    build: .
+    command: ["node", "dist/src/index.js"]
+    environment:
+      PORT: "8080"
+      REDIS_URL: redis://redis:6379
+      AGENT_SERVICE_TOKENS: ${AGENT_SERVICE_TOKENS:-dev-token}
+      AGENT_WEBHOOK_SECRET: ${AGENT_WEBHOOK_SECRET:-dev-webhook-secret}
+      INTERNAL_BASE_URL: http://api:8080
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      ARTIFACT_STORE: local
+      ARTIFACTS_DIR: /data
+    ports:
+      - "8080:8080"
+    volumes:
+      - artifact-data:/data
+    networks: [default, jobs-internal]
+    depends_on: [redis]
+
+  worker:
+    build: .
+    command: ["node", "dist/src/queue/worker-main.js"]
+    environment:
+      REDIS_URL: redis://redis:6379
+      AGENT_SERVICE_TOKENS: ${AGENT_SERVICE_TOKENS:-dev-token}
+      AGENT_WEBHOOK_SECRET: ${AGENT_WEBHOOK_SECRET:-dev-webhook-secret}
+      INTERNAL_BASE_URL: http://api:8080
+      ARTIFACT_STORE: local
+      ARTIFACTS_DIR: /data
+      EXECUTOR: docker
+      RUNNER_IMAGE: karos-agent-runner:latest
+      DOCKER_NETWORK: agent-service-jobs-internal
+      JOB_HTTP_PROXY: http://proxy:8888
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      WORKER_CONCURRENCY: "2"
+    volumes:
+      - artifact-data:/data
+      # the worker spawns one sibling container per job
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [default, jobs-internal]
+    depends_on: [redis, api]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks: [default]
+
+  # Allowlisting egress proxy — the ONLY way out of the jobs-internal network
+  proxy:
+    image: ghcr.io/kalaksi/tinyproxy:latest
+    volumes:
+      - ./config/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
+      - ./config/proxy-filter.txt:/etc/tinyproxy/proxy-filter.txt:ro
+    networks: [default, jobs-internal]
+
+  mock-webhook:
+    build: .
+    command: ["node", "dist/tools/mock-webhook.js"]
+    environment:
+      AGENT_WEBHOOK_SECRET: ${AGENT_WEBHOOK_SECRET:-dev-webhook-secret}
+      MOCK_WEBHOOK_PORT: "9009"
+      MOCK_WEBHOOK_DIR: /data/webhooks
+    ports:
+      - "9009:9009"
+    volumes:
+      - artifact-data:/data
+    networks: [default]
+
+networks:
+  default: {}
+  # internal: no route to the outside world; jobs reach the internet only via proxy
+  jobs-internal:
+    name: agent-service-jobs-internal
+    internal: true
+
+volumes:
+  artifact-data: {}
+  redis-data: {}
