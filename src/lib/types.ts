@@ -86,6 +86,12 @@ export interface Client {
    *   failed   — one or more stages threw; check server logs for details
    */
   onboardingStatus?: "pending" | "running" | "done" | "failed";
+  /**
+   * This client's folder slug in the karos-agents lab repo (clients/<slug>/).
+   * Used by the external agent service to load the client's profile + emitted
+   * sub-skills. Absent ⇒ jobs run against client_context/ only.
+   */
+  agentsRepoSlug?: string;
   createdAt: number;
   createdBy: string;
 }
@@ -178,6 +184,38 @@ export interface JobRunEvent {
   message: string;
 }
 
+/** Task types the external agent service (agent-service/) can run. */
+export type ManagedTaskType = "social_post" | "newsletter_issue" | "blog_article" | "landing_page";
+
+/** One deliverable file produced by an external agent-service job. */
+export interface ExternalJobArtifact {
+  name: string;
+  /** agents-repo-relative path the agent wrote (provenance). */
+  path: string;
+  bytes: number;
+  sha256: string;
+  contentType?: string;
+  /** Per the lab contract, only files under an outputs client/ folder are client-visible. */
+  clientFacing: boolean;
+  /** Platform-hosted URL (client-facing, re-hosted) or service URL (internal). */
+  url?: string;
+}
+
+/** Provenance + results of a job executed by the external agent service. */
+export interface ExternalJobInfo {
+  serviceJobId: string;
+  taskType: ManagedTaskType;
+  /** karos-agents commit the job ran against. */
+  agentsRepoSha?: string;
+  model?: string;
+  /** SDK cost estimate; token counts are the authoritative record. */
+  totalCostUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  artifacts?: ExternalJobArtifact[];
+  transcriptUrl?: string;
+}
+
 export interface Job {
   id: string;
   clientId: string;
@@ -192,6 +230,8 @@ export interface Job {
   emailedTo?: string | null;
   events: JobRunEvent[];
   error?: string | null;
+  /** Present when this job runs on the external agent service. */
+  external?: ExternalJobInfo;
   createdBy: string;
   assignedTo?: string | null;
   createdAt: number;

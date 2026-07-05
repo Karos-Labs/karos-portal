@@ -235,6 +235,13 @@ export async function updateJob(id: string, data: Partial<Job>): Promise<void> {
   await col.jobs().doc(id).set(data, { merge: true });
 }
 
+/** Look up the platform job that mirrors an external agent-service job. */
+export async function getJobByExternalServiceId(serviceJobId: string): Promise<Job | null> {
+  const snap = await col.jobs().where("external.serviceJobId", "==", serviceJobId).limit(1).get();
+  const doc = snap.docs[0];
+  return doc ? withId<Job>(doc) : null;
+}
+
 /* ------------------------------ assets ----------------------------- */
 
 export async function listAssets(opts?: { clientId?: string }): Promise<Asset[]> {

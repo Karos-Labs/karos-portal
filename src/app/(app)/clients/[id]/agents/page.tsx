@@ -10,6 +10,8 @@ import {
 } from "@/lib/data";
 import { PageHeader } from "@/components/ui";
 import { AgentsHubTab } from "@/components/agents-hub-tab";
+import { ManagedJobForm } from "@/components/managed-job-form";
+import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 
 export default async function ClientAgentsPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -31,6 +33,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     listContextItems({ clientId: id }),
     listClientIntegrations(id),
   ]);
+  const agentServiceConfigured = isAgentServiceConfigured();
 
   return (
     <>
@@ -54,6 +57,11 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         contextItems={contextItems}
         integrations={integrations}
       />
+      {(user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE") && agentServiceConfigured && (
+        <div className="mt-6 max-w-xl">
+          <ManagedJobForm clientId={id} contextItems={contextItems} />
+        </div>
+      )}
     </>
   );
 }

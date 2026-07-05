@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { JobStatusBadge } from "@/components/job-status";
 import { AssetCard } from "@/components/asset-card";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { ManagedJobCancelButton } from "@/components/managed-job-cancel";
 import { formatDateTime } from "@/lib/utils";
 
 export default async function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -36,7 +37,10 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
             {job.emailedTo && <span className="text-neon-dim"> · emailed to {job.emailedTo}</span>}
           </p>
         </div>
-        <JobStatusBadge status={job.status} />
+        <div className="flex items-center gap-3">
+          {job.external && inProgress && <ManagedJobCancelButton jobId={job.id} />}
+          <JobStatusBadge status={job.status} />
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
@@ -66,6 +70,60 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
         </div>
 
         <div className="space-y-6">
+          {job.external && (
+            <Card>
+              <CardTitle className="mb-3">Agent run</CardTitle>
+              <dl className="space-y-2 text-sm">
+                {job.external.totalCostUsd !== undefined && (
+                  <div className="flex justify-between">
+                    <dt className="text-xs text-muted-2">Cost (estimate)</dt>
+                    <dd>${job.external.totalCostUsd.toFixed(4)}</dd>
+                  </div>
+                )}
+                {job.external.inputTokens !== undefined && (
+                  <div className="flex justify-between">
+                    <dt className="text-xs text-muted-2">Tokens in / out</dt>
+                    <dd>
+                      {job.external.inputTokens.toLocaleString()} / {job.external.outputTokens?.toLocaleString() ?? 0}
+                    </dd>
+                  </div>
+                )}
+                {job.external.model && (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-xs text-muted-2">Model</dt>
+                    <dd className="truncate text-xs">{job.external.model}</dd>
+                  </div>
+                )}
+                {job.external.agentsRepoSha && (
+                  <div className="flex justify-between">
+                    <dt className="text-xs text-muted-2">Agents repo</dt>
+                    <dd className="font-mono text-xs">{job.external.agentsRepoSha.slice(0, 10)}</dd>
+                  </div>
+                )}
+              </dl>
+              {(job.external.artifacts?.length ?? 0) > 0 && (
+                <div className="mt-4">
+                  <p className="mb-1.5 text-xs text-muted-2">Artifacts</p>
+                  <ul className="space-y-1">
+                    {job.external.artifacts!.map((a) => (
+                      <li key={a.path} className="flex items-center gap-1.5 text-xs">
+                        <Icon name={a.clientFacing ? "FileCheck" : "FileLock"} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                        {a.url ? (
+                          <a href={a.url} target="_blank" rel="noreferrer" className="truncate hover:text-neon">
+                            {a.name}
+                          </a>
+                        ) : (
+                          <span className="truncate">{a.name}</span>
+                        )}
+                        {!a.clientFacing && <Badge tone="neutral">internal</Badge>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </Card>
+          )}
+
           <Card>
             <CardTitle className="mb-3">Inputs</CardTitle>
             {Object.entries(job.input).filter(([, v]) => v).length === 0 ? (
