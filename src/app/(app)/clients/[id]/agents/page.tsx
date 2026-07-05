@@ -10,6 +10,8 @@ import {
 } from "@/lib/data";
 import { PageHeader } from "@/components/ui";
 import { AgentsHubTab } from "@/components/agents-hub-tab";
+import { ManagedProducts } from "@/components/managed-products";
+import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 
 export default async function ClientAgentsPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -31,6 +33,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     listContextItems({ clientId: id }),
     listClientIntegrations(id),
   ]);
+  const agentServiceConfigured = isAgentServiceConfigured();
 
   return (
     <>
@@ -54,6 +57,9 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         contextItems={contextItems}
         integrations={integrations}
       />
+      {(user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE") && agentServiceConfigured && (
+        <ManagedProducts clientId={id} contextItems={contextItems} jobs={jobs} />
+      )}
     </>
   );
 }

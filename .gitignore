@@ -37,6 +37,8 @@ env.local
 env.*.local
 # .env.production holds only public NEXT_PUBLIC_FIREBASE_* config — safe to commit.
 !.env.production
+# templates hold no secrets — always committed
+!.env.example
 
 # vercel
 .vercel
