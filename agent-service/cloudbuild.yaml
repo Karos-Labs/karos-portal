@@ -3,16 +3,23 @@
 # worker as Cloud Run services, and updates the runner Cloud Run Job.
 #
 # Substitutions:
-#   _REGION         e.g. us-central1
-#   _REPO           Artifact Registry repo, e.g. karos
-#   _AGENTS_REF     karos-agents git ref to bake into the runner image
+#   _REGION           e.g. us-central1
+#   _REPO             Artifact Registry repo, e.g. karos
+#   _AGENTS_REF       karos-agents git ref to bake into the runner image
+#   _VPC_CONNECTOR    Serverless VPC Access connector (bootstrap-gcp.sh: agent-vpc)
+#   _INTERNAL_API_URL deployed api URL (worker→api callbacks + runner IAM audience)
+#   _JOB_HTTP_PROXY   egress proxy the runner is forced through, e.g. http://10.x.x.x:8888
 #
-# The GitHub token for cloning the (private) agents repo comes from Secret
-# Manager (github-token) via the availableSecrets block.
+# Run deploy/bootstrap-gcp.sh once first (creates SAs, secrets, connector,
+# Memorystore, bucket, proxy VM). The GitHub token for cloning the private
+# agents repo comes from Secret Manager (github-token) via availableSecrets.
 substitutions:
   _REGION: us-central1
   _REPO: karos
   _AGENTS_REF: main
+  _VPC_CONNECTOR: agent-vpc
+  _INTERNAL_API_URL: ""
+  _JOB_HTTP_PROXY: ""
 
 steps:
   - id: build-service
@@ -56,7 +63,11 @@ steps:
       - agent-service-api
       - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-service:$COMMIT_SHA
       - --region=${_REGION}
+      # IAM auth: platform + runner present a Google ID token; app token rides
+      # X-Karos-Service-Token (see src/auth.ts). Grant callers roles/run.invoker.
       - --no-allow-unauthenticated
+      - --service-account=agent-service-sa@$PROJECT_ID.iam.gserviceaccount.com
+      - --vpc-connector=${_VPC_CONNECTOR}
       - --memory=1Gi
       - --min-instances=1
       - --set-env-vars=ARTIFACT_STORE=gcs,EXECUTOR=cloudrun,CLOUDRUN_PROJECT=$PROJECT_ID,CLOUDRUN_REGION=${_REGION},CLOUDRUN_JOB=agent-runner
@@ -74,9 +85,12 @@ steps:
       - --args=dist/src/queue/worker-main.js
       - --region=${_REGION}
       - --no-allow-unauthenticated
+      - --service-account=agent-service-sa@$PROJECT_ID.iam.gserviceaccount.com
+      - --vpc-connector=${_VPC_CONNECTOR}
       - --memory=1Gi
       - --min-instances=1
       - --no-cpu-throttling
+      # INTERNAL_BASE_URL is the api URL — also the audience for the runner's IAM token.
       - --set-env-vars=ARTIFACT_STORE=gcs,EXECUTOR=cloudrun,CLOUDRUN_PROJECT=$PROJECT_ID,CLOUDRUN_REGION=${_REGION},CLOUDRUN_JOB=agent-runner,INTERNAL_BASE_URL=${_INTERNAL_API_URL}
       - --set-secrets=AGENT_SERVICE_TOKENS=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest,REDIS_URL=agent-redis-url:latest,AGENT_ARTIFACTS_BUCKET=agent-artifacts-bucket:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest
 
@@ -88,9 +102,14 @@ steps:
       - |
         gcloud run jobs describe agent-runner --region=${_REGION} >/dev/null 2>&1 \
           && CMD=update || CMD=create
+        # Job containers reach the internet ONLY through the egress proxy
+        # (HTTPS_PROXY); vpc-egress=all-traffic + the connector route them there.
         gcloud run jobs $$CMD agent-runner \
           --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/agent-runner:$COMMIT_SHA \
           --region=${_REGION} \
+          --service-account=agent-runner-sa@$PROJECT_ID.iam.gserviceaccount.com \
+          --vpc-connector=${_VPC_CONNECTOR} --vpc-egress=all-traffic \
+          --set-env-vars=JOB_HTTP_PROXY=${_JOB_HTTP_PROXY} \
           --memory=2Gi --cpu=2 --task-timeout=45m --max-retries=0
 
 availableSecrets:

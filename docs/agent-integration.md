@@ -104,8 +104,15 @@ streamed as NDJSON during the run, so it survives timeouts and kills:
   egress + firewall so job containers reach only the proxy and `api.anthropic.com`.
 - **Credentials**: `ANTHROPIC_API_KEY` exists only in the agent-service environment. Jobs get
   a single-purpose per-job callback token, valid only for their own `/internal/jobs/:id/*`
-  endpoints. Platform → service auth is a rotatable bearer token (`AGENT_SERVICE_TOKENS`
-  accepts a comma-separated list; add the new token, roll clients, remove the old).
+  endpoints.
+- **Service auth is IAM + app token** ("IAM + bearer"). In production the api runs
+  `--no-allow-unauthenticated`: callers (the platform, the runner job) present a Google-signed
+  ID token in `Authorization` (validated by the Cloud Run edge — the platform/runner runtime SAs
+  need `roles/run.invoker`), plus the app token in `X-Karos-Service-Token`
+  (`AGENT_SERVICE_TOKENS`, comma-separated for rotation — add the new token, roll callers, remove
+  the old). The ID-token layer is driven by `AGENT_SERVICE_AUDIENCE` (platform) / `RUNNER_IAM_AUDIENCE`
+  (runner) = the api URL; unset locally, so dev falls back to the app token on `Authorization`.
+  Deploy/IAM steps: `agent-service/DEPLOY.md`; one-time infra: `agent-service/deploy/bootstrap-gcp.sh`.
 - **Untrusted input**: web content and client-supplied files are data, never instructions —
   stated in every job prompt; the platform re-hosts client-facing artifacts into its own
   storage rather than serving agent-controlled URLs.
@@ -151,6 +158,8 @@ The mock webhook receiver verifies signatures and drops payloads in the shared v
   (job containers get no key; the egress proxy adds the Authorization header for
   api.anthropic.com) — recommended next step before running untrusted-content-heavy task
   types at scale.
-- **No platform-side reconciliation loop yet**: if webhook delivery exhausts all retries, the
-  platform job stays queued/running until someone checks. A small cron that polls
-  `getAgentServiceJob` for jobs in-flight longer than their timeout would close this.
+- **Platform-side reconciliation** runs as a cron (`GET /api/agent-service/reconcile`, Bearer
+  `CRON_SECRET`): it polls `getAgentServiceJob` for managed jobs stuck queued/running past ~20 min
+  and syncs terminal status, idempotent with the webhook via `claimExternalJobCompletion`. Schedule
+  it in Cloud Scheduler (DEPLOY.md step 6). It unsticks the job record; artifact re-hosting still
+  comes through the webhook, so a fully-missed webhook needs a redelivery or re-run to attach assets.
