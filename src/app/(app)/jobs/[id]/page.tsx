@@ -8,6 +8,7 @@ import { JobStatusBadge } from "@/components/job-status";
 import { AssetCard } from "@/components/asset-card";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ManagedJobCancelButton } from "@/components/managed-job-cancel";
+import { ManagedJobProgress } from "@/components/managed-job-progress";
 import { formatDateTime } from "@/lib/utils";
 
 export default async function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -42,6 +43,8 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           <JobStatusBadge status={job.status} />
         </div>
       </div>
+
+      {job.external && <ManagedJobProgress status={job.status} />}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <div className="space-y-6">
