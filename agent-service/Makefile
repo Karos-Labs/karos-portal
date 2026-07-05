@@ -6,12 +6,17 @@
 
 AGENTS_REPO_REF ?= main
 
+# Make's $(if) splits on commas, so the comma inside the --secret value must
+# be escaped through a variable.
+COMMA := ,
+SECRET_FLAG = $(if $(GITHUB_TOKEN),--secret id=github_token$(COMMA)env=GITHUB_TOKEN)
+
 up:
 	docker compose up -d --build
 
 runner:
 	docker build -f runner/Dockerfile \
-		$(if $(GITHUB_TOKEN),--secret id=github_token,env=GITHUB_TOKEN,) \
+		$(SECRET_FLAG) \
 		--build-arg AGENTS_REPO_REF=$(AGENTS_REPO_REF) \
 		-t karos-agent-runner:latest .
 
