@@ -12,6 +12,7 @@ import {
   TIMESTAMP_HEADER,
   verifyAgentServiceSignature,
 } from "@/lib/agent-service/verify";
+import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import type { AssetType, ExternalJobArtifact, JobStatus, ManagedTaskType } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
@@ -136,7 +137,10 @@ export async function POST(req: NextRequest) {
         rehostedTotal + artifact.bytes <= REHOST_TOTAL_LIMIT_BYTES;
       if (artifact.client_facing && artifact.url && withinBudget) {
         try {
-          const res = await fetch(artifact.url, { signal: AbortSignal.timeout(60_000) });
+          const res = await fetch(artifact.url, {
+            headers: agentServiceFetchHeaders(artifact.url),
+            signal: AbortSignal.timeout(60_000),
+          });
           if (!res.ok) {
             events.push({
               at: Date.now(),

@@ -50,3 +50,25 @@ export async function cancelAgentServiceJob(serviceJobId: string): Promise<{ sta
 export function isAgentServiceConfigured(): boolean {
   return Boolean(process.env.AGENT_SERVICE_URL && process.env.AGENT_SERVICE_TOKEN);
 }
+
+/**
+ * Auth headers for fetching an artifact/transcript URL back from the service.
+ * The service's local-store routes are bearer-protected, so those fetches need
+ * the token; production artifact URLs are GCS signed links on a different host
+ * and must NOT carry an Authorization header (GCS rejects combined auth), so
+ * the token is attached only when the URL belongs to the agent service.
+ * Pure (env injected) so it can be unit-tested.
+ */
+export function agentServiceFetchHeaders(
+  url: string,
+  env: { base?: string; token?: string } = {
+    ...(process.env.AGENT_SERVICE_URL ? { base: process.env.AGENT_SERVICE_URL } : {}),
+    ...(process.env.AGENT_SERVICE_TOKEN ? { token: process.env.AGENT_SERVICE_TOKEN } : {}),
+  },
+): Record<string, string> | undefined {
+  const base = env.base?.replace(/\/$/, "");
+  if (base && env.token && url.startsWith(base)) {
+    return { authorization: `Bearer ${env.token}` };
+  }
+  return undefined;
+}

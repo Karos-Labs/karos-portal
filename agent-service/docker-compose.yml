@@ -29,6 +29,10 @@ services:
       AGENT_SERVICE_TOKENS: ${AGENT_SERVICE_TOKENS:-dev-token}
       AGENT_WEBHOOK_SECRET: ${AGENT_WEBHOOK_SECRET:-dev-webhook-secret}
       INTERNAL_BASE_URL: http://api:8080
+      # Externally-reachable base for artifact/transcript URLs handed to the
+      # platform — must match the api's so re-host + transcript links resolve
+      # from the host, not the compose-internal http://api:8080.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       ARTIFACT_STORE: local
       ARTIFACTS_DIR: /data
       EXECUTOR: docker
