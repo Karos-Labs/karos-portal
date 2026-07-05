@@ -43,6 +43,9 @@ export function buildJobSpec(config: ServiceConfig, record: JobRecord): JobSpec 
 export function buildRunnerEnv(config: ServiceConfig): Record<string, string> {
   const env: Record<string, string> = {};
   if (config.anthropicApiKey) env.ANTHROPIC_API_KEY = config.anthropicApiKey;
+  // On Cloud Run the api enforces IAM, so the runner must present an ID token
+  // (audience = the api URL it calls back to) alongside its per-job token.
+  if (config.executor === "cloudrun") env.RUNNER_IAM_AUDIENCE = config.internalBaseUrl;
   if (config.jobHttpProxy) {
     env.HTTP_PROXY = config.jobHttpProxy;
     env.HTTPS_PROXY = config.jobHttpProxy;

@@ -1,26 +1,36 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { JobSpec, JobUsage, RunnerCompleteBody } from "../../src/types.js";
+import { fetchIdToken } from "../../src/gcp-identity.js";
 
 /**
- * HTTP client for the service's /internal endpoints. Authenticated with the
- * single-purpose per-job runner token — the only credential in the sandbox.
+ * HTTP client for the service's /internal endpoints. App-level auth is the
+ * single-purpose per-job runner token (the only credential in the sandbox).
+ * When RUNNER_IAM_AUDIENCE is set (Cloud Run), it also attaches a Google ID
+ * token so the request clears the api's IAM edge — "IAM + bearer".
  */
 export class ServiceCallback {
+  private readonly iamAudience = process.env.RUNNER_IAM_AUDIENCE;
+
   constructor(private readonly spec: JobSpec) {}
 
   private url(suffix: string): string {
     return `${this.spec.callbackBaseUrl}/internal/jobs/${this.spec.jobId}/${suffix}`;
   }
 
-  private headers(extra?: Record<string, string>): Record<string, string> {
-    return { "x-runner-token": this.spec.runnerToken, ...extra };
+  private async headers(extra?: Record<string, string>): Promise<Record<string, string>> {
+    const headers: Record<string, string> = { "x-runner-token": this.spec.runnerToken, ...extra };
+    if (this.iamAudience) {
+      const idToken = await fetchIdToken(this.iamAudience);
+      if (idToken) headers.authorization = `Bearer ${idToken}`;
+    }
+    return headers;
   }
 
   async appendTranscript(lines: string): Promise<void> {
     await fetch(this.url("transcript"), {
       method: "POST",
-      headers: this.headers({ "content-type": "application/json" }),
+      headers: await this.headers({ "content-type": "application/json" }),
       body: JSON.stringify({ lines }),
       signal: AbortSignal.timeout(30_000),
     });
@@ -44,7 +54,7 @@ export class ServiceCallback {
     );
     const response = await fetch(this.url("artifacts"), {
       method: "POST",
-      headers: this.headers(),
+      headers: await this.headers(),
       body: form,
       signal: AbortSignal.timeout(120_000),
     });
@@ -56,7 +66,7 @@ export class ServiceCallback {
   async complete(body: RunnerCompleteBody): Promise<void> {
     await fetch(this.url("complete"), {
       method: "POST",
-      headers: this.headers({ "content-type": "application/json" }),
+      headers: await this.headers({ "content-type": "application/json" }),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(30_000),
     });
