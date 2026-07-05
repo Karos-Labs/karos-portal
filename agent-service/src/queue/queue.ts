@@ -22,7 +22,8 @@ export function makeQueue(connection: Redis): JobsQueue {
 }
 
 export async function enqueueJob(queue: JobsQueue, record: JobRecord): Promise<void> {
-  await queue.add("run", { jobId: record.id }, { jobId: `${record.id}:${record.attempt}` });
+  // BullMQ custom ids must not contain ":" (used in its Redis keys)
+  await queue.add("run", { jobId: record.id }, { jobId: `${record.id}_${record.attempt}` });
 }
 
 export async function removeQueuedJob(queue: JobsQueue, jobId: string): Promise<boolean> {

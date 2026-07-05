@@ -52,7 +52,7 @@ services:
 
   # Allowlisting egress proxy — the ONLY way out of the jobs-internal network
   proxy:
-    image: ghcr.io/kalaksi/tinyproxy:latest
+    build: ./proxy
     volumes:
       - ./config/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
       - ./config/proxy-filter.txt:/etc/tinyproxy/proxy-filter.txt:ro
