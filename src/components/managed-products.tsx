@@ -169,7 +169,14 @@ function RunProductModal({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [fields, setFields] = useState<Record<string, string>>({});
+  // Seed select defaults so a shown-but-untouched selection still submits.
+  const [fields, setFields] = useState<Record<string, string>>(() => {
+    const seed: Record<string, string> = {};
+    for (const f of product.briefFields) {
+      if (f.type === "select" && f.options?.[0]) seed[f.key] = f.options[0].value;
+    }
+    return seed;
+  });
   const [notes, setNotes] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);

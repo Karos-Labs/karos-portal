@@ -89,7 +89,7 @@ describe("buildWebhookPayload", () => {
 });
 
 describe("buildRunnerEnv", () => {
-  it("passes the API key and proxy settings with NO_PROXY for the callback host", () => {
+  it("passes the API key and proxy settings, exempting the api + metadata hosts from the proxy", () => {
     const config = {
       anthropicApiKey: "sk-ant-xxx",
       jobHttpProxy: "http://proxy:8888",
@@ -98,7 +98,9 @@ describe("buildRunnerEnv", () => {
     const env = buildRunnerEnv(config);
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-xxx");
     expect(env.HTTPS_PROXY).toBe("http://proxy:8888");
-    expect(env.NO_PROXY).toBe("api");
+    // api host bypasses the proxy (callbacks go direct), and the GCE metadata
+    // server must too (it's the IAM ID-token source, denied by the allow-list).
+    expect(env.NO_PROXY?.split(",")).toEqual(["api", "metadata.google.internal", "169.254.169.254"]);
   });
 
   it("omits proxy vars when no proxy is configured", () => {

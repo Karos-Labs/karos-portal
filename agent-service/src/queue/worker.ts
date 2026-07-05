@@ -51,7 +51,14 @@ export function buildRunnerEnv(config: ServiceConfig): Record<string, string> {
     env.HTTPS_PROXY = config.jobHttpProxy;
     env.http_proxy = config.jobHttpProxy;
     env.https_proxy = config.jobHttpProxy;
-    env.NO_PROXY = new URL(config.internalBaseUrl).hostname;
+    // Bypass the egress proxy for the api callbacks AND the GCE metadata server
+    // (the IAM ID-token source) — the proxy allow-list denies both, so routing
+    // them through it would break every runner→api callback with a 403.
+    env.NO_PROXY = [
+      new URL(config.internalBaseUrl).hostname,
+      "metadata.google.internal",
+      "169.254.169.254",
+    ].join(",");
     env.no_proxy = env.NO_PROXY;
   }
   return env;

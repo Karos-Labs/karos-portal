@@ -14,13 +14,17 @@ const STEPS = [
  */
 export function ManagedJobProgress({ status }: { status: JobStatus }) {
   const failed = status === "failed";
-  const current = status === "queued" ? 0 : status === "running" ? 1 : 2;
+  // A failed managed job never reached "review" (that's a success state), so pin
+  // the failure to the working step rather than the final one.
+  const current = status === "queued" ? 0 : status === "running" || failed ? 1 : 2;
 
   return (
     <div className="mb-6 flex items-center gap-2 rounded-[var(--radius)] border border-border bg-surface px-4 py-3">
       {STEPS.map((step, i) => {
         const reached = i <= current;
-        const isCurrent = i === current && !failed && status !== "review" && i !== 2;
+        // "in progress" pulse only on a non-terminal working step (i !== 2 already
+        // excludes the review/done step).
+        const isCurrent = i === current && !failed && i !== 2;
         const failedHere = failed && i === current;
         return (
           <div key={step.key} className="flex min-w-0 flex-1 items-center gap-2">

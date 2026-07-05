@@ -19,7 +19,9 @@ function config(): { baseUrl: string; token: string } {
   if (!baseUrl || !token) {
     throw new Error("Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN).");
   }
-  return { baseUrl: baseUrl.replace(/\/$/, ""), token };
+  // The service treats AGENT_SERVICE_TOKENS as a comma-separated list (rotation);
+  // send a single current token (the first) so the whole string never mismatches.
+  return { baseUrl: baseUrl.replace(/\/$/, ""), token: token.split(",")[0]!.trim() };
 }
 
 let idTokenCache: { audience: string; token: string; expiresAt: number } | null = null;
@@ -104,9 +106,14 @@ export function agentServiceFetchHeaders(
     ...(process.env.AGENT_SERVICE_TOKEN ? { token: process.env.AGENT_SERVICE_TOKEN } : {}),
   },
 ): Record<string, string> | undefined {
-  const base = env.base?.replace(/\/$/, "");
-  if (base && env.token && url.startsWith(base)) {
-    return { authorization: `Bearer ${env.token}` };
+  if (!env.base || !env.token) return undefined;
+  // Exact origin match (not a prefix) — a startsWith check would also match a
+  // spoofed host like https://<service>.run.app.evil.com and leak the token.
+  let sameOrigin = false;
+  try {
+    sameOrigin = new URL(url).origin === new URL(env.base).origin;
+  } catch {
+    return undefined;
   }
-  return undefined;
+  return sameOrigin ? { authorization: `Bearer ${env.token.split(",")[0]!.trim()}` } : undefined;
 }

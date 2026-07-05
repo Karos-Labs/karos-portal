@@ -8,18 +8,22 @@ export const maxDuration = 60;
 /**
  * Safety net for managed jobs whose completion webhook never arrived (delivery
  * exhausted its retries during a platform outage/deploy). Polls the agent
- * service for jobs stuck queued/running past a threshold and syncs terminal
- * status. Idempotent with the webhook via claimExternalJobCompletion — whichever
- * runs first wins; artifact re-hosting still happens through the webhook, so
- * this only unsticks the job record (a follow-up webhook redelivery, or a manual
- * re-run, attaches assets).
+ * service for jobs stuck queued/running past a threshold.
  *
- * Schedule via Cloud Scheduler (every ~10 min): GET with Authorization: Bearer <CRON_SECRET>.
+ * Only FAILURE outcomes are terminalized here — they carry no client artifacts,
+ * so flipping the record to "failed" is complete. A `done` job is deliberately
+ * left alone: its deliverables are attached only by the webhook's artifact
+ * re-host, and claiming it here would permanently block the webhook's durable
+ * redelivery (the claim is single-use), losing the assets. A `done` job stuck
+ * past the window is surfaced (not silently flipped) for monitoring.
+ *
+ * Idempotent with the webhook via claimExternalJobCompletion — whichever runs
+ * first wins. Schedule via Cloud Scheduler (~10 min): GET, Authorization: Bearer <CRON_SECRET>.
  */
 const STALE_AFTER_MS = 20 * 60 * 1000;
 
-const TERMINAL_MAP: Record<string, JobStatus> = {
-  done: "review",
+// Failure outcomes only — `done` is left for the webhook (see above).
+const FAILURE_MAP: Record<string, JobStatus> = {
   failed: "failed",
   cancelled: "failed",
   dead_letter: "failed",
@@ -44,7 +48,12 @@ export async function GET(req: NextRequest) {
     if (!serviceJobId) continue;
     try {
       const remote = await getAgentServiceJob(serviceJobId);
-      const mapped = TERMINAL_MAP[remote.status];
+      if (remote.status === "done") {
+        // Deliverables must come through the webhook — don't claim/flip here.
+        results.push({ jobId: job.id, action: "done on service — awaiting webhook, left for redelivery" });
+        continue;
+      }
+      const mapped = FAILURE_MAP[remote.status];
       if (!mapped) {
         results.push({ jobId: job.id, action: `still ${remote.status}` });
         continue;
@@ -55,12 +64,12 @@ export async function GET(req: NextRequest) {
         continue;
       }
       await updateJob(job.id, {
-        error: remote.status === "done" ? null : (remote.error ?? remote.status),
+        error: remote.error ?? remote.status,
         events: [
           ...job.events,
           {
             at: Date.now(),
-            level: remote.status === "done" ? "success" : "error",
+            level: "error",
             message: `Reconciled from agent service: ${remote.status} (webhook missed)`,
           },
         ],

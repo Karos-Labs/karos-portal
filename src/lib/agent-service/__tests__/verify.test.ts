@@ -94,6 +94,14 @@ describe("agentServiceFetchHeaders", () => {
     expect(agentServiceFetchHeaders(url, env)).toBeUndefined();
   });
 
+  it("does NOT attach the token to a spoofed host that merely shares the base as a prefix", () => {
+    const prod = { base: "https://agent.run.app", token: "secret" };
+    expect(agentServiceFetchHeaders("https://agent.run.app.evil.com/steal", prod)).toBeUndefined();
+    expect(agentServiceFetchHeaders("https://agent.run.app/v1/jobs/x/artifacts/y", prod)).toEqual({
+      authorization: "Bearer secret",
+    });
+  });
+
   it("tolerates a trailing slash on the base and returns nothing when unconfigured", () => {
     const url = "http://localhost:8080/v1/jobs/abc/artifacts/z";
     expect(agentServiceFetchHeaders(url, { base: "http://localhost:8080/", token: "t" })).toEqual({

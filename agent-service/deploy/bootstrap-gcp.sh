@@ -127,6 +127,13 @@ PROXY_IP=$(gcloud compute instances describe "$PROXY_VM" --zone "$PROXY_ZONE" --
 have compute firewall-rules describe agent-allow-proxy \
   || gcloud compute firewall-rules create agent-allow-proxy \
        --network "$NETWORK" --direction INGRESS --action ALLOW --rules tcp:8888 --source-ranges "$CONNECTOR_RANGE"
+# Cloud NAT so the proxy VM (no external IP) can actually reach the allow-listed
+# domains — without this the proxy has no internet path and all egress fails.
+have compute routers describe agent-nat-router --region "$REGION" \
+  || gcloud compute routers create agent-nat-router --network "$NETWORK" --region "$REGION"
+have compute routers nats describe agent-nat --router agent-nat-router --region "$REGION" \
+  || gcloud compute routers nats create agent-nat --router agent-nat-router --region "$REGION" \
+       --auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges
 
 cat <<EOF
 
