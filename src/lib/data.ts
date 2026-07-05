@@ -236,6 +236,23 @@ export async function updateJob(id: string, data: Partial<Job>): Promise<void> {
   await col.jobs().doc(id).set(data, { merge: true });
 }
 
+/**
+ * Managed (agent-service) jobs still non-terminal and last updated before
+ * `staleBefore` — candidates for webhook-miss reconciliation.
+ */
+export async function listStuckManagedJobs(staleBefore: number, limit = 25): Promise<Job[]> {
+  const snap = await col
+    .jobs()
+    .where("agentId", "==", "agent-service")
+    .where("status", "in", ["queued", "running"])
+    .get();
+  return snap.docs
+    .map((d) => withId<Job>(d))
+    .filter((j) => j.external?.serviceJobId && (j.updatedAt ?? j.createdAt) < staleBefore)
+    .sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))
+    .slice(0, limit);
+}
+
 /** Look up the platform job that mirrors an external agent-service job. */
 export async function getJobByExternalServiceId(serviceJobId: string): Promise<Job | null> {
   const snap = await col.jobs().where("external.serviceJobId", "==", serviceJobId).limit(1).get();
