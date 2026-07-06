@@ -53,8 +53,13 @@ export async function submitManagedJobAction(input: {
   });
   if (missing.length > 0) return { error: `Missing required field: ${missing.join(", ")}` };
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-  if (!appUrl) return { error: "NEXT_PUBLIC_APP_URL must be set for webhook callbacks." };
+  // Prefer a dedicated runtime var (plain env vars are readable at runtime on
+  // Cloud Run; NEXT_PUBLIC_* can get inlined at build) and don't overload the
+  // OAuth-facing NEXT_PUBLIC_APP_URL. Fall back to it for local/dev.
+  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  if (!appUrl) {
+    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
+  }
 
   const contextFiles: AgentServiceContextFile[] = [];
   for (const itemId of input.contextItemIds ?? []) {

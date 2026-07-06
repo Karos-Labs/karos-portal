@@ -21,7 +21,8 @@ CONNECTOR_RANGE="${CONNECTOR_RANGE:-10.8.0.0/28}"
 REDIS_INSTANCE="${REDIS_INSTANCE:-agent-redis}"
 BUCKET="${BUCKET:-${PROJECT_ID}-agent-artifacts}"
 PROXY_VM="${PROXY_VM:-agent-egress-proxy}"
-PROXY_ZONE="${PROXY_ZONE:-${REGION}-a}"
+# Zone -b exists in every region; -a does NOT (e.g. europe-west1 has b/c/d only).
+PROXY_ZONE="${PROXY_ZONE:-${REGION}-b}"
 SERVICE_SA="agent-service-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 RUNNER_SA="agent-runner-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 # The platform's Cloud Run runtime service account (it calls the agent api).
