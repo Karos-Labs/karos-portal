@@ -9,10 +9,11 @@ import { AssetCard } from "@/components/asset-card";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ManagedJobCancelButton } from "@/components/managed-job-cancel";
 import { ManagedJobProgress } from "@/components/managed-job-progress";
+import { JobDeleteButton } from "@/components/job-delete";
 import { formatDateTime } from "@/lib/utils";
 
 export default async function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
+  const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const { id } = await params;
   const job = await getJob(id);
   if (!job) notFound();
@@ -40,6 +41,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
         </div>
         <div className="flex items-center gap-3">
           {job.external && inProgress && <ManagedJobCancelButton jobId={job.id} />}
+          {user.role === "KAROS_ADMIN" && <JobDeleteButton jobId={job.id} />}
           <JobStatusBadge status={job.status} />
         </div>
       </div>
