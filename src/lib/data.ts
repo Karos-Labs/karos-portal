@@ -236,6 +236,11 @@ export async function updateJob(id: string, data: Partial<Job>): Promise<void> {
   await col.jobs().doc(id).set(data, { merge: true });
 }
 
+/** Deletes the job record only — assets created by the job keep living on /assets. */
+export async function deleteJob(id: string): Promise<void> {
+  await col.jobs().doc(id).delete();
+}
+
 /**
  * Managed (agent-service) jobs still non-terminal and last updated before
  * `staleBefore` — candidates for webhook-miss reconciliation.

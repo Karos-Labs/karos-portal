@@ -60,6 +60,7 @@ function EditClientModal({
     domains: (client.domains ?? []).join(", "),
     description: client.description ?? "",
     brandVoice: client.brandVoice ?? "",
+    agentsRepoSlug: client.agentsRepoSlug ?? "",
   });
 
   function set(k: keyof typeof form, v: string) {
@@ -79,6 +80,7 @@ function EditClientModal({
         domainsCsv: form.domains,
         description: form.description.trim(),
         brandVoice: form.brandVoice.trim(),
+        agentsRepoSlug: form.agentsRepoSlug.trim().toLowerCase(),
       });
       onClose();
       router.refresh();
@@ -119,6 +121,14 @@ function EditClientModal({
         <div>
           <Label>Email domains (for auto-routing meetings)</Label>
           <Input value={form.domains} onChange={(e) => set("domains", e.target.value)} placeholder="acme.com, acmecorp.com" />
+        </div>
+        <div>
+          <Label>Lab repo slug (karos-agents clients/ folder)</Label>
+          <Input
+            value={form.agentsRepoSlug}
+            onChange={(e) => set("agentsRepoSlug", e.target.value)}
+            placeholder="e.g. xodigital — links managed runs + lab imports to the client's lab folder"
+          />
         </div>
         <div>
           <Label>About</Label>

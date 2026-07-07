@@ -17,5 +17,7 @@ export * from "./support-actions";
 export * from "./task-actions";
 export * from "./settings-actions";
 export * from "./execution-actions";
+export * from "./job-actions";
 export * from "./managed-agent-actions";
 export * from "./external-job-actions";
+export * from "./lab-output-actions";

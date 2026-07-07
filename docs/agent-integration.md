@@ -128,6 +128,18 @@ streamed as NDJSON during the run, so it survives timeouts and kills:
 4. Reject timestamps older/newer than 5 minutes (replay window).
 5. Idempotency: if the mirrored job is already terminal, acknowledge and skip.
 
+## Importing lab runs done outside the service
+
+Runs executed manually in the karos-agents lab commit their deliverables to
+`clients/<slug>/outputs/<agent>/<run>/client/` (git is the lab's store). Staff can pull those
+into the platform without re-running anything: **Clients → [client] → Agents → Import lab
+outputs**. The importer lists the client's committed runs via the GitHub API
+(`AGENTS_REPO_GITHUB_TOKEN`, read-only), downloads each item's `client/` files, re-hosts them
+in the platform's own storage, and creates one **draft asset per deliverable item**
+(caption.txt → body, first image → hero, everything linked in `meta.files`). Idempotent per
+item (`meta.labRun`), so re-importing a run only picks up new items. Requires the client's
+`agentsRepoSlug` (set in the client Edit dialog). The lab repo is never written to.
+
 ## Local dev
 
 ```bash

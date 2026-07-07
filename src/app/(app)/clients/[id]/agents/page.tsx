@@ -11,7 +11,9 @@ import {
 import { PageHeader } from "@/components/ui";
 import { AgentsHubTab } from "@/components/agents-hub-tab";
 import { ManagedProducts } from "@/components/managed-products";
+import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
+import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 
 export default async function ClientAgentsPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -34,6 +36,8 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     listClientIntegrations(id),
   ]);
   const agentServiceConfigured = isAgentServiceConfigured();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  const labImportAvailable = isStaff && isLabOutputsConfigured();
 
   return (
     <>
@@ -41,12 +45,15 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         title="AI Agents"
         description="Run agents, review drafts, and track scheduled deliverables."
         action={
-          <a
-            href={`/clients/${id}/settings`}
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-          >
-            Manage integrations →
-          </a>
+          <div className="flex items-center gap-3">
+            {labImportAvailable && <LabImportButton clientId={id} />}
+            <a
+              href={`/clients/${id}/settings`}
+              className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
+            >
+              Manage integrations →
+            </a>
+          </div>
         }
       />
       <AgentsHubTab
@@ -57,7 +64,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         contextItems={contextItems}
         integrations={integrations}
       />
-      {(user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE") && agentServiceConfigured && (
+      {isStaff && agentServiceConfigured && (
         <ManagedProducts clientId={id} contextItems={contextItems} jobs={jobs} />
       )}
     </>
