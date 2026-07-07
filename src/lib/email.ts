@@ -18,7 +18,7 @@ export async function sendEmail(input: SendEmailInput): Promise<
   { ok: true; id: string } | { ok: false; error: string }
 > {
   const key = process.env.RESEND_API_KEY;
-  const from = process.env.EMAIL_FROM || "Karos CMO <onboarding@resend.dev>";
+  const from = process.env.EMAIL_FROM || "Karos CMO <donotreply@karoslabs.com>";
   if (!key) {
     return { ok: false, error: "RESEND_API_KEY is not set" };
   }

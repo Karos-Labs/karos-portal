@@ -16,6 +16,7 @@ import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import type { AssetType, ExternalJobArtifact, JobStatus, ManagedTaskType } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
+import { recommendedScheduleFields } from "@/lib/scheduling";
 import { logger } from "@/services/logger";
 
 export const maxDuration = 120;
@@ -176,11 +177,12 @@ export async function POST(req: NextRequest) {
 
     const clientFacingCount = artifacts.filter((a) => a.clientFacing).length;
     if (clientFacingCount > 0) {
+      const assetType = ASSET_TYPE_MAP[payload.task_type] ?? "note";
       const assetId = await createAsset({
         clientId: job.clientId,
         jobId: job.id,
         agentId: "agent-service",
-        type: ASSET_TYPE_MAP[payload.task_type] ?? "note",
+        type: assetType,
         title: job.title,
         content: primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "",
         meta: {
@@ -190,6 +192,7 @@ export async function POST(req: NextRequest) {
         },
         imageUrl: primaryImageUrl,
         status: "draft",
+        ...recommendedScheduleFields(assetType),
         createdBy: "agent-service",
         createdAt: now,
         updatedAt: now,

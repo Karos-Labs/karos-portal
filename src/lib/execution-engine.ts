@@ -12,17 +12,29 @@ import { MODELS } from "@/lib/constants";
 import {
   getClientTask,
   getClient,
+  getAgent,
+  listAgents,
   updateClientTask,
   listClientTasks,
 } from "@/lib/data";
 import { sendEmail } from "@/lib/email";
+import { runAgentForTask } from "@/lib/agents/run";
 import { buildArtifactGenerationPrompt } from "@/lib/ai/prompts/proactive-assistant";
-import type { ClientTask, TaskOwner } from "@/lib/types";
+import type { Agent, AppUser, ClientTask, TaskOwner } from "@/lib/types";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
 const SONNET = anthropic(MODELS.SONNET);
 const HAIKU = anthropic(MODELS.HAIKU);
+
+/** Actor attributed to runs triggered without a user in scope (autopilot). */
+const KAROS_SYSTEM_ACTOR: AppUser = {
+  uid: "karos_system",
+  email: "system@karoslabs.com",
+  name: "Karos AI",
+  role: "KAROS_ADMIN",
+  createdAt: 0,
+};
 
 /* ── Internal helpers ────────────────────────────────────────────── */
 
@@ -49,37 +61,110 @@ function selectModel(task: ClientTask) {
   return HAIKU;
 }
 
+/**
+ * Map a task to the ecosystem agent that should execute it:
+ * 1. Explicit link — `metadata.agentId` set by the Copilot at creation time.
+ * 2. Name match — karos_managed task titles follow the dispatch-phrasing
+ *    standard ("Generate 5 posts via [Agent Name]"), so an agent whose name
+ *    appears in the title is the intended executor. Longest name wins to
+ *    disambiguate overlapping names.
+ * Returns null when no runnable (published, active, non-system) agent maps —
+ * the caller falls back to the generic artifact prompt.
+ */
+export async function resolveExecutionAgent(task: ClientTask): Promise<Agent | null> {
+  const runnable = (a: Agent | null): a is Agent =>
+    !!a && a.status === "published" && a.isActive && !a.isSystem;
+
+  const linkedAgentId = task.metadata?.agentId as string | undefined;
+  if (linkedAgentId) {
+    const linked = await getAgent(linkedAgentId);
+    if (runnable(linked)) return linked;
+  }
+
+  const agents = (await listAgents({ status: "published" })).filter(runnable);
+  const title = task.title.toLowerCase();
+  const matches = agents
+    .filter((a) => a.name.trim().length >= 3 && title.includes(a.name.trim().toLowerCase()))
+    .sort((a, b) => b.name.length - a.name.length);
+  return matches[0] ?? null;
+}
+
 /* ── Core single-task runner ─────────────────────────────────────── */
 
 /**
- * Executes a single karos_managed task via Claude:
- * - Generates an artifact (Flow A: content; Flow B: email/publish draft)
+ * Executes a single karos_managed task:
+ * - Resolves the ecosystem agent mapped to the task (Copilot `metadata.agentId`
+ *   link or dispatch-phrasing name match) and runs it via the agents engine;
+ *   falls back to the generic artifact prompt when no agent maps.
+ * - On a re-run (adjustment feedback present), feeds the agent both the
+ *   original task context AND the previous output + client feedback.
  * - Advances status to review_pending on success
- * - Records error in metadata on failure (status stays in_progress)
+ * - Records error in metadata on failure (status returns to pending)
  */
-export async function runTaskExecution(clientId: string, taskId: string): Promise<void> {
+export async function runTaskExecution(
+  clientId: string,
+  taskId: string,
+  actor: AppUser = KAROS_SYSTEM_ACTOR,
+): Promise<void> {
   const [task, client] = await Promise.all([getClientTask(taskId), getClient(clientId)]);
   if (!task || !client) return;
+  // Defense in depth: never generate with a mismatched client context.
+  if (task.clientId !== clientId) return;
 
   const taskType = resolveTaskType(task);
   const adjustmentFeedback = task.metadata?.adjustmentFeedback as string | undefined;
+  // On a re-run the prior deliverable is still on the task — it becomes the
+  // revision base so the model refines rather than regenerates from scratch.
+  const previousArtifact = adjustmentFeedback
+    ? (task.metadata?.artifact as string | undefined)
+    : undefined;
 
   try {
-    const { text } = await generateText({
-      model: selectModel(task),
-      prompt: buildArtifactGenerationPrompt(
-        task.title,
-        task.description,
-        task.source,
-        task.priority,
-        taskType,
-        client.name,
-        client.industry,
-        client.website,
-        client.brandVoice,
-        adjustmentFeedback,
-      ),
-    });
+    let artifact: string;
+    let executedBy: { agentId: string; agentName: string; jobId: string } | null = null;
+
+    // Integration actions keep the generic prompt — its "Subject:" output
+    // contract is what dispatchArtifactEmail parses.
+    const agent = taskType === "content_generation" ? await resolveExecutionAgent(task) : null;
+
+    if (agent) {
+      const input: Record<string, string> = {
+        task: task.title,
+        brief: task.description ?? "",
+        priority: task.priority,
+      };
+      if (adjustmentFeedback) {
+        input.revision_feedback = adjustmentFeedback;
+        if (previousArtifact) input.previous_version = previousArtifact;
+      }
+      const run = await runAgentForTask({
+        agent,
+        client,
+        input,
+        actor,
+        title: `Task · ${task.title.slice(0, 80)}`,
+      });
+      artifact = run.output;
+      executedBy = { agentId: agent.id, agentName: agent.name, jobId: run.jobId };
+    } else {
+      const { text } = await generateText({
+        model: selectModel(task),
+        prompt: buildArtifactGenerationPrompt(
+          task.title,
+          task.description,
+          task.source,
+          task.priority,
+          taskType,
+          client.name,
+          client.industry,
+          client.website,
+          client.brandVoice,
+          adjustmentFeedback,
+          previousArtifact,
+        ),
+      });
+      artifact = text;
+    }
 
     await updateClientTask(taskId, {
       status: "review_pending",
@@ -87,9 +172,12 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
         ...(task.metadata ?? {}),
         executing: false,
         type: taskType,
-        artifact: text,
+        artifact,
         adjustmentFeedback: null,
         executionError: null,
+        ...(executedBy
+          ? { agentId: executedBy.agentId, agentName: executedBy.agentName, jobId: executedBy.jobId }
+          : {}),
       },
       updatedAt: Date.now(),
     });

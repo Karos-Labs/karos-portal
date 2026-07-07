@@ -17,6 +17,7 @@ import {
   bumpAgentRun,
 } from "@/lib/data";
 import { sendEmail, emailShell } from "@/lib/email";
+import { recommendedScheduleFields } from "@/lib/scheduling";
 import { generatePostImage, imageGenConfigured } from "@/lib/images";
 import { CONTEXT_CAPS } from "@/lib/context";
 import { logger } from "@/services/logger";
@@ -415,6 +416,86 @@ export async function startAgentRun(params: RunParams): Promise<RunResult> {
   return { jobId, status: "running" };
 }
 
+/**
+ * Execute an agent synchronously on behalf of a task-board task and return the
+ * generated output. Persists a Job for observability (timeline, usage, run
+ * count) but deliberately skips asset creation and client email — the
+ * deliverable goes to the task's Review stage, where the approve/re-run loop
+ * owns what happens next. Images are skipped for the same reason: the task
+ * artifact is text. Throws on generation failure so the execution engine can
+ * record the error on the task.
+ */
+export async function runAgentForTask(args: {
+  agent: Agent;
+  client: Client;
+  input: Record<string, string>;
+  actor: AppUser;
+  title?: string;
+}): Promise<{ jobId: string; output: string }> {
+  const { agent, client, input, actor } = args;
+  const now = Date.now();
+  const runStart = now;
+  const events: JobRunEvent[] = [
+    { at: now, level: "info", message: `Task execution · "${agent.name}" for ${client.name}` },
+  ];
+  const jobId = await createJob({
+    ...baseJob({ agentId: agent.id, clientId: client.id, agent, client, input, actor, now, events, status: "running" }),
+    ...(args.title ? { title: args.title } : {}),
+  });
+
+  try {
+    const generated = await generateContent({
+      agent,
+      client,
+      input,
+      withImages: false,
+      imageKeyPrefix: jobId,
+      events,
+    });
+
+    logger.logUsage({
+      clientId: client.id,
+      agentId: agent.id,
+      agentName: agent.name,
+      modelName: agent.model || DEFAULT_MODEL,
+      operation: "task_execution",
+      inputTokens: generated.usage.inputTokens,
+      outputTokens: generated.usage.outputTokens,
+      jobId,
+      durationMs: Date.now() - runStart,
+    });
+
+    // Instagram-style structured output reads poorly as raw JSON in the task
+    // review panel — flatten it to a human-readable deliverable.
+    const output = generated.posts
+      ? generated.posts
+          .map(
+            (p, i) =>
+              `Post ${i + 1}\n${p.caption}\n\nHashtags: ${p.hashtags.map((h) => `#${h}`).join(" ")}\nCTA: ${p.callToAction}`,
+          )
+          .join("\n\n---\n\n")
+      : (generated.text ?? generated.rawOutput);
+
+    events.push({ at: Date.now(), level: "success", message: "Deliverable sent to task review" });
+    await updateJob(jobId, { status: "review", rawOutput: generated.rawOutput, events, updatedAt: Date.now() });
+    await bumpAgentRun(agent.id);
+    return { jobId, output };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    events.push({ at: Date.now(), level: "error", message: `Task execution failed: ${message}` });
+    logger.logError({
+      clientId: client.id,
+      agentId: agent.id,
+      operation: "task_execution",
+      errorMessage: message,
+      stackTrace: e instanceof Error ? e.stack : undefined,
+      severity: "ERROR",
+    });
+    await updateJob(jobId, { status: "failed", error: message, events, updatedAt: Date.now() });
+    throw e;
+  }
+}
+
 /** Provenance key of the imported "full digital intelligence & competitive report" agent. */
 export const INTEL_LABS_SKILL_ID = "karos-intel";
 
@@ -522,6 +603,9 @@ async function executeRun(args: {
             meta: { hashtags: p.hashtags, imageConcept: p.imageConcept, callToAction: p.callToAction },
             imageUrl: images[i],
             status: "draft",
+            // Stagger the batch across successive optimal windows (post 1 → next
+            // slot, post 2 → the one after) so a run doesn't stack on one time.
+            ...recommendedScheduleFields("instagram_post", i),
             createdBy: actor.uid,
             createdAt: Date.now(),
             updatedAt: Date.now(),
@@ -580,21 +664,23 @@ async function executeRun(args: {
     const text = generated.text ?? "";
 
     if (agent.capabilities.includes("create_assets")) {
+      const assetType =
+        agent.outputKind === "article"
+          ? ("article" as const)
+          : agent.outputKind === "email"
+            ? ("email" as const)
+            : agent.outputKind === "social_posts"
+              ? ("social_post" as const)
+              : ("note" as const);
       const id = await createAsset({
         clientId,
         jobId,
         agentId,
-        type:
-          agent.outputKind === "article"
-            ? "article"
-            : agent.outputKind === "email"
-              ? "email"
-              : agent.outputKind === "social_posts"
-                ? "social_post"
-                : "note",
+        type: assetType,
         title: input.topic || input.title || `${agent.name} output`,
         content: text,
         status: "draft",
+        ...recommendedScheduleFields(assetType),
         createdBy: actor.uid,
         createdAt: Date.now(),
         updatedAt: Date.now(),

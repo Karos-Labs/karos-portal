@@ -1,6 +1,6 @@
 import "server-only";
 
-import { generateText } from "ai";
+import { streamText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
 import type { Client } from "@/lib/types";
@@ -193,14 +193,37 @@ export async function runIntelReportPipeline(
 
   const userMessage = `Generate the complete Karos Intel Report for ${client.name}. Output ONLY the markdown report — no preamble, no explanation. Start immediately with "# Karos Intel: ${client.name}".`;
 
-  // Phase A: main report — runs alone so its connection is never competing with the
-  // document pipeline's burst of parallel research agents at startup.
-  const { text: firstPassText } = await generateText({
+  // Live-web tools: the Intel Report must operate on the client's CURRENT state.
+  // web_search + web_fetch run server-side on Anthropic's infra inside this same
+  // request — the model fetches the client's live site, verifies competitors,
+  // and checks review platforms before scoring. maxUses bounds per-run cost.
+  const liveTools = {
+    web_search: anthropic.tools.webSearch_20260209({ maxUses: 15 }),
+    web_fetch: anthropic.tools.webFetch_20260209({ maxUses: 12, maxContentTokens: 6000 }),
+  };
+
+  // Phase A: main report. streamText is used throughout (not generateText) because Anthropic
+  // starts sending response headers within ~1 second of receiving a streaming request, whereas
+  // non-streaming requests buffer the entire generation server-side before sending any headers.
+  // At 16k max tokens, non-streaming generation can exceed undici's default 5-minute
+  // headersTimeout (UND_ERR_HEADERS_TIMEOUT), causing connection resets on every retry.
+  const firstPassStream = streamText({
     model: anthropic(MODELS.SONNET),
     system: compiledPrompt,
+    tools: liveTools,
     messages: [{ role: "user", content: userMessage }],
     maxOutputTokens: DOC_MAX_TOKENS,
   });
+  const firstPassText = await firstPassStream.text;
+
+  // Live-data integrity gate: an empty/stub first pass means the generation
+  // failed upstream (auth, overload, tool errors). Fail loudly — never store
+  // an empty report as if it were a successful run.
+  if (firstPassText.trim().length < 500) {
+    throw new Error(
+      `[intel] Report generation for ${client.name} returned ${firstPassText.trim().length} chars — aborting run (no partial/stub report will be stored)`,
+    );
+  }
 
   // Detect truncation: the last real ## section in the prompt must appear in the output.
   // Excludes Change Log / Sources that the model is instructed to omit.
@@ -215,9 +238,10 @@ export async function runIntelReportPipeline(
     console.info(
       `[intel] Continuation pass triggered for ${client.name} (first pass: ${firstPassText.length} chars, missing: "${lastRequiredSection}")`,
     );
-    const { text: continuation } = await generateText({
+    const contStream = streamText({
       model: anthropic(MODELS.SONNET),
       system: compiledPrompt,
+      tools: liveTools,
       messages: [
         { role: "user", content: userMessage },
         { role: "assistant", content: text },
@@ -229,6 +253,7 @@ export async function runIntelReportPipeline(
       ],
       maxOutputTokens: DOC_MAX_TOKENS,
     });
+    const continuation = await contStream.text;
     text = text + continuation;
   }
 
@@ -254,14 +279,12 @@ export async function runIntelReportPipeline(
 
   // Phase B: background pipelines — run after the report is safely stored so their
   // concurrent connections never compete with the main report generation.
-  await Promise.all([
-    // Context-doc pipeline (non-fatal) — forward run-specific context so all sub-agents share it
-    import("./pipeline")
-      .then(({ runOnboardPipeline }) => runOnboardPipeline(clientId, runSpecificContext))
-      .catch((err: unknown) => {
-        console.error("[intel] Onboard pipeline failed (non-fatal):", err);
-      }),
-    // Branding refresh — always regenerate so the brand profile stays in sync with the Intel Report (non-fatal)
+  // The context-doc pipeline is now FATAL when it fails: those documents are the
+  // ground truth every downstream agent consumes, so a run that silently skips
+  // them must surface as failed (onboardingStatus: "failed"), not as "done".
+  // Branding stays non-fatal — it is cosmetic relative to the intel outputs.
+  const [onboardResult] = await Promise.allSettled([
+    import("./pipeline").then(({ runOnboardPipeline }) => runOnboardPipeline(clientId, runSpecificContext)),
     applyBrandingForClient(clientId, client)
       .then((r) => {
         console.info(`[intel] Branding refreshed for ${client.name} (${r.source}): ${r.primaryAccent ?? "no color"}`);
@@ -270,6 +293,14 @@ export async function runIntelReportPipeline(
         console.error("[intel] Branding generation failed (non-fatal):", err);
       }),
   ]);
+
+  if (onboardResult.status === "rejected") {
+    console.error("[intel] Context-doc pipeline failed:", onboardResult.reason);
+    throw new Error(
+      `Intel Report stored, but the context-document pipeline failed: ${onboardResult.reason instanceof Error ? onboardResult.reason.message : String(onboardResult.reason)}`,
+      { cause: onboardResult.reason },
+    );
+  }
 }
 
 /* ── HTML report generator ───────────────────────────────────────── */

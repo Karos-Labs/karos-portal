@@ -2,9 +2,8 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requireTaskAccess } from "./_shared";
 import {
-  getClientTask,
   getClient,
   updateClientTask,
   createTaskComment,
@@ -29,15 +28,14 @@ export async function startTaskExecutionAction(
   taskId: string,
   clientId: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const user = await requireUser();
-  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
-    return { ok: false, error: "Forbidden" };
-  }
-
-  const task = await getClientTask(taskId);
-  if (!task) return { ok: false, error: "Task not found" };
+  const access = await requireTaskAccess(taskId, clientId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { user, task } = access;
   if (inferOwnerEngine(task) !== "karos_managed") {
     return { ok: false, error: "Task is not karos_managed" };
+  }
+  if (task.metadata?.executing === true) {
+    return { ok: true }; // already running — don't double-trigger
   }
 
   await updateClientTask(taskId, {
@@ -46,7 +44,7 @@ export async function startTaskExecutionAction(
     updatedAt: Date.now(),
   });
 
-  after(() => runTaskExecution(clientId, taskId).catch(console.error));
+  after(() => runTaskExecution(clientId, taskId, user).catch(console.error));
   return { ok: true };
 }
 
@@ -59,13 +57,10 @@ export async function approveTaskArtifactAction(
   taskId: string,
   clientId: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const user = await requireUser();
-  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
-    return { ok: false, error: "Forbidden" };
-  }
-
-  const task = await getClientTask(taskId);
-  if (!task || task.status !== "review_pending") {
+  const access = await requireTaskAccess(taskId, clientId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { task } = access;
+  if (task.status !== "review_pending") {
     return { ok: false, error: "Task is not in review_pending state" };
   }
 
@@ -81,27 +76,27 @@ export async function approveTaskArtifactAction(
   return { ok: true };
 }
 
-/* ── Request Adjustments ─────────────────────────────────────────── */
+/* ── Request Adjustments / Re-run ────────────────────────────────── */
 
 /**
- * Client rejects the artifact with textual feedback.
- * The task returns to in_progress and Claude re-generates with the feedback injected.
+ * The Review-stage "Re-run" loop: the client leaves feedback on the artifact,
+ * the task returns to in_progress, and the mapped agent (or the generic
+ * engine) re-executes with the original context, the previous output, and the
+ * new feedback injected.
  */
 export async function requestAdjustmentsAction(
   taskId: string,
   clientId: string,
   feedback: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const user = await requireUser();
-  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
-    return { ok: false, error: "Forbidden" };
-  }
+  const access = await requireTaskAccess(taskId, clientId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { user, task } = access;
 
   const trimmed = feedback.trim();
   if (!trimmed) return { ok: false, error: "Feedback cannot be empty" };
 
-  const task = await getClientTask(taskId);
-  if (!task || task.status !== "review_pending") {
+  if (task.status !== "review_pending") {
     return { ok: false, error: "Task is not in review_pending state" };
   }
 
@@ -126,7 +121,7 @@ export async function requestAdjustmentsAction(
     updatedAt: Date.now(),
   });
 
-  after(() => runTaskExecution(clientId, taskId).catch(console.error));
+  after(() => runTaskExecution(clientId, taskId, user).catch(console.error));
   revalidatePath("/tasks");
   return { ok: true };
 }
@@ -141,13 +136,11 @@ export async function publishIntegrationAction(
   taskId: string,
   clientId: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const user = await requireUser();
-  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
-    return { ok: false, error: "Forbidden" };
-  }
+  const access = await requireTaskAccess(taskId, clientId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { user, task } = access;
 
-  const [task, client] = await Promise.all([getClientTask(taskId), getClient(clientId)]);
-  if (!task) return { ok: false, error: "Task not found" };
+  const client = await getClient(clientId);
   if (task.status !== "review_pending") {
     return { ok: false, error: "Task is not in review_pending state" };
   }

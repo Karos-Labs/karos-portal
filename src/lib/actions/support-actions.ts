@@ -20,9 +20,7 @@ export async function sendSupportEmailAction(
 
   const { name, email, subject, message } = parsed.data;
 
-  // Extract bare address from "Display Name <addr@domain>" or use as-is
-  const emailFrom = process.env.EMAIL_FROM ?? "hello@karoslabs.com";
-  const to = emailFrom.match(/<([^>]+)>/)?.[1] ?? emailFrom;
+  const to = process.env.ADMIN_EMAIL ?? "hello@karoslabs.com";
 
   const safeMessage = message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const html = `

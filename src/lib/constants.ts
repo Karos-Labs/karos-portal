@@ -25,3 +25,23 @@ export const CONDENSE_MAX_TOKENS = 8_000;
  */
 export const COMPANY_ALIAS_EMAIL =
   process.env.KAROS_COMPANY_ALIAS ?? "hello@karoslabs.com";
+
+/**
+ * Hard cap on active (pending / in_progress / review_pending) tasks per client.
+ * Enforced at every task-creation entry point: the Copilot create_tasks and
+ * fetch_gmail_context tools, the quick-add ingester, and manual creation.
+ */
+export const MAX_ACTIVE_TASKS = 10;
+
+/**
+ * Display labels for managed action-item statuses, in lifecycle order.
+ * Shared by the dashboard UI and the audit-history writers.
+ */
+export const ACTION_ITEM_STATUS_LABELS = {
+  open: "Open",
+  in_progress: "In Progress",
+  in_review: "In Review",
+  done: "Done",
+} as const;
+
+export const ACTION_ITEM_STATUSES = ["open", "in_progress", "in_review", "done"] as const;

@@ -22,6 +22,7 @@ import {
   buildCachedMessages,
   logCacheUsage,
 } from "@/lib/agents/run";
+import { recommendedScheduleFields } from "@/lib/scheduling";
 import type { AppUser, Client, Job, JobRunEvent } from "@/lib/types";
 import { pickNext } from "./picker";
 import { runQa } from "./qa";
@@ -341,6 +342,7 @@ async function executeContentEngineRun(args: {
       },
       imageUrl: cover,
       status: "draft",
+      ...recommendedScheduleFields("instagram_post"),
       createdBy: actor.uid,
       createdAt: Date.now(),
       updatedAt: Date.now(),

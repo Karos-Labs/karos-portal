@@ -4,9 +4,15 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { updateAssetAction, scheduleAssetAction, unscheduleAssetAction } from "@/lib/actions";
+import {
+  updateAssetAction,
+  scheduleAssetAction,
+  unscheduleAssetAction,
+  publishAssetNowAction,
+} from "@/lib/actions";
+import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS } from "@/lib/integrations/platforms";
 import { relativeTime, cn } from "@/lib/utils";
-import type { Asset } from "@/lib/types";
+import type { Asset, PublishMode } from "@/lib/types";
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
@@ -18,22 +24,18 @@ const TYPE_ICON: Record<string, string> = {
   note: "FileText",
 };
 
-// Which social platforms can auto-publish each asset type
-const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
-  instagram_post: ["instagram"],
-  social_post: ["twitter", "linkedin", "facebook"],
-  article: ["linkedin"],
-  email: [],
-  note: [],
+const MODE_LABELS: Record<PublishMode, string> = {
+  auto: "Auto-publish",
+  manual: "Manual push",
+  placeholder: "Placeholder",
 };
 
-const PLATFORM_LABELS: Record<string, string> = {
-  instagram: "Instagram",
-  facebook: "Facebook",
-  linkedin: "LinkedIn",
-  twitter: "X (Twitter)",
-  youtube: "YouTube",
-};
+/** epoch millis → value for <input type="datetime-local"> in the user's timezone */
+function toLocalInputValue(t: number): string {
+  const d = new Date(t);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 /* ── Status badge tone ───────────────────────────────────────────────── */
 
@@ -60,24 +62,59 @@ function ScheduleSection({
   const availablePlatforms = connectedPlatforms.filter((p) =>
     compatiblePlatforms.includes(p),
   );
+  const canAuto = availablePlatforms.length > 0;
 
-  // eslint-disable-next-line react-hooks/purity -- initial value only; component mounts once per modal open
-  const minDatetime = new Date(Date.now() + 60_000).toISOString().slice(0, 16);
-  const [datetime, setDatetime] = useState(minDatetime);
+  // eslint-disable-next-line react-hooks/purity -- initial values only; component mounts once per open
+  const now = Date.now();
+  const minDatetime = toLocalInputValue(now + 60_000);
+  // Pre-fill with the agent's recommended slot when it's still in the future.
+  const recommended =
+    asset.recommendedAt && asset.recommendedAt > now + 60_000 ? asset.recommendedAt : null;
+  const [datetime, setDatetime] = useState(
+    recommended ? toLocalInputValue(recommended) : minDatetime,
+  );
+  const [mode, setMode] = useState<PublishMode>(canAuto ? "auto" : "placeholder");
   const [platform, setPlatform] = useState(availablePlatforms[0] ?? "");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const usingRecommended = recommended != null && datetime === toLocalInputValue(recommended);
+  const showPlatformPicker = mode !== "placeholder" && availablePlatforms.length > 0;
+
+  const modeOptions: { id: PublishMode; label: string; hint: string; disabled?: boolean }[] = [
+    {
+      id: "auto",
+      label: MODE_LABELS.auto,
+      hint: "Posts automatically at the scheduled time",
+      disabled: !canAuto,
+    },
+    {
+      id: "manual",
+      label: MODE_LABELS.manual,
+      hint: "On the calendar — you push it live with Publish Now",
+    },
+    {
+      id: "placeholder",
+      label: MODE_LABELS.placeholder,
+      hint: "Calendar-only roadmap item — Karos never posts it",
+    },
+  ];
 
   async function handleSchedule() {
     if (!datetime) return;
     setBusy(true);
+    setError(null);
     try {
       await scheduleAssetAction(
         asset.id,
         new Date(datetime).getTime(),
-        platform || undefined,
+        mode === "placeholder" ? undefined : platform || undefined,
+        mode,
       );
       router.refresh();
       onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Scheduling failed");
     } finally {
       setBusy(false);
     }
@@ -86,7 +123,31 @@ function ScheduleSection({
   return (
     <div className="mt-3 space-y-2.5 rounded-md border border-border bg-surface-2 p-3">
       <p className="text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
-        Schedule for later
+        Add to content calendar
+      </p>
+
+      {/* Publishing tier */}
+      <div className="flex flex-wrap gap-1.5">
+        {modeOptions.map((opt) => (
+          <button
+            key={opt.id}
+            onClick={() => !opt.disabled && setMode(opt.id)}
+            disabled={opt.disabled}
+            title={opt.disabled ? "Connect a compatible platform to enable auto-publishing" : opt.hint}
+            className={cn(
+              "rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors",
+              mode === opt.id
+                ? "border-neon/60 bg-neon/10 text-neon"
+                : "border-border text-muted hover:text-foreground",
+              opt.disabled && "cursor-not-allowed opacity-40",
+            )}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-muted-2">
+        {modeOptions.find((o) => o.id === mode)?.hint}
       </p>
 
       <div className="flex flex-wrap items-end gap-2">
@@ -102,8 +163,8 @@ function ScheduleSection({
           />
         </div>
 
-        {/* Platform picker (only when platforms are available) */}
-        {availablePlatforms.length > 0 && (
+        {/* Platform picker (auto/manual modes with connected platforms) */}
+        {showPlatformPicker && (
           <div className="min-w-[130px]">
             <label className="mb-1 block text-[11px] text-muted-2">Platform</label>
             <select
@@ -121,7 +182,31 @@ function ScheduleSection({
         )}
       </div>
 
-      {availablePlatforms.length === 0 && compatiblePlatforms.length > 0 && (
+      {/* Agent recommendation */}
+      {recommended != null && (
+        <p className="flex items-center gap-1.5 text-[11px] text-muted-2">
+          <Icon name="Sparkles" className="h-3 w-3 shrink-0 text-neon" />
+          <span>
+            {usingRecommended ? "Using the agent-recommended slot" : "Agent recommends "}
+            {!usingRecommended && (
+              <button
+                onClick={() => setDatetime(toLocalInputValue(recommended))}
+                className="font-medium text-neon hover:underline"
+              >
+                {new Date(recommended).toLocaleString([], {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </button>
+            )}
+            {asset.recommendedReason ? ` — ${asset.recommendedReason}` : ""}
+          </span>
+        </p>
+      )}
+
+      {!canAuto && compatiblePlatforms.length > 0 && (
         <p className="text-[11px] text-muted-2">
           <Icon name="AlertCircle" className="mr-1 inline h-3 w-3 text-warning" />
           Connect{" "}
@@ -130,13 +215,14 @@ function ScheduleSection({
         </p>
       )}
 
+      {error && (
+        <p className="rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5 text-[11px] text-danger">
+          {error}
+        </p>
+      )}
+
       <div className="flex gap-2">
-        <Button
-          size="sm"
-          onClick={handleSchedule}
-          loading={busy}
-          disabled={!datetime || (compatiblePlatforms.length > 0 && availablePlatforms.length === 0)}
-        >
+        <Button size="sm" onClick={handleSchedule} loading={busy} disabled={!datetime}>
           <Icon name="CalendarClock" className="h-3.5 w-3.5" />
           Approve &amp; Schedule
         </Button>
@@ -168,7 +254,14 @@ export function AssetCard({
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
-  const hasSchedulablePlatforms = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).length > 0;
+  const [publishError, setPublishError] = useState<string | null>(asset.publishError ?? null);
+
+  // Manual push available when a connected platform can carry this asset type.
+  const compatibleConnected = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).filter((p) =>
+    (connectedPlatforms ?? []).includes(p),
+  );
+  const canPublishNow =
+    canApprove && compatibleConnected.length > 0 && asset.status !== "published";
 
   // Content-engine carousels carry their slides (each with its own photo) in
   // meta.slides; a plain post has only the single cover `asset.imageUrl`.
@@ -203,6 +296,21 @@ export function AssetCard({
     try {
       await unscheduleAssetAction(asset.id);
       router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePublishNow() {
+    setBusy(true);
+    setPublishError(null);
+    try {
+      const res = await publishAssetNowAction(asset.id, asset.scheduledPlatform);
+      if (res.ok) {
+        router.refresh();
+      } else {
+        setPublishError(res.error);
+      }
     } finally {
       setBusy(false);
     }
@@ -314,9 +422,12 @@ export function AssetCard({
           {/* Scheduled info strip */}
           {asset.status === "scheduled" && asset.scheduledAt && (
             <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5">
-              <Icon name="Clock" className="h-3.5 w-3.5 shrink-0 text-info" />
+              <Icon
+                name={asset.publishMode === "placeholder" ? "CalendarDays" : "Clock"}
+                className="h-3.5 w-3.5 shrink-0 text-info"
+              />
               <p className="text-xs text-muted-2">
-                Scheduled for{" "}
+                {MODE_LABELS[asset.publishMode ?? "auto"]} ·{" "}
                 <span className="font-medium text-foreground">
                   {new Date(asset.scheduledAt).toLocaleString([], {
                     month: "short",
@@ -325,7 +436,7 @@ export function AssetCard({
                     minute: "2-digit",
                   })}
                 </span>
-                {asset.scheduledPlatform && (
+                {asset.scheduledPlatform && asset.publishMode !== "placeholder" && (
                   <>
                     {" "}
                     on{" "}
@@ -342,6 +453,14 @@ export function AssetCard({
               >
                 Unschedule
               </button>
+            </div>
+          )}
+
+          {/* Last publish failure (manual push or auto cron) */}
+          {publishError && asset.status !== "published" && (
+            <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5">
+              <Icon name="AlertCircle" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
+              <p className="text-xs text-danger">Publish failed: {publishError}</p>
             </div>
           )}
 
@@ -362,6 +481,20 @@ export function AssetCard({
               {open ? "Collapse" : "Expand"}
             </button>
             <span className="text-xs text-muted-2">· {relativeTime(asset.createdAt)}</span>
+            {asset.status === "draft" && asset.recommendedAt && (
+              <span
+                className="inline-flex items-center gap-1 text-xs text-muted-2"
+                title={asset.recommendedReason ?? "Agent-recommended publish time"}
+              >
+                · <Icon name="Sparkles" className="h-3 w-3 text-neon/70" />
+                {new Date(asset.recommendedAt).toLocaleString([], {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </span>
+            )}
 
             <div className="ml-auto flex gap-1.5">
               {canApprove && !editing && (
@@ -377,6 +510,21 @@ export function AssetCard({
                   <Icon name="Pencil" className="h-3.5 w-3.5" />
                 </Button>
               )}
+              {canPublishNow && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handlePublishNow}
+                  loading={busy}
+                  title={`Push live now via ${
+                    PLATFORM_LABELS[asset.scheduledPlatform ?? compatibleConnected[0]] ??
+                    "the connected platform"
+                  }`}
+                >
+                  <Icon name="Send" className="h-3.5 w-3.5" />
+                  Publish Now
+                </Button>
+              )}
               {canApprove && asset.status === "draft" && !scheduling && (
                 <>
                   <Button
@@ -386,12 +534,7 @@ export function AssetCard({
                       setScheduling(true);
                       setEditing(false);
                     }}
-                    disabled={!hasSchedulablePlatforms}
-                    title={
-                      hasSchedulablePlatforms
-                        ? "Schedule for auto-publishing"
-                        : "This asset type cannot be auto-published"
-                    }
+                    title="Put this on the content calendar — auto-publish, manual push, or placeholder"
                   >
                     <Icon name="Clock" className="h-3.5 w-3.5" />
                     Schedule

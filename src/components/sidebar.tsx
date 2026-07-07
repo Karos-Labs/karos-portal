@@ -39,7 +39,7 @@ function clientViewNav(clientId: string): NavItem[] {
   return [
     { href: `/clients/${clientId}`, label: "Analytics", icon: "BarChart3", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"], exact: true },
     { href: `/clients/${clientId}/agents`, label: "AI Agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
-    { href: "/assets", label: "Library", icon: "Library", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
+    { href: `/assets?clientId=${clientId}`, label: "Library", icon: "Library", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
     { href: "/tasks", label: "Progress", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   ];
 }
@@ -302,9 +302,10 @@ export function Sidebar({
   const nav = (
     <nav className="flex flex-col gap-1">
       {items.map((item) => {
+        const itemPath = item.href.split("?")[0];
         const active = item.exact
-          ? pathname === item.href
-          : pathname === item.href || pathname.startsWith(item.href + "/");
+          ? pathname === itemPath
+          : pathname === itemPath || pathname.startsWith(itemPath + "/");
         const badge = item.href === "/registrations" && pendingCount > 0 ? pendingCount : null;
         return (
           <Link

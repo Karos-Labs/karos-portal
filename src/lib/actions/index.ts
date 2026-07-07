@@ -6,6 +6,7 @@ export * from "./client-actions";
 export * from "./agent-actions";
 export * from "./asset-actions";
 export * from "./transcript-actions";
+export * from "./action-item-actions";
 export * from "./branding-actions";
 export * from "./intel-actions";
 export * from "./competitor-actions";

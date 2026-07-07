@@ -5,7 +5,11 @@ import { useRouter } from "next/navigation";
 import { Button, Badge, Input, Label } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { saveIntegrationAction, deleteIntegrationAction } from "@/lib/actions";
+import {
+  saveIntegrationAction,
+  deleteIntegrationAction,
+  setIntegrationAutoPublishAction,
+} from "@/lib/actions";
 import { PLATFORM_REGISTRY, OAUTH_SUPPORTED_PLATFORM_IDS, type PlatformConfig } from "@/lib/integrations/platforms";
 import type { ClientIntegration, Role } from "@/lib/types";
 
@@ -136,6 +140,9 @@ function PlatformCard({
   // Connect button regardless of whether the server env vars are wired up.
   const hasOAuthSupport = OAUTH_SUPPORTED_PLATFORM_IDS.has(platform.id);
   const isConnected = !!integration;
+  // Absent flag = enabled (pre-toggle integrations keep auto-publishing).
+  const [autoPublish, setAutoPublish] = useState(integration?.autoPublish !== false);
+  const [togglingAuto, setTogglingAuto] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -153,6 +160,7 @@ function PlatformCard({
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional re-sync when integration prop changes
     setAccountName(integration?.accountName ?? "");
+    setAutoPublish(integration?.autoPublish !== false);
     const next: Record<string, string> = {};
     for (const f of platform.fields) {
       next[f.key] = f.type === "password" ? "" : (integration?.credentials[f.key] ?? "");
@@ -195,6 +203,19 @@ function PlatformCard({
       setFormError(e instanceof Error ? e.message : "Save failed — please try again.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleAutoPublishToggle() {
+    const next = !autoPublish;
+    setAutoPublish(next); // optimistic — revalidation corrects on failure
+    setTogglingAuto(true);
+    try {
+      await setIntegrationAutoPublishAction(clientId, platform.id, next);
+    } catch {
+      setAutoPublish(!next);
+    } finally {
+      setTogglingAuto(false);
     }
   }
 
@@ -269,6 +290,41 @@ function PlatformCard({
           <p className="text-[11px] text-warning/80">
             OAuth env vars not set — the button above will fail until configured.
           </p>
+        )}
+
+        {/* Three-tier publishing control: on = the cron auto-posts scheduled
+            content here; off = content goes out only via manual Publish Now. */}
+        {isConnected && (
+          <button
+            onClick={handleAutoPublishToggle}
+            disabled={togglingAuto}
+            className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-foreground/[0.03] px-3 py-2 transition-colors hover:border-border-strong disabled:opacity-60"
+            title={
+              autoPublish
+                ? "Scheduled content posts automatically at its slot"
+                : "Auto-posting is off — publish through the Publish Now button only"
+            }
+          >
+            <span className="flex items-center gap-1.5 text-xs text-muted">
+              <Icon name="Zap" className="h-3.5 w-3.5" />
+              Auto-publish scheduled content
+            </span>
+            <span
+              className={cn(
+                "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors",
+                autoPublish ? "bg-neon/80" : "bg-foreground/15",
+              )}
+              aria-checked={autoPublish}
+              role="switch"
+            >
+              <span
+                className={cn(
+                  "inline-block h-3 w-3 transform rounded-full bg-surface transition-transform",
+                  autoPublish ? "translate-x-3.5" : "translate-x-0.5",
+                )}
+              />
+            </span>
+          </button>
         )}
 
         {isConnected && (
