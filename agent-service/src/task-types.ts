@@ -32,6 +32,10 @@ export interface PromptContext {
   clientScaffolded: boolean;
 }
 
+// Agents run on Opus 4.8 for output quality parity with local Claude Code runs.
+// This is the exact model id, not the "opus" alias, so the tier is pinned.
+const AGENT_MODEL = "claude-opus-4-8";
+
 const READ_TOOLS = ["Read", "Glob", "Grep"];
 const WRITE_TOOLS = ["Write", "Edit", "TodoWrite"];
 const RESEARCH_TOOLS = ["WebSearch", "WebFetch", "Task"];
@@ -107,8 +111,8 @@ export const TASK_TYPE_CONFIGS: Record<TaskType, TaskTypeConfig> = {
     disallowedTools: COMMON_DISALLOWED,
     timeoutMs: 20 * 60 * 1000,
     maxTurns: 400,
-    maxBudgetUsd: 15,
-    model: "sonnet",
+    maxBudgetUsd: 45,
+    model: AGENT_MODEL,
     egressGroups: ["core", "research", "image_sourcing", "social_platforms"],
     buildPrompt: (spec, ctx) => `${commonPreamble(spec, ctx)}
 
@@ -135,8 +139,8 @@ Run the "karos-instagram-tiktok-content-agent" skill (products/social/instagram-
     disallowedTools: COMMON_DISALLOWED,
     timeoutMs: 15 * 60 * 1000,
     maxTurns: 250,
-    maxBudgetUsd: 10,
-    model: "sonnet",
+    maxBudgetUsd: 30,
+    model: AGENT_MODEL,
     egressGroups: ["core", "research", "fonts"],
     buildPrompt: (spec, ctx) => `${commonPreamble(spec, ctx)}
 
@@ -163,8 +167,8 @@ Run the "karos-newsletter-agent" skill (products/social/newsletter-agent/SKILL.m
     disallowedTools: COMMON_DISALLOWED,
     timeoutMs: 15 * 60 * 1000,
     maxTurns: 250,
-    maxBudgetUsd: 10,
-    model: "sonnet",
+    maxBudgetUsd: 30,
+    model: AGENT_MODEL,
     egressGroups: ["core", "research"],
     buildPrompt: (spec, ctx) => `${commonPreamble(spec, ctx)}
 
@@ -197,8 +201,8 @@ Run the "karos-blog-agent" skill (products/social/blog-agent/SKILL.md). If the c
     disallowedTools: COMMON_DISALLOWED,
     timeoutMs: 30 * 60 * 1000,
     maxTurns: 500,
-    maxBudgetUsd: 15,
-    model: "sonnet",
+    maxBudgetUsd: 45,
+    model: AGENT_MODEL,
     egressGroups: ["core", "fonts", "npm"],
     buildPrompt: (spec, ctx) => `${commonPreamble(spec, ctx)}
 
