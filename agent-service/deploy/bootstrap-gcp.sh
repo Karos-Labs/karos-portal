@@ -99,6 +99,11 @@ gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member "serviceAccount:$SERVICE_SA" --role roles/storage.objectAdmin -q >/dev/null
 gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member "serviceAccount:$RUNNER_SA" --role roles/storage.objectAdmin -q >/dev/null
+# V4 signed URLs for artifacts/transcripts. On Cloud Run there is no private key,
+# so getSignedUrl calls the IAM signBlob API — the api/worker SA must be able to
+# sign as itself. Without this, artifact upload throws and jobs dead-letter.
+gcloud iam service-accounts add-iam-policy-binding "$SERVICE_SA" \
+  --member "serviceAccount:$SERVICE_SA" --role roles/iam.serviceAccountTokenCreator -q >/dev/null
 # Worker launches runner Cloud Run Job executions, acting as the runner SA.
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member "serviceAccount:$SERVICE_SA" --role roles/run.developer --condition=None -q >/dev/null
