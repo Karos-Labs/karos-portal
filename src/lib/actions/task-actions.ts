@@ -18,7 +18,6 @@ import {
   createTaskComment,
   listAgents,
   normalizeTitleForDedup,
-  taskTitleExists,
 } from "@/lib/data";
 import { runTaskExecution, inferOwnerEngine } from "@/lib/execution-engine";
 import {
@@ -79,14 +78,8 @@ export async function createTaskAction(input: {
   const client = await getClient(input.clientId);
   if (!client) return { ok: false, error: "Client not found" };
 
-  const { activeCount } = await getTaskBoardCapacity(input.clientId);
-  if (activeCount >= MAX_ACTIVE_TASKS) {
-    return {
-      ok: false,
-      error: `Task board is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
-    };
-  }
-
+  // No capacity check: manual tasks infer client_managed, which is exempt
+  // from the karos_managed execution-queue cap.
   const id = await createClientTask({
     clientId: input.clientId,
     title: input.title.trim(),
@@ -219,13 +212,6 @@ export async function ingestCustomUserTaskAction(
   ]);
   if (!client) return { ok: false, error: "Client not found" };
 
-  if (capacity.activeCount >= MAX_ACTIVE_TASKS) {
-    return {
-      ok: false,
-      error: `Task board is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
-    };
-  }
-
   // Build a brief agent capability summary for the routing prompt
   const agentSummary = agents
     .filter((a) => !a.isSystem && a.isActive)
@@ -250,10 +236,18 @@ export async function ingestCustomUserTaskAction(
     ),
   });
 
+  // The cap bounds the Karos AI execution queue only — apply it after routing,
+  // once we know which owner the task landed on.
+  if (parsed.owner === "karos_managed" && capacity.activeCount >= MAX_ACTIVE_TASKS) {
+    return {
+      ok: false,
+      error: `The Karos AI queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
+    };
+  }
+
   // Dedup check against the AI-extracted title
   const normalizedTitle = normalizeTitleForDedup(parsed.title);
-  const exists = await taskTitleExists(clientId, normalizedTitle);
-  if (exists) {
+  if (capacity.existingTitles.has(normalizedTitle)) {
     return { ok: false, error: "A similar task already exists on your board" };
   }
 

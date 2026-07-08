@@ -6,9 +6,11 @@
 import "server-only";
 
 import { revalidatePath } from "next/cache";
-import { generateText } from "ai";
+import { generateText, generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { z } from "zod";
 import { MODELS } from "@/lib/constants";
+import { logger } from "@/services/logger";
 import {
   getClientTask,
   getClient,
@@ -62,14 +64,62 @@ function selectModel(task: ClientTask) {
 }
 
 /**
+ * Last-resort router: a cheap Haiku call that picks the best-fit agent from
+ * the catalog (or none). Exists so karos_managed work still executes through
+ * an in-system agent even when the task carries no explicit link and its
+ * title names no agent. Best-effort — any failure falls back to null.
+ */
+async function classifyAgentForTask(task: ClientTask, agents: Agent[]): Promise<Agent | null> {
+  if (agents.length === 0) return null;
+  try {
+    const catalog = agents
+      .map((a) => `- id: ${a.id} | ${a.name} — ${a.description} (output: ${a.outputKind})`)
+      .join("\n");
+    const { object, usage } = await generateObject({
+      model: HAIKU,
+      schema: z.object({
+        agentId: z
+          .string()
+          .nullable()
+          .describe("The id of the single best-fit agent, or null if none can produce this deliverable"),
+      }),
+      prompt: `You route marketing tasks to the best-fit AI execution agent.
+
+TASK: ${task.title}
+${task.description ? `CONTEXT: ${task.description}` : ""}
+CATEGORY: ${task.source.replace(/_/g, " ")}
+
+AVAILABLE AGENTS:
+${catalog}
+
+Pick the agent whose purpose and output type best matches the deliverable this task requires. Return null ONLY when no agent could plausibly produce it.`,
+    });
+    logger.logUsage({
+      clientId: task.clientId,
+      agentId: null,
+      agentName: "task_agent_router",
+      modelName: MODELS.HAIKU,
+      operation: "task_agent_routing",
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+    });
+    return agents.find((a) => a.id === object.agentId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Map a task to the ecosystem agent that should execute it:
  * 1. Explicit link — `metadata.agentId` set by the Copilot at creation time.
  * 2. Name match — karos_managed task titles follow the dispatch-phrasing
  *    standard ("Generate 5 posts via [Agent Name]"), so an agent whose name
  *    appears in the title is the intended executor. Longest name wins to
  *    disambiguate overlapping names.
- * Returns null when no runnable (published, active, non-system) agent maps —
- * the caller falls back to the generic artifact prompt.
+ * 3. Classifier — Haiku routes over the catalog so agent execution stays the
+ *    default even for unlinked tasks (legacy tasks, quick-adds).
+ * Returns null only when no runnable (published, active, non-system) agent
+ * fits — the caller falls back to the generic artifact prompt.
  */
 export async function resolveExecutionAgent(task: ClientTask): Promise<Agent | null> {
   const runnable = (a: Agent | null): a is Agent =>
@@ -86,7 +136,9 @@ export async function resolveExecutionAgent(task: ClientTask): Promise<Agent | n
   const matches = agents
     .filter((a) => a.name.trim().length >= 3 && title.includes(a.name.trim().toLowerCase()))
     .sort((a, b) => b.name.length - a.name.length);
-  return matches[0] ?? null;
+  if (matches[0]) return matches[0];
+
+  return classifyAgentForTask(task, agents);
 }
 
 /* ── Core single-task runner ─────────────────────────────────────── */
