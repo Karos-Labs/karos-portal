@@ -109,7 +109,12 @@ export const TASK_TYPE_CONFIGS: Record<TaskType, TaskTypeConfig> = {
       "Bash(tesseract:*)",
     ],
     disallowedTools: COMMON_DISALLOWED,
-    timeoutMs: 20 * 60 * 1000,
+    // 35 min (the worker kills the run at spec.timeoutMs). A full IG run —
+    // research → brand setup → Chromium slide render → caption → QA → finalize —
+    // exceeds 20 min: observed job 394e536d rendered slides but was killed at the
+    // old 20-min budget with only caption+QA left. Stays under the runner Cloud
+    // Run Job task-timeout (45m) even with the executor's +120s buffer.
+    timeoutMs: 35 * 60 * 1000,
     maxTurns: 400,
     maxBudgetUsd: 45,
     model: AGENT_MODEL,
