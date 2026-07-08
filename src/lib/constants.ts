@@ -27,11 +27,15 @@ export const COMPANY_ALIAS_EMAIL =
   process.env.KAROS_COMPANY_ALIAS ?? "hello@karoslabs.com";
 
 /**
- * Hard cap on active (pending / in_progress / review_pending) tasks per client.
+ * Hard cap on active (pending / in_progress / review_pending) KAROS-MANAGED
+ * tasks per client — this bounds the AI-agent execution queue only;
+ * client_managed tasks (OAuth onboarding, approvals, website edits) are exempt
+ * and uncapped. Set to 15 rather than 10 because a single 7-day multi-channel
+ * content-dispatch plan can legitimately exceed 10 agent tasks on its own.
  * Enforced at every task-creation entry point: the Copilot create_tasks and
- * fetch_gmail_context tools, the quick-add ingester, and manual creation.
+ * fetch_gmail_context tools and the quick-add ingester.
  */
-export const MAX_ACTIVE_TASKS = 10;
+export const MAX_ACTIVE_TASKS = 15;
 
 /**
  * Display labels for managed action-item statuses, in lifecycle order.

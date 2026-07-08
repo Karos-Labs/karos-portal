@@ -26,9 +26,9 @@ export interface ProactiveSystemContext {
   hasGmailIntegration: boolean;
   /** Whether any content assets are currently scheduled for publication. */
   hasScheduledContent: boolean;
-  /** Tasks currently active (pending / in_progress / review_pending) on the board. */
+  /** karos_managed tasks currently active (pending / in_progress / review_pending). */
   activeTaskCount: number;
-  /** The per-client active-task cap (MAX_ACTIVE_TASKS). */
+  /** The per-client cap on active karos_managed tasks (MAX_ACTIVE_TASKS). */
   maxActiveTasks: number;
 }
 
@@ -84,7 +84,7 @@ HARD RULES for these onboarding tasks:
 - Title must name the exact platform: "Connect [Platform] account to Karos"
 - owner = client_managed (OAuth requires the client's own credentials)
 - priority = high (missing channels block all content distribution to that platform)
-- Create these first in a Scan & Refresh — they take priority within the task-board capacity limit`
+- These tasks are always created in a Scan & Refresh — client_managed tasks are exempt from the Karos-managed capacity cap`
     : "";
 
   const scenarioA = hasSocial
@@ -174,18 +174,18 @@ Every \`karos_managed\` task title must use execution-dispatch language. Describ
 ### AVAILABLE AI EXECUTION AGENTS
 ${agentCatalogBlock}
 
-CRITICAL RULE: Every \`karos_managed\` task MUST either (a) name one of the agents above as the executor, or (b) describe a direct Karos staff deliverable (drafting, editing, publishing, technical fix). If neither applies, set \`owner: "client_managed"\` instead.
-AGENT LINKAGE: When an agent above will execute the task, ALWAYS pass its \`agentId\` in the \`create_tasks\` call — this is what routes execution to that agent when the task moves to In Progress. Omit \`agentId\` only for staff deliverables and \`client_managed\` tasks.
+CRITICAL RULE: karos_managed work is EXECUTED BY THE AGENTS ABOVE. Every \`karos_managed\` task MUST name one of the agents above as its executor and carry that agent's \`agentId\`. Only when no agent's purpose fits may a karos_managed task describe a direct Karos staff deliverable (editing, publishing, technical fix) — and if neither applies, set \`owner: "client_managed"\` instead.
+AGENT LINKAGE: The \`agentId\` you pass in \`create_tasks\` is what routes execution to that agent when the task moves to In Progress. Omit \`agentId\` only for staff deliverables and \`client_managed\` tasks.
 ${onboardingBlock ? `\n${onboardingBlock}` : ""}
 
-### TASK BOARD CAPACITY — HARD LIMIT
-The task board allows at most **${ctx.maxActiveTasks} active tasks** (pending, in progress, or awaiting review) per client. There are currently **${ctx.activeTaskCount} active** — **${slotsFree} slot${slotsFree === 1 ? "" : "s"} free**.
-- NEVER propose more tasks than there are free slots; rank by impact and cut the rest
-- ${slotsFree === 0 ? "The board is AT CAPACITY: do not call `create_tasks` with new tasks — tell the user to complete or approve existing tasks first" : "Anything beyond the free slots will be rejected by the platform, so prioritise ruthlessly"}
+### KAROS EXECUTION QUEUE CAPACITY — HARD LIMIT
+At most **${ctx.maxActiveTasks} active karos_managed tasks** (pending, in progress, or awaiting review) per client — this bounds the AI-agent execution queue. There are currently **${ctx.activeTaskCount} active** — **${slotsFree} slot${slotsFree === 1 ? "" : "s"} free**. \`client_managed\` tasks are exempt and uncapped.
+- NEVER propose more karos_managed tasks than there are free slots; rank by impact and cut the rest
+- ${slotsFree === 0 ? "The queue is AT CAPACITY: do not propose new karos_managed tasks — tell the user to complete or approve existing tasks first (client_managed tasks may still be created)" : "karos_managed proposals beyond the free slots will be rejected by the platform, so prioritise ruthlessly"}
 - The cap is enforced server-side; exceeding it is impossible, not just discouraged
 
 ### TASK QUALITY STANDARDS
-- Generate **up to ${Math.min(10, Math.max(slotsFree, 0))} substantive tasks** per major action trigger (never more than the free capacity above), platform onboarding tasks first
+- Generate **up to ${Math.min(10, Math.max(slotsFree, 0))} substantive karos_managed tasks** per major action trigger (never more than the free queue capacity above); client_managed tasks (e.g. platform onboarding) are additional and uncapped
 - Every task must be hyper-specific to this client — zero generic placeholders
 - Each task receives the correct **owner** field:
   - **karos_managed**: executed by Karos AI agents or staff (content creation, research, drafting, analysis, publishing)

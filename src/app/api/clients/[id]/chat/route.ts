@@ -350,12 +350,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return `Analyzed ${emails.length} operational signals — all extracted items already exist in your task board (${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped).`;
       }
 
+      // The cap bounds the Karos AI execution queue only — client_managed
+      // items pass through uncapped.
       const slotsFree = Math.max(0, MAX_ACTIVE_TASKS - activeCount);
-      if (slotsFree === 0) {
-        return `Analyzed ${emails.length} operational signals and found ${deduped.length} actionable item${deduped.length !== 1 ? "s" : ""}, but the task board is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks, then re-scan.`;
+      const karosProposed = deduped.filter((t) => t.owner === "karos_managed");
+      const clientProposed = deduped.filter((t) => t.owner !== "karos_managed");
+      const acceptedKaros = karosProposed.slice(0, slotsFree);
+      const capSkipped = karosProposed.length - acceptedKaros.length;
+      const freshTasks = [...clientProposed, ...acceptedKaros];
+
+      if (freshTasks.length === 0) {
+        return `Analyzed ${emails.length} operational signals and found ${deduped.length} actionable item${deduped.length !== 1 ? "s" : ""}, but the Karos-managed queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks, then re-scan.`;
       }
-      const freshTasks = deduped.slice(0, slotsFree);
-      const capSkipped = deduped.length - freshTasks.length;
 
       const now = Date.now();
       await Promise.all(
@@ -378,7 +384,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       const notes = [
         dupSkipped > 0 ? `${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped` : "",
-        capSkipped > 0 ? `${capSkipped} deferred — board capacity reached` : "",
+        capSkipped > 0 ? `${capSkipped} deferred — Karos-managed queue capacity reached` : "",
       ].filter(Boolean);
       const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
       return (
@@ -396,7 +402,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Call this AFTER writing your analysis response text, not before. " +
       "Use for competitor research, brand audits, content dispatch plans, or any other actionable output. " +
       "Set owner='karos_managed' for tasks Karos AI or staff will execute; 'client_managed' for tasks the client must do themselves. " +
-      `The board holds at most ${MAX_ACTIVE_TASKS} active tasks per client — proposals beyond the free capacity are rejected. ` +
+      `The Karos AI execution queue holds at most ${MAX_ACTIVE_TASKS} active karos_managed tasks per client — karos_managed proposals beyond the free capacity are rejected; client_managed tasks are uncapped. ` +
       "Pass an empty tasks array when the board already covers all observable signals.",
     inputSchema: z.object({
       tasks: z
@@ -433,12 +439,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return `All ${tasks.length} proposed task${tasks.length !== 1 ? "s" : ""} already exist in the task board — skipped to prevent duplicates.`;
       }
 
+      // The cap bounds the Karos AI execution queue only — client_managed
+      // tasks (onboarding, approvals) pass through uncapped.
       const slotsFree = Math.max(0, MAX_ACTIVE_TASKS - activeCount);
-      if (slotsFree === 0) {
-        return `Task board is at capacity (${MAX_ACTIVE_TASKS} active tasks) — no tasks created. Ask the user to complete or approve existing tasks first.`;
+      const karosProposed = deduped.filter((t) => t.owner === "karos_managed");
+      const clientProposed = deduped.filter((t) => t.owner !== "karos_managed");
+      const acceptedKaros = karosProposed.slice(0, slotsFree);
+      const capSkipped = karosProposed.length - acceptedKaros.length;
+      const freshTasks = [...clientProposed, ...acceptedKaros];
+
+      if (freshTasks.length === 0) {
+        return `Karos-managed queue is at capacity (${MAX_ACTIVE_TASKS} active tasks) — no tasks created. Ask the user to complete or approve existing tasks first.`;
       }
-      const freshTasks = deduped.slice(0, slotsFree);
-      const capSkipped = deduped.length - freshTasks.length;
 
       const now = Date.now();
       await Promise.all(
@@ -461,7 +473,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const count = freshTasks.length;
       const notes = [
         dupSkipped > 0 ? `${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped` : "",
-        capSkipped > 0 ? `${capSkipped} dropped — board capacity (${MAX_ACTIVE_TASKS} active) reached` : "",
+        capSkipped > 0 ? `${capSkipped} karos_managed dropped — AI queue capacity (${MAX_ACTIVE_TASKS} active) reached` : "",
       ].filter(Boolean);
       const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
       return `Created ${count} task${count !== 1 ? "s" : ""} in your task board${skipNote}.`;

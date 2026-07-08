@@ -1105,9 +1105,10 @@ export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
 ];
 
 /**
- * One fetch that powers both task-creation guards: how many tasks are still
- * active (for the MAX_ACTIVE_TASKS cap) and the normalized titles of every
- * existing task — completed included — for deduplication.
+ * One fetch that powers both task-creation guards: how many KAROS-MANAGED
+ * tasks are still active (for the MAX_ACTIVE_TASKS cap — client_managed tasks
+ * are exempt and uncapped) and the normalized titles of every existing task —
+ * completed included — for deduplication.
  */
 export async function getTaskBoardCapacity(clientId: string): Promise<{
   activeCount: number;
@@ -1115,8 +1116,12 @@ export async function getTaskBoardCapacity(clientId: string): Promise<{
 }> {
   const existing = await listClientTasks({ clientId, limit: 500 });
   const active = new Set<TaskStatus>(ACTIVE_TASK_STATUSES);
+  // Owner inference mirrors inferOwnerEngine (execution-engine.ts) — kept
+  // inline because data.ts sits below the engine in the import graph.
+  const isKarosManaged = (t: ClientTask) =>
+    (t.owner ?? (t.source === "manual" ? "client_managed" : "karos_managed")) === "karos_managed";
   return {
-    activeCount: existing.filter((t) => active.has(t.status)).length,
+    activeCount: existing.filter((t) => active.has(t.status) && isKarosManaged(t)).length,
     existingTitles: new Set(existing.map((t) => normalizeTitleForDedup(t.title))),
   };
 }
