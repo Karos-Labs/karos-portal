@@ -5,8 +5,13 @@ import { Icon } from "@/components/icon";
 import { AssetCard } from "@/components/asset-card";
 import { AssetsView } from "@/components/assets-view";
 
-export default async function AssetsPage() {
+export default async function AssetsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ clientId?: string }>;
+}) {
   const user = await requireUser();
+  const { clientId: viewClientId } = await searchParams;
 
   if (user.role === "CLIENT_USER") {
     if (!user.clientId) {
@@ -29,7 +34,22 @@ export default async function AssetsPage() {
   }
 
   const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
-  const [allAssets, clients] = await Promise.all([listAssets(), listClients(employeeFilter)]);
+  const clients = await listClients(employeeFilter);
+
+  // Staff arriving via the sidebar's "View as client" nav get the same
+  // library/calendar toggle a client sees, scoped to that one client.
+  const viewClient = viewClientId ? clients.find((c) => c.id === viewClientId) : undefined;
+  if (viewClient) {
+    const clientAssets = await listAssets({ clientId: viewClient.id });
+    return (
+      <>
+        <PageHeader title={`${viewClient.name} — Library`} description="Content library and delivery calendar." />
+        <AssetsView assets={clientAssets} />
+      </>
+    );
+  }
+
+  const allAssets = await listAssets();
   const clientIds = new Set(clients.map((c) => c.id));
   const assets = user.role === "KAROS_EMPLOYEE" ? allAssets.filter((a) => clientIds.has(a.clientId)) : allAssets;
   const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "Unknown";

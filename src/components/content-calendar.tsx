@@ -7,11 +7,21 @@ import type { Asset } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
 
+/**
+ * kind maps the three-tier publishing flow (+ agent suggestions) onto chips:
+ *   published   — went live (auto cron or Publish Now)
+ *   scheduled   — auto/manual item awaiting its slot
+ *   placeholder — calendar-only roadmap entry (never auto-posted)
+ *   suggested   — draft with an agent-recommended slot, not yet scheduled
+ */
+type EventKind = "published" | "scheduled" | "placeholder" | "suggested";
+
 interface CalendarEvent {
   assetId: string;
   title: string;
   scheduledAt: number;
-  status: "scheduled" | "published";
+  kind: EventKind;
+  mode?: string;
   agentColor: string;
   platform?: string;
 }
@@ -35,45 +45,77 @@ const PLATFORM_COLORS: Record<string, string> = {
 
 /* ── Event builder ───────────────────────────────────────────────────── */
 
+function eventKind(a: Asset): EventKind | null {
+  if (a.status === "published" && (a.scheduledAt != null || a.publishedAt != null)) return "published";
+  if (a.status === "scheduled" && a.scheduledAt != null) {
+    return a.publishMode === "placeholder" ? "placeholder" : "scheduled";
+  }
+  // Draft with an agent-recommended slot — advisory until someone schedules it.
+  if (a.status === "draft" && a.recommendedAt != null) return "suggested";
+  return null;
+}
+
 function buildEvents(assets: Asset[]): CalendarEvent[] {
   return assets
-    .filter(
-      (a): a is Asset & { scheduledAt: number } =>
-        (a.status === "scheduled" || a.status === "published") && a.scheduledAt != null,
-    )
-    .map((a) => {
+    .map((a): CalendarEvent | null => {
+      const kind = eventKind(a);
+      if (!kind) return null;
       const platformColor = a.scheduledPlatform ? PLATFORM_COLORS[a.scheduledPlatform] : undefined;
+      const at =
+        kind === "suggested"
+          ? a.recommendedAt!
+          : (a.scheduledAt ?? a.publishedAt!);
       return {
         assetId: a.id,
         title: a.title,
-        scheduledAt: a.scheduledAt,
-        status: a.status as "scheduled" | "published",
+        scheduledAt: at,
+        kind,
+        mode: a.publishMode,
         agentColor: platformColor ?? "#FF6B2C",
         platform: a.scheduledPlatform,
       };
     })
+    .filter((e): e is CalendarEvent => e != null)
     .sort((a, b) => a.scheduledAt - b.scheduledAt);
 }
 
 /* ── Event chip ──────────────────────────────────────────────────────── */
 
+/** Chip styling per kind: published = live green, scheduled = upcoming info,
+    placeholder = neutral roadmap entry, suggested = faint advisory. */
+const KIND_CHIP_CLASS: Record<EventKind, string> = {
+  published: "bg-success/15 text-success",
+  scheduled: "border border-dashed border-info/50 bg-info/10 text-info",
+  placeholder: "border border-dashed border-muted-2/50 bg-foreground/[0.04] text-muted",
+  suggested: "border border-dotted border-neon/40 bg-neon/5 text-muted-2 italic",
+};
+
+const KIND_TOOLTIP: Record<EventKind, string> = {
+  published: "Published",
+  scheduled: "Scheduled",
+  placeholder: "Placeholder (not auto-posted)",
+  suggested: "Agent-suggested slot (draft)",
+};
+
+const MODE_TOOLTIP: Record<string, string> = {
+  auto: "auto-publish",
+  manual: "manual push",
+};
+
 function EventChip({ event }: { event: CalendarEvent }) {
-  const isScheduled = event.status === "scheduled";
   const timeStr = new Date(event.scheduledAt).toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
   });
+  const modeStr = event.kind === "scheduled" && event.mode ? MODE_TOOLTIP[event.mode] : undefined;
 
-  /* Status is the judgment: scheduled = slate (upcoming), published = green (live). */
   return (
     <div
       className={cn(
         "flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-default",
-        isScheduled
-          ? "border border-dashed border-info/50 bg-info/10 text-info"
-          : "bg-success/15 text-success",
+        KIND_CHIP_CLASS[event.kind],
       )}
-      title={`${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""}`}
+      title={`${KIND_TOOLTIP[event.kind]}${modeStr ? ` · ${modeStr}` : ""} — ${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""}`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{event.title}</span>
@@ -94,8 +136,11 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
   const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
   const totalCells = Math.ceil((firstDayOfWeek + totalDays) / 7) * 7;
 
-  const scheduledCount = events.filter((e) => e.status === "scheduled").length;
-  const publishedCount = events.filter((e) => e.status === "published").length;
+  const scheduledCount = events.filter(
+    (e) => e.kind === "scheduled" || e.kind === "placeholder",
+  ).length;
+  const publishedCount = events.filter((e) => e.kind === "published").length;
+  const suggestedCount = events.filter((e) => e.kind === "suggested").length;
 
   function eventsForDay(day: number): CalendarEvent[] {
     return events.filter((e) => {
@@ -143,9 +188,13 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
             <p className="text-sm font-medium leading-tight">Content Calendar</p>
             <p className="text-[11px] text-muted-2">
               {isEmpty && "Nothing scheduled yet"}
-              {scheduledCount > 0 && `${scheduledCount} scheduled`}
-              {scheduledCount > 0 && publishedCount > 0 && " · "}
-              {publishedCount > 0 && `${publishedCount} published`}
+              {[
+                scheduledCount > 0 ? `${scheduledCount} scheduled` : null,
+                publishedCount > 0 ? `${publishedCount} published` : null,
+                suggestedCount > 0 ? `${suggestedCount} suggested` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </p>
           </div>
         </div>
@@ -231,14 +280,22 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
       </div>
 
       {/* Legend */}
-      <div className="flex items-center gap-5 border-t border-border px-4 py-2">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
         <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <div className="h-2.5 w-3.5 rounded-sm border border-dashed border-muted-2 opacity-60" />
+          <div className="h-2.5 w-3.5 rounded-sm border border-dashed border-info/60 bg-info/10" />
           Scheduled
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
           <div className="h-2.5 w-3.5 rounded-sm bg-success opacity-80" />
           Published
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
+          <div className="h-2.5 w-3.5 rounded-sm border border-dashed border-muted-2/60 bg-foreground/[0.04]" />
+          Placeholder
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
+          <div className="h-2.5 w-3.5 rounded-sm border border-dotted border-neon/50 bg-neon/5" />
+          Suggested
         </div>
       </div>
     </div>

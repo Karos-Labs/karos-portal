@@ -44,8 +44,14 @@ agents run in the external agent service — see the agent-service section of
 ## 4. Resend (emailing clients)
 
 1. Create a key at <https://resend.com> → `RESEND_API_KEY`.
-2. Verify a sending domain and set `EMAIL_FROM` (e.g. `Karos CMO <hello@yourdomain.com>`).
-   For quick tests you can use `onboarding@resend.dev`.
+2. Verify a sending domain and set `EMAIL_FROM` to a do-not-reply address on it, e.g.
+   `Karos CMO <donotreply@yourdomain.com>`. All outbound mail (agent deliveries, client
+   replies, execution notifications) goes through `sendEmail()` in `src/lib/email.ts`, so
+   this one var controls the sender everywhere. For quick tests you can use
+   `onboarding@resend.dev`.
+3. Set `ADMIN_EMAIL` to a real, monitored inbox (e.g. `hello@yourdomain.com`) — this is
+   where support requests and copilot escalations are delivered. Keep it separate from
+   `EMAIL_FROM` since replies to the do-not-reply address won't be seen.
 
 ## 5. Fireflies (transcript ingestion)
 

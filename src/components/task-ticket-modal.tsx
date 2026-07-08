@@ -68,9 +68,11 @@ const ROLE_LABEL: Record<string, string> = {
 function ArtifactSection({
   artifact,
   taskType,
+  agentName,
 }: {
   artifact: string;
   taskType: string;
+  agentName?: string;
 }) {
   const isEmailArtifact = taskType === "integration_action";
 
@@ -83,6 +85,12 @@ function ArtifactSection({
         <p className="text-xs font-semibold text-neon">
           {isEmailArtifact ? "Draft Email" : "Generated Deliverable"}
         </p>
+        {agentName && (
+          <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-neon/25 bg-neon/10 px-2 py-0.5 text-[10px] font-medium text-neon">
+            <Icon name="Bot" className="h-2.5 w-2.5" />
+            {agentName}
+          </span>
+        )}
       </div>
       <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
         <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
@@ -237,7 +245,7 @@ function ReviewPanel({
               ) : (
                 <Icon name="RefreshCw" className="h-3 w-3" />
               )}
-              {adjusting ? "Sending…" : "Send & Re-generate"}
+              {adjusting ? "Re-running…" : "Re-run"}
             </button>
           </div>
         </form>
@@ -445,6 +453,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   const initialPlan = (task.metadata?.aiPlan as string | undefined) ?? null;
   const artifact = (task.metadata?.artifact as string | undefined) ?? null;
   const taskType = (task.metadata?.type as string | undefined) ?? "content_generation";
+  const executingAgentName = (task.metadata?.agentName as string | undefined) ?? undefined;
   const isReviewPending = task.status === "review_pending";
   const isExecuting = task.metadata?.executing === true;
   const failedUpload = task.metadata?.failedUpload as boolean | undefined;
@@ -571,7 +580,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
 
           {/* Generated artifact (review_pending only) */}
           {isReviewPending && artifact && !isExecuting && (
-            <ArtifactSection artifact={artifact} taskType={taskType} />
+            <ArtifactSection artifact={artifact} taskType={taskType} agentName={executingAgentName} />
           )}
 
           {/* Review / approval panel (review_pending only) */}

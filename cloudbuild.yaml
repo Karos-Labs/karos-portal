@@ -134,7 +134,7 @@ steps:
       # (both empty until the agent service is deployed; the managed-products UI
       # stays hidden until AGENT_SERVICE_URL is set). NEXT_PUBLIC_APP_URL is the
       # webhook callback base.
-      - --set-env-vars=EMAIL_FROM=Karos CMO <hello@karoslabs.com>,NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},NEXT_PUBLIC_APP_URL=${_APP_URL}
+      - --set-env-vars=EMAIL_FROM=Karos CMO <donotreply@karoslabs.com>,ADMIN_EMAIL=hello@karoslabs.com,NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},NEXT_PUBLIC_APP_URL=${_APP_URL}
     waitFor: [docker-push]
 
 images:

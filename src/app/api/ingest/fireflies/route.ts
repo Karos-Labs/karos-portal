@@ -55,6 +55,14 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await ingestTranscript(transcript, "fireflies");
+    if (result.duplicate) {
+      return NextResponse.json({
+        ok: true,
+        skipped: true,
+        reason: "Duplicate — same recording or same title + timestamp already ingested",
+        id: result.id,
+      });
+    }
 
     // Append meeting signal to the matched client's intel context docs
     if (result.clientId) {

@@ -12,7 +12,6 @@ import {
   listClientContextDocs,
   listJobs,
   listAssets,
-  listClientTasks,
   updateClient,
   upsertClientContextDoc,
   getClientContextDoc,
@@ -20,6 +19,7 @@ import {
   markIntegrationExpired,
   createClientTask,
   deleteAllClientTasks,
+  getTaskBoardCapacity,
   normalizeTitleForDedup,
   chargeClientCredits,
   getClientCredits,
@@ -34,7 +34,7 @@ import { brandingToContextDocContent } from "@/lib/branding";
 import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
 import { logger } from "@/services/logger";
 import type { BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
-import { MODELS } from "@/lib/constants";
+import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 
 export const maxDuration = 60;
 
@@ -58,7 +58,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   };
   const messages = (body.messages ?? []) as ModelMessage[];
 
-  const [client, report, competitors, contextDocs, jobs, assets, integrations] =
+  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity] =
     await Promise.all([
       getClient(clientId),
       getClientReport(clientId),
@@ -67,6 +67,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       listJobs({ clientId }),
       listAssets({ clientId }),
       listClientIntegrations(clientId),
+      getTaskBoardCapacity(clientId),
     ]);
 
   if (!client) {
@@ -140,6 +141,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       linkedSocialPlatforms,
       hasGmailIntegration: !!googleIntegration,
       hasScheduledContent,
+      activeTaskCount: boardCapacity.activeCount,
+      maxActiveTasks: MAX_ACTIVE_TASKS,
     }) +
     creditsAppendix;
 
@@ -336,17 +339,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       // Dedup against ALL existing tasks (every status: pending, in_progress,
       // review_pending, completed) so we never recreate work that is already
-      // tracked or was recently finished.
-      const existingTasks = await listClientTasks({ clientId, limit: 500 });
-      const existingNorm = new Set(existingTasks.map((t) => normalizeTitleForDedup(t.title)));
-      const freshTasks = extracted.tasks.filter(
-        (t) => !existingNorm.has(normalizeTitleForDedup(t.title)),
+      // tracked or was recently finished — then enforce the active-task cap.
+      const { activeCount, existingTitles } = await getTaskBoardCapacity(clientId);
+      const deduped = extracted.tasks.filter(
+        (t) => !existingTitles.has(normalizeTitleForDedup(t.title)),
       );
-      const skipped = extracted.tasks.length - freshTasks.length;
+      const dupSkipped = extracted.tasks.length - deduped.length;
 
-      if (freshTasks.length === 0) {
-        return `Analyzed ${emails.length} operational signals — all extracted items already exist in your task board (${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped).`;
+      if (deduped.length === 0) {
+        return `Analyzed ${emails.length} operational signals — all extracted items already exist in your task board (${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped).`;
       }
+
+      const slotsFree = Math.max(0, MAX_ACTIVE_TASKS - activeCount);
+      if (slotsFree === 0) {
+        return `Analyzed ${emails.length} operational signals and found ${deduped.length} actionable item${deduped.length !== 1 ? "s" : ""}, but the task board is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks, then re-scan.`;
+      }
+      const freshTasks = deduped.slice(0, slotsFree);
+      const capSkipped = deduped.length - freshTasks.length;
 
       const now = Date.now();
       await Promise.all(
@@ -367,7 +376,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ),
       );
 
-      const skipNote = skipped > 0 ? ` (${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped)` : "";
+      const notes = [
+        dupSkipped > 0 ? `${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped` : "",
+        capSkipped > 0 ? `${capSkipped} deferred — board capacity reached` : "",
+      ].filter(Boolean);
+      const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
       return (
         `Analyzed ${emails.length} operational signals and created ${freshTasks.length} task${freshTasks.length !== 1 ? "s" : ""}${skipNote}:\n` +
         freshTasks.map((t, i) => `${i + 1}. [${t.priority.toUpperCase()}] ${t.title}`).join("\n")
@@ -382,7 +395,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Persist one or more structured tasks to the client's task board after you have completed your analysis. " +
       "Call this AFTER writing your analysis response text, not before. " +
       "Use for competitor research, brand audits, content dispatch plans, or any other actionable output. " +
-      "Set owner='karos_managed' for tasks Karos AI or staff will execute; 'client_managed' for tasks the client must do themselves.",
+      "Set owner='karos_managed' for tasks Karos AI or staff will execute; 'client_managed' for tasks the client must do themselves. " +
+      `The board holds at most ${MAX_ACTIVE_TASKS} active tasks per client — proposals beyond the free capacity are rejected. ` +
+      "Pass an empty tasks array when the board already covers all observable signals.",
     inputSchema: z.object({
       tasks: z
         .array(
@@ -398,23 +413,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               .describe("karos_managed = Karos AI/staff executes; client_managed = client must do it"),
           }),
         )
-        .min(1)
         .max(10),
     }),
     execute: async ({ tasks }) => {
+      if (tasks.length === 0) {
+        return "No new tasks created — the task board already covers all observable signals.";
+      }
+
       // Dedup against ALL existing tasks (every status: pending, in_progress,
       // review_pending, completed) so we never recreate work that is already
-      // tracked or was recently finished.
-      const existingTasks = await listClientTasks({ clientId, limit: 500 });
-      const existingNorm = new Set(existingTasks.map((t) => normalizeTitleForDedup(t.title)));
-      const freshTasks = tasks.filter(
-        (t) => !existingNorm.has(normalizeTitleForDedup(t.title)),
+      // tracked or was recently finished — then enforce the active-task cap.
+      const { activeCount, existingTitles } = await getTaskBoardCapacity(clientId);
+      const deduped = tasks.filter(
+        (t) => !existingTitles.has(normalizeTitleForDedup(t.title)),
       );
-      const skipped = tasks.length - freshTasks.length;
+      const dupSkipped = tasks.length - deduped.length;
 
-      if (freshTasks.length === 0) {
+      if (deduped.length === 0) {
         return `All ${tasks.length} proposed task${tasks.length !== 1 ? "s" : ""} already exist in the task board — skipped to prevent duplicates.`;
       }
+
+      const slotsFree = Math.max(0, MAX_ACTIVE_TASKS - activeCount);
+      if (slotsFree === 0) {
+        return `Task board is at capacity (${MAX_ACTIVE_TASKS} active tasks) — no tasks created. Ask the user to complete or approve existing tasks first.`;
+      }
+      const freshTasks = deduped.slice(0, slotsFree);
+      const capSkipped = deduped.length - freshTasks.length;
 
       const now = Date.now();
       await Promise.all(
@@ -435,7 +459,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
 
       const count = freshTasks.length;
-      const skipNote = skipped > 0 ? ` (${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped)` : "";
+      const notes = [
+        dupSkipped > 0 ? `${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped` : "",
+        capSkipped > 0 ? `${capSkipped} dropped — board capacity (${MAX_ACTIVE_TASKS} active) reached` : "",
+      ].filter(Boolean);
+      const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
       return `Created ${count} task${count !== 1 ? "s" : ""} in your task board${skipNote}.`;
     },
   });

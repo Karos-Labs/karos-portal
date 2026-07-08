@@ -17,6 +17,7 @@ import {
   type LabRun,
 } from "@/lib/lab-outputs";
 import { uploadBytes } from "@/lib/storage";
+import { recommendedScheduleFields } from "@/lib/scheduling";
 import { logActivity, requireStaff } from "./_shared";
 
 const CONTENT_CHAR_CAP = 100_000;
@@ -171,6 +172,8 @@ export async function importLabRunAction(input: {
         },
         imageUrl,
         status: "draft",
+        // `created` staggers the batch across successive optimal windows.
+        ...recommendedScheduleFields(guessAssetType(input.agentFolder), created),
         createdBy: ctx.user.uid,
         createdAt: now,
         updatedAt: now,

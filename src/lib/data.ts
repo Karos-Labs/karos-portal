@@ -4,6 +4,7 @@ import { cache } from "react";
 import { adminDb } from "@/lib/firebase/admin";
 import type {
   AccessToken,
+  ActionItem,
   ActionItemNotification,
   ActivityLog,
   Feedback,
@@ -67,6 +68,8 @@ const col = {
   // Client usage credits: balance doc per client (doc ID = clientId) + append-only ledger.
   clientCredits: () => adminDb().collection("clientCredits"),
   creditLedger: () => adminDb().collection("creditLedger"),
+  // Managed meeting action items (status / assignee / comments / audit history).
+  actionItems: () => adminDb().collection("actionItems"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -261,24 +264,45 @@ export async function updateAsset(id: string, data: Partial<Asset>): Promise<voi
  * All assets with status="scheduled" whose scheduledAt is at or before `before` (default: now).
  * Sorted oldest-first so the cron processes in chronological order.
  * Pass `limit` to cap the batch size and bound each cron tick's execution time.
+ * Pass `autoOnly` (the cron does) to exclude manual-push and placeholder items —
+ * those live on the calendar but must never be auto-posted. Legacy assets with no
+ * publishMode predate the three-tier flow and keep their original auto behavior.
  */
-export async function listScheduledAssets(opts?: { before?: number; limit?: number }): Promise<Asset[]> {
+export async function listScheduledAssets(opts?: {
+  before?: number;
+  limit?: number;
+  autoOnly?: boolean;
+}): Promise<Asset[]> {
   const before = opts?.before ?? Date.now();
   const snap = await col.assets().where("status", "==", "scheduled").get();
   const due = snap.docs
     .map((d) => withId<Asset>(d))
     .filter((a) => a.scheduledAt != null && a.scheduledAt <= before)
+    .filter((a) => !opts?.autoOnly || a.publishMode === "auto" || a.publishMode == null)
     .sort((a, b) => (a.scheduledAt ?? 0) - (b.scheduledAt ?? 0));
   return opts?.limit != null ? due.slice(0, opts.limit) : due;
 }
 
-/** Clear scheduledAt + scheduledPlatform and revert status to draft. */
+/** Record a successful platform push: status → published, stamp publishedAt, clear any stale error. */
+export async function markAssetPublished(id: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.assets().doc(id).update({
+    status: "published",
+    publishedAt: Date.now(),
+    publishError: FieldValue.delete(),
+    updatedAt: Date.now(),
+  });
+}
+
+/** Clear the schedule (time, platform, mode, last error) and revert status to draft. */
 export async function clearAssetSchedule(id: string): Promise<void> {
   const { FieldValue } = await import("firebase-admin/firestore");
   await col.assets().doc(id).update({
     status: "draft",
     scheduledAt: FieldValue.delete(),
     scheduledPlatform: FieldValue.delete(),
+    publishMode: FieldValue.delete(),
+    publishError: FieldValue.delete(),
     updatedAt: Date.now(),
   });
 }
@@ -319,6 +343,78 @@ export async function updateTranscript(id: string, data: Partial<Transcript>): P
 export async function getTranscriptByExternalId(externalId: string): Promise<Transcript | null> {
   const snap = await col.transcripts().where("externalId", "==", externalId).limit(1).get();
   return snap.empty ? null : withId<Transcript>(snap.docs[0]);
+}
+
+/** Normalize a meeting title for duplicate comparison (case/whitespace-insensitive). */
+export function normalizeMeetingTitle(title: string): string {
+  return title.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Find an already-ingested transcript that is the SAME meeting as the given one.
+ *
+ * Duplicate rule: a meeting is a duplicate only when
+ *   (a) the provider externalId matches — same Fireflies recording, always the
+ *       same meeting; or
+ *   (b) BOTH the normalized title AND the meeting timestamp match.
+ * Title alone is never enough: recurring meetings ("Weekly Sync") share a title
+ * but have different timestamps and must each be ingested.
+ */
+export async function findDuplicateTranscript(input: {
+  externalId?: string;
+  title: string;
+  meetingDate?: number;
+}): Promise<Transcript | null> {
+  if (input.externalId) {
+    const byExternalId = await getTranscriptByExternalId(input.externalId);
+    if (byExternalId) return byExternalId;
+  }
+  // Without a timestamp we cannot confirm it's the same occurrence — not a duplicate.
+  if (input.meetingDate == null) return null;
+
+  const snap = await col.transcripts().where("meetingDate", "==", input.meetingDate).get();
+  const wanted = normalizeMeetingTitle(input.title);
+  for (const doc of snap.docs) {
+    const t = withId<Transcript>(doc);
+    if (normalizeMeetingTitle(t.title) === wanted) return t;
+  }
+  return null;
+}
+
+/* ---------------------- managed action items ----------------------- */
+
+/** Deterministic doc id — makes ingestion/webhook retries idempotent. */
+export function actionItemDocId(transcriptId: string, sourceIndex: number): string {
+  return `${transcriptId}_${sourceIndex}`;
+}
+
+export async function getActionItem(id: string): Promise<ActionItem | null> {
+  const doc = await col.actionItems().doc(id).get();
+  return doc.exists ? withId<ActionItem>(doc) : null;
+}
+
+/** Create (or overwrite-merge) an action item at its deterministic id. */
+export async function setActionItem(id: string, data: Omit<ActionItem, "id">): Promise<void> {
+  await col.actionItems().doc(id).set(data, { merge: true });
+}
+
+export async function updateActionItem(id: string, data: Partial<ActionItem>): Promise<void> {
+  await col.actionItems().doc(id).set(data, { merge: true });
+}
+
+/** All managed action items currently assigned to a user, newest meeting first. */
+export async function listActionItemsByAssignee(userId: string): Promise<ActionItem[]> {
+  const snap = await col.actionItems().where("assigneeUserId", "==", userId).get();
+  return snap.docs
+    .map((d) => withId<ActionItem>(d))
+    .sort((a, b) => (b.meetingDate ?? b.createdAt) - (a.meetingDate ?? a.createdAt));
+}
+
+export async function listActionItemsForTranscript(transcriptId: string): Promise<ActionItem[]> {
+  const snap = await col.actionItems().where("transcriptId", "==", transcriptId).get();
+  return snap.docs
+    .map((d) => withId<ActionItem>(d))
+    .sort((a, b) => a.sourceIndex - b.sourceIndex);
 }
 
 /* -------------------------- context items -------------------------- */
@@ -574,6 +670,19 @@ export async function markIntegrationExpired(clientId: string, platform: string)
   const docId = `${clientId}_${platform}`;
   await col.clientIntegrations().doc(docId).set(
     { status: "expired", expiredAt: Date.now() },
+    { merge: true },
+  );
+}
+
+/** Toggle whether the publish cron may auto-post to this platform (Publish Now always works). */
+export async function setIntegrationAutoPublish(
+  clientId: string,
+  platform: string,
+  enabled: boolean,
+): Promise<void> {
+  const docId = `${clientId}_${platform}`;
+  await col.clientIntegrations().doc(docId).set(
+    { autoPublish: enabled, updatedAt: Date.now() },
     { merge: true },
   );
 }
@@ -984,6 +1093,32 @@ export async function listCreditLedger(clientId: string, limit = 50): Promise<Cr
     .map((d) => withId<CreditLedgerEntry>(d))
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, limit);
+}
+
+/* ─────────────────────── Task capacity helper ───────────────────── */
+
+/** Statuses that count against the per-client active-task cap. */
+export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
+  "pending",
+  "in_progress",
+  "review_pending",
+];
+
+/**
+ * One fetch that powers both task-creation guards: how many tasks are still
+ * active (for the MAX_ACTIVE_TASKS cap) and the normalized titles of every
+ * existing task — completed included — for deduplication.
+ */
+export async function getTaskBoardCapacity(clientId: string): Promise<{
+  activeCount: number;
+  existingTitles: Set<string>;
+}> {
+  const existing = await listClientTasks({ clientId, limit: 500 });
+  const active = new Set<TaskStatus>(ACTIVE_TASK_STATUSES);
+  return {
+    activeCount: existing.filter((t) => active.has(t.status)).length,
+    existingTitles: new Set(existing.map((t) => normalizeTitleForDedup(t.title))),
+  };
 }
 
 /* ─────────────────────── Deduplication helper ───────────────────── */

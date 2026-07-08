@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listClients, listJobs, listAssets, listTranscripts } from "@/lib/data";
+import { listClients, listJobs, listAssets, listTranscripts, listActionItemsByAssignee, listUsers } from "@/lib/data";
 import { Card, CardTitle, StatCard, Badge, EmptyState, Button, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { JobStatusBadge } from "@/components/job-status";
+import { MyActionItems } from "@/components/my-action-items";
 import { relativeTime } from "@/lib/utils";
 import { AGENT_SERVICE_AGENT_ID, MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 
@@ -15,9 +16,21 @@ export default async function DashboardPage() {
     redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
   }
 
+  // Managed action items — admin-only view for now (see action-item-actions.ts
+  // for the client rollout note).
+  const isAdmin = user.role === "KAROS_ADMIN";
   const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
-  const [clients, jobs] = await Promise.all([listClients(employeeFilter), listJobs()]);
+  const [clients, jobs, myActionItems, allUsers] = await Promise.all([
+    listClients(employeeFilter),
+    listJobs(),
+    isAdmin ? listActionItemsByAssignee(user.uid) : Promise.resolve([]),
+    isAdmin ? listUsers() : Promise.resolve([]),
+  ]);
   const managedJobs = jobs.filter((j) => j.agentId === AGENT_SERVICE_AGENT_ID);
+  // Reassignment targets: active staff only.
+  const staffUsers = allUsers.filter(
+    (u) => !u.disabled && (u.role === "KAROS_ADMIN" || u.role === "KAROS_EMPLOYEE"),
+  );
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const weekAgo = Date.now() - 7 * 86400000;
   const jobsThisWeek = jobs.filter((j) => j.createdAt > weekAgo);
@@ -44,6 +57,17 @@ export default async function DashboardPage() {
         <StatCard label="Jobs this week" value={jobsThisWeek.length} icon={<Icon name="ListChecks" className="h-5 w-5" />} />
         <StatCard label="Delivered" value={delivered} icon={<Icon name="Send" className="h-5 w-5" />} />
       </div>
+
+      {isAdmin && (
+        <div className="mt-6">
+          <MyActionItems
+            items={myActionItems}
+            users={staffUsers}
+            clients={clients}
+            currentUserId={user.uid}
+          />
+        </div>
+      )}
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">

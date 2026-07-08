@@ -1,6 +1,6 @@
 import "server-only";
 
-import { generateText } from "ai";
+import { streamText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
 import { CONDENSATION_RULES } from "./brain";
@@ -67,12 +67,13 @@ Update the frontmatter:
 
 Return ONLY the condensed markdown document. No preamble, no explanation.`;
 
-  const { text } = await generateText({
+  const condenseStream = streamText({
     model: anthropic(MODELS.SONNET),
     system: systemPrompt,
     messages: [{ role: "user", content: userMessage }],
     maxOutputTokens: CONDENSE_MAX_TOKENS,
   });
+  const text = await condenseStream.text;
 
   // Detect truncation/omission: the condensed doc must include both the first and last ## sections.
   const internalSections = internalContent.match(/^## .+/gm) ?? [];
@@ -87,7 +88,7 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
   if (missingFirst || missingLast) {
     // Retry as a fresh call — do not include the truncated assistant turn, which anchors
     // the model to the incomplete first output and defeats a full-rewrite instruction.
-    const { text: cont } = await generateText({
+    const condenseRetryStream = streamText({
       model: anthropic(MODELS.SONNET),
       system: systemPrompt,
       messages: [
@@ -100,6 +101,7 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
       ],
       maxOutputTokens: CONDENSE_MAX_TOKENS,
     });
+    const cont = await condenseRetryStream.text;
     const rewritten = stripPreamble(cont);
     // Fall back to the first-pass result if the rewrite returned empty content.
     return { docType, content: rewritten.length > 0 ? rewritten : condensed };

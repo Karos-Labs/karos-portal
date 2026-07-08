@@ -42,8 +42,12 @@ export async function createClientAction(input: {
     createdBy: user.uid,
   });
 
+  // Onboarding trigger: fires immediately after the client record (with its
+  // initial details/parameters) is persisted. runIntelReportPipeline re-fetches
+  // the client from Firestore at execution time, so the Intel Report Agent
+  // always operates on the live, current client state — never a captured copy.
   after(async () => {
-    await updateClient(id, { onboardingStatus: "running" });
+    await updateClient(id, { onboardingStatus: "running", onboardingError: "" });
     const { runIntelReportPipeline } = await import("@/lib/intel");
     const [brandingResult, intelResult] = await Promise.allSettled([
       applyBrandingForClient(id),
@@ -53,10 +57,22 @@ export async function createClientAction(input: {
       console.error("[onboard] Branding generation failed (non-fatal):", brandingResult.reason);
     }
     if (intelResult.status === "rejected") {
-      console.error("[onboard] Intel Report generation failed (non-fatal):", intelResult.reason);
+      console.error("[onboard] Intel Report generation failed:", intelResult.reason);
     }
     const anyFailed = brandingResult.status === "rejected" || intelResult.status === "rejected";
-    await updateClient(id, { onboardingStatus: anyFailed ? "failed" : "done" });
+    // Persist WHY the run failed so the UI can surface it — a silent "failed"
+    // badge with the reason buried in server logs is exactly what we're avoiding.
+    const failureReasons = [
+      brandingResult.status === "rejected" ? `branding: ${String((brandingResult.reason as Error)?.message ?? brandingResult.reason)}` : "",
+      intelResult.status === "rejected" ? `intel: ${String((intelResult.reason as Error)?.message ?? intelResult.reason)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ")
+      .slice(0, 500);
+    await updateClient(id, {
+      onboardingStatus: anyFailed ? "failed" : "done",
+      onboardingError: anyFailed ? failureReasons : "",
+    });
   });
 
   revalidatePath("/clients");

@@ -26,21 +26,28 @@ export interface ProactiveSystemContext {
   hasGmailIntegration: boolean;
   /** Whether any content assets are currently scheduled for publication. */
   hasScheduledContent: boolean;
+  /** Tasks currently active (pending / in_progress / review_pending) on the board. */
+  activeTaskCount: number;
+  /** The per-client active-task cap (MAX_ACTIVE_TASKS). */
+  maxActiveTasks: number;
 }
 
 /* ── Dynamic system appendix builder ────────────────────────────── */
 
 export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): string {
-  /* Agent catalog */
+  /* Agent catalog — includes the agentId the model must pass to create_tasks */
   const agentCatalogBlock = ctx.agents.length > 0
     ? ctx.agents
         .map(
           (a) =>
-            `• **${a.name}** — ${a.description} | output: ${a.outputKind}` +
+            `• **${a.name}** (agentId: \`${a.id}\`) — ${a.description} | output: ${a.outputKind}` +
             (a.capabilities.length ? ` | caps: ${a.capabilities.join(", ")}` : ""),
         )
         .join("\n")
     : "• No AI agents are currently active — recommend setting up an agent as the first karos_managed task.";
+
+  /* Task board capacity */
+  const slotsFree = Math.max(0, ctx.maxActiveTasks - ctx.activeTaskCount);
 
   /* Social scenario */
   const hasSocial = ctx.linkedSocialPlatforms.length > 0;
@@ -77,7 +84,7 @@ HARD RULES for these onboarding tasks:
 - Title must name the exact platform: "Connect [Platform] account to Karos"
 - owner = client_managed (OAuth requires the client's own credentials)
 - priority = high (missing channels block all content distribution to that platform)
-- These tasks are always created in a Scan & Refresh regardless of other task counts`
+- Create these first in a Scan & Refresh — they take priority within the task-board capacity limit`
     : "";
 
   const scenarioA = hasSocial
@@ -168,10 +175,17 @@ Every \`karos_managed\` task title must use execution-dispatch language. Describ
 ${agentCatalogBlock}
 
 CRITICAL RULE: Every \`karos_managed\` task MUST either (a) name one of the agents above as the executor, or (b) describe a direct Karos staff deliverable (drafting, editing, publishing, technical fix). If neither applies, set \`owner: "client_managed"\` instead.
+AGENT LINKAGE: When an agent above will execute the task, ALWAYS pass its \`agentId\` in the \`create_tasks\` call — this is what routes execution to that agent when the task moves to In Progress. Omit \`agentId\` only for staff deliverables and \`client_managed\` tasks.
 ${onboardingBlock ? `\n${onboardingBlock}` : ""}
 
+### TASK BOARD CAPACITY — HARD LIMIT
+The task board allows at most **${ctx.maxActiveTasks} active tasks** (pending, in progress, or awaiting review) per client. There are currently **${ctx.activeTaskCount} active** — **${slotsFree} slot${slotsFree === 1 ? "" : "s"} free**.
+- NEVER propose more tasks than there are free slots; rank by impact and cut the rest
+- ${slotsFree === 0 ? "The board is AT CAPACITY: do not call `create_tasks` with new tasks — tell the user to complete or approve existing tasks first" : "Anything beyond the free slots will be rejected by the platform, so prioritise ruthlessly"}
+- The cap is enforced server-side; exceeding it is impossible, not just discouraged
+
 ### TASK QUALITY STANDARDS
-- Generate **5–10 substantive tasks** per major action trigger, plus all mandatory platform onboarding tasks
+- Generate **up to ${Math.min(10, Math.max(slotsFree, 0))} substantive tasks** per major action trigger (never more than the free capacity above), platform onboarding tasks first
 - Every task must be hyper-specific to this client — zero generic placeholders
 - Each task receives the correct **owner** field:
   - **karos_managed**: executed by Karos AI agents or staff (content creation, research, drafting, analysis, publishing)
@@ -404,6 +418,7 @@ export function buildArtifactGenerationPrompt(
   clientWebsite?: string,
   brandVoice?: string,
   adjustmentFeedback?: string,
+  previousArtifact?: string,
 ): string {
   const context = [
     clientIndustry && `Industry: ${clientIndustry}`,
@@ -412,8 +427,12 @@ export function buildArtifactGenerationPrompt(
     .filter(Boolean)
     .join(" · ");
 
+  const previousBlock = adjustmentFeedback && previousArtifact
+    ? `\n\nPREVIOUS VERSION OF THE DELIVERABLE (being revised):\n---\n${previousArtifact}\n---`
+    : "";
+
   const feedbackBlock = adjustmentFeedback
-    ? `\n\nCLIENT FEEDBACK ON PREVIOUS VERSION:\n"${adjustmentFeedback}"\n\nIncorporate this feedback fully into the revised output — do not ignore any point raised.`
+    ? `${previousBlock}\n\nCLIENT FEEDBACK ON PREVIOUS VERSION:\n"${adjustmentFeedback}"\n\nProduce a refined version: keep what the feedback doesn't challenge, and incorporate every point raised — do not ignore any of them.`
     : "";
 
   if (taskType === "integration_action") {

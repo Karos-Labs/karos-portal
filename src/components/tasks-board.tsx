@@ -152,7 +152,7 @@ function TaskCard({
 
   return (
     <div
-      draggable={isDraggable}
+      draggable={isDraggable && !isExecuting}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onClick}
@@ -434,11 +434,12 @@ export function TasksBoard({
     return () => clearInterval(id);
   }, [hasExecuting, stableRefresh]);
 
-  /* Status change handler — detects karos execution path */
+  /* Status change handler — detects karos execution path.
+     Moving any karos_managed task into In Progress (drag, card button, or
+     modal footer) triggers its mapped ecosystem agent. */
   function handleStatusChange(id: string, status: TaskStatus, cid: string) {
     const task = localTasks.find((t) => t.id === id);
     const isKarosExecution =
-      activeTab === "karos" &&
       status === "in_progress" &&
       task &&
       inferOwner(task) === "karos_managed" &&
@@ -595,10 +596,14 @@ export function TasksBoard({
         </div>
       )}
 
-      {/* DnD hint for client tab */}
-      {activeTab === "client" && (
+      {/* DnD hint */}
+      {activeTab === "client" ? (
         <p className="mb-4 text-xs text-muted-2">
           Drag cards between columns to update status, or click any card to open the detail view.
+        </p>
+      ) : (
+        <p className="mb-4 text-xs text-muted-2">
+          Drag a card to In Progress to dispatch its AI agent, or click any card to open the detail view.
         </p>
       )}
 
@@ -623,7 +628,7 @@ export function TasksBoard({
             tasks={visibleTasks.filter((t) => t.status === status)}
             canDelete={canDelete}
             showClientName={showClientName}
-            enableDnD={activeTab === "client"}
+            enableDnD
             draggingId={draggingId}
             dropTarget={dropTarget}
             onStatusChange={handleStatusChange}

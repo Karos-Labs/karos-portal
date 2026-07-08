@@ -92,6 +92,8 @@ export interface Client {
    *   failed   — one or more stages threw; check server logs for details
    */
   onboardingStatus?: "pending" | "running" | "done" | "failed";
+  /** Human-readable reason for the last onboarding failure (truncated). Cleared when a new run starts. */
+  onboardingError?: string;
   /**
    * This client's folder slug in the karos-agents lab repo (clients/<slug>/).
    * Used by the external agent service to load the client's profile + emitted
@@ -198,6 +200,18 @@ export type AssetType =
   | "social_post"
   | "note";
 
+/**
+ * Three-tier publishing flow for scheduled content:
+ *   auto        — the publish cron pushes to the platform API at scheduledAt
+ *                 (requires a connected integration with autoPublish enabled)
+ *   manual      — lives on the calendar; a user triggers "Publish Now" through
+ *                 the platform API when they choose
+ *   placeholder — calendar-only roadmap item; Karos never touches the
+ *                 client's social accounts for it
+ * Legacy assets (scheduled before this field existed) are treated as "auto".
+ */
+export type PublishMode = "auto" | "manual" | "placeholder";
+
 export interface Asset {
   id: string;
   clientId: string;
@@ -212,10 +226,24 @@ export interface Asset {
   /** Public URL of the generated visual (Vercel Blob), when one exists. */
   imageUrl?: string | null;
   status: "draft" | "approved" | "delivered" | "published" | "scheduled";
-  /** Epoch millis — set when status is "scheduled". Cron publishes when this time passes. */
+  /** Epoch millis — set when status is "scheduled". Cron publishes when this time passes (auto mode only). */
   scheduledAt?: number;
-  /** Which platform to auto-publish to (matches ClientIntegration.platform). */
+  /** Which platform to publish to (matches ClientIntegration.platform). */
   scheduledPlatform?: string;
+  /** How this asset reaches the platform once scheduled. Absent on legacy assets ⇒ "auto". */
+  publishMode?: PublishMode;
+  /**
+   * Agent-recommended optimal publish time (epoch millis), stamped at generation.
+   * Advisory only — becomes real once a user schedules the asset (it pre-fills the
+   * schedule form and renders as a "suggested" chip on the calendar).
+   */
+  recommendedAt?: number;
+  /** One-line rationale for recommendedAt, e.g. "LinkedIn engagement peaks Tue–Thu mornings". */
+  recommendedReason?: string;
+  /** Epoch millis when the asset was actually pushed to a platform (auto cron or Publish Now). */
+  publishedAt?: number;
+  /** Last publish failure (manual or cron), surfaced on the asset card. Cleared on success. */
+  publishError?: string;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -554,6 +582,12 @@ export interface ClientIntegration {
    * "expired" — the publish cron received a 401/403; re-connect required.
    */
   status?: "active" | "expired";
+  /**
+   * When true (default / absent), the publish cron may auto-post scheduled content
+   * to this platform. When false, content targeting this platform can only go out
+   * via a manual "Publish Now" click — the cron skips it.
+   */
+  autoPublish?: boolean;
   /** Epoch millis when the cron first detected the token had expired. */
   expiredAt?: number;
   connectedBy: string;
@@ -606,6 +640,60 @@ export interface Transcript {
   /** Epoch millis when this transcript was last pushed as a meeting signal to clientContextDocs. */
   contextDocSignalAt?: number;
   createdAt: number;
+}
+
+/* ─────────────────── Managed Action Items ───────────────────────────── */
+
+/**
+ * Lifecycle status for a managed action item. "open" is the initial state;
+ * "done" mirrors back to the source transcript's completedItems.
+ */
+export type ActionItemStatus = "open" | "in_progress" | "in_review" | "done";
+
+/** A comment/note left on a managed action item. */
+export interface ActionItemComment {
+  id: string;
+  authorId: string;
+  authorName: string;
+  text: string;
+  createdAt: number;
+}
+
+/** One entry in an action item's audit trail. Append-only. */
+export interface ActionItemHistoryEntry {
+  at: number;
+  /** "system" for automated events (Fireflies ingestion). */
+  actorId: string;
+  actorName: string;
+  type: "created" | "status_changed" | "reassigned" | "comment_added";
+  /** Human-readable description, e.g. 'Marked Done and assigned to Y by Tomer'. */
+  detail: string;
+}
+
+/**
+ * A meeting action item promoted to a fully managed task (Firestore `actionItems`).
+ * Doc id is deterministic — `${transcriptId}_${sourceIndex}` — so ingestion and
+ * webhook retries are idempotent. The parallel arrays on Transcript remain the
+ * source used by the meeting detail page; changes are mirrored both ways.
+ */
+export interface ActionItem {
+  id: string;
+  transcriptId: string;
+  transcriptTitle: string;
+  /** Index into transcript.actionItems[] — keeps the meeting page and dashboard in sync. */
+  sourceIndex: number;
+  clientId?: string | null;
+  meetingDate?: number;
+  text: string;
+  status: ActionItemStatus;
+  assigneeUserId?: string | null;
+  assigneeName?: string | null;
+  comments: ActionItemComment[];
+  history: ActionItemHistoryEntry[];
+  /** Future client rollout: when true, the owning client's users may view this item. Staff-only while absent/false. */
+  visibleToClient?: boolean;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /* ─────────────────── Notification Centre ───────────────────────────── */
@@ -678,6 +766,13 @@ export interface ClientTask {
   /** Which party is responsible for executing this task. Defaults to source-based inference. */
   owner?: TaskOwner;
   sourceLabel?: string;
+  /**
+   * Freeform execution state. Well-known keys:
+   * `agentId`/`agentName` — the ecosystem agent mapped to execute this task (set by the
+   * Copilot at creation or by the engine after a name match); `jobId` — the Job created
+   * by the last agent execution; `executing`, `type`, `artifact`, `adjustmentFeedback`,
+   * `executionError`, `aiPlan`, `recipient`, `failedUpload*`, `published*`.
+   */
   metadata?: Record<string, unknown>;
   completedAt?: number | null;
   createdBy: string;

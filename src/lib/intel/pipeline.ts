@@ -1,6 +1,6 @@
 import "server-only";
 
-import { generateText } from "ai";
+import { streamText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
 import { getClient, replaceClientContextDocs, listClientCompetitors, listTranscripts } from "@/lib/data";
@@ -17,6 +17,53 @@ type PipelineDocType = Exclude<ContextDocType, "meeting-notes">;
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Anthropic server-side live-web tools. Web search + web fetch execute on
+ * Anthropic's infrastructure inside a single request — no client-side loop.
+ * The _20260209 variants (dynamic filtering) are supported by Sonnet 4.6.
+ *
+ * These are what make every research pass a LIVE look at the client's current
+ * state instead of a training-data recall. maxUses bounds cost per agent.
+ */
+function liveWebTools(maxSearches: number, maxFetches: number) {
+  return {
+    web_search: anthropic.tools.webSearch_20260209({ maxUses: maxSearches }),
+    web_fetch: anthropic.tools.webFetch_20260209({
+      maxUses: maxFetches,
+      // Cap per-fetch content so one giant page can't crowd out the rest of
+      // the research context (prevents truncated/corrupted downstream prompts).
+      maxContentTokens: 6000,
+    }),
+  };
+}
+
+/** Minimum plausible size for a usable research brief. Anything shorter is
+ *  treated as a failed run (e.g. the model errored out or returned a stub). */
+const MIN_RESEARCH_CHARS = 300;
+
+/**
+ * Runs one research agent with validation + one retry.
+ * Throws (instead of silently returning "") when both attempts fail, so the
+ * caller can decide whether the run is still viable.
+ */
+async function runResearchAgent(name: string, fn: () => Promise<string>): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const text = await fn();
+      if (text.trim().length >= MIN_RESEARCH_CHARS) return text;
+      lastError = new Error(
+        `${name} research returned only ${text.trim().length} chars (min ${MIN_RESEARCH_CHARS}) — treated as incomplete`,
+      );
+      console.warn(`[onboard] ${String(lastError)} (attempt ${attempt}/2)`);
+    } catch (err) {
+      lastError = err;
+      console.warn(`[onboard] ${name} research attempt ${attempt}/2 failed:`, err);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function clientContext(client: Client): string {
@@ -138,41 +185,45 @@ function buildMeetingSignals(
 /* ── Phase 1: Research agents (parallel) ─────────────────────────── */
 
 async function researchSocial(client: Client, rules: string): Promise<string> {
-  const { text } = await generateText({
+  const socialStream = streamText({
     model: anthropic(MODELS.SONNET),
-    system: `${rules}\n\nYou are a social media research analyst.`,
+    system: `${rules}\n\nYou are a social media research analyst with LIVE web access. Search for real, current accounts — never recall handles or follower counts from memory when a live lookup is possible.`,
+    tools: liveWebTools(8, 6),
     messages: [
       {
         role: "user",
-        content: `Research the social media presence of ${client.name} (${client.website ?? "no website"}).
+        content: `Research the LIVE social media presence of ${client.name} (${client.website ?? "no website"}).
 
-Find their accounts on Instagram, TikTok, LinkedIn, and X/Twitter.
+Start by fetching their website to find linked social accounts (footer/header icons), then search each platform: Instagram, TikTok, LinkedIn, and X/Twitter.
 
 For each platform where you find them:
-- Handle / URL
-- Approximate follower count — IMPORTANT: if you cannot source this from a live measurement, write "data unavailable (training knowledge only — live Apify scrape required)"
-- Posting cadence (posts per week) — observed or "data unavailable"
+- Handle / URL — confirmed live, labeled "web-observed (URL, ${todayISO()})"
+- Follower count — only if visible in a live search/fetch result; otherwise write "—"
+- Posting cadence (posts per week) — observed from live results or "—"
 - Content formats used (photos, carousels, reels, etc.)
 - Engagement quality (qualitative observation from available posts)
 
-Also identify their top 5-8 competitors' social handles.
+Also identify their top 5-8 competitors' social handles (verify the handles exist via search).
 
-Return structured markdown. Follow the no-guessed-numbers rule strictly.`,
+Return structured markdown. Follow the no-guessed-numbers rule strictly — a "—" is always better than a fabricated count.`,
       },
     ],
-    maxOutputTokens: 1500,
+    maxOutputTokens: 2500,
   });
-  return text;
+  return socialStream.text;
 }
 
 async function researchContent(client: Client, rules: string): Promise<string> {
-  const { text } = await generateText({
+  const contentStream = streamText({
     model: anthropic(MODELS.SONNET),
-    system: `${rules}\n\nYou are a senior brand messaging and content strategist. Apply deep analytical reasoning to extract every meaningful signal from the available data.`,
+    system: `${rules}\n\nYou are a senior brand messaging and content strategist with LIVE web access. Fetch the client's actual pages before analyzing — quote what is live TODAY, not what you remember. Apply deep analytical reasoning to extract every meaningful signal.`,
+    tools: liveWebTools(5, 8),
     messages: [
       {
         role: "user",
         content: `Analyze the brand messaging and content strategy of ${client.name} (${client.website ?? "no website"}).
+
+FIRST: fetch their homepage${client.website ? ` (${client.website})` : ""}, then their /about, /pricing, and blog pages if they exist. Base every quote on the live copy you just fetched, labeled "web-observed (URL, ${todayISO()})".
 
 For each finding below, provide: (a) the specific evidence you based it on, and (b) the strategic implication — what does this mean for how Karos should position and create content for this brand?
 
@@ -190,9 +241,9 @@ Do not guess follower counts or engagement metrics — those belong in the socia
 Return detailed markdown with strategic implications for each finding.`,
       },
     ],
-    maxOutputTokens: 1800,
+    maxOutputTokens: 2800,
   });
-  return text;
+  return contentStream.text;
 }
 
 async function researchCompetitive(
@@ -204,13 +255,16 @@ async function researchCompetitive(
     ? `\n\nCRITICAL: The following competitors have been manually flagged by the client's team and MUST be included regardless of their prominence in the market:\n${trackedCompetitors.map((c) => `- ${c.company}${c.url ? ` (${c.url})` : ""}`).join("\n")}`
     : "";
 
-  const { text } = await generateText({
+  const competitiveStream = streamText({
     model: anthropic(MODELS.SONNET),
-    system: `${rules}\n\nYou are a senior competitive intelligence analyst. You produce boardroom-grade market intelligence, not just lists of competitors. Apply Claude Sonnet's full analytical depth. For every finding, deliver the strategic implication — not just the observation. For qualitative analysis, never write "data unavailable" — use deep reasoning and industry knowledge to derive insights.`,
+    system: `${rules}\n\nYou are a senior competitive intelligence analyst with LIVE web access. You produce boardroom-grade market intelligence, not just lists of competitors. Verify each competitor exists and is active via live search, and quote their CURRENT taglines from fetched pages. For every finding, deliver the strategic implication — not just the observation. For qualitative analysis, never write "data unavailable" — use deep reasoning and industry knowledge to derive insights.`,
+    tools: liveWebTools(10, 8),
     messages: [
       {
         role: "user",
         content: `Research the competitive landscape for ${client.name} (${client.website ?? "no website"}) in the ${client.industry ?? "their"} industry.${trackedBlock}
+
+LIVE VERIFICATION REQUIRED: search for the current market landscape first, then fetch the homepages of the top competitors you identify (and every manually-flagged competitor above). Quote taglines and pricing only from pages fetched in this run, labeled "web-observed (URL, ${todayISO()})".
 
 Produce a comprehensive competitive intelligence brief in three layers:
 
@@ -248,9 +302,9 @@ Do not score competitors numerically. Do not estimate revenue.
 Return rich, structured markdown with strategic implications throughout.`,
       },
     ],
-    maxOutputTokens: 2500,
+    maxOutputTokens: 3500,
   });
-  return text;
+  return competitiveStream.text;
 }
 
 async function researchStrategy(client: Client, rules: string, meetingSignals = ""): Promise<string> {
@@ -258,13 +312,16 @@ async function researchStrategy(client: Client, rules: string, meetingSignals = 
     ? `\n\n${meetingSignals}\n\nUse the meeting signals above as additional context about what the client is focusing on, their stated priorities, and any market observations from real conversations. These are firsthand signals — treat them as high-confidence qualitative data and weight them heavily.`
     : "";
 
-  const { text } = await generateText({
+  const strategyStream = streamText({
     model: anthropic(MODELS.SONNET),
-    system: `${rules}\n\nYou are a senior market strategy analyst. For every finding, deliver the strategic implication — not just the observation. Apply Claude Sonnet's full analytical reasoning.`,
+    system: `${rules}\n\nYou are a senior market strategy analyst with LIVE web access. Ground positioning and business-model findings in pages fetched during THIS run. For every finding, deliver the strategic implication — not just the observation. Apply Claude Sonnet's full analytical reasoning.`,
+    tools: liveWebTools(6, 5),
     messages: [
       {
         role: "user",
         content: `Research the market positioning and strategy of ${client.name} (${client.website ?? "no website"}) in the ${client.industry ?? "their"} industry.
+
+FIRST: fetch the client's website and search for recent news/announcements about them and their category. Label live findings "web-observed (URL, ${todayISO()})".
 
 For each section, provide the finding AND its strategic implication for a marketing agency working with this client.
 
@@ -282,9 +339,9 @@ Base all observations on verifiable public signals. Do not invent KPIs or revenu
 Return structured markdown with strategic implications.${signalsBlock}`,
       },
     ],
-    maxOutputTokens: 1800,
+    maxOutputTokens: 2800,
   });
-  return text;
+  return strategyStream.text;
 }
 
 async function researchSentiment(client: Client, rules: string, meetingSignals = ""): Promise<string> {
@@ -292,13 +349,16 @@ async function researchSentiment(client: Client, rules: string, meetingSignals =
     ? `\n\n${meetingSignals}\n\nCross-reference the meeting signals with the sentiment research below. Client or prospect concerns surfaced in meetings are firsthand qualitative signals — treat them as the highest-confidence data in this section and factor them in explicitly.`
     : "";
 
-  const { text } = await generateText({
+  const sentimentStream = streamText({
     model: anthropic(MODELS.SONNET),
-    system: `${rules}\n\nYou are a senior customer sentiment and UX analyst. Deliver strategic implications alongside every finding — not just the observation, but what it means for how Karos should position, message, and market for this brand. Apply deep contextual reasoning.`,
+    system: `${rules}\n\nYou are a senior customer sentiment and UX analyst with LIVE web access. Search review platforms for CURRENT ratings and real customer language before citing any sentiment data. Deliver strategic implications alongside every finding — not just the observation, but what it means for how Karos should position, message, and market for this brand. Apply deep contextual reasoning.`,
+    tools: liveWebTools(8, 5),
     messages: [
       {
         role: "user",
         content: `Research customer sentiment and audience psychology for ${client.name} (${client.website ?? "no website"}) in the ${client.industry ?? "their"} industry.
+
+LIVE VERIFICATION REQUIRED: search G2, Capterra, Trustpilot, Reddit, and industry forums (Reclame Aqui for Brazilian companies) for real, current reviews and discussions about this brand and its category. Label live findings "web-observed (URL, ${todayISO()})".
 
 For each section, include: the finding + the strategic implication for messaging and positioning.
 
@@ -316,9 +376,9 @@ For qualitative insights about buyer psychology, objections, and category dynami
 Return structured markdown with strategic implications.${signalsBlock}`,
       },
     ],
-    maxOutputTokens: 1800,
+    maxOutputTokens: 2800,
   });
-  return text;
+  return sentimentStream.text;
 }
 
 /* ── Phase 2: Document generators (parallel) ─────────────────────── */
@@ -351,9 +411,23 @@ async function generateDoc(
   const template = TEMPLATES[docType] ?? "";
   const researchBlock = buildResearchBlock(docType, research);
 
-  const systemPrompt = `${rules}\n\nYou are a senior strategic analyst writing a living context document for ${client.name}. Apply Claude Sonnet's full analytical depth to every section.
+  const systemPrompt = `${rules}\n\nYou are a senior strategic analyst at Karos Labs writing the definitive ${docType} context document for ${client.name}. This document is consumed by every downstream content and strategy agent — its accuracy directly determines the quality of everything the agency produces for this client. Apply Claude Sonnet's full analytical depth to every section.
 
-DATA INTEGRITY RULES:
+## ◈ DATA PROVENANCE & INGESTION PROTOCOL
+
+The RESEARCH FINDINGS block below was gathered minutes ago by parallel research agents with LIVE web access (web search + web fetch). It is the freshest available intelligence on this client. Ingest it under these rules:
+
+1. **Source-of-truth hierarchy** (higher always overrides lower on conflict):
+   a. CLIENT CONTEXT — entered directly by the client's team
+   b. "web-observed (URL, date):" findings — fetched live in this run
+   c. "training knowledge:" findings — unverified model memory
+   d. "industry pattern:" — general market inference
+2. **Preserve provenance labels.** When you carry a fact into the document, carry its source label with it. Never launder a training-knowledge claim into a web-observed one.
+3. **No invention beyond the evidence.** Every named competitor, quoted tagline, metric, price, and regulatory identifier in your output must be traceable to the CLIENT CONTEXT or the RESEARCH FINDINGS. If neither supports it, omit it or mark it "to capture with client".
+4. **Degraded-research handling.** If a research section begins with "RESEARCH UNAVAILABLE", that vertical failed for this run. Do NOT reconstruct it from memory — use "—" for its quantitative fields and lean on CLIENT CONTEXT plus the surviving verticals for qualitative sections.
+5. **Conflict resolution.** When two research verticals disagree, prefer the one with the more specific live citation; note genuine ambiguity as "[verify with client]" rather than picking silently.
+
+## ◈ DATA INTEGRITY RULES
 - For specific QUANTITATIVE METRICS (follower counts, revenue, headcount): cite only figures from a named, verifiable source. If a metric was not measured, use "—" (em dash) in table cells or omit it in prose — never write "data unavailable".
 - PRICING is a HIGH-RISK field — it changes constantly and training data is frequently wrong. Only state a price explicitly visible on the client's current website. If uncertain, write "see [website URL] for current pricing". Never state a pricing figure from training memory that you cannot confirm is currently live.
 - FOUNDING / LAUNCH DATE is a HIGH-RISK field — training data frequently confuses incorporation date, rebrand date, and actual product launch. Only state a year you confirmed on the company's own website or a primary source. If uncertain: write "[launch date — verify with client]".
@@ -362,7 +436,7 @@ DATA INTEGRITY RULES:
 - CLIENT CONTEXT is the highest-authority source for all basic company facts. It was entered directly by the client's team. If CLIENT CONTEXT states a fact, it overrides any research finding or training knowledge.
 - ZERO TOLERANCE for these phrases in qualitative sections: "N/A", "not found", "no information available", "cannot determine", "as an AI", or equivalent filler.
 
-CRITICAL OUTPUT RULES:
+## ◈ CRITICAL OUTPUT RULES
 - COMPLETE ALL SECTIONS. Do not truncate, skip, or abbreviate any section heading. Every section listed in the template MUST appear in the output. A truncated document is a failed document.
 - BEGIN with the YAML frontmatter \`---\`. Your FIRST character of output must be the opening \`---\`. Do NOT write anything before it — no greetings, no preamble, no analysis.
 - Output sections STRICTLY IN ORDER from section 1 to the last section. Never jump ahead. Never start mid-document. Never skip a section because you think it will be short.
@@ -370,7 +444,7 @@ CRITICAL OUTPUT RULES:
 - Do NOT include the template instruction blockquotes (lines starting with \`> ...\`). Replace those with actual filled content.
 - Do NOT use \`---\` horizontal rule separators anywhere in the document body. Use blank lines between subsections instead.
 - Do NOT include a "Change Log" section or any trailing metadata after the document body.
-- DATA SOURCING LANGUAGE: Never write "a live scrape was performed" or "a live scrape was not possible". Use consistent labels only: "website-observed:" / "training knowledge:" / "industry pattern:". All documents in this run must agree on what was and wasn't accessed.
+- DATA SOURCING LANGUAGE: Never write "a live scrape was performed" or "a live scrape was not possible". Use consistent labels only: "web-observed (URL, date):" / "training knowledge:" / "industry pattern:". All documents in this run must agree on what was and wasn't accessed.
 - TABLE CELLS with missing data: Use "—" (em dash) for unknown quantitative fields. Never write "data unavailable", "N/A", or "not found" inside a table cell.
 - GOALS & KPI TABLES: Include KPIs where you can name the metric and cadence even if baseline/target are not publicly known. For baseline: write "to capture with client". For target: write "to define with client". Omit KPI rows only if the metric itself is irrelevant for this business — never use "data unavailable" in any KPI table cell.
 - If the CLIENT CONTEXT block includes brand voice or branding guidelines, those are the primary source for voice and brand sections — use them directly, not as a secondary reference.`;
@@ -381,6 +455,8 @@ CRITICAL OUTPUT RULES:
 ${clientContext(client)}
 
 ## RESEARCH FINDINGS
+*(Gathered live on ${todayISO()} by research agents with web search + web fetch access. Ingest per the DATA PROVENANCE & INGESTION PROTOCOL.)*
+
 ${researchBlock}
 
 ## TEMPLATE TO FILL
@@ -398,17 +474,18 @@ INSTRUCTIONS:
 - Update the frontmatter: set last_updated to ${todayISO()}, set client to "${client.id}".
 - Return ONLY the filled markdown document — start immediately with \`---\`, no preamble, no Change Log.`;
 
-  const { text } = await generateText({
+  const docStream = streamText({
     model: anthropic(MODELS.SONNET),
     system: systemPrompt,
     messages: [{ role: "user", content: userMessage }],
     maxOutputTokens: DOC_MAX_TOKENS,
   });
+  const text = await docStream.text;
 
   // Continuation pass: if the last template section is missing, the model stopped early.
   const lastSection = lastTemplateSection(template);
   if (lastSection && !text.includes(lastSection)) {
-    const { text: cont } = await generateText({
+    const contDocStream = streamText({
       model: anthropic(MODELS.SONNET),
       system: systemPrompt,
       messages: [
@@ -422,6 +499,7 @@ INSTRUCTIONS:
       ],
       maxOutputTokens: DOC_MAX_TOKENS,
     });
+    const cont = await contDocStream.text;
     return stripPreamble(text + cont);
   }
 
@@ -471,7 +549,7 @@ ${corrections.trim()}
 ## OUTPUT FORMAT
 Return ONLY the corrected document. Start immediately with the first character of the document (the opening \`---\` of the YAML frontmatter, if present). No preamble, no explanation, no "Here is the corrected document:" prefix.`;
 
-  const { text } = await generateText({
+  const corrStream = streamText({
     model: anthropic(MODELS.SONNET),
     system: systemPrompt,
     messages: [
@@ -482,6 +560,7 @@ Return ONLY the corrected document. Start immediately with the first character o
     ],
     maxOutputTokens: DOC_MAX_TOKENS,
   });
+  const text = await corrStream.text;
 
   const result = text.trim();
 
@@ -496,7 +575,7 @@ Return ONLY the corrected document. Start immediately with the first character o
   ) {
     // Correction failed structural checks — attempt a continuation pass before giving up.
     if (result.length < inputCharCount * 0.75) {
-      const { text: cont } = await generateText({
+      const corrContStream = streamText({
         model: anthropic(MODELS.SONNET),
         system: systemPrompt,
         messages: [
@@ -513,6 +592,7 @@ Return ONLY the corrected document. Start immediately with the first character o
         ],
         maxOutputTokens: DOC_MAX_TOKENS,
       });
+      const cont = await corrContStream.text;
       const recovered = (result + cont).trim();
       const recoveredSections = (recovered.match(/^## /gm) ?? []).length;
       const recoveredRatio = recovered.length / inputCharCount;
@@ -591,26 +671,47 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
   // Build meeting signals from stored transcripts for this client
   const meetingSignals = buildMeetingSignals(existingTranscripts);
 
-  // Phase 1: 5 parallel research agents
+  // Phase 1: 5 parallel research agents, each with live web access.
+  // Every agent is wrapped in runResearchAgent: output is validated (minimum
+  // length) and retried once before being declared failed — a transient API
+  // error or an empty stub can never silently poison the documents.
   // Pass manually-tracked competitors into competitive research so regeneration
   // always accounts for competitors the client's team has explicitly flagged.
   // Pass meeting signals into strategy/sentiment research for firsthand context.
-  // Promise.allSettled — one failed agent degrades output but never aborts the pipeline.
+  const researchAgentNames = ["social", "content", "competitive", "strategy", "sentiment"] as const;
   const researchResults = await Promise.allSettled([
-    researchSocial(client, rules),
-    researchContent(client, rules),
-    researchCompetitive(client, rules, existingCompetitors),
-    researchStrategy(client, rules, meetingSignals),
-    researchSentiment(client, rules, meetingSignals),
+    runResearchAgent("social", () => researchSocial(client, rules)),
+    runResearchAgent("content", () => researchContent(client, rules)),
+    runResearchAgent("competitive", () => researchCompetitive(client, rules, existingCompetitors)),
+    runResearchAgent("strategy", () => researchStrategy(client, rules, meetingSignals)),
+    runResearchAgent("sentiment", () => researchSentiment(client, rules, meetingSignals)),
   ]);
+
+  const failedAgents: string[] = [];
   const [social, content, competitive, strategy, sentiment] = researchResults.map((r, i) => {
+    const name = researchAgentNames[i];
     if (r.status === "rejected") {
-      const name = ["social", "content", "competitive", "strategy", "sentiment"][i];
-      console.error(`[onboard] ${name} research failed (non-fatal):`, r.reason);
-      return "";
+      failedAgents.push(name);
+      console.error(`[onboard] ${name} research failed after retry:`, r.reason);
+      // Explicit unavailability marker — the doc-generation prompt instructs the
+      // model to degrade gracefully instead of hallucinating the missing vertical.
+      return `> RESEARCH UNAVAILABLE: The ${name} research pass failed for this run (live data fetch error). Do NOT fabricate ${name} findings. Use "—" for any quantitative field this research would have supplied, and derive qualitative points only from CLIENT CONTEXT and the other research verticals.`;
     }
     return r.value;
   });
+
+  // Quality gate: with a majority of research verticals dead, the documents
+  // would be mostly hallucination-bait. Fail the run loudly instead — the
+  // caller marks onboardingStatus "failed" and staff can regenerate.
+  if (failedAgents.length >= 3) {
+    throw new Error(
+      `Onboard pipeline aborted: ${failedAgents.length}/5 research agents failed (${failedAgents.join(", ")}). ` +
+        "Refusing to generate context documents from insufficient live data.",
+    );
+  }
+  if (failedAgents.length > 0) {
+    console.warn(`[onboard] Proceeding with degraded research (failed: ${failedAgents.join(", ")})`);
+  }
 
   const research: Research = { social, content, competitive, strategy, sentiment };
 

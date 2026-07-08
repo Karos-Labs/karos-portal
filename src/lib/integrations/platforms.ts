@@ -40,6 +40,29 @@ export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
   "youtube",
 ]);
 
+/**
+ * Which platforms each asset type can be pushed to (auto cron or Publish Now).
+ * Single source of truth — the publish cron, the asset card, and the schedule
+ * form all read this map. Order matters: first connected match wins when a
+ * platform has to be inferred.
+ */
+export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
+  instagram_post: ["instagram"],
+  social_post: ["twitter", "linkedin", "facebook"],
+  article: ["linkedin"],
+  email: [],
+  note: [],
+};
+
+/** Human-readable platform names for badges / pickers. */
+export const PLATFORM_LABELS: Record<string, string> = {
+  instagram: "Instagram",
+  facebook: "Facebook",
+  linkedin: "LinkedIn",
+  twitter: "X (Twitter)",
+  youtube: "YouTube",
+};
+
 export const PLATFORM_REGISTRY: PlatformConfig[] = [
   {
     id: "instagram",

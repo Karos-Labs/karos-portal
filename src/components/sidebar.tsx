@@ -302,9 +302,10 @@ export function Sidebar({
   const nav = (
     <nav className="flex flex-col gap-1">
       {items.map((item) => {
+        const itemPath = item.href.split("?")[0];
         const active = item.exact
-          ? pathname === item.href
-          : pathname === item.href || pathname.startsWith(item.href + "/");
+          ? pathname === itemPath
+          : pathname === itemPath || pathname.startsWith(itemPath + "/");
         const badge = item.href === "/registrations" && pendingCount > 0 ? pendingCount : null;
         return (
           <Link

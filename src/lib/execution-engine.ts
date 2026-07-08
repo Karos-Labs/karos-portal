@@ -54,18 +54,27 @@ function selectModel(task: ClientTask) {
 /**
  * Executes a single karos_managed task via Claude:
  * - Generates an artifact (Flow A: content; Flow B: email/publish draft)
+ * - On a re-run (adjustment feedback present), feeds the model both the
+ *   original task context AND the previous output + client feedback.
  * - Advances status to review_pending on success
- * - Records error in metadata on failure (status stays in_progress)
+ * - Records error in metadata on failure (status returns to pending)
  */
 export async function runTaskExecution(clientId: string, taskId: string): Promise<void> {
   const [task, client] = await Promise.all([getClientTask(taskId), getClient(clientId)]);
   if (!task || !client) return;
+  // Defense in depth: never generate with a mismatched client context.
+  if (task.clientId !== clientId) return;
 
   const taskType = resolveTaskType(task);
   const adjustmentFeedback = task.metadata?.adjustmentFeedback as string | undefined;
+  // On a re-run the prior deliverable is still on the task — it becomes the
+  // revision base so the model refines rather than regenerates from scratch.
+  const previousArtifact = adjustmentFeedback
+    ? (task.metadata?.artifact as string | undefined)
+    : undefined;
 
   try {
-    const { text } = await generateText({
+    const { text: artifact } = await generateText({
       model: selectModel(task),
       prompt: buildArtifactGenerationPrompt(
         task.title,
@@ -78,6 +87,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
         client.website,
         client.brandVoice,
         adjustmentFeedback,
+        previousArtifact,
       ),
     });
 
@@ -87,7 +97,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
         ...(task.metadata ?? {}),
         executing: false,
         type: taskType,
-        artifact: text,
+        artifact,
         adjustmentFeedback: null,
         executionError: null,
       },

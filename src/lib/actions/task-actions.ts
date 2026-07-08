@@ -1,17 +1,19 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { generateText, generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { MODELS } from "@/lib/constants";
+import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
+import { requireTaskAccess } from "./_shared";
 import {
   createClientTask,
   updateClientTask,
   deleteClientTask,
   getClient,
-  getClientTask,
+  getTaskBoardCapacity,
   listTaskComments,
   createTaskComment,
   normalizeTitleForDedup,
@@ -19,6 +21,7 @@ import {
   chargeClientCredits,
 } from "@/lib/data";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { runTaskExecution, inferOwnerEngine } from "@/lib/execution-engine";
 import {
   buildTaskExecutionPlanPrompt,
   buildTaskIngestionRoutingPrompt,
@@ -49,24 +52,37 @@ async function chargeTaskAssist(user: AppUser, clientId: string, reason: string)
   }
 }
 
-/** Update a task's status. Accessible to the owning client user and staff. */
+/**
+ * Update a task's status. Accessible to the owning client user and staff.
+ * Moving a karos_managed task into In Progress automatically triggers its
+ * mapped ecosystem agent — every UI path (drag, card button, modal footer)
+ * lands here, so the trigger cannot be bypassed client-side.
+ */
 export async function updateTaskStatusAction(
   id: string,
   status: TaskStatus,
   clientId: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const user = await requireUser();
+  const access = await requireTaskAccess(id, clientId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { task } = access;
 
-  // CLIENT_USER may only update tasks for their own client
-  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
-    return { ok: false, error: "Forbidden" };
-  }
+  const triggersExecution =
+    status === "in_progress" &&
+    inferOwnerEngine(task) === "karos_managed" &&
+    task.metadata?.executing !== true;
 
   const patch: Partial<ClientTask> = { status, updatedAt: Date.now() };
   if (status === "completed") patch.completedAt = Date.now();
   if (status !== "completed") patch.completedAt = null;
+  if (triggersExecution) {
+    patch.metadata = { ...(task.metadata ?? {}), executing: true, executionError: null };
+  }
 
   await updateClientTask(id, patch);
+  if (triggersExecution) {
+    after(() => runTaskExecution(clientId, id).catch(console.error));
+  }
   revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };
@@ -87,6 +103,14 @@ export async function createTaskAction(input: {
 
   const client = await getClient(input.clientId);
   if (!client) return { ok: false, error: "Client not found" };
+
+  const { activeCount } = await getTaskBoardCapacity(input.clientId);
+  if (activeCount >= MAX_ACTIVE_TASKS) {
+    return {
+      ok: false,
+      error: `Task board is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
+    };
+  }
 
   const id = await createClientTask({
     clientId: input.clientId,
@@ -124,10 +148,8 @@ export async function getTaskCommentsAction(
   taskId: string,
   clientId: string,
 ): Promise<{ comments: TaskComment[]; error?: string }> {
-  const user = await requireUser();
-  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
-    return { comments: [], error: "Forbidden" };
-  }
+  const access = await requireTaskAccess(taskId, clientId);
+  if (!access.ok) return { comments: [], error: access.error };
   const comments = await listTaskComments(taskId);
   return { comments };
 }
@@ -138,10 +160,9 @@ export async function addTaskCommentAction(
   clientId: string,
   content: string,
 ): Promise<{ ok: boolean; comment?: TaskComment; error?: string }> {
-  const user = await requireUser();
-  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
-    return { ok: false, error: "Forbidden" };
-  }
+  const access = await requireTaskAccess(taskId, clientId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { user } = access;
   const trimmed = content.trim();
   if (!trimmed) return { ok: false, error: "Comment cannot be empty" };
 
@@ -169,14 +190,9 @@ export async function generateTaskPlanAction(
   taskId: string,
   clientId: string,
 ): Promise<{ plan: string; error?: string }> {
-  const user = await requireUser();
-  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
-    return { plan: "", error: "Forbidden" };
-  }
-
-  const [task, client] = await Promise.all([getClientTask(taskId), getClient(clientId)]);
-  if (!task) return { plan: "", error: "Task not found" };
-  if (task.clientId !== clientId) return { plan: "", error: "Forbidden" };
+  const access = await requireTaskAccess(taskId, clientId);
+  if (!access.ok) return { plan: "", error: access.error };
+  const { user, task } = access;
 
   // Serve the persisted plan when one exists — no model call, no charge.
   const cached = task.metadata?.aiPlan;
@@ -184,6 +200,8 @@ export async function generateTaskPlanAction(
 
   const denied = await chargeTaskAssist(user, clientId, `AI plan · ${task.title.slice(0, 80)}`);
   if (denied) return { plan: "", error: denied };
+
+  const client = await getClient(clientId);
 
   const { text } = await generateText({
     model: anthropic(MODELS.HAIKU),
@@ -226,8 +244,18 @@ export async function ingestCustomUserTaskAction(
   if (!trimmed) return { ok: false, error: "Task description cannot be empty" };
   if (trimmed.length > 1000) return { ok: false, error: "Task description is too long" };
 
-  const client = await getClient(clientId);
+  const [client, capacity] = await Promise.all([
+    getClient(clientId),
+    getTaskBoardCapacity(clientId),
+  ]);
   if (!client) return { ok: false, error: "Client not found" };
+
+  if (capacity.activeCount >= MAX_ACTIVE_TASKS) {
+    return {
+      ok: false,
+      error: `Task board is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
+    };
+  }
 
   const denied = await chargeTaskAssist(user, clientId, "Custom task ingestion");
   if (denied) return { ok: false, error: denied };
