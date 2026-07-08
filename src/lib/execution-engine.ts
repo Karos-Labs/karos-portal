@@ -142,6 +142,18 @@ export async function runAutopilotBatch(clientId: string): Promise<void> {
   }
 }
 
+/**
+ * Execute an explicit set of already-claimed tasks (status flipped to
+ * in_progress + executing by claimTaskForExecution). Used by the credit-charged
+ * client autopilot path so the executed batch is exactly the charged batch.
+ */
+export async function runClaimedTasks(clientId: string, taskIds: string[]): Promise<void> {
+  revalidatePath("/tasks");
+  for (const id of taskIds) {
+    await runTaskExecution(clientId, id).catch(console.error);
+  }
+}
+
 /* ── Integration publish helper ──────────────────────────────────── */
 
 /**

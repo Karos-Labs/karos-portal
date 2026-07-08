@@ -8,7 +8,12 @@ import {
   getClient,
   updateClientTask,
   createTaskComment,
+  chargeClientCredits,
+  claimTaskForExecution,
+  releaseTaskClaim,
 } from "@/lib/data";
+import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
+import type { AppUser } from "@/lib/types";
 import { sendEmail } from "@/lib/email";
 import {
   runTaskExecution,
@@ -17,6 +22,36 @@ import {
 } from "@/lib/execution-engine";
 
 const ALERT_EMAIL = "hello@karoslabs.com";
+
+/**
+ * Charge a client user for one task execution; staff executions (and admin
+ * "View as Client" sessions) are free. Returns the denial message when the
+ * charge is refused, null when it went through (or wasn't needed).
+ */
+async function chargeTaskExecution(
+  user: AppUser,
+  clientId: string,
+  taskId: string,
+  taskTitle: string,
+  reasonPrefix: string,
+): Promise<string | null> {
+  if (!isBillableClientActor(user)) return null;
+  try {
+    await chargeClientCredits({
+      clientId,
+      amount: CREDIT_COSTS.taskExecution,
+      operation: "task_execution",
+      reason: `${reasonPrefix} · ${taskTitle.slice(0, 80)}`,
+      jobId: taskId,
+      actorUid: user.uid,
+      actorName: user.name,
+    });
+    return null;
+  } catch (e) {
+    if (e instanceof CreditError) return e.message;
+    throw e;
+  }
+}
 
 /* ── Trigger: manual drag Pending → In Progress ──────────────────── */
 
@@ -40,11 +75,17 @@ export async function startTaskExecutionAction(
     return { ok: false, error: "Task is not karos_managed" };
   }
 
-  await updateClientTask(taskId, {
-    status: "in_progress",
-    metadata: { ...(task.metadata ?? {}), executing: true, executionError: null },
-    updatedAt: Date.now(),
-  });
+  // Atomically claim the task first (verifies ownership + pending status +
+  // not already executing) so a double-fired drag or retry can't charge and
+  // execute the same task twice.
+  const claimed = await claimTaskForExecution(taskId, clientId, ["pending"]);
+  if (!claimed) return { ok: false, error: "Task is already running or not in a runnable state" };
+
+  const denied = await chargeTaskExecution(user, clientId, taskId, task.title, "Task execution");
+  if (denied) {
+    await releaseTaskClaim(taskId, claimed.status);
+    return { ok: false, error: denied };
+  }
 
   after(() => runTaskExecution(clientId, taskId).catch(console.error));
   return { ok: true };
@@ -100,9 +141,15 @@ export async function requestAdjustmentsAction(
   const trimmed = feedback.trim();
   if (!trimmed) return { ok: false, error: "Feedback cannot be empty" };
 
-  const task = await getClientTask(taskId);
-  if (!task || task.status !== "review_pending") {
-    return { ok: false, error: "Task is not in review_pending state" };
+  // Atomic claim: verifies ownership + review_pending + not already executing,
+  // and flips to in_progress — two concurrent submits can't both charge.
+  const claimed = await claimTaskForExecution(taskId, clientId, ["review_pending"]);
+  if (!claimed) return { ok: false, error: "Task is not in review_pending state" };
+
+  const denied = await chargeTaskExecution(user, clientId, taskId, claimed.title, "Task adjustments");
+  if (denied) {
+    await releaseTaskClaim(taskId, claimed.status);
+    return { ok: false, error: denied };
   }
 
   // Persist feedback as comment for audit trail
@@ -116,9 +163,8 @@ export async function requestAdjustmentsAction(
   });
 
   await updateClientTask(taskId, {
-    status: "in_progress",
     metadata: {
-      ...(task.metadata ?? {}),
+      ...(claimed.metadata ?? {}),
       executing: true,
       adjustmentFeedback: trimmed,
       executionError: null,

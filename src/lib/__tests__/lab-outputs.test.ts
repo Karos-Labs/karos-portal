@@ -3,6 +3,7 @@ import {
   groupRunFiles,
   guessAssetType,
   humanizeItemName,
+  normalizeLabSlug,
   pickPrimaryFiles,
   type LabFile,
 } from "../lab-outputs-shared";
@@ -66,6 +67,30 @@ describe("guessAssetType", () => {
     expect(guessAssetType("blog-agent")).toBe("article");
     expect(guessAssetType("linkedin-agent")).toBe("social_post");
     expect(guessAssetType("rebrand")).toBe("note");
+  });
+});
+
+describe("normalizeLabSlug", () => {
+  it("passes through a plain slug", () => {
+    expect(normalizeLabSlug("karoslabs")).toBe("karoslabs");
+    expect(normalizeLabSlug("  XODigital ")).toBe("xodigital");
+  });
+
+  it("extracts the slug from a full GitHub URL", () => {
+    expect(
+      normalizeLabSlug("https://github.com/karoslabs/karos-agents/tree/main/clients/karoslabs/outputs"),
+    ).toBe("karoslabs");
+  });
+
+  it("extracts the slug from a repo path", () => {
+    expect(normalizeLabSlug("clients/karoslabs/outputs")).toBe("karoslabs");
+    expect(normalizeLabSlug("clients/xodigital")).toBe("xodigital");
+  });
+
+  it("returns empty for blank input", () => {
+    expect(normalizeLabSlug("")).toBe("");
+    expect(normalizeLabSlug(null)).toBe("");
+    expect(normalizeLabSlug(undefined)).toBe("");
   });
 });
 

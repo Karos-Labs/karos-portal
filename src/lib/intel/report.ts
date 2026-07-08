@@ -7,7 +7,6 @@ import type { Client } from "@/lib/types";
 import type { ParsedReport } from "@/lib/report-parser";
 import {
   getClient,
-  getSystemAgent,
   upsertClientReport,
   replaceReportCompetitors,
 } from "@/lib/data";
@@ -18,7 +17,7 @@ import { DEFAULT_INTEL_PROMPT } from "./brain";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
-/** Fixed Firestore document ID for the Intel Report system agent. */
+/** Provenance key used when logging feedback on intel-generated context docs. */
 export const INTEL_AGENT_ID = "intel-report-agent";
 
 /* ── Prompt compilation ──────────────────────────────────────────── */
@@ -167,29 +166,10 @@ export async function runIntelReportPipeline(
   const client = await getClient(clientId);
   if (!client) throw new Error(`Client not found: ${clientId}`);
 
-  const agent = await getSystemAgent(INTEL_AGENT_ID);
-
-  // The DB agent prompt is treated as ADDITIONAL INSTRUCTIONS appended to the
-  // code base prompt — never a replacement. This means:
-  //   - Code changes to DEFAULT_INTEL_PROMPT always take effect immediately
-  //   - Admins can add client-specific or market-specific instructions via the UI
-  //     without needing to maintain the full base prompt themselves
-  // Legacy detection: if the DB contains a full legacy prompt (starts with the old
-  // opener and has the old scoring section), ignore it so the new base takes over.
-  const isLegacyFullPrompt =
-    agent?.systemPrompt?.startsWith("You are the Karos Intel AI") &&
-    agent.systemPrompt.includes("## SCORING METHODOLOGY");
-  const additionalInstructions =
-    agent?.systemPrompt && !isLegacyFullPrompt ? agent.systemPrompt.trim() : "";
-
   const brandingContext = compileBrandingContext(client.brandingGuidelines);
 
   const basePrompt = compilePrompt(DEFAULT_INTEL_PROMPT, client, brandingContext);
-  const compiledPrompt = assemblePromptLayers(
-    basePrompt,
-    additionalInstructions,
-    runSpecificContext ?? "",
-  );
+  const compiledPrompt = assemblePromptLayers(basePrompt, "", runSpecificContext ?? "");
 
   const userMessage = `Generate the complete Karos Intel Report for ${client.name}. Output ONLY the markdown report — no preamble, no explanation. Start immediately with "# Karos Intel: ${client.name}".`;
 

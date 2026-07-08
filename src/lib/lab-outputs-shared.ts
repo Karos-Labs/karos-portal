@@ -82,6 +82,21 @@ export function guessAssetType(agentFolder: string): AssetType {
   return "note";
 }
 
+/**
+ * Extracts the client folder slug from whatever staff typed into the "Lab repo
+ * slug" field — a plain slug ("karoslabs"), a path ("clients/karoslabs/outputs"),
+ * or a full GitHub URL (".../tree/main/clients/karoslabs/outputs"). Returns "" if
+ * nothing usable is found.
+ */
+export function normalizeLabSlug(input: string | null | undefined): string {
+  if (!input) return "";
+  const s = input.trim();
+  const inPath = s.match(/clients\/([^/\s?#]+)/i);
+  if (inPath) return inPath[1].toLowerCase();
+  const lastSegment = s.split(/[/\s]+/).filter(Boolean).pop() ?? s;
+  return lastSegment.toLowerCase().replace(/[^a-z0-9._-]/g, "");
+}
+
 /** "01-template-launch-hero" → "Template launch hero"; "2026-07-06-template-launch" → "Template launch" */
 export function humanizeItemName(key: string): string {
   const cleaned = key

@@ -32,6 +32,12 @@ export interface AppUser {
   approvedAt?: number | null;
   createdAt: number;
   lastLoginAt?: number;
+  /**
+   * Transient, never persisted: set by auth when a KAROS_ADMIN is viewing as
+   * this client user ("View as Client"). Charge gates use it so impersonated
+   * sessions never spend the client's real credits.
+   */
+  impersonatedBy?: string;
 }
 
 /** Client-editable social handles / profile URLs. */
@@ -115,59 +121,6 @@ export interface ClientRequest {
   reviewedBy?: string;
   /** Notes left by a Karos staff member when approving/rejecting. */
   reviewNotes?: string;
-}
-
-/** A field collected from the user before an agent runs. */
-export interface AgentField {
-  key: string;
-  label: string;
-  type: "text" | "textarea" | "number" | "select";
-  placeholder?: string;
-  required?: boolean;
-  options?: string[];
-  defaultValue?: string;
-}
-
-export type AgentCapability =
-  | "generate" // produce text/structured content
-  | "generate_images" // generate a real image per Instagram post from its visual brief
-  | "email_client" // deliver the result to the client by email
-  | "create_assets" // persist outputs to the client's asset library
-  | "use_transcripts" // ground the run on the client's meeting transcripts
-  | "use_brand_voice"; // ground the run on the client's brand voice
-
-/** An "agent" is a reusable skill that employees build inside the app. */
-export interface Agent {
-  id: string;
-  name: string;
-  description: string;
-  /** lucide icon name, e.g. "Instagram" */
-  icon: string;
-  color: string;
-  /** Anthropic model id. */
-  model: string;
-  systemPrompt: string;
-  /** Structured-output contract the agent should produce (freeform guidance for the model). */
-  outputKind: "instagram_posts" | "email" | "article" | "social_posts" | "freeform";
-  fields: AgentField[];
-  capabilities: AgentCapability[];
-  /** Lifecycle: drafts are in-development (test-only); published agents are live & runnable. */
-  status: "draft" | "published";
-  /** Only meaningful once published — pause/resume runnability. */
-  isActive: boolean;
-  /** When true, available to every employee. Only meaningful once published. */
-  shared: boolean;
-  createdBy: string;
-  createdAt: number;
-  updatedAt: number;
-  runCount?: number;
-  /** Provenance + idempotency key for system-seeded agents (e.g. the intel report agent). */
-  labsSkillId?: string;
-  /**
-   * When true: this is an internal Karos system agent (e.g. the Intel Report Agent).
-   * Hidden from client-facing views; visible to admins for configuration.
-   */
-  isSystem?: boolean;
 }
 
 export type JobStatus =
@@ -748,4 +701,58 @@ export interface ClientSettings {
   clientId: string;
   autopilot: boolean;
   updatedAt: number;
+}
+
+/* ─────────────────────── Client Credits ─────────────────────────── */
+
+/**
+ * A client's credit balance + spend caps. Stored in `clientCredits`, doc ID =
+ * clientId. Created lazily with defaults on the first charge or grant.
+ * CLIENT_USER-initiated AI actions charge this balance; staff work never does.
+ * Weekly/monthly caps are the per-client rate limit (null = uncapped); spend
+ * counters reset when their UTC window key rolls over.
+ */
+export interface ClientCredits {
+  clientId: string;
+  balance: number;
+  weeklyLimit: number | null;
+  monthlyLimit: number | null;
+  /** ISO week of the current spend window, e.g. "2026-W28". */
+  weekKey: string;
+  weekSpent: number;
+  /** Calendar month of the current spend window, e.g. "2026-07". */
+  monthKey: string;
+  monthSpent: number;
+  updatedAt: number;
+}
+
+export type CreditEntryKind = "grant" | "charge" | "refund" | "adjustment";
+
+export type CreditOperation =
+  /** Legacy — in-app agent runs no longer exist; kept so old ledger entries still render. */
+  | "agent_run"
+  | "chat_message"
+  | "task_execution"
+  | "doc_correction"
+  | "manual";
+
+/**
+ * Append-only audit trail of every balance change. Stored in `creditLedger`
+ * (its own retained collection — usageLogs are purged after 30 days).
+ */
+export interface CreditLedgerEntry {
+  id: string;
+  clientId: string;
+  /** Signed change: positive for grants/refunds, negative for charges. */
+  delta: number;
+  balanceAfter: number;
+  kind: CreditEntryKind;
+  operation: CreditOperation;
+  /** Human label shown in the ledger, e.g. "Agent run · Instagram Pack". */
+  reason: string;
+  agentId?: string | null;
+  jobId?: string | null;
+  actorUid: string;
+  actorName?: string;
+  createdAt: number;
 }

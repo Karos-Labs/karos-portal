@@ -335,13 +335,15 @@ export function AssetCard({
                   </>
                 )}
               </p>
-              <button
-                onClick={handleUnschedule}
-                disabled={busy}
-                className="ml-auto text-[11px] text-muted-2 transition-colors hover:text-danger disabled:opacity-50"
-              >
-                Unschedule
-              </button>
+              {canApprove && (
+                <button
+                  onClick={handleUnschedule}
+                  disabled={busy}
+                  className="ml-auto text-[11px] text-muted-2 transition-colors hover:text-danger disabled:opacity-50"
+                >
+                  Unschedule
+                </button>
+              )}
             </div>
           )}
 

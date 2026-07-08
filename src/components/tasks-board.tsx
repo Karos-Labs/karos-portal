@@ -60,13 +60,19 @@ function nextStatusFor(current: TaskStatus): TaskStatus {
 
 function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boolean }) {
   const [isOn, setIsOn] = useState(enabled);
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function toggle() {
     const next = !isOn;
     setIsOn(next);
+    setError(null);
     startTransition(async () => {
-      await updateAutopilotAction(clientId, next);
+      const res = await updateAutopilotAction(clientId, next);
+      if (!res.ok) {
+        setIsOn(!next);
+        setError(res.error ?? "Could not update Autopilot");
+      }
     });
   }
 
@@ -87,6 +93,7 @@ function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boo
             ? "Karos AI is executing pending tasks automatically"
             : "Tasks are queued — toggle on to execute automatically"}
         </p>
+        {error && <p className="mt-0.5 text-xs text-danger">{error}</p>}
       </div>
       <button
         onClick={toggle}
@@ -393,6 +400,7 @@ export function TasksBoard({
   const router = useRouter();
   const [localTasks, setLocalTasks] = useState(tasks);
   const [activeTab, setActiveTab] = useState<"karos" | "client">("karos");
+  const [execError, setExecError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<TaskStatus | null>(null);
@@ -445,8 +453,20 @@ export function TasksBoard({
             : t,
         ),
       );
+      setExecError(null);
       startTransition(async () => {
-        await startTaskExecutionAction(id, cid);
+        const res = await startTaskExecutionAction(id, cid);
+        if (!res.ok) {
+          // Revert the optimistic in_progress flip and show why (e.g. credits).
+          setLocalTasks((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "pending", metadata: { ...(t.metadata ?? {}), executing: false } }
+                : t,
+            ),
+          );
+          setExecError(res.error ?? "Could not start the task");
+        }
         // Refresh layout so notification bell reflects updated task counts.
         router.refresh();
       });
@@ -558,6 +578,20 @@ export function TasksBoard({
       {activeTab === "karos" && clientId && (
         <div className="mb-5">
           <AutopilotToggle clientId={clientId} enabled={autopilotEnabled} />
+        </div>
+      )}
+
+      {/* Execution error (e.g. credit denial) */}
+      {execError && (
+        <div className="mb-4 flex items-start justify-between gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
+          <p className="text-xs text-danger">{execError}</p>
+          <button
+            onClick={() => setExecError(null)}
+            className="shrink-0 text-xs text-danger/70 hover:text-danger"
+            aria-label="Dismiss"
+          >
+            <Icon name="X" className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
 

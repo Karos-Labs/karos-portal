@@ -39,7 +39,7 @@ function clientViewNav(clientId: string): NavItem[] {
   return [
     { href: `/clients/${clientId}`, label: "Analytics", icon: "BarChart3", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"], exact: true },
     { href: `/clients/${clientId}/agents`, label: "AI Agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
-    { href: "/assets", label: "Library", icon: "Library", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
+    { href: `/clients/${clientId}/assets`, label: "Library", icon: "Library", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
     { href: "/tasks", label: "Progress", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   ];
 }

@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { listAssets, listClients, listJobs, listAgents } from "@/lib/data";
+import { listAssets, listClients } from "@/lib/data";
 import { EmptyState, PageHeader, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetCard } from "@/components/asset-card";
@@ -17,15 +17,13 @@ export default async function AssetsPage() {
         </>
       );
     }
-    const [assets, jobs, agents] = await Promise.all([
-      listAssets({ clientId: user.clientId }),
-      listJobs({ clientId: user.clientId }),
-      listAgents({ status: "published" }),
-    ]);
+    const allClientAssets = await listAssets({ clientId: user.clientId });
+    // Clients only see deliverables their Karos team has approved — drafts stay internal.
+    const assets = allClientAssets.filter((a) => a.status !== "draft");
     return (
       <>
         <PageHeader title="Library" description="Your content library and delivery calendar." />
-        <AssetsView assets={assets} jobs={jobs} agents={agents} />
+        <AssetsView assets={assets} />
       </>
     );
   }

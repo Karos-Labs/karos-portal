@@ -12,6 +12,7 @@ import {
   isLabOutputsConfigured,
   listLabOutputRuns,
   listRunClientFiles,
+  normalizeLabSlug,
   pickPrimaryFiles,
   type LabRun,
 } from "@/lib/lab-outputs";
@@ -46,12 +47,13 @@ async function requireLabClient(clientId: string) {
   }
   const client = await getClient(clientId);
   if (!client) return { error: "Client not found." } as const;
-  if (!client.agentsRepoSlug) {
+  const slug = normalizeLabSlug(client.agentsRepoSlug);
+  if (!slug) {
     return {
       error: "This client has no lab repo slug yet — set it via the client's Edit dialog (Lab repo slug).",
     } as const;
   }
-  return { user, client, slug: client.agentsRepoSlug } as const;
+  return { user, client, slug } as const;
 }
 
 /** Lists the client's committed lab runs (clients/<slug>/outputs/** in karos-agents). */

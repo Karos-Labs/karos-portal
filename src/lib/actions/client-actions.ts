@@ -7,6 +7,7 @@ import { createClient, updateClient, deleteClient, getClientByKeyId } from "@/li
 import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
 import type { Client, SocialLinks } from "@/lib/types";
+import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import { requireStaff } from "./_shared";
 
 export async function createClientAction(input: {
@@ -132,6 +133,8 @@ export async function updateClientAction(id: string, input: Partial<Client> & { 
     delete (patch as { domainsCsv?: string }).domainsCsv;
   }
   if (patch.contactEmail) patch.contactEmail = patch.contactEmail.toLowerCase();
+  // Store just the client folder slug even if a full repo URL/path was pasted.
+  if (patch.agentsRepoSlug !== undefined) patch.agentsRepoSlug = normalizeLabSlug(patch.agentsRepoSlug);
   // Immutable / security-sensitive fields — only dedicated actions may change these.
   delete (patch as Partial<Client> & { clientKeyId?: string }).clientKeyId;
   delete (patch as Partial<Client> & { createdAt?: number }).createdAt;

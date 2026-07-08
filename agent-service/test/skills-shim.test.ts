@@ -42,6 +42,23 @@ describe("skills shim", () => {
     }
   });
 
+  it("throws when the entry skill path resolves to no SKILL.md", async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), "shim-missing-"));
+    // Only a vendor skill exists; the configured entry path is absent (the
+    // stale-path regression that silently ran the agent with no entry skill).
+    await makeSkill(repo, "skills/vendors/pack/skills/seo-audit");
+
+    await expect(
+      buildSkillsShim({
+        repoDir: repo,
+        entrySkillDir: "products/social/instagram-tiktok-agent",
+        skillRoots: ["skills/vendors/pack"],
+        clientSlug: "acme",
+        includeClientSkills: false,
+      }),
+    ).rejects.toThrow(/entry skill not found/);
+  });
+
   it("collectSkillDirs finds nested skills but respects the depth cap", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "collect-test-"));
     await makeSkill(root, "a");

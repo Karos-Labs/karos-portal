@@ -6,7 +6,6 @@ import type {
   AccessToken,
   ActionItemNotification,
   ActivityLog,
-  Agent,
   Feedback,
   AgentReviewNotification,
   AppUser,
@@ -14,6 +13,7 @@ import type {
   Client,
   ClientCompetitor,
   ClientContextDoc,
+  ClientCredits,
   ClientIntegration,
   ClientReport,
   ClientRequest,
@@ -21,6 +21,8 @@ import type {
   ClientTask,
   ContextDocTier,
   ContextItem,
+  CreditLedgerEntry,
+  CreditOperation,
   Job,
   JobStatus,
   LoginLog,
@@ -29,8 +31,13 @@ import type {
   TaskStatus,
   Transcript,
 } from "@/lib/types";
-import type { ContentCatalog, ContentEngineConfig, LedgerEntry } from "@/lib/content-engine/types";
-import type { NewsletterConfig } from "@/lib/newsletter/types";
+import {
+  CreditError,
+  applyCredit,
+  assessCharge,
+  defaultClientCredits,
+  rollCreditWindows,
+} from "@/lib/credits";
 
 /* ----------------------------- helpers ----------------------------- */
 
@@ -41,7 +48,6 @@ function withId<T>(doc: FirebaseFirestore.DocumentSnapshot): T {
 const col = {
   users: () => adminDb().collection("users"),
   clients: () => adminDb().collection("clients"),
-  agents: () => adminDb().collection("agents"),
   jobs: () => adminDb().collection("jobs"),
   assets: () => adminDb().collection("assets"),
   transcripts: () => adminDb().collection("transcripts"),
@@ -54,17 +60,13 @@ const col = {
   clientIntegrations: () => adminDb().collection("clientIntegrations"),
   clientRequests: () => adminDb().collection("clientRequests"),
   loginLogs: () => adminDb().collection("loginLogs"),
-  // Content Engine (native e12 port). Catalog + config are keyed by clientId
-  // (one doc per client); the ledger is an append-only collection.
-  contentCatalogs: () => adminDb().collection("contentCatalogs"),
-  contentEngineConfigs: () => adminDb().collection("contentEngineConfigs"),
-  contentLedger: () => adminDb().collection("contentLedger"),
-  // Newsletter + Blog Engine (native e11 port). Brand + content-foundation, one doc per client.
-  newsletterConfigs: () => adminDb().collection("newsletterConfigs"),
   clientTasks: () => adminDb().collection("clientTasks"),
   taskComments: () => adminDb().collection("taskComments"),
   clientSettings: () => adminDb().collection("clientSettings"),
   feedbacks: () => adminDb().collection("feedbacks"),
+  // Client usage credits: balance doc per client (doc ID = clientId) + append-only ledger.
+  clientCredits: () => adminDb().collection("clientCredits"),
+  creditLedger: () => adminDb().collection("creditLedger"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -151,61 +153,6 @@ export async function matchClientByDomains(domains: string[]): Promise<Client | 
     if (domains.some((d) => cd.includes(d))) return c;
   }
   return null;
-}
-
-/* ------------------------------ agents ----------------------------- */
-
-export async function listAgents(opts?: { status?: Agent["status"] }): Promise<Agent[]> {
-  const snap = await col.agents().get();
-  let agents = snap.docs.map((d) => withId<Agent>(d));
-  // Default a missing status to "published" so any pre-existing/seeded agent stays live.
-  if (opts?.status) agents = agents.filter((a) => (a.status ?? "published") === opts.status);
-  return agents.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-}
-
-export async function getAgent(id: string): Promise<Agent | null> {
-  const doc = await col.agents().doc(id).get();
-  return doc.exists ? withId<Agent>(doc) : null;
-}
-
-/** Resolve an imported karos-labs agent by its provenance key (e.g. "karos-intel"). */
-export async function getAgentByLabsSkillId(labsSkillId: string): Promise<Agent | null> {
-  const snap = await col.agents().where("labsSkillId", "==", labsSkillId).limit(1).get();
-  return snap.empty ? null : withId<Agent>(snap.docs[0]);
-}
-
-export async function createAgent(data: Omit<Agent, "id">): Promise<string> {
-  const ref = await col.agents().add(data);
-  return ref.id;
-}
-
-export async function updateAgent(id: string, data: Partial<Agent>): Promise<void> {
-  await col.agents().doc(id).set(data, { merge: true });
-}
-
-export async function deleteAgent(id: string): Promise<void> {
-  await col.agents().doc(id).delete();
-}
-
-/**
- * Fetch a system agent by its fixed document ID (e.g. "intel-report-agent").
- * Semantic alias for getAgent() — no extra filtering; the fixed doc ID is the contract.
- */
-export async function getSystemAgent(id: string): Promise<Agent | null> {
-  return getAgent(id);
-}
-
-/** Create or fully overwrite a system agent document (uses the provided id as doc key). */
-export async function upsertSystemAgent(id: string, data: Omit<Agent, "id">): Promise<void> {
-  await col.agents().doc(id).set({ id, ...data });
-}
-
-export async function bumpAgentRun(id: string): Promise<void> {
-  const { FieldValue } = await import("firebase-admin/firestore");
-  await col.agents().doc(id).set(
-    { runCount: FieldValue.increment(1), updatedAt: Date.now() },
-    { merge: true },
-  );
 }
 
 /* ------------------------------- jobs ------------------------------ */
@@ -423,53 +370,6 @@ export async function findAccessTokenByHash(tokenHash: string): Promise<AccessTo
 
 export async function updateAccessToken(id: string, data: Partial<AccessToken>): Promise<void> {
   await col.accessTokens().doc(id).set(data, { merge: true });
-}
-
-/* ------------------------- content engine -------------------------- */
-
-/** A client's topic catalog (one doc, keyed by clientId). */
-export async function getContentCatalog(clientId: string): Promise<ContentCatalog | null> {
-  const doc = await col.contentCatalogs().doc(clientId).get();
-  return doc.exists ? (doc.data() as ContentCatalog) : null;
-}
-
-export async function upsertContentCatalog(catalog: ContentCatalog): Promise<void> {
-  await col.contentCatalogs().doc(catalog.clientId).set(catalog, { merge: true });
-}
-
-/** A client's content-engine config (voice/qa rules + picker selection; keyed by clientId). */
-export async function getContentEngineConfig(clientId: string): Promise<ContentEngineConfig | null> {
-  const doc = await col.contentEngineConfigs().doc(clientId).get();
-  return doc.exists ? (doc.data() as ContentEngineConfig) : null;
-}
-
-export async function upsertContentEngineConfig(config: ContentEngineConfig): Promise<void> {
-  await col.contentEngineConfigs().doc(config.clientId).set(config, { merge: true });
-}
-
-/** The client's ledger, oldest→newest (order matters: the picker reads the last entry's format). */
-export async function listLedger(opts: { clientId: string }): Promise<LedgerEntry[]> {
-  const snap = await col.contentLedger().where("clientId", "==", opts.clientId).get();
-  return snap.docs
-    .map((d) => d.data() as LedgerEntry & { clientId: string })
-    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || (a.vol ?? 0) - (b.vol ?? 0));
-}
-
-export async function appendLedger(entry: LedgerEntry & { clientId: string }): Promise<string> {
-  const ref = await col.contentLedger().add(entry);
-  return ref.id;
-}
-
-/* ------------------------ newsletter + blog ------------------------ */
-
-/** A client's newsletter/blog config (brand + content foundation; keyed by clientId). */
-export async function getNewsletterConfig(clientId: string): Promise<NewsletterConfig | null> {
-  const doc = await col.newsletterConfigs().doc(clientId).get();
-  return doc.exists ? (doc.data() as NewsletterConfig) : null;
-}
-
-export async function upsertNewsletterConfig(config: Partial<NewsletterConfig> & { clientId: string }): Promise<void> {
-  await col.newsletterConfigs().doc(config.clientId).set(config, { merge: true });
 }
 
 /* ----------------------- intelligence reports ----------------------- */
@@ -857,6 +757,50 @@ export async function getClientTask(id: string): Promise<ClientTask | null> {
   return doc.exists ? withId<ClientTask>(doc) : null;
 }
 
+/**
+ * Atomically claim a task for execution: verifies it belongs to `clientId`,
+ * is in one of `fromStatuses`, and isn't already executing, then flips it to
+ * in_progress + executing in the same transaction. Returns the task as it was
+ * BEFORE the claim (so callers can revert), or null when the claim loses.
+ * This is the idempotency gate that stops double-charged duplicate executions.
+ */
+export async function claimTaskForExecution(
+  taskId: string,
+  clientId: string,
+  fromStatuses: TaskStatus[],
+): Promise<ClientTask | null> {
+  const ref = col.clientTasks().doc(taskId);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return null;
+    const task = withId<ClientTask>(snap);
+    if (task.clientId !== clientId) return null;
+    if (!fromStatuses.includes(task.status)) return null;
+    if (task.metadata?.executing === true) return null;
+    tx.update(ref, {
+      status: "in_progress",
+      metadata: { ...(task.metadata ?? {}), executing: true, executionError: null },
+      updatedAt: Date.now(),
+    });
+    return task;
+  });
+}
+
+/** Undo a claimTaskForExecution (e.g. the credit charge was denied). */
+export async function releaseTaskClaim(taskId: string, previousStatus: TaskStatus): Promise<void> {
+  const doc = await col.clientTasks().doc(taskId).get();
+  if (!doc.exists) return;
+  const task = withId<ClientTask>(doc);
+  await col.clientTasks().doc(taskId).set(
+    {
+      status: previousStatus,
+      metadata: { ...(task.metadata ?? {}), executing: false },
+      updatedAt: Date.now(),
+    },
+    { merge: true },
+  );
+}
+
 export async function createClientTask(data: Omit<ClientTask, "id">): Promise<string> {
   const ref = await col.clientTasks().add(data);
   return ref.id;
@@ -899,6 +843,147 @@ export async function upsertClientSettings(
     { clientId, ...patch },
     { merge: true },
   );
+}
+
+/* ─────────────────────── Client Credits ─────────────────────────── */
+
+/**
+ * A client's credit state with spend windows rolled to `now` for display.
+ * Returns the default (unpersisted) doc for clients that were never charged
+ * or granted — the doc is created lazily by the first mutation.
+ */
+export async function getClientCredits(clientId: string): Promise<ClientCredits> {
+  const doc = await col.clientCredits().doc(clientId).get();
+  const now = Date.now();
+  if (!doc.exists) return defaultClientCredits(clientId, now);
+  return rollCreditWindows(doc.data() as ClientCredits, now);
+}
+
+type CreditEntryMeta = {
+  clientId: string;
+  operation: CreditOperation;
+  reason: string;
+  agentId?: string | null;
+  jobId?: string | null;
+  actorUid: string;
+  actorName?: string;
+};
+
+/**
+ * Atomically charge a client's balance and append the ledger entry.
+ * Enforces the balance and the weekly/monthly caps inside one transaction;
+ * throws CreditError (client-readable message) when the charge is denied.
+ * A zero/negative amount is a no-op that returns the current balance.
+ */
+export async function chargeClientCredits(
+  args: CreditEntryMeta & { amount: number },
+): Promise<{ balance: number }> {
+  const ref = col.clientCredits().doc(args.clientId);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const now = Date.now();
+    const current = snap.exists
+      ? (snap.data() as ClientCredits)
+      : defaultClientCredits(args.clientId, now);
+
+    const assessed = assessCharge(current, args.amount, now);
+    if (!assessed.ok) throw new CreditError(assessed.code, assessed.message);
+    if (args.amount <= 0) return { balance: assessed.next.balance };
+
+    tx.set(ref, assessed.next);
+    const entryRef = col.creditLedger().doc();
+    tx.set(entryRef, {
+      id: entryRef.id,
+      clientId: args.clientId,
+      delta: -args.amount,
+      balanceAfter: assessed.next.balance,
+      kind: "charge",
+      operation: args.operation,
+      reason: args.reason,
+      agentId: args.agentId ?? null,
+      jobId: args.jobId ?? null,
+      actorUid: args.actorUid,
+      actorName: args.actorName,
+      createdAt: now,
+    } satisfies CreditLedgerEntry);
+    return { balance: assessed.next.balance };
+  });
+}
+
+/**
+ * Atomically add credits (grant / refund / admin adjustment) and append the
+ * ledger entry. Refunds also hand back weekly/monthly window spend. Negative
+ * amounts are allowed only for kind="adjustment" (admin deduction).
+ */
+export async function creditClientCredits(
+  args: CreditEntryMeta & {
+    amount: number;
+    kind: "grant" | "refund" | "adjustment";
+    /** Refunds: when the original charge happened — scopes window-spend hand-back. */
+    chargedAt?: number;
+  },
+): Promise<{ balance: number }> {
+  if (args.amount === 0) throw new Error("Amount must be non-zero");
+  if (args.amount < 0 && args.kind !== "adjustment") {
+    throw new Error("Only adjustments may deduct credits");
+  }
+  const ref = col.clientCredits().doc(args.clientId);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const now = Date.now();
+    const current = snap.exists
+      ? (snap.data() as ClientCredits)
+      : defaultClientCredits(args.clientId, now);
+
+    const next = applyCredit(current, args.amount, args.kind, now, args.chargedAt);
+    tx.set(ref, next);
+    const entryRef = col.creditLedger().doc();
+    tx.set(entryRef, {
+      id: entryRef.id,
+      clientId: args.clientId,
+      delta: args.amount,
+      balanceAfter: next.balance,
+      kind: args.kind,
+      operation: args.operation,
+      reason: args.reason,
+      agentId: args.agentId ?? null,
+      jobId: args.jobId ?? null,
+      actorUid: args.actorUid,
+      actorName: args.actorName,
+      createdAt: now,
+    } satisfies CreditLedgerEntry);
+    return { balance: next.balance };
+  });
+}
+
+/** Set the weekly/monthly spend caps (null = uncapped). Creates the doc with defaults if missing. */
+export async function setClientCreditLimits(
+  clientId: string,
+  limits: { weeklyLimit: number | null; monthlyLimit: number | null },
+): Promise<void> {
+  const ref = col.clientCredits().doc(clientId);
+  await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const now = Date.now();
+    const current = snap.exists
+      ? (snap.data() as ClientCredits)
+      : defaultClientCredits(clientId, now);
+    tx.set(ref, {
+      ...rollCreditWindows(current, now),
+      weeklyLimit: limits.weeklyLimit,
+      monthlyLimit: limits.monthlyLimit,
+      updatedAt: now,
+    });
+  });
+}
+
+/** Ledger entries for a client, newest first. */
+export async function listCreditLedger(clientId: string, limit = 50): Promise<CreditLedgerEntry[]> {
+  const snap = await col.creditLedger().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<CreditLedgerEntry>(d))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit);
 }
 
 /* ─────────────────────── Deduplication helper ───────────────────── */

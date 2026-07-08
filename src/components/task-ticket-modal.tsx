@@ -114,6 +114,7 @@ function ReviewPanel({
 }) {
   const [showAdjustForm, setShowAdjustForm] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [adjustError, setAdjustError] = useState<string | null>(null);
   const [approving, startApproveTransition] = useTransition();
   const [adjusting, startAdjustTransition] = useTransition();
   const [publishing, startPublishTransition] = useTransition();
@@ -130,12 +131,15 @@ function ReviewPanel({
     e.preventDefault();
     const trimmed = feedback.trim();
     if (!trimmed || adjusting) return;
+    setAdjustError(null);
     startAdjustTransition(async () => {
       const res = await requestAdjustmentsAction(taskId, clientId, trimmed);
       if (res.ok) {
         onAdjust(trimmed);
         setFeedback("");
         setShowAdjustForm(false);
+      } else {
+        setAdjustError(res.error ?? "Could not request adjustments");
       }
     });
   }
@@ -214,6 +218,7 @@ function ReviewPanel({
             rows={3}
             className="w-full resize-none rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50 focus:ring-1 focus:ring-neon/30"
           />
+          {adjustError && <p className="text-xs text-danger">{adjustError}</p>}
           <div className="flex justify-end gap-2">
             <button
               type="button"

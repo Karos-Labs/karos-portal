@@ -10,12 +10,10 @@ import {
   getClientReport,
   listClientCompetitors,
   listClientContextDocs,
-  listAgents,
   listJobs,
   listAssets,
   listClientTasks,
   updateClient,
-  updateAsset,
   upsertClientContextDoc,
   getClientContextDoc,
   listClientIntegrations,
@@ -23,15 +21,19 @@ import {
   createClientTask,
   deleteAllClientTasks,
   normalizeTitleForDedup,
+  chargeClientCredits,
+  getClientCredits,
 } from "@/lib/data";
-import { buildCopilotSystemPrompt, buildAgentCopilotSystemPrompt } from "@/lib/copilot-context";
+import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
+import type { ClientCredits } from "@/lib/types";
+import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
-import { startAgentRun } from "@/lib/agents/run";
+import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { sendEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
 import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
 import { logger } from "@/services/logger";
-import type { Agent, Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
+import type { BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
 import { MODELS } from "@/lib/constants";
 
 export const maxDuration = 60;
@@ -53,18 +55,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const body = await req.json() as {
     messages?: Array<{ role: "user" | "assistant"; content: string }>;
-    agentId?: string | null;
   };
   const messages = (body.messages ?? []) as ModelMessage[];
-  const requestedAgentId = body.agentId ?? null;
 
-  const [client, report, competitors, contextDocs, allAgents, jobs, assets, integrations] =
+  const [client, report, competitors, contextDocs, jobs, assets, integrations] =
     await Promise.all([
       getClient(clientId),
       getClientReport(clientId),
       listClientCompetitors(clientId),
       listClientContextDocs(clientId),
-      listAgents({ status: "published" }),
       listJobs({ clientId }),
       listAssets({ clientId }),
       listClientIntegrations(clientId),
@@ -74,45 +73,65 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return Response.json({ error: "Client not found" }, { status: 404 });
   }
 
-  // Resolve agent-specific mode
-  let focusedAgent: Agent | null = null;
-  let agentJobs = jobs;
-  let agentAssets: Asset[] = [];
-
-  if (requestedAgentId) {
-    focusedAgent = allAgents.find((a) => a.id === requestedAgentId && !a.isSystem) ?? null;
-    if (focusedAgent) {
-      agentJobs = jobs.filter((j) => j.agentId === requestedAgentId);
-      agentAssets = assets.filter((a) => a.agentId === requestedAgentId);
+  // Client users spend 1 credit per copilot message (staff chat and admin
+  // "View as Client" sessions are free). The charge enforces the balance +
+  // weekly/monthly caps; denials return 402 with a readable message the dock
+  // renders inline.
+  let credits: ClientCredits | null = null;
+  if (isBillableClientActor(user)) {
+    try {
+      await chargeClientCredits({
+        clientId,
+        amount: CREDIT_COSTS.chatMessage,
+        operation: "chat_message",
+        reason: "Copilot chat message",
+        actorUid: user.uid,
+        actorName: user.name,
+      });
+    } catch (e) {
+      if (e instanceof CreditError) {
+        return Response.json({ error: e.message }, { status: 402 });
+      }
+      throw e;
     }
+    credits = await getClientCredits(clientId);
   }
 
-  const baseSystemPrompt = focusedAgent
-    ? buildAgentCopilotSystemPrompt(focusedAgent, client, agentJobs, agentAssets, contextDocs)
-    : buildCopilotSystemPrompt(client, report, competitors, allAgents, jobs, assets, contextDocs);
+  const baseSystemPrompt = buildCopilotSystemPrompt(client, report, competitors, jobs, assets, contextDocs);
 
   /* ── Shared Google integration lookup ────────────────────────────── */
   const googleIntegration = integrations.find(
     (i) => i.platform === "google" && i.status === "active",
   );
 
-  // Build dynamic proactive appendix with live agent catalog, social integrations,
-  // calendar state, and Gmail status so the AI follows the correct scenario rules.
-  const agentCatalog = allAgents
-    .filter((a) => !a.isSystem && a.isActive && a.status === "published")
-    .map((a) => ({
-      id: a.id,
-      name: a.name,
-      outputKind: a.outputKind,
-      description: a.description,
-      capabilities: a.capabilities as string[],
-    }));
+  // Build dynamic proactive appendix with the managed-product catalog (karos-agents
+  // lab products run by the Karos team), social integrations, calendar state, and
+  // Gmail status so the AI follows the correct scenario rules.
+  const agentCatalog = MANAGED_PRODUCTS.map((p) => ({
+    id: p.taskType,
+    name: p.name,
+    outputKind: p.taskType,
+    description: p.tagline,
+    capabilities: [] as string[],
+  }));
 
   const linkedSocialPlatforms = integrations
     .filter((i) => i.platform !== "google" && (i.status ?? "active") === "active")
     .map((i) => i.platform);
 
   const hasScheduledContent = assets.some((a) => a.status === "scheduled");
+
+  // Make the copilot credits-aware for client users: it can quote run costs,
+  // warn on a low balance, and explain why an action was declined.
+  const creditsAppendix = credits
+    ? `\n\n## Usage credits\n` +
+      `This client pays for AI actions with credits. Current balance: ${credits.balance} credits. ` +
+      `Used ${credits.weekSpent}${credits.weeklyLimit != null ? ` of ${credits.weeklyLimit}` : ""} this week, ` +
+      `${credits.monthSpent}${credits.monthlyLimit != null ? ` of ${credits.monthlyLimit}` : ""} this month.\n` +
+      `Costs: chat message ${CREDIT_COSTS.chatMessage}, task execution ${CREDIT_COSTS.taskExecution}, ` +
+      `doc correction ${CREDIT_COSTS.targetedCorrection} (global ${CREDIT_COSTS.globalCorrection}).\n` +
+      `If the balance is under 20, proactively mention it and suggest asking the Karos team for a top-up. Never invent credit figures beyond these.`
+    : "";
 
   const systemPrompt =
     `${baseSystemPrompt}\n\n` +
@@ -121,7 +140,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       linkedSocialPlatforms,
       hasGmailIntegration: !!googleIntegration,
       hasScheduledContent,
-    });
+    }) +
+    creditsAppendix;
 
   /* ── Shared tools ─────────────────────────────────────────────────── */
 
@@ -426,8 +446,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     after(() =>
       logger.logUsage({
         clientId,
-        agentId: requestedAgentId,
-        agentName: focusedAgent?.name ?? "chat_copilot",
+        agentId: null,
+        agentName: "chat_copilot",
         modelName: MODELS.SONNET,
         operation: "chat_copilot",
         inputTokens: usage.inputTokens ?? 0,
@@ -436,90 +456,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
-  /* ── Stream — branch on agent mode ─────────────────────────────── */
+  /* ── Stream ──────────────────────────────────────────────────────── */
 
-  if (focusedAgent) {
-    const agent = focusedAgent;
-
-    const runAgentTool = tool({
-      description:
-        "Trigger a new content generation run for this agent. Use when the user says /run, 'start new generation', 'create new posts', 'generate', or similar intent. " +
-        "Collect required field values from the conversation first. Apply defaults for optional fields. Confirm the run with the user before calling.",
-      inputSchema: z.object({
-        fieldValues: z
-          .record(z.string(), z.string())
-          .describe(
-            "Key-value pairs matching the agent's input field keys. " +
-              "Use each field's default value when the user hasn't provided one. " +
-              "Do not ask for optional fields the user hasn't mentioned.",
-          ),
-      }),
-      execute: async ({ fieldValues }) => {
-        const input: Record<string, string> = {};
-        for (const f of agent.fields ?? []) {
-          input[f.key] = fieldValues[f.key] ?? f.defaultValue ?? "";
-        }
-        for (const [k, v] of Object.entries(fieldValues)) {
-          if (!(k in input)) input[k] = v;
-        }
-        try {
-          const result = await startAgentRun({ agentId: agent.id, clientId, input, actor: user });
-          return (
-            `Run started successfully. Job ID: ${result.jobId}. ` +
-            `The agent is generating content in the background — drafts will appear in the Agents Hub once complete.`
-          );
-        } catch (e) {
-          return `Failed to start run: ${e instanceof Error ? e.message : "Unknown error"}`;
-        }
-      },
-    });
-
-    const editDraftTool = tool({
-      description:
-        "Update the content or status of a specific draft asset. Use when the user asks to fix, rewrite, edit, approve, or reject a draft. " +
-        "Reference the asset ID from the ACTIVE DRAFTS section. Always confirm the exact change with the user before calling.",
-      inputSchema: z.object({
-        assetId: z
-          .string()
-          .describe("The exact asset ID from the ACTIVE DRAFTS list in the system prompt"),
-        content: z.string().optional().describe("New content to replace the existing content"),
-        status: z
-          .enum(["draft", "approved", "delivered", "published"])
-          .optional()
-          .describe("New status to assign (e.g. 'approved' to approve the draft)"),
-      }),
-      execute: async ({ assetId, content, status }) => {
-        const target = agentAssets.find((a) => a.id === assetId);
-        if (!target) return "Asset not found or doesn't belong to this agent's pipeline.";
-        const patch: Partial<Asset> = { updatedAt: Date.now() };
-        if (content !== undefined) patch.content = content;
-        if (status !== undefined) patch.status = status;
-        await updateAsset(assetId, patch);
-        const label = status ? `status → ${status}` : "content updated";
-        return `Draft updated (${label}). The change will appear in the Agents Hub after the page refreshes.`;
-      },
-    });
-
-    const result = streamText({
-      model: MODEL,
-      system: systemPrompt,
-      messages,
-      stopWhen: STOP_WHEN,
-      tools: {
-        update_branding_guidelines: updateBrandingTool,
-        send_support_email: sendSupportEmailTool,
-        fetch_gmail_context: fetchGmailContextTool,
-        create_tasks: createTasksTool,
-        run_agent: runAgentTool,
-        edit_draft: editDraftTool,
-      },
-      onFinish: ({ usage }) => logCopilotUsage(usage),
-    });
-
-    return result.toTextStreamResponse();
-  }
-
-  // General mode
   const result = streamText({
     model: MODEL,
     system: systemPrompt,

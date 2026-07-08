@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listClients, listAgents, listJobs, listAssets, listTranscripts } from "@/lib/data";
+import { listClients, listJobs, listAssets, listTranscripts } from "@/lib/data";
 import { Card, CardTitle, StatCard, Badge, EmptyState, Button, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { JobStatusBadge } from "@/components/job-status";
 import { relativeTime } from "@/lib/utils";
+import { AGENT_SERVICE_AGENT_ID, MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 
 export default async function DashboardPage() {
   const user = await requireUser();
@@ -15,12 +16,8 @@ export default async function DashboardPage() {
   }
 
   const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
-  const [clients, agents, jobs] = await Promise.all([
-    listClients(employeeFilter),
-    listAgents(),
-    listJobs(),
-  ]);
-  const activeAgents = agents.filter((a) => a.isActive);
+  const [clients, jobs] = await Promise.all([listClients(employeeFilter), listJobs()]);
+  const managedJobs = jobs.filter((j) => j.agentId === AGENT_SERVICE_AGENT_ID);
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const weekAgo = Date.now() - 7 * 86400000;
   const jobsThisWeek = jobs.filter((j) => j.createdAt > weekAgo);
@@ -43,7 +40,7 @@ export default async function DashboardPage() {
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Clients" value={clients.length} icon={<Icon name="Building2" className="h-5 w-5" />} />
-        <StatCard label="Active agents" value={activeAgents.length} icon={<Icon name="Bot" className="h-5 w-5" />} />
+        <StatCard label="Managed runs" value={managedJobs.length} icon={<Icon name="Bot" className="h-5 w-5" />} />
         <StatCard label="Jobs this week" value={jobsThisWeek.length} icon={<Icon name="ListChecks" className="h-5 w-5" />} />
         <StatCard label="Delivered" value={delivered} icon={<Icon name="Send" className="h-5 w-5" />} />
       </div>
@@ -85,40 +82,29 @@ export default async function DashboardPage() {
         </Card>
 
         <Card>
-          <CardTitle className="mb-4">Top agents</CardTitle>
-          {activeAgents.length === 0 ? (
-            <EmptyState
-              icon={<Icon name="Bot" className="h-6 w-6" />}
-              title="No agents yet"
-              description="Build your first AI agent."
-              action={
-                <Link href="/agents/new">
-                  <Button size="sm">Create agent</Button>
-                </Link>
-              }
-            />
-          ) : (
-            <ul className="space-y-2">
-              {activeAgents
-                .slice()
-                .sort((a, b) => (b.runCount ?? 0) - (a.runCount ?? 0))
-                .slice(0, 5)
-                .map((a) => (
-                  <li key={a.id}>
-                    <Link href={`/agents/${a.id}`} className="flex items-center gap-3 rounded-md p-2 transition-colors hover:bg-surface-2">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-neon-soft text-neon" style={a.color ? { color: a.color, background: a.color + "1f" } : undefined}>
-                        <Icon name={a.icon} className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{a.name}</p>
-                        <p className="text-xs text-muted-2">{a.runCount ?? 0} runs</p>
-                      </div>
-                      <Badge tone="neon">Active</Badge>
-                    </Link>
-                  </li>
-                ))}
-            </ul>
-          )}
+          <CardTitle className="mb-4">Managed agents</CardTitle>
+          <ul className="space-y-2">
+            {MANAGED_PRODUCTS.map((p) => {
+              const runs = managedJobs.filter((j) => j.external?.taskType === p.taskType).length;
+              return (
+                <li key={p.taskType}>
+                  <Link href="/agents" className="flex items-center gap-3 rounded-md p-2 transition-colors hover:bg-surface-2">
+                    <div
+                      className="flex h-9 w-9 items-center justify-center rounded-md"
+                      style={{ color: p.color, background: p.color + "1f" }}
+                    >
+                      <Icon name={p.icon} className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{p.name}</p>
+                      <p className="text-xs text-muted-2">{runs} run{runs !== 1 ? "s" : ""}</p>
+                    </div>
+                    <Badge tone="neon">Live</Badge>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
         </Card>
       </div>
     </>

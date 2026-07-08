@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/ui";
 import { AssetCard } from "@/components/asset-card";
 import { ContentCalendar } from "@/components/content-calendar";
 import { cn } from "@/lib/utils";
-import type { Agent, Asset, Job } from "@/lib/types";
+import type { Asset } from "@/lib/types";
 
 type View = "library" | "calendar";
 
@@ -16,12 +16,11 @@ type View = "library" | "calendar";
  */
 export function AssetsView({
   assets,
-  jobs,
-  agents,
+  canApprove = false,
 }: {
   assets: Asset[];
-  jobs: Job[];
-  agents: Agent[];
+  /** Staff-only: show approve/schedule controls on each card. Clients never approve. */
+  canApprove?: boolean;
 }) {
   const [view, setView] = useState<View>("library");
 
@@ -61,12 +60,12 @@ export function AssetsView({
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
             {assets.map((a) => (
-              <AssetCard key={a.id} asset={a} canApprove />
+              <AssetCard key={a.id} asset={a} canApprove={canApprove} />
             ))}
           </div>
         )
       ) : (
-        <ContentCalendar assets={assets} jobs={jobs} agents={agents} />
+        <ContentCalendar assets={assets} />
       )}
     </>
   );
