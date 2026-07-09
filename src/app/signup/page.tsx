@@ -54,10 +54,10 @@ function routeAfterAuth(role: string | null, clientId: string | null): string {
 function friendly(err: unknown): string {
   const code = (err as { code?: string })?.code ?? "";
   const map: Record<string, string> = {
-    "auth/email-already-in-use": "That email is already registered — try signing in instead.",
+    "auth/email-already-in-use": "That email is already registered. Try signing in instead.",
     "auth/weak-password": "Password must be at least 6 characters.",
     "auth/popup-closed-by-user": "Sign-in cancelled.",
-    "auth/popup-blocked": "Popup blocked — allow popups for this site and try again.",
+    "auth/popup-blocked": "Popup blocked. Allow popups for this site and try again.",
     "auth/cancelled-popup-request": "",
     "auth/invalid-api-key": "Firebase isn't configured. Add your keys to .env.local.",
   };
@@ -167,15 +167,17 @@ export default function SignupPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm animate-fade-up">
 
-        {/* Logo */}
+        {/* Wordmark lockup — head disc + Spectral (brand §2.2), matches /login */}
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md bg-neon-soft neon-glow">
-            <Icon name="Sparkles" className="h-6 w-6 text-neon" />
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Karos<span className="neon-text">CMO</span>
-          </h1>
-          <p className="mt-1 text-sm text-muted">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="mx-auto mb-4 h-12 w-12 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+          />
+          <p className="eyebrow mb-2">Your AI CMO</p>
+          <h1 className="text-2xl">Karos Labs</h1>
+          <p className="mt-1.5 text-sm text-muted">
             {step === "key" ? "Enter your invitation key to get started." : "Create your account."}
           </p>
         </div>

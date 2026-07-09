@@ -445,7 +445,7 @@ function RegenerateModal({
           <div className="space-y-1.5">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
               Run-Specific Context{" "}
-              <span className="font-normal normal-case text-muted-2">— optional</span>
+              <span className="font-normal normal-case text-muted-2">(optional)</span>
             </p>
             <textarea
               ref={textareaRef}

@@ -357,7 +357,7 @@ export function ActivityTimeline({
           <div>
             <p className="text-sm font-medium text-foreground">No activity yet</p>
             <p className="mt-1 text-xs text-muted-2">
-              Events appear here as work is done — Intel Reports, campaigns, branding updates, and notes.
+              Events appear here as work is done: Intel Reports, campaigns, branding updates, and notes.
             </p>
           </div>
         </div>

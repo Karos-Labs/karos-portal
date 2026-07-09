@@ -91,7 +91,7 @@ function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boo
         <p className="text-xs text-muted truncate">
           {isOn
             ? "Karos AI is executing pending tasks automatically"
-            : "Tasks are queued — toggle on to execute automatically"}
+            : "Tasks are queued. Toggle on to execute automatically"}
         </p>
         {error && <p className="mt-0.5 text-xs text-danger">{error}</p>}
       </div>
@@ -180,7 +180,7 @@ function TaskCard({
       {hasError && !isExecuting && (
         <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-danger/10 px-2 py-1">
           <Icon name="AlertTriangle" className="h-3 w-3 text-danger" />
-          <span className="text-[10px] font-medium text-danger">Execution failed — click to retry</span>
+          <span className="text-[10px] font-medium text-danger">Execution failed. Click to retry</span>
         </div>
       )}
 
@@ -612,7 +612,7 @@ export function TasksBoard({
         <div className="mb-4 flex items-center gap-2 rounded-md border border-neon/20 bg-neon/5 px-3 py-2">
           <Icon name="Loader" className="h-3.5 w-3.5 animate-spin text-neon" />
           <p className="text-xs text-neon">
-            Karos AI is generating deliverables — cards will update automatically.
+            Karos AI is generating deliverables. Cards will update automatically.
           </p>
         </div>
       )}

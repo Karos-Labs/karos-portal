@@ -59,13 +59,13 @@ export default async function AgentsPage() {
       <Card className="mt-6">
         <CardTitle className="mb-1">Run an agent</CardTitle>
         <p className="mb-4 text-xs text-muted">
-          Agents always run against a client&apos;s context — pick a client to launch one.
+          Agents always run against a client&apos;s context. Pick a client to launch one.
         </p>
         {activeClients.length === 0 ? (
           <EmptyState
             icon={<Icon name="Building2" className="h-6 w-6" />}
             title="No active clients"
-            description="Add a client first — agents run against a client's context."
+            description="Add a client first. Agents run against a client's context."
           />
         ) : (
           <div className="flex flex-wrap gap-2">

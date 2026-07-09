@@ -144,7 +144,7 @@ export function AddCompetitorModal({ open, onClose, clientId }: Props) {
                 )
               }
             >
-              <option value="">—</option>
+              <option value="">-</option>
               {THREAT_OPTIONS.map((t) => (
                 <option key={t} value={t}>
                   {t}

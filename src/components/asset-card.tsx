@@ -93,12 +93,12 @@ function ScheduleSection({
     {
       id: "manual",
       label: MODE_LABELS.manual,
-      hint: "On the calendar — you push it live with Publish Now",
+      hint: "On the calendar, you push it live with Publish Now",
     },
     {
       id: "placeholder",
       label: MODE_LABELS.placeholder,
-      hint: "Calendar-only roadmap item — Karos never posts it",
+      hint: "Calendar-only roadmap item. Karos never posts it",
     },
   ];
 
@@ -203,7 +203,7 @@ function ScheduleSection({
                 })}
               </button>
             )}
-            {asset.recommendedReason ? ` — ${asset.recommendedReason}` : ""}
+            {asset.recommendedReason ? ` · ${asset.recommendedReason}` : ""}
           </span>
         </p>
       )}
@@ -574,6 +574,21 @@ export function AssetCard({
               {open ? "Collapse" : "Expand"}
             </button>
             <span className="text-xs text-muted-2">· {relativeTime(asset.createdAt)}</span>
+            {galleryImages.length > 0 && (
+              <a
+                href={`/api/assets/${asset.id}/download`}
+                download
+                className="inline-flex items-center gap-1 text-xs text-muted transition-colors hover:text-foreground"
+                title={
+                  galleryImages.length > 1
+                    ? `Download all ${galleryImages.length} photos as a zip`
+                    : "Download photo"
+                }
+              >
+                <Icon name="Download" className="h-3.5 w-3.5" />
+                {galleryImages.length > 1 ? `Download all (${galleryImages.length})` : "Download"}
+              </a>
+            )}
             {asset.status === "draft" && asset.recommendedAt && (
               <span
                 className="inline-flex items-center gap-1 text-xs text-muted-2"
@@ -627,7 +642,7 @@ export function AssetCard({
                       setScheduling(true);
                       setEditing(false);
                     }}
-                    title="Put this on the content calendar — auto-publish, manual push, or placeholder"
+                    title="Put this on the content calendar: auto-publish, manual push, or placeholder"
                   >
                     <Icon name="Clock" className="h-3.5 w-3.5" />
                     Schedule

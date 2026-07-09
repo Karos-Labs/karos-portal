@@ -43,7 +43,7 @@ function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[]
       label: "Competitor Deep-Dive",
       sublabel: "Generate intel brief + counter-strategy tasks",
       trigger:
-        "Help me research a competitor. I'll give you their URL or company name — start by asking me which competitor to focus on.",
+        "Help me research a competitor. I'll give you their URL or company name. Start by asking me which competitor to focus on.",
       color: "#6b9fd4",
     },
     {

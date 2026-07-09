@@ -275,7 +275,7 @@ function RunProductModal({
           <Textarea
             id="mp-notes"
             rows={2}
-            placeholder="Anything else the agent should know — optional"
+            placeholder="Anything else the agent should know (optional)"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
@@ -302,7 +302,7 @@ function RunProductModal({
                   />
                   <Icon name={item.kind === "image" ? "Image" : "FileText"} className="h-3.5 w-3.5 text-muted-2" />
                   <span className="truncate">{item.name}</span>
-                  {item.note && <span className="truncate text-muted-2">— {item.note}</span>}
+                  {item.note && <span className="truncate text-muted-2">· {item.note}</span>}
                 </label>
               ))}
             </div>
@@ -315,7 +315,7 @@ function RunProductModal({
         <div className="flex items-center justify-between gap-3 pt-1">
           <p className="text-xs text-muted-2">
             <Icon name="Clock" className="mr-1 inline h-3 w-3" />
-            {product.estimate} — you can leave this page; the run continues.
+            {product.estimate}. You can leave this page; the run continues.
           </p>
           <Button variant="accent" onClick={submit} loading={pending}>
             {pending ? "Starting…" : "Start run"}

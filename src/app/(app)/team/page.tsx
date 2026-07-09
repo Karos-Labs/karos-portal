@@ -54,7 +54,7 @@ export default async function TeamPage() {
                 New Client Access Requests
               </h2>
               <p className="mb-4 text-sm text-muted">
-                These companies submitted the public request form — they don&apos;t have a Client Access
+                These companies submitted the public request form. They don&apos;t have a Client Access
                 Key yet. Review, then create a client and share their key.
               </p>
               <ClientRequestManager requests={accessRequests} />

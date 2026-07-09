@@ -112,7 +112,7 @@ export function CorrectInfoModal({
             className="resize-none"
           />
           <p className="text-[11px] text-muted-2">
-            Be specific. Only the facts you name will change — everything else stays identical.
+            Be specific. Only the facts you name will change. Everything else stays identical.
             Tip: {"⌘"}Enter to submit.
           </p>
 

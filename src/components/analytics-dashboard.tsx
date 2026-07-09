@@ -171,7 +171,7 @@ export function FeedbackTable({ feedbacks, clients }: FeedbackTableProps) {
                       {f.scope === "single_doc" ? "Single doc" : "Global"}
                     </span>
                   </td>
-                  <td className="py-2 pr-4 text-muted-2">{f.docType ?? "—"}</td>
+                  <td className="py-2 pr-4 text-muted-2">{f.docType ?? "-"}</td>
                   <td className="py-2 pr-4 capitalize text-muted-2">{f.creatorRole}</td>
                   <td className="py-2 max-w-xs">
                     <p className="line-clamp-2">{f.feedbackText}</p>

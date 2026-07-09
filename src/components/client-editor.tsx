@@ -143,7 +143,7 @@ export function ClientEditor({ client }: { client: Client }) {
       <div>
         <Label>Brand logo</Label>
         <p className="mb-2 text-[10px] text-muted-2">
-          PNG, JPG, or SVG — max 4 MB. AI uses the logo pixels to extract authentic brand colors.
+          PNG, JPG, or SVG · max 4 MB. AI uses the logo pixels to extract authentic brand colors.
         </p>
 
         {logoUrl ? (
@@ -212,7 +212,7 @@ export function ClientEditor({ client }: { client: Client }) {
                 <Icon name="Upload" className="h-5 w-5 text-muted-2" />
                 <div>
                   <p className="text-sm font-medium">Click or drag to upload</p>
-                  <p className="text-xs text-muted-2">PNG, JPG, or SVG — max 4 MB</p>
+                  <p className="text-xs text-muted-2">PNG, JPG, or SVG · max 4 MB</p>
                 </div>
               </>
             )}
@@ -268,7 +268,7 @@ function Field({ label, value, multiline }: { label: string; value?: string; mul
     <div>
       <p className="text-xs text-muted">{label}</p>
       <p className={`mt-0.5 text-sm ${multiline ? "whitespace-pre-wrap" : ""} ${value ? "text-foreground" : "text-muted-2"}`}>
-        {value || "—"}
+        {value || "-"}
       </p>
     </div>
   );

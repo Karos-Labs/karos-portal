@@ -20,7 +20,7 @@ export function JobTranscript({ turns, truncated }: { turns: TranscriptTurn[]; t
         <Turn key={i} turn={turn} />
       ))}
       {truncated && (
-        <p className="text-xs text-muted-2">Transcript truncated — showing the earliest portion of the run.</p>
+        <p className="text-xs text-muted-2">Transcript truncated, showing the earliest portion of the run.</p>
       )}
     </div>
   );

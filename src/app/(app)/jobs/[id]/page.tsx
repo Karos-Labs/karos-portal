@@ -39,7 +39,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{job.agentName}</h1>
           <p className="text-sm text-muted">
-            {client?.name ?? "—"} · {formatDateTime(job.createdAt)}
+            {client?.name ?? "-"} · {formatDateTime(job.createdAt)}
             {job.emailedTo && <span className="text-neon-dim"> · emailed to {job.emailedTo}</span>}
           </p>
         </div>

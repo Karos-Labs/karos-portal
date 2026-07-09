@@ -200,7 +200,7 @@ function PlatformCard({
       await saveIntegrationAction(clientId, platform.id, merged, accountName || undefined);
       setAdvancedOpen(false);
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : "Save failed — please try again.");
+      setFormError(e instanceof Error ? e.message : "Save failed. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -288,7 +288,7 @@ function PlatformCard({
         {/* Admin-only hint when OAuth flow exists but env vars aren't configured yet */}
         {isAdmin && hasOAuthSupport && !isOAuthEnabled && (
           <p className="text-[11px] text-warning/80">
-            OAuth env vars not set — the button above will fail until configured.
+            OAuth env vars not set. The button above will fail until configured.
           </p>
         )}
 
@@ -302,7 +302,7 @@ function PlatformCard({
             title={
               autoPublish
                 ? "Scheduled content posts automatically at its slot"
-                : "Auto-posting is off — publish through the Publish Now button only"
+                : "Auto-posting is off. Publish through the Publish Now button only"
             }
           >
             <span className="flex items-center gap-1.5 text-xs text-muted">
@@ -498,7 +498,7 @@ export function IntegrationsTab({
 
     if (!popup || popup.closed) {
       setConnectingPlatform(null);
-      setPopupError("Popup was blocked — please allow popups for this site and try again.");
+      setPopupError("Popup was blocked. Please allow popups for this site and try again.");
       return;
     }
 

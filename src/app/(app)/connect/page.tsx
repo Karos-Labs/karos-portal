@@ -25,7 +25,7 @@ export default async function ConnectPage() {
           <Card className="space-y-4">
             <CardTitle>1. Create a personal access token</CardTitle>
             <p className="text-sm text-muted">
-              Claude Code authenticates with a bearer token tied to your account. It acts as you —
+              Claude Code authenticates with a bearer token tied to your account. It acts as you,
               with the same permissions you have in the app. Keep it secret; revoke it anytime.
             </p>
             <TokenManager tokens={tokens} mcpUrl={mcpUrl} />
@@ -64,7 +64,7 @@ export default async function ConnectPage() {
             </blockquote>
             <p className="text-sm text-muted">
               Claude Code will read the client&apos;s context, submit the managed job to the agent service,
-              and you can poll it — results land in Jobs and Assets for review as usual.
+              and you can poll it; results land in Jobs and Assets for review as usual.
             </p>
           </Card>
         </div>

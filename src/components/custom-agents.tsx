@@ -89,7 +89,7 @@ export function CustomAgentsHub({
         <div>
           <h2 className="text-xl text-foreground">Custom agents</h2>
           <p className="mt-0.5 text-sm text-muted">
-            Stored system prompts that fire a Claude session inside the karos-agents repo — run
+            Stored system prompts that fire a Claude session inside the karos-agents repo. Run
             with a plain-language request.
           </p>
         </div>
@@ -238,7 +238,7 @@ export function ClientCustomAgents({
           <h2 className="text-xl text-foreground">{viewerIsClient ? "Your AI agents" : "Custom agents"}</h2>
           <p className="mt-0.5 text-sm text-muted">
             {viewerIsClient
-              ? "Fire an agent with a plain-language request — deliverables land in your Library after review."
+              ? "Fire an agent with a plain-language request. Deliverables land in your Library after review."
               : "Prompt-driven agents from the custom library, run against this client."}
           </p>
         </div>
@@ -274,7 +274,7 @@ export function ClientCustomAgents({
                     size="sm"
                     variant="subtle"
                     disabled={short}
-                    title={short ? "Not enough credits — ask your Karos team for a top-up." : undefined}
+                    title={short ? "Not enough credits. Ask your Karos team for a top-up." : undefined}
                     onClick={() => setRunAgent(agent)}
                   >
                     <Icon name="Play" className="h-3.5 w-3.5" /> Run
@@ -382,7 +382,7 @@ function RunCustomAgentModal({
   function submit() {
     setError(null);
     if (!selectedClientId) {
-      setError("Pick a client — agents always run against a client's context.");
+      setError("Pick a client. Agents always run against a client's context.");
       return;
     }
     if (!prompt.trim()) {
@@ -416,7 +416,7 @@ function RunCustomAgentModal({
           <Icon name="CheckCircle2" className="mx-auto h-8 w-8 text-success" />
           <p className="text-sm text-foreground">Run started</p>
           <p className="text-xs text-muted">
-            The agent is working — this usually takes 10–35 minutes. Deliverables appear in your
+            The agent is working. This usually takes 10–35 minutes. Deliverables appear in your
             Library once your Karos team approves them.
           </p>
           <Button variant="subtle" onClick={onClose}>
@@ -458,7 +458,7 @@ function RunCustomAgentModal({
             onChange={(e) => setPrompt(e.target.value)}
           />
           <p className="mt-1 text-xs text-muted-2">
-            A plain-language request — the agent already knows the brand and its own playbook.
+            A plain-language request. The agent already knows the brand and its own playbook.
           </p>
         </div>
 
@@ -483,7 +483,7 @@ function RunCustomAgentModal({
                   />
                   <Icon name={item.kind === "image" ? "Image" : "FileText"} className="h-3.5 w-3.5 text-muted-2" />
                   <span className="truncate">{item.name}</span>
-                  {item.note && <span className="truncate text-muted-2">— {item.note}</span>}
+                  {item.note && <span className="truncate text-muted-2">· {item.note}</span>}
                 </label>
               ))}
             </div>
@@ -495,7 +495,7 @@ function RunCustomAgentModal({
         <div className="flex items-center justify-between gap-3 pt-1">
           <p className="text-xs text-muted-2">
             <Icon name="Clock" className="mr-1 inline h-3 w-3" />
-            ~10–35 min — you can leave this page; the run continues.
+            ~10–35 min. You can leave this page; the run continues.
             {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
           </p>
           <Button variant="accent" onClick={submit} loading={pending}>
@@ -572,7 +572,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       open
       onClose={onClose}
       title={agent ? `Edit ${agent.name}` : "New custom agent"}
-      description="The instructions are the agent's system prompt — the run adds the client context and the user's request around them."
+      description="The instructions are the agent's system prompt. The run adds the client context and the user's request around them."
       className="max-w-2xl"
     >
       <div className="mt-4 space-y-4">
@@ -663,7 +663,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
         {agent?.source?.status === "blocked" && (
           <p className="rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
             <Icon name="AlertTriangle" className="mr-1 inline h-3.5 w-3.5 text-warning" />
-            The repo catalog marks this skill blocked — review before enabling.
+            The repo catalog marks this skill blocked. Review before enabling.
           </p>
         )}
         {error && <p className="text-xs text-danger">{error}</p>}
@@ -905,7 +905,7 @@ export function ClientAgentAccessCard({
   if (agents.length === 0) {
     return (
       <p className="text-xs text-muted">
-        No custom agents in the library yet — import them on the{" "}
+        No custom agents in the library yet. Import them on the{" "}
         <Link href="/agents" className="text-neon hover:underline">
           Agents page
         </Link>
