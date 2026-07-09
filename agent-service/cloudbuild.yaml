@@ -112,7 +112,7 @@ steps:
           --region=${_REGION} \
           --service-account=agent-runner-sa@$PROJECT_ID.iam.gserviceaccount.com \
           --vpc-connector=${_VPC_CONNECTOR} --vpc-egress=all-traffic \
-          --memory=2Gi --cpu=2 --task-timeout=45m --max-retries=0
+          --memory=4Gi --cpu=2 --task-timeout=45m --max-retries=0
 
 availableSecrets:
   secretManager:
