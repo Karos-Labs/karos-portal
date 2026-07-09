@@ -51,7 +51,11 @@ export function CorrectInfoModal({
     setError(null);
     startTransition(async () => {
       try {
-        await applyTargetedDocCorrectionAction(documentId, trimmed);
+        const res = await applyTargetedDocCorrectionAction(documentId, trimmed);
+        if (res.error) {
+          setError(res.error);
+          return;
+        }
         onSuccess();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to apply correction. Please try again.");

@@ -91,8 +91,8 @@ function briefAsBullets(brief: Record<string, unknown>): string {
 
 export const TASK_TYPE_CONFIGS: Record<TaskType, TaskTypeConfig> = {
   social_post: {
-    entrySkill: "karos-instagram-tiktok-content-agent",
-    entrySkillDir: "products/social/instagram-tiktok-agent",
+    entrySkill: "karos-instagram-agent",
+    entrySkillDir: "products/live/instagram-agent",
     skillRoots: ["skills/vendors/taste-skill", "skills/vendors/last30days"],
     includeClientSkills: true,
     allowedTools: [
@@ -109,22 +109,30 @@ export const TASK_TYPE_CONFIGS: Record<TaskType, TaskTypeConfig> = {
       "Bash(tesseract:*)",
     ],
     disallowedTools: COMMON_DISALLOWED,
-    timeoutMs: 20 * 60 * 1000,
+    // 35 min (the worker kills the run at spec.timeoutMs). A full IG run —
+    // research → brand setup → Chromium slide render → caption → QA → finalize —
+    // exceeds 20 min: observed job 394e536d rendered slides but was killed at the
+    // old 20-min budget with only caption+QA left. Stays under the runner Cloud
+    // Run Job task-timeout (45m) even with the executor's +120s buffer.
+    timeoutMs: 35 * 60 * 1000,
     maxTurns: 400,
     maxBudgetUsd: 45,
     model: AGENT_MODEL,
-    egressGroups: ["core", "research", "image_sourcing", "social_platforms"],
+    // "fonts" is required: the render engine (render.mjs → Playwright) waits on
+    // document.fonts.ready and treats a font-load failure as a hard failure, so
+    // slides render blank without egress to Google Fonts / Fontshare.
+    egressGroups: ["core", "research", "image_sourcing", "social_platforms", "fonts"],
     buildPrompt: (spec, ctx) => `${commonPreamble(spec, ctx)}
 
 TASK: produce Instagram/TikTok content for ${ctx.clientSlug}.
 ${briefAsBullets(spec.brief)}
 
-Run the "karos-instagram-tiktok-content-agent" skill (products/social/instagram-tiktok-agent/SKILL.md). If this client already has emitted generator sub-skills under clients/${ctx.clientSlug}/skills/instagram-tiktok-agent/, use those generators for production instead of re-running full setup; only fall back to the master skill's setup flow when no client system exists yet. Produce the requested number of posts, each with its deliverable image/copy plus caption.txt and about.txt on the client/ side.`,
+Run the "karos-instagram-agent" skill (products/live/instagram-agent/SKILL.md). If this client already has emitted generator sub-skills under clients/${ctx.clientSlug}/skills/instagram-agent/, use those generators for production instead of re-running full setup; only fall back to the master skill's setup flow when no client system exists yet. Produce the requested number of posts, each with its deliverable image/copy plus caption.txt and about.txt on the client/ side.`,
   },
 
   newsletter_issue: {
     entrySkill: "karos-newsletter-agent",
-    entrySkillDir: "products/social/newsletter-agent",
+    entrySkillDir: "products/live/newsletter-agent",
     skillRoots: ["skills/vendors/last30days"],
     includeClientSkills: true,
     allowedTools: [
@@ -147,12 +155,12 @@ Run the "karos-instagram-tiktok-content-agent" skill (products/social/instagram-
 TASK: produce one newsletter issue for ${ctx.clientSlug}.
 ${briefAsBullets(spec.brief)}
 
-Run the "karos-newsletter-agent" skill (products/social/newsletter-agent/SKILL.md). Ignore any legacy pg_cron/Supabase wiring in the skill text (adapter rule). Deliver the rendered HTML (dark + light) and the issue copy on the client/ side, with research notes on the internal/ side.`,
+Run the "karos-newsletter-agent" skill (products/live/newsletter-agent/SKILL.md). Ignore any legacy pg_cron/Supabase wiring in the skill text (adapter rule). Deliver the rendered HTML (dark + light) and the issue copy on the client/ side, with research notes on the internal/ side.`,
   },
 
   blog_article: {
     entrySkill: "karos-blog-agent",
-    entrySkillDir: "products/social/blog-agent",
+    entrySkillDir: "products/live/blog-agent",
     skillRoots: ["skills/vendors/last30days"],
     includeClientSkills: true,
     allowedTools: [
@@ -175,14 +183,14 @@ Run the "karos-newsletter-agent" skill (products/social/newsletter-agent/SKILL.m
 TASK: produce one blog article for ${ctx.clientSlug}.
 ${briefAsBullets(spec.brief)}
 
-Run the "karos-blog-agent" skill (products/social/blog-agent/SKILL.md). If the client has emitted blog generator sub-skills under clients/${ctx.clientSlug}/skills/, use them. Deliver the final article (markdown + rendered HTML if the engine supports it) on the client/ side with keyword/SERP research on the internal/ side.`,
+Run the "karos-blog-agent" skill (products/live/blog-agent/SKILL.md). If the client has emitted blog generator sub-skills under clients/${ctx.clientSlug}/skills/, use them. Deliver the final article (markdown + rendered HTML if the engine supports it) on the client/ side with keyword/SERP research on the internal/ side.`,
   },
 
   landing_page: {
     entrySkill: "landing-builder",
-    entrySkillDir: "products/landing-page/landing-builder",
+    entrySkillDir: "products/live/landing-page/landing-builder",
     skillRoots: [
-      "products/landing-page/landing-taste",
+      "products/live/landing-page/landing-taste",
       "skills/vendors/taste-skill",
       "skills/vendors/brand-toolkit",
     ],
@@ -209,7 +217,7 @@ Run the "karos-blog-agent" skill (products/social/blog-agent/SKILL.md). If the c
 TASK: build a landing page for ${ctx.clientSlug}.
 ${briefAsBullets(spec.brief)}
 
-Run the "landing-builder" skill (products/landing-page/landing-builder/SKILL.md), composing landing-taste and the taste/brand vendor skills for visual quality. Use the client's brand kit (clients/${ctx.clientSlug}/brand/ and profile/branding-guidelines.md) when present. Deliver the complete page source and a static build on the client/ side; document build/run steps in a README next to the source.`,
+Run the "landing-builder" skill (products/live/landing-page/landing-builder/SKILL.md), composing landing-taste and the taste/brand vendor skills for visual quality. Use the client's brand kit (clients/${ctx.clientSlug}/brand/ and profile/branding-guidelines.md) when present. Deliver the complete page source and a static build on the client/ side; document build/run steps in a README next to the source.`,
   },
 };
 

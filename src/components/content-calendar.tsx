@@ -3,8 +3,7 @@
 import { useState, useMemo } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { AssetDetailModal } from "@/components/asset-detail-modal";
-import type { Asset, Agent, Job } from "@/lib/types";
+import type { Asset } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
 
@@ -57,16 +56,11 @@ function eventKind(a: Asset): EventKind | null {
   return null;
 }
 
-function buildEvents(assets: Asset[], jobs: Job[], agents: Agent[]): CalendarEvent[] {
-  const agentById = new Map(agents.map((a) => [a.id, a]));
-  const agentByJob = new Map(jobs.map((j) => [j.id, j.agentId]));
-
+function buildEvents(assets: Asset[]): CalendarEvent[] {
   return assets
     .map((a): CalendarEvent | null => {
       const kind = eventKind(a);
       if (!kind) return null;
-      const agentId = a.agentId ?? (a.jobId ? agentByJob.get(a.jobId) : undefined);
-      const agent = agentId ? agentById.get(agentId) : undefined;
       const platformColor = a.scheduledPlatform ? PLATFORM_COLORS[a.scheduledPlatform] : undefined;
       const at =
         kind === "suggested"
@@ -78,7 +72,7 @@ function buildEvents(assets: Asset[], jobs: Job[], agents: Agent[]): CalendarEve
         scheduledAt: at,
         kind,
         mode: a.publishMode,
-        agentColor: platformColor ?? agent?.color ?? "#FF6B2C",
+        agentColor: platformColor ?? "#FF6B2C",
         platform: a.scheduledPlatform,
       };
     })
@@ -134,23 +128,13 @@ function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: 
 
 /* ── Main component ──────────────────────────────────────────────────── */
 
-export function ContentCalendar({
-  assets,
-  jobs,
-  agents,
-}: {
-  assets: Asset[];
-  jobs: Job[];
-  agents: Agent[];
-}) {
+export function ContentCalendar({ assets }: { assets: Asset[] }) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
 
-  const events = useMemo(() => buildEvents(assets, jobs, agents), [assets, jobs, agents]);
-  const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
-  const openAsset = openAssetId ? assetById.get(openAssetId) ?? null : null;
+  const events = useMemo(() => buildEvents(assets), [assets]);
 
   const totalDays = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();

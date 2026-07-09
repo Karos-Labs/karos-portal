@@ -21,6 +21,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --no-cache-dir --break-system-packages \
       httpx ddgs pyyaml pillow pytesseract youtube-transcript-api yt-dlp
 
+# Headless Chromium for the karos-agents render engines. render.mjs does
+# `import { chromium } from 'playwright'` and screenshots HTML slides to PNG —
+# without it, social/newsletter/landing renders ship blank. Baked in because the
+# render sandbox can't install it at runtime (no npm/npx tool grant, no registry
+# egress). playwright is installed globally and exposed via NODE_PATH so each
+# engine's bare `import 'playwright'` resolves without a per-engine install.
+# Pin to the engines' dependency (playwright ^1.53.0).
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+ENV NODE_PATH=/usr/local/lib/node_modules
+RUN npm install -g playwright@1.53.0 \
+    && npx --yes playwright@1.53.0 install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 # Bake the agents repo at the pinned ref (full clone so agent_version overrides
 # can check out other refs without network access)
 RUN --mount=type=secret,id=github_token \
@@ -41,7 +54,7 @@ COPY test ./test
 RUN npx tsc -p tsconfig.json && npm prune --omit=dev && npm cache clean --force
 
 # Non-root; /work is the throwaway job workspace
-RUN useradd -m -u 10001 agent && mkdir -p /work && chown -R agent:agent /work /opt/karos-agents /app
+RUN useradd -m -u 10001 agent && mkdir -p /work && chown -R agent:agent /work /opt/karos-agents /app /opt/pw-browsers
 USER agent
 ENV HOME=/home/agent \
     AGENTS_REPO_DIR=/opt/karos-agents \

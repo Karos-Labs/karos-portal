@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { listAssets, listClients, listJobs, listAgents, listClientIntegrations } from "@/lib/data";
+import { listAssets, listClients } from "@/lib/data";
 import { EmptyState, PageHeader, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetCard } from "@/components/asset-card";
@@ -22,17 +22,13 @@ export default async function AssetsPage({
         </>
       );
     }
-    const [assets, jobs, agents, integrations] = await Promise.all([
-      listAssets({ clientId: user.clientId }),
-      listJobs({ clientId: user.clientId }),
-      listAgents({ status: "published" }),
-      listClientIntegrations(user.clientId),
-    ]);
-    const connectedPlatforms = integrations.filter((i) => i.status !== "expired").map((i) => i.platform);
+    const allClientAssets = await listAssets({ clientId: user.clientId });
+    // Clients only see deliverables their Karos team has approved — drafts stay internal.
+    const assets = allClientAssets.filter((a) => a.status !== "draft");
     return (
       <>
         <PageHeader title="Library" description="Your content library and delivery calendar." />
-        <AssetsView assets={assets} jobs={jobs} agents={agents} connectedPlatforms={connectedPlatforms} />
+        <AssetsView assets={assets} />
       </>
     );
   }
@@ -44,17 +40,11 @@ export default async function AssetsPage({
   // library/calendar toggle a client sees, scoped to that one client.
   const viewClient = viewClientId ? clients.find((c) => c.id === viewClientId) : undefined;
   if (viewClient) {
-    const [clientAssets, jobs, agents, integrations] = await Promise.all([
-      listAssets({ clientId: viewClient.id }),
-      listJobs({ clientId: viewClient.id }),
-      listAgents({ status: "published" }),
-      listClientIntegrations(viewClient.id),
-    ]);
-    const connectedPlatforms = integrations.filter((i) => i.status !== "expired").map((i) => i.platform);
+    const clientAssets = await listAssets({ clientId: viewClient.id });
     return (
       <>
         <PageHeader title={`${viewClient.name} — Library`} description="Content library and delivery calendar." />
-        <AssetsView assets={clientAssets} jobs={jobs} agents={agents} connectedPlatforms={connectedPlatforms} />
+        <AssetsView assets={clientAssets} />
       </>
     );
   }

@@ -44,6 +44,7 @@ export function ClientRail({
   actionItems,
   reviewJobs,
   taskAlerts,
+  creditBalance,
 }: {
   user: AppUser;
   client: Client;
@@ -53,6 +54,8 @@ export function ClientRail({
   actionItems: ActionItemNotification[];
   reviewJobs: AgentReviewNotification[];
   taskAlerts: ClientTask[];
+  /** Client's credit balance — shown as a pill linking to settings. Hidden when null. */
+  creditBalance?: number | null;
 }) {
   const pathname = usePathname();
   const home = `/clients/${client.id}`;
@@ -150,6 +153,18 @@ export function ClientRail({
 
           {/* Bottom account menu */}
           <div className="shrink-0 border-t border-border p-3">
+            {creditBalance != null && (
+              <Link
+                href={settingsItem.href}
+                className="mb-2 flex items-center justify-between rounded-md border border-border px-3 py-2 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
+                  Credits
+                </span>
+                <span className="font-mono font-medium text-foreground">{creditBalance}</span>
+              </Link>
+            )}
             <AccountMenu
               user={user}
               client={client}
@@ -170,7 +185,19 @@ export function ClientRail({
             Karos<span className="text-neon">CMO</span>
           </span>
         </Link>
-        <NotificationBell actionItems={actionItems} reviewJobs={reviewJobs} taskAlerts={taskAlerts} />
+        <div className="flex items-center gap-2">
+          {creditBalance != null && (
+            <Link
+              href={settingsItem.href}
+              aria-label={`${creditBalance} credits remaining — open settings`}
+              className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted"
+            >
+              <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
+              <span className="font-mono font-medium text-foreground">{creditBalance}</span>
+            </Link>
+          )}
+          <NotificationBell actionItems={actionItems} reviewJobs={reviewJobs} taskAlerts={taskAlerts} />
+        </div>
       </div>
 
       {/* ── Mobile bottom tab bar ── */}

@@ -16,15 +16,40 @@ import {
   getTaskBoardCapacity,
   listTaskComments,
   createTaskComment,
-  listAgents,
   normalizeTitleForDedup,
+  chargeClientCredits,
 } from "@/lib/data";
+import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { runTaskExecution, inferOwnerEngine } from "@/lib/execution-engine";
 import {
   buildTaskExecutionPlanPrompt,
   buildTaskIngestionRoutingPrompt,
 } from "@/lib/ai/prompts/proactive-assistant";
-import type { TaskStatus, ClientTask, TaskComment, TaskOwner } from "@/lib/types";
+import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
+import type { AppUser, TaskStatus, ClientTask, TaskComment, TaskOwner } from "@/lib/types";
+
+/**
+ * Charge a client user for a small Haiku task helper (plan generation,
+ * custom-task classification). Staff and impersonated sessions are free.
+ * Returns the denial message, or null when the charge went through.
+ */
+async function chargeTaskAssist(user: AppUser, clientId: string, reason: string): Promise<string | null> {
+  if (!isBillableClientActor(user)) return null;
+  try {
+    await chargeClientCredits({
+      clientId,
+      amount: CREDIT_COSTS.taskAssist,
+      operation: "task_execution",
+      reason,
+      actorUid: user.uid,
+      actorName: user.name,
+    });
+    return null;
+  } catch (e) {
+    if (e instanceof CreditError) return e.message;
+    throw e;
+  }
+}
 
 /**
  * Update a task's status. Accessible to the owning client user and staff.
@@ -39,7 +64,7 @@ export async function updateTaskStatusAction(
 ): Promise<{ ok: boolean; error?: string }> {
   const access = await requireTaskAccess(id, clientId);
   if (!access.ok) return { ok: false, error: access.error };
-  const { user, task } = access;
+  const { task } = access;
 
   const triggersExecution =
     status === "in_progress" &&
@@ -55,7 +80,7 @@ export async function updateTaskStatusAction(
 
   await updateClientTask(id, patch);
   if (triggersExecution) {
-    after(() => runTaskExecution(clientId, id, user).catch(console.error));
+    after(() => runTaskExecution(clientId, id).catch(console.error));
   }
   revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
@@ -160,7 +185,14 @@ export async function generateTaskPlanAction(
 ): Promise<{ plan: string; error?: string }> {
   const access = await requireTaskAccess(taskId, clientId);
   if (!access.ok) return { plan: "", error: access.error };
-  const { task } = access;
+  const { user, task } = access;
+
+  // Serve the persisted plan when one exists — no model call, no charge.
+  const cached = task.metadata?.aiPlan;
+  if (typeof cached === "string" && cached.trim()) return { plan: cached };
+
+  const denied = await chargeTaskAssist(user, clientId, `AI plan · ${task.title.slice(0, 80)}`);
+  if (denied) return { plan: "", error: denied };
 
   const client = await getClient(clientId);
 
@@ -205,17 +237,19 @@ export async function ingestCustomUserTaskAction(
   if (!trimmed) return { ok: false, error: "Task description cannot be empty" };
   if (trimmed.length > 1000) return { ok: false, error: "Task description is too long" };
 
-  const [client, agents, capacity] = await Promise.all([
+  const [client, capacity] = await Promise.all([
     getClient(clientId),
-    listAgents({ status: "published" }),
     getTaskBoardCapacity(clientId),
   ]);
   if (!client) return { ok: false, error: "Client not found" };
 
-  // Build a brief agent capability summary for the routing prompt
-  const agentSummary = agents
-    .filter((a) => !a.isSystem && a.isActive)
-    .map((a) => `${a.name} (${a.outputKind})`)
+  const denied = await chargeTaskAssist(user, clientId, "Custom task ingestion");
+  if (denied) return { ok: false, error: denied };
+
+  // Build a brief capability summary for the routing prompt from the managed
+  // product catalog (the karos-agents lab products the Karos team can run).
+  const agentSummary = MANAGED_PRODUCTS
+    .map((p) => `${p.name} (${p.taskType})`)
     .join(", ") || "none configured";
 
   const routingSchema = z.object({

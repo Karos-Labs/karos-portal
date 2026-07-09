@@ -236,7 +236,9 @@ export async function getCurrentUser(): Promise<AppUser | null> {
     const impUid = store.get(IMPERSONATE_COOKIE)?.value;
     if (impUid) {
       const target = await getUser(impUid);
-      if (target && !target.disabled) return target;
+      // impersonatedBy is transient — it marks the session so credit charges
+      // and other client-billed actions know a staff member is behind it.
+      if (target && !target.disabled) return { ...target, impersonatedBy: realUser.uid };
       store.delete(IMPERSONATE_COOKIE);
     }
   }
@@ -274,7 +276,11 @@ export async function getViewingContext(): Promise<{
     if (impUid) {
       const target = await getUser(impUid);
       if (target && !target.disabled) {
-        return { user: target, isImpersonating: true, realAdmin: realUser };
+        return {
+          user: { ...target, impersonatedBy: realUser.uid },
+          isImpersonating: true,
+          realAdmin: realUser,
+        };
       }
       store.delete(IMPERSONATE_COOKIE);
     }

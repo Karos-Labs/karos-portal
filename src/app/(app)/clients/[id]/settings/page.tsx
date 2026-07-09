@@ -1,12 +1,19 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getClient, listClientIntegrations, listTranscripts } from "@/lib/data";
+import {
+  getClient,
+  getClientCredits,
+  listClientIntegrations,
+  listCreditLedger,
+  listTranscripts,
+} from "@/lib/data";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
 import { Card, CardTitle, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { IntegrationsTab } from "@/components/integrations-tab";
 import { ClientKeyInline } from "@/components/client-key-inline";
+import { CreditsPanel } from "@/components/credits-panel";
 import { LogoutButton } from "@/components/logout-button";
 import { relativeTime } from "@/lib/utils";
 
@@ -23,9 +30,11 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
   const client = await getClient(id);
   if (!client) notFound();
 
-  const [integrations, transcripts] = await Promise.all([
+  const [integrations, transcripts, credits, creditLedger] = await Promise.all([
     listClientIntegrations(id),
     listTranscripts({ clientId: id }),
+    getClientCredits(id),
+    listCreditLedger(id, 15),
   ]);
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
@@ -44,6 +53,11 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
           </Link>
         }
       />
+
+      {/* Credits & usage */}
+      <div className="mb-8">
+        <CreditsPanel clientId={client.id} credits={credits} ledger={creditLedger} role={user.role} />
+      </div>
 
       {/* Integrations */}
       <IntegrationsTab

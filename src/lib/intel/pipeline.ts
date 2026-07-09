@@ -3,8 +3,7 @@ import "server-only";
 import { streamText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
-import { getClient, getSystemAgent, replaceClientContextDocs, listClientCompetitors, listTranscripts } from "@/lib/data";
-import { INTEL_AGENT_ID } from "./report";
+import { getClient, replaceClientContextDocs, listClientCompetitors, listTranscripts } from "@/lib/data";
 import { RESEARCH_ENGINE_RULES, METRICS_RULES } from "./brain";
 import { TEMPLATES } from "./templates";
 import { condenseDocs } from "./condense";
@@ -660,18 +659,14 @@ function buildResearchBlock(docType: ContextDocType, research: Research): string
  * 4. All docs atomically replace existing clientContextDocs for this client
  */
 export async function runOnboardPipeline(clientId: string, runSpecificContext = ""): Promise<void> {
-  const [client, agent, existingCompetitors, existingTranscripts] = await Promise.all([
+  const [client, existingCompetitors, existingTranscripts] = await Promise.all([
     getClient(clientId),
-    getSystemAgent(INTEL_AGENT_ID),
     listClientCompetitors(clientId),
     listTranscripts({ clientId }),
   ]);
   if (!client) throw new Error(`Client not found: ${clientId}`);
 
-  // Load additional instructions from agent config (non-fatal if missing)
-  const isLegacyPrompt = agent?.systemPrompt?.startsWith("You are the Karos Intel AI");
-  const additionalInstructions = (!isLegacyPrompt && agent?.systemPrompt) ? agent.systemPrompt : "";
-  const rules = coreRules(additionalInstructions, runSpecificContext);
+  const rules = coreRules("", runSpecificContext);
 
   // Build meeting signals from stored transcripts for this client
   const meetingSignals = buildMeetingSignals(existingTranscripts);

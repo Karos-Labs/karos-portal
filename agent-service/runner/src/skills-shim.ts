@@ -44,6 +44,7 @@ export async function buildSkillsShim(params: {
   if (params.includeClientSkills) roots.push(`clients/${params.clientSlug}/skills`);
 
   const skillDirs = new Set<string>();
+  const entryAbs = path.join(params.repoDir, params.entrySkillDir);
   for (const root of roots) {
     const abs = path.join(params.repoDir, root);
     try {
@@ -54,6 +55,16 @@ export async function buildSkillsShim(params: {
       // not itself a skill dir — scan below it
     }
     for (const dir of await collectSkillDirs(abs)) skillDirs.add(dir);
+  }
+
+  // The entry skill is the whole point of the run — if its configured path
+  // resolved to nothing (a stale task-types.ts path after a repo reorg), fail
+  // loudly instead of silently running the agent with no skill to execute.
+  if (!skillDirs.has(entryAbs)) {
+    throw new Error(
+      `entry skill not found at "${params.entrySkillDir}" (no SKILL.md) — ` +
+        `the task-type config points at a path missing from the agents repo`,
+    );
   }
 
   const used = new Set<string>();

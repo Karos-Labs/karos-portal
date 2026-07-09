@@ -11,28 +11,25 @@ import {
   markIntegrationExpired,
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
+import { requireStaff } from "./_shared";
 import {
   TokenExpiredError,
   inferPlatform,
   publishAssetToPlatform,
 } from "@/lib/integrations/publishers";
-import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
-import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
-import type { Asset, PublishMode } from "@/lib/types";
+import type { PublishMode } from "@/lib/types";
 
-/** Load the asset and verify the caller may act on it. Shared guard for all asset actions. */
-async function requireAssetAccess(id: string): Promise<Asset> {
+export async function updateAssetAction(id: string, patch: { content?: string; title?: string; status?: "draft" | "approved" | "delivered" | "published" }) {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
   const asset = await getAsset(id);
   if (!asset) throw new Error("Asset not found");
-  // CLIENT_USER may only act on their own assets.
-  if (user.role === "CLIENT_USER" && asset.clientId !== user.clientId) throw new Error("Forbidden");
-  return asset;
-}
-
-export async function updateAssetAction(id: string, patch: { content?: string; title?: string; status?: "draft" | "approved" | "delivered" | "published" }) {
-  const asset = await requireAssetAccess(id);
+  if (user.role === "CLIENT_USER") {
+    // Own assets only — and never status: approval is what publishes a draft
+    // to the client's Library, so it stays a staff-only transition.
+    if (asset.clientId !== user.clientId) throw new Error("Forbidden");
+    if (patch.status !== undefined) throw new Error("Forbidden");
+  }
   await updateAsset(id, { ...patch, updatedAt: Date.now() });
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
@@ -54,7 +51,9 @@ export async function scheduleAssetAction(
   platform?: string,
   mode?: PublishMode,
 ): Promise<void> {
-  const asset = await requireAssetAccess(id);
+  await requireStaff();
+  const asset = await getAsset(id);
+  if (!asset) throw new Error("Asset not found");
   const publishMode: PublishMode = mode ?? (platform ? "auto" : "placeholder");
   if (publishMode === "auto" && !platform) {
     throw new Error("Auto-publish requires a target platform");
@@ -141,7 +140,9 @@ export async function approveAssetAction(
 
 /** Revert a scheduled asset back to draft and clear its schedule. */
 export async function unscheduleAssetAction(id: string): Promise<void> {
-  const asset = await requireAssetAccess(id);
+  await requireStaff();
+  const asset = await getAsset(id);
+  if (!asset) throw new Error("Asset not found");
   await clearAssetSchedule(id);
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
@@ -156,7 +157,9 @@ export async function publishAssetNowAction(
   id: string,
   platform?: string,
 ): Promise<{ ok: true; platform: string } | { ok: false; error: string }> {
-  const asset = await requireAssetAccess(id);
+  await requireStaff();
+  const asset = await getAsset(id);
+  if (!asset) throw new Error("Asset not found");
   if (asset.status === "published") return { ok: false, error: "Already published" };
 
   const integrations = await listClientIntegrations(asset.clientId);

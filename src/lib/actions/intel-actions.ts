@@ -5,24 +5,34 @@ import { revalidatePath } from "next/cache";
 import {
   getClient,
   updateClient,
-  getAgent,
-  upsertSystemAgent,
-  updateAgent,
   listClientContextDocs,
   upsertClientContextDoc,
-  getSystemAgent,
-  getClientContextDoc,
   getClientContextDocById,
   getClientContextDocByTier,
   updateContextDocSummary,
   updateContextDocContent,
   logFeedback,
+  chargeClientCredits,
 } from "@/lib/data";
 import { logger } from "@/services/logger";
 import { getCurrentUser } from "@/lib/auth";
-import type { ContextDocTier } from "@/lib/types";
-import { requireStaff, requireAdmin, logActivity } from "./_shared";
+import type { AppUser, ContextDocTier } from "@/lib/types";
+import { requireStaff, logActivity } from "./_shared";
 import { MODELS } from "@/lib/constants";
+import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
+
+/** Charge a client user for a doc correction (staff + impersonated sessions are free). Throws CreditError on denial. */
+async function chargeDocCorrection(user: AppUser, clientId: string, amount: number, reason: string) {
+  if (!isBillableClientActor(user)) return;
+  await chargeClientCredits({
+    clientId,
+    amount,
+    operation: "doc_correction",
+    reason,
+    actorUid: user.uid,
+    actorName: user.name,
+  });
+}
 
 /**
  * Generate a short (2-sentence) company brief from the client's context docs.
@@ -107,45 +117,6 @@ export async function addActivityNoteAction(clientId: string, text: string): Pro
 }
 
 /**
- * Seed the Intel Report system agent into Firestore (idempotent).
- * Admin-only: call once from the admin UI or on first deploy.
- */
-export async function seedIntelAgentAction(): Promise<void> {
-  await requireAdmin();
-  const { INTEL_AGENT_ID, DEFAULT_INTEL_PROMPT } = await import("@/lib/intel");
-  const existing = await getAgent(INTEL_AGENT_ID);
-  if (existing) return;
-  const now = Date.now();
-  await upsertSystemAgent(INTEL_AGENT_ID, {
-    name: "Intel Report Agent",
-    description:
-      "Automated Digital Intelligence & Competitive Report generator. Runs via Claude API — never shown to clients.",
-    icon: "BarChart2",
-    color: "#C8FF00",
-    model: MODELS.SONNET,
-    systemPrompt: DEFAULT_INTEL_PROMPT,
-    outputKind: "freeform",
-    fields: [],
-    capabilities: ["generate"],
-    status: "published",
-    isActive: true,
-    shared: false,
-    isSystem: true,
-    createdBy: "system",
-    createdAt: now,
-    updatedAt: now,
-    runCount: 0,
-  });
-}
-
-/** Update the Intel Report Agent's system prompt template. Admin-only. */
-export async function updateIntelPromptAction(template: string): Promise<void> {
-  await requireAdmin();
-  const { INTEL_AGENT_ID } = await import("@/lib/intel");
-  await updateAgent(INTEL_AGENT_ID, { systemPrompt: template, updatedAt: Date.now() });
-}
-
-/**
  * Run the Intel Report pipeline for a client. Admins and employees only.
  * @param runSpecificContext Optional run-specific instructions entered at execution time.
  *   These are threaded into the pipeline as Layer C (highest priority) and expire after this run.
@@ -155,9 +126,7 @@ export async function generateIntelReportAction(
   runSpecificContext?: string,
 ): Promise<void> {
   await requireStaff();
-  const { INTEL_AGENT_ID, runIntelReportPipeline } = await import("@/lib/intel");
-  const existing = await getAgent(INTEL_AGENT_ID);
-  if (!existing) await seedIntelAgentAction();
+  const { runIntelReportPipeline } = await import("@/lib/intel");
   await runIntelReportPipeline(clientId, runSpecificContext);
   const ctxNote = runSpecificContext?.trim()
     ? ` — with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
@@ -180,21 +149,15 @@ export async function generateIntelReportAction(
  */
 export async function refreshClientContextDocsAction(clientId: string): Promise<void> {
   await requireStaff();
-  const { INTEL_AGENT_ID } = await import("@/lib/intel");
 
-  const [client, agent, internalDocs] = await Promise.all([
+  const [client, internalDocs] = await Promise.all([
     getClient(clientId),
-    getSystemAgent(INTEL_AGENT_ID),
     listClientContextDocs(clientId, "internal"),
   ]);
   if (!client) throw new Error("Client not found");
 
   const { RESEARCH_ENGINE_RULES, METRICS_RULES } = await import("@/lib/intel");
-  const isLegacyPrompt = agent?.systemPrompt?.startsWith("You are the Karos Intel AI");
-  const additionalInstructions = (!isLegacyPrompt && agent?.systemPrompt) ? agent.systemPrompt : "";
-  const rules = [RESEARCH_ENGINE_RULES, "", METRICS_RULES, additionalInstructions.trim()]
-    .filter(Boolean)
-    .join("\n");
+  const rules = [RESEARCH_ENGINE_RULES, "", METRICS_RULES].filter(Boolean).join("\n");
 
   const internalMap: Record<string, string> = {};
   for (const doc of internalDocs) internalMap[doc.docType] = doc.content;
@@ -315,7 +278,18 @@ export async function generateDocSummaryAction(
 export async function applyTargetedDocCorrectionAction(
   documentId: string,
   corrections: string,
-): Promise<void> {
+): Promise<{ ok: true; error?: never } | { ok?: never; error: string }> {
+  // Errors (incl. credit denials) return as data — thrown server-action errors
+  // are masked in production, which would hide the reason from the client UI.
+  try {
+    await applyTargetedDocCorrection(documentId, corrections);
+    return { ok: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Failed to apply the correction" };
+  }
+}
+
+async function applyTargetedDocCorrection(documentId: string, corrections: string): Promise<void> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
   if (!corrections.trim()) throw new Error("Corrections text is required");
@@ -330,6 +304,13 @@ export async function applyTargetedDocCorrectionAction(
 
   const client = await getClient(doc.clientId);
   if (!client) throw new Error("Client not found");
+
+  await chargeDocCorrection(
+    user,
+    doc.clientId,
+    CREDIT_COSTS.targetedCorrection,
+    `Doc correction · ${doc.docType}`,
+  );
 
   const { applyDocCorrections } = await import("@/lib/intel");
   const corrected = await applyDocCorrections(client, doc.docType, doc.content, corrections);
@@ -437,7 +418,16 @@ export async function applyDocCorrectionAction(
 export async function applyGlobalDocCorrectionAction(
   clientId: string,
   corrections: string,
-): Promise<void> {
+): Promise<{ ok: true; error?: never } | { ok?: never; error: string }> {
+  try {
+    await applyGlobalDocCorrection(clientId, corrections);
+    return { ok: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Failed to apply the correction" };
+  }
+}
+
+async function applyGlobalDocCorrection(clientId: string, corrections: string): Promise<void> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
   if (user.role === "CLIENT_USER" && user.clientId !== clientId) throw new Error("Forbidden");
@@ -451,6 +441,15 @@ export async function applyGlobalDocCorrectionAction(
   ]);
   if (!client) throw new Error("Client not found");
   if (!allDocs.length) throw new Error("No documents found for this client");
+
+  // Global corrections rewrite every context doc (one model call each) — the
+  // most expensive client-triggerable action, priced accordingly.
+  await chargeDocCorrection(
+    user,
+    clientId,
+    CREDIT_COSTS.globalCorrection,
+    "Global doc correction",
+  );
 
   const { applyDocCorrections } = await import("@/lib/intel");
 

@@ -6,37 +6,23 @@
 import "server-only";
 
 import { revalidatePath } from "next/cache";
-import { generateText, generateObject } from "ai";
+import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { z } from "zod";
 import { MODELS } from "@/lib/constants";
-import { logger } from "@/services/logger";
 import {
   getClientTask,
   getClient,
-  getAgent,
-  listAgents,
   updateClientTask,
   listClientTasks,
 } from "@/lib/data";
 import { sendEmail } from "@/lib/email";
-import { runAgentForTask } from "@/lib/agents/run";
 import { buildArtifactGenerationPrompt } from "@/lib/ai/prompts/proactive-assistant";
-import type { Agent, AppUser, ClientTask, TaskOwner } from "@/lib/types";
+import type { ClientTask, TaskOwner } from "@/lib/types";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
 const SONNET = anthropic(MODELS.SONNET);
 const HAIKU = anthropic(MODELS.HAIKU);
-
-/** Actor attributed to runs triggered without a user in scope (autopilot). */
-const KAROS_SYSTEM_ACTOR: AppUser = {
-  uid: "karos_system",
-  email: "system@karoslabs.com",
-  name: "Karos AI",
-  role: "KAROS_ADMIN",
-  createdAt: 0,
-};
 
 /* ── Internal helpers ────────────────────────────────────────────── */
 
@@ -63,101 +49,17 @@ function selectModel(task: ClientTask) {
   return HAIKU;
 }
 
-/**
- * Last-resort router: a cheap Haiku call that picks the best-fit agent from
- * the catalog (or none). Exists so karos_managed work still executes through
- * an in-system agent even when the task carries no explicit link and its
- * title names no agent. Best-effort — any failure falls back to null.
- */
-async function classifyAgentForTask(task: ClientTask, agents: Agent[]): Promise<Agent | null> {
-  if (agents.length === 0) return null;
-  try {
-    const catalog = agents
-      .map((a) => `- id: ${a.id} | ${a.name} — ${a.description} (output: ${a.outputKind})`)
-      .join("\n");
-    const { object, usage } = await generateObject({
-      model: HAIKU,
-      schema: z.object({
-        agentId: z
-          .string()
-          .nullable()
-          .describe("The id of the single best-fit agent, or null if none can produce this deliverable"),
-      }),
-      prompt: `You route marketing tasks to the best-fit AI execution agent.
-
-TASK: ${task.title}
-${task.description ? `CONTEXT: ${task.description}` : ""}
-CATEGORY: ${task.source.replace(/_/g, " ")}
-
-AVAILABLE AGENTS:
-${catalog}
-
-Pick the agent whose purpose and output type best matches the deliverable this task requires. Return null ONLY when no agent could plausibly produce it.`,
-    });
-    logger.logUsage({
-      clientId: task.clientId,
-      agentId: null,
-      agentName: "task_agent_router",
-      modelName: MODELS.HAIKU,
-      operation: "task_agent_routing",
-      inputTokens: usage.inputTokens ?? 0,
-      outputTokens: usage.outputTokens ?? 0,
-    });
-    return agents.find((a) => a.id === object.agentId) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Map a task to the ecosystem agent that should execute it:
- * 1. Explicit link — `metadata.agentId` set by the Copilot at creation time.
- * 2. Name match — karos_managed task titles follow the dispatch-phrasing
- *    standard ("Generate 5 posts via [Agent Name]"), so an agent whose name
- *    appears in the title is the intended executor. Longest name wins to
- *    disambiguate overlapping names.
- * 3. Classifier — Haiku routes over the catalog so agent execution stays the
- *    default even for unlinked tasks (legacy tasks, quick-adds).
- * Returns null only when no runnable (published, active, non-system) agent
- * fits — the caller falls back to the generic artifact prompt.
- */
-export async function resolveExecutionAgent(task: ClientTask): Promise<Agent | null> {
-  const runnable = (a: Agent | null): a is Agent =>
-    !!a && a.status === "published" && a.isActive && !a.isSystem;
-
-  const linkedAgentId = task.metadata?.agentId as string | undefined;
-  if (linkedAgentId) {
-    const linked = await getAgent(linkedAgentId);
-    if (runnable(linked)) return linked;
-  }
-
-  const agents = (await listAgents({ status: "published" })).filter(runnable);
-  const title = task.title.toLowerCase();
-  const matches = agents
-    .filter((a) => a.name.trim().length >= 3 && title.includes(a.name.trim().toLowerCase()))
-    .sort((a, b) => b.name.length - a.name.length);
-  if (matches[0]) return matches[0];
-
-  return classifyAgentForTask(task, agents);
-}
-
 /* ── Core single-task runner ─────────────────────────────────────── */
 
 /**
- * Executes a single karos_managed task:
- * - Resolves the ecosystem agent mapped to the task (Copilot `metadata.agentId`
- *   link or dispatch-phrasing name match) and runs it via the agents engine;
- *   falls back to the generic artifact prompt when no agent maps.
- * - On a re-run (adjustment feedback present), feeds the agent both the
+ * Executes a single karos_managed task via Claude:
+ * - Generates an artifact (Flow A: content; Flow B: email/publish draft)
+ * - On a re-run (adjustment feedback present), feeds the model both the
  *   original task context AND the previous output + client feedback.
  * - Advances status to review_pending on success
  * - Records error in metadata on failure (status returns to pending)
  */
-export async function runTaskExecution(
-  clientId: string,
-  taskId: string,
-  actor: AppUser = KAROS_SYSTEM_ACTOR,
-): Promise<void> {
+export async function runTaskExecution(clientId: string, taskId: string): Promise<void> {
   const [task, client] = await Promise.all([getClientTask(taskId), getClient(clientId)]);
   if (!task || !client) return;
   // Defense in depth: never generate with a mismatched client context.
@@ -172,51 +74,22 @@ export async function runTaskExecution(
     : undefined;
 
   try {
-    let artifact: string;
-    let executedBy: { agentId: string; agentName: string; jobId: string } | null = null;
-
-    // Integration actions keep the generic prompt — its "Subject:" output
-    // contract is what dispatchArtifactEmail parses.
-    const agent = taskType === "content_generation" ? await resolveExecutionAgent(task) : null;
-
-    if (agent) {
-      const input: Record<string, string> = {
-        task: task.title,
-        brief: task.description ?? "",
-        priority: task.priority,
-      };
-      if (adjustmentFeedback) {
-        input.revision_feedback = adjustmentFeedback;
-        if (previousArtifact) input.previous_version = previousArtifact;
-      }
-      const run = await runAgentForTask({
-        agent,
-        client,
-        input,
-        actor,
-        title: `Task · ${task.title.slice(0, 80)}`,
-      });
-      artifact = run.output;
-      executedBy = { agentId: agent.id, agentName: agent.name, jobId: run.jobId };
-    } else {
-      const { text } = await generateText({
-        model: selectModel(task),
-        prompt: buildArtifactGenerationPrompt(
-          task.title,
-          task.description,
-          task.source,
-          task.priority,
-          taskType,
-          client.name,
-          client.industry,
-          client.website,
-          client.brandVoice,
-          adjustmentFeedback,
-          previousArtifact,
-        ),
-      });
-      artifact = text;
-    }
+    const { text: artifact } = await generateText({
+      model: selectModel(task),
+      prompt: buildArtifactGenerationPrompt(
+        task.title,
+        task.description,
+        task.source,
+        task.priority,
+        taskType,
+        client.name,
+        client.industry,
+        client.website,
+        client.brandVoice,
+        adjustmentFeedback,
+        previousArtifact,
+      ),
+    });
 
     await updateClientTask(taskId, {
       status: "review_pending",
@@ -227,9 +100,6 @@ export async function runTaskExecution(
         artifact,
         adjustmentFeedback: null,
         executionError: null,
-        ...(executedBy
-          ? { agentId: executedBy.agentId, agentName: executedBy.agentName, jobId: executedBy.jobId }
-          : {}),
       },
       updatedAt: Date.now(),
     });
@@ -279,6 +149,18 @@ export async function runAutopilotBatch(clientId: string): Promise<void> {
 
   for (const t of pendingKaros) {
     await runTaskExecution(clientId, t.id).catch(console.error);
+  }
+}
+
+/**
+ * Execute an explicit set of already-claimed tasks (status flipped to
+ * in_progress + executing by claimTaskForExecution). Used by the credit-charged
+ * client autopilot path so the executed batch is exactly the charged batch.
+ */
+export async function runClaimedTasks(clientId: string, taskIds: string[]): Promise<void> {
+  revalidatePath("/tasks");
+  for (const id of taskIds) {
+    await runTaskExecution(clientId, id).catch(console.error);
   }
 }
 

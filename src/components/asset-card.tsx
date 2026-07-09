@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { ImageLightbox, type LightboxImage } from "@/components/image-lightbox";
 import {
   updateAssetAction,
   approveAssetAction,
@@ -318,7 +319,25 @@ export function AssetCard({
   const isCarousel = slides.length > 0;
   const photoCount = slides.filter((s) => s.imageUrl).length;
 
-  async function setStatus(status: "delivered" | "published") {
+  // Flatten every picture in this asset into a single gallery the lightbox can
+  // page through. Carousels contribute each slide that has a photo; a plain
+  // post contributes its single cover image.
+  const galleryImages: LightboxImage[] = isCarousel
+    ? slides
+        .filter((s) => s.imageUrl)
+        .map((s, i) => ({ url: s.imageUrl as string, caption: s.headline ?? `Slide ${i + 1}` }))
+    : asset.imageUrl
+      ? [{ url: asset.imageUrl, caption: asset.title }]
+      : [];
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
+  // Map a slide's position (some slides have no photo) to its index within
+  // galleryImages, so a thumbnail opens the right picture.
+  function galleryIndexForSlide(slideIndex: number): number {
+    return slides.slice(0, slideIndex).filter((s) => s.imageUrl).length;
+  }
+
+  async function setStatus(status: "approved" | "delivered" | "published") {
     setBusy(true);
     try {
       await updateAssetAction(asset.id, { status });
@@ -396,8 +415,18 @@ export function AssetCard({
                 {slides.map((s, i) => (
                   <div key={i} className="w-28 shrink-0">
                     {s.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={s.imageUrl} alt={s.headline ?? `Slide ${i + 1}`} className="h-36 w-28 rounded-lg border border-border object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setLightboxIndex(galleryIndexForSlide(i))}
+                        className="group relative block h-36 w-28 overflow-hidden rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
+                        title="View full size"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={s.imageUrl} alt={s.headline ?? `Slide ${i + 1}`} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition-opacity group-hover:bg-black/30 group-hover:opacity-100">
+                          <Icon name="Maximize2" className="h-5 w-5" />
+                        </span>
+                      </button>
                     ) : (
                       <div className="flex h-36 w-28 items-center justify-center rounded-lg border border-dashed border-border text-center text-[10px] text-muted-2">
                         no photo
@@ -407,15 +436,25 @@ export function AssetCard({
                   </div>
                 ))}
               </div>
-              <p className="mt-1 text-[10px] text-muted-2">{slides.length} slides · {photoCount} with photos</p>
+              <p className="mt-1 text-[10px] text-muted-2">
+                {slides.length} slides · {photoCount} with photos
+                {photoCount > 0 && " · tap a photo to view & download"}
+              </p>
             </div>
           ) : asset.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={asset.imageUrl}
-              alt={asset.title}
-              className="mt-2 w-full max-w-sm rounded-lg border border-border"
-            />
+            <button
+              type="button"
+              onClick={() => setLightboxIndex(0)}
+              className="group relative mt-2 block w-full max-w-sm overflow-hidden rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
+              title="View full size"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={asset.imageUrl} alt={asset.title} className="w-full" />
+              <span className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/50 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100">
+                <Icon name="Maximize2" className="h-3 w-3" />
+                View
+              </span>
+            </button>
           ) : null}
 
           {open && (
@@ -430,8 +469,15 @@ export function AssetCard({
                   {slides.map((s, i) => (
                     <div key={i} className="flex gap-2 rounded-lg bg-surface-2 p-2">
                       {s.imageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={s.imageUrl} alt="" className="h-24 w-20 shrink-0 rounded border border-border object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => setLightboxIndex(galleryIndexForSlide(i))}
+                          className="h-24 w-20 shrink-0 overflow-hidden rounded border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
+                          title="View full size"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={s.imageUrl} alt="" className="h-full w-full object-cover" />
+                        </button>
                       ) : null}
                       <div className="min-w-0">
                         <p className="text-xs font-medium">
@@ -513,13 +559,15 @@ export function AssetCard({
                   </>
                 )}
               </p>
-              <button
-                onClick={handleUnschedule}
-                disabled={busy}
-                className="ml-auto text-[11px] text-muted-2 transition-colors hover:text-danger disabled:opacity-50"
-              >
-                Unschedule
-              </button>
+              {canApprove && (
+                <button
+                  onClick={handleUnschedule}
+                  disabled={busy}
+                  className="ml-auto text-[11px] text-muted-2 transition-colors hover:text-danger disabled:opacity-50"
+                >
+                  Unschedule
+                </button>
+              )}
             </div>
           )}
 
@@ -617,6 +665,16 @@ export function AssetCard({
           </div>
         </div>
       </div>
+
+      {lightboxIndex !== null && galleryImages.length > 0 && (
+        <ImageLightbox
+          images={galleryImages}
+          index={lightboxIndex}
+          onIndexChange={setLightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          name={asset.title}
+        />
+      )}
     </Card>
   );
 }

@@ -5,6 +5,7 @@ import {
   groupRunFiles,
   guessAssetType,
   humanizeItemName,
+  normalizeLabSlug,
   pickPrimaryFiles,
   type LabFile,
   type LabItemGroup,
@@ -144,5 +145,5 @@ export async function downloadLabFile(path: string): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer());
 }
 
-export { groupRunFiles, guessAssetType, humanizeItemName, pickPrimaryFiles };
+export { groupRunFiles, guessAssetType, humanizeItemName, normalizeLabSlug, pickPrimaryFiles };
 export type { LabFile, LabItemGroup, AssetType };

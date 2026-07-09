@@ -1,100 +1,83 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { listAgents, listClients, getSystemAgent } from "@/lib/data";
-import { Button, EmptyState, PageHeader } from "@/components/ui";
+import { listClients } from "@/lib/data";
+import { Badge, Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { AgentCard, DraftAgentCard } from "@/components/agent-card";
-import { ManagedAgentLauncher } from "@/components/managed-agent-launcher";
-import { IntelAgentSection } from "@/components/intel-agent-section";
-import { INTEL_AGENT_ID, RESEARCH_ENGINE_RULES, METRICS_RULES } from "@/lib/intel";
+import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 
+/**
+ * Staff catalog of the managed agents — the karos-agents lab products run by
+ * the external agent service. Runs are launched from a client's Agents page
+ * (they always execute against a specific client's context).
+ */
 export default async function AgentsPage() {
   const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
-  const [drafts, publishedAll, clients, intelAgent] = await Promise.all([
-    listAgents({ status: "draft" }),
-    listAgents({ status: "published" }),
-    listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined),
-    user.role === "KAROS_ADMIN" ? getSystemAgent(INTEL_AGENT_ID) : Promise.resolve(null),
-  ]);
-  // System agents are hidden from the regular published list
-  const published = publishedAll.filter((a) => !a.isSystem);
+  const clients = await listClients(
+    user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined,
+  );
+  const activeClients = clients.filter((c) => c.status === "active");
 
   return (
     <>
       <PageHeader
         title="Agents"
-        description="Reusable AI skills your team builds and runs for clients."
-        action={
-          <div className="flex items-center gap-2">
-            <Link href="/agents/new">
-              <Button>
-                <Icon name="Plus" className="h-4 w-4" />
-                New agent
-              </Button>
-            </Link>
-          </div>
-        }
+        description="Managed lab agents from the karos-agents repo, run by the agent service for a chosen client."
       />
 
-      {drafts.length > 0 && (
-        <section className="mb-8">
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-muted">
-            <Icon name="PencilRuler" className="h-4 w-4" />
-            In development
-            <span className="text-muted-2">· {drafts.length}</span>
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {drafts.map((agent) => (
-              <DraftAgentCard key={agent.id} agent={agent} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section>
-        {drafts.length > 0 && <h2 className="mb-3 text-sm font-semibold text-muted">Live agents</h2>}
-        {published.length === 0 ? (
-          <EmptyState
-            icon={<Icon name="Bot" className="h-7 w-7" />}
-            title={drafts.length > 0 ? "No live agents yet" : "No agents yet"}
-            description="Create a custom agent from scratch."
-            action={
-              <div className="flex flex-wrap gap-2">
-                <Link href="/agents/new">
-                  <Button variant="outline">Build from scratch</Button>
-                </Link>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {MANAGED_PRODUCTS.map((product) => (
+          <Card key={product.taskType} className="flex flex-col">
+            <div className="flex items-start gap-3">
+              <div
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md"
+                style={{ background: product.color + "1f", color: product.color }}
+              >
+                <Icon name={product.icon} className="h-5 w-5" />
               </div>
-            }
+              <div className="min-w-0 flex-1">
+                <p className="font-medium">{product.name}</p>
+                <p className="mt-0.5 text-xs text-muted">{product.tagline}</p>
+              </div>
+              <Badge tone="neutral">{product.estimate}</Badge>
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-muted-2">{product.description}</p>
+            <ul className="mt-3 space-y-0.5">
+              {product.deliverables.map((d) => (
+                <li key={d} className="flex items-center gap-1.5 text-xs text-foreground">
+                  <Icon name="Check" className="h-3 w-3 shrink-0 text-success" /> {d}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="mt-6">
+        <CardTitle className="mb-1">Run an agent</CardTitle>
+        <p className="mb-4 text-xs text-muted">
+          Agents always run against a client&apos;s context — pick a client to launch one.
+        </p>
+        {activeClients.length === 0 ? (
+          <EmptyState
+            icon={<Icon name="Building2" className="h-6 w-6" />}
+            title="No active clients"
+            description="Add a client first — agents run against a client's context."
           />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {published.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} clients={clients} canEdit />
+          <div className="flex flex-wrap gap-2">
+            {activeClients.map((c) => (
+              <Link
+                key={c.id}
+                href={`/clients/${c.id}/agents`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-xs text-foreground transition-colors hover:border-border-strong hover:bg-surface-3"
+              >
+                <Icon name="Play" className="h-3 w-3 text-muted" />
+                {c.name}
+              </Link>
             ))}
           </div>
         )}
-      </section>
-
-      {/* Claude-platform managed agents — run for a chosen client */}
-      <section className="mt-8">
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-muted">
-          <Icon name="Sparkles" className="h-4 w-4" />
-          Platform agents
-        </h2>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <ManagedAgentLauncher
-            clients={clients.map((c) => ({ id: c.id, name: c.name }))}
-          />
-        </div>
-      </section>
-
-      {/* Intel Report Agent — admin only, collapsed by default */}
-      {user.role === "KAROS_ADMIN" && (
-        <IntelAgentSection
-          agent={intelAgent}
-          lockedRules={{ researchEngine: RESEARCH_ENGINE_RULES, metrics: METRICS_RULES }}
-        />
-      )}
+      </Card>
     </>
   );
 }

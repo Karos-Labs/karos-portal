@@ -99,15 +99,21 @@ the Managed products UI appears once it's present.
 ## 6. Schedule the crons (Cloud Scheduler)
 
 ```bash
-for path in publish cleanup-logs "agent-service/reconcile"; do
+for path in publish cleanup-logs "agent-service/reconcile" "credits/reconcile"; do
   gcloud scheduler jobs create http ${path//\//-} \
     --schedule="*/10 * * * *" --uri="<platform-url>/api/$path" \
     --http-method=GET --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)"
 done
 ```
 
-(`publish` every 5 min, `cleanup-logs` daily, `reconcile` every ~10 min — adjust
-schedules to taste.)
+(`publish` every 5 min, `cleanup-logs` daily, both `reconcile`s every ~10 min —
+adjust schedules to taste.)
+
+`credits/reconcile` is the credit-loss safety net: client users are charged
+upfront and the work runs deferred, so an instance recycle mid-run leaves the
+execution stuck and the charge unrefunded. The sweep releases work stuck past
+30 min and refunds its charge idempotently (deterministic
+`refund_<chargeEntryId>` ledger doc) — safe to run as often as you like.
 
 ## 7. Smoke test
 
