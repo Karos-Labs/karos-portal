@@ -143,29 +143,11 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
     description: "Schedule and publish posts to your X account.",
     fields: [
       {
-        key: "apiKey",
-        label: "API Key",
-        type: "text",
-        required: true,
-        hint: "From your X Developer Portal → Project & Apps → Keys and Tokens",
-      },
-      {
-        key: "apiSecret",
-        label: "API Key Secret",
-        type: "password",
-        required: true,
-      },
-      {
         key: "accessToken",
-        label: "Access Token",
-        type: "text",
-        required: true,
-      },
-      {
-        key: "accessTokenSecret",
-        label: "Access Token Secret",
+        label: "OAuth 2.0 Bearer Token",
         type: "password",
         required: true,
+        hint: "Generate via the X Developer Portal → OAuth 2.0 Tools, or reconnect via Connect above",
       },
     ],
   },

@@ -213,14 +213,6 @@ async function publishToTwitter(
 ): Promise<void> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
-  // Manual OAuth 1.0a keys (apiKey/apiSecret/accessTokenSecret) can't be used as a
-  // bearer token — posting requires request signing we don't implement. Fail with
-  // a clear message instead of a confusing 401 from the API.
-  if (credentials.accessTokenSecret && !token.startsWith("Bearer") && credentials.apiKey) {
-    throw new Error(
-      "X (Twitter) manual OAuth 1.0a keys are not supported for publishing — reconnect via OAuth to get a bearer token",
-    );
-  }
 
   // 280-char hard limit
   const text = asset.content.slice(0, 280);
