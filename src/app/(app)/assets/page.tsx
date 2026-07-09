@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { listAssets, listClients, listJobs, listAgents } from "@/lib/data";
+import { listAssets, listClients, listJobs, listAgents, listClientIntegrations } from "@/lib/data";
 import { EmptyState, PageHeader, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetCard } from "@/components/asset-card";
@@ -22,15 +22,17 @@ export default async function AssetsPage({
         </>
       );
     }
-    const [assets, jobs, agents] = await Promise.all([
+    const [assets, jobs, agents, integrations] = await Promise.all([
       listAssets({ clientId: user.clientId }),
       listJobs({ clientId: user.clientId }),
       listAgents({ status: "published" }),
+      listClientIntegrations(user.clientId),
     ]);
+    const connectedPlatforms = integrations.filter((i) => i.status !== "expired").map((i) => i.platform);
     return (
       <>
         <PageHeader title="Library" description="Your content library and delivery calendar." />
-        <AssetsView assets={assets} jobs={jobs} agents={agents} />
+        <AssetsView assets={assets} jobs={jobs} agents={agents} connectedPlatforms={connectedPlatforms} />
       </>
     );
   }
@@ -42,15 +44,17 @@ export default async function AssetsPage({
   // library/calendar toggle a client sees, scoped to that one client.
   const viewClient = viewClientId ? clients.find((c) => c.id === viewClientId) : undefined;
   if (viewClient) {
-    const [clientAssets, jobs, agents] = await Promise.all([
+    const [clientAssets, jobs, agents, integrations] = await Promise.all([
       listAssets({ clientId: viewClient.id }),
       listJobs({ clientId: viewClient.id }),
       listAgents({ status: "published" }),
+      listClientIntegrations(viewClient.id),
     ]);
+    const connectedPlatforms = integrations.filter((i) => i.status !== "expired").map((i) => i.platform);
     return (
       <>
         <PageHeader title={`${viewClient.name} — Library`} description="Content library and delivery calendar." />
-        <AssetsView assets={clientAssets} jobs={jobs} agents={agents} />
+        <AssetsView assets={clientAssets} jobs={jobs} agents={agents} connectedPlatforms={connectedPlatforms} />
       </>
     );
   }

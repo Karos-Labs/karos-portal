@@ -314,8 +314,10 @@ export async function updateAsset(id: string, data: Partial<Asset>): Promise<voi
 }
 
 /**
- * All assets with status="scheduled" whose scheduledAt is at or before `before` (default: now).
- * Sorted oldest-first so the cron processes in chronological order.
+ * All calendar-booked assets (status "scheduled" OR "approved") whose scheduledAt is
+ * at or before `before` (default: now). Approval places an asset on the calendar at a
+ * designated time, so approved auto-mode assets are auto-published just like scheduled
+ * ones. Sorted oldest-first so the cron processes in chronological order.
  * Pass `limit` to cap the batch size and bound each cron tick's execution time.
  * Pass `autoOnly` (the cron does) to exclude manual-push and placeholder items —
  * those live on the calendar but must never be auto-posted. Legacy assets with no
@@ -327,7 +329,7 @@ export async function listScheduledAssets(opts?: {
   autoOnly?: boolean;
 }): Promise<Asset[]> {
   const before = opts?.before ?? Date.now();
-  const snap = await col.assets().where("status", "==", "scheduled").get();
+  const snap = await col.assets().where("status", "in", ["scheduled", "approved"]).get();
   const due = snap.docs
     .map((d) => withId<Asset>(d))
     .filter((a) => a.scheduledAt != null && a.scheduledAt <= before)

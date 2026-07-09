@@ -1,16 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
   updateAssetAction,
-  scheduleAssetAction,
+  approveAssetAction,
+  recommendAssetScheduleAction,
   unscheduleAssetAction,
   publishAssetNowAction,
 } from "@/lib/actions";
 import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS } from "@/lib/integrations/platforms";
+import { AssetDownloadButtons } from "@/components/asset-detail-modal";
 import { relativeTime, cn } from "@/lib/utils";
 import type { Asset, PublishMode } from "@/lib/types";
 
@@ -46,28 +48,39 @@ function statusTone(status: Asset["status"]): "warning" | "neon" | "info" | "neu
   return "neutral";
 }
 
-/* ── Schedule section ────────────────────────────────────────────────── */
+/* ── Pre-approval panel ──────────────────────────────────────────────── */
 
-function ScheduleSection({
+/**
+ * The pre-approval step for a draft: pick the publishing tier (auto/manual/
+ * placeholder) and the publication slot, then Approve. Approving stamps the asset
+ * onto the content calendar at the chosen time. Auto-publish is only offered when
+ * the agent's channel integration is connected and active for this client.
+ */
+function ApprovePanel({
   asset,
   connectedPlatforms,
+  agentChannels,
   onDone,
 }: {
   asset: Asset;
   connectedPlatforms: string[];
+  agentChannels?: string[];
   onDone: () => void;
 }) {
   const router = useRouter();
   const compatiblePlatforms = PUBLISHABLE_PLATFORMS[asset.type] ?? [];
-  const availablePlatforms = connectedPlatforms.filter((p) =>
-    compatiblePlatforms.includes(p),
-  );
+  // The agent's declared channels narrow which platforms this asset targets; without
+  // any, fall back to every platform the asset type can publish to.
+  const channelPlatforms =
+    agentChannels && agentChannels.length
+      ? agentChannels.filter((p) => compatiblePlatforms.includes(p))
+      : compatiblePlatforms;
+  const availablePlatforms = connectedPlatforms.filter((p) => channelPlatforms.includes(p));
   const canAuto = availablePlatforms.length > 0;
 
   // eslint-disable-next-line react-hooks/purity -- initial values only; component mounts once per open
   const now = Date.now();
   const minDatetime = toLocalInputValue(now + 60_000);
-  // Pre-fill with the agent's recommended slot when it's still in the future.
   const recommended =
     asset.recommendedAt && asset.recommendedAt > now + 60_000 ? asset.recommendedAt : null;
   const [datetime, setDatetime] = useState(
@@ -77,8 +90,31 @@ function ScheduleSection({
   const [platform, setPlatform] = useState(availablePlatforms[0] ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // AI recommendation aware of the client's calendar density (fetched on open).
+  const [aiRec, setAiRec] = useState<{ at: number; reason: string } | null>(null);
+  const [recLoading, setRecLoading] = useState(true);
 
-  const usingRecommended = recommended != null && datetime === toLocalInputValue(recommended);
+  useEffect(() => {
+    let cancelled = false;
+    recommendAssetScheduleAction(asset.id)
+      .then((rec) => {
+        if (cancelled || !rec) return;
+        setAiRec(rec);
+        // Only auto-fill if the user hasn't already picked a custom time.
+        if (rec.at > Date.now() + 60_000) setDatetime(toLocalInputValue(rec.at));
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setRecLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [asset.id]);
+
+  const suggestedAt = aiRec?.at ?? recommended;
+  const suggestedReason = aiRec?.reason ?? asset.recommendedReason;
+  const usingSuggested = suggestedAt != null && datetime === toLocalInputValue(suggestedAt);
   const showPlatformPicker = mode !== "placeholder" && availablePlatforms.length > 0;
 
   const modeOptions: { id: PublishMode; label: string; hint: string; disabled?: boolean }[] = [
@@ -100,21 +136,20 @@ function ScheduleSection({
     },
   ];
 
-  async function handleSchedule() {
+  async function handleApprove() {
     if (!datetime) return;
     setBusy(true);
     setError(null);
     try {
-      await scheduleAssetAction(
-        asset.id,
-        new Date(datetime).getTime(),
-        mode === "placeholder" ? undefined : platform || undefined,
-        mode,
-      );
+      await approveAssetAction(asset.id, {
+        scheduledAt: new Date(datetime).getTime(),
+        platform: mode === "placeholder" ? undefined : platform || undefined,
+        publishMode: mode,
+      });
       router.refresh();
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Scheduling failed");
+      setError(e instanceof Error ? e.message : "Approval failed");
     } finally {
       setBusy(false);
     }
@@ -123,7 +158,7 @@ function ScheduleSection({
   return (
     <div className="mt-3 space-y-2.5 rounded-md border border-border bg-surface-2 p-3">
       <p className="text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
-        Add to content calendar
+        Approve &amp; add to content calendar
       </p>
 
       {/* Publishing tier */}
@@ -133,7 +168,7 @@ function ScheduleSection({
             key={opt.id}
             onClick={() => !opt.disabled && setMode(opt.id)}
             disabled={opt.disabled}
-            title={opt.disabled ? "Connect a compatible platform to enable auto-publishing" : opt.hint}
+            title={opt.disabled ? "Connect this agent's channel integration to enable auto-publishing" : opt.hint}
             className={cn(
               "rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors",
               mode === opt.id
@@ -182,35 +217,42 @@ function ScheduleSection({
         )}
       </div>
 
-      {/* Agent recommendation */}
-      {recommended != null && (
+      {/* AI recommendation (calendar-density aware) */}
+      {recLoading ? (
         <p className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <Icon name="Sparkles" className="h-3 w-3 shrink-0 text-neon" />
-          <span>
-            {usingRecommended ? "Using the agent-recommended slot" : "Agent recommends "}
-            {!usingRecommended && (
-              <button
-                onClick={() => setDatetime(toLocalInputValue(recommended))}
-                className="font-medium text-neon hover:underline"
-              >
-                {new Date(recommended).toLocaleString([], {
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </button>
-            )}
-            {asset.recommendedReason ? ` — ${asset.recommendedReason}` : ""}
-          </span>
+          <Icon name="Loader" className="h-3 w-3 shrink-0 animate-spin text-neon" />
+          Finding an optimal slot…
         </p>
+      ) : (
+        suggestedAt != null && (
+          <p className="flex items-center gap-1.5 text-[11px] text-muted-2">
+            <Icon name="Sparkles" className="h-3 w-3 shrink-0 text-neon" />
+            <span>
+              {usingSuggested ? "Using the recommended slot" : "AI recommends "}
+              {!usingSuggested && (
+                <button
+                  onClick={() => setDatetime(toLocalInputValue(suggestedAt))}
+                  className="font-medium text-neon hover:underline"
+                >
+                  {new Date(suggestedAt).toLocaleString([], {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </button>
+              )}
+              {suggestedReason ? ` — ${suggestedReason}` : ""}
+            </span>
+          </p>
+        )
       )}
 
       {!canAuto && compatiblePlatforms.length > 0 && (
         <p className="text-[11px] text-muted-2">
           <Icon name="AlertCircle" className="mr-1 inline h-3 w-3 text-warning" />
           Connect{" "}
-          {compatiblePlatforms.map((p) => PLATFORM_LABELS[p] ?? p).join(" or ")}{" "}
+          {channelPlatforms.map((p) => PLATFORM_LABELS[p] ?? p).join(" or ")}{" "}
           in the Integrations tab to enable auto-publishing.
         </p>
       )}
@@ -222,9 +264,9 @@ function ScheduleSection({
       )}
 
       <div className="flex gap-2">
-        <Button size="sm" onClick={handleSchedule} loading={busy} disabled={!datetime}>
-          <Icon name="CalendarClock" className="h-3.5 w-3.5" />
-          Approve &amp; Schedule
+        <Button size="sm" onClick={handleApprove} loading={busy} disabled={!datetime}>
+          <Icon name="Check" className="h-3.5 w-3.5" />
+          Approve
         </Button>
         <Button size="sm" variant="ghost" onClick={onDone}>
           Cancel
@@ -240,15 +282,18 @@ export function AssetCard({
   asset,
   canApprove,
   connectedPlatforms,
+  agentChannels,
 }: {
   asset: Asset;
   canApprove?: boolean;
   connectedPlatforms?: string[];
+  /** The generating agent's distribution channels — gate auto-publish to these platforms. */
+  agentChannels?: string[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [scheduling, setScheduling] = useState(false);
+  const [approving, setApproving] = useState(false);
   const [content, setContent] = useState(asset.content);
   const [busy, setBusy] = useState(false);
 
@@ -263,6 +308,9 @@ export function AssetCard({
   const canPublishNow =
     canApprove && compatibleConnected.length > 0 && asset.status !== "published";
 
+  // Notes have no scheduling dimension; everything else can land on the calendar.
+  const calendarEligible = asset.type !== "note";
+
   // Content-engine carousels carry their slides (each with its own photo) in
   // meta.slides; a plain post has only the single cover `asset.imageUrl`.
   type SlideMeta = { role?: string; headline?: string; body?: string | null; imageUrl?: string | null; attribution?: string | null };
@@ -270,10 +318,21 @@ export function AssetCard({
   const isCarousel = slides.length > 0;
   const photoCount = slides.filter((s) => s.imageUrl).length;
 
-  async function setStatus(status: "approved" | "delivered" | "published") {
+  async function setStatus(status: "delivered" | "published") {
     setBusy(true);
     try {
       await updateAssetAction(asset.id, { status });
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Approve a non-schedulable draft (e.g. a note) straight through — no calendar slot. */
+  async function handleSimpleApprove() {
+    setBusy(true);
+    try {
+      await approveAssetAction(asset.id);
       router.refresh();
     } finally {
       setBusy(false);
@@ -416,11 +475,19 @@ export function AssetCard({
                   </div>
                 </div>
               )}
+              {!editing && (
+                <div className="mt-3">
+                  <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+                    Download
+                  </p>
+                  <AssetDownloadButtons asset={asset} />
+                </div>
+              )}
             </>
           )}
 
-          {/* Scheduled info strip */}
-          {asset.status === "scheduled" && asset.scheduledAt && (
+          {/* Scheduled info strip — shown for scheduled and approved-on-calendar assets */}
+          {(asset.status === "scheduled" || asset.status === "approved") && asset.scheduledAt && (
             <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5">
               <Icon
                 name={asset.publishMode === "placeholder" ? "CalendarDays" : "Clock"}
@@ -464,12 +531,13 @@ export function AssetCard({
             </div>
           )}
 
-          {/* Scheduling form */}
-          {scheduling && canApprove && (
-            <ScheduleSection
+          {/* Pre-approval panel (mode + slot) */}
+          {approving && canApprove && (
+            <ApprovePanel
               asset={asset}
               connectedPlatforms={connectedPlatforms ?? []}
-              onDone={() => setScheduling(false)}
+              agentChannels={agentChannels ?? asset.channels}
+              onDone={() => setApproving(false)}
             />
           )}
 
@@ -504,7 +572,7 @@ export function AssetCard({
                   onClick={() => {
                     setOpen(true);
                     setEditing(true);
-                    setScheduling(false);
+                    setApproving(false);
                   }}
                 >
                   <Icon name="Pencil" className="h-3.5 w-3.5" />
@@ -525,39 +593,25 @@ export function AssetCard({
                   Publish Now
                 </Button>
               )}
-              {canApprove && asset.status === "draft" && !scheduling && (
-                <>
+              {canApprove && asset.status === "draft" && !approving && (
+                calendarEligible ? (
                   <Button
                     size="sm"
-                    variant="outline"
                     onClick={() => {
-                      setScheduling(true);
+                      setApproving(true);
                       setEditing(false);
                     }}
-                    title="Put this on the content calendar — auto-publish, manual push, or placeholder"
-                  >
-                    <Icon name="Clock" className="h-3.5 w-3.5" />
-                    Schedule
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => setStatus("approved")}
-                    loading={busy}
+                    title="Choose auto-publish, manual push, or placeholder, then approve onto the calendar"
                   >
                     <Icon name="Check" className="h-3.5 w-3.5" />
                     Approve
                   </Button>
-                </>
-              )}
-              {canApprove && asset.status === "draft" && scheduling && (
-                <Button
-                  size="sm"
-                  onClick={() => setStatus("approved")}
-                  loading={busy}
-                >
-                  <Icon name="Check" className={cn("h-3.5 w-3.5", scheduling && "opacity-50")} />
-                  Approve now
-                </Button>
+                ) : (
+                  <Button size="sm" onClick={handleSimpleApprove} loading={busy}>
+                    <Icon name="Check" className="h-3.5 w-3.5" />
+                    Approve
+                  </Button>
+                )
               )}
             </div>
           </div>

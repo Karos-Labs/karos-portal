@@ -133,6 +133,66 @@ export function recommendPublishTime(opts: {
   return null; // unreachable in practice (60-day horizon)
 }
 
+function sameLocalDay(a: number, b: number): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() &&
+    da.getDate() === db.getDate()
+  );
+}
+
+/** No more than this many pieces should land on a single day before we spread to the next. */
+const MAX_PER_DAY = 2;
+/** Keep publications at least this far apart so a day never feels spammy. */
+const MIN_GAP_MS = 90 * 60 * 1000;
+
+/**
+ * Calendar-density-aware optimal slot.
+ *
+ * Starts from the platform's engagement windows (recommendPublishTime) but walks
+ * forward past any window that would crowd the client's existing calendar — a day
+ * already holding MAX_PER_DAY items, or a slot within MIN_GAP_MS of something booked.
+ * This looks at the client's *current* scheduled/approved/published times so the
+ * recommendation adapts to how full the calendar already is and to past scheduling
+ * cadence, rather than blindly returning the same window every time.
+ *
+ * @param scheduled  Epoch-millis of the client's already-booked publications.
+ * @returns          A slot the user can accept or override; null only when the type
+ *                   has no scheduling dimension at all.
+ */
+export function recommendPublishTimeWithDensity(opts: {
+  assetType: AssetType;
+  platform?: string;
+  scheduled: number[];
+  from?: number;
+}): { at: number; reason: string } | null {
+  const from = opts.from ?? Date.now();
+  const booked = opts.scheduled.filter((t) => Number.isFinite(t));
+
+  const base = recommendPublishTime({ assetType: opts.assetType, platform: opts.platform, from });
+  if (!base) return null;
+
+  const dayFull = (t: number) => booked.filter((s) => sameLocalDay(s, t)).length >= MAX_PER_DAY;
+  const tooClose = (t: number) => booked.some((s) => Math.abs(s - t) < MIN_GAP_MS);
+
+  // Walk successive optimal windows until one lands on an uncrowded day.
+  for (let index = 0; index < 90; index++) {
+    const rec = recommendPublishTime({ assetType: opts.assetType, platform: opts.platform, index, from });
+    if (!rec) break;
+    if (!dayFull(rec.at) && !tooClose(rec.at)) {
+      const reason =
+        booked.length > 0
+          ? `${rec.reason}. Spaced out to keep your calendar evenly paced.`
+          : rec.reason;
+      return { at: rec.at, reason };
+    }
+  }
+  // Everything in the horizon is crowded — fall back to the base optimal slot.
+  return base;
+}
+
 /**
  * Convenience spread for asset-creation sites:
  * `{ ...recommendedScheduleFields(type, i) }` adds recommendedAt/recommendedReason

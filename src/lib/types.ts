@@ -153,6 +153,13 @@ export interface Agent {
   outputKind: "instagram_posts" | "email" | "article" | "social_posts" | "freeform";
   fields: AgentField[];
   capabilities: AgentCapability[];
+  /**
+   * Distribution channels this agent's outputs are destined for — platform ids
+   * matching PlatformConfig.id / ClientIntegration.platform (e.g. ["instagram", "linkedin"]).
+   * Stamped onto every asset the agent creates (Asset.channels) so the schedule/approve
+   * flow can default the target platform and gate auto-publish. Empty ⇒ no channel preset.
+   */
+  channels?: string[];
   /** Lifecycle: drafts are in-development (test-only); published agents are live & runnable. */
   status: "draft" | "published";
   /** Only meaningful once published — pause/resume runnability. */
@@ -272,8 +279,24 @@ export interface Asset {
   meta?: Record<string, unknown>;
   /** Public URL of the generated visual (Vercel Blob), when one exists. */
   imageUrl?: string | null;
+  /**
+   * MIME type of the primary downloadable payload, when the asset is a binary file
+   * (e.g. "image/jpeg", "video/mp4"). Drives the native download action's format +
+   * extension. Absent ⇒ derive from type/imageUrl (image) or fall back to text.
+   */
+  mimeType?: string;
+  /**
+   * Distribution channels for this asset — platform ids copied from the generating
+   * agent (Agent.channels) at creation. Advisory: pre-selects the target platform in
+   * the approve/schedule flow and is surfaced in the calendar detail modal.
+   */
+  channels?: string[];
   status: "draft" | "approved" | "delivered" | "published" | "scheduled";
-  /** Epoch millis — set when status is "scheduled". Cron publishes when this time passes (auto mode only). */
+  /**
+   * Epoch millis — the designated publication slot. Set when an asset is scheduled OR
+   * approved onto the calendar. The auto-publish cron pushes it once this time passes
+   * (publishMode "auto" only), for both "scheduled" and "approved" assets.
+   */
   scheduledAt?: number;
   /** Which platform to publish to (matches ClientIntegration.platform). */
   scheduledPlatform?: string;

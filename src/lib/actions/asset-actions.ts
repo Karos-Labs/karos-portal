@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import {
   getAsset,
+  listAssets,
   updateAsset,
   clearAssetSchedule,
   markAssetPublished,
@@ -15,6 +16,8 @@ import {
   inferPlatform,
   publishAssetToPlatform,
 } from "@/lib/integrations/publishers";
+import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
 import type { Asset, PublishMode } from "@/lib/types";
 
 /** Load the asset and verify the caller may act on it. Shared guard for all asset actions. */
@@ -63,6 +66,75 @@ export async function scheduleAssetAction(
     ...(platform ? { scheduledPlatform: platform } : {}),
     updatedAt: Date.now(),
   });
+  revalidatePath("/assets");
+  revalidatePath(`/clients/${asset.clientId}`);
+}
+
+/** The asset's target platform preference: an explicit schedule wins, else the first
+ *  agent channel compatible with the asset type. */
+function preferredPlatform(asset: Asset): string | undefined {
+  if (asset.scheduledPlatform) return asset.scheduledPlatform;
+  const compatible = PUBLISHABLE_PLATFORMS[asset.type] ?? [];
+  return (asset.channels ?? []).find((c) => compatible.includes(c));
+}
+
+/**
+ * AI-recommended optimal publish slot for a draft, aware of the client's current
+ * calendar density and past scheduling. Reads the client's already-booked
+ * publications and returns a slot the user can accept or override in the approve
+ * flow. Returns null only when the asset type has no scheduling dimension (e.g. note).
+ */
+export async function recommendAssetScheduleAction(
+  id: string,
+): Promise<{ at: number; reason: string } | null> {
+  const asset = await requireAssetAccess(id);
+  const all = await listAssets({ clientId: asset.clientId });
+  const scheduled = all
+    .filter((a) => a.id !== id && a.scheduledAt != null)
+    .map((a) => a.scheduledAt as number);
+  return recommendPublishTimeWithDensity({
+    assetType: asset.type,
+    platform: preferredPlatform(asset),
+    scheduled,
+  });
+}
+
+/**
+ * Approve a draft. When a slot is supplied the asset is placed on the content
+ * calendar at that time (status → approved, publishMode selected pre-approval):
+ *   auto        — cron auto-posts at scheduledAt (requires an active integration)
+ *   manual      — on the calendar; the user pushes it live with Publish Now
+ *   placeholder — calendar-only roadmap entry
+ * Non-schedulable assets (no slot) simply transition to approved.
+ */
+export async function approveAssetAction(
+  id: string,
+  opts?: { scheduledAt?: number; platform?: string; publishMode?: PublishMode },
+): Promise<void> {
+  const asset = await requireAssetAccess(id);
+  const patch: Partial<Asset> = { status: "approved", updatedAt: Date.now() };
+
+  if (opts?.scheduledAt != null) {
+    const publishMode: PublishMode = opts.publishMode ?? (opts.platform ? "auto" : "placeholder");
+    if (publishMode === "auto") {
+      if (!opts.platform) throw new Error("Auto-publish requires a target platform");
+      // Enforce: auto-publish only when the required integration is connected and active.
+      const integrations = await listClientIntegrations(asset.clientId);
+      const active = integrations.find(
+        (i) => i.platform === opts.platform && i.status !== "expired",
+      );
+      if (!active) {
+        throw new Error(
+          `Connect an active ${opts.platform} integration to auto-publish — or approve as manual/placeholder`,
+        );
+      }
+    }
+    patch.scheduledAt = opts.scheduledAt;
+    patch.publishMode = publishMode;
+    if (opts.platform) patch.scheduledPlatform = opts.platform;
+  }
+
+  await updateAsset(id, patch);
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
 }

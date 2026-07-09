@@ -18,10 +18,13 @@ export function AssetsView({
   assets,
   jobs,
   agents,
+  connectedPlatforms,
 }: {
   assets: Asset[];
   jobs: Job[];
   agents: Agent[];
+  /** Active integration platform ids for this client — enables auto-publish on approval. */
+  connectedPlatforms?: string[];
 }) {
   const [view, setView] = useState<View>("library");
 
@@ -61,7 +64,12 @@ export function AssetsView({
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
             {assets.map((a) => (
-              <AssetCard key={a.id} asset={a} canApprove />
+              <AssetCard
+                key={a.id}
+                asset={a}
+                canApprove
+                connectedPlatforms={connectedPlatforms}
+              />
             ))}
           </div>
         )

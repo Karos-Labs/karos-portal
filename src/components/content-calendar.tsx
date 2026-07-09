@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
+import { AssetDetailModal } from "@/components/asset-detail-modal";
 import type { Asset, Agent, Job } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -47,7 +48,8 @@ const PLATFORM_COLORS: Record<string, string> = {
 
 function eventKind(a: Asset): EventKind | null {
   if (a.status === "published" && (a.scheduledAt != null || a.publishedAt != null)) return "published";
-  if (a.status === "scheduled" && a.scheduledAt != null) {
+  // Approving a draft onto the calendar and legacy "scheduled" both land here.
+  if ((a.status === "scheduled" || a.status === "approved") && a.scheduledAt != null) {
     return a.publishMode === "placeholder" ? "placeholder" : "scheduled";
   }
   // Draft with an agent-recommended slot — advisory until someone schedules it.
@@ -107,7 +109,7 @@ const MODE_TOOLTIP: Record<string, string> = {
   manual: "manual push",
 };
 
-function EventChip({ event }: { event: CalendarEvent }) {
+function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: string) => void }) {
   const timeStr = new Date(event.scheduledAt).toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
@@ -115,16 +117,18 @@ function EventChip({ event }: { event: CalendarEvent }) {
   const modeStr = event.kind === "scheduled" && event.mode ? MODE_TOOLTIP[event.mode] : undefined;
 
   return (
-    <div
+    <button
+      type="button"
+      onClick={() => onOpen(event.assetId)}
       className={cn(
-        "flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-default",
+        "flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate text-left transition-opacity hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-neon/50",
         KIND_CHIP_CLASS[event.kind],
       )}
-      title={`${KIND_TOOLTIP[event.kind]}${modeStr ? ` · ${modeStr}` : ""} — ${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""}`}
+      title={`${KIND_TOOLTIP[event.kind]}${modeStr ? ` · ${modeStr}` : ""} — ${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""} · click for details`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{event.title}</span>
-    </div>
+    </button>
   );
 }
 
@@ -142,8 +146,11 @@ export function ContentCalendar({
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [openAssetId, setOpenAssetId] = useState<string | null>(null);
 
   const events = useMemo(() => buildEvents(assets, jobs, agents), [assets, jobs, agents]);
+  const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
+  const openAsset = openAssetId ? assetById.get(openAssetId) ?? null : null;
 
   const totalDays = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
@@ -277,7 +284,7 @@ export function ContentCalendar({
                   </p>
                   <div className="space-y-[3px]">
                     {dayEvents.slice(0, 3).map((e) => (
-                      <EventChip key={e.assetId} event={e} />
+                      <EventChip key={e.assetId} event={e} onOpen={setOpenAssetId} />
                     ))}
                     {dayEvents.length > 3 && (
                       <p className="pl-1 text-[9px] text-muted-2">
@@ -311,6 +318,13 @@ export function ContentCalendar({
           Suggested
         </div>
       </div>
+
+      <AssetDetailModal
+        asset={openAsset}
+        agents={agents}
+        open={openAsset != null}
+        onClose={() => setOpenAssetId(null)}
+      />
     </div>
   );
 }
