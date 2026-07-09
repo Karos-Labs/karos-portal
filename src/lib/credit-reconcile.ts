@@ -70,20 +70,35 @@ export async function listStuckTaskExecutions(staleBefore: number, limit = 25): 
 }
 
 /**
- * Platform-local jobs stuck queued/running past `staleBefore`. Excludes
- * external agent-service jobs — those have their own reconciler
- * (/api/agent-service/reconcile) and are never client-charged.
+ * Extra staleness demanded before sweeping an agent-service job that never
+ * recorded a serviceJobId. Almost always that means the submit crashed and the
+ * service never saw the job — but a crash in the instant between a successful
+ * submit and persisting its id leaves the run alive with a webhook coming
+ * (matched via the metadata platform_job_id fallback). Waiting out the longest
+ * run (35 min) plus webhook slack before failing it keeps that race
+ * theoretical.
+ */
+export const UNSUBMITTED_AGENT_JOB_EXTRA_MS = 90 * 60 * 1000;
+
+/**
+ * Platform-local jobs stuck queued/running past `staleBefore`. Agent-service
+ * jobs WITH a serviceJobId are excluded — /api/agent-service/reconcile owns
+ * those (it polls the service, and custom-agent runs are refunded there).
+ * Agent-service jobs WITHOUT one are included after a longer staleness: the
+ * submit crashed before the service accepted the job, so no webhook will ever
+ * terminalize it — and for a client-fired custom agent the upfront charge
+ * would otherwise be stranded (charge happens between createJob and submit).
  */
 export async function listStuckLocalJobs(staleBefore: number, limit = 25): Promise<Job[]> {
   const snap = await jobsCol().where("status", "in", ["queued", "running"]).get();
   return snap.docs
     .map((d) => ({ ...(d.data() as Job), id: d.id }))
-    .filter(
-      (j) =>
-        j.agentId !== "agent-service" &&
-        !j.external?.serviceJobId &&
-        (j.updatedAt ?? j.createdAt ?? 0) < staleBefore,
-    )
+    .filter((j) => {
+      if (j.external?.serviceJobId) return false;
+      const cutoff =
+        j.agentId === "agent-service" ? staleBefore - UNSUBMITTED_AGENT_JOB_EXTRA_MS : staleBefore;
+      return (j.updatedAt ?? j.createdAt ?? 0) < cutoff;
+    })
     .sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))
     .slice(0, limit);
 }
@@ -155,6 +170,27 @@ function stageRefundWrites(
   } satisfies CreditLedgerEntry);
 }
 
+/**
+ * Refund the newest unpaired charge for `jobId`, if any — used when a
+ * client-charged agent-service job terminates without deliverables (failed /
+ * cancelled / dead-lettered webhook, or the agent-service reconciler flips a
+ * stuck job). No-op for staff-fired runs (never charged). Same idempotency
+ * contract as the sweeps: deterministic refund_<chargeEntryId> id via
+ * tx.create(), so webhook redelivery or a concurrent sweep can't double-pay.
+ */
+export async function refundJobCharge(
+  jobId: string,
+  reason: string,
+): Promise<{ refunded: boolean; amount?: number; chargeEntryId?: string }> {
+  return db().runTransaction(async (tx) => {
+    const now = Date.now();
+    const staged = await readRefundableCharge(tx, jobId, now);
+    if (!staged) return { refunded: false };
+    stageRefundWrites(tx, staged, reason, now);
+    return { refunded: true, amount: staged.amount, chargeEntryId: staged.charge.id };
+  });
+}
+
 /* ─────────────────────────── reconcilers ────────────────────────── */
 
 /**
@@ -214,8 +250,11 @@ export async function reconcileStuckTaskExecution(
 
 /**
  * Fail one stuck platform-local job and refund its charge, atomically.
- * Covers legacy local agent runs (charged with jobId = job doc id); external
- * agent-service jobs never reach here (filtered by the sweep + re-checked).
+ * Covers legacy local agent runs and agent-service jobs whose submit crashed
+ * before the service accepted them (no serviceJobId — the client-charged
+ * custom-agent case). Jobs the service actually accepted never reach here
+ * (filtered by the sweep + re-checked in-transaction): the agent-service
+ * reconciler owns those.
  */
 export async function reconcileStuckJob(jobId: string, staleBefore: number): Promise<ReconcileResult> {
   return db().runTransaction(async (tx) => {
@@ -227,10 +266,12 @@ export async function reconcileStuckJob(jobId: string, staleBefore: number): Pro
     if (job.status !== "queued" && job.status !== "running") {
       return { action: "skipped", detail: `already ${job.status}`, refunded: false };
     }
-    if (job.agentId === "agent-service" || job.external?.serviceJobId) {
-      return { action: "skipped", detail: "external job — agent-service reconciler owns it", refunded: false };
+    if (job.external?.serviceJobId) {
+      return { action: "skipped", detail: "submitted to the service — agent-service reconciler owns it", refunded: false };
     }
-    if ((job.updatedAt ?? job.createdAt ?? 0) >= staleBefore) {
+    const cutoff =
+      job.agentId === "agent-service" ? staleBefore - UNSUBMITTED_AGENT_JOB_EXTRA_MS : staleBefore;
+    if ((job.updatedAt ?? job.createdAt ?? 0) >= cutoff) {
       return { action: "skipped", detail: "updated since sweep — not stale", refunded: false };
     }
 

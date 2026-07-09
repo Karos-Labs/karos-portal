@@ -59,6 +59,29 @@ describe("skills shim", () => {
     ).rejects.toThrow(/entry skill not found/);
   });
 
+  it("refuses roots that resolve outside the repo copy", async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), "shim-escape-"));
+    await makeSkill(repo, "products/social/blog-agent", "karos-blog-agent");
+    await expect(
+      buildSkillsShim({
+        repoDir: repo,
+        entrySkillDir: "../outside",
+        skillRoots: [],
+        clientSlug: "acme",
+        includeClientSkills: false,
+      }),
+    ).rejects.toThrow(/escapes the agents repo/);
+    await expect(
+      buildSkillsShim({
+        repoDir: repo,
+        entrySkillDir: "products/social/blog-agent",
+        skillRoots: ["products/../../etc"],
+        clientSlug: "acme",
+        includeClientSkills: false,
+      }),
+    ).rejects.toThrow(/escapes the agents repo/);
+  });
+
   it("collectSkillDirs finds nested skills but respects the depth cap", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "collect-test-"));
     await makeSkill(root, "a");

@@ -1,4 +1,4 @@
-export const TASK_TYPES = ["social_post", "newsletter_issue", "blog_article", "landing_page"] as const;
+export const TASK_TYPES = ["social_post", "newsletter_issue", "blog_article", "landing_page", "custom"] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled" | "dead_letter";

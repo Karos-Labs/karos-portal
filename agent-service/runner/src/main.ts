@@ -1,6 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { decodeJobSpec } from "../../src/exec/executor.js";
-import { getTaskTypeConfig } from "../../src/task-types.js";
+import { resolveTaskConfig } from "../../src/task-types.js";
 import type { RunnerCompleteBody } from "../../src/types.js";
 import { ServiceCallback } from "./callback.js";
 import { prepareWorkspace, writeClientContext } from "./workspace.js";
@@ -52,7 +52,7 @@ async function main(): Promise<void> {
   delete process.env.JOB_SPEC_B64;
   const spec = decodeJobSpec(specB64);
   const callback = new ServiceCallback(spec);
-  const taskConfig = getTaskTypeConfig(spec.taskType);
+  const taskConfig = resolveTaskConfig(spec.taskType, spec.brief);
 
   let report: RunnerCompleteBody = { outcome: "failed", error: "runner did not finish", transient: true };
   const transcript = new TranscriptStreamer(callback);

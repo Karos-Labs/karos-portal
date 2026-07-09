@@ -102,7 +102,6 @@ export async function approveRegistrationAction(
 
   await upsertUser({ ...existing, ...patch });
   await adminAuth().updateUser(uid, { disabled: false }).catch(() => {});
-  revalidatePath("/registrations");
   revalidatePath("/team");
 }
 
@@ -111,7 +110,6 @@ export async function rejectRegistrationAction(uid: string) {
   await requireAdmin();
   await deleteUser(uid);
   await adminAuth().deleteUser(uid).catch(() => {});
-  revalidatePath("/registrations");
   revalidatePath("/team");
 }
 

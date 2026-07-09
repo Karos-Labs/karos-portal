@@ -6,6 +6,7 @@ import {
   getClientCredits,
   listClientIntegrations,
   listCreditLedger,
+  listCustomAgents,
   listTranscripts,
 } from "@/lib/data";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
@@ -14,6 +15,7 @@ import { Icon } from "@/components/icon";
 import { IntegrationsTab } from "@/components/integrations-tab";
 import { ClientKeyInline } from "@/components/client-key-inline";
 import { CreditsPanel } from "@/components/credits-panel";
+import { ClientAgentAccessCard } from "@/components/custom-agents";
 import { LogoutButton } from "@/components/logout-button";
 import { relativeTime } from "@/lib/utils";
 
@@ -30,11 +32,13 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
   const client = await getClient(id);
   if (!client) notFound();
 
-  const [integrations, transcripts, credits, creditLedger] = await Promise.all([
+  const isAdmin = user.role === "KAROS_ADMIN";
+  const [integrations, transcripts, credits, creditLedger, customAgents] = await Promise.all([
     listClientIntegrations(id),
     listTranscripts({ clientId: id }),
     getClientCredits(id),
     listCreditLedger(id, 15),
+    isAdmin ? listCustomAgents() : Promise.resolve([]),
   ]);
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
@@ -58,6 +62,24 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       <div className="mb-8">
         <CreditsPanel clientId={client.id} credits={credits} ledger={creditLedger} role={user.role} />
       </div>
+
+      {/* Agent access (admin) — which custom agents this client may fire themselves */}
+      {isAdmin && (
+        <div className="mb-8">
+          <Card>
+            <CardTitle className="mb-1">AI agent access</CardTitle>
+            <p className="mb-3 text-sm text-muted-2">
+              Agents this client&apos;s users can run from their AI Agents page. Each run charges
+              the client&apos;s credits.
+            </p>
+            <ClientAgentAccessCard
+              clientId={client.id}
+              agents={customAgents}
+              allowedIds={client.customAgentIds ?? []}
+            />
+          </Card>
+        </div>
+      )}
 
       {/* Integrations */}
       <IntegrationsTab

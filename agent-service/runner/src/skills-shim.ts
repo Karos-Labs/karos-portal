@@ -25,6 +25,19 @@ export async function collectSkillDirs(root: string, depth = 0): Promise<string[
 }
 
 /**
+ * Last line of the traversal defense (schema pattern → resolveTaskConfig →
+ * here): a root that resolves outside the job's repo copy is a hard error,
+ * whatever upstream layer let it through.
+ */
+function assertInsideRepo(repoDir: string, rel: string): void {
+  const repoAbs = path.resolve(repoDir);
+  const abs = path.resolve(repoDir, rel);
+  if (abs !== repoAbs && !abs.startsWith(repoAbs + path.sep)) {
+    throw new Error(`skill path escapes the agents repo: ${JSON.stringify(rel)}`);
+  }
+}
+
+/**
  * Builds the .claude/skills/ shim: relative symlinks pointing at every skill
  * directory this task type needs. Nothing in the source repo is modified —
  * the shim exists only in the throwaway job workspace, and the SDK discovers
@@ -42,6 +55,7 @@ export async function buildSkillsShim(params: {
 
   const roots = [params.entrySkillDir, ...params.skillRoots];
   if (params.includeClientSkills) roots.push(`clients/${params.clientSlug}/skills`);
+  for (const root of roots) assertInsideRepo(params.repoDir, root);
 
   const skillDirs = new Set<string>();
   const entryAbs = path.join(params.repoDir, params.entrySkillDir);
