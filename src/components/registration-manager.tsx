@@ -278,7 +278,7 @@ export function ClientRequestManager({ requests }: { requests: ClientRequest[] }
             <Input
               value={notes[r.id] ?? ""}
               onChange={(e) => setNotes((s) => ({ ...s, [r.id]: e.target.value }))}
-              placeholder="e.g. Approved — create client and send key"
+              placeholder="e.g. Approved: create client and send key"
             />
           </div>
 

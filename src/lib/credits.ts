@@ -44,6 +44,12 @@ export const CREDIT_COSTS = {
   globalCorrection: 15,
   /** Small Haiku task helpers: AI execution plan, custom-task classification. */
   taskAssist: 1,
+  /**
+   * One custom-agent run on the agent service (Opus, 10–35 min, research +
+   * media renders — the real cost is task_execution × dozens). Default only:
+   * admins can override per agent via CustomAgent.creditCost.
+   */
+  customAgentRun: 25,
 } as const;
 
 /** Applied to new clients on their first charge/grant (lazy doc creation). */

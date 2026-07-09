@@ -32,7 +32,7 @@ export default async function TasksPage() {
       <div>
         <PageHeader
           title="Progress"
-          description="Your tasks and account activity — what's next and what's done."
+          description="Your tasks and account activity: what's next and what's done."
         />
         <ProgressView
           tasks={tasks}

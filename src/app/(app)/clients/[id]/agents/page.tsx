@@ -1,18 +1,59 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { getClient, listJobs, listContextItems } from "@/lib/data";
+import {
+  getClient,
+  getClientCredits,
+  listContextItems,
+  listCustomAgents,
+  listJobs,
+} from "@/lib/data";
+import { availableCredits, isBillableClientActor } from "@/lib/credits";
 import { Button, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ManagedProducts } from "@/components/managed-products";
+import {
+  ClientCustomAgents,
+  type CustomAgentRunRow,
+  type RunnableAgentSummary,
+} from "@/components/custom-agents";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
+import type { CustomAgent, Job } from "@/lib/types";
+
+/** Strip an agent to the client-safe summary — never the instructions/skill paths. */
+function toSummary(agent: CustomAgent): RunnableAgentSummary {
+  return {
+    id: agent.id,
+    name: agent.name,
+    description: agent.description,
+    icon: agent.icon,
+    color: agent.color,
+    creditCost: agent.creditCost ?? null,
+  };
+}
+
+/** Custom-agent runs as slim rows; `withLinks` adds staff-only /jobs targets. */
+function toRunRows(jobs: Job[], withLinks: boolean): CustomAgentRunRow[] {
+  return jobs
+    .filter((j) => j.agentId === "agent-service" && j.external?.taskType === "custom")
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 8)
+    .map((j) => ({
+      id: j.id,
+      agentName: j.agentName,
+      status: j.status,
+      createdAt: j.createdAt,
+      ...(j.input.prompt ? { prompt: j.input.prompt } : {}),
+      ...(withLinks ? { href: `/jobs/${j.id}` } : {}),
+    }));
+}
 
 /**
- * A client's AI Agents page. The only agents on the platform are the managed
- * karos-agents lab products run by the external agent service — staff launch
- * them here; clients review the resulting deliverables in their Library.
+ * A client's AI Agents page. Staff launch the managed lab products and any
+ * custom agent here; client users see (and fire, billed in credits) only the
+ * custom agents an admin granted them in client settings.
  */
 export default async function ClientAgentsPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -28,35 +69,63 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   if (!client) notFound();
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  const agentServiceConfigured = isAgentServiceConfigured();
 
-  // Client users don't launch managed runs — the Karos team does. Point them
-  // at their Library, where approved deliverables land.
+  // Client users: their granted custom agents (if any) — otherwise the
+  // "your team is on it" state. Managed products stay staff-launched.
   if (!isStaff) {
+    const allowedIds = new Set(client.customAgentIds ?? []);
+    const [allAgents, jobs, contextItems, credits] = await Promise.all([
+      allowedIds.size > 0 ? listCustomAgents() : Promise.resolve([]),
+      listJobs({ clientId: id }),
+      listContextItems({ clientId: id }),
+      getClientCredits(id),
+    ]);
+    const agents = allAgents.filter((a) => a.enabled && allowedIds.has(a.id)).map(toSummary);
+    // Client viewers see only runs of agents they're allowed — not the
+    // history of staff-fired agents outside their allowlist.
+    const allowedNames = new Set(agents.map((a) => a.name));
+    const runs = toRunRows(jobs, false).filter((r) => allowedNames.has(r.agentName));
+    // Impersonating admins see the client view but never spend real credits —
+    // show the gate only to billable client actors.
+    const spendable = isBillableClientActor(user) ? availableCredits(credits) : undefined;
+
     return (
       <>
         <PageHeader
           title="AI Agents"
           description="Your Karos team runs AI agents that research, produce, and deliver content for you."
         />
-        <EmptyState
-          icon={<Icon name="Bot" className="h-7 w-7" />}
-          title="Your team is on it"
-          description="Karos runs managed AI agents for your account. Deliverables appear in your Library once they're approved."
-          action={
-            <Link href="/assets">
-              <Button>Open Library</Button>
-            </Link>
-          }
-        />
+        {agents.length > 0 && agentServiceConfigured ? (
+          <ClientCustomAgents
+            clientId={id}
+            agents={agents}
+            runs={runs}
+            contextItems={contextItems}
+            viewerIsClient
+            {...(spendable !== undefined ? { availableCredits: spendable } : {})}
+          />
+        ) : (
+          <EmptyState
+            icon={<Icon name="Bot" className="h-7 w-7" />}
+            title="Your team is on it"
+            description="Karos runs managed AI agents for your account. Deliverables appear in your Library once they're approved."
+            action={
+              <Link href="/assets">
+                <Button>Open Library</Button>
+              </Link>
+            }
+          />
+        )}
       </>
     );
   }
 
-  const [jobs, contextItems] = await Promise.all([
+  const [jobs, contextItems, customAgents] = await Promise.all([
     listJobs({ clientId: id }),
     listContextItems({ clientId: id }),
+    listCustomAgents(),
   ]);
-  const agentServiceConfigured = isAgentServiceConfigured();
   const labImportAvailable = isLabOutputsConfigured();
 
   return (
@@ -77,7 +146,16 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         }
       />
       {agentServiceConfigured ? (
-        <ManagedProducts clientId={id} contextItems={contextItems} jobs={jobs} />
+        <>
+          <ManagedProducts clientId={id} contextItems={contextItems} jobs={jobs} />
+          <ClientCustomAgents
+            clientId={id}
+            agents={customAgents.filter((a) => a.enabled).map(toSummary)}
+            runs={toRunRows(jobs, true)}
+            contextItems={contextItems}
+            viewerIsClient={false}
+          />
+        </>
       ) : (
         <EmptyState
           icon={<Icon name="Bot" className="h-7 w-7" />}

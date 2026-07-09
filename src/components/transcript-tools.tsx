@@ -130,7 +130,7 @@ export function ManualIngestButton() {
                 <Input
                   value={form.title}
                   onChange={(e) => setForm((s) => ({ ...s, title: e.target.value }))}
-                  placeholder="Acme — kickoff call"
+                  placeholder="Acme: kickoff call"
                 />
               </div>
               <div>
@@ -271,7 +271,7 @@ export function HideFromClientToggle({
     <button
       onClick={toggle}
       disabled={saving}
-      title={hidden ? "Currently hidden from clients — click to make visible" : "Visible to clients — click to hide"}
+      title={hidden ? "Currently hidden from clients - click to make visible" : "Visible to clients - click to hide"}
       className={`flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-medium transition-colors disabled:opacity-50 ${
         hidden
           ? "border-warning/40 bg-warning/10 text-warning hover:bg-warning/20"

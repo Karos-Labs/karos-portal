@@ -15,7 +15,7 @@ export default async function JobsPage() {
   ]);
   const allowed = new Set(clients.map((c) => c.id));
   const visible = user.role === "KAROS_EMPLOYEE" ? jobs.filter((j) => allowed.has(j.clientId)) : jobs;
-  const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "—";
+  const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "-";
   const isAdmin = user.role === "KAROS_ADMIN";
 
   return (

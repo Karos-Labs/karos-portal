@@ -28,7 +28,6 @@ const NAV: NavItem[] = [
   { href: "/transcripts", label: "Meetings", icon: "Mic", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/assets", label: "Assets", icon: "FolderOpen", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/tasks", label: "Tasks", icon: "CheckSquare", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
-  { href: "/registrations", label: "Registrations", icon: "UserCheck", roles: ["KAROS_ADMIN"] },
   { href: "/team", label: "Team", icon: "Users", roles: ["KAROS_ADMIN"] },
   { href: "/connect", label: "Connect", icon: "Plug", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/admin/analytics", label: "Analytics", icon: "TrendingUp", roles: ["KAROS_ADMIN"] },
@@ -291,9 +290,19 @@ export function Sidebar({
     if (n.href === "/team" && user.role === "CLIENT_USER" && user.isGroupAdmin) return true;
     return false;
   }).map((n) => {
-    if (n.href === "/dashboard" && clientHomePath) return { ...n, href: clientHomePath };
+    // exact — otherwise Dashboard stays lit on the AI Agents page below it.
+    if (n.href === "/dashboard" && clientHomePath) return { ...n, href: clientHomePath, exact: true };
     return n;
   });
+  if (clientHomePath) {
+    // Client users run their granted custom agents from their own agents page.
+    adminItems.splice(1, 0, {
+      href: `${clientHomePath}/agents`,
+      label: "AI Agents",
+      icon: "Bot",
+      roles: ["CLIENT_USER"],
+    });
+  }
 
   // In Client View mode show the 4 client-facing tabs; otherwise show the full admin nav.
   // Using (isStaff && activeClient) so TS narrows activeClient to non-null in the truthy branch.
@@ -306,7 +315,7 @@ export function Sidebar({
         const active = item.exact
           ? pathname === itemPath
           : pathname === itemPath || pathname.startsWith(itemPath + "/");
-        const badge = item.href === "/registrations" && pendingCount > 0 ? pendingCount : null;
+        const badge = item.href === "/team" && pendingCount > 0 ? pendingCount : null;
         return (
           <Link
             key={item.href}

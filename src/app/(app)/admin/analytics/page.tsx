@@ -308,7 +308,7 @@ function renderPage(p: {
           <EmptyState
             icon={<Icon name="ShieldCheck" className="h-5 w-5" />}
             title="No errors recorded"
-            description="Clean run — no errors in this period."
+            description="Clean run, no errors in this period."
           />
         ) : (
           <ul className="divide-y divide-border">

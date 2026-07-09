@@ -1,20 +1,24 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { listClients } from "@/lib/data";
+import { listClients, listCustomAgents } from "@/lib/data";
 import { Badge, Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { isAgentServiceConfigured } from "@/lib/agent-service/client";
+import { isCustomAgentImportConfigured } from "@/lib/agent-service/custom-agent-import";
+import { CustomAgentsHub } from "@/components/custom-agents";
 
 /**
  * Staff catalog of the managed agents — the karos-agents lab products run by
- * the external agent service. Runs are launched from a client's Agents page
- * (they always execute against a specific client's context).
+ * the external agent service — plus the custom-agents library (stored system
+ * prompts, importable from the repo catalog, runnable with a plain prompt).
  */
 export default async function AgentsPage() {
   const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
-  const clients = await listClients(
-    user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined,
-  );
+  const [clients, customAgents] = await Promise.all([
+    listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined),
+    listCustomAgents(),
+  ]);
   const activeClients = clients.filter((c) => c.status === "active");
 
   return (
@@ -55,13 +59,13 @@ export default async function AgentsPage() {
       <Card className="mt-6">
         <CardTitle className="mb-1">Run an agent</CardTitle>
         <p className="mb-4 text-xs text-muted">
-          Agents always run against a client&apos;s context — pick a client to launch one.
+          Agents always run against a client&apos;s context. Pick a client to launch one.
         </p>
         {activeClients.length === 0 ? (
           <EmptyState
             icon={<Icon name="Building2" className="h-6 w-6" />}
             title="No active clients"
-            description="Add a client first — agents run against a client's context."
+            description="Add a client first. Agents run against a client's context."
           />
         ) : (
           <div className="flex flex-wrap gap-2">
@@ -78,6 +82,14 @@ export default async function AgentsPage() {
           </div>
         )}
       </Card>
+
+      <CustomAgentsHub
+        agents={customAgents}
+        clients={activeClients.map((c) => ({ id: c.id, name: c.name }))}
+        isAdmin={user.role === "KAROS_ADMIN"}
+        importConfigured={isCustomAgentImportConfigured()}
+        serviceConfigured={isAgentServiceConfigured()}
+      />
     </>
   );
 }

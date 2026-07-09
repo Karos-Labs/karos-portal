@@ -57,7 +57,7 @@ function UserRow({
 }) {
   const [actionPending, startAction] = useTransition();
   const [impersonatePending, startImpersonate] = useTransition();
-  const clientName = (id?: string | null) => clients.find((c) => c.id === id)?.name ?? "—";
+  const clientName = (id?: string | null) => clients.find((c) => c.id === id)?.name ?? "-";
   const isSelf = u.uid === currentUid;
   const isAdmin = currentUserRole === "KAROS_ADMIN";
   const isGroupAdmin = currentUserRole === "CLIENT_USER";

@@ -17,7 +17,7 @@ export default async function ConnectPage() {
     <>
       <PageHeader
         title="Connect Claude Code"
-        description="Build and test agents from your own terminal. Karos exposes an MCP server your Claude Code can drive."
+        description="Drive Karos from your own terminal. Karos exposes an MCP server your Claude Code can use to read client data, browse jobs & assets, submit managed jobs, and upload files."
       />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
@@ -25,7 +25,7 @@ export default async function ConnectPage() {
           <Card className="space-y-4">
             <CardTitle>1. Create a personal access token</CardTitle>
             <p className="text-sm text-muted">
-              Claude Code authenticates with a bearer token tied to your account. It acts as you —
+              Claude Code authenticates with a bearer token tied to your account. It acts as you,
               with the same permissions you have in the app. Keep it secret; revoke it anytime.
             </p>
             <TokenManager tokens={tokens} mcpUrl={mcpUrl} />
@@ -56,15 +56,15 @@ export default async function ConnectPage() {
           </Card>
 
           <Card className="space-y-3">
-            <CardTitle>3. Build agents by chatting</CardTitle>
+            <CardTitle>3. Work by chatting</CardTitle>
             <p className="text-sm text-muted">Once connected, just talk to Claude Code. For example:</p>
             <blockquote className="rounded-md border-l-2 border-neon bg-neon-soft/40 px-4 py-3 text-sm">
-              “Draft an Instagram agent for <em>Acme Co</em> focused on their summer launch. Test-run it,
-              read the captions, tighten the system prompt until the hooks are punchy, then publish it.”
+              “Pull <em>Acme Co</em>&apos;s brand voice and recent assets, then submit a 3-post Instagram job
+              focused on their summer launch and tell me the job id.”
             </blockquote>
             <p className="text-sm text-muted">
-              Claude Code will list your clients, create a draft, run sandboxed tests (nothing is emailed
-              or saved), iterate on the prompt, and publish when you&apos;re happy.
+              Claude Code will read the client&apos;s context, submit the managed job to the agent service,
+              and you can poll it; results land in Jobs and Assets for review as usual.
             </p>
           </Card>
         </div>
@@ -73,14 +73,16 @@ export default async function ConnectPage() {
           <Card className="space-y-3">
             <CardTitle>Available tools</CardTitle>
             {[
-              ["list_clients", "Your clients (id, name, brand voice)"],
+              ["list_clients", "Clients you can access"],
+              ["get_client", "Full profile & brand voice"],
               ["list_client_context", "Files & images attached to a client"],
-              ["list_agents", "Existing agents — drafts and live"],
-              ["get_agent", "Full config of one agent"],
-              ["create_agent", "Create a new draft agent"],
-              ["update_agent", "Edit a draft's prompt / fields / capabilities"],
-              ["test_run_agent", "Sandboxed run — no email, no saved assets"],
-              ["publish_agent", "Make a draft live & runnable"],
+              ["get_client_context_docs", "Brand/strategy/audience docs"],
+              ["list_assets / get_asset", "Generated content, with bodies"],
+              ["list_jobs / get_job", "Agent runs & their status"],
+              ["list_products", "Managed products & their brief fields"],
+              ["submit_job", "Submit a managed job to the agent service"],
+              ["upload_context_file", "Attach a reference file/image"],
+              ["upload_asset", "Save a generated asset (draft)"],
             ].map(([name, hint]) => (
               <div key={name} className="flex items-start gap-2">
                 <Icon name="Wrench" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neon" />

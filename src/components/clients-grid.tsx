@@ -127,7 +127,7 @@ function EditClientModal({
           <Input
             value={form.agentsRepoSlug}
             onChange={(e) => set("agentsRepoSlug", e.target.value)}
-            placeholder="e.g. xodigital — links managed runs + lab imports to the client's lab folder"
+            placeholder="e.g. xodigital: links managed runs + lab imports to the client's lab folder"
           />
         </div>
         <div>
@@ -264,7 +264,7 @@ export function ClientsGrid({
                       <ClientAvatar client={c} />
                       <div>
                         <p className="font-semibold">{c.name}</p>
-                        <p className="text-xs text-muted-2">{c.industry || c.website || "—"}</p>
+                        <p className="text-xs text-muted-2">{c.industry || c.website || "-"}</p>
                       </div>
                     </div>
                     <Badge tone={c.status === "active" ? "neon" : "neutral"}>{c.status}</Badge>

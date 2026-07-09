@@ -265,7 +265,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
             onChange={(e) => setField("visualStyle", e.target.value)}
             className="w-full rounded-[8px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-neon"
           >
-            <option value="">— Not set —</option>
+            <option value="">(Not set)</option>
             <option value="Minimalist">Minimalist</option>
             <option value="Corporate">Corporate</option>
             <option value="Dark Mode">Dark Mode</option>

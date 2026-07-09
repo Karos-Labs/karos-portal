@@ -24,6 +24,7 @@ import type {
   ContextItem,
   CreditLedgerEntry,
   CreditOperation,
+  CustomAgent,
   Job,
   JobStatus,
   LoginLog,
@@ -70,6 +71,8 @@ const col = {
   creditLedger: () => adminDb().collection("creditLedger"),
   // Managed meeting action items (status / assignee / comments / audit history).
   actionItems: () => adminDb().collection("actionItems"),
+  // Platform-defined agents runnable via the agent service's "custom" task type.
+  customAgents: () => adminDb().collection("customAgents"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -953,6 +956,49 @@ export async function upsertClientSettings(
   await col.clientSettings().doc(clientId).set(
     { clientId, ...patch },
     { merge: true },
+  );
+}
+
+/* ─────────────────────── Custom Agents ──────────────────────────── */
+
+export async function listCustomAgents(): Promise<CustomAgent[]> {
+  const snap = await col.customAgents().get();
+  return snap.docs
+    .map((d) => withId<CustomAgent>(d))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function getCustomAgent(id: string): Promise<CustomAgent | null> {
+  const doc = await col.customAgents().doc(id).get();
+  return doc.exists ? withId<CustomAgent>(doc) : null;
+}
+
+export async function getCustomAgentByKey(key: string): Promise<CustomAgent | null> {
+  const snap = await col.customAgents().where("key", "==", key).limit(1).get();
+  return snap.empty ? null : withId<CustomAgent>(snap.docs[0]);
+}
+
+export async function createCustomAgent(data: Omit<CustomAgent, "id">): Promise<string> {
+  const ref = await col.customAgents().add(data);
+  return ref.id;
+}
+
+export async function updateCustomAgent(id: string, data: Partial<CustomAgent>): Promise<void> {
+  await col.customAgents().doc(id).update(data);
+}
+
+export async function deleteCustomAgent(id: string): Promise<void> {
+  await col.customAgents().doc(id).delete();
+}
+
+/** Drop a deleted agent's id from every client allowlist (hygiene on delete). */
+export async function removeCustomAgentFromClients(agentId: string): Promise<void> {
+  const snap = await col.clients().where("customAgentIds", "array-contains", agentId).get();
+  await Promise.all(
+    snap.docs.map((doc) => {
+      const ids = ((doc.data() as Client).customAgentIds ?? []).filter((id) => id !== agentId);
+      return doc.ref.update({ customAgentIds: ids });
+    }),
   );
 }
 

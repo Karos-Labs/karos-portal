@@ -77,7 +77,7 @@ export function CreditsPanel({
       setNote("");
       router.refresh();
     } catch {
-      setError("Something went wrong — please try again.");
+      setError("Something went wrong. Please try again.");
     } finally {
       setBusy(null);
     }
@@ -97,7 +97,7 @@ export function CreditsPanel({
       setNotice("Spend limits updated.");
       router.refresh();
     } catch {
-      setError("Something went wrong — please try again.");
+      setError("Something went wrong. Please try again.");
     } finally {
       setBusy(null);
     }
@@ -112,7 +112,7 @@ export function CreditsPanel({
             Credits &amp; usage
           </CardTitle>
           <p className="mt-0.5 text-sm text-muted-2">
-            AI actions — agent runs, copilot messages, task executions, doc corrections — spend credits.
+            AI actions (agent runs, copilot messages, task executions, doc corrections) spend credits.
           </p>
         </div>
         <div className="text-right">

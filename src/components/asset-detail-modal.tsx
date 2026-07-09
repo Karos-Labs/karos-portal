@@ -4,6 +4,7 @@ import { Modal } from "@/components/modal";
 import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { PLATFORM_LABELS } from "@/lib/integrations/platforms";
+import { assetImages } from "@/lib/asset-images";
 import type { Asset } from "@/lib/types";
 
 const TYPE_ICON: Record<string, string> = {
@@ -37,35 +38,22 @@ function fmt(t: number): string {
   });
 }
 
-/** Which native download formats apply to this asset, by MIME type. */
-function downloadFormats(asset: Asset): Array<{ format: string; label: string; icon: string }> {
-  const out: Array<{ format: string; label: string; icon: string }> = [];
-  const isVideo = asset.mimeType?.startsWith("video/");
-  const videoMeta = (asset.meta?.videoUrl as string | undefined) ?? (asset.meta?.mediaUrl as string | undefined);
-  if (asset.imageUrl && !isVideo) out.push({ format: "image", label: "Image (.jpg)", icon: "Camera" });
-  if (isVideo || videoMeta) out.push({ format: "video", label: "Video", icon: "Video" });
-  if (asset.content?.trim()) out.push({ format: "text", label: "Text (.txt)", icon: "FileText" });
-  return out;
-}
-
-/** Native download actions for an asset — anchors to the same-origin download route. */
+/** Native download action for an asset's photos — anchors to the shared download route
+ *  (single image, or a zip when the asset carries a carousel). */
 export function AssetDownloadButtons({ asset, className }: { asset: Asset; className?: string }) {
-  const formats = downloadFormats(asset);
-  if (formats.length === 0) return null;
+  const images = assetImages(asset);
+  if (images.length === 0) return null;
   return (
     <div className={className ?? "flex flex-wrap gap-1.5"}>
-      {formats.map((f) => (
-        <a
-          key={f.format}
-          href={`/api/assets/${asset.id}/download?format=${f.format}`}
-          download
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
-        >
-          <Icon name={f.icon} className="h-3.5 w-3.5" />
-          <Icon name="Download" className="h-3 w-3" />
-          {f.label}
-        </a>
-      ))}
+      <a
+        href={`/api/assets/${asset.id}/download`}
+        download
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+      >
+        <Icon name="Camera" className="h-3.5 w-3.5" />
+        <Icon name="Download" className="h-3 w-3" />
+        {images.length > 1 ? `Download all (${images.length})` : "Download"}
+      </a>
     </div>
   );
 }

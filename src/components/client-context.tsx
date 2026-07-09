@@ -86,7 +86,7 @@ export function ClientContext({ clientId, items }: { clientId: string; items: Co
         />
       </div>
       <p className="text-xs text-muted-2">
-        Files & images agents use automatically for this client — brand guidelines, product
+        Files & images agents use automatically for this client: brand guidelines, product
         photos, references. Images and PDFs are read by the model; up to 4 MB each.
       </p>
 
@@ -120,7 +120,7 @@ export function ClientContext({ clientId, items }: { clientId: string; items: Co
                   </div>
                 </div>
                 {it.note && <p className="line-clamp-2 text-[11px] text-muted-2" title={it.note}>{it.note}</p>}
-                {it.kind === "other" && <p className="text-[11px] text-muted-2">Stored — not read by the model</p>}
+                {it.kind === "other" && <p className="text-[11px] text-muted-2">Stored, not read by the model</p>}
               </div>
             </div>
           ))}

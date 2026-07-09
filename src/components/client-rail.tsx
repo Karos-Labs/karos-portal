@@ -189,7 +189,7 @@ export function ClientRail({
           {creditBalance != null && (
             <Link
               href={settingsItem.href}
-              aria-label={`${creditBalance} credits remaining — open settings`}
+              aria-label={`${creditBalance} credits remaining, open settings`}
               className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted"
             >
               <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />

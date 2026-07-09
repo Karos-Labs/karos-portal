@@ -6,42 +6,25 @@ import { Icon } from "@/components/icon";
 
 export type LightboxImage = { url: string; caption?: string };
 
-/** Slugify a caption/title into a safe download filename stem. */
-function fileStem(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "image"
-  );
-}
-
-/** Best-guess file extension from a blob URL, defaulting to jpg. */
-function extFromUrl(url: string): string {
-  const m = url.split("?")[0].match(/\.(png|jpe?g|webp|gif|avif)$/i);
-  return m ? m[1].toLowerCase().replace("jpeg", "jpg") : "jpg";
-}
-
 /**
  * Full-screen image viewer. Pages through every picture in an asset with
- * arrow keys / on-screen chevrons and downloads the current image.
+ * arrow keys / on-screen chevrons and downloads the whole post via a
+ * server-side route (which sidesteps the storage host's CORS restrictions).
  */
 export function ImageLightbox({
   images,
   index,
   onIndexChange,
   onClose,
-  name,
+  downloadUrl,
 }: {
   images: LightboxImage[];
   index: number;
   onIndexChange: (i: number) => void;
   onClose: () => void;
-  /** Base name for downloaded files (e.g. the asset title). */
-  name?: string;
+  /** Server route that streams all of the post's images (zip for multi). */
+  downloadUrl?: string;
 }) {
-  const [downloading, setDownloading] = React.useState(false);
   const count = images.length;
   const current = images[index];
 
@@ -68,40 +51,10 @@ export function ImageLightbox({
     };
   }, [go, onClose]);
 
-  async function handleDownload() {
-    if (!current) return;
-    const filename = `${fileStem(name ?? current.caption ?? "image")}${
-      count > 1 ? `-${index + 1}` : ""
-    }.${extFromUrl(current.url)}`;
-    setDownloading(true);
-    try {
-      // Fetch → blob so cross-origin (Vercel Blob) URLs actually download
-      // instead of navigating; falls back to a plain link if that fails.
-      const res = await fetch(current.url);
-      const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objectUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(objectUrl);
-    } catch {
-      const a = document.createElement("a");
-      a.href = current.url;
-      a.download = filename;
-      a.target = "_blank";
-      a.rel = "noopener";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } finally {
-      setDownloading(false);
-    }
-  }
-
   if (!current) return null;
+
+  // Prefer the server route (works cross-origin); fall back to the raw image.
+  const href = downloadUrl ?? current.url;
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col bg-black/85 backdrop-blur-sm">
@@ -111,14 +64,14 @@ export function ImageLightbox({
           {count > 1 ? `${index + 1} / ${count}` : ""}
         </span>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleDownload}
-            disabled={downloading}
-            className="inline-flex items-center gap-1.5 rounded-md border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20 disabled:opacity-50"
+          <a
+            href={href}
+            download
+            className="inline-flex items-center gap-1.5 rounded-md border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20"
           >
-            <Icon name={downloading ? "Loader" : "Download"} className={`h-3.5 w-3.5 ${downloading ? "animate-spin" : ""}`} />
-            {downloading ? "Saving…" : "Download"}
-          </button>
+            <Icon name="Download" className="h-3.5 w-3.5" />
+            {count > 1 ? `Download all (${count})` : "Download"}
+          </a>
           <button
             onClick={onClose}
             aria-label="Close"

@@ -1,152 +1,28 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createJob, getClient, getContextItem, getJob, updateJob } from "@/lib/data";
-import {
-  cancelAgentServiceJob,
-  isAgentServiceConfigured,
-  submitAgentServiceJob,
-} from "@/lib/agent-service/client";
-import type { AgentServiceContextFile } from "@/lib/agent-service/types";
-import type { ManagedTaskType } from "@/lib/types";
-import { logActivity, requireStaff } from "./_shared";
-
-// "use server" files may only export async functions — keep these private.
-const MANAGED_TASK_LABELS: Record<ManagedTaskType, string> = {
-  social_post: "Social posts (IG/TikTok)",
-  newsletter_issue: "Newsletter issue",
-  blog_article: "Blog article",
-  landing_page: "Landing page",
-};
-
-// Mirrors the required fields in the service's per-task-type JSON schemas so
-// invalid briefs never mint a job doc (the service would 422 them anyway).
-const REQUIRED_BRIEF_FIELDS: Record<ManagedTaskType, string[]> = {
-  social_post: [],
-  newsletter_issue: [],
-  blog_article: ["topic"],
-  landing_page: ["page_goal"],
-};
+import { getJob, updateJob } from "@/lib/data";
+import { cancelAgentServiceJob } from "@/lib/agent-service/client";
+import { submitManagedJob, type SubmitManagedJobInput } from "@/lib/jobs/submit-managed";
+import { requireStaff } from "./_shared";
 
 /**
  * Submits a job to the external agent service and mirrors it as a platform
  * `jobs` doc. Progress arrives via the signed webhook
- * (/api/agent-service/webhook); the jobs UI polls the doc as usual.
+ * (/api/agent-service/webhook); the jobs UI polls the doc as usual. The actual
+ * work lives in the shared `submitManagedJob` core so the MCP `submit_job` tool
+ * runs the identical path — this wrapper only adds staff auth + cache busting.
  */
-export async function submitManagedJobAction(input: {
-  clientId: string;
-  taskType: ManagedTaskType;
-  brief: Record<string, unknown>;
-  /** ContextItem ids to send along as job input files. */
-  contextItemIds?: string[];
-}): Promise<{ jobId?: string; error?: string }> {
+export async function submitManagedJobAction(
+  input: SubmitManagedJobInput,
+): Promise<{ jobId?: string; error?: string }> {
   const user = await requireStaff();
-  if (!isAgentServiceConfigured()) {
-    return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
+  const result = await submitManagedJob(user, input);
+  if (result.jobId && !result.error) {
+    revalidatePath("/jobs");
+    revalidatePath(`/clients/${input.clientId}`);
   }
-  const client = await getClient(input.clientId);
-  if (!client) return { error: "Client not found." };
-
-  const missing = REQUIRED_BRIEF_FIELDS[input.taskType].filter((field) => {
-    const value = input.brief[field];
-    return value === undefined || value === null || String(value).trim() === "";
-  });
-  if (missing.length > 0) return { error: `Missing required field: ${missing.join(", ")}` };
-
-  // Prefer a dedicated runtime var (plain env vars are readable at runtime on
-  // Cloud Run; NEXT_PUBLIC_* can get inlined at build) and don't overload the
-  // OAuth-facing NEXT_PUBLIC_APP_URL. Fall back to it for local/dev.
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
-  if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
-  }
-
-  const contextFiles: AgentServiceContextFile[] = [];
-  for (const itemId of input.contextItemIds ?? []) {
-    const item = await getContextItem(itemId);
-    if (!item || item.clientId !== input.clientId) {
-      return { error: "Context file not found for this client." };
-    }
-    contextFiles.push({
-      name: item.name,
-      url: item.url,
-      content_type: item.mimeType,
-      ...(item.note ? { description: item.note } : {}),
-    });
-  }
-
-  const now = Date.now();
-  const label = MANAGED_TASK_LABELS[input.taskType];
-  const inputSummary = Object.fromEntries(
-    Object.entries(input.brief)
-      .filter(([, v]) => v !== undefined && v !== null && v !== "")
-      .map(([k, v]) => [k, Array.isArray(v) ? v.join("; ") : String(v)]),
-  );
-  const jobId = await createJob({
-    clientId: input.clientId,
-    agentId: "agent-service",
-    agentName: label,
-    title: `${label} — ${client.name}`,
-    status: "queued",
-    input: inputSummary,
-    assetIds: [],
-    events: [{ at: now, level: "info", message: "Submitted to agent service" }],
-    createdBy: user.uid,
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  let submittedServiceJobId: string | undefined;
-  try {
-    const submitted = await submitAgentServiceJob({
-      task_type: input.taskType,
-      client_id: input.clientId,
-      ...(client.agentsRepoSlug ? { client_slug: client.agentsRepoSlug } : {}),
-      brief: input.brief,
-      callback_url: `${appUrl.replace(/\/$/, "")}/api/agent-service/webhook`,
-      ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),
-      metadata: { platform_job_id: jobId },
-    });
-    submittedServiceJobId = submitted.job_id;
-    await updateJob(jobId, {
-      external: { serviceJobId: submitted.job_id, taskType: input.taskType },
-      updatedAt: Date.now(),
-    });
-  } catch (e) {
-    // If the run was accepted but recording it failed, stop the run rather
-    // than leaving an orphan burning tokens against a job marked failed.
-    if (submittedServiceJobId) {
-      try {
-        await cancelAgentServiceJob(submittedServiceJobId);
-      } catch {
-        // best effort — the webhook receiver's metadata fallback still matches
-      }
-    }
-    const message = e instanceof Error ? e.message : "Agent service submission failed";
-    await updateJob(jobId, {
-      status: "failed",
-      error: message,
-      events: [
-        { at: now, level: "info", message: "Submitted to agent service" },
-        { at: Date.now(), level: "error", message },
-      ],
-      updatedAt: Date.now(),
-    });
-    return { jobId, error: message };
-  }
-
-  void logActivity({
-    clientId: input.clientId,
-    timestamp: Date.now(),
-    type: "CAMPAIGN_CREATED",
-    title: `Managed job started: ${label}`,
-    actor: user.name,
-    actorRole: "staff",
-    metadata: { jobId, taskType: input.taskType },
-  });
-  revalidatePath("/jobs");
-  revalidatePath(`/clients/${input.clientId}`);
-  return { jobId };
+  return result;
 }
 
 /** Requests cancellation of a running managed job. */

@@ -24,7 +24,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Karos Labs — Your AI CMO",
+  title: "Karos Labs · Your AI CMO",
   description: "Your AI CMO. Always-on agents that run strategy, content, and growth.",
 };
 

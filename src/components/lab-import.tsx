@@ -138,7 +138,7 @@ export function LabImportButton({ clientId }: { clientId: string }) {
                       <p className="truncate text-sm">{run.runName}</p>
                       <p className="truncate text-xs text-muted-2">
                         {run.agentFolder}
-                        {result && <span className="ml-1.5 text-muted">— {result}</span>}
+                        {result && <span className="ml-1.5 text-muted">· {result}</span>}
                       </p>
                     </div>
                     {imported && <Badge tone="success">imported</Badge>}

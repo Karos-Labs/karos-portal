@@ -43,7 +43,7 @@ export default async function AssetsPage({
     const clientAssets = await listAssets({ clientId: viewClient.id });
     return (
       <>
-        <PageHeader title={`${viewClient.name} — Library`} description="Content library and delivery calendar." />
+        <PageHeader title={`${viewClient.name} · Library`} description="Content library and delivery calendar." />
         <AssetsView assets={clientAssets} />
       </>
     );

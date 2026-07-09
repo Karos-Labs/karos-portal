@@ -119,7 +119,7 @@ function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: 
         "flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate text-left transition-opacity hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-neon/50",
         KIND_CHIP_CLASS[event.kind],
       )}
-      title={`${KIND_TOOLTIP[event.kind]}${modeStr ? ` · ${modeStr}` : ""} — ${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""} · click for details`}
+      title={`${KIND_TOOLTIP[event.kind]}${modeStr ? ` · ${modeStr}` : ""} · ${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""}`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{event.title}</span>

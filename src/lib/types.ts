@@ -100,6 +100,12 @@ export interface Client {
    * sub-skills. Absent ⇒ jobs run against client_context/ only.
    */
   agentsRepoSlug?: string;
+  /**
+   * CustomAgent ids this client's users may run themselves (billed in
+   * credits). Managed by admins from the client settings page; absent/empty ⇒
+   * the client sees no runnable agents.
+   */
+  customAgentIds?: string[];
   createdAt: number;
   createdBy: string;
 }
@@ -140,7 +146,48 @@ export interface JobRunEvent {
 }
 
 /** Task types the external agent service (agent-service/) can run. */
-export type ManagedTaskType = "social_post" | "newsletter_issue" | "blog_article" | "landing_page";
+export type ManagedTaskType = "social_post" | "newsletter_issue" | "blog_article" | "landing_page" | "custom";
+
+/**
+ * A platform-defined agent: a stored system prompt bound to an entry skill in
+ * the karos-agents repo, runnable through the agent service's "custom" task
+ * type with a free-text prompt. Created by admins — imported from the repo's
+ * catalog (catalog/agent-runtime-manifest.json) or written by hand. Clients
+ * may run one only when its id is in their Client.customAgentIds allowlist.
+ */
+export interface CustomAgent {
+  id: string;
+  /** Stable slug (the repo skill_name for imports), unique across agents. */
+  key: string;
+  name: string;
+  description: string;
+  /** lucide icon name (see components/icon.tsx). */
+  icon: string;
+  /** Badge/chip hex color. */
+  color: string;
+  /** Repo-relative entry skill directory, e.g. "products/live/instagram-agent". */
+  entrySkillDir: string;
+  /** Extra repo-relative skill roots linked into the run (vendor packs). */
+  skillRoots: string[];
+  /** Also link the client's emitted skills (clients/<slug>/skills/). */
+  includeClientSkills: boolean;
+  /** The agent's system-prompt text, appended after the service's common preamble. */
+  instructions: string;
+  /** Per-run price for billable client actors; null ⇒ CREDIT_COSTS.customAgentRun. */
+  creditCost?: number | null;
+  /** Hidden from run surfaces when false (still editable by admins). */
+  enabled: boolean;
+  /** Import provenance (absent on hand-written agents). */
+  source?: {
+    path: string;
+    /** Runtime-manifest status at import time (ready / blocked / unreviewed). */
+    status?: string;
+    repoSha?: string;
+  } | null;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
 
 /** One deliverable file produced by an external agent-service job. */
 export interface ExternalJobArtifact {
@@ -845,6 +892,8 @@ export type CreditOperation =
   | "chat_message"
   | "task_execution"
   | "doc_correction"
+  /** Client-fired custom agent run on the agent service (jobId = platform job doc id). */
+  | "custom_agent_run"
   | "manual";
 
 /**

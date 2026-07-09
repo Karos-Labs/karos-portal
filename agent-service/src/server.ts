@@ -8,7 +8,7 @@ import type { JobRecord } from "./types.js";
 import { makeBearerAuth } from "./auth.js";
 import { registerJobRoutes } from "./api/jobs.js";
 import { registerInternalRoutes } from "./api/internal.js";
-import { getTaskTypeConfig } from "./task-types.js";
+import { resolveTaskConfig } from "./task-types.js";
 import { validateJobRequest } from "./schemas/validate.js";
 
 export interface ServerDeps {
@@ -25,13 +25,54 @@ export interface ServerDeps {
 export const MAX_ARTIFACT_FILE_BYTES = 100 * 1024 * 1024;
 export const MAX_ARTIFACT_TOTAL_BYTES = 500 * 1024 * 1024;
 
+/**
+ * The whole JobSpec travels to the runner as ONE env var (JOB_SPEC_B64), and
+ * Cloud Run caps env overrides at ~32 KiB total. Reject at submit time — a
+ * spec over budget would be accepted here and then dead-letter on every start
+ * attempt without the runner ever launching. 30 KiB leaves headroom for the
+ * worker's other env (proxy vars, API key).
+ */
+export const MAX_JOB_SPEC_B64_BYTES = 30 * 1024;
+
+function estimatedSpecB64Bytes(deps: ServerDeps, request: JobRecord["request"]): number {
+  const worstCase = {
+    jobId: "00000000-0000-0000-0000-000000000000",
+    taskType: request.task_type,
+    clientId: request.client_id,
+    clientSlug: request.client_slug ?? "",
+    brief: request.brief,
+    contextFiles: request.context_files ?? [],
+    agentVersion: request.agent_version ?? "",
+    timeoutMs: 3_600_000,
+    callbackBaseUrl: deps.config.internalBaseUrl,
+    runnerToken: "0".repeat(64),
+  };
+  // base64 inflates 3 bytes → 4 chars.
+  return Math.ceil(Buffer.byteLength(JSON.stringify(worstCase), "utf8") / 3) * 4;
+}
+
 export function createJobRecord(deps: ServerDeps, body: unknown): { record: JobRecord } | { errors: string[] } {
   const validation = validateJobRequest(body, {
     allowInsecureCallbacks: deps.config.allowInsecureCallbacks,
   });
   if (!validation.ok) return { errors: validation.errors };
   const request = validation.request;
-  const taskConfig = getTaskTypeConfig(request.task_type);
+  // Resolves the per-job config now so malformed custom briefs (bad skill
+  // paths) are rejected at submit time instead of failing inside the runner.
+  try {
+    resolveTaskConfig(request.task_type, request.brief);
+  } catch (err) {
+    return { errors: [`/brief ${err instanceof Error ? err.message : String(err)}`] };
+  }
+  const specBytes = estimatedSpecB64Bytes(deps, request);
+  if (specBytes > MAX_JOB_SPEC_B64_BYTES) {
+    return {
+      errors: [
+        `job spec too large (~${Math.ceil(specBytes / 1024)} KiB encoded; max ${MAX_JOB_SPEC_B64_BYTES / 1024} KiB) — ` +
+          "trim the brief (instructions/notes) or attach fewer context files",
+      ],
+    };
+  }
   const record: JobRecord = {
     id: randomUUID(),
     status: "queued",
@@ -42,7 +83,6 @@ export function createJobRecord(deps: ServerDeps, body: unknown): { record: JobR
     artifacts: [],
     runnerToken: randomBytes(32).toString("hex"),
   };
-  void taskConfig;
   return { record };
 }
 

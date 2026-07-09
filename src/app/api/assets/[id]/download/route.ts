@@ -1,98 +1,88 @@
-import { type NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import JSZip from "jszip";
+import { getCurrentUser, isStaff } from "@/lib/auth";
 import { getAsset } from "@/lib/data";
-import { getCurrentUser } from "@/lib/auth";
-import type { Asset } from "@/lib/types";
+import { assetImages, assetFileStem, imageExtFromUrl } from "@/lib/asset-images";
+import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
+
+export const runtime = "nodejs";
 
 /**
- * Native download for an asset, chosen by MIME type / requested format:
- *   ?format=text  → the asset copy as a .txt file
- *   ?format=image → the generated visual re-served as a .jpg
- *   ?format=video → the attached video re-served with its own extension
- * With no format we pick the best default: image if there's a visual, else video
- * if there's a video payload, else text. Remote media (Vercel Blob) is proxied so
- * the browser's `download` attribute works (cross-origin downloads are otherwise
- * ignored) and so the file is named/typed sensibly.
+ * Download every image in an asset as a single file — a zip for a multi-photo
+ * carousel, or the raw image for a single-photo post. The fetch happens
+ * server-side, so it works regardless of the storage host's CORS policy (the
+ * browser can't fetch firebasestorage URLs cross-origin, which is why the old
+ * client-side download silently produced nothing).
  */
-
-function slug(input: string): string {
-  return (
-    input
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "asset"
-  );
-}
-
-/** The video payload URL for an asset, if any (explicit mimeType or a meta field). */
-function videoUrl(asset: Asset): string | null {
-  const metaUrl = (asset.meta?.videoUrl as string | undefined) ?? (asset.meta?.mediaUrl as string | undefined);
-  if (metaUrl && (asset.mimeType?.startsWith("video/") ?? true)) return metaUrl;
-  if (asset.mimeType?.startsWith("video/") && asset.imageUrl) return asset.imageUrl;
-  return null;
-}
-
-function textExport(asset: Asset): string {
-  const lines = [asset.title, "", asset.content ?? ""];
-  const hashtags = asset.meta?.hashtags as string[] | undefined;
-  if (hashtags?.length) lines.push("", hashtags.map((h) => "#" + h).join(" "));
-  const cta = asset.meta?.callToAction as string | undefined;
-  if (cta) lines.push("", `CTA: ${cta}`);
-  return lines.join("\n");
-}
-
-async function proxyRemote(url: string, contentType: string, filename: string): Promise<Response> {
-  const res = await fetch(url);
-  if (!res.ok || !res.body) {
-    return new NextResponse(`Upstream file unavailable (${res.status})`, { status: 502 });
-  }
-  return new NextResponse(res.body, {
-    headers: {
-      "Content-Type": res.headers.get("Content-Type") ?? contentType,
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Cache-Control": "private, no-store",
-    },
-  });
-}
-
 export async function GET(
-  req: NextRequest,
+  _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const user = await getCurrentUser();
-  if (!user || user.disabled) return new NextResponse("Unauthorized", { status: 401 });
+  if (!user || user.disabled) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const { id } = await params;
   const asset = await getAsset(id);
-  if (!asset) return new NextResponse("Asset not found", { status: 404 });
+  if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // CLIENT_USER may only download their own client's assets.
-  if (user.role === "CLIENT_USER" && asset.clientId !== user.clientId) {
-    return new NextResponse("Forbidden", { status: 403 });
+  // Staff see everything; a client may only download its own client's assets.
+  if (!isStaff(user) && user.clientId !== asset.clientId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const video = videoUrl(asset);
-  const hasImage = Boolean(asset.imageUrl) && !asset.mimeType?.startsWith("video/");
-  const requested = req.nextUrl.searchParams.get("format");
-  const format = requested ?? (hasImage ? "image" : video ? "video" : "text");
-  const base = slug(asset.title);
-
-  if (format === "image") {
-    if (!asset.imageUrl) return new NextResponse("No image on this asset", { status: 404 });
-    return proxyRemote(asset.imageUrl, "image/jpeg", `${base}.jpg`);
+  const images = assetImages(asset);
+  if (images.length === 0) {
+    return NextResponse.json({ error: "This asset has no images" }, { status: 404 });
   }
 
-  if (format === "video") {
-    if (!video) return new NextResponse("No video on this asset", { status: 404 });
-    const ext = asset.mimeType?.split("/")[1] ?? "mp4";
-    return proxyRemote(video, asset.mimeType ?? "video/mp4", `${base}.${ext}`);
+  const stem = assetFileStem(asset.title || "post");
+  const fetchImage = (url: string) => {
+    const headers = agentServiceFetchHeaders(url);
+    return fetch(url, headers ? { headers } : undefined);
+  };
+
+  // Single photo → stream the raw image.
+  if (images.length === 1) {
+    const res = await fetchImage(images[0].url);
+    if (!res.ok) {
+      return NextResponse.json({ error: "Could not fetch image" }, { status: 502 });
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return new NextResponse(bytes, {
+      headers: {
+        "Content-Type": res.headers.get("content-type") ?? "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${stem}.${imageExtFromUrl(images[0].url)}"`,
+        "Cache-Control": "private, no-store",
+      },
+    });
   }
 
-  // Default / "other": serve the copy as text.
-  return new NextResponse(textExport(asset), {
+  // Multi-photo post → bundle every image into one zip.
+  const zip = new JSZip();
+  const added = await Promise.all(
+    images.map(async (img, i) => {
+      try {
+        const res = await fetchImage(img.url);
+        if (!res.ok) return false;
+        zip.file(`${stem}-${i + 1}.${imageExtFromUrl(img.url)}`, await res.arrayBuffer());
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+  );
+
+  if (!added.some(Boolean)) {
+    return NextResponse.json({ error: "Could not fetch images" }, { status: 502 });
+  }
+
+  const archive = await zip.generateAsync({ type: "arraybuffer" });
+  return new NextResponse(archive, {
     headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${base}.txt"`,
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${stem}.zip"`,
       "Cache-Control": "private, no-store",
     },
   });

@@ -77,5 +77,5 @@ export async function reviewClientRequestAction(
     reviewedBy: admin.uid,
     reviewNotes: reviewNotes?.trim() || undefined,
   });
-  revalidatePath("/registrations");
+  revalidatePath("/team");
 }
