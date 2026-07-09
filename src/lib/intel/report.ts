@@ -1,24 +1,40 @@
 import "server-only";
 
-import { streamText } from "ai";
+import { streamText, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
 import type { Client } from "@/lib/types";
 import type { ParsedReport } from "@/lib/report-parser";
 import {
   getClient,
+  getClientSeoGeo,
   upsertClientReport,
   replaceReportCompetitors,
 } from "@/lib/data";
+import { ENGINE_LABELS, type SeoGeoInsights } from "@/lib/seo-geo";
 import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
 import { applyBrandingForClient, effectiveDominantColors } from "@/lib/branding";
 import type { BrandingGuidelines } from "@/lib/types";
 import { DEFAULT_INTEL_PROMPT } from "./brain";
+import { logger } from "@/services/logger";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
 /** Provenance key used when logging feedback on intel-generated context docs. */
 export const INTEL_AGENT_ID = "intel-report-agent";
+
+/** Minimum chars for a viable first-pass report. Below this = a swallowed upstream failure. */
+const MIN_REPORT_CHARS = 500;
+
+/**
+ * Max agentic steps per report pass. Anthropic returns `stop_reason: "pause_turn"`
+ * when its server-side web tools run long; the AI SDK's default `stopWhen` is
+ * `stepCountIs(1)`, so it stops at the FIRST pause and resolves `.text` with only
+ * the pre-pause intro (~150 chars) — no error, just a truncated stub. Allowing
+ * multiple steps lets the SDK resume the paused turn until the model finishes.
+ * Bounded well above the tool budget (15 searches + 12 fetches) to cap cost.
+ */
+const REPORT_MAX_STEPS = 24;
 
 /* ── Prompt compilation ──────────────────────────────────────────── */
 
@@ -68,6 +84,40 @@ function compileBrandingContext(g: BrandingGuidelines | undefined): string {
       "Never contradict or ignore the established palette.",
   );
 
+  return lines.join("\n");
+}
+
+/**
+ * Compiles the measured SEO/GEO baseline (from the platform's multi-model capture)
+ * into a context block for the Intel prompt. When present, the report's SEO and GEO
+ * dimension analysis anchors on these MEASURED numbers instead of re-deriving them
+ * from browsing alone. Returns "" when no capture has run yet (first onboarding).
+ */
+function compileSeoGeoContext(insights: SeoGeoInsights | null): string {
+  if (!insights) return "";
+  const date = new Date(insights.capturedAt).toISOString().slice(0, 10);
+  const lines = [
+    "## Measured SEO & GEO Baseline",
+    `(Captured ${date} by the platform's SEO/GEO research vertical — MEASURED data, treat as ground truth for the SEO and GEO dimension analysis. Do not contradict these numbers with browsing-based estimates.)`,
+    "",
+    `- SEO score: ${insights.seoScore}/100 (coverage ${insights.seoDataCoveragePct}%)`,
+    `- GEO readiness: ${insights.geoReadiness}/100 (coverage ${insights.geoReadinessCoveragePct}%)`,
+    `- GEO visibility index: ${insights.geoVisibilityIndex}/100 (coverage ${insights.geoVisibilityCoveragePct}%)`,
+  ];
+  const live = insights.perEngine.filter((e) => e.captureTier !== "UNAVAILABLE" && e.promptsMeasured > 0);
+  if (live.length) {
+    lines.push("", "Per-engine visibility (each row labeled with the model provider that measured it):");
+    for (const e of live) {
+      lines.push(
+        `- ${ENGINE_LABELS[e.engine]} (source: ${e.source}): named in ${Math.round(e.mentionRate * 100)}% of buyer-intent answers, ${Math.round(e.shareOfVoice)}% share of voice${e.topCompetitor ? `, leading competitor ${e.topCompetitor.name} at ${Math.round(e.topCompetitor.shareOfVoice)}%` : ""}`,
+      );
+    }
+  }
+  const topGaps = insights.gaps.slice(0, 5);
+  if (topGaps.length) {
+    lines.push("", "Top measured gaps (score-lift ordered):");
+    for (const g of topGaps) lines.push(`- [${g.lever}/${g.severity}] ${g.title} — ${g.measured}`);
+  }
   return lines.join("\n");
 }
 
@@ -154,6 +204,50 @@ function compilePrompt(template: string, client: Client, brandingContext?: strin
 /* ── Main pipeline ───────────────────────────────────────────────── */
 
 /**
+ * Diagnose why a report pass ended short. When there is no stream error, a stub
+ * means the model ended its turn early — the finish reason, warnings (e.g. a tool
+ * dropped as unsupported), step/tool counts, and the literal text reveal which.
+ * Every read is guarded so a missing field never masks the diagnosis.
+ */
+async function describeStub(
+  stream: {
+    finishReason: PromiseLike<unknown>;
+    warnings: PromiseLike<unknown>;
+    steps: PromiseLike<unknown[]>;
+    toolCalls: PromiseLike<unknown[]>;
+    toolResults: PromiseLike<unknown[]>;
+  },
+  text: string,
+): Promise<string> {
+  const safe = async <T>(p: PromiseLike<T>, fallback: T): Promise<T> => {
+    try {
+      return await p;
+    } catch {
+      return fallback;
+    }
+  };
+  const [finishReason, warnings, steps, toolCalls, toolResults] = await Promise.all([
+    safe<unknown>(stream.finishReason, "unknown"),
+    safe<unknown>(stream.warnings, undefined),
+    safe<unknown[]>(stream.steps, []),
+    safe<unknown[]>(stream.toolCalls, []),
+    safe<unknown[]>(stream.toolResults, []),
+  ]);
+  const warnText =
+    Array.isArray(warnings) && warnings.length
+      ? warnings
+          .map((w) =>
+            w && typeof w === "object" && "message" in w
+              ? String((w as { message: unknown }).message)
+              : JSON.stringify(w),
+          )
+          .join("; ")
+      : "none";
+  const snippet = text.trim().replace(/\s+/g, " ").slice(0, 300);
+  return `finishReason=${String(finishReason)}, steps=${(steps as unknown[]).length}, toolCalls=${(toolCalls as unknown[]).length}, toolResults=${(toolResults as unknown[]).length}, warnings=[${warnText}], text="${snippet}"`;
+}
+
+/**
  * Run the full Intel Report pipeline for a client:
  * 1. Generate the structured ClientReport (monolithic prompt, backward-compatible)
  * 2. Run the new multi-agent onboarding pipeline in parallel to generate context docs
@@ -163,12 +257,17 @@ export async function runIntelReportPipeline(
   clientId: string,
   runSpecificContext?: string,
 ): Promise<void> {
-  const client = await getClient(clientId);
+  const [client, priorSeoGeo] = await Promise.all([getClient(clientId), getClientSeoGeo(clientId)]);
   if (!client) throw new Error(`Client not found: ${clientId}`);
 
   const brandingContext = compileBrandingContext(client.brandingGuidelines);
 
-  const basePrompt = compilePrompt(DEFAULT_INTEL_PROMPT, client, brandingContext);
+  // Cross-reference: a prior multi-model SEO/GEO capture (if any) anchors the
+  // report's SEO/GEO dimensions on measured data instead of browsing estimates.
+  const seoGeoContext = compileSeoGeoContext(priorSeoGeo);
+  const basePrompt =
+    compilePrompt(DEFAULT_INTEL_PROMPT, client, brandingContext) +
+    (seoGeoContext ? `\n\n${seoGeoContext}\n` : "");
   const compiledPrompt = assemblePromptLayers(basePrompt, "", runSpecificContext ?? "");
 
   const userMessage = `Generate the complete Karos Intel Report for ${client.name}. Output ONLY the markdown report — no preamble, no explanation. Start immediately with "# Karos Intel: ${client.name}".`;
@@ -178,8 +277,8 @@ export async function runIntelReportPipeline(
   // request — the model fetches the client's live site, verifies competitors,
   // and checks review platforms before scoring. maxUses bounds per-run cost.
   const liveTools = {
-    web_search: anthropic.tools.webSearch_20260209({ maxUses: 15 }),
-    web_fetch: anthropic.tools.webFetch_20260209({ maxUses: 12, maxContentTokens: 6000 }),
+    web_search: anthropic.tools.webSearch_20250305({ maxUses: 15 }),
+    web_fetch: anthropic.tools.webFetch_20250910({ maxUses: 12, maxContentTokens: 6000 }),
   };
 
   // Phase A: main report. streamText is used throughout (not generateText) because Anthropic
@@ -187,21 +286,66 @@ export async function runIntelReportPipeline(
   // non-streaming requests buffer the entire generation server-side before sending any headers.
   // At 16k max tokens, non-streaming generation can exceed undici's default 5-minute
   // headersTimeout (UND_ERR_HEADERS_TIMEOUT), causing connection resets on every retry.
-  const firstPassStream = streamText({
-    model: anthropic(MODELS.SONNET),
-    system: compiledPrompt,
-    tools: liveTools,
-    messages: [{ role: "user", content: userMessage }],
-    maxOutputTokens: DOC_MAX_TOKENS,
-  });
-  const firstPassText = await firstPassStream.text;
+  // The AI SDK routes provider-side stream errors (overload, 429 rate-limit, web-tool
+  // failures, pause_turn interruptions) to onError and resolves `.text` with whatever
+  // partial text streamed before the error — it does NOT reject. We capture that error,
+  // retry once, and on final failure throw it as the root cause instead of the opaque
+  // "returned N chars" stub. Only a clean pass (no stream error AND ≥ min chars) is used.
+  let firstPassText = "";
+  let passSucceeded = false;
+  let lastPassError: unknown;
+  for (let attempt = 1; attempt <= 2 && !passSucceeded; attempt++) {
+    let streamError: unknown;
+    const firstPassStream = streamText({
+      model: anthropic(MODELS.SONNET),
+      system: compiledPrompt,
+      tools: liveTools,
+      // Continue past Anthropic pause_turn / tool-use steps instead of stopping at
+      // the first pause (default stepCountIs(1)) with a truncated intro-only stub.
+      stopWhen: stepCountIs(REPORT_MAX_STEPS),
+      messages: [{ role: "user", content: userMessage }],
+      maxOutputTokens: DOC_MAX_TOKENS,
+      onError: ({ error }) => {
+        streamError = error;
+      },
+    });
+    const passText = await firstPassStream.text;
+    logger.trackStream(firstPassStream, {
+      clientId, agentId: null, agentName: "Intel Report",
+      modelName: MODELS.SONNET, operation: "intel_report",
+    });
 
-  // Live-data integrity gate: an empty/stub first pass means the generation
-  // failed upstream (auth, overload, tool errors). Fail loudly — never store
-  // an empty report as if it were a successful run.
-  if (firstPassText.trim().length < 500) {
+    if (streamError) {
+      lastPassError = streamError;
+      console.warn(
+        `[intel] Report generation attempt ${attempt}/2 for ${client.name} failed upstream:`,
+        streamError,
+      );
+      continue;
+    }
+    if (passText.trim().length < MIN_REPORT_CHARS) {
+      firstPassText = passText;
+      // Instrument the stub: with no stream error, a short pass means the model
+      // ended the turn early. Capture WHY (finish reason, warnings, steps, tool
+      // usage, and the literal text) so the failure is self-diagnosing instead of
+      // an opaque "returned N chars".
+      const diag = await describeStub(firstPassStream, passText);
+      lastPassError = new Error(`returned ${passText.trim().length} chars (min ${MIN_REPORT_CHARS}) — ${diag}`);
+      console.warn(`[intel] Report generation attempt ${attempt}/2 for ${client.name}: ${String(lastPassError)}`);
+      continue;
+    }
+    firstPassText = passText;
+    passSucceeded = true;
+  }
+
+  // Live-data integrity gate: after one retry, a failed/stub first pass means the
+  // generation failed upstream (auth, overload, tool errors). Fail loudly with the
+  // captured root cause — never store an empty report as if it were a successful run.
+  if (!passSucceeded) {
+    const cause = lastPassError instanceof Error ? lastPassError.message : String(lastPassError ?? "unknown");
     throw new Error(
-      `[intel] Report generation for ${client.name} returned ${firstPassText.trim().length} chars — aborting run (no partial/stub report will be stored)`,
+      `[intel] Report generation for ${client.name} failed after 2 attempts — aborting run (no partial/stub report will be stored). Upstream cause: ${cause}`,
+      { cause: lastPassError },
     );
   }
 
@@ -218,10 +362,12 @@ export async function runIntelReportPipeline(
     console.info(
       `[intel] Continuation pass triggered for ${client.name} (first pass: ${firstPassText.length} chars, missing: "${lastRequiredSection}")`,
     );
+    let contError: unknown;
     const contStream = streamText({
       model: anthropic(MODELS.SONNET),
       system: compiledPrompt,
       tools: liveTools,
+      stopWhen: stepCountIs(REPORT_MAX_STEPS),
       messages: [
         { role: "user", content: userMessage },
         { role: "assistant", content: text },
@@ -232,9 +378,22 @@ export async function runIntelReportPipeline(
         },
       ],
       maxOutputTokens: DOC_MAX_TOKENS,
+      onError: ({ error }) => {
+        contError = error;
+      },
     });
     const continuation = await contStream.text;
-    text = text + continuation;
+    logger.trackStream(contStream, {
+      clientId, agentId: null, agentName: "Intel Report (continuation)",
+      modelName: MODELS.SONNET, operation: "intel_report",
+    });
+    // Non-fatal: the first pass already cleared the integrity gate. If the continuation
+    // errored upstream, log the real cause and keep the first pass rather than aborting.
+    if (contError) {
+      console.warn(`[intel] Continuation pass for ${client.name} failed upstream (using first pass as-is):`, contError);
+    } else {
+      text = text + continuation;
+    }
   }
 
   const parsed = parseMarkdownReport(text);

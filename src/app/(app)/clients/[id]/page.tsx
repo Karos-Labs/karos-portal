@@ -1,8 +1,18 @@
 import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getClient, listAssets, listJobs, listClientIntegrations } from "@/lib/data";
+import {
+  getClient,
+  getClientSeoGeo,
+  listAssets,
+  listJobs,
+  listClientIntegrations,
+  listClientTasks,
+} from "@/lib/data";
 import { PageHeader } from "@/components/ui";
 import { ClientAnalytics } from "@/components/client-analytics";
+import { ClientHomeOverview } from "@/components/client-home-overview";
+import { SeoGeoPanel } from "@/components/seo-geo-panel";
+import type { ClientTask } from "@/lib/types";
 
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -18,22 +28,56 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const client = await getClient(id);
   if (!client) notFound();
 
-  const [assets, jobs, integrations] = await Promise.all([
+  const isClientViewer = user.role === "CLIENT_USER";
+
+  const [assets, jobs, integrations, seoGeo, tasks] = await Promise.all([
     listAssets({ clientId: id }),
     listJobs({ clientId: id }),
     listClientIntegrations(id),
+    getClientSeoGeo(id),
+    isClientViewer
+      ? listClientTasks({ clientId: id, status: ["pending", "review_pending"], limit: 50 })
+      : Promise.resolve([] as ClientTask[]),
   ]);
+
+  const firstName = user.name?.trim().split(/\s+/)[0];
 
   return (
     <>
-      <PageHeader title="Analytics" description={`Performance snapshot for ${client.name}.`} />
-      <ClientAnalytics
-        clientId={client.id}
-        clientName={client.name}
-        assets={assets}
-        jobs={jobs}
-        integrations={integrations}
-      />
+      {isClientViewer ? (
+        <PageHeader
+          title={firstName ? `Welcome back, ${firstName}` : "Welcome back"}
+          description={`Here's what's happening across the ${client.name} workspace.`}
+        />
+      ) : (
+        <PageHeader title="Dashboard" description={`Workspace overview for ${client.name}.`} />
+      )}
+      <div className="space-y-8">
+        {isClientViewer && (
+          <section className="space-y-3">
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Overview</p>
+            <ClientHomeOverview jobs={jobs} tasks={tasks} assets={assets} />
+          </section>
+        )}
+        <section className="space-y-3">
+          {isClientViewer && (
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Performance</p>
+          )}
+          <ClientAnalytics
+            clientId={client.id}
+            clientName={client.name}
+            assets={assets}
+            jobs={jobs}
+            integrations={integrations}
+          />
+        </section>
+        <section className="space-y-3">
+          {isClientViewer && (
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Search &amp; AI visibility</p>
+          )}
+          <SeoGeoPanel insights={seoGeo} />
+        </section>
+      </div>
     </>
   );
 }

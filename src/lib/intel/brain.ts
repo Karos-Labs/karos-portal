@@ -88,7 +88,19 @@ Official registration numbers and regulatory declarations are publicly visible o
 export const METRICS_RULES = `
 ## METRICS-V1 — ONBOARDING SCOPE
 
-Onboarding uses ONLY the social_content vertical. SEO/GEO and web/UX metrics are deferred.
+Onboarding uses the social_content vertical plus the seo_geo vertical. Web/UX metrics are deferred.
+
+### seo_geo metrics (supplied by the SEO/GEO research vertical — never re-derive them)
+| Metric | Definition | Source |
+|--------|-----------|--------|
+| seo_score | 0-100, technical SEO checks weighted per the a3 scoring model | Live site audit (MEASURED checks only) |
+| geo_readiness | 0-100, AI-crawler access + extractability + evidence + freshness | Live site audit (MEASURED checks only) |
+| geo_visibility_index | 0-100, blended multi-engine answer visibility | Multi-model capture (OpenAI / Gemini / Anthropic) |
+| share_of_voice | Client mentions / all roster mentions per engine, % | Multi-model capture |
+
+- Every engine-derived number carries the provider that produced it (source: "OpenAI" | "Gemini" | "Anthropic") — preserve that provenance label when citing it.
+- Numbers labeled MEASURED were captured live this run; ESTIMATED/PENDING values never enter a score and must never be presented as measured.
+- If the SEO/GEO research section reads "RESEARCH UNAVAILABLE", use "—" for these metrics — never reconstruct them from memory.
 
 ### social_content metrics (required per platform, if handle exists)
 | Metric | Definition | Source |

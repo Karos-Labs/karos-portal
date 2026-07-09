@@ -16,6 +16,7 @@ import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
 import type { ClientCompetitor } from "@/lib/types";
 import { requireStaff, requireClientAccess, logActivity } from "./_shared";
 import { MODELS } from "@/lib/constants";
+import { logger } from "@/services/logger";
 
 /** Core AI competitor analysis helper — not exported. */
 async function _analyzeCompetitors(clientId: string): Promise<void> {
@@ -61,7 +62,7 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
     client.description ? `— ${client.description}` : "",
   ].filter(Boolean).join(" ");
 
-  const { object } = await generateObject({
+  const { object, usage } = await generateObject({
     model: anthropic(MODELS.SONNET),
     schema,
     system:
@@ -76,6 +77,12 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
       "• Data must be specific and scannable in under 2 seconds.",
     prompt: `Analyze these competitors for ${clientCtx}.\n\nCOMPETITORS: ${names}\n\nReturn one object per competitor.`,
     maxOutputTokens: 3500,
+  });
+
+  logger.logUsage({
+    clientId, agentId: null, agentName: "Competitor Analysis",
+    modelName: MODELS.SONNET, operation: "competitor_analysis",
+    inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
   });
 
   if (object.competitors.length === 0) return;
@@ -308,7 +315,7 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
     client.description ? `Description: ${client.description}` : "",
   ].filter(Boolean).join("\n");
 
-  const { object } = await generateObject({
+  const { object, usage } = await generateObject({
     model: anthropic(MODELS.SONNET),
     schema,
     system:
@@ -321,6 +328,12 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
       "• NEVER write complete sentences or use filler words.",
     prompt: `${clientCtx}\n\nIdentify the top 5–7 direct competitors. Return one object per competitor.`,
     maxOutputTokens: 4500,
+  });
+
+  logger.logUsage({
+    clientId, agentId: null, agentName: "Competitor Discovery",
+    modelName: MODELS.SONNET, operation: "competitor_analysis",
+    inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
   });
 
   if (object.competitors.length === 0) throw new Error("No competitors discovered — try adding names manually.");

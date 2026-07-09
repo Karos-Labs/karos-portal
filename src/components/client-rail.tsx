@@ -62,7 +62,7 @@ export function ClientRail({
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
   const primaryNav: NavItem[] = [
-    { href: home, label: "Analytics", icon: "BarChart3", exact: true },
+    { href: home, label: "Dashboard", icon: "LayoutDashboard", exact: true },
     { href: `${home}/agents`, label: "AI Agents", icon: "Bot" },
     { href: "/assets", label: "Library", icon: "Library" },
     { href: "/tasks", label: "Progress", icon: "ListChecks" },

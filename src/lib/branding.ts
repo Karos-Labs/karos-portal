@@ -11,6 +11,7 @@ import {
   upsertClientContextDoc,
 } from "@/lib/data";
 import type { BrandColor, BrandingGuidelines, Client } from "@/lib/types";
+import { logger, readWebSearchCount } from "@/services/logger";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Color helper
@@ -302,13 +303,14 @@ async function gatherSiteIntelligence(
   domain: string,
   clientName: string,
   access: SiteAccessState,
+  clientId: string,
 ): Promise<string | null> {
   if (access === "unknown") return null;
 
   try {
     if (access === "accessible") {
       const siteUrl = `https://${domain}`;
-      const { text } = await generateText({
+      const { text, usage, providerMetadata } = await generateText({
         model: anthropic(MODELS.HAIKU),
         stopWhen: stepCountIs(8),
         tools: {
@@ -337,11 +339,17 @@ async function gatherSiteIntelligence(
           `BRAND_CSS_VARS: <list of --var-name: #hex pairs, or "none"> ` +
           `NOTES: <any other brand-defining colors or patterns observed>`,
       });
+      logger.logUsage({
+        clientId, agentId: null, agentName: "Branding · Site Intelligence",
+        modelName: MODELS.HAIKU, operation: "branding_extraction",
+        inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+        webSearchCount: readWebSearchCount(providerMetadata),
+      });
       return text?.trim() || null;
     }
 
     // blocked — use web search to find public brand identity assets
-    const { text } = await generateText({
+    const { text, usage, providerMetadata } = await generateText({
       model: anthropic(MODELS.HAIKU),
       stopWhen: stepCountIs(5),
       tools: {
@@ -353,6 +361,12 @@ async function gatherSiteIntelligence(
         `Look for: brand guidelines, design system docs, press kits, Figma community files, ` +
         `Behance/Dribbble portfolios, or any official source listing their color palette. ` +
         `Report specific hex codes and font names if found.`,
+    });
+    logger.logUsage({
+      clientId, agentId: null, agentName: "Branding · Site Intelligence",
+      modelName: MODELS.HAIKU, operation: "branding_extraction",
+      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+      webSearchCount: readWebSearchCount(providerMetadata),
     });
     return text?.trim() || null;
   } catch (err) {
@@ -649,7 +663,7 @@ export async function applyBrandingForClient(
       if (!domain) return null;
       const access = await checkSiteAccess(`https://${domain}`);
       console.info(`[branding] ${domain} — access: ${access}`);
-      const intel = await gatherSiteIntelligence(domain, client.name, access);
+      const intel = await gatherSiteIntelligence(domain, client.name, access, clientId);
       if (intel) {
         console.info(`[branding] ${domain} — site intelligence gathered (${intel.length} chars)`);
       }
@@ -690,6 +704,11 @@ export async function applyBrandingForClient(
       ],
     });
     object = result.object;
+    logger.logUsage({
+      clientId, agentId: null, agentName: "Branding · Palette Extraction",
+      modelName: MODELS.HAIKU, operation: "branding_extraction",
+      inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0,
+    });
   } else {
     // Text-only mode: SVG colors and/or site intelligence are embedded in the prompt text
     const result = await generateObject({
@@ -698,6 +717,11 @@ export async function applyBrandingForClient(
       prompt: promptText,
     });
     object = result.object;
+    logger.logUsage({
+      clientId, agentId: null, agentName: "Branding · Palette Extraction",
+      modelName: MODELS.HAIKU, operation: "branding_extraction",
+      inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0,
+    });
   }
 
   // ── Normalize and assemble guidelines ───────────────────────────

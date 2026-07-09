@@ -40,6 +40,7 @@ import {
   defaultClientCredits,
   rollCreditWindows,
 } from "@/lib/credits";
+import type { SeoGeoInsights } from "@/lib/seo-geo";
 
 /* ----------------------------- helpers ----------------------------- */
 
@@ -73,6 +74,8 @@ const col = {
   actionItems: () => adminDb().collection("actionItems"),
   // Platform-defined agents runnable via the agent service's "custom" task type.
   customAgents: () => adminDb().collection("customAgents"),
+  // SEO & GEO insights: one doc per client (doc ID = clientId), written by the onboarding pipeline.
+  clientSeoGeo: () => adminDb().collection("clientSeoGeo"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -486,6 +489,19 @@ export async function upsertClientReport(data: Omit<ClientReport, "id">): Promis
   await col.clientReports().doc(data.clientId).set({ id: data.clientId, ...data });
 }
 
+/* ----------------------- SEO & GEO insights ------------------------ */
+
+/** Latest SEO/GEO insight set for a client (doc ID = clientId, 1:1). */
+export async function getClientSeoGeo(clientId: string): Promise<SeoGeoInsights | null> {
+  const doc = await col.clientSeoGeo().doc(clientId).get();
+  return doc.exists ? (doc.data() as SeoGeoInsights) : null;
+}
+
+/** Save (or overwrite) the SEO/GEO insight set; document ID = clientId. */
+export async function upsertClientSeoGeo(data: SeoGeoInsights): Promise<void> {
+  await col.clientSeoGeo().doc(data.clientId).set(data);
+}
+
 /* --------------------- client competitors -------------------------- */
 
 export async function listClientCompetitors(clientId: string): Promise<ClientCompetitor[]> {
@@ -767,7 +783,16 @@ export async function getClientRequest(id: string): Promise<ClientRequest | null
  * across non-archived transcripts. Uses the denormalised `assignedUserIds` array
  * for an efficient single Firestore query.
  */
-export async function listAssignedActionItems(userId: string): Promise<ActionItemNotification[]> {
+export async function listAssignedActionItems(
+  userId: string,
+  opts?: {
+    /**
+     * Scope for CLIENT_USER sessions: only items from this client's transcripts,
+     * excluding hidden-from-client and Karos-internal meetings.
+     */
+    forClientId?: string;
+  },
+): Promise<ActionItemNotification[]> {
   const snap = await col.transcripts()
     .where("assignedUserIds", "array-contains", userId)
     .get();
@@ -776,6 +801,12 @@ export async function listAssignedActionItems(userId: string): Promise<ActionIte
   for (const doc of snap.docs) {
     const t = withId<Transcript>(doc);
     if (t.archived) continue;
+    if (
+      opts?.forClientId &&
+      (t.clientId !== opts.forClientId || t.hiddenFromClient || t.isKarosInternal)
+    ) {
+      continue;
+    }
     const items = t.actionItems ?? [];
     const assignedIds = t.actionItemAssignedUserIds ?? [];
     const completed = new Set(t.completedItems ?? []);

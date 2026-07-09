@@ -1,14 +1,16 @@
 import "server-only";
 
-import { streamText } from "ai";
+import { streamText, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
-import { getClient, replaceClientContextDocs, listClientCompetitors, listTranscripts } from "@/lib/data";
+import { getClient, replaceClientContextDocs, listClientCompetitors, listTranscripts, upsertClientSeoGeo } from "@/lib/data";
 import { RESEARCH_ENGINE_RULES, METRICS_RULES } from "./brain";
 import { TEMPLATES } from "./templates";
 import { condenseDocs } from "./condense";
+import { runSeoGeoResearch, type SeoGeoResearch } from "./seo-geo";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble } from "@/lib/text-utils";
+import { logger } from "@/services/logger";
 
 // "meeting-notes" is written exclusively by appendMeetingSignalToContextDoc — not generated here.
 type PipelineDocType = Exclude<ContextDocType, "meeting-notes">;
@@ -22,15 +24,18 @@ function todayISO(): string {
 /**
  * Anthropic server-side live-web tools. Web search + web fetch execute on
  * Anthropic's infrastructure inside a single request — no client-side loop.
- * The _20260209 variants (dynamic filtering) are supported by Sonnet 4.6.
+ * The _20250305/_20250910 variants are direct server-executed web tools (the
+ * model calls them, Anthropic runs them inline). The newer _20260209 variants are
+ * code-execution-integrated and require programmatic tool-calling, which these
+ * models reject — do NOT use them here.
  *
  * These are what make every research pass a LIVE look at the client's current
  * state instead of a training-data recall. maxUses bounds cost per agent.
  */
 function liveWebTools(maxSearches: number, maxFetches: number) {
   return {
-    web_search: anthropic.tools.webSearch_20260209({ maxUses: maxSearches }),
-    web_fetch: anthropic.tools.webFetch_20260209({
+    web_search: anthropic.tools.webSearch_20250305({ maxUses: maxSearches }),
+    web_fetch: anthropic.tools.webFetch_20250910({
       maxUses: maxFetches,
       // Cap per-fetch content so one giant page can't crowd out the rest of
       // the research context (prevents truncated/corrupted downstream prompts).
@@ -42,6 +47,14 @@ function liveWebTools(maxSearches: number, maxFetches: number) {
 /** Minimum plausible size for a usable research brief. Anything shorter is
  *  treated as a failed run (e.g. the model errored out or returned a stub). */
 const MIN_RESEARCH_CHARS = 300;
+
+/**
+ * Max agentic steps per research agent. Anthropic emits `stop_reason: "pause_turn"`
+ * mid-way through long server-side web-tool use; the SDK's default `stopWhen` is
+ * `stepCountIs(1)`, which stops at the first pause and returns a truncated stub.
+ * Allowing multiple steps lets the agent resume until it actually finishes.
+ */
+const RESEARCH_MAX_STEPS = 20;
 
 /**
  * Runs one research agent with validation + one retry.
@@ -189,6 +202,7 @@ async function researchSocial(client: Client, rules: string): Promise<string> {
     model: anthropic(MODELS.SONNET),
     system: `${rules}\n\nYou are a social media research analyst with LIVE web access. Search for real, current accounts — never recall handles or follower counts from memory when a live lookup is possible.`,
     tools: liveWebTools(8, 6),
+    stopWhen: stepCountIs(RESEARCH_MAX_STEPS),
     messages: [
       {
         role: "user",
@@ -210,6 +224,10 @@ Return structured markdown. Follow the no-guessed-numbers rule strictly — a "�
     ],
     maxOutputTokens: 2500,
   });
+  logger.trackStream(socialStream, {
+    clientId: client.id, agentId: null, agentName: "Research: Social",
+    modelName: MODELS.SONNET, operation: "intel_research",
+  });
   return socialStream.text;
 }
 
@@ -218,6 +236,7 @@ async function researchContent(client: Client, rules: string): Promise<string> {
     model: anthropic(MODELS.SONNET),
     system: `${rules}\n\nYou are a senior brand messaging and content strategist with LIVE web access. Fetch the client's actual pages before analyzing — quote what is live TODAY, not what you remember. Apply deep analytical reasoning to extract every meaningful signal.`,
     tools: liveWebTools(5, 8),
+    stopWhen: stepCountIs(RESEARCH_MAX_STEPS),
     messages: [
       {
         role: "user",
@@ -243,6 +262,10 @@ Return detailed markdown with strategic implications for each finding.`,
     ],
     maxOutputTokens: 2800,
   });
+  logger.trackStream(contentStream, {
+    clientId: client.id, agentId: null, agentName: "Research: Content",
+    modelName: MODELS.SONNET, operation: "intel_research",
+  });
   return contentStream.text;
 }
 
@@ -259,6 +282,7 @@ async function researchCompetitive(
     model: anthropic(MODELS.SONNET),
     system: `${rules}\n\nYou are a senior competitive intelligence analyst with LIVE web access. You produce boardroom-grade market intelligence, not just lists of competitors. Verify each competitor exists and is active via live search, and quote their CURRENT taglines from fetched pages. For every finding, deliver the strategic implication — not just the observation. For qualitative analysis, never write "data unavailable" — use deep reasoning and industry knowledge to derive insights.`,
     tools: liveWebTools(10, 8),
+    stopWhen: stepCountIs(RESEARCH_MAX_STEPS),
     messages: [
       {
         role: "user",
@@ -304,6 +328,10 @@ Return rich, structured markdown with strategic implications throughout.`,
     ],
     maxOutputTokens: 3500,
   });
+  logger.trackStream(competitiveStream, {
+    clientId: client.id, agentId: null, agentName: "Research: Competitive",
+    modelName: MODELS.SONNET, operation: "intel_research",
+  });
   return competitiveStream.text;
 }
 
@@ -316,6 +344,7 @@ async function researchStrategy(client: Client, rules: string, meetingSignals = 
     model: anthropic(MODELS.SONNET),
     system: `${rules}\n\nYou are a senior market strategy analyst with LIVE web access. Ground positioning and business-model findings in pages fetched during THIS run. For every finding, deliver the strategic implication — not just the observation. Apply Claude Sonnet's full analytical reasoning.`,
     tools: liveWebTools(6, 5),
+    stopWhen: stepCountIs(RESEARCH_MAX_STEPS),
     messages: [
       {
         role: "user",
@@ -341,6 +370,10 @@ Return structured markdown with strategic implications.${signalsBlock}`,
     ],
     maxOutputTokens: 2800,
   });
+  logger.trackStream(strategyStream, {
+    clientId: client.id, agentId: null, agentName: "Research: Strategy",
+    modelName: MODELS.SONNET, operation: "intel_research",
+  });
   return strategyStream.text;
 }
 
@@ -353,6 +386,7 @@ async function researchSentiment(client: Client, rules: string, meetingSignals =
     model: anthropic(MODELS.SONNET),
     system: `${rules}\n\nYou are a senior customer sentiment and UX analyst with LIVE web access. Search review platforms for CURRENT ratings and real customer language before citing any sentiment data. Deliver strategic implications alongside every finding — not just the observation, but what it means for how Karos should position, message, and market for this brand. Apply deep contextual reasoning.`,
     tools: liveWebTools(8, 5),
+    stopWhen: stepCountIs(RESEARCH_MAX_STEPS),
     messages: [
       {
         role: "user",
@@ -378,6 +412,10 @@ Return structured markdown with strategic implications.${signalsBlock}`,
     ],
     maxOutputTokens: 2800,
   });
+  logger.trackStream(sentimentStream, {
+    clientId: client.id, agentId: null, agentName: "Research: Sentiment",
+    modelName: MODELS.SONNET, operation: "intel_research",
+  });
   return sentimentStream.text;
 }
 
@@ -389,6 +427,10 @@ interface Research {
   competitive: string;
   strategy: string;
   sentiment: string;
+  /** Technical SEO audit brief (a3 port — scores, checks, prioritized gaps). */
+  seo: string;
+  /** AI answer-engine visibility brief (multi-model capture with provider provenance). */
+  geo: string;
 }
 
 // No per-doc limits — elite, comprehensive documents require full output. 16k for all (from constants.ts).
@@ -481,6 +523,10 @@ INSTRUCTIONS:
     maxOutputTokens: DOC_MAX_TOKENS,
   });
   const text = await docStream.text;
+  logger.trackStream(docStream, {
+    clientId: client.id, agentId: null, agentName: `Doc: ${docType}`,
+    modelName: MODELS.SONNET, operation: "intel_doc_generation",
+  });
 
   // Continuation pass: if the last template section is missing, the model stopped early.
   const lastSection = lastTemplateSection(template);
@@ -500,6 +546,10 @@ INSTRUCTIONS:
       maxOutputTokens: DOC_MAX_TOKENS,
     });
     const cont = await contDocStream.text;
+    logger.trackStream(contDocStream, {
+      clientId: client.id, agentId: null, agentName: `Doc (continuation): ${docType}`,
+      modelName: MODELS.SONNET, operation: "intel_doc_generation",
+    });
     return stripPreamble(text + cont);
   }
 
@@ -561,6 +611,10 @@ Return ONLY the corrected document. Start immediately with the first character o
     maxOutputTokens: DOC_MAX_TOKENS,
   });
   const text = await corrStream.text;
+  logger.trackStream(corrStream, {
+    clientId: client.id, agentId: null, agentName: `Doc Correction: ${docType}`,
+    modelName: MODELS.SONNET, operation: "doc_correction",
+  });
 
   const result = text.trim();
 
@@ -593,6 +647,10 @@ Return ONLY the corrected document. Start immediately with the first character o
         maxOutputTokens: DOC_MAX_TOKENS,
       });
       const cont = await corrContStream.text;
+      logger.trackStream(corrContStream, {
+        clientId: client.id, agentId: null, agentName: `Doc Correction (continuation): ${docType}`,
+        modelName: MODELS.SONNET, operation: "doc_correction",
+      });
       const recovered = (result + cont).trim();
       const recoveredSections = (recovered.match(/^## /gm) ?? []).length;
       const recoveredRatio = recovered.length / inputCharCount;
@@ -621,10 +679,13 @@ function buildResearchBlock(docType: ContextDocType, research: Research): string
     parts.push("### Strategy Research\n" + research.strategy);
     parts.push("### Sentiment Research\n" + research.sentiment);
     parts.push("### Competitive Research (for white space)\n" + research.competitive);
+    parts.push("### SEO & Search Visibility Research\n" + research.seo);
+    parts.push("### AI Answer-Engine Visibility Research (multi-model, provider-labeled)\n" + research.geo);
   }
   if (docType === "competitor-analysis") {
     parts.push("### Competitive Research\n" + research.competitive);
     parts.push("### Social Research\n" + research.social);
+    parts.push("### AI Answer-Engine Visibility Research (share-of-voice vs competitors, provider-labeled)\n" + research.geo);
   }
   if (docType === "product-information") {
     parts.push("### Content & Messaging Research\n" + research.content);
@@ -636,6 +697,7 @@ function buildResearchBlock(docType: ContextDocType, research: Research): string
     parts.push("### Strategy & ICP Research\n" + research.strategy);
     parts.push("### Content & Messaging Research\n" + research.content);
     parts.push("### Competitive Research (audience signals from competitor messaging)\n" + research.competitive);
+    parts.push("### Search-Intent Signals (frozen buyer-intent prompt set from the AI-visibility capture)\n" + research.geo);
   }
   if (docType === "client-guidelines") {
     parts.push("### Content Research\n" + research.content);
@@ -645,6 +707,8 @@ function buildResearchBlock(docType: ContextDocType, research: Research): string
     parts.push("### Strategy Research\n" + research.strategy);
     parts.push("### Competitive Research\n" + research.competitive);
     parts.push("### Sentiment Research\n" + research.sentiment);
+    parts.push("### SEO Audit & Prioritized Gaps (score-lift ordered — convert to actions)\n" + research.seo);
+    parts.push("### AI Answer-Engine Visibility Gaps (convert to actions)\n" + research.geo);
   }
   return parts.length ? parts.join("\n\n") : Object.values(research).join("\n\n");
 }
@@ -679,12 +743,20 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
   // always accounts for competitors the client's team has explicitly flagged.
   // Pass meeting signals into strategy/sentiment research for firsthand context.
   const researchAgentNames = ["social", "content", "competitive", "strategy", "sentiment"] as const;
-  const researchResults = await Promise.allSettled([
-    runResearchAgent("social", () => researchSocial(client, rules)),
-    runResearchAgent("content", () => researchContent(client, rules)),
-    runResearchAgent("competitive", () => researchCompetitive(client, rules, existingCompetitors)),
-    runResearchAgent("strategy", () => researchStrategy(client, rules, meetingSignals)),
-    runResearchAgent("sentiment", () => researchSentiment(client, rules, meetingSignals)),
+  // The SEO/GEO vertical (a3 port) runs alongside the five core agents. It has its
+  // own internal retry + per-engine degradation, so it is settled separately and
+  // never counts against the core-research quality gate below.
+  const [researchResults, seoGeoResult] = await Promise.all([
+    Promise.allSettled([
+      runResearchAgent("social", () => researchSocial(client, rules)),
+      runResearchAgent("content", () => researchContent(client, rules)),
+      runResearchAgent("competitive", () => researchCompetitive(client, rules, existingCompetitors)),
+      runResearchAgent("strategy", () => researchStrategy(client, rules, meetingSignals)),
+      runResearchAgent("sentiment", () => researchSentiment(client, rules, meetingSignals)),
+    ]),
+    runSeoGeoResearch(client, rules, existingCompetitors)
+      .then((r): PromiseSettledResult<SeoGeoResearch> => ({ status: "fulfilled", value: r }))
+      .catch((reason): PromiseSettledResult<SeoGeoResearch> => ({ status: "rejected", reason })),
   ]);
 
   const failedAgents: string[] = [];
@@ -713,7 +785,26 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
     console.warn(`[onboard] Proceeding with degraded research (failed: ${failedAgents.join(", ")})`);
   }
 
-  const research: Research = { social, content, competitive, strategy, sentiment };
+  // SEO/GEO enrichment: on success the two briefs join the research context and the
+  // structured insights are persisted for the comparative-graph UI. A total SEO/GEO
+  // failure degrades to explicit unavailability markers — never blocks onboarding.
+  let seo: string;
+  let geo: string;
+  if (seoGeoResult.status === "fulfilled") {
+    seo = seoGeoResult.value.seoBrief;
+    geo = seoGeoResult.value.geoBrief;
+    try {
+      await upsertClientSeoGeo(seoGeoResult.value.insights);
+    } catch (err) {
+      console.error("[onboard] Failed to persist SEO/GEO insights (non-fatal):", err);
+    }
+  } else {
+    console.error("[onboard] SEO/GEO research failed:", seoGeoResult.reason);
+    seo = `> RESEARCH UNAVAILABLE: The SEO audit failed for this run (live data fetch error). Do NOT fabricate SEO findings. Use "—" for any SEO metric this research would have supplied.`;
+    geo = `> RESEARCH UNAVAILABLE: The AI answer-engine visibility capture failed for this run. Do NOT fabricate GEO visibility findings. Use "—" for any visibility metric this research would have supplied.`;
+  }
+
+  const research: Research = { social, content, competitive, strategy, sentiment, seo, geo };
 
   // Phase 2: 8 parallel document generators
   const internalDocTypes: PipelineDocType[] = [

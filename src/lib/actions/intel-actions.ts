@@ -136,7 +136,7 @@ export async function generateIntelReportAction(
     timestamp: Date.now(),
     type: "INTEL_GENERATION",
     title: "Intel Report generated",
-    description: `Full 5-agent competitive intelligence pipeline completed${ctxNote}`,
+    description: `Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical)${ctxNote}`,
     actor: "System AI",
     actorRole: "system",
   });

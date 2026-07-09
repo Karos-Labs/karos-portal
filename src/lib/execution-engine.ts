@@ -18,6 +18,8 @@ import {
 import { sendEmail } from "@/lib/email";
 import { buildArtifactGenerationPrompt } from "@/lib/ai/prompts/proactive-assistant";
 import type { ClientTask, TaskOwner } from "@/lib/types";
+import { logger } from "@/services/logger";
+import type { ModelId } from "@/lib/constants";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
@@ -44,9 +46,18 @@ export function resolveTaskType(task: ClientTask): "content_generation" | "integ
   return "content_generation";
 }
 
+/** True when a task warrants the high-capability model (kept in sync with selectModel). */
+function usesSonnet(task: ClientTask): boolean {
+  return task.source === "content_dispatch" || task.priority === "high";
+}
+
 function selectModel(task: ClientTask) {
-  if (task.source === "content_dispatch" || task.priority === "high") return SONNET;
-  return HAIKU;
+  return usesSonnet(task) ? SONNET : HAIKU;
+}
+
+/** The model id string for the model selectModel would pick — used for usage logging. */
+function selectModelName(task: ClientTask): ModelId {
+  return usesSonnet(task) ? MODELS.SONNET : MODELS.HAIKU;
 }
 
 /* ── Core single-task runner ─────────────────────────────────────── */
@@ -74,7 +85,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
     : undefined;
 
   try {
-    const { text: artifact } = await generateText({
+    const { text: artifact, usage } = await generateText({
       model: selectModel(task),
       prompt: buildArtifactGenerationPrompt(
         task.title,
@@ -89,6 +100,12 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
         adjustmentFeedback,
         previousArtifact,
       ),
+    });
+
+    logger.logUsage({
+      clientId, agentId: null, agentName: "Task Execution",
+      modelName: selectModelName(task), operation: "task_execution",
+      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
     });
 
     await updateClientTask(taskId, {

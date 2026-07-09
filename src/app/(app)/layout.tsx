@@ -34,7 +34,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           allClients,
         }))
       : Promise.resolve(null),
-    listAssignedActionItems(user.uid),
+    // CLIENT_USER notifications are strictly scoped to their own client account;
+    // a client user with no clientId has no company context, so no items at all.
+    user.role === "CLIENT_USER"
+      ? user.clientId
+        ? listAssignedActionItems(user.uid, { forClientId: user.clientId })
+        : Promise.resolve([] as ActionItemNotification[])
+      : listAssignedActionItems(user.uid),
     user.role === "CLIENT_USER" && user.clientId
       ? listReviewJobs(user.clientId)
       : Promise.resolve([] as AgentReviewNotification[]),

@@ -6,16 +6,30 @@
 
 /* ── Log records ─────────────────────────────────────────────────── */
 
+/** Model vendor behind a call. Drives which pricing table row applies. */
+export type ProviderId = "anthropic" | "openai" | "google";
+
 export interface UsageLog {
   id: string;
   clientId: string | null;
   agentId: string | null;
   agentName: string;
+  /** Which vendor served the request. Derived from `modelName` when not supplied. */
+  provider: ProviderId;
   modelName: string;
-  /** e.g. "agent_run" | "intel_report" | "branding_gen" | "competitor_analysis" */
+  /**
+   * The feature/surface that triggered the run — the analytics `featureContext`.
+   * e.g. "intel_report" | "intel_research" | "seo_audit" | "geo_capture" |
+   * "chat_copilot" | "branding_extraction" | "competitor_analysis" | "task_execution".
+   */
   operation: string;
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Anthropic server-side web_search invocations billed on top of tokens
+   * (web_fetch is included, no per-call charge). 0 for providers/calls without it.
+   */
+  webSearchCount?: number;
   estimatedCostUsd: number;
   jobId?: string | null;
   durationMs?: number;
@@ -51,8 +65,14 @@ export interface AnalyticsSnapshot {
 
 /* ── Pricing matrix ──────────────────────────────────────────────── */
 
-/** Official Anthropic per-token pricing (USD per 1 million tokens). */
+/**
+ * Per-token pricing (USD per 1 million tokens) across every provider the
+ * platform calls. Anthropic models run the core pipeline; OpenAI + Gemini
+ * answer their columns in the SEO/GEO visibility capture.
+ * Update these when vendor pricing changes.
+ */
 export const MODEL_PRICING: Record<string, { inputPer1M: number; outputPer1M: number }> = {
+  // Anthropic (Claude)
   "claude-opus-4-8":            { inputPer1M: 15.00, outputPer1M: 75.00 },
   "claude-opus-4-7":            { inputPer1M: 15.00, outputPer1M: 75.00 },
   "claude-sonnet-4-6":          { inputPer1M: 3.00,  outputPer1M: 15.00 },
@@ -60,16 +80,38 @@ export const MODEL_PRICING: Record<string, { inputPer1M: number; outputPer1M: nu
   "claude-3-5-sonnet-20241022": { inputPer1M: 3.00,  outputPer1M: 15.00 },
   "claude-3-opus-20240229":     { inputPer1M: 15.00, outputPer1M: 75.00 },
   "claude-3-haiku-20240307":    { inputPer1M: 0.25,  outputPer1M: 1.25  },
+  // OpenAI (SEO/GEO "chatgpt" engine)
+  "gpt-4o-mini":                { inputPer1M: 0.15,  outputPer1M: 0.60  },
+  "gpt-4o":                     { inputPer1M: 2.50,  outputPer1M: 10.00 },
+  // Google (SEO/GEO "gemini" engine)
+  "gemini-2.5-flash":           { inputPer1M: 0.30,  outputPer1M: 2.50  },
+  "gemini-2.5-pro":             { inputPer1M: 1.25,  outputPer1M: 10.00 },
   _default:                     { inputPer1M: 3.00,  outputPer1M: 15.00 },
 };
+
+/**
+ * Anthropic server-side web_search pricing: $10 per 1,000 searches → $0.01 each.
+ * web_fetch carries no per-call charge (only the tokens it feeds into context).
+ */
+export const WEB_SEARCH_COST_PER_CALL = 10 / 1_000;
+
+/** Infer the vendor from a model id so callers don't have to pass it explicitly. */
+export function providerForModel(modelName: string): ProviderId {
+  if (modelName.startsWith("gpt-") || modelName.startsWith("o1") || modelName.startsWith("o3")) return "openai";
+  if (modelName.startsWith("gemini")) return "google";
+  return "anthropic";
+}
 
 export function computeCostUsd(
   modelName: string,
   inputTokens: number,
   outputTokens: number,
+  webSearchCount = 0,
 ): number {
   const p = MODEL_PRICING[modelName] ?? MODEL_PRICING._default!;
-  const raw = (inputTokens * p.inputPer1M + outputTokens * p.outputPer1M) / 1_000_000;
+  const raw =
+    (inputTokens * p.inputPer1M + outputTokens * p.outputPer1M) / 1_000_000 +
+    webSearchCount * WEB_SEARCH_COST_PER_CALL;
   return Math.round(raw * 1_000_000) / 1_000_000; // 6 decimal precision
 }
 

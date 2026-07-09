@@ -16,6 +16,18 @@ export type ModelId = (typeof MODELS)[keyof typeof MODELS];
 /** Max output tokens for full internal context documents (Sonnet 4.6 ceiling). */
 export const DOC_MAX_TOKENS = 16_000;
 
+/**
+ * External answer-engine models used by the SEO/GEO visibility capture
+ * (src/lib/intel/seo-geo-providers.ts). Keys come strictly from env:
+ * OPENAI_API_KEY / GEMINI_API_KEY (GCP Secret Manager in production).
+ */
+export const SEO_GEO_CAPTURE = {
+  /** Answers the "chatgpt" engine column. */
+  OPENAI_MODEL: "gpt-4o-mini",
+  /** Answers the "gemini" engine column (search-grounded). */
+  GEMINI_MODEL: "gemini-2.5-flash",
+} as const;
+
 /** Max output tokens for condensed client-facing documents. */
 export const CONDENSE_MAX_TOKENS = 8_000;
 

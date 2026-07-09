@@ -26,6 +26,7 @@ import {
   buildTaskIngestionRoutingPrompt,
 } from "@/lib/ai/prompts/proactive-assistant";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
+import { logger } from "@/services/logger";
 import type { AppUser, TaskStatus, ClientTask, TaskComment, TaskOwner } from "@/lib/types";
 
 /**
@@ -196,7 +197,7 @@ export async function generateTaskPlanAction(
 
   const client = await getClient(clientId);
 
-  const { text } = await generateText({
+  const { text, usage } = await generateText({
     model: anthropic(MODELS.HAIKU),
     prompt: buildTaskExecutionPlanPrompt(
       task.title,
@@ -208,6 +209,14 @@ export async function generateTaskPlanAction(
       client?.website,
     ),
   });
+
+  after(() =>
+    logger.logUsage({
+      clientId, agentId: null, agentName: "Task Plan",
+      modelName: MODELS.HAIKU, operation: "task_plan",
+      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+    }),
+  );
 
   await updateClientTask(taskId, {
     metadata: { ...(task.metadata ?? {}), aiPlan: text },
@@ -259,7 +268,7 @@ export async function ingestCustomUserTaskAction(
     owner: z.enum(["karos_managed", "client_managed"]),
   });
 
-  const { object: parsed } = await generateObject({
+  const { object: parsed, usage } = await generateObject({
     model: anthropic(MODELS.HAIKU),
     schema: routingSchema,
     prompt: buildTaskIngestionRoutingPrompt(
@@ -269,6 +278,14 @@ export async function ingestCustomUserTaskAction(
       agentSummary,
     ),
   });
+
+  after(() =>
+    logger.logUsage({
+      clientId, agentId: null, agentName: "Task Ingestion Routing",
+      modelName: MODELS.HAIKU, operation: "task_ingestion",
+      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+    }),
+  );
 
   // The cap bounds the Karos AI execution queue only — apply it after routing,
   // once we know which owner the task landed on.

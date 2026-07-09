@@ -6,6 +6,7 @@ import type { Client, ContextDocType } from "@/lib/types";
 import { CONDENSATION_RULES } from "./brain";
 import { MODELS, CONDENSE_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble } from "@/lib/text-utils";
+import { logger } from "@/services/logger";
 
 export interface CondensedDoc {
   docType: ContextDocType;
@@ -74,6 +75,10 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
     maxOutputTokens: CONDENSE_MAX_TOKENS,
   });
   const text = await condenseStream.text;
+  logger.trackStream(condenseStream, {
+    clientId: client.id, agentId: null, agentName: `Condense: ${docType}`,
+    modelName: MODELS.SONNET, operation: "doc_condense",
+  });
 
   // Detect truncation/omission: the condensed doc must include both the first and last ## sections.
   const internalSections = internalContent.match(/^## .+/gm) ?? [];
@@ -102,6 +107,10 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
       maxOutputTokens: CONDENSE_MAX_TOKENS,
     });
     const cont = await condenseRetryStream.text;
+    logger.trackStream(condenseRetryStream, {
+      clientId: client.id, agentId: null, agentName: `Condense (retry): ${docType}`,
+      modelName: MODELS.SONNET, operation: "doc_condense",
+    });
     const rewritten = stripPreamble(cont);
     // Fall back to the first-pass result if the rewrite returned empty content.
     return { docType, content: rewritten.length > 0 ? rewritten : condensed };

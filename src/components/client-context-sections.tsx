@@ -67,11 +67,11 @@ export function CompetitorTrack({
     (a, b) => (threatOrder[a.threatLevel ?? ""] ?? 3) - (threatOrder[b.threatLevel ?? ""] ?? 3),
   );
 
-  const highThreat = sorted.filter((c) => c.threatLevel === "HIGH");
-  const rest = sorted.filter((c) => c.threatLevel !== "HIGH");
-  const defaultItems = highThreat.slice(0, 3);
-  const extraItems = [...highThreat.slice(3), ...rest];
-  const displayed = showAll ? [...defaultItems, ...extraItems] : defaultItems;
+  // Show the top 3 by priority (HIGH first, then MEDIUM, then LOW) so lower-priority
+  // competitors fill in when there aren't 3 HIGH-threat ones.
+  const defaultItems = sorted.slice(0, 3);
+  const extraItems = sorted.slice(3);
+  const displayed = showAll ? sorted : defaultItems;
 
   function openAdd() {
     setAddOpen(true);
@@ -157,13 +157,11 @@ export function CompetitorTrack({
         </div>
       )}
 
-      {competitors.length === 0 ? (
+      {competitors.length === 0 && (
         <p className="px-1 py-1 text-xs text-muted-2">
           No competitors tracked yet. Click + to add one.
         </p>
-      ) : defaultItems.length === 0 ? (
-        <p className="px-1 py-1 text-xs text-muted-2">No high-priority competitors identified.</p>
-      ) : null}
+      )}
 
       {displayed.length > 0 && (
         <ul className="space-y-0.5">

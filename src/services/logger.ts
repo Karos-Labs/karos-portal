@@ -17,19 +17,88 @@
 import "server-only";
 
 import { adminDb } from "@/lib/firebase/admin";
-import { computeCostUsd, sanitizeModelKey } from "@/lib/models/usage-log";
-import type { UsageLog, ErrorLog } from "@/lib/models/usage-log";
+import { computeCostUsd, providerForModel, sanitizeModelKey } from "@/lib/models/usage-log";
+import type { ProviderId, UsageLog, ErrorLog } from "@/lib/models/usage-log";
+
+/** Minimal shape of an AI SDK streamText/generateText usage object. */
+interface SdkUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+/** Fields every usage record needs; provider is derived from the model when omitted. */
+type UsageInput = Omit<UsageLog, "id" | "timestamp" | "estimatedCostUsd" | "provider"> & {
+  provider?: ProviderId;
+};
+
+/** Metadata for logging an AI SDK streaming/generate result (usage read for you). */
+type StreamMeta = Omit<UsageInput, "inputTokens" | "outputTokens" | "webSearchCount">;
+
+/**
+ * Best-effort extraction of Anthropic server-side web_search invocation count
+ * from AI SDK provider metadata. Never throws; returns 0 when unavailable.
+ * Exported for `generateText` call sites, which expose `providerMetadata` as a
+ * resolved value rather than the promise `trackStream` consumes.
+ */
+export function readWebSearchCount(providerMetadata: unknown): number {
+  try {
+    const anthropic = (providerMetadata as { anthropic?: Record<string, unknown> })?.anthropic;
+    const usage = anthropic?.usage as Record<string, unknown> | undefined;
+    const serverToolUse =
+      (usage?.serverToolUse as Record<string, unknown> | undefined) ??
+      (usage?.server_tool_use as Record<string, unknown> | undefined);
+    const count =
+      (serverToolUse?.webSearchRequests as number | undefined) ??
+      (serverToolUse?.web_search_requests as number | undefined);
+    return Number.isFinite(count) ? Number(count) : 0;
+  } catch {
+    return 0;
+  }
+}
 
 class Logger {
   /* ── Public API ─────────────────────────────────────────────────── */
 
-  logUsage(data: Omit<UsageLog, "id" | "timestamp" | "estimatedCostUsd">): void {
+  logUsage(data: UsageInput): void {
+    const provider = data.provider ?? providerForModel(data.modelName);
+    const webSearchCount = data.webSearchCount ?? 0; // Firestore rejects undefined
     const estimatedCostUsd = computeCostUsd(
       data.modelName,
       data.inputTokens,
       data.outputTokens,
+      webSearchCount,
     );
-    void this._writeUsage({ ...data, estimatedCostUsd, timestamp: Date.now() });
+    void this._writeUsage({ ...data, provider, webSearchCount, estimatedCostUsd, timestamp: Date.now() });
+  }
+
+  /**
+   * Log usage for an AI SDK `streamText`/`generateText` result. Reads the
+   * result's `usage` (and, when present, `providerMetadata` for web_search
+   * counts) then records one UsageLog. Fire-and-forget — never throws, never
+   * blocks the caller. Call it right after you finish consuming the stream:
+   *   const text = await stream.text;
+   *   logger.trackStream(stream, { clientId, agentName, modelName, operation });
+   */
+  trackStream(
+    result: { usage: PromiseLike<SdkUsage>; providerMetadata?: PromiseLike<unknown> },
+    meta: StreamMeta,
+  ): void {
+    void (async () => {
+      try {
+        const [usage, providerMetadata] = await Promise.all([
+          result.usage,
+          result.providerMetadata ?? Promise.resolve(undefined),
+        ]);
+        this.logUsage({
+          ...meta,
+          inputTokens: usage.inputTokens ?? 0,
+          outputTokens: usage.outputTokens ?? 0,
+          webSearchCount: readWebSearchCount(providerMetadata),
+        });
+      } catch {
+        // Usage logging must never disrupt the generation path.
+      }
+    })();
   }
 
   logError(data: Omit<ErrorLog, "id" | "timestamp">): void {

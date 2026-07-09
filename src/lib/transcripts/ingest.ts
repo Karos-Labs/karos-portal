@@ -7,6 +7,7 @@ import { z } from "zod";
 import { createTranscript, findDuplicateTranscript, getClientContextDoc, listClients, listUsers, upsertClientContextDoc } from "@/lib/data";
 import { createActionItemDocsForTranscript } from "@/lib/action-items";
 import { MODELS } from "@/lib/constants";
+import { logger } from "@/services/logger";
 import type { FirefliesTranscript } from "@/lib/transcripts/fireflies";
 import type { AppUser, Client, Transcript } from "@/lib/types";
 
@@ -17,14 +18,20 @@ const analysisSchema = z.object({
 });
 
 /** Produce summary/action-items/keywords, preferring the AI pass but falling back to provider data. */
-async function analyze(t: FirefliesTranscript) {
+async function analyze(t: FirefliesTranscript, clientId: string | null) {
+  const model = process.env.TRANSCRIPT_MODEL || MODELS.SONNET;
   try {
-    const { object } = await generateObject({
-      model: anthropic(process.env.TRANSCRIPT_MODEL || MODELS.SONNET),
+    const { object, usage } = await generateObject({
+      model: anthropic(model),
       schema: analysisSchema,
       system:
         "You are an analyst for a marketing agency. Summarise client meeting transcripts and extract action items and key topics that the agency should act on.",
       prompt: `Meeting: ${t.title}\nParticipants: ${t.participants.join(", ")}\n\nTranscript:\n${t.text.slice(0, 18000)}`,
+    });
+    logger.logUsage({
+      clientId, agentId: null, agentName: "Transcript Analysis",
+      modelName: model, operation: "transcript_analysis",
+      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
     });
     return object;
   } catch {
@@ -226,7 +233,9 @@ export async function ingestTranscript(
     return { id: existing.id, clientId: existing.clientId ?? null, matched: !!existing.clientId, duplicate: true };
   }
 
-  const analysis = await analyze(t);
+  // clientId is resolved by name-matching further below; transcript analysis runs
+  // before that match, so it is logged as an unattributed (system) ingestion cost.
+  const analysis = await analyze(t, null);
   const actionItemsByOwner = parseActionItemsByOwner(analysis.actionItems);
 
   // Build per-item parallel owners array

@@ -104,6 +104,12 @@ function bullets(text: string): string[] {
     .filter((l) => l.length > 0 && !isPlaceholder(l));
 }
 
+/** "AmFi (amfi.finance)" → { name: "AmFi", url: "amfi.finance" } */
+function parseNameAndUrl(raw: string): { name: string; url?: string } {
+  const match = raw.match(/^([^(]+?)\s*(?:\(([^)]+)\))?$/);
+  return { name: match?.[1]?.trim() ?? raw.trim(), url: match?.[2]?.trim() || undefined };
+}
+
 /* ────────────────────── Sub-parsers ────────────────────── */
 
 function parseOverallScore(
@@ -162,8 +168,11 @@ function parseWideScan(
     .map((r) => {
       const tier = r[1]?.trim() ?? "Other";
       const overlap = r[3]?.trim() ?? "Low";
+      // Wide Scan cells are often "Company (domain.com)" — split out the URL.
+      const { name, url } = parseNameAndUrl(r[0] ?? "");
       return {
-        company: r[0] ?? "",
+        company: name,
+        url,
         marketTier: (["Leader", "Challenger", "Niche"].includes(tier) ? tier : "Other") as ClientCompetitor["marketTier"],
         minInvestment: isPlaceholder(r[2] ?? "") ? "" : (r[2] ?? ""),
         overlap: (["High", "Medium", "Low-Med", "Low"].includes(overlap) ? overlap : "Low") as ClientCompetitor["overlap"],
@@ -300,10 +309,8 @@ function parseCompetitorProfiles(
     const lines = block.split("\n");
     const heading = lines[0]?.trim() ?? "";
     // "INCO (inco.vc)" → name "INCO", url "inco.vc"
-    const headingMatch = heading.match(/^([^(]+?)\s*(?:\(([^)]+)\))?$/);
-    if (!headingMatch) continue;
-    const name = headingMatch[1].trim().split(/\s*\/\s*/)[0].trim(); // handle "Bloxs / Altxs"
-    const url = headingMatch[2]?.trim();
+    const { name: rawName, url } = parseNameAndUrl(heading);
+    const name = rawName.split(/\s*\/\s*/)[0].trim(); // handle "Bloxs / Altxs"
     const body = lines.slice(1).join("\n");
 
     const founded = bullet(body, "Founded");
@@ -338,11 +345,16 @@ export function parseMarkdownReport(md: string): ParsedReport {
   const wideScan = parseWideScan(section(md, "Wide Scan"));
   const profiles = parseCompetitorProfiles(section(md, "Competitor Profiles"));
 
-  // Merge profile details (url, founded, scale, strengths, weaknesses, threatLevel) into Wide Scan rows
+  // Merge profile details (url, founded, scale, strengths, weaknesses, threatLevel) into Wide Scan rows.
+  // Only overwrite with defined profile values — an explicit `undefined` shouldn't clobber a
+  // url/threatLevel already parsed from the Wide Scan row.
   const competitorRows = wideScan.map((row) => {
     const key = row.company.toLowerCase().split(/\s*\/\s*/)[0].trim();
     const profile = profiles[key] ?? {};
-    return { ...row, ...profile };
+    const definedProfile = Object.fromEntries(
+      Object.entries(profile).filter(([, v]) => v !== undefined),
+    );
+    return { ...row, ...definedProfile };
   });
 
   const { brandVoiceRows, brandVoiceArchetypes, brandVoiceTerritory } = parseBrandVoice(
