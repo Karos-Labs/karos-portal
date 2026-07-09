@@ -4,7 +4,7 @@ import { Modal } from "@/components/modal";
 import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { PLATFORM_LABELS } from "@/lib/integrations/platforms";
-import type { Asset, Agent } from "@/lib/types";
+import type { Asset } from "@/lib/types";
 
 const TYPE_ICON: Record<string, string> = {
   instagram_post: "Camera",
@@ -85,18 +85,15 @@ type SlideMeta = {
  */
 export function AssetDetailModal({
   asset,
-  agents,
   open,
   onClose,
 }: {
   asset: Asset | null;
-  agents?: Agent[];
   open: boolean;
   onClose: () => void;
 }) {
   if (!asset) return null;
 
-  const agent = asset.agentId ? agents?.find((a) => a.id === asset.agentId) : undefined;
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
   const slides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
@@ -113,12 +110,6 @@ export function AssetDetailModal({
             <Icon name={TYPE_ICON[asset.type] ?? "FileText"} className="h-3.5 w-3.5" />
             {asset.type.replace(/_/g, " ")}
           </span>
-          {agent && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-2">
-              <Icon name={agent.icon} className="h-3.5 w-3.5" />
-              {agent.name}
-            </span>
-          )}
         </div>
 
         {/* Metadata grid */}

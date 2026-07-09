@@ -17,7 +17,19 @@ import {
   inferPlatform,
   publishAssetToPlatform,
 } from "@/lib/integrations/publishers";
-import type { PublishMode } from "@/lib/types";
+import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
+import type { Asset, PublishMode } from "@/lib/types";
+
+/** Load the asset and verify the caller may act on it. Shared guard for the actions below. */
+async function requireAssetAccess(id: string): Promise<Asset> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  const asset = await getAsset(id);
+  if (!asset) throw new Error("Asset not found");
+  if (user.role === "CLIENT_USER" && asset.clientId !== user.clientId) throw new Error("Forbidden");
+  return asset;
+}
 
 export async function updateAssetAction(id: string, patch: { content?: string; title?: string; status?: "draft" | "approved" | "delivered" | "published" }) {
   const user = await getCurrentUser();

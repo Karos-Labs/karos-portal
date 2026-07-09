@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
+import { AssetDetailModal } from "@/components/asset-detail-modal";
 import type { Asset } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -135,6 +136,8 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
 
   const events = useMemo(() => buildEvents(assets), [assets]);
+  const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
+  const openAsset = openAssetId ? assetById.get(openAssetId) ?? null : null;
 
   const totalDays = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
@@ -305,7 +308,6 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
 
       <AssetDetailModal
         asset={openAsset}
-        agents={agents}
         open={openAsset != null}
         onClose={() => setOpenAssetId(null)}
       />
