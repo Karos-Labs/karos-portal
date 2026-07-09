@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { claimExternalJobCompletion, listStuckManagedJobs, updateJob } from "@/lib/data";
 import { getAgentServiceJob, isAgentServiceConfigured } from "@/lib/agent-service/client";
+import { refundJobCharge } from "@/lib/credit-reconcile";
 import type { JobStatus } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -56,6 +57,21 @@ export async function GET(req: NextRequest) {
       const mapped = FAILURE_MAP[remote.status];
       if (!mapped) {
         results.push({ jobId: job.id, action: `still ${remote.status}` });
+        continue;
+      }
+      // Client-charged custom-agent runs: hand the credits back when the run
+      // died without deliverables (no-op for staff-fired jobs; idempotent via
+      // refund_<chargeEntryId>). BEFORE the claim — the claim is single-use,
+      // so a refund attempted after it has no retry path. On failure, skip
+      // this job entirely: it stays stuck, and the next cron pass retries
+      // both writes.
+      try {
+        await refundJobCharge(job.id, `Auto-refund · run ${remote.status} (webhook missed) · ${job.agentName}`.slice(0, 120));
+      } catch (e) {
+        results.push({
+          jobId: job.id,
+          action: `refund failed — left for next pass: ${e instanceof Error ? e.message : "unknown"}`,
+        });
         continue;
       }
       const claimed = await claimExternalJobCompletion(job.id, mapped);

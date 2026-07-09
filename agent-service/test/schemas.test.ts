@@ -92,4 +92,40 @@ describe("job request validation", () => {
       expect(result.request.brief.platform).toBe("both");
     }
   });
+
+  describe("custom task type", () => {
+    function customRequest(brief: Record<string, unknown>): Record<string, unknown> {
+      return baseRequest({
+        task_type: "custom",
+        brief: {
+          entry_skill_dir: "products/live/instagram-agent",
+          instructions: "Run the instagram agent end to end.",
+          prompt: "3 posts about the new offer",
+          ...brief,
+        },
+      });
+    }
+
+    it("accepts a valid custom brief and defaults include_client_skills", () => {
+      const result = validateJobRequest(customRequest({}));
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.request.brief.include_client_skills).toBe(true);
+    });
+
+    it("requires entry_skill_dir, instructions, and prompt", () => {
+      expect(validateJobRequest(customRequest({ entry_skill_dir: undefined })).ok).toBe(false);
+      expect(validateJobRequest(customRequest({ instructions: undefined })).ok).toBe(false);
+      expect(validateJobRequest(customRequest({ prompt: undefined })).ok).toBe(false);
+    });
+
+    it("rejects traversal and out-of-tree skill paths", () => {
+      expect(validateJobRequest(customRequest({ entry_skill_dir: "products/../../../etc" })).ok).toBe(false);
+      expect(validateJobRequest(customRequest({ entry_skill_dir: "/etc/passwd" })).ok).toBe(false);
+      expect(validateJobRequest(customRequest({ entry_skill_dir: "docs/whatever" })).ok).toBe(false);
+      expect(validateJobRequest(customRequest({ entry_skill_dir: "products//live" })).ok).toBe(false);
+      expect(
+        validateJobRequest(customRequest({ skill_roots: ["skills/vendors/ok", "clients/../escape"] })).ok,
+      ).toBe(false);
+    });
+  });
 });

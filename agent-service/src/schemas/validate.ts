@@ -5,6 +5,7 @@ import socialPost from "./task-types/social_post.json" with { type: "json" };
 import newsletterIssue from "./task-types/newsletter_issue.json" with { type: "json" };
 import blogArticle from "./task-types/blog_article.json" with { type: "json" };
 import landingPage from "./task-types/landing_page.json" with { type: "json" };
+import custom from "./task-types/custom.json" with { type: "json" };
 
 export const MAX_CONTEXT_FILES = 20;
 export const MAX_CONTEXT_FILE_BYTES = 20 * 1024 * 1024;
@@ -31,7 +32,8 @@ const baseRequestSchema = {
         required: ["name", "url"],
         properties: {
           name: { type: "string", minLength: 1, maxLength: 200, pattern: "^[^/\\\\]+$" },
-          url: { type: "string", format: "uri", pattern: "^https://" },
+          // maxLength bounds the JobSpec env payload (signed URLs run long).
+          url: { type: "string", format: "uri", pattern: "^https://", maxLength: 2000 },
           description: { type: "string", maxLength: 1000 },
           content_type: { type: "string", maxLength: 200 },
         },
@@ -50,6 +52,7 @@ const briefSchemas: Record<TaskType, object> = {
   newsletter_issue: newsletterIssue,
   blog_article: blogArticle,
   landing_page: landingPage,
+  custom,
 };
 
 const ajv = new Ajv({ allErrors: true, useDefaults: true, coerceTypes: false });

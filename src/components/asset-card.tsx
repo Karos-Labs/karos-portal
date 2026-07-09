@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { ImageLightbox, type LightboxImage } from "@/components/image-lightbox";
+import { ImageLightbox } from "@/components/image-lightbox";
+import { assetImages } from "@/lib/asset-images";
 import {
   updateAssetAction,
   scheduleAssetAction,
@@ -252,6 +253,21 @@ export function AssetCard({
   const [scheduling, setScheduling] = useState(false);
   const [content, setContent] = useState(asset.content);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function copyCaption() {
+    const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
+    const text = hashtags.length
+      ? `${asset.content}\n\n${hashtags.map((h) => "#" + h).join(" ")}`
+      : asset.content;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked — no-op */
+    }
+  }
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
@@ -267,20 +283,37 @@ export function AssetCard({
   // Content-engine carousels carry their slides (each with its own photo) in
   // meta.slides; a plain post has only the single cover `asset.imageUrl`.
   type SlideMeta = { role?: string; headline?: string; body?: string | null; imageUrl?: string | null; attribution?: string | null };
-  const slides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
+  const metaSlides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
+
+  // When the webhook didn't write structured meta.slides, reconstruct the
+  // post's full set of photos from whatever the ingest path left behind, so a
+  // multi-photo post shows the whole post and not just its cover:
+  //   • meta.artifacts — legacy webhook posts (each photo an artifact entry)
+  //   • meta.images    — lab-imported posts (a plain list of hosted URLs)
+  // Both are natural-sorted (so slide-2 precedes slide-10).
+  const IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif)$/i;
+  type MetaArtifact = { name?: string; url?: string; contentType?: string };
+  const fallbackSlides: SlideMeta[] = (() => {
+    if (metaSlides.length > 0) return [];
+    const fromArtifacts = ((asset.meta?.artifacts as MetaArtifact[] | undefined) ?? [])
+      .filter((a) => a?.url && (a.contentType?.startsWith("image/") || (a.name && IMAGE_EXT.test(a.name))))
+      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", undefined, { numeric: true }))
+      .map((a) => ({ imageUrl: a.url as string }));
+    if (fromArtifacts.length > 0) return fromArtifacts;
+    return ((asset.meta?.images as string[] | undefined) ?? [])
+      .filter((u): u is string => typeof u === "string" && u.length > 0)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+      .map((url) => ({ imageUrl: url }));
+  })();
+
+  // Only treat as a carousel when there's genuinely more than one photo;
+  // single-photo posts keep the cleaner full-width single-image rendering.
+  const slides = metaSlides.length > 0 ? metaSlides : fallbackSlides.length > 1 ? fallbackSlides : [];
   const isCarousel = slides.length > 0;
   const photoCount = slides.filter((s) => s.imageUrl).length;
 
-  // Flatten every picture in this asset into a single gallery the lightbox can
-  // page through. Carousels contribute each slide that has a photo; a plain
-  // post contributes its single cover image.
-  const galleryImages: LightboxImage[] = isCarousel
-    ? slides
-        .filter((s) => s.imageUrl)
-        .map((s, i) => ({ url: s.imageUrl as string, caption: s.headline ?? `Slide ${i + 1}` }))
-    : asset.imageUrl
-      ? [{ url: asset.imageUrl, caption: asset.title }]
-      : [];
+  // The lightbox pages through the same set the download route bundles.
+  const galleryImages = assetImages(asset);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // Map a slide's position (some slides have no photo) to its index within
@@ -346,9 +379,21 @@ export function AssetCard({
             <p className="truncate text-sm font-medium">{asset.title}</p>
             <Badge tone={statusTone(asset.status)}>{asset.status}</Badge>
           </div>
-          <p className={`mt-1 whitespace-pre-wrap text-sm text-muted ${open ? "" : "line-clamp-2"}`}>
-            {asset.content}
-          </p>
+          <div className="group/caption relative">
+            <p className={`mt-1 whitespace-pre-wrap text-sm text-muted ${open ? "pr-8" : "line-clamp-2"}`}>
+              {asset.content}
+            </p>
+            {asset.content && (
+              <button
+                type="button"
+                onClick={copyCaption}
+                title="Copy caption"
+                className="absolute right-0 top-0 rounded-md border border-border bg-surface p-1.5 text-muted-2 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover/caption:opacity-100"
+              >
+                <Icon name={copied ? "Check" : "Copy"} className={cn("h-3.5 w-3.5", copied && "text-neon")} />
+              </button>
+            )}
+          </div>
 
           {isCarousel ? (
             <div className="mt-2">
@@ -373,7 +418,7 @@ export function AssetCard({
                         no photo
                       </div>
                     )}
-                    <p className="mt-1 line-clamp-2 text-[10px] text-muted-2">{i + 1}. {s.headline}</p>
+                    <p className="mt-1 line-clamp-2 text-[10px] text-muted-2">{s.headline ? `${i + 1}. ${s.headline}` : `Slide ${i + 1}`}</p>
                   </div>
                 ))}
               </div>
@@ -422,7 +467,7 @@ export function AssetCard({
                       ) : null}
                       <div className="min-w-0">
                         <p className="text-xs font-medium">
-                          {i + 1}. {s.headline}
+                          {s.headline ? `${i + 1}. ${s.headline}` : `Slide ${i + 1}`}
                           {s.role ? <span className="text-muted-2"> · {s.role}</span> : null}
                         </p>
                         {s.body ? <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted">{s.body}</p> : null}
@@ -618,7 +663,7 @@ export function AssetCard({
           index={lightboxIndex}
           onIndexChange={setLightboxIndex}
           onClose={() => setLightboxIndex(null)}
-          name={asset.title}
+          downloadUrl={`/api/assets/${asset.id}/download`}
         />
       )}
     </Card>

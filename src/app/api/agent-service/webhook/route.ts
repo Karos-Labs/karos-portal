@@ -17,6 +17,7 @@ import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/age
 import type { AssetType, ExternalJobArtifact, JobStatus, ManagedTaskType } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
+import { refundJobCharge } from "@/lib/credit-reconcile";
 import { logger } from "@/services/logger";
 
 export const maxDuration = 120;
@@ -37,6 +38,8 @@ const ASSET_TYPE_MAP: Record<ManagedTaskType, AssetType> = {
   newsletter_issue: "email",
   blog_article: "article",
   landing_page: "note",
+  // Custom agents can produce anything — "note" is the safe library bucket.
+  custom: "note",
 };
 
 const TEXT_EXTENSIONS = [".md", ".html", ".txt"];
@@ -105,6 +108,27 @@ export async function POST(req: NextRequest) {
   }
 
   const status = STATUS_MAP[payload.status] ?? "failed";
+
+  // Client-charged runs (custom agents fired by CLIENT_USERs) get their
+  // credits back when the run dies without deliverables. This MUST happen
+  // before the claim below: the claim is single-use, so a refund attempted
+  // after it has no retry if the write fails or the instance dies in between.
+  // Failing the delivery instead (503) keeps it in the service's retry queue,
+  // and the deterministic refund_<chargeEntryId> ledger id makes redelivery
+  // safe after a half-applied attempt. No-op for staff-fired runs (never
+  // charged) and for already-refunded redeliveries.
+  let refund: { refunded: boolean; amount?: number } = { refunded: false };
+  if (payload.status !== "done") {
+    try {
+      refund = await refundJobCharge(
+        job.id,
+        `Auto-refund · run ${payload.status} · ${job.agentName}`.slice(0, 120),
+      );
+    } catch {
+      return NextResponse.json({ error: "Refund write failed — retry delivery" }, { status: 503 });
+    }
+  }
+
   // Atomic claim — makes redelivery (sender retries on timeout) idempotent:
   // exactly one delivery flips the job out of queued/running and runs the
   // side effects (asset creation, usage logging).
@@ -121,7 +145,10 @@ export async function POST(req: NextRequest) {
 
   if (payload.status === "done") {
     let primaryText: { artifact: AgentServiceArtifact; content: string } | null = null;
-    let primaryImageUrl: string | null = null;
+    // A post is a multi-slide carousel: collect EVERY image, not just the
+    // first. Keyed by artifact name so we can restore slide order (slide-2
+    // before slide-10) regardless of artifact arrival order.
+    const imageEntries: { name: string; url: string }[] = [];
 
     for (const artifact of payload.artifacts) {
       const entry: ExternalJobArtifact = {
@@ -164,8 +191,8 @@ export async function POST(req: NextRequest) {
               if (!primaryText || content.length > primaryText.content.length) {
                 primaryText = { artifact, content };
               }
-            } else if (IMAGE_EXTENSIONS.includes(ext) && !primaryImageUrl) {
-              primaryImageUrl = hosted.url;
+            } else if (IMAGE_EXTENSIONS.includes(ext)) {
+              imageEntries.push({ name: artifact.name, url: hosted.url });
             }
           }
         } catch {
@@ -174,6 +201,16 @@ export async function POST(req: NextRequest) {
       }
       artifacts.push(entry);
     }
+
+    // Natural-sort by filename so slide-2 precedes slide-10, then expose each
+    // image as a carousel slide the asset card can page through.
+    const orderedImageUrls = imageEntries
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+      .map((e) => e.url);
+    const slides =
+      orderedImageUrls.length > 1
+        ? orderedImageUrls.map((url) => ({ imageUrl: url }))
+        : undefined;
 
     const clientFacingCount = artifacts.filter((a) => a.clientFacing).length;
     if (clientFacingCount > 0) {
@@ -189,8 +226,9 @@ export async function POST(req: NextRequest) {
           taskType: payload.task_type,
           agentsRepoSha: payload.agents_repo_sha,
           artifacts: artifacts.filter((a) => a.clientFacing),
+          ...(slides ? { slides } : {}),
         },
-        imageUrl: primaryImageUrl,
+        imageUrl: orderedImageUrls[0] ?? null,
         status: "draft",
         ...recommendedScheduleFields(assetType),
         createdBy: "agent-service",
@@ -213,6 +251,13 @@ export async function POST(req: NextRequest) {
           ? "Job cancelled"
           : `Job ${payload.status.replace("_", " ")}: ${payload.error ?? "unknown error"}`,
     });
+    if (refund.refunded) {
+      events.push({
+        at: now,
+        level: "info",
+        message: `Refunded ${refund.amount} credit${refund.amount === 1 ? "" : "s"} for the failed run`,
+      });
+    }
   }
 
   const inputTokens = Object.values(payload.usage?.models ?? {}).reduce((s, m) => s + m.inputTokens, 0);

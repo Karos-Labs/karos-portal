@@ -20,8 +20,12 @@ export const maxDuration = 60;
  * so re-runs, overlaps, and crash-retries never double-refund — this is also
  * the retry for refund writes that failed mid-reconcile.
  *
- * External agent-service jobs are excluded — /api/agent-service/reconcile
- * owns those, and they are never client-charged.
+ * Agent-service jobs the service actually accepted (serviceJobId recorded)
+ * are excluded — the webhook and /api/agent-service/reconcile own those,
+ * including the refund for client-charged custom-agent runs. Agent-service
+ * jobs whose submit crashed before the service saw them (no serviceJobId)
+ * ARE swept here, after a longer staleness — that's the only reconciler that
+ * can refund their upfront charge.
  *
  * Schedule via Cloud Scheduler (~10 min): GET, Authorization: Bearer <CRON_SECRET>.
  * 30 min staleness: far beyond any live after() run, so a swept item is
