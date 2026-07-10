@@ -16,7 +16,36 @@ import {
   inferPlatform,
   publishAssetToPlatform,
 } from "@/lib/integrations/publishers";
-import type { PublishMode } from "@/lib/types";
+import { recommendPublishTime } from "@/lib/scheduling";
+import type { Asset, PublishMode } from "@/lib/types";
+
+/** Mirror of scheduling.ts MIN_LEAD_MS — don't schedule sooner than this. */
+const SCHEDULE_LEAD_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Approving a post also puts it on the content calendar. The calendar only
+ * renders assets with status="scheduled" + a scheduledAt, so approval that
+ * merely set status="approved" left posts invisible on the calendar. We reuse
+ * the agent's recommended slot when it's still in the future, otherwise pick the
+ * next optimal slot for the asset's type. Mode "manual" keeps it on the calendar
+ * as a real scheduled item that staff push live — approval never auto-posts to a
+ * platform. Types with no scheduling dimension (e.g. notes) are just approved.
+ */
+function approvalScheduleFields(asset: Asset): Partial<Asset> {
+  const recommended = asset.recommendedAt;
+  if (recommended != null && recommended >= Date.now() + SCHEDULE_LEAD_MS) {
+    return { status: "scheduled", scheduledAt: recommended, publishMode: "manual" };
+  }
+  const rec = recommendPublishTime({ assetType: asset.type, platform: asset.scheduledPlatform });
+  if (!rec) return { status: "approved" };
+  return {
+    status: "scheduled",
+    scheduledAt: rec.at,
+    publishMode: "manual",
+    recommendedAt: rec.at,
+    recommendedReason: rec.reason,
+  };
+}
 
 export async function updateAssetAction(id: string, patch: { content?: string; title?: string; status?: "draft" | "approved" | "delivered" | "published" }) {
   const user = await getCurrentUser();
@@ -29,7 +58,12 @@ export async function updateAssetAction(id: string, patch: { content?: string; t
     if (asset.clientId !== user.clientId) throw new Error("Forbidden");
     if (patch.status !== undefined) throw new Error("Forbidden");
   }
-  await updateAsset(id, { ...patch, updatedAt: Date.now() });
+  // Approving a draft also schedules it onto the content calendar (see above).
+  const write: Partial<Asset> =
+    patch.status === "approved"
+      ? { ...patch, ...approvalScheduleFields(asset) }
+      : patch;
+  await updateAsset(id, { ...write, updatedAt: Date.now() });
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
 }

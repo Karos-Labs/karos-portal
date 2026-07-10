@@ -636,6 +636,7 @@ export function AssetCard({
                     size="sm"
                     onClick={() => setStatus("approved")}
                     loading={busy}
+                    title="Approve and add to the content calendar at the recommended time"
                   >
                     <Icon name="Check" className="h-3.5 w-3.5" />
                     Approve
