@@ -145,8 +145,12 @@ export interface JobRunEvent {
   message: string;
 }
 
-/** Task types the external agent service (agent-service/) can run. */
-export type ManagedTaskType = "social_post" | "newsletter_issue" | "blog_article" | "landing_page" | "custom";
+/**
+ * Task type the external agent service (agent-service/) runs. The hardcoded lab
+ * product catalog was retired 2026-07 — every agent is now a repo-imported
+ * CustomAgent run through the single "custom" task type.
+ */
+export type ManagedTaskType = "custom";
 
 /**
  * A platform-defined agent: a stored system prompt bound to an entry skill in
@@ -307,6 +311,48 @@ export interface Asset {
   publishedAt?: number;
   /** Last publish failure (manual or cron), surfaced on the asset card. Cleared on success. */
   publishError?: string;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** How often a scheduled agent run repeats. "once" fires a single future run. */
+export type RunCadence = "once" | "daily" | "weekly" | "monthly";
+
+/**
+ * A planned agent run: a managed (catalog) product queued to fire at a future
+ * time, optionally on a repeating cadence. Staff-created; the /api/run-scheduled
+ * cron submits the actual job via submitCustomAgentJob() when `nextRunAt` passes,
+ * then advances (recurring) or completes (once) the schedule. Clients only view
+ * their own upcoming runs — they never create or edit them.
+ */
+export interface ScheduledRun {
+  id: string;
+  clientId: string;
+  /** The repo-imported custom agent this run fires. */
+  customAgentId: string;
+  /** Snapshot of the agent's display fields — survives the agent being renamed/deleted. */
+  agentName: string;
+  agentIcon: string;
+  agentColor: string;
+  /** Free-text request handed to the agent on every fire. */
+  prompt: string;
+  cadence: RunCadence;
+  /** Local hour (0–23) the run fires. */
+  hour: number;
+  /** Local minute (0–59) the run fires. */
+  minute: number;
+  /** weekly cadence: 0=Sun … 6=Sat. */
+  weekday?: number;
+  /** monthly cadence: 1–31 (clamped to the month's length). */
+  dayOfMonth?: number;
+  /** Next fire time (epoch millis) — the scheduling cursor the cron drains. */
+  nextRunAt: number;
+  status: "active" | "paused" | "completed";
+  /** Epoch millis of the most recent fire. */
+  lastRunAt?: number;
+  /** Job id created by the most recent fire. */
+  lastJobId?: string;
   createdBy: string;
   createdAt: number;
   updatedAt: number;

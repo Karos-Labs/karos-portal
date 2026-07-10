@@ -27,7 +27,7 @@ export default async function AssetsPage({
     const assets = getClientLibraryAssets(allClientAssets);
     return (
       <>
-        <PageHeader title="Library" description="Your content library and delivery calendar." />
+        <PageHeader title="Library" description="Your content library — everything your Karos team has created for you." />
         <AssetsView assets={assets} />
       </>
     );
@@ -37,7 +37,7 @@ export default async function AssetsPage({
   const clients = await listClients(employeeFilter);
 
   // Staff arriving via the sidebar's "View as client" nav get the same
-  // library/calendar toggle a client sees, scoped to that one client.
+  // library a client sees, scoped to that one client.
   const viewClient = viewClientId ? clients.find((c) => c.id === viewClientId) : undefined;
   if (viewClient) {
     const clientAssets = await listAssets({ clientId: viewClient.id });

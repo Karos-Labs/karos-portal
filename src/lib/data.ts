@@ -29,6 +29,7 @@ import type {
   JobStatus,
   LoginLog,
   Role,
+  ScheduledRun,
   TaskComment,
   TaskStatus,
   Transcript,
@@ -76,6 +77,8 @@ const col = {
   customAgents: () => adminDb().collection("customAgents"),
   // SEO & GEO insights: one doc per client (doc ID = clientId), written by the onboarding pipeline.
   clientSeoGeo: () => adminDb().collection("clientSeoGeo"),
+  // Planned agent runs (calendar): future/recurring managed jobs the cron drains.
+  scheduledRuns: () => adminDb().collection("scheduledRuns"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -236,6 +239,52 @@ export async function claimExternalJobCompletion(jobId: string, status: JobStatu
     tx.update(ref, { status, updatedAt: Date.now() });
     return true;
   });
+}
+
+/* -------------------------- scheduled runs ------------------------- */
+
+export async function listScheduledRuns(opts?: { clientId?: string }): Promise<ScheduledRun[]> {
+  let snap;
+  if (opts?.clientId) {
+    snap = await col.scheduledRuns().where("clientId", "==", opts.clientId).get();
+  } else {
+    snap = await col.scheduledRuns().get();
+  }
+  return snap.docs
+    .map((d) => withId<ScheduledRun>(d))
+    .sort((a, b) => a.nextRunAt - b.nextRunAt);
+}
+
+export async function getScheduledRun(id: string): Promise<ScheduledRun | null> {
+  const doc = await col.scheduledRuns().doc(id).get();
+  return doc.exists ? withId<ScheduledRun>(doc) : null;
+}
+
+export async function createScheduledRun(data: Omit<ScheduledRun, "id">): Promise<string> {
+  const ref = await col.scheduledRuns().add(data);
+  return ref.id;
+}
+
+export async function updateScheduledRun(id: string, data: Partial<ScheduledRun>): Promise<void> {
+  await col.scheduledRuns().doc(id).set(data, { merge: true });
+}
+
+export async function deleteScheduledRun(id: string): Promise<void> {
+  await col.scheduledRuns().doc(id).delete();
+}
+
+/**
+ * Active scheduled runs whose nextRunAt is at or before `before` (default: now),
+ * oldest-first. The cron drains these each tick; `limit` bounds a tick's work.
+ */
+export async function listDueScheduledRuns(before?: number, limit = 25): Promise<ScheduledRun[]> {
+  const cutoff = before ?? Date.now();
+  const snap = await col.scheduledRuns().where("status", "==", "active").get();
+  return snap.docs
+    .map((d) => withId<ScheduledRun>(d))
+    .filter((r) => r.nextRunAt <= cutoff)
+    .sort((a, b) => a.nextRunAt - b.nextRunAt)
+    .slice(0, limit);
 }
 
 /* ------------------------------ assets ----------------------------- */

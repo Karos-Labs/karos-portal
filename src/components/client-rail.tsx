@@ -65,6 +65,7 @@ export function ClientRail({
     { href: home, label: "Dashboard", icon: "LayoutDashboard", exact: true },
     { href: `${home}/agents`, label: "AI Agents", icon: "Bot" },
     { href: "/assets", label: "Library", icon: "Library" },
+    { href: "/calendar", label: "Calendar", icon: "CalendarClock" },
     { href: "/tasks", label: "Progress", icon: "ListChecks" },
   ];
   const settingsItem: NavItem = { href: `${home}/settings`, label: "Settings", icon: "Settings" };

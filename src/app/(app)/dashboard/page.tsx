@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listClients, listJobs, listAssets, listTranscripts, listActionItemsByAssignee, listUsers } from "@/lib/data";
+import { listClients, listJobs, listAssets, listTranscripts, listActionItemsByAssignee, listUsers, listCustomAgents } from "@/lib/data";
 import { Card, CardTitle, StatCard, Badge, EmptyState, Button, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { JobStatusBadge } from "@/components/job-status";
 import { MyActionItems } from "@/components/my-action-items";
 import { relativeTime } from "@/lib/utils";
-import { AGENT_SERVICE_AGENT_ID, MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
 
 export default async function DashboardPage() {
   const user = await requireUser();
@@ -20,13 +20,15 @@ export default async function DashboardPage() {
   // for the client rollout note).
   const isAdmin = user.role === "KAROS_ADMIN";
   const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
-  const [clients, jobs, myActionItems, allUsers] = await Promise.all([
+  const [clients, jobs, myActionItems, allUsers, customAgents] = await Promise.all([
     listClients(employeeFilter),
     listJobs(),
     isAdmin ? listActionItemsByAssignee(user.uid) : Promise.resolve([]),
     isAdmin ? listUsers() : Promise.resolve([]),
+    listCustomAgents(),
   ]);
   const managedJobs = jobs.filter((j) => j.agentId === AGENT_SERVICE_AGENT_ID);
+  const enabledAgents = customAgents.filter((a) => a.enabled);
   // Reassignment targets: active staff only.
   const staffUsers = allUsers.filter(
     (u) => !u.disabled && (u.role === "KAROS_ADMIN" || u.role === "KAROS_EMPLOYEE"),
@@ -106,29 +108,45 @@ export default async function DashboardPage() {
         </Card>
 
         <Card>
-          <CardTitle className="mb-4">Managed agents</CardTitle>
-          <ul className="space-y-2">
-            {MANAGED_PRODUCTS.map((p) => {
-              const runs = managedJobs.filter((j) => j.external?.taskType === p.taskType).length;
-              return (
-                <li key={p.taskType}>
-                  <Link href="/agents" className="flex items-center gap-3 rounded-md p-2 transition-colors hover:bg-surface-2">
-                    <div
-                      className="flex h-9 w-9 items-center justify-center rounded-md"
-                      style={{ color: p.color, background: p.color + "1f" }}
-                    >
-                      <Icon name={p.icon} className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{p.name}</p>
-                      <p className="text-xs text-muted-2">{runs} run{runs !== 1 ? "s" : ""}</p>
-                    </div>
-                    <Badge tone="neon">Live</Badge>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="mb-4 flex items-center justify-between">
+            <CardTitle>Agents</CardTitle>
+            <Link href="/agents" className="text-xs text-neon hover:underline">Manage</Link>
+          </div>
+          {enabledAgents.length === 0 ? (
+            <EmptyState
+              icon={<Icon name="Bot" className="h-6 w-6" />}
+              title="No agents yet"
+              description="Import agents from the karos-agents repo to get started."
+              action={
+                <Link href="/agents">
+                  <Button size="sm">Import agents</Button>
+                </Link>
+              }
+            />
+          ) : (
+            <ul className="space-y-2">
+              {enabledAgents.slice(0, 6).map((agent) => {
+                const runs = managedJobs.filter((j) => j.agentName === agent.name).length;
+                return (
+                  <li key={agent.id}>
+                    <Link href="/agents" className="flex items-center gap-3 rounded-md p-2 transition-colors hover:bg-surface-2">
+                      <div
+                        className="flex h-9 w-9 items-center justify-center rounded-md"
+                        style={{ color: agent.color, background: agent.color + "1f" }}
+                      >
+                        <Icon name={agent.icon} className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{agent.name}</p>
+                        <p className="text-xs text-muted-2">{runs} run{runs !== 1 ? "s" : ""}</p>
+                      </div>
+                      <Badge tone="neon">Live</Badge>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </Card>
       </div>
     </>
