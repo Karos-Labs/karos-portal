@@ -11,7 +11,6 @@ import {
 import { availableCredits, isBillableClientActor } from "@/lib/credits";
 import { Button, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { ManagedProducts } from "@/components/managed-products";
 import {
   ClientCustomAgents,
   type CustomAgentRunRow,
@@ -132,7 +131,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     <>
       <PageHeader
         title="AI Agents"
-        description="Run managed lab agents for this client and track their deliverables."
+        description="Run repo agents for this client and track their deliverables."
         action={
           <div className="flex items-center gap-3">
             {labImportAvailable && <LabImportButton clientId={id} />}
@@ -146,16 +145,13 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         }
       />
       {agentServiceConfigured ? (
-        <>
-          <ManagedProducts clientId={id} contextItems={contextItems} jobs={jobs} />
-          <ClientCustomAgents
-            clientId={id}
-            agents={customAgents.filter((a) => a.enabled).map(toSummary)}
-            runs={toRunRows(jobs, true)}
-            contextItems={contextItems}
-            viewerIsClient={false}
-          />
-        </>
+        <ClientCustomAgents
+          clientId={id}
+          agents={customAgents.filter((a) => a.enabled).map(toSummary)}
+          runs={toRunRows(jobs, true)}
+          contextItems={contextItems}
+          viewerIsClient={false}
+        />
       ) : (
         <EmptyState
           icon={<Icon name="Bot" className="h-7 w-7" />}

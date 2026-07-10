@@ -14,7 +14,7 @@ import {
 } from "@/lib/agent-service/verify";
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
-import type { AssetType, ExternalJobArtifact, JobStatus, ManagedTaskType } from "@/lib/types";
+import type { AssetType, ExternalJobArtifact, JobStatus } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { refundJobCharge } from "@/lib/credit-reconcile";
@@ -33,14 +33,16 @@ const STATUS_MAP: Record<AgentServiceWebhookPayload["status"], JobStatus> = {
   cancelled: "failed",
 };
 
-const ASSET_TYPE_MAP: Record<ManagedTaskType, AssetType> = {
-  social_post: "social_post",
-  newsletter_issue: "email",
-  blog_article: "article",
-  landing_page: "note",
-  // Custom agents can produce anything — "note" is the safe library bucket.
-  custom: "note",
-};
+/**
+ * Custom agents can produce anything, so we infer the library bucket from the
+ * deliverables: images ⇒ a schedulable social post (so it auto-places on the
+ * calendar), a long-form .md/.html ⇒ an article, everything else ⇒ a note.
+ */
+function inferAssetType(hasImages: boolean, primaryTextName?: string): AssetType {
+  if (hasImages) return "social_post";
+  if (primaryTextName && /\.(md|html?)$/i.test(primaryTextName)) return "article";
+  return "note";
+}
 
 const TEXT_EXTENSIONS = [".md", ".html", ".txt"];
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
@@ -214,7 +216,14 @@ export async function POST(req: NextRequest) {
 
     const clientFacingCount = artifacts.filter((a) => a.clientFacing).length;
     if (clientFacingCount > 0) {
-      const assetType = ASSET_TYPE_MAP[payload.task_type] ?? "note";
+      const assetType = inferAssetType(orderedImageUrls.length > 0, primaryText?.artifact.name);
+      // Auto-place the produced post on the content calendar: when the type has
+      // a recommended engagement slot, schedule it there in "manual" mode so it
+      // shows up on the client's calendar immediately but never auto-posts to a
+      // social account without a human hitting Publish Now. Types with no slot
+      // (e.g. landing pages) stay drafts.
+      const rec = recommendedScheduleFields(assetType);
+      const autoScheduled = "recommendedAt" in rec && typeof rec.recommendedAt === "number";
       const assetId = await createAsset({
         clientId: job.clientId,
         jobId: job.id,
@@ -229,8 +238,10 @@ export async function POST(req: NextRequest) {
           ...(slides ? { slides } : {}),
         },
         imageUrl: orderedImageUrls[0] ?? null,
-        status: "draft",
-        ...recommendedScheduleFields(assetType),
+        ...rec,
+        ...(autoScheduled
+          ? { status: "scheduled" as const, scheduledAt: rec.recommendedAt, publishMode: "manual" as const }
+          : { status: "draft" as const }),
         createdBy: "agent-service",
         createdAt: now,
         updatedAt: now,

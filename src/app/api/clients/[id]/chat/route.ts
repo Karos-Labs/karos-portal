@@ -10,6 +10,7 @@ import {
   getClientReport,
   listClientCompetitors,
   listClientContextDocs,
+  listCustomAgents,
   listJobs,
   listAssets,
   updateClient,
@@ -28,7 +29,6 @@ import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits"
 import type { ClientCredits } from "@/lib/types";
 import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
-import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { sendEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
 import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
@@ -58,7 +58,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   };
   const messages = (body.messages ?? []) as ModelMessage[];
 
-  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity] =
+  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, customAgents] =
     await Promise.all([
       getClient(clientId),
       getClientReport(clientId),
@@ -68,6 +68,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       listAssets({ clientId }),
       listClientIntegrations(clientId),
       getTaskBoardCapacity(clientId),
+      listCustomAgents(),
     ]);
 
   if (!client) {
@@ -105,16 +106,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     (i) => i.platform === "google" && i.status === "active",
   );
 
-  // Build dynamic proactive appendix with the managed-product catalog (karos-agents
-  // lab products run by the Karos team), social integrations, calendar state, and
-  // Gmail status so the AI follows the correct scenario rules.
-  const agentCatalog = MANAGED_PRODUCTS.map((p) => ({
-    id: p.taskType,
-    name: p.name,
-    outputKind: p.taskType,
-    description: p.tagline,
-    capabilities: [] as string[],
-  }));
+  // Build dynamic proactive appendix with the repo agents the Karos team can run
+  // for this client, social integrations, calendar state, and Gmail status so the
+  // AI follows the correct scenario rules.
+  const agentCatalog = customAgents
+    .filter((a) => a.enabled)
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      outputKind: "custom",
+      description: a.description,
+      capabilities: [] as string[],
+    }));
 
   const linkedSocialPlatforms = integrations
     .filter((i) => i.platform !== "google" && (i.status ?? "active") === "active")

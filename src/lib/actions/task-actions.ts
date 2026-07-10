@@ -18,8 +18,8 @@ import {
   createTaskComment,
   normalizeTitleForDedup,
   chargeClientCredits,
+  listCustomAgents,
 } from "@/lib/data";
-import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { runTaskExecution, inferOwnerEngine } from "@/lib/execution-engine";
 import {
   buildTaskExecutionPlanPrompt,
@@ -246,11 +246,13 @@ export async function ingestCustomUserTaskAction(
   const denied = await chargeTaskAssist(user, clientId, "Custom task ingestion");
   if (denied) return { ok: false, error: denied };
 
-  // Build a brief capability summary for the routing prompt from the managed
-  // product catalog (the karos-agents lab products the Karos team can run).
-  const agentSummary = MANAGED_PRODUCTS
-    .map((p) => `${p.name} (${p.taskType})`)
-    .join(", ") || "none configured";
+  // Build a brief capability summary for the routing prompt from the repo agents
+  // the Karos team can run for clients.
+  const agents = await listCustomAgents();
+  const agentSummary = agents
+    .filter((a) => a.enabled)
+    .map((a) => (a.description ? `${a.name} — ${a.description}` : a.name))
+    .join("; ") || "none configured";
 
   const routingSchema = z.object({
     title: z.string().max(120).describe("Short, action-verb task title"),

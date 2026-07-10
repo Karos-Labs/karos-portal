@@ -280,47 +280,22 @@ export function AssetCard({
   const canPublishNow =
     canApprove && compatibleConnected.length > 0 && asset.status !== "published";
 
-  // Content-engine carousels carry their slides (each with its own photo) in
-  // meta.slides; a plain post has only the single cover `asset.imageUrl`.
-  type SlideMeta = { role?: string; headline?: string; body?: string | null; imageUrl?: string | null; attribution?: string | null };
-  const metaSlides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
-
-  // When the webhook didn't write structured meta.slides, reconstruct the
-  // post's full set of photos from whatever the ingest path left behind, so a
-  // multi-photo post shows the whole post and not just its cover:
-  //   • meta.artifacts — legacy webhook posts (each photo an artifact entry)
-  //   • meta.images    — lab-imported posts (a plain list of hosted URLs)
-  // Both are natural-sorted (so slide-2 precedes slide-10).
-  const IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif)$/i;
-  type MetaArtifact = { name?: string; url?: string; contentType?: string };
-  const fallbackSlides: SlideMeta[] = (() => {
-    if (metaSlides.length > 0) return [];
-    const fromArtifacts = ((asset.meta?.artifacts as MetaArtifact[] | undefined) ?? [])
-      .filter((a) => a?.url && (a.contentType?.startsWith("image/") || (a.name && IMAGE_EXT.test(a.name))))
-      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", undefined, { numeric: true }))
-      .map((a) => ({ imageUrl: a.url as string }));
-    if (fromArtifacts.length > 0) return fromArtifacts;
-    return ((asset.meta?.images as string[] | undefined) ?? [])
-      .filter((u): u is string => typeof u === "string" && u.length > 0)
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-      .map((url) => ({ imageUrl: url }));
-  })();
-
-  // Only treat as a carousel when there's genuinely more than one photo;
-  // single-photo posts keep the cleaner full-width single-image rendering.
-  const slides = metaSlides.length > 0 ? metaSlides : fallbackSlides.length > 1 ? fallbackSlides : [];
-  const isCarousel = slides.length > 0;
-  const photoCount = slides.filter((s) => s.imageUrl).length;
-
-  // The lightbox pages through the same set the download route bundles.
+  // Every photo in the post — handles content-engine slides, agent-service
+  // artifacts, and lab-imported meta.images/files — as the single source of
+  // truth for both the on-card strip and the lightbox/download route.
   const galleryImages = assetImages(asset);
+  const isCarousel = galleryImages.length > 1;
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
-  // Map a slide's position (some slides have no photo) to its index within
-  // galleryImages, so a thumbnail opens the right picture.
-  function galleryIndexForSlide(slideIndex: number): number {
-    return slides.slice(0, slideIndex).filter((s) => s.imageUrl).length;
-  }
+  // Rich per-slide copy (headline/body/role/attribution) only exists on
+  // content-engine posts; used to flesh out the expanded view. Each maps back
+  // to its gallery index so its thumbnail opens the matching photo.
+  type SlideMeta = { role?: string; headline?: string; body?: string | null; imageUrl?: string | null; attribution?: string | null };
+  const richSlides = ((asset.meta?.slides as SlideMeta[] | undefined) ?? []).filter(
+    (s) => s && (s.headline || s.body || s.attribution),
+  );
+  const galleryIndexForUrl = (url?: string | null) =>
+    url ? galleryImages.findIndex((g) => g.url === url) : -1;
 
   async function setStatus(status: "approved" | "delivered" | "published") {
     setBusy(true);
@@ -398,36 +373,29 @@ export function AssetCard({
           {isCarousel ? (
             <div className="mt-2">
               <div className="flex gap-2 overflow-x-auto pb-1">
-                {slides.map((s, i) => (
+                {galleryImages.map((img, i) => (
                   <div key={i} className="w-28 shrink-0">
-                    {s.imageUrl ? (
-                      <button
-                        type="button"
-                        onClick={() => setLightboxIndex(galleryIndexForSlide(i))}
-                        className="group relative block h-36 w-28 overflow-hidden rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
-                        title="View full size"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={s.imageUrl} alt={s.headline ?? `Slide ${i + 1}`} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
-                        <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition-opacity group-hover:bg-black/30 group-hover:opacity-100">
-                          <Icon name="Maximize2" className="h-5 w-5" />
-                        </span>
-                      </button>
-                    ) : (
-                      <div className="flex h-36 w-28 items-center justify-center rounded-lg border border-dashed border-border text-center text-[10px] text-muted-2">
-                        no photo
-                      </div>
-                    )}
-                    <p className="mt-1 line-clamp-2 text-[10px] text-muted-2">{s.headline ? `${i + 1}. ${s.headline}` : `Slide ${i + 1}`}</p>
+                    <button
+                      type="button"
+                      onClick={() => setLightboxIndex(i)}
+                      className="group relative block h-36 w-28 overflow-hidden rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
+                      title="View full size"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.url} alt={img.caption ?? `Slide ${i + 1}`} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition-opacity group-hover:bg-black/30 group-hover:opacity-100">
+                        <Icon name="Maximize2" className="h-5 w-5" />
+                      </span>
+                    </button>
+                    <p className="mt-1 line-clamp-2 text-[10px] text-muted-2">{img.caption ?? `Slide ${i + 1}`}</p>
                   </div>
                 ))}
               </div>
               <p className="mt-1 text-[10px] text-muted-2">
-                {slides.length} slides · {photoCount} with photos
-                {photoCount > 0 && " · tap a photo to view & download"}
+                {galleryImages.length} photos · tap a photo to view &amp; download
               </p>
             </div>
-          ) : asset.imageUrl ? (
+          ) : galleryImages.length === 1 ? (
             <button
               type="button"
               onClick={() => setLightboxIndex(0)}
@@ -435,7 +403,7 @@ export function AssetCard({
               title="View full size"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={asset.imageUrl} alt={asset.title} className="w-full" />
+              <img src={galleryImages[0].url} alt={asset.title} className="w-full" />
               <span className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/50 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100">
                 <Icon name="Maximize2" className="h-3 w-3" />
                 View
@@ -450,31 +418,34 @@ export function AssetCard({
                   {hashtags.map((h) => "#" + h).join(" ")}
                 </p>
               )}
-              {isCarousel && (
+              {richSlides.length > 0 && (
                 <div className="mt-2 space-y-2">
-                  {slides.map((s, i) => (
-                    <div key={i} className="flex gap-2 rounded-lg bg-surface-2 p-2">
-                      {s.imageUrl ? (
-                        <button
-                          type="button"
-                          onClick={() => setLightboxIndex(galleryIndexForSlide(i))}
-                          className="h-24 w-20 shrink-0 overflow-hidden rounded border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
-                          title="View full size"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={s.imageUrl} alt="" className="h-full w-full object-cover" />
-                        </button>
-                      ) : null}
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium">
-                          {s.headline ? `${i + 1}. ${s.headline}` : `Slide ${i + 1}`}
-                          {s.role ? <span className="text-muted-2"> · {s.role}</span> : null}
-                        </p>
-                        {s.body ? <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted">{s.body}</p> : null}
-                        {s.attribution ? <p className="mt-1 text-[10px] text-muted-2">{s.attribution}</p> : null}
+                  {richSlides.map((s, i) => {
+                    const gi = galleryIndexForUrl(s.imageUrl);
+                    return (
+                      <div key={i} className="flex gap-2 rounded-lg bg-surface-2 p-2">
+                        {s.imageUrl && gi >= 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setLightboxIndex(gi)}
+                            className="h-24 w-20 shrink-0 overflow-hidden rounded border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
+                            title="View full size"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={s.imageUrl} alt="" className="h-full w-full object-cover" />
+                          </button>
+                        ) : null}
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium">
+                            {s.headline ? `${i + 1}. ${s.headline}` : `Slide ${i + 1}`}
+                            {s.role ? <span className="text-muted-2"> · {s.role}</span> : null}
+                          </p>
+                          {s.body ? <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted">{s.body}</p> : null}
+                          {s.attribution ? <p className="mt-1 text-[10px] text-muted-2">{s.attribution}</p> : null}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               {!isCarousel && imageConcept && (
