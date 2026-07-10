@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useMemo, useTransition } from "react";
+import { useRef, useState, useMemo, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Input, Textarea, Label } from "@/components/ui";
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { updateClientAction, deleteClientAction } from "@/lib/actions";
-import { initials } from "@/lib/utils";
+import { cn, initials } from "@/lib/utils";
 import type { Asset, Client, Job } from "@/lib/types";
 
 /* ── Client avatar: logo or initials fallback ────────────────────────── */
@@ -63,8 +63,60 @@ function EditClientModal({
     agentsRepoSlug: client.agentsRepoSlug ?? "",
   });
 
+  // Logo — uploaded/removed immediately via the logo API route (client already exists).
+  const [logoUrl, setLogoUrl] = useState(client.logoUrl ?? "");
+  const [logoFileName, setLogoFileName] = useState<string | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoRemoving, setLogoRemoving] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   function set(k: keyof typeof form, v: string) {
     setForm((s) => ({ ...s, [k]: v }));
+  }
+
+  async function handleLogoUpload(file: File) {
+    if (logoUploading) return;
+    setLogoUploading(true);
+    setLogoError(null);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch(`/api/clients/${client.id}/logo`, { method: "POST", body });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? "Upload failed");
+      }
+      const { url } = (await res.json()) as { url: string };
+      setLogoUrl(url);
+      setLogoFileName(file.name);
+      router.refresh();
+    } catch (e) {
+      setLogoError(e instanceof Error ? e.message : "Logo upload failed");
+    } finally {
+      setLogoUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function removeLogo() {
+    if (logoRemoving) return;
+    setLogoRemoving(true);
+    setLogoError(null);
+    try {
+      const res = await fetch(`/api/clients/${client.id}/logo`, { method: "DELETE" });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? "Could not remove logo");
+      }
+      setLogoUrl("");
+      setLogoFileName(null);
+      router.refresh();
+    } catch (e) {
+      setLogoError(e instanceof Error ? e.message : "Could not remove logo");
+    } finally {
+      setLogoRemoving(false);
+    }
   }
 
   async function submit() {
@@ -98,6 +150,77 @@ function EditClientModal({
       description="Update this client's details."
     >
       <div className="space-y-3">
+        <div>
+          <Label>Brand logo</Label>
+          {logoUrl ? (
+            <div className="flex items-center gap-3 rounded-[10px] border border-border bg-surface-2 p-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[6px] border border-border bg-white p-1">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={logoUrl}
+                  alt="Brand logo"
+                  className="h-full w-full object-contain"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+              </div>
+              <p className="min-w-0 flex-1 truncate text-xs font-medium">{logoFileName ?? "Logo uploaded"}</p>
+              <div className="flex shrink-0 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={logoUploading || logoRemoving}
+                  className="rounded-[6px] border border-border px-2.5 py-1.5 text-xs font-medium transition-colors hover:border-neon/50 hover:text-neon disabled:pointer-events-none disabled:opacity-50"
+                >
+                  Change
+                </button>
+                <button
+                  type="button"
+                  onClick={removeLogo}
+                  disabled={logoUploading || logoRemoving}
+                  className="flex items-center justify-center rounded-[6px] border border-border p-1.5 text-muted-2 transition-colors hover:border-danger/50 hover:text-danger disabled:pointer-events-none disabled:opacity-50"
+                  aria-label="Remove logo"
+                >
+                  {logoRemoving ? (
+                    <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  ) : (
+                    <Icon name="Trash2" className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
+              className={cn(
+                "flex cursor-pointer flex-col items-center gap-1.5 rounded-[10px] border-2 border-dashed border-border py-4 text-center transition-colors hover:border-neon/40",
+                logoUploading && "pointer-events-none opacity-60",
+              )}
+            >
+              {logoUploading ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-neon border-t-transparent" />
+                  <span className="text-xs text-muted-2">Uploading…</span>
+                </>
+              ) : (
+                <>
+                  <Icon name="Upload" className="h-4 w-4 text-muted-2" />
+                  <p className="text-xs text-muted-2">Click to upload · PNG, JPG, or SVG · max 4 MB</p>
+                </>
+              )}
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/svg+xml,.svg"
+            className="sr-only"
+            onChange={(e) => { if (e.target.files?.[0]) handleLogoUpload(e.target.files[0]); }}
+          />
+          {logoError && <p className="mt-1 text-xs text-danger">{logoError}</p>}
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <Label>Name *</Label>

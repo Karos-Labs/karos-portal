@@ -24,8 +24,10 @@ export const DOC_MAX_TOKENS = 16_000;
 export const SEO_GEO_CAPTURE = {
   /** Answers the "chatgpt" engine column. */
   OPENAI_MODEL: "gpt-4o-mini",
-  /** Answers the "gemini" engine column (search-grounded). */
-  GEMINI_MODEL: "gemini-2.5-flash",
+  /** Answers the "gemini" engine column (search-grounded). gemini-2.5-flash and
+   *  older flash models are blocked for new API keys ("no longer available to new
+   *  users"); 3.5-flash is the current GA flash that supports google_search grounding. */
+  GEMINI_MODEL: "gemini-3.5-flash",
 } as const;
 
 /** Max output tokens for condensed client-facing documents. */

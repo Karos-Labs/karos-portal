@@ -98,6 +98,23 @@ function extractJsonBlock(text: string): string | null {
   return null;
 }
 
+/** Pull the first JSON array literal out of a model response (tolerates code fences + prose). */
+function extractJsonArray(text: string): string | null {
+  const unfenced = text.replace(/```(?:json)?/gi, "").replace(/```/g, "");
+  const start = unfenced.indexOf("[");
+  const end = unfenced.lastIndexOf("]");
+  return start >= 0 && end > start ? unfenced.slice(start, end + 1) : null;
+}
+
+/** JSON.parse that tolerates trailing commas (the most common LLM JSON glitch). */
+function tolerantJsonParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return JSON.parse(s.replace(/,(\s*[}\]])/g, "$1"));
+  }
+}
+
 const VALID_TIERS = new Set(["MEASURED", "ESTIMATED", "PENDING"]);
 const VALID_CONFIDENCE = new Set(["CONFIRMED", "LIKELY", "HYPOTHESIS"]);
 
@@ -195,7 +212,7 @@ Every check id from both registries MUST appear exactly once in the JSON. The JS
 
   let parsed: { seoChecks?: unknown; geoChecks?: unknown };
   try {
-    parsed = JSON.parse(json) as { seoChecks?: unknown; geoChecks?: unknown };
+    parsed = tolerantJsonParse(json) as { seoChecks?: unknown; geoChecks?: unknown };
   } catch (err) {
     throw new Error(`Site audit JSON block failed to parse: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -254,13 +271,17 @@ Return ONLY a fenced \`\`\`json block containing an array of ${PROMPT_SET_SIZE} 
       clientId: client.id, agentId: null, agentName: "GEO Prompt Set",
       modelName: MODELS.HAIKU, operation: "geo_promptset",
     });
-    const json = extractJsonBlock(text) ?? text.trim();
-    const arr = JSON.parse(json) as unknown;
-    if (Array.isArray(arr)) {
-      const prompts = arr.filter((p): p is string => typeof p === "string" && p.trim().length > 8);
-      if (prompts.length >= 3) return prompts.slice(0, PROMPT_SET_SIZE);
+    // The prompt set is a bare JSON array (no seoChecks/geoChecks keys), so use the
+    // generic array extractor rather than extractJsonBlock (which targets the audit).
+    const json = extractJsonArray(text);
+    if (json) {
+      const arr = tolerantJsonParse(json) as unknown;
+      if (Array.isArray(arr)) {
+        const prompts = arr.filter((p): p is string => typeof p === "string" && p.trim().length > 8);
+        if (prompts.length >= 3) return prompts.slice(0, PROMPT_SET_SIZE);
+      }
     }
-    throw new Error("prompt set too small");
+    throw new Error("prompt set could not be parsed or was too small");
   } catch (err) {
     console.warn("[seo-geo] Prompt-set generation failed — using deterministic fallback:", err);
     return fallbackPromptSet(client);

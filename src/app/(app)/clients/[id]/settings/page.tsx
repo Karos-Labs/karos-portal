@@ -16,6 +16,7 @@ import { IntegrationsTab } from "@/components/integrations-tab";
 import { ClientKeyInline } from "@/components/client-key-inline";
 import { CreditsPanel } from "@/components/credits-panel";
 import { ClientAgentAccessCard } from "@/components/custom-agents";
+import { ClientEditor } from "@/components/client-editor";
 import { LogoutButton } from "@/components/logout-button";
 import { relativeTime } from "@/lib/utils";
 
@@ -33,6 +34,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
   if (!client) notFound();
 
   const isAdmin = user.role === "KAROS_ADMIN";
+  const isStaff = isAdmin || user.role === "KAROS_EMPLOYEE";
   const [integrations, transcripts, credits, creditLedger, customAgents] = await Promise.all([
     listClientIntegrations(id),
     listTranscripts({ clientId: id }),
@@ -57,6 +59,13 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
           </Link>
         }
       />
+
+      {/* Brand profile (logo, voice, contact) — staff-managed */}
+      {isStaff && (
+        <div className="mb-8">
+          <ClientEditor client={client} />
+        </div>
+      )}
 
       {/* Credits & usage */}
       <div className="mb-8">

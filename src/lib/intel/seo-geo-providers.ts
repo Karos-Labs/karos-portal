@@ -28,6 +28,12 @@ const CAPTURE_MAX_TOKENS = 1024;
 /** Hard wall-clock cap per engine call. */
 const CAPTURE_TIMEOUT_MS = 90_000;
 
+// Capture model ids default to constants but can be overridden by env so a provider
+// deprecation (e.g. "model no longer available to new users") is an ops config change,
+// not a code redeploy. Empty/unset falls back to the pinned constant.
+const OPENAI_MODEL = process.env.OPENAI_CAPTURE_MODEL || SEO_GEO_CAPTURE.OPENAI_MODEL;
+const GEMINI_MODEL = process.env.GEMINI_CAPTURE_MODEL || SEO_GEO_CAPTURE.GEMINI_MODEL;
+
 /** Extract unique registrable domains from URLs appearing in an answer text. */
 function domainsFromText(text: string): string[] {
   const urls = text.match(/https?:\/\/[^\s)\]}"'<>]+/g) ?? [];
@@ -63,7 +69,7 @@ async function askOpenAI(prompt: string, clientId: string): Promise<{ answerText
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: SEO_GEO_CAPTURE.OPENAI_MODEL,
+      model: OPENAI_MODEL,
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: CAPTURE_MAX_TOKENS,
     }),
@@ -80,7 +86,7 @@ async function askOpenAI(prompt: string, clientId: string): Promise<{ answerText
   // Multi-model provenance: log OpenAI token usage against this client.
   logger.logUsage({
     clientId, agentId: null, agentName: "GEO Capture · ChatGPT",
-    provider: "openai", modelName: SEO_GEO_CAPTURE.OPENAI_MODEL, operation: "geo_capture",
+    provider: "openai", modelName: OPENAI_MODEL, operation: "geo_capture",
     inputTokens: data.usage?.prompt_tokens ?? 0,
     outputTokens: data.usage?.completion_tokens ?? 0,
   });
@@ -98,7 +104,7 @@ interface GeminiResponse {
       groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>;
     };
   }>;
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number };
 }
 
 async function askGemini(prompt: string, clientId: string): Promise<{ answerText: string; citations: string[] }> {
@@ -106,7 +112,7 @@ async function askGemini(prompt: string, clientId: string): Promise<{ answerText
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${SEO_GEO_CAPTURE.GEMINI_MODEL}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
@@ -114,7 +120,13 @@ async function askGemini(prompt: string, clientId: string): Promise<{ answerText
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         // Search grounding makes this a MEASURED_grounded surface (a3 capture tiers).
         tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: CAPTURE_MAX_TOKENS },
+        generationConfig: {
+          maxOutputTokens: CAPTURE_MAX_TOKENS,
+          // gemini-3.x flash is a thinking model; without this the reasoning budget
+          // consumes maxOutputTokens and the answer comes back short or empty
+          // (→ spurious "empty answer" / UNAVAILABLE). Disable thinking for the capture.
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       }),
       signal: AbortSignal.timeout(CAPTURE_TIMEOUT_MS),
     },
@@ -127,9 +139,11 @@ async function askGemini(prompt: string, clientId: string): Promise<{ answerText
   // Multi-model provenance: log Gemini token usage against this client.
   logger.logUsage({
     clientId, agentId: null, agentName: "GEO Capture · Gemini",
-    provider: "google", modelName: SEO_GEO_CAPTURE.GEMINI_MODEL, operation: "geo_capture",
+    provider: "google", modelName: GEMINI_MODEL, operation: "geo_capture",
     inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
-    outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+    outputTokens:
+      data.usageMetadata?.candidatesTokenCount ??
+      Math.max(0, (data.usageMetadata?.totalTokenCount ?? 0) - (data.usageMetadata?.promptTokenCount ?? 0)),
   });
   const candidate = data.candidates?.[0];
   const answerText = (candidate?.content?.parts ?? [])

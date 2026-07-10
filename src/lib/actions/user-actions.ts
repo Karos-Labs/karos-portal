@@ -32,6 +32,10 @@ export async function createTeamMemberAction(input: {
     email,
     password: input.password,
     displayName: input.name,
+    // Admin bypass: manually added users skip the self-signup email-verification
+    // gate. Minting them pre-verified lets them log in / set their password
+    // without a blocking verification step.
+    emailVerified: true,
   });
   const user: AppUser = {
     uid: userRecord.uid,
