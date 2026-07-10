@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { getClient, listAssets } from "@/lib/data";
 import { PageHeader } from "@/components/ui";
 import { AssetsView } from "@/components/assets-view";
+import { getClientLibraryAssets } from "@/lib/asset-visibility";
 
 /**
  * A single client's deliverables, for staff to review and approve. Approving a
@@ -22,7 +23,7 @@ export default async function ClientAssetsPage({ params }: { params: Promise<{ i
   const client = await getClient(id);
   if (!client) notFound();
 
-  const assets = await listAssets({ clientId: id });
+  const assets = getClientLibraryAssets(await listAssets({ clientId: id }));
 
   const pendingCount = assets.filter((a) => a.status === "draft").length;
 

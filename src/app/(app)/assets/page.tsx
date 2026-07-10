@@ -4,6 +4,7 @@ import { EmptyState, PageHeader, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetCard } from "@/components/asset-card";
 import { AssetsView } from "@/components/assets-view";
+import { getClientLibraryAssets } from "@/lib/asset-visibility";
 
 export default async function AssetsPage({
   searchParams,
@@ -23,8 +24,7 @@ export default async function AssetsPage({
       );
     }
     const allClientAssets = await listAssets({ clientId: user.clientId });
-    // Clients only see deliverables their Karos team has approved — drafts stay internal.
-    const assets = allClientAssets.filter((a) => a.status !== "draft");
+    const assets = getClientLibraryAssets(allClientAssets);
     return (
       <>
         <PageHeader title="Library" description="Your content library and delivery calendar." />
