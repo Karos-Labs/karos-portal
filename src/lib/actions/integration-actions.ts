@@ -10,6 +10,7 @@ import {
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { issueAccessToken } from "@/lib/tokens";
+import { autoCompleteTasksOnIntegrationConnect } from "@/lib/task-sync";
 import { requireStaff } from "./_shared";
 
 /**
@@ -40,7 +41,12 @@ export async function saveIntegrationAction(
     updatedAt: Date.now(),
   });
 
+  // Task Map sync: connecting the platform completes any matching
+  // "Connect <platform>" onboarding task without a manual drag.
+  await autoCompleteTasksOnIntegrationConnect(clientId, platform).catch(() => {});
+
   revalidatePath(`/clients/${clientId}`);
+  revalidatePath("/tasks");
 }
 
 /**

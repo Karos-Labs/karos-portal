@@ -37,7 +37,7 @@ const TIMEFRAME_MS: Record<Exclude<Timeframe, "all">, number> = {
 
 /* ── Main component ──────────────────────────────────────────────── */
 
-export function MeetingsClient({ transcripts, clients, users, currentUserRole, currentClientId }: Props) {
+export function MeetingsClient({ transcripts, clients, currentUserRole, currentClientId }: Props) {
   const isStaff = currentUserRole !== "CLIENT_USER";
   const [tab, setTab] = useState<Tab>("active");
   const [timeframe, setTimeframe] = useState<Timeframe>("all");
@@ -69,7 +69,6 @@ export function MeetingsClient({ transcripts, clients, users, currentUserRole, c
       }
       return true;
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcripts, tab, timeframe, clientFilter, isStaff, currentClientId]);
 
   const activeCount = transcripts.filter((t) => !t.archived).length;

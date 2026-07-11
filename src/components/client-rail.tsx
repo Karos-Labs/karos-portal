@@ -285,7 +285,7 @@ export function ClientRail({
                 </Link>
               )}
               <div className="px-0">
-                <ContactUsButton variant="row" />
+                <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
               </div>
               <ThemeSwitch />
             </div>

@@ -132,7 +132,15 @@ export default function LoginPage() {
       // Save the Google access token before navigating — if the browser navigates
       // first, the in-flight server-action fetch can be aborted.
       if (googleAccessToken) {
-        await saveGoogleOAuthTokenAction(googleAccessToken).catch(() => {});
+        // Non-blocking: a failed token save shouldn't block login, but it must
+        // not vanish silently — otherwise Google-gated features appear "not
+        // connected" with no clue why. Log it so it's diagnosable.
+        const saved = await saveGoogleOAuthTokenAction(googleAccessToken).catch(
+          (e) => ({ ok: false as const, error: e instanceof Error ? e.message : "save failed" }),
+        );
+        if (!saved.ok) {
+          console.warn("[login] Google token save failed:", saved.error);
+        }
       }
 
       window.location.replace(

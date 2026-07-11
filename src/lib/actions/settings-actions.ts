@@ -11,8 +11,13 @@ import {
   claimTaskForExecution,
   releaseTaskClaim,
 } from "@/lib/data";
-import { runAutopilotBatch, runClaimedTasks, inferOwnerEngine } from "@/lib/execution-engine";
-import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
+import {
+  runAutopilotBatch,
+  runClaimedTasks,
+  inferOwnerEngine,
+  plannedTaskExecutionCost,
+} from "@/lib/execution-engine";
+import { CreditError, isBillableClientActor } from "@/lib/credits";
 
 /**
  * Toggle the Autopilot Mode flag for a client.
@@ -41,25 +46,41 @@ export async function updateAutopilotAction(
     const pending = await listClientTasks({ clientId, status: "pending", limit: 10 });
     const batch = pending.filter((t) => inferOwnerEngine(t) === "karos_managed").slice(0, 5);
     const claimedIds: string[] = [];
+    // Claim + charge PER TASK with jobId = task.id — every refund mechanism
+    // (webhook failure sync, stuck-execution sweep) pairs on that key, so an
+    // aggregate batch charge would be unrefundable when one run dies.
+    // Product-aware pricing: each task charges what will actually run it.
+    let firstDenial: string | null = null;
     for (const t of batch) {
       const claimed = await claimTaskForExecution(t.id, clientId, ["pending"]);
-      if (claimed) claimedIds.push(t.id);
-    }
-    if (claimedIds.length > 0) {
+      if (!claimed) continue;
       try {
         await chargeClientCredits({
           clientId,
-          amount: claimedIds.length * CREDIT_COSTS.taskExecution,
+          amount: plannedTaskExecutionCost(claimed),
           operation: "task_execution",
-          reason: `Autopilot batch · ${claimedIds.length} task${claimedIds.length === 1 ? "" : "s"}`,
+          reason: `Autopilot · ${claimed.title.slice(0, 80)}`,
+          jobId: t.id,
           actorUid: user.uid,
           actorName: user.name,
         });
+        claimedIds.push(t.id);
       } catch (e) {
-        await Promise.all(claimedIds.map((id) => releaseTaskClaim(id, "pending")));
-        if (e instanceof CreditError) return { ok: false, error: e.message };
-        throw e;
+        // Release only the CURRENT (uncharged) claim. Earlier tasks are
+        // already charged — releasing them would strand their charges, so
+        // they stay claimed and run with the batch.
+        await releaseTaskClaim(t.id, "pending");
+        if (e instanceof CreditError) {
+          // Out of credits/caps — run what was already funded.
+          firstDenial = e.message;
+          break;
+        }
+        console.error("[autopilot] charge failed unexpectedly:", e);
+        break;
       }
+    }
+    if (claimedIds.length === 0 && firstDenial) {
+      return { ok: false, error: firstDenial };
     }
     await upsertClientSettings(clientId, { autopilot: enabled, updatedAt: Date.now() });
     if (claimedIds.length > 0) {

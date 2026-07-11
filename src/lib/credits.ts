@@ -12,7 +12,7 @@
  * The transactional balance mutations live in src/lib/data.ts.
  */
 
-import type { AppUser, ClientCredits } from "@/lib/types";
+import type { AppUser, ClientCredits, ManagedTaskType } from "@/lib/types";
 
 /**
  * True when this actor's AI actions should charge the client's balance:
@@ -36,7 +36,12 @@ export function isBillableClientActor(
 export const CREDIT_COSTS = {
   /** One copilot chat message (Sonnet, up to 6 tool steps). */
   chatMessage: 1,
-  /** One karos_managed task execution (also adjustment re-runs + autopilot items). */
+  /**
+   * BASELINE karos_managed task execution — the in-process (single Sonnet/Haiku
+   * call) path only. Tasks dispatched to a managed product cost more: see
+   * TASK_EXECUTION_COSTS / taskExecutionCost() — always resolve through that,
+   * never charge this flat rate for a product run.
+   */
   taskExecution: 5,
   /** Targeted correction of a single context document. */
   targetedCorrection: 2,
@@ -51,6 +56,33 @@ export const CREDIT_COSTS = {
    */
   customAgentRun: 25,
 } as const;
+
+/**
+ * Per-product execution prices for task runs dispatched to the agent service.
+ * Scaled to real compute: a product run is a full sandboxed agent session
+ * (research + generation, ~$0.50–2), not one model call — text-only products
+ * sit at 2× the baseline, media-heavy generation higher still.
+ */
+export const TASK_EXECUTION_COSTS: Record<Exclude<ManagedTaskType, "custom">, number> = {
+  /** Text + research (markdown/HTML article). */
+  blog_article: 10,
+  /** Text + research + HTML render (dark/light variants). */
+  newsletter_issue: 10,
+  /** Research + per-post VISUAL generation — media-heavy. */
+  social_post: 15,
+  /** Heaviest: full page build with brand kit + static build (~15–30 min). */
+  landing_page: 20,
+} as const;
+
+/**
+ * Resolve what one task execution costs given the product that will actually
+ * run it. No product (in-process generic path) or "custom" (custom agents
+ * have their own per-agent pricing) ⇒ the flat baseline.
+ */
+export function taskExecutionCost(productType?: ManagedTaskType | null): number {
+  if (!productType || productType === "custom") return CREDIT_COSTS.taskExecution;
+  return TASK_EXECUTION_COSTS[productType] ?? CREDIT_COSTS.taskExecution;
+}
 
 /** Applied to new clients on their first charge/grant (lazy doc creation). */
 export const CREDIT_DEFAULTS = {

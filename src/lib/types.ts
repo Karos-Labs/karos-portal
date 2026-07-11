@@ -307,6 +307,13 @@ export interface Asset {
   publishedAt?: number;
   /** Last publish failure (manual or cron), surfaced on the asset card. Cleared on success. */
   publishError?: string;
+  /**
+   * Epoch millis when a publish attempt claimed this asset. Set transactionally by
+   * `claimAssetForPublish` so the auto-cron, a manual "Publish Now", or two overlapping
+   * cron ticks can never double-post the same asset. Cleared on success or failure; a
+   * stale claim (older than the claim TTL) can be re-taken so a crashed run never wedges.
+   */
+  publishClaimedAt?: number;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -801,7 +808,12 @@ export interface IntegrationExpiredNotification {
 
 /* ─────────────────── Proactive Task Board ───────────────────────── */
 
-export type TaskStatus = "pending" | "in_progress" | "review_pending" | "completed";
+/**
+ * "archived" — terminal storage state: tasks completed ≥7 days ago are swept
+ * there (archiveStaleCompletedTasks) so the active board stays clean. Hidden
+ * from listClientTasks unless explicitly requested.
+ */
+export type TaskStatus = "pending" | "in_progress" | "review_pending" | "completed" | "archived";
 export type TaskPriority = "high" | "medium" | "low";
 export type TaskSource =
   | "gmail"
@@ -830,11 +842,22 @@ export interface ClientTask {
   owner?: TaskOwner;
   sourceLabel?: string;
   /**
+   * Contextual priority weight 0–100 (how critical the underlying gap is —
+   * e.g. missing core integration ≈ 90, optional secondary post ≈ 30).
+   * Set by the Copilot at generation; drives board sorting within a column.
+   * Absent ⇒ derived from `priority` (high 80 / medium 50 / low 25).
+   */
+  weight?: number;
+  /**
    * Freeform execution state. Well-known keys:
-   * `agentId`/`agentName` — the ecosystem agent mapped to execute this task (set by the
-   * Copilot at creation or by the engine after a name match); `jobId` — the Job created
-   * by the last agent execution; `executing`, `type`, `artifact`, `adjustmentFeedback`,
-   * `executionError`, `aiPlan`, `recipient`, `failedUpload*`, `published*`.
+   * `productType` — the managed product (ManagedTaskType) that executes this task;
+   * `platform` — canonical integration platform key the task concerns;
+   * `completionTrigger` — auto-complete hook: "integration_connected:<platform>" or
+   * "product_run:<taskType>" (see task-sync.ts);
+   * `externalJobId` — platform Job id of the agent-service run dispatched for this task;
+   * `agentName`, `executing`, `type`, `artifact`, `artifactImageUrl`, `artifactAssetIds`,
+   * `approvedAssetId`, `adjustmentFeedback`, `executionError`, `aiPlan`, `recipient`,
+   * `failedUpload*`, `published*`, `autoCompletedReason`.
    */
   metadata?: Record<string, unknown>;
   completedAt?: number | null;

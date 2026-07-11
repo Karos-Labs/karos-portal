@@ -19,6 +19,8 @@ export default async function TasksPage() {
   const user = await requireUser();
 
   // CLIENT_USER sees only their client's tasks + activity, behind one Progress view.
+  // Archiving is handled at query level (listClientTasks hides tasks Done ≥7d)
+  // plus a physical sweep in the /api/credits/reconcile cron — no page-load work.
   if (user.role === "CLIENT_USER") {
     if (!user.clientId) redirect("/dashboard");
     const [tasks, settings, activityLogs, jobs, report] = await Promise.all([

@@ -172,11 +172,6 @@ function PlatformCard({
     setFields((prev) => ({ ...prev, [key]: value }));
   }
 
-  function openAdvanced() {
-    setFormError(null);
-    setAdvancedOpen(true);
-  }
-
   async function handleManualSave() {
     const missing = platform.fields.filter(
       (f) => f.required && !isConnected && !fields[f.key].trim(),

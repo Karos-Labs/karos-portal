@@ -12,10 +12,11 @@ import type { Asset } from "@/lib/types";
  * kind maps the three-tier publishing flow (+ agent suggestions) onto chips:
  *   published   — went live (auto cron or Publish Now)
  *   scheduled   — auto/manual item awaiting its slot
+ *   failed      — scheduled item whose last publish attempt errored (needs attention)
  *   placeholder — calendar-only roadmap entry (never auto-posted)
  *   suggested   — draft with an agent-recommended slot, not yet scheduled
  */
-type EventKind = "published" | "scheduled" | "placeholder" | "suggested";
+type EventKind = "published" | "scheduled" | "failed" | "placeholder" | "suggested";
 
 interface CalendarEvent {
   assetId: string;
@@ -50,7 +51,10 @@ function eventKind(a: Asset): EventKind | null {
   if (a.status === "published" && (a.scheduledAt != null || a.publishedAt != null)) return "published";
   // Approving a draft onto the calendar and legacy "scheduled" both land here.
   if ((a.status === "scheduled" || a.status === "approved") && a.scheduledAt != null) {
-    return a.publishMode === "placeholder" ? "placeholder" : "scheduled";
+    if (a.publishMode === "placeholder") return "placeholder";
+    // publishError is cleared on a successful push, so its presence on a still-scheduled
+    // item means the last auto/manual attempt failed — surface it instead of a calm chip.
+    return a.publishError ? "failed" : "scheduled";
   }
   // Draft with an agent-recommended slot — advisory until someone schedules it.
   if (a.status === "draft" && a.recommendedAt != null) return "suggested";
@@ -88,6 +92,7 @@ function buildEvents(assets: Asset[]): CalendarEvent[] {
 const KIND_CHIP_CLASS: Record<EventKind, string> = {
   published: "bg-success/15 text-success",
   scheduled: "border border-dashed border-info/50 bg-info/10 text-info",
+  failed: "border border-danger/50 bg-danger/10 text-danger",
   placeholder: "border border-dashed border-muted-2/50 bg-foreground/[0.04] text-muted",
   suggested: "border border-dotted border-neon/40 bg-neon/5 text-muted-2 italic",
 };
@@ -95,6 +100,7 @@ const KIND_CHIP_CLASS: Record<EventKind, string> = {
 const KIND_TOOLTIP: Record<EventKind, string> = {
   published: "Published",
   scheduled: "Scheduled",
+  failed: "Publish failed — open to review",
   placeholder: "Placeholder (not auto-posted)",
   suggested: "Agent-suggested slot (draft)",
 };

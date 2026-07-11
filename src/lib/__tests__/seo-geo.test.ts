@@ -53,6 +53,23 @@ describe("gazetteer matching", () => {
     expect(rootDomain("rivalone.com")).toBe("rivalone.com");
     expect(rootDomain(undefined)).toBeNull();
   });
+  it("counts a competitor referenced only by its domain or short label (URL aliases)", () => {
+    const byDomain = analyzeAnswer(
+      answer({ answerText: "For payments, rivalone.com is the usual pick." }),
+      gaz,
+    );
+    expect(byDomain.mentionedBrands).toContain("Rival One");
+
+    const byLabel = analyzeAnswer(
+      answer({ answerText: "Most people just use Rivalone these days." }),
+      gaz,
+    );
+    expect(byLabel.mentionedBrands).toContain("Rival One");
+
+    // A competitor with no URL is still matched only by name (no false domain hits).
+    const betaOnly = analyzeAnswer(answer({ answerText: "Beta Corp is fine." }), gaz);
+    expect(betaOnly.mentionedBrands).toEqual(["Beta Corp"]);
+  });
 });
 
 describe("answer analysis + provenance", () => {

@@ -316,6 +316,8 @@ export function AssetCard({
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
   const [publishError, setPublishError] = useState<string | null>(asset.publishError ?? null);
+  // Surfaces failures from approve / save / unschedule so those actions don't fail silently.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Manual push available when a connected platform can carry this asset type.
   const compatibleConnected = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).filter((p) =>
@@ -382,9 +384,12 @@ export function AssetCard({
   /** Approve a non-schedulable draft (e.g. a note) straight through — no calendar slot. */
   async function handleSimpleApprove() {
     setBusy(true);
+    setActionError(null);
     try {
       await approveAssetAction(asset.id);
       router.refresh();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Approval failed");
     } finally {
       setBusy(false);
     }
@@ -392,10 +397,13 @@ export function AssetCard({
 
   async function saveEdit() {
     setBusy(true);
+    setActionError(null);
     try {
       await updateAssetAction(asset.id, { content });
       setEditing(false);
       router.refresh();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Couldn't save your changes");
     } finally {
       setBusy(false);
     }
@@ -403,9 +411,12 @@ export function AssetCard({
 
   async function handleUnschedule() {
     setBusy(true);
+    setActionError(null);
     try {
       await unscheduleAssetAction(asset.id);
       router.refresh();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Couldn't unschedule this asset");
     } finally {
       setBusy(false);
     }
@@ -612,6 +623,14 @@ export function AssetCard({
             <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5">
               <Icon name="AlertCircle" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
               <p className="text-xs text-danger">Publish failed: {publishError}</p>
+            </div>
+          )}
+
+          {/* Approve / save / unschedule failure */}
+          {actionError && (
+            <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5">
+              <Icon name="AlertCircle" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
+              <p className="text-xs text-danger">{actionError}</p>
             </div>
           )}
 

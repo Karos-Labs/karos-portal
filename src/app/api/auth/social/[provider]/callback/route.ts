@@ -1,6 +1,7 @@
 import { type NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { upsertClientIntegration } from "@/lib/data";
+import { autoCompleteTasksOnIntegrationConnect } from "@/lib/task-sync";
 import {
   OAUTH_CONFIGS,
   verifyOAuthState,
@@ -243,10 +244,19 @@ export async function GET(
       credentials,
       accountName: accountName || undefined,
       method: "oauth",
+      // Set status explicitly: consumers that filter `status === "active"`
+      // (analytics, copilot context, proactive assistant) drop status-less
+      // integrations, so a freshly-connected OAuth channel must be marked active
+      // — mirroring saveGoogleOAuthTokenAction.
+      status: "active",
       connectedBy: parsed.uid,
       connectedAt: Date.now(),
       updatedAt: Date.now(),
     });
+
+    // Task Map sync: the client just did this work — flip any matching
+    // "Connect <platform>" onboarding task to Done automatically.
+    await autoCompleteTasksOnIntegrationConnect(parsed.clientId, provider).catch(() => {});
 
     return successPage(provider, accountName, origin);
   } catch (e) {

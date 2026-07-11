@@ -408,8 +408,6 @@ export function ChatbotWidget({
   defaultOpen = false,
   userName,
   hasGoogleIntegration = false,
-  client: _client,
-  report: _report,
   docked = false,
   onCollapse,
   floatingPosition = "bottom-6 right-6",

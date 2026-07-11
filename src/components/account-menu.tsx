@@ -106,7 +106,7 @@ export function AccountMenu({
                 <Icon name="Settings" className="h-4 w-4 text-muted-2" />
                 Settings
               </Link>
-              <ContactUsButton variant="row" />
+              <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
             </div>
 
             {/* Log out */}

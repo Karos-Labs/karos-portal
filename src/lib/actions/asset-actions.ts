@@ -9,6 +9,8 @@ import {
   markAssetPublished,
   listClientIntegrations,
   markIntegrationExpired,
+  claimAssetForPublish,
+  releaseAssetPublishClaim,
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { requireStaff } from "./_shared";
@@ -189,9 +191,17 @@ export async function publishAssetNowAction(
     return { ok: false, error: `No active ${target} integration — connect or re-connect it first` };
   }
 
+  // Atomically claim so a concurrent auto-cron tick (or a double-clicked button)
+  // can't push this same asset in parallel and post it twice.
+  const claimed = await claimAssetForPublish(id);
+  if (!claimed) {
+    return { ok: false, error: "This asset is already being published — give it a moment." };
+  }
+
   try {
     await publishAssetToPlatform(target, integration, asset);
   } catch (e) {
+    await releaseAssetPublishClaim(id).catch(() => {});
     const message = e instanceof Error ? e.message : "Unknown error";
     if (e instanceof TokenExpiredError) {
       await markIntegrationExpired(asset.clientId, target).catch(() => {});

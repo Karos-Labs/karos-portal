@@ -40,6 +40,7 @@ import {
   defaultClientCredits,
   rollCreditWindows,
 } from "@/lib/credits";
+import { computeBoardCapacity } from "@/lib/task-dedup";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 
 /* ----------------------------- helpers ----------------------------- */
@@ -298,6 +299,46 @@ export async function markAssetPublished(id: string): Promise<void> {
     status: "published",
     publishedAt: Date.now(),
     publishError: FieldValue.delete(),
+    publishClaimedAt: FieldValue.delete(),
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * How long a publish claim is honored before it's considered stale and re-claimable.
+ * Longer than any single platform push, shorter than the cron interval, so a run that
+ * crashes mid-publish never permanently wedges an asset.
+ */
+const PUBLISH_CLAIM_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Atomically claim an asset for a single publish attempt. Returns true ONLY for the
+ * caller that wins the claim; concurrent callers (a manual "Publish Now" racing the
+ * auto-cron, or two overlapping cron ticks) get false and must not publish. Prevents
+ * duplicate posts to a client's real social accounts. Uses a transaction so the
+ * check-and-set is atomic. Callers must release the claim on failure (or it self-heals
+ * after PUBLISH_CLAIM_TTL_MS).
+ */
+export async function claimAssetForPublish(id: string): Promise<boolean> {
+  const ref = col.assets().doc(id);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const asset = snap.data() as Asset;
+    if (asset.status === "published") return false;
+    const now = Date.now();
+    const claimedAt = asset.publishClaimedAt;
+    if (claimedAt != null && now - claimedAt < PUBLISH_CLAIM_TTL_MS) return false;
+    tx.update(ref, { publishClaimedAt: now, updatedAt: now });
+    return true;
+  });
+}
+
+/** Release a publish claim after a failed attempt so a later run can retry. */
+export async function releaseAssetPublishClaim(id: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.assets().doc(id).update({
+    publishClaimedAt: FieldValue.delete(),
     updatedAt: Date.now(),
   });
 }
@@ -497,9 +538,22 @@ export async function getClientSeoGeo(clientId: string): Promise<SeoGeoInsights 
   return doc.exists ? (doc.data() as SeoGeoInsights) : null;
 }
 
-/** Save (or overwrite) the SEO/GEO insight set; document ID = clientId. */
+/**
+ * Save the SEO/GEO insight set (document ID = clientId). Guarded by a transaction so a
+ * slower or degraded intel run can't clobber a fresher capture: when two runs overlap,
+ * last-writer-wins would silently downgrade coverage. We keep whichever capture started
+ * later (higher capturedAt), regardless of which one finishes writing last.
+ */
 export async function upsertClientSeoGeo(data: SeoGeoInsights): Promise<void> {
-  await col.clientSeoGeo().doc(data.clientId).set(data);
+  const ref = col.clientSeoGeo().doc(data.clientId);
+  await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists) {
+      const existing = snap.data() as SeoGeoInsights;
+      if (existing.capturedAt > data.capturedAt) return; // a newer capture already landed
+    }
+    tx.set(ref, data);
+  });
 }
 
 /* --------------------- client competitors -------------------------- */
@@ -675,12 +729,29 @@ export async function listClientIntegrations(clientId: string): Promise<ClientIn
 /**
  * Create or overwrite one integration (keyed on clientId + platform).
  * Uses a deterministic doc ID so upserts are idempotent.
+ *
+ * The client's auto-publish opt-out SURVIVES reconnects: a full overwrite
+ * would silently re-enable posting (absent flag ⇒ enabled everywhere), so the
+ * previous `autoPublish` is carried over unless the caller sets it
+ * explicitly. `status`/`expiredAt` are deliberately NOT carried — a fresh
+ * connect clears the expired state.
  */
 export async function upsertClientIntegration(
   data: Omit<ClientIntegration, "id">,
 ): Promise<void> {
   const docId = `${data.clientId}_${data.platform}`;
-  await col.clientIntegrations().doc(docId).set({ id: docId, ...data });
+  const ref = col.clientIntegrations().doc(docId);
+  const existing = await ref.get();
+  const previousAutoPublish = existing.exists
+    ? (existing.data() as ClientIntegration).autoPublish
+    : undefined;
+  await ref.set({
+    id: docId,
+    ...(data.autoPublish === undefined && previousAutoPublish !== undefined
+      ? { autoPublish: previousAutoPublish }
+      : {}),
+    ...data,
+  });
 }
 
 /**
@@ -858,6 +929,8 @@ export async function listClientTasks(opts: {
   /** Single status or array of statuses — filtered in JS to avoid composite indexes. */
   status?: TaskStatus | TaskStatus[];
   limit?: number;
+  /** Archived tasks are hidden unless requested (or explicitly asked for via status). */
+  includeArchived?: boolean;
 }): Promise<ClientTask[]> {
   // Avoid composite-index requirement by filtering in JS after a simple query.
   let q = col.clientTasks() as FirebaseFirestore.Query;
@@ -870,31 +943,67 @@ export async function listClientTasks(opts: {
     const allowed = new Set<TaskStatus>(opts.status);
     results = results.filter((t) => allowed.has(t.status));
   }
+  // Archived is a storage state, not a board state — exclude it unless the
+  // caller opted in or explicitly filtered for it. Tasks completed past the
+  // archive threshold are treated as archived AT QUERY TIME, so the active
+  // view is clean immediately — the physical sweep (cron) merely catches the
+  // documents up to what this filter already decided.
+  const askedForArchived =
+    opts.status === "archived" ||
+    (Array.isArray(opts.status) && opts.status.includes("archived"));
+  if (!opts.includeArchived && !askedForArchived) {
+    const archiveCutoff = Date.now() - TASK_ARCHIVE_AFTER_MS;
+    results = results.filter(
+      (t) =>
+        t.status !== "archived" &&
+        !(t.status === "completed" && (t.completedAt ?? t.updatedAt ?? 0) < archiveCutoff),
+    );
+  }
   return results
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, opts.limit ?? 200);
 }
 
+/** Tasks marked Done stay on the board this long before the sweep archives them. */
+export const TASK_ARCHIVE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
- * Delete ALL tasks for a client in batched Firestore writes.
- * Used by the Scan & Refresh flow to clear stale tasks before generating a fresh map.
- * Returns the number of documents deleted.
+ * Archiving pipeline: move tasks that have been completed for ≥7 days into the
+ * "archived" state so the active board stays clean. Batched; safe to call
+ * lazily on page load (after()) or from a cron. Returns the number archived.
  */
-export async function deleteAllClientTasks(clientId: string): Promise<number> {
-  const snap = await col.clientTasks().where("clientId", "==", clientId).get();
-  if (snap.empty) return 0;
+export async function archiveStaleCompletedTasks(clientId?: string): Promise<number> {
+  const cutoff = Date.now() - TASK_ARCHIVE_AFTER_MS;
+  let q = col.clientTasks().where("status", "==", "completed") as FirebaseFirestore.Query;
+  if (clientId) q = q.where("clientId", "==", clientId);
+  const snap = await q.get();
+  const stale = snap.docs.filter((d) => {
+    const t = d.data() as ClientTask;
+    return (t.completedAt ?? t.updatedAt ?? 0) < cutoff;
+  });
+  if (stale.length === 0) return 0;
 
   const db = adminDb();
-  const CHUNK = 400; // stay well under Firestore's 500-write limit
-  const docs = snap.docs;
-
-  for (let i = 0; i < docs.length; i += CHUNK) {
+  const CHUNK = 400;
+  const now = Date.now();
+  for (let i = 0; i < stale.length; i += CHUNK) {
     const batch = db.batch();
-    docs.slice(i, i + CHUNK).forEach((d) => batch.delete(d.ref));
+    stale.slice(i, i + CHUNK).forEach((d) =>
+      batch.update(d.ref, { status: "archived", updatedAt: now }),
+    );
     await batch.commit();
   }
+  return stale.length;
+}
 
-  return docs.length;
+/** Resolve the task that dispatched a given agent-service run (metadata.externalJobId). */
+export async function findTaskByExternalJobId(jobId: string): Promise<ClientTask | null> {
+  const snap = await col
+    .clientTasks()
+    .where("metadata.externalJobId", "==", jobId)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<ClientTask>(snap.docs[0]);
 }
 
 export async function getClientTask(id: string): Promise<ClientTask | null> {
@@ -924,7 +1033,45 @@ export async function claimTaskForExecution(
     if (task.metadata?.executing === true) return null;
     tx.update(ref, {
       status: "in_progress",
-      metadata: { ...(task.metadata ?? {}), executing: true, executionError: null },
+      metadata: {
+        ...(task.metadata ?? {}),
+        executing: true,
+        executionError: null,
+        // Clear the previous dispatch's link at claim time: a stale id would
+        // exempt this claim from the stuck-execution sweep (which skips
+        // externalJobId tasks) if the deferred run dies before re-dispatching.
+        externalJobId: null,
+      },
+      updatedAt: Date.now(),
+    });
+    return task;
+  });
+}
+
+/**
+ * Atomically claim a review_pending task for its terminal transition
+ * (approve / publish): verifies ownership, review_pending status, and that no
+ * re-run is executing, then flips to completed in the same transaction.
+ * Returns the task as it was BEFORE the claim, or null when the claim loses —
+ * this is what stops approve racing a charged Re-run (or a second approve tab)
+ * into double side effects.
+ */
+export async function claimTaskCompletion(
+  taskId: string,
+  clientId: string,
+): Promise<ClientTask | null> {
+  const ref = col.clientTasks().doc(taskId);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return null;
+    const task = withId<ClientTask>(snap);
+    if (task.clientId !== clientId) return null;
+    if (task.status !== "review_pending") return null;
+    if (task.metadata?.executing === true) return null;
+    tx.update(ref, {
+      status: "completed",
+      completedAt: Date.now(),
+      metadata: { ...(task.metadata ?? {}), failedUpload: null },
       updatedAt: Date.now(),
     });
     return task;
@@ -1174,56 +1321,25 @@ export async function listCreditLedger(clientId: string, limit = 50): Promise<Cr
     .slice(0, limit);
 }
 
-/* ─────────────────────── Task capacity helper ───────────────────── */
+/* ─────────────────────── Task capacity / dedup ──────────────────── */
 
-/** Statuses that count against the per-client active-task cap. */
-export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
-  "pending",
-  "in_progress",
-  "review_pending",
-];
+// The rules are pure and unit-tested in src/lib/task-dedup.ts; data.ts only
+// owns the fetch. ACTIVE_TASK_STATUSES + normalizeTitleForDedup re-exported
+// for existing consumers.
+export { ACTIVE_TASK_STATUSES, normalizeTitleForDedup } from "@/lib/task-dedup";
 
 /**
- * One fetch that powers both task-creation guards: how many KAROS-MANAGED
+ * One fetch that powers the task-creation guards: how many KAROS-MANAGED
  * tasks are still active (for the MAX_ACTIVE_TASKS cap — client_managed tasks
- * are exempt and uncapped) and the normalized titles of every existing task —
- * completed included — for deduplication.
+ * are exempt and uncapped), the normalized titles of every existing task for
+ * the exact-match dedup tier, and the raw task list for the similarity /
+ * product-scope dedup tiers (findDuplicateReason).
  */
 export async function getTaskBoardCapacity(clientId: string): Promise<{
   activeCount: number;
   existingTitles: Set<string>;
+  tasks: ClientTask[];
 }> {
   const existing = await listClientTasks({ clientId, limit: 500 });
-  const active = new Set<TaskStatus>(ACTIVE_TASK_STATUSES);
-  // Owner inference mirrors inferOwnerEngine (execution-engine.ts) — kept
-  // inline because data.ts sits below the engine in the import graph.
-  const isKarosManaged = (t: ClientTask) =>
-    (t.owner ?? (t.source === "manual" ? "client_managed" : "karos_managed")) === "karos_managed";
-  return {
-    activeCount: existing.filter((t) => active.has(t.status) && isKarosManaged(t)).length,
-    existingTitles: new Set(existing.map((t) => normalizeTitleForDedup(t.title))),
-  };
-}
-
-/* ─────────────────────── Deduplication helper ───────────────────── */
-
-/** Normalize a task title to a canonical form for dedup comparison. */
-export function normalizeTitleForDedup(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^\w\s]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Returns true when an existing task for this client has a normalized title
- * that exactly matches the given normalized title.
- */
-export async function taskTitleExists(
-  clientId: string,
-  normalizedTitle: string,
-): Promise<boolean> {
-  const existing = await listClientTasks({ clientId, limit: 500 });
-  return existing.some((t) => normalizeTitleForDedup(t.title) === normalizedTitle);
+  return { ...computeBoardCapacity(existing), tasks: existing };
 }

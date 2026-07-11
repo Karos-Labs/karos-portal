@@ -2,8 +2,21 @@ import "server-only";
 
 import { createHmac, randomBytes, createHash } from "crypto";
 
-const STATE_SECRET =
-  process.env.OAUTH_STATE_SECRET ?? "dev-oauth-secret-change-in-prod";
+/**
+ * HMAC key for the OAuth `state` token. Falls back to a dev-only constant, but
+ * refuses that fallback in production: a public signing key would let an attacker
+ * forge a `state` for an arbitrary clientId and connect social credentials onto
+ * another client's account. Evaluated lazily (per sign/verify) so importing this
+ * module never crashes unrelated routes — only an actual OAuth flow trips the guard.
+ */
+function getStateSecret(): string {
+  const secret = process.env.OAUTH_STATE_SECRET;
+  if (secret) return secret;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("OAUTH_STATE_SECRET must be set in production");
+  }
+  return "dev-oauth-secret-change-in-prod";
+}
 
 const APP_URL = (
   process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
@@ -22,7 +35,7 @@ export function getAppOrigin(): string {
 /* ── State signing ───────────────────────────────────────────────────── */
 
 function sign(data: string): string {
-  return createHmac("sha256", STATE_SECRET).update(data).digest("hex");
+  return createHmac("sha256", getStateSecret()).update(data).digest("hex");
 }
 
 export function signOAuthState(payload: {

@@ -25,6 +25,15 @@ export async function submitClientRequestAction(input: {
   if (!companyName || !adminEmail || !useCase) {
     return { ok: false, error: "Company name, admin email, and use case are required." };
   }
+  // Validate untrusted input on this public, unauthenticated endpoint: reject
+  // malformed emails and cap field lengths so a script can't store junk or
+  // oversized documents.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) {
+    return { ok: false, error: "Please enter a valid email address." };
+  }
+  if (companyName.length > 200 || useCase.length > 5000 || (input.website?.length ?? 0) > 500) {
+    return { ok: false, error: "One or more fields exceed the allowed length." };
+  }
 
   const data: Omit<ClientRequest, "id"> = {
     companyName,
@@ -40,7 +49,7 @@ export async function submitClientRequestAction(input: {
   try {
     const { sendEmail } = await import("@/lib/email");
     const to = process.env.KAROS_EMAIL || "hello@karoslabs.com";
-    await sendEmail({
+    const result = await sendEmail({
       to,
       subject: `[KarosCMO] New client access request — ${companyName}`,
       html: `
@@ -55,8 +64,18 @@ export async function submitClientRequestAction(input: {
           <p style="margin:20px 0 0;color:#5f7177;font-size:13px;">Review this request in the KarosCMO Registrations dashboard.</p>
         </div>`,
     });
-  } catch {
-    // Email failure is non-fatal — the request is already saved to Firestore.
+    // Email failure is non-fatal — the request is already saved to Firestore —
+    // but log it so a misconfigured mailer doesn't silently drop notifications.
+    if (!result.ok) {
+      console.error(
+        `[client-request] Notification email failed for "${companyName}": ${result.error}`,
+      );
+    }
+  } catch (e) {
+    console.error(
+      `[client-request] Notification email threw for "${companyName}":`,
+      e instanceof Error ? e.message : e,
+    );
   }
 
   return { ok: true };

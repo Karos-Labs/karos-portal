@@ -130,6 +130,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             actionItems={actionItems as ActionItemNotification[]}
             reviewJobs={reviewJobs}
             taskAlerts={taskAlerts}
+            userName={user.name}
+            userEmail={user.email}
           />
           <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
             <div className="mx-auto w-full max-w-6xl animate-fade-up">{children}</div>

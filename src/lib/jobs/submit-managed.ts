@@ -44,6 +44,12 @@ export interface SubmitManagedJobInput {
   brief: Record<string, unknown>;
   /** ContextItem ids to send along as job input files. */
   contextItemIds?: string[];
+  /**
+   * Task-board task that dispatched this run. Echoed back in the webhook
+   * metadata (karos_task_id) so the task sync can resolve the task even if
+   * the webhook outruns the dispatcher's own metadata write.
+   */
+  taskId?: string;
 }
 
 export async function submitManagedJob(
@@ -125,6 +131,7 @@ export async function submitManagedJob(
       ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),
       metadata: {
         platform_job_id: jobId,
+        ...(input.taskId ? { karos_task_id: input.taskId } : {}),
         ...(jobToken ? { karos_job_token: jobToken, karos_mcp_url: `${origin}/api/mcp` } : {}),
       },
     });
