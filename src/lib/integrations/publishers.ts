@@ -233,6 +233,56 @@ async function publishToTwitter(
   }
 }
 
+/* ── TikTok ──────────────────────────────────────────────────────────── */
+
+async function publishToTikTok(
+  credentials: Record<string, string>,
+  asset: Asset,
+): Promise<void> {
+  const token = credentials.accessToken;
+  if (!token) throw new Error("No access token");
+
+  // TikTok is video-first: the Content Posting API pulls a hosted video by URL.
+  // The media URL rides on asset.imageUrl (the generated payload); mimeType or the
+  // extension must confirm it's a video, since captions/images alone can't post.
+  const videoUrl = asset.imageUrl;
+  const looksLikeVideo =
+    (asset.mimeType?.startsWith("video/") ?? false) ||
+    (!!videoUrl && /\.(mp4|mov|webm)(\?|$)/i.test(videoUrl));
+  if (!videoUrl || !looksLikeVideo) {
+    throw new Error("TikTok posts require a video file (e.g. video/mp4)");
+  }
+
+  const res = await fetch("https://open.tiktokapis.com/v2/post/publish/video/init/", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json; charset=UTF-8",
+    },
+    body: JSON.stringify({
+      post_info: {
+        // TikTok caption limit is 2200 chars. SELF_ONLY keeps posts private until
+        // the TikTok app is approved for public posting (required for unaudited apps).
+        title: asset.content.slice(0, 2200),
+        privacy_level: "SELF_ONLY",
+      },
+      source_info: { source: "PULL_FROM_URL", video_url: videoUrl },
+    }),
+  });
+
+  if (res.status === 401 || res.status === 403) throw new TokenExpiredError("tiktok", res.status);
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(`TikTok publish failed: ${err.error?.message ?? res.status}`);
+  }
+  // A logical failure (e.g. url_ownership_unverified) still returns HTTP 200 with a
+  // non-"ok" error code, so inspect the body rather than trusting the status alone.
+  const body = (await res.json()) as { error?: { code?: string; message?: string } };
+  if (body.error?.code && body.error.code !== "ok") {
+    throw new Error(`TikTok publish failed: ${body.error.message ?? body.error.code}`);
+  }
+}
+
 /* ── Dispatcher ──────────────────────────────────────────────────────── */
 
 export async function publishAssetToPlatform(
@@ -249,6 +299,8 @@ export async function publishAssetToPlatform(
       return publishToLinkedIn(integration.credentials, asset);
     case "twitter":
       return publishToTwitter(integration.credentials, asset);
+    case "tiktok":
+      return publishToTikTok(integration.credentials, asset);
     case "youtube":
       // Video upload (resumable, multi-GB) is a different beast — YouTube items
       // stay on the calendar as manual/placeholder entries for now.

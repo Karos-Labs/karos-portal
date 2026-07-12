@@ -63,6 +63,13 @@ const PLATFORM_SCHEDULES: Record<string, PlatformSchedule> = {
     ],
     reason: "YouTube views ramp up Thu–Sat in the late afternoon ahead of evening watch time",
   },
+  tiktok: {
+    windows: [
+      { days: [2, 3, 4], hour: 18, minute: 0 },
+      { days: WEEKDAYS, hour: 20, minute: 0 },
+    ],
+    reason: "TikTok watch time peaks on weekday evenings when short-form scrolling spikes",
+  },
 };
 
 /** Fallback platform used to pick a window when no platform is known yet. */

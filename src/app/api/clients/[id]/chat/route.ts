@@ -443,7 +443,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                 "The managed product (executing agent) for this task — REQUIRED for karos_managed content tasks; omit for staff deliverables and client_managed tasks",
               ),
             platform: z
-              .enum(["linkedin", "facebook", "instagram", "twitter", "youtube"])
+              .enum(["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"])
               .optional()
               .describe("Canonical platform key the task concerns (integration onboarding, re-auth, or the content's target channel)"),
             weight: z

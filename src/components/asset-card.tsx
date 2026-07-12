@@ -449,15 +449,24 @@ export function AssetCard({
             <Badge tone={statusTone(asset.status)}>{asset.status}</Badge>
           </div>
           <div className="group/caption relative">
-            <p className={`mt-1 whitespace-pre-wrap text-sm text-muted ${open ? "pr-8" : "line-clamp-2"}`}>
+            <p
+              className={cn(
+                "mt-1 whitespace-pre-wrap text-sm text-muted",
+                asset.content && "pr-9",
+                !open && "line-clamp-2",
+              )}
+            >
               {asset.content}
             </p>
             {asset.content && (
               <button
                 type="button"
                 onClick={copyCaption}
-                title="Copy caption"
-                className="absolute right-0 top-0 rounded-md border border-border bg-surface p-1.5 text-muted-2 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover/caption:opacity-100"
+                title={copied ? "Copied" : "Copy caption"}
+                aria-label={copied ? "Caption copied" : "Copy caption"}
+                // Visible & tappable by default (touch devices have no hover); on
+                // hover-capable pointers it stays a subtle reveal on hover/focus.
+                className="absolute right-0 top-0 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-muted-2 transition-opacity hover:text-foreground [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-visible:opacity-100 [@media(hover:hover)]:group-hover/caption:opacity-100"
               >
                 <Icon name={copied ? "Check" : "Copy"} className={cn("h-3.5 w-3.5", copied && "text-neon")} />
               </button>

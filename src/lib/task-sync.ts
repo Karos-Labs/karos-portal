@@ -33,6 +33,7 @@ const PLATFORM_ALIASES: Record<string, string[]> = {
   instagram: ["instagram"],
   twitter: ["twitter", "x (twitter)", " x "],
   youtube: ["youtube"],
+  tiktok: ["tiktok"],
   google: ["google", "gmail", "google workspace"],
 };
 

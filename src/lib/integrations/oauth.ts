@@ -106,6 +106,17 @@ export interface OAuthPlatformConfig {
   requiresLongLivedExchange?: boolean;
   /** Additional params appended to the authorization URL */
   extraAuthParams?: Record<string, string>;
+  /**
+   * Query-param name for the app's client id on the authorize URL. Defaults to
+   * the OAuth-standard "client_id"; TikTok is the odd one out and calls it
+   * "client_key" (on both the authorize URL and the token request body).
+   */
+  clientIdParam?: string;
+  /**
+   * Separator joining the requested scopes. Defaults to a space (OAuth 2.0
+   * standard); TikTok requires a comma-separated list.
+   */
+  scopeSeparator?: string;
 }
 
 /**
@@ -160,6 +171,20 @@ export const OAUTH_CONFIGS: Record<string, OAuthPlatformConfig> = {
       "https://www.googleapis.com/auth/youtube",
     ],
     extraAuthParams: { access_type: "offline", prompt: "consent" },
+  },
+  tiktok: {
+    // TikTok Login Kit v2. Note the quirks handled via clientIdParam/scopeSeparator:
+    // the app credential is passed as `client_key` (not `client_id`) and scopes are
+    // comma-separated. PKCE is mandatory. video.publish/upload back the Content
+    // Posting API used by publishToTikTok().
+    envClientId: "TIKTOK_CLIENT_KEY",
+    envClientSecret: "TIKTOK_CLIENT_SECRET",
+    authUrl: "https://www.tiktok.com/v2/auth/authorize/",
+    tokenUrl: "https://open.tiktokapis.com/v2/oauth/token/",
+    scopes: ["user.info.basic", "video.upload", "video.publish"],
+    usePkce: true,
+    clientIdParam: "client_key",
+    scopeSeparator: ",",
   },
 };
 

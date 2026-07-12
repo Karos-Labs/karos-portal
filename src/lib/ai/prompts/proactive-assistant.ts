@@ -85,6 +85,7 @@ ${expiredIntegrations.length > 0 ? `\n⚠ EXPIRED integrations needing re-authen
 
 GAP RULES:
 - A connected platform with NO scheduled content in the next 14 days is a critical gap → create a karos_managed task to fill it, linked to the right product: instagram/tiktok gaps → \`social_post\`; blog/website cadence gaps → \`blog_article\`; email cadence gaps → \`newsletter_issue\`.
+- TikTok is video/short-form first: a TikTok content gap MUST be filled with a media-heavy \`social_post\` explicitly tailored for TikTok (short-form video / vertical clip concept, hook-led caption). Set \`platform: "tiktok"\`, name TikTok in the title, and give it a HIGH weight (≥75, priority high) — an empty TikTok calendar starves the client's highest-velocity channel.
 - For connected platforms the products don't post to natively (linkedin, facebook, twitter, youtube), fill gaps with \`blog_article\` / \`social_post\` source content the team repurposes — name the target platform in the title and set \`platform\`.
 - A platform with a healthy pipeline needs nothing — never pad the board when the calendar is already covered.`;
 
@@ -103,6 +104,7 @@ GAP RULES:
     { key: "linkedin",  display: "LinkedIn"    },
     { key: "x",         display: "X (Twitter)" },
     { key: "youtube",   display: "YouTube"     },
+    { key: "tiktok",    display: "TikTok"      },
   ];
   const linkedNorm = ctx.linkedSocialPlatforms.map((p) => p.toLowerCase());
   const missingPlatforms = CANONICAL_PLATFORMS.filter(
