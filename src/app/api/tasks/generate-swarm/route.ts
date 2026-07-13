@@ -1,0 +1,59 @@
+import { getCurrentUser } from "@/lib/auth";
+import { buildSwarmContext, runSwarm, type SwarmEvent } from "@/lib/agent-swarm";
+
+export const maxDuration = 120;
+
+/**
+ * Agent Swarm task generation over Server-Sent Events. The client's "Refresh
+ * Task Map" trigger opens this stream; each backend debate turn is serialized to
+ * an SSE `data:` frame the moment it lands, so the War Room console can render the
+ * agents arguing in real time. The final frames report the locked consensus and
+ * how many tasks were persisted.
+ *
+ * GET with `?clientId=` so it works over EventSource semantics; auth-scoped like
+ * the copilot chat route.
+ */
+export async function GET(req: Request) {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const clientId = new URL(req.url).searchParams.get("clientId");
+  if (!clientId) {
+    return Response.json({ error: "clientId is required" }, { status: 400 });
+  }
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const encoder = new TextEncoder();
+  const frame = (event: SwarmEvent) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const context = await buildSwarmContext(clientId);
+        for await (const event of runSwarm({ clientId, createdBy: user.uid, context })) {
+          controller.enqueue(frame(event));
+        }
+      } catch (e) {
+        controller.enqueue(
+          frame({ type: "error", message: e instanceof Error ? e.message : "Swarm failed to start" }),
+        );
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      // Disable proxy buffering so frames flush immediately.
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
