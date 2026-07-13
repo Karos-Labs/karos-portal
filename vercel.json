@@ -7,6 +7,10 @@
     {
       "path": "/api/cleanup-logs",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/analytics/sync",
+      "schedule": "0 4 * * *"
     }
   ]
 }

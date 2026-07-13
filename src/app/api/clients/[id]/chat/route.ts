@@ -19,6 +19,7 @@ import {
   markIntegrationExpired,
   createClientTask,
   getTaskBoardCapacity,
+  getClientPerformanceBenchmarks,
   chargeClientCredits,
   getClientCredits,
 } from "@/lib/data";
@@ -57,7 +58,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   };
   const messages = (body.messages ?? []) as ModelMessage[];
 
-  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity] =
+  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks] =
     await Promise.all([
       getClient(clientId),
       getClientReport(clientId),
@@ -67,6 +68,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       listAssets({ clientId }),
       listClientIntegrations(clientId),
       getTaskBoardCapacity(clientId),
+      getClientPerformanceBenchmarks(clientId),
     ]);
 
   if (!client) {
@@ -156,6 +158,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `If the balance is under 20, proactively mention it and suggest asking the Karos team for a top-up. Never invent credit figures beyond these.`
     : "";
 
+  // Flatten measured analytics into the prompt's benchmark shape (Firestore
+  // types stay out of the pure prompt builder).
+  const toBenchmarkEntry = (r: (typeof benchmarks.top)[number]) => ({
+    label: r.assetLabel ?? r.assetId,
+    platform: r.platform,
+    assetType: r.assetType,
+    engagementScore: r.engagementScore,
+    impressions: r.metrics.impressions,
+    engagementRate: r.metrics.engagementRate,
+  });
+
   const systemPrompt =
     `${baseSystemPrompt}\n\n` +
     buildProactiveSystemAppendix({
@@ -167,6 +180,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       hasScheduledContent,
       activeTaskCount: boardCapacity.activeCount,
       maxActiveTasks: MAX_ACTIVE_TASKS,
+      historicalBenchmarks: {
+        top: benchmarks.top.map(toBenchmarkEntry),
+        bottom: benchmarks.bottom.map(toBenchmarkEntry),
+        sampleSize: benchmarks.sampleSize,
+      },
     }) +
     creditsAppendix;
 

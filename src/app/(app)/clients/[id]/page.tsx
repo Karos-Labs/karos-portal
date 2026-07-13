@@ -10,6 +10,7 @@ import {
 } from "@/lib/data";
 import { PageHeader } from "@/components/ui";
 import { ClientAnalytics } from "@/components/client-analytics";
+import { AiInsights } from "@/components/ai-insights";
 import { ClientHomeOverview } from "@/components/client-home-overview";
 import { SeoGeoPanel } from "@/components/seo-geo-panel";
 import type { ClientTask } from "@/lib/types";
@@ -70,6 +71,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             jobs={jobs}
             integrations={integrations}
           />
+          <AiInsights clientId={client.id} />
         </section>
         <section className="space-y-3">
           {isClientViewer && (

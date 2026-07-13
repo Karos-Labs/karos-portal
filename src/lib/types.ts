@@ -665,6 +665,72 @@ export interface ClientIntegration {
   updatedAt: number;
 }
 
+/* ──────────────────── Marketing performance analytics ──────────────────── */
+
+/**
+ * Unified, platform-agnostic performance metrics for one published asset.
+ * Every social network reports engagement with a different shape (LinkedIn's
+ * `impressionCount`, TikTok's `video_views`, Twitter's `impression_count`, …);
+ * the analytics ingestion layer normalizes all of them into these four fields
+ * (see `normalizePlatformMetrics` in `src/lib/analytics.ts`).
+ */
+export interface MarketingMetrics {
+  /** Times the content was served/rendered on the platform. */
+  impressions: number;
+  /** Outbound clicks (link clicks, profile taps, CTA presses). */
+  clicks: number;
+  /** Engagements ÷ impressions as a 0–1 fraction (likes+comments+shares+saves). */
+  engagementRate: number;
+  /** Total watch time in seconds summed across all views (0 for non-video). */
+  videoViewTime: number;
+}
+
+/**
+ * One performance record per (client, asset, platform) — the analytics half of
+ * the Self-Improving Marketing Loop. Written by the analytics sync cron
+ * (`/api/analytics/sync`), read by the Task Map engine (`getClientPerformanceBenchmarks`)
+ * to bias new content suggestions toward proven winners and away from losers.
+ *
+ * Doc ID is deterministic `${clientId}_${platform}_${assetId}` so re-syncs upsert
+ * in place (one living metrics row per asset+platform, not an append log). The
+ * per-client history is queried by the `clientId` field then sorted in JS — the
+ * denormalized `engagementScore` makes top/bottom-N ranking a single cheap read,
+ * matching this repo's "avoid composite indexes" convention.
+ */
+export interface ClientMarketingAnalytics {
+  id: string;
+  clientId: string;
+  /** The asset these metrics belong to (assets collection id). */
+  assetId: string;
+  /** The Task Map task that produced the asset, when known (clientTasks id). */
+  taskId?: string | null;
+  /** Canonical integration platform key, e.g. "linkedin", "tiktok". */
+  platform: string;
+  /** Asset type snapshot (e.g. "social_post"), for grouping wins/losses by format. */
+  assetType?: string | null;
+  /** Human-readable asset label (title / first line) surfaced in benchmarks + insights. */
+  assetLabel?: string | null;
+  /** Unified metrics, normalized across platforms. */
+  metrics: MarketingMetrics;
+  /** Denormalized 0–100 weighted engagement score (see `engagementScore`) for cheap ranking. */
+  engagementScore: number;
+  /** Data provenance: "mock" until the live platform Insights APIs are wired in. */
+  source: "mock" | "live";
+  /** Epoch millis when the upstream metrics were captured/fetched. */
+  capturedAt: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Top/bottom performers for a client, ranked by `engagementScore`. */
+export interface PerformanceBenchmarks {
+  clientId: string;
+  top: ClientMarketingAnalytics[];
+  bottom: ClientMarketingAnalytics[];
+  /** Total analytics records considered when ranking. */
+  sampleSize: number;
+}
+
 /* ────────────────────────────────────────────────────────────────────── */
 
 export interface Transcript {

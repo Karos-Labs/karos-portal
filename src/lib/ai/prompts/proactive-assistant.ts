@@ -23,6 +23,29 @@ export interface AgentCatalogEntry {
   briefKeys?: string[];
 }
 
+/** One ranked performance record, flattened for the prompt (no Firestore types). */
+export interface BenchmarkEntry {
+  /** Human-readable asset label (title / first line). */
+  label: string;
+  /** Canonical platform key, e.g. "linkedin". */
+  platform: string;
+  /** Asset format, e.g. "social_post". */
+  assetType?: string | null;
+  /** 0–100 weighted engagement score. */
+  engagementScore: number;
+  impressions: number;
+  /** 0–1 engagement fraction. */
+  engagementRate: number;
+}
+
+/** Top/bottom performers for the client, fed into the benchmarks block. */
+export interface HistoricalBenchmarks {
+  top: BenchmarkEntry[];
+  bottom: BenchmarkEntry[];
+  /** How many analytics records the ranking was drawn from. */
+  sampleSize: number;
+}
+
 export interface ProactiveSystemContext {
   /** Managed-product agents available for karos_managed execution. */
   agents: AgentCatalogEntry[];
@@ -40,6 +63,13 @@ export interface ProactiveSystemContext {
   activeTaskCount: number;
   /** The per-client cap on active karos_managed tasks (MAX_ACTIVE_TASKS). */
   maxActiveTasks: number;
+  /**
+   * Measured performance of this client's published content, ranked into
+   * winners/losers. Drives the HISTORICAL PERFORMANCE BENCHMARKS block so the
+   * model biases new tasks toward proven styles. Omit (or sampleSize 0) when no
+   * analytics have been captured yet — the block is then suppressed entirely.
+   */
+  historicalBenchmarks?: HistoricalBenchmarks;
 }
 
 /* ── Dynamic system appendix builder ────────────────────────────── */
@@ -88,6 +118,31 @@ GAP RULES:
 - TikTok is video/short-form first: a TikTok content gap MUST be filled with a media-heavy \`social_post\` explicitly tailored for TikTok (short-form video / vertical clip concept, hook-led caption). Set \`platform: "tiktok"\`, name TikTok in the title, and give it a HIGH weight (≥75, priority high) — an empty TikTok calendar starves the client's highest-velocity channel.
 - For connected platforms the products don't post to natively (linkedin, facebook, twitter, youtube), fill gaps with \`blog_article\` / \`social_post\` source content the team repurposes — name the target platform in the title and set \`platform\`.
 - A platform with a healthy pipeline needs nothing — never pad the board when the calendar is already covered.`;
+
+  /* Historical performance benchmarks — the self-improving feedback loop.
+     Suppressed entirely when there's no measured data, so the model never
+     reasons about (or hallucinates) results it doesn't have. */
+  const bm = ctx.historicalBenchmarks;
+  const fmtBenchmark = (b: BenchmarkEntry) =>
+    `• [${b.engagementScore.toFixed(1)}] ${b.platform}${b.assetType ? ` · ${b.assetType}` : ""} — "${b.label}" (${b.impressions.toLocaleString()} impressions, ${(b.engagementRate * 100).toFixed(1)}% engagement)`;
+  const benchmarksBlock =
+    bm && bm.sampleSize > 0 && (bm.top.length > 0 || bm.bottom.length > 0)
+      ? `### HISTORICAL PERFORMANCE BENCHMARKS — DATA-DRIVEN CONTENT STRATEGY
+
+Measured results from this client's published content, ranked by engagement score (0–100) across ${bm.sampleSize} tracked asset${bm.sampleSize === 1 ? "" : "s"}:
+
+TOP PERFORMERS — proven winners:
+${bm.top.length > 0 ? bm.top.map(fmtBenchmark).join("\n") : "• (none yet)"}
+
+LOWEST PERFORMERS — measurably underperforming:
+${bm.bottom.length > 0 ? bm.bottom.map(fmtBenchmark).join("\n") : "• (none yet)"}
+
+BENCHMARK RULES — you MUST apply these when proposing content tasks:
+- Dynamically analyse the wins and losses above and let them shape the task map. Bias new \`karos_managed\` content toward the platforms, formats, and angles in TOP PERFORMERS — double down on what is proven to convert for THIS client.
+- Intentionally phase out the structures/angles in LOWEST PERFORMERS. Do not propose more of what is measurably failing; if a losing format must be revisited, reframe it toward a winning pattern rather than repeating it.
+- When a benchmark motivates a task, cite the specific signal in the task description (e.g. "LinkedIn long-form outperforms static posts 3× for this client").
+- These are the ONLY performance figures you may reference — never invent metrics beyond them.`
+      : "";
 
   /* Social scenario */
   const hasSocial = ctx.linkedSocialPlatforms.length > 0;
@@ -219,6 +274,7 @@ CRITICAL RULE — CAPABILITIES ARE EXHAUSTIVE: karos_managed work is EXECUTED BY
 AGENT LINKAGE: The \`productType\` you pass in \`create_tasks\` is what routes execution to that agent when the task moves to In Progress. Omit \`productType\` only for staff deliverables and \`client_managed\` tasks.
 
 ${contentGapBlock}
+${benchmarksBlock ? `\n${benchmarksBlock}` : ""}
 ${onboardingBlock ? `\n${onboardingBlock}` : ""}
 
 ### KAROS EXECUTION QUEUE CAPACITY — HARD LIMIT

@@ -16,6 +16,7 @@ import type {
   ClientContextDoc,
   ClientCredits,
   ClientIntegration,
+  ClientMarketingAnalytics,
   ClientReport,
   ClientRequest,
   ClientSettings,
@@ -28,6 +29,7 @@ import type {
   Job,
   JobStatus,
   LoginLog,
+  PerformanceBenchmarks,
   Role,
   TaskComment,
   TaskStatus,
@@ -40,6 +42,7 @@ import {
   defaultClientCredits,
   rollCreditWindows,
 } from "@/lib/credits";
+import { engagementScore, rankByEngagement } from "@/lib/analytics";
 import { computeBoardCapacity } from "@/lib/task-dedup";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 
@@ -77,6 +80,9 @@ const col = {
   customAgents: () => adminDb().collection("customAgents"),
   // SEO & GEO insights: one doc per client (doc ID = clientId), written by the onboarding pipeline.
   clientSeoGeo: () => adminDb().collection("clientSeoGeo"),
+  // Marketing performance analytics: one doc per (client, asset, platform),
+  // doc ID = `${clientId}_${platform}_${assetId}`, written by /api/analytics/sync.
+  clientMarketingAnalytics: () => adminDb().collection("clientMarketingAnalytics"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -554,6 +560,78 @@ export async function upsertClientSeoGeo(data: SeoGeoInsights): Promise<void> {
     }
     tx.set(ref, data);
   });
+}
+
+/* ----------------- marketing performance analytics ----------------- */
+
+/** Deterministic doc id so a re-sync upserts one asset+platform row in place. */
+function analyticsDocId(clientId: string, platform: string, assetId: string): string {
+  return `${clientId}_${platform}_${assetId}`;
+}
+
+/** All performance records for a client, newest capture first. */
+export async function listClientMarketingAnalytics(
+  clientId: string,
+): Promise<ClientMarketingAnalytics[]> {
+  const snap = await col
+    .clientMarketingAnalytics()
+    .where("clientId", "==", clientId)
+    .get();
+  return snap.docs
+    .map((d) => withId<ClientMarketingAnalytics>(d))
+    .sort((a, b) => (b.capturedAt ?? 0) - (a.capturedAt ?? 0));
+}
+
+/**
+ * Upsert one asset+platform metrics row. Idempotent on the deterministic doc id
+ * and last-writer-wins guarded by `capturedAt` (mirrors `upsertClientSeoGeo`) so
+ * an out-of-order or replayed sync can't overwrite fresher metrics with stale
+ * ones. The 0–100 `engagementScore` is (re)derived from the metrics here so the
+ * denormalized ranking field can never drift from the numbers it summarizes.
+ */
+export async function upsertClientMarketingAnalytics(
+  input: Omit<ClientMarketingAnalytics, "id" | "engagementScore" | "createdAt" | "updatedAt">,
+): Promise<void> {
+  const id = analyticsDocId(input.clientId, input.platform, input.assetId);
+  const ref = col.clientMarketingAnalytics().doc(id);
+  const score = engagementScore(input.metrics);
+  await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const now = Date.now();
+    if (snap.exists) {
+      const existing = snap.data() as ClientMarketingAnalytics;
+      if ((existing.capturedAt ?? 0) > input.capturedAt) return; // a newer capture already landed
+      tx.set(
+        ref,
+        { ...input, id, engagementScore: score, updatedAt: now },
+        { merge: true },
+      );
+    } else {
+      tx.set(ref, {
+        ...input,
+        id,
+        engagementScore: score,
+        createdAt: now,
+        updatedAt: now,
+      } satisfies ClientMarketingAnalytics);
+    }
+  });
+}
+
+/**
+ * Top-N and bottom-N performers for a client, ranked by `engagementScore`.
+ * Reads the whole per-client history with a single indexed `clientId` query and
+ * ranks in JS (see the "avoid composite indexes" convention) — cheap because the
+ * score is stored, not recomputed. Fed into the Task Map prompt so the model
+ * doubles down on proven winners and phases out failing structures.
+ */
+export async function getClientPerformanceBenchmarks(
+  clientId: string,
+  count = 5,
+): Promise<PerformanceBenchmarks> {
+  const records = await listClientMarketingAnalytics(clientId);
+  const { top, bottom } = rankByEngagement(records, count);
+  return { clientId, top, bottom, sampleSize: records.length };
 }
 
 /* --------------------- client competitors -------------------------- */
