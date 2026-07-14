@@ -4,6 +4,7 @@ import { getCurrentUser, isStaff } from "@/lib/auth";
 import { getAsset } from "@/lib/data";
 import { assetImages, assetFileStem, imageExtFromUrl } from "@/lib/asset-images";
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
+import { isAssetUnlockedForClient } from "@/lib/post-chain";
 
 export const runtime = "nodejs";
 
@@ -30,6 +31,15 @@ export async function GET(
   // Staff see everything; a client may only download its own client's assets.
   if (!isStaff(user) && user.clientId !== asset.clientId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Future-dated chain posts are withheld from clients until their day arrives
+  // (server-local midnight) — same gate as the library's redaction layer.
+  if (!isStaff(user) && !isAssetUnlockedForClient(asset, Date.now())) {
+    return NextResponse.json(
+      { error: "This deliverable unlocks on its scheduled date." },
+      { status: 403 },
+    );
   }
 
   const images = assetImages(asset);

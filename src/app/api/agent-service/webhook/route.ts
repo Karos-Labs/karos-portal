@@ -18,6 +18,9 @@ import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/age
 import type { AssetType, ExternalJobArtifact, JobStatus, ManagedTaskType } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
+import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { orderKeyForCreatedAt } from "@/lib/post-chain";
+import { reflowClientChain } from "@/lib/chain";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
 import { logger } from "@/services/logger";
@@ -275,12 +278,24 @@ export async function POST(req: NextRequest) {
     const clientFacingCount = artifacts.filter((a) => a.clientFacing).length;
     if (clientFacingCount > 0) {
       const assetType = ASSET_TYPE_MAP[payload.task_type] ?? "note";
+      // job.title is `${job.agentName} — ${clientName}` (submit-managed.ts /
+      // custom-agent-actions.ts). Strip only that exact appended " — <client>"
+      // suffix — never a blind split on " — " (agent/client names may contain
+      // legitimate em-dashes). The job doc keeps its full title.
+      const clientSuffix = " — ";
+      const assetTitle =
+        job.agentName && job.title.startsWith(job.agentName + clientSuffix)
+          ? job.agentName
+          : job.title;
+      // Only real catalog products get a template chip; "custom" runs have no
+      // managed product (getManagedProduct would fall back to the first one).
+      const managedProduct = MANAGED_PRODUCTS.find((p) => p.taskType === payload.task_type);
       const assetId = await createAsset({
         clientId: job.clientId,
         jobId: job.id,
         agentId: "agent-service",
         type: assetType,
-        title: job.title,
+        title: assetTitle,
         content: primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "",
         meta: {
           taskType: payload.task_type,
@@ -290,6 +305,10 @@ export async function POST(req: NextRequest) {
         },
         imageUrl: orderedImageUrls[0] ?? null,
         status: "draft",
+        ...(managedProduct
+          ? { templateKey: payload.task_type, templateName: managedProduct.name }
+          : {}),
+        orderKey: orderKeyForCreatedAt(now, job.id),
         ...recommendedScheduleFields(assetType),
         createdBy: "agent-service",
         createdAt: now,
@@ -297,6 +316,16 @@ export async function POST(req: NextRequest) {
       });
       assetIds.push(assetId);
       createdAssetId = assetId;
+      // Auto-assign the new post its one-per-day chain date. Best-effort: the
+      // job is already claimed (single delivery), so a reflow failure must not
+      // fail the webhook — it self-heals on the next import/webhook/staff reflow.
+      await reflowClientChain(job.clientId).catch(() =>
+        events.push({
+          at: Date.now(),
+          level: "error",
+          message: "Calendar reflow failed — run the staff reflow action",
+        }),
+      );
     }
     taskArtifactContent = primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "";
     taskArtifactImage = orderedImageUrls[0] ?? null;

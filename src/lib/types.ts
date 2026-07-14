@@ -314,6 +314,30 @@ export interface Asset {
    * stale claim (older than the claim TTL) can be re-taken so a crashed run never wedges.
    */
   publishClaimedAt?: number;
+  /**
+   * Stable slug identifying the template/format that produced this post
+   * (e.g. "by-the-numbers", or the managed taskType for agent-service posts).
+   * Derived at creation from the lab item folder / data.json / managed product;
+   * backfilled on legacy assets by the re-date migration. Renders as a chip.
+   */
+  templateKey?: string;
+  /** Human chip label for templateKey (e.g. "By The Numbers", "Social posts"). Always paired with templateKey. */
+  templateName?: string;
+  /**
+   * Lexicographically sortable internal-generation-order key driving the
+   * one-post-per-day content chain. Lab imports: `${runName}#${itemKey}`
+   * (run names lead with YYYY-MM-DD; item keys keep their zero-padded/ISO-date
+   * prefix). Other sources: `${ISO-timestamp}#${uniq}`. Both forms lead with a
+   * sortable date so cross-source sorting interleaves chronologically. Legacy
+   * assets without one are covered by deriveOrderKey() fallbacks at read time.
+   */
+  orderKey?: string;
+  /**
+   * DERIVED ONLY — never persisted to Firestore. Set true by the client-facing
+   * redaction layer (redactLockedAsset) on copies of future-dated assets so
+   * client components can render the locked-placeholder treatment.
+   */
+  locked?: boolean;
   createdBy: string;
   createdAt: number;
   updatedAt: number;

@@ -57,6 +57,26 @@ describe("pickPrimaryFiles", () => {
     expect(picked.captionFile).toBeUndefined();
     expect(picked.textFile?.name).toBe("post.md");
   });
+
+  it("returns the item's data.json metadata file when present", () => {
+    const picked = pickPrimaryFiles([
+      file("01/caption.txt"),
+      file("01/data.json"),
+      file("01/01.png"),
+    ]);
+    expect(picked.dataJsonFile?.name).toBe("data.json");
+  });
+
+  it("omits dataJsonFile when there is no data.json", () => {
+    const picked = pickPrimaryFiles([file("01/caption.txt"), file("01/01.png")]);
+    expect(picked.dataJsonFile).toBeUndefined();
+  });
+
+  it("never treats data.json as the text body or an image", () => {
+    const picked = pickPrimaryFiles([file("01/data.json"), file("01/hero.png")]);
+    expect(picked.textFile).toBeUndefined();
+    expect(picked.imageFiles.map((f) => f.name)).not.toContain("data.json");
+  });
 });
 
 describe("guessAssetType", () => {

@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
+import { templateForAsset, isAssetUnlockedForClient } from "@/lib/post-chain";
 import type { Asset } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -26,6 +27,11 @@ interface CalendarEvent {
   mode?: string;
   agentColor: string;
   platform?: string;
+  /** Template/format chip label (e.g. "By The Numbers"), when resolvable. */
+  templateName?: string;
+  /** True when this asset is a future-dated placeholder for the viewer — render
+      a non-clickable "upcoming" chip and never open the detail modal. */
+  locked?: boolean;
 }
 
 /* ── Constants ───────────────────────────────────────────────────────── */
@@ -66,20 +72,33 @@ function eventKind(a: Asset, now: number): EventKind | null {
     if (isAuto && a.scheduledAt <= now) return "published";
     return "scheduled";
   }
-  // Draft with an agent-recommended slot — advisory until someone schedules it.
-  if (a.status === "draft" && a.recommendedAt != null) return "suggested";
+  // Draft with a planned chain slot (scheduledAt) or an agent-recommended slot —
+  // advisory until a staffer approves it. The one-post-per-day chain writes
+  // scheduledAt onto drafts, so bucketing drafts by scheduledAt ?? recommendedAt
+  // makes the chain visible on every viewer's calendar (staff included).
+  if (a.status === "draft" && (a.scheduledAt != null || a.recommendedAt != null)) return "suggested";
   return null;
 }
 
-function buildEvents(assets: Asset[], now: number): CalendarEvent[] {
+/** A future-dated placeholder for this viewer: the server already redacts client
+    copies (asset.locked), and we defensively re-derive it for client viewers. */
+function isLockedForViewer(a: Asset, viewerIsClient: boolean, now: number): boolean {
+  return a.locked === true || (viewerIsClient && !isAssetUnlockedForClient(a, now));
+}
+
+function buildEvents(assets: Asset[], now: number, viewerIsClient: boolean): CalendarEvent[] {
   return assets
     .map((a): CalendarEvent | null => {
-      const kind = eventKind(a, now);
+      const locked = isLockedForViewer(a, viewerIsClient, now);
+      let kind = eventKind(a, now);
+      // A locked upcoming asset always earns a calendar slot (rendered as a
+      // non-clickable placeholder) even if its status wouldn't otherwise chip.
+      if (!kind && locked && a.scheduledAt != null) kind = "scheduled";
       if (!kind) return null;
       const platformColor = a.scheduledPlatform ? PLATFORM_COLORS[a.scheduledPlatform] : undefined;
       const at =
         kind === "suggested"
-          ? a.recommendedAt!
+          ? (a.scheduledAt ?? a.recommendedAt!)
           : (a.scheduledAt ?? a.publishedAt!);
       return {
         assetId: a.id,
@@ -89,6 +108,8 @@ function buildEvents(assets: Asset[], now: number): CalendarEvent[] {
         mode: a.publishMode,
         agentColor: platformColor ?? "#FF6B2C",
         platform: a.scheduledPlatform,
+        templateName: templateForAsset(a)?.name,
+        locked,
       };
     })
     .filter((e): e is CalendarEvent => e != null)
@@ -131,6 +152,26 @@ function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: 
     hour: "numeric",
     minute: "2-digit",
   });
+
+  // Locked = future-dated placeholder: show the template name behind a lock, no
+  // click-through, no content — the actual asset never opens (requirement H).
+  if (event.locked) {
+    const label = event.templateName ?? event.title;
+    const dateStr = new Date(event.scheduledAt).toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+    });
+    return (
+      <div
+        className="flex w-full items-center gap-1 truncate rounded border border-dashed border-border bg-surface-2 px-1 py-0.5 text-[10px] leading-tight text-muted-2"
+        title={`Upcoming · ${label} · unlocks ${dateStr}`}
+      >
+        <Icon name="Lock" className="h-2.5 w-2.5 shrink-0 opacity-70" />
+        <span className="truncate">{label}</span>
+      </div>
+    );
+  }
+
   const modeStr = event.kind === "scheduled" && event.mode ? MODE_TOOLTIP[event.mode] : undefined;
 
   return (
@@ -141,17 +182,29 @@ function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: 
         "flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate text-left transition-opacity hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-neon/50",
         KIND_CHIP_CLASS[event.kind],
       )}
-      title={`${KIND_TOOLTIP[event.kind]}${modeStr ? ` · ${modeStr}` : ""} · ${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""}`}
+      title={`${KIND_TOOLTIP[event.kind]}${modeStr ? ` · ${modeStr}` : ""}${event.templateName ? ` · ${event.templateName}` : ""} · ${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""}`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{event.title}</span>
+      {event.templateName && (
+        <span className="ml-auto max-w-[46%] shrink-0 truncate font-mono text-[9px] uppercase tracking-wide opacity-60">
+          {event.templateName}
+        </span>
+      )}
     </button>
   );
 }
 
 /* ── Main component ──────────────────────────────────────────────────── */
 
-export function ContentCalendar({ assets }: { assets: Asset[] }) {
+export function ContentCalendar({
+  assets,
+  viewerIsClient = false,
+}: {
+  assets: Asset[];
+  /** Client viewers see future-dated posts as non-clickable locked placeholders. */
+  viewerIsClient?: boolean;
+}) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -161,7 +214,10 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
   // impure and would change every render, breaking the memo). Resolves past
   // auto-publish slots to "published" as of page load, without self-flipping mid-session.
   const [nowMs] = useState(() => Date.now());
-  const events = useMemo(() => buildEvents(assets, nowMs), [assets, nowMs]);
+  const events = useMemo(
+    () => buildEvents(assets, nowMs, viewerIsClient),
+    [assets, nowMs, viewerIsClient],
+  );
   const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
   const openAsset = openAssetId ? assetById.get(openAssetId) ?? null : null;
 

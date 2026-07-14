@@ -268,6 +268,60 @@ export async function updateAsset(id: string, data: Partial<Asset>): Promise<voi
 }
 
 /**
+ * Persist content-chain assignments (see lib/post-chain.ts planClientChain).
+ *
+ * CRON-SAFETY INVARIANT: only DRAFT assets are ever written — each target doc
+ * is re-read and skipped (with a warning) if its live status is anything else,
+ * so a race with staff approval can never re-date a calendar-armed asset.
+ * NEVER writes status; forces publishMode "manual" unless already
+ * manual/placeholder — absent = legacy auto, and a stale explicit "auto" on a
+ * draft must be downgraded too, or either would arm the /api/publish cron the
+ * moment the draft is approved with a past date. recommendedAt mirrors the
+ * chain slot so the calendar's draft bucketing and the approve form agree
+ * with the chain date.
+ */
+export async function applyChainAssignments(
+  assignments: Array<{ id: string; scheduledAt: number; orderKey?: string }>,
+): Promise<void> {
+  if (assignments.length === 0) return;
+  const db = adminDb();
+  const CHUNK = 300; // getAll + batch limits are 500; stay comfortably under.
+  for (let i = 0; i < assignments.length; i += CHUNK) {
+    const chunk = assignments.slice(i, i + CHUNK);
+    const snaps = await db.getAll(...chunk.map((a) => col.assets().doc(a.id)));
+    const batch = db.batch();
+    let writes = 0;
+    for (let j = 0; j < chunk.length; j++) {
+      const assignment = chunk[j];
+      const snap = snaps[j];
+      const doc = snap.exists ? (snap.data() as Asset) : null;
+      if (!doc || doc.status !== "draft") {
+        console.warn(
+          `[chain] skipping assignment for asset ${assignment.id}: status is ${doc?.status ?? "missing"}, not draft`,
+        );
+        continue;
+      }
+      batch.set(
+        snap.ref,
+        {
+          scheduledAt: assignment.scheduledAt,
+          ...(assignment.orderKey ? { orderKey: assignment.orderKey } : {}),
+          ...(doc.publishMode !== "manual" && doc.publishMode !== "placeholder"
+            ? { publishMode: "manual" as const }
+            : {}),
+          recommendedAt: assignment.scheduledAt,
+          recommendedReason: "One post per day — assigned by the content chain",
+          updatedAt: Date.now(),
+        },
+        { merge: true },
+      );
+      writes++;
+    }
+    if (writes > 0) await batch.commit();
+  }
+}
+
+/**
  * All calendar-booked assets (status "scheduled" OR "approved") whose scheduledAt is
  * at or before `before` (default: now). Approval places an asset on the calendar at a
  * designated time, so approved auto-mode assets are auto-published just like scheduled

@@ -18,6 +18,13 @@ import {
 } from "@/lib/lab-outputs";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
+import {
+  chainFamilyFor,
+  orderKeyForLabItem,
+  templateForAsset,
+  templateFromItemKey,
+} from "@/lib/post-chain";
+import { reflowClientChain } from "@/lib/chain";
 import { logActivity, requireStaff } from "./_shared";
 
 const CONTENT_CHAR_CAP = 100_000;
@@ -39,6 +46,50 @@ const CONTENT_TYPES: Record<string, string> = {
 function contentTypeFor(name: string): string {
   const i = name.lastIndexOf(".");
   return (i >= 0 && CONTENT_TYPES[name.slice(i).toLowerCase()]) || "application/octet-stream";
+}
+
+/** "By The Numbers" → "by-the-numbers" (template key from a data.json format). */
+function slugifyFormat(s: string): string {
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/** "by the numbers" → "By The Numbers" (template chip label from a data.json format). */
+function titleCaseFormat(s: string): string {
+  return s
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/** Optional per-item metadata the lab may emit as data.json alongside deliverables. */
+interface LabItemData {
+  /** Declared template/format name — authoritative over the folder-key slug. */
+  format?: string;
+  /** Internal generation date (YYYY-MM-DD) — sorts bare-slug items in the chain. */
+  date?: string;
+}
+
+/** Parse + validate a data.json body; returns null when nothing usable is present. */
+function parseLabItemData(raw: string): LabItemData | null {
+  try {
+    const parsed = JSON.parse(raw) as { format?: unknown; date?: unknown };
+    const format =
+      typeof parsed.format === "string" && parsed.format.trim() ? parsed.format.trim() : undefined;
+    const date =
+      typeof parsed.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)
+        ? parsed.date
+        : undefined;
+    if (!format && !date) return null;
+    return { ...(format ? { format } : {}), ...(date ? { date } : {}) };
+  } catch {
+    // Malformed data.json — template/date fall back to the item folder key.
+    return null;
+  }
 }
 
 async function requireLabClient(clientId: string) {
@@ -111,6 +162,19 @@ export async function importLabRunAction(input: {
         .map((a) => (a.meta as { labRun?: string } | undefined)?.labRun)
         .filter((v): v is string => typeof v === "string"),
     );
+    // Template keys this client already has, so one-off run slugs collapse onto
+    // an existing template (e.g. "voce-sabia-renda-fixa-…" → "voce-sabia")
+    // instead of minting a near-duplicate chip. Seeded from existing assets and
+    // extended as this import derives new templates.
+    const knownTemplateKeys = new Set<string>();
+    for (const a of existing) {
+      const t = templateForAsset(a);
+      if (t) knownTemplateKeys.add(t.key);
+    }
+
+    // agentFolder is constant for the whole run, so the type/family are too.
+    const assetType = guessAssetType(input.agentFolder);
+    const chainFamily = chainFamilyFor(assetType);
 
     const now = Date.now();
     let created = 0;
@@ -123,13 +187,16 @@ export async function importLabRunAction(input: {
         skipped++;
         continue;
       }
-      const { captionFile, aboutFile, textFile, imageFiles } = pickPrimaryFiles(group.files);
+      const { captionFile, aboutFile, textFile, imageFiles, dataJsonFile } = pickPrimaryFiles(
+        group.files,
+      );
 
       const hosted: Array<{ name: string; relPath: string; url: string; bytes: number }> = [];
       let content = "";
       let about = "";
       let imageUrl: string | null = null;
       const imageUrls: string[] = [];
+      let dataJson: LabItemData | null = null;
 
       for (const file of group.files) {
         if (file.size > MAX_LAB_FILE_BYTES || totalBytes + file.size > MAX_LAB_RUN_BYTES) continue;
@@ -145,6 +212,7 @@ export async function importLabRunAction(input: {
           content = bytes.toString("utf8").slice(0, CONTENT_CHAR_CAP);
         }
         if (file === aboutFile) about = bytes.toString("utf8").slice(0, 4000);
+        if (file === dataJsonFile) dataJson = parseLabItemData(bytes.toString("utf8"));
         if (imageFiles.includes(file)) {
           imageUrls.push(url);
           imageUrl ??= url;
@@ -155,12 +223,25 @@ export async function importLabRunAction(input: {
         continue;
       }
 
+      // Template chip: the lab's declared data.json `format` wins; otherwise the
+      // item folder key (stripped of its date/index prefix), collapsed onto a
+      // known template key when one matches. Never baked into the title (E).
+      let template = templateFromItemKey(
+        group.key === "run" ? input.runName : group.key,
+        [...knownTemplateKeys],
+      );
+      if (dataJson?.format) {
+        const key = slugifyFormat(dataJson.format);
+        if (key) template = { key, name: titleCaseFormat(dataJson.format) };
+      }
+      if (template) knownTemplateKeys.add(template.key);
+
       await createAsset({
         clientId: input.clientId,
         jobId: null,
         agentId: null,
-        type: guessAssetType(input.agentFolder),
-        title: `${humanizeItemName(group.key === "run" ? input.runName : group.key)} — ${input.runName}`,
+        type: assetType,
+        title: humanizeItemName(group.key === "run" ? input.runName : group.key),
         content,
         meta: {
           source: "lab-import",
@@ -172,8 +253,11 @@ export async function importLabRunAction(input: {
         },
         imageUrl,
         status: "draft",
-        // `created` staggers the batch across successive optimal windows.
-        ...recommendedScheduleFields(guessAssetType(input.agentFolder), created),
+        ...(template ? { templateKey: template.key, templateName: template.name } : {}),
+        orderKey: orderKeyForLabItem(input.runName, group.key, dataJson?.date),
+        // Chain-family types get their date + recommendedAt from the post-create
+        // reflow (A8/A4); only non-chain types keep the advisory stagger.
+        ...(chainFamily ? {} : recommendedScheduleFields(assetType, created)),
         createdBy: ctx.user.uid,
         createdAt: now,
         updatedAt: now,
@@ -190,6 +274,13 @@ export async function importLabRunAction(input: {
       actorRole: "staff",
       metadata: { runKey, created, skipped },
     });
+    // Auto-assign every new post its one-per-day chain date; later batches
+    // interleave with existing unposted items by orderKey. Best-effort — a
+    // reflow failure must never fail the import (staff can re-run it from the
+    // "Re-plan calendar" action).
+    await reflowClientChain(input.clientId).catch((e) =>
+      console.error("[lab-import] chain reflow failed", e),
+    );
     revalidatePath(`/clients/${input.clientId}`);
     revalidatePath("/assets");
     return { created, skipped };

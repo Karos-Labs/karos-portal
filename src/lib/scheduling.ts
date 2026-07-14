@@ -150,8 +150,12 @@ function sameLocalDay(a: number, b: number): boolean {
   );
 }
 
-/** No more than this many pieces should land on a single day before we spread to the next. */
-const MAX_PER_DAY = 2;
+/**
+ * No more than this many pieces should land on a single day before we spread
+ * to the next. Matches the content chain's one-post-per-day rule
+ * (lib/post-chain.ts) so staff density suggestions agree with chain dates.
+ */
+const MAX_PER_DAY = 1;
 /** Keep publications at least this far apart so a day never feels spammy. */
 const MIN_GAP_MS = 90 * 60 * 1000;
 

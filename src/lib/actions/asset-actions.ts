@@ -124,6 +124,9 @@ export async function approveAssetAction(
   id: string,
   opts?: { scheduledAt?: number; platform?: string; publishMode?: PublishMode },
 ): Promise<void> {
+  // Approval is a staff-only gate: requireAssetAccess alone would let a client
+  // approve their own asset (and via opts.platform arm auto-publish).
+  await requireStaff();
   const asset = await requireAssetAccess(id);
   const patch: Partial<Asset> = { status: "approved", updatedAt: Date.now() };
 
@@ -145,6 +148,17 @@ export async function approveAssetAction(
     patch.scheduledAt = opts.scheduledAt;
     patch.publishMode = publishMode;
     if (opts.platform) patch.scheduledPlatform = opts.platform;
+  } else if (
+    asset.scheduledAt != null &&
+    asset.publishMode !== "manual" &&
+    asset.publishMode !== "placeholder"
+  ) {
+    // Cron-safety: approving a chain-dated draft (it already carries a
+    // scheduledAt) without an explicit slot must never leave it cron-eligible —
+    // absent == legacy "auto", and a stale explicit "auto" left over from a
+    // revert-to-draft is just as dangerous. Force "manual" so publishing
+    // stays an explicit staff action.
+    patch.publishMode = "manual";
   }
 
   await updateAsset(id, patch);
