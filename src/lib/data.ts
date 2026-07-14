@@ -293,6 +293,9 @@ export async function updateAsset(id: string, data: Partial<Asset>): Promise<voi
  * chain slot so the calendar's draft bucketing and the approve form agree
  * with the chain date.
  */
+import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { integrationIsUsable } from "@/lib/integration-status";
+
 export async function applyChainAssignments(
   assignments: Array<{ id: string; scheduledAt: number; orderKey?: string }>,
 ): Promise<void> {
@@ -314,14 +317,29 @@ export async function applyChainAssignments(
         );
         continue;
       }
+
+      // Decide a preferred platform for this asset (explicit scheduledPlatform wins,
+      // else the first agent channel compatible with the asset type).
+      const compatible = PUBLISHABLE_PLATFORMS[doc.type] ?? [];
+      const preferredPlatform = doc.scheduledPlatform ?? (doc.channels ?? []).find((c) => compatible.includes(c));
+
+      // Check if the client has an active integration for this preferred platform.
+      const integrations = await listClientIntegrations(doc.clientId);
+      const activeIntegration = preferredPlatform
+        ? integrations.find((i) => i.platform === preferredPlatform && integrationIsUsable(i))
+        : undefined;
+
       batch.set(
         snap.ref,
         {
           scheduledAt: assignment.scheduledAt,
           ...(assignment.orderKey ? { orderKey: assignment.orderKey } : {}),
-          ...(doc.publishMode !== "manual" && doc.publishMode !== "placeholder"
-            ? { publishMode: "manual" as const }
-            : {}),
+          // If an active integration exists for the preferred platform, allow auto.
+          // Otherwise keep safety: mark manual so nothing auto-posts without a connection.
+          ...(activeIntegration
+            ? { publishMode: "auto" as const }
+            : { publishMode: doc.publishMode !== "manual" && doc.publishMode !== "placeholder" ? "manual" as const : doc.publishMode }),
+          ...(preferredPlatform ? { scheduledPlatform: preferredPlatform } : {}),
           recommendedAt: assignment.scheduledAt,
           recommendedReason: "One post per day — assigned by the content chain",
           updatedAt: Date.now(),
