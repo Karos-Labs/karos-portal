@@ -325,17 +325,21 @@ export async function applyChainAssignments(
 
       // Check if the client has an active integration for this preferred platform.
       const integrations = await listClientIntegrations(doc.clientId);
-      const activeIntegration = preferredPlatform
-        ? integrations.find((i) => i.platform === preferredPlatform && integrationIsUsable(i))
-        : undefined;
+      const settings = await getClientSettings(doc.clientId);
+      const allowAuto = settings?.autoScheduleEnabled === true;
+      const activeIntegration =
+        allowAuto && preferredPlatform
+          ? integrations.find((i) => i.platform === preferredPlatform && integrationIsUsable(i))
+          : undefined;
 
       batch.set(
         snap.ref,
         {
           scheduledAt: assignment.scheduledAt,
           ...(assignment.orderKey ? { orderKey: assignment.orderKey } : {}),
-          // If an active integration exists for the preferred platform, allow auto.
-          // Otherwise keep safety: mark manual so nothing auto-posts without a connection.
+          // If an active integration exists for the preferred platform AND the client
+          // opted in to auto-scheduling, allow auto. Otherwise keep safety: mark
+          // manual so nothing auto-posts without a connection or explicit opt-in.
           ...(activeIntegration
             ? { publishMode: "auto" as const }
             : { publishMode: doc.publishMode !== "manual" && doc.publishMode !== "placeholder" ? "manual" as const : doc.publishMode }),

@@ -11,6 +11,7 @@ import {
   markIntegrationExpired,
   claimAssetForPublish,
   releaseAssetPublishClaim,
+  getClientSettings,
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { requireStaff } from "./_shared";
@@ -135,7 +136,14 @@ export async function approveAssetAction(
     const publishMode: PublishMode = opts.publishMode ?? (opts.platform ? "auto" : "placeholder");
     if (publishMode === "auto") {
       if (!opts.platform) throw new Error("Auto-publish requires a target platform");
-      // Enforce: auto-publish only when the required integration is connected and active.
+      // Enforce: auto-publish only when the client opted-in and the required
+      // integration is connected and active.
+      const settings = await getClientSettings(asset.clientId);
+      if (!settings?.autoScheduleEnabled) {
+        throw new Error(
+          `Client has not enabled auto-scheduling — approve as manual/placeholder or enable in Client Settings`,
+        );
+      }
       const integrations = await listClientIntegrations(asset.clientId);
       const active = integrations.find(
         (i) => i.platform === opts.platform && integrationIsUsable(i),
@@ -157,18 +165,22 @@ export async function approveAssetAction(
     if (candidateAt != null) {
       // Decide platform preference and whether an active integration exists
       const platform = preferredPlatform(asset);
+      const settings = await getClientSettings(asset.clientId);
+      const allowAuto = settings?.autoScheduleEnabled === true;
       const integrations = await listClientIntegrations(asset.clientId);
-      const active = platform
-        ? integrations.find((i) => i.platform === platform && integrationIsUsable(i))
-        : undefined;
+      const active =
+        allowAuto && platform
+          ? integrations.find((i) => i.platform === platform && integrationIsUsable(i))
+          : undefined;
 
       patch.scheduledAt = candidateAt;
       if (active) {
         patch.publishMode = "auto";
         if (platform) patch.scheduledPlatform = platform;
       } else {
-        // No usable integration — keep safety: land on the calendar but require
-        // an explicit Publish Now (manual) so nothing posts without a connection.
+        // No usable integration or client opted out — keep safety: land on the
+        // calendar but require an explicit Publish Now (manual) so nothing posts
+        // without a connection or an opt-in.
         patch.publishMode = "manual";
         if (platform) patch.scheduledPlatform = platform;
       }

@@ -1058,6 +1058,8 @@ export interface TaskComment {
 export interface ClientSettings {
   clientId: string;
   autopilot: boolean;
+  /** Whether the client has opted into auto-scheduling (approve → auto when integrations exist). */
+  autoScheduleEnabled?: boolean;
   updatedAt: number;
 }
 

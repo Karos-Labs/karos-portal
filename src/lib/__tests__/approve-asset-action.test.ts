@@ -49,6 +49,8 @@ describe("approveAssetAction auto-schedule behavior", () => {
       { id: "i1", platform: "linkedin", clientId: "c1", connectedAt: 1 },
     ]);
     (integ.integrationIsUsable as any).mockReturnValue(true);
+    // client opted in
+    (data.getClientSettings as any).mockResolvedValue({ clientId: "c1", autoScheduleEnabled: true });
     const updated: any[] = [];
     (data.updateAsset as any).mockImplementation(async (id: string, patch: Record<string, any>) => {
       updated.push({ id, patch });
@@ -71,6 +73,8 @@ describe("approveAssetAction auto-schedule behavior", () => {
       { id: "i1", platform: "linkedin", clientId: "c1", connectedAt: 1 },
     ]);
     (integ.integrationIsUsable as any).mockReturnValue(false);
+    // client opted in (but integration unusable)
+    (data.getClientSettings as any).mockResolvedValue({ clientId: "c1", autoScheduleEnabled: true });
     const updated: any[] = [];
     (data.updateAsset as any).mockImplementation(async (id: string, patch: Record<string, any>) => {
       updated.push({ id, patch });
@@ -84,6 +88,32 @@ describe("approveAssetAction auto-schedule behavior", () => {
     expect(patch).toHaveProperty("scheduledAt", asset.recommendedAt);
     expect(patch).toHaveProperty("publishMode", "manual");
     // platform preference still suggested on the calendar for staff reference
+    expect(patch).toHaveProperty("scheduledPlatform", "linkedin");
+  });
+
+  it("respects client opt-out: even with a usable integration, auto-scheduling is blocked when the client has disabled autoScheduleEnabled", async () => {
+    const asset = makeAsset({ recommendedAt: NOW + 86_400_000, channels: ["linkedin"] });
+    (data.getAsset as any).mockResolvedValue(asset);
+    (data.listClientIntegrations as any).mockResolvedValue([
+      { id: "i1", platform: "linkedin", clientId: "c1", connectedAt: 1 },
+    ]);
+    (integ.integrationIsUsable as any).mockReturnValue(true);
+    // client settings show opt-out
+    (data.getClientSettings as any).mockResolvedValue({ clientId: "c1", autoScheduleEnabled: false });
+
+    const updated: any[] = [];
+    (data.updateAsset as any).mockImplementation(async (id: string, patch: Record<string, any>) => {
+      updated.push({ id, patch });
+    });
+
+    await actions.approveAssetAction("a1");
+
+    expect(updated.length).toBe(1);
+    const patch = updated[0].patch;
+    expect(patch).toHaveProperty("status", "approved");
+    expect(patch).toHaveProperty("scheduledAt", asset.recommendedAt);
+    // Because client opted out, even though integration is usable, publishMode must be manual
+    expect(patch).toHaveProperty("publishMode", "manual");
     expect(patch).toHaveProperty("scheduledPlatform", "linkedin");
   });
 });
