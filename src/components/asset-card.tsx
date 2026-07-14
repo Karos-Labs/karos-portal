@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import type { KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -13,7 +14,7 @@ import {
   unscheduleAssetAction,
   publishAssetNowAction,
 } from "@/lib/actions";
-import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS } from "@/lib/integrations/platforms";
+import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS, PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { templateForAsset } from "@/lib/post-chain";
 import { relativeTime, cn } from "@/lib/utils";
 import type { Asset, PublishMode } from "@/lib/types";
@@ -33,6 +34,10 @@ const MODE_LABELS: Record<PublishMode, string> = {
   manual: "Manual push",
   placeholder: "Placeholder",
 };
+
+// Slide metadata used by the carousel and rendering logic
+type SlideMeta = { role?: string; headline?: string; body?: string | null; imageUrl?: string | null; attribution?: string | null };
+
 
 /** epoch millis → value for <input type="datetime-local"> in the user's timezone */
 function toLocalInputValue(t: number): string {
@@ -280,6 +285,124 @@ function ApprovePanel({
 
 /* ── Main component ──────────────────────────────────────────────────── */
 
+function Carousel({ slides, onOpenLightbox }: { slides: SlideMeta[]; onOpenLightbox: (i: number) => void }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const slideRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            const idx = Number((e.target as HTMLElement).dataset?.slideIndex ?? -1);
+            if (!Number.isNaN(idx) && idx >= 0) setCurrentIndex(idx);
+          }
+        }
+      },
+      { root: containerRef.current, threshold: 0.5 },
+    );
+    slideRefs.current.forEach((el) => el && observer.observe(el));
+    return () => observer.disconnect();
+  }, []);
+
+  function scrollToIndex(i: number) {
+    const el = slideRefs.current[i];
+    if (el && containerRef.current) {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+      setCurrentIndex(i);
+      // focus the slide for screen readers
+      try { el.focus({ preventScroll: true }); } catch {};
+    }
+  }
+
+  function onKeyDown(e: KeyboardEvent) {
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      scrollToIndex(Math.min(currentIndex + 1, slides.length - 1));
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      scrollToIndex(Math.max(currentIndex - 1, 0));
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      scrollToIndex(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      scrollToIndex(slides.length - 1);
+    }
+  }
+
+  return (
+    <div>
+      <div
+        ref={containerRef}
+        tabIndex={0}
+        role="region"
+        aria-roledescription="carousel"
+        aria-label={`Carousel with ${slides.length} slides`}
+        onKeyDown={onKeyDown}
+        className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-2 focus:outline-none"
+      >
+        {slides.map((s, i) => (
+          <div
+            key={i}
+            ref={(el) => { slideRefs.current[i] = el; }}
+            data-slide-index={i}
+            tabIndex={-1}
+            role="group"
+            aria-roledescription="slide"
+            aria-label={`Slide ${i + 1} of ${slides.length}`}
+            className="snap-start shrink-0 w-full max-w-[420px] rounded-lg bg-surface-2 p-2"
+          >
+            {s.imageUrl ? (
+              <button
+                type="button"
+                onClick={() => onOpenLightbox(i)}
+                className="group relative block h-48 w-full overflow-hidden rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
+                title="View full size"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={s.imageUrl} alt={s.headline ?? `Slide ${i + 1}`} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+                <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition-opacity group-hover:bg-black/30 group-hover:opacity-100">
+                  <Icon name="Maximize2" className="h-5 w-5" />
+                </span>
+              </button>
+            ) : (
+              <div className="flex h-48 items-center justify-center overflow-hidden rounded-lg border border-dashed border-border text-center text-[10px] text-muted-2">
+                no photo
+              </div>
+            )}
+            <div className="mt-2 min-w-0">
+              <p className="text-xs font-medium">
+                {s.headline ? `${i + 1}. ${s.headline}` : `Slide ${i + 1}`}
+                {s.role ? <span className="text-muted-2"> · {s.role}</span> : null}
+              </p>
+              {s.body ? <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted">{s.body}</p> : null}
+              {s.attribution ? <p className="mt-1 text-[10px] text-muted-2">{s.attribution}</p> : null}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Visible dot indicators — keyboard focusable */}
+      <div className="mt-2 flex items-center justify-center gap-2">
+        {slides.map((_, i) => (
+          <button
+            key={i}
+            onClick={() => scrollToIndex(i)}
+            aria-label={`Go to slide ${i + 1}`}
+            aria-current={currentIndex === i ? "true" : undefined}
+            className={cn(
+              "h-2 w-2 rounded-full transition-colors",
+              currentIndex === i ? "bg-neon" : "bg-border/60",
+            )}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function AssetCard({
   asset,
   canApprove,
@@ -374,6 +497,9 @@ export function AssetCard({
 
   // Template/format chip (e.g. "By The Numbers") — data-driven, legacy-safe.
   const template = templateForAsset(asset);
+  // Resolve a primary platform (scheduledPlatform, fallback to agent channels)
+  const primaryPlatform = asset.scheduledPlatform ?? (asset.channels && asset.channels.length ? asset.channels[0] : undefined);
+  const platformConfig = PLATFORM_REGISTRY.find((p) => p.id === primaryPlatform);
 
   // Locked upcoming post: a future-dated deliverable the client can't open yet.
   // The server already redacted content/images/meta before this reached the
@@ -409,15 +535,6 @@ export function AssetCard({
     );
   }
 
-  async function setStatus(status: "approved" | "delivered" | "published") {
-    setBusy(true);
-    try {
-      await updateAssetAction(asset.id, { status });
-      router.refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
 
   /** Approve a non-schedulable draft (e.g. a note) straight through — no calendar slot. */
   async function handleSimpleApprove() {
@@ -478,9 +595,16 @@ export function AssetCard({
   return (
     <Card className="overflow-hidden">
       <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
-          <Icon name={TYPE_ICON[asset.type] ?? "FileText"} className="h-4 w-4" />
-        </div>
+        <div className="flex items-center gap-2">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
+              <Icon name={TYPE_ICON[asset.type] ?? "FileText"} className="h-4 w-4" />
+            </div>
+            {platformConfig ? (
+              <div className="flex h-7 w-7 items-center justify-center rounded-md text-white" style={{ background: platformConfig.color }}>
+                <Icon name={platformConfig.icon} className="h-4 w-4" />
+              </div>
+            ) : null}
+          </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
@@ -576,30 +700,15 @@ export function AssetCard({
                 </p>
               )}
               {isCarousel && (
-                <div className="mt-2 space-y-2">
-                  {slides.map((s, i) => (
-                    <div key={i} className="flex gap-2 rounded-lg bg-surface-2 p-2">
-                      {s.imageUrl ? (
-                        <button
-                          type="button"
-                          onClick={() => setLightboxIndex(galleryIndexForSlide(i))}
-                          className="h-24 w-20 shrink-0 overflow-hidden rounded border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
-                          title="View full size"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={s.imageUrl} alt="" className="h-full w-full object-cover" />
-                        </button>
-                      ) : null}
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium">
-                          {s.headline ? `${i + 1}. ${s.headline}` : `Slide ${i + 1}`}
-                          {s.role ? <span className="text-muted-2"> · {s.role}</span> : null}
-                        </p>
-                        {s.body ? <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted">{s.body}</p> : null}
-                        {s.attribution ? <p className="mt-1 text-[10px] text-muted-2">{s.attribution}</p> : null}
-                      </div>
-                    </div>
-                  ))}
+                <div className="mt-2">
+                  <div className="relative">
+                    {/* Accessible carousel: keyboard navigation, ARIA roles, and visible dot indicators */}
+                    <Carousel slides={slides} onOpenLightbox={(i) => setLightboxIndex(galleryIndexForSlide(i))} />
+                  </div>
+                  <p className="mt-1 text-[10px] text-muted-2">
+                    {slides.length} slides · {photoCount} with photos
+                    {photoCount > 0 && " · swipe to view & download"}
+                  </p>
                 </div>
               )}
               {!isCarousel && imageConcept && (
@@ -768,34 +877,29 @@ export function AssetCard({
                 </Button>
               )}
               {canApprove && asset.status === "draft" && !approving && (
-                calendarEligible ? (
-                  <>
-                    <Button
-                      size="sm"
-                      onClick={() => {
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (calendarEligible) {
                         setApproving(true);
                         setEditing(false);
-                      }}
-                      title="Put this on the content calendar: auto-publish, manual push, or placeholder"
-                    >
-                      <Icon name="Clock" className="h-3.5 w-3.5" />
-                      Schedule
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => setStatus("approved")}
-                      loading={busy}
-                    >
-                      <Icon name="Check" className="h-3.5 w-3.5" />
-                      Approve
-                    </Button>
-                  </>
-                ) : (
-                  <Button size="sm" onClick={handleSimpleApprove} loading={busy}>
+                      } else {
+                        handleSimpleApprove();
+                      }
+                    }}
+                    loading={busy}
+                  >
                     <Icon name="Check" className="h-3.5 w-3.5" />
                     Approve
                   </Button>
-                )
+                  {!editing && (
+                    <Button size="sm" variant="outline" onClick={() => { setOpen(true); setEditing(true); setApproving(false); }}>
+                      <Icon name="Pencil" className="h-3.5 w-3.5" />
+                      Edit
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
           </div>

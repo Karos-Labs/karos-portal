@@ -19,6 +19,7 @@ import {
   markIntegrationExpired,
   createClientTask,
   getTaskBoardCapacity,
+  getClientPerformanceBenchmarks,
   chargeClientCredits,
   getClientCredits,
 } from "@/lib/data";
@@ -29,6 +30,8 @@ import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { getClientCustomAgents, buildAgentCatalog } from "@/lib/agent-roster";
+import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { sendEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
 import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
@@ -58,7 +61,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   };
   const messages = (body.messages ?? []) as ModelMessage[];
 
-  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity] =
+  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks, customAgents] =
     await Promise.all([
       getClient(clientId),
       getClientReport(clientId),
@@ -68,6 +71,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       listAssets({ clientId }),
       listClientIntegrations(clientId),
       getTaskBoardCapacity(clientId),
+      getClientPerformanceBenchmarks(clientId),
+      getClientCustomAgents(clientId),
     ]);
 
   if (!client) {
@@ -105,28 +110,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   /* ── Shared Google integration lookup ────────────────────────────── */
   const googleIntegration = integrations.find(
-    (i) => i.platform === "google" && i.status === "active",
+    (i) => i.platform === "google" && integrationIsUsable(i),
   );
 
   // Build dynamic proactive appendix with the managed-product catalog (karos-agents
   // lab products run by the Karos team), social integrations, calendar state, and
   // Gmail status so the AI follows the correct scenario rules.
-  const agentCatalog = MANAGED_PRODUCTS.map((p) => ({
-    id: p.taskType,
-    name: p.name,
-    outputKind: p.taskType,
-    description: `${p.tagline}. ${p.description}`,
-    capabilities: [] as string[],
-    deliverables: p.deliverables,
-    estimate: p.estimate,
-    briefKeys: p.briefFields.map((f) => f.key),
-  }));
+  // Unified roster: the managed lab products PLUS the client's assigned custom
+  // agents (git-imported), so the copilot plans around the full agent set.
+  const agentCatalog = buildAgentCatalog(customAgents);
 
   const socialIntegrations = integrations
     .filter((i) => i.platform !== "google")
     .map((i) => ({
       platform: i.platform,
-      status: (i.status === "expired" ? "expired" : "active") as "active" | "expired",
+      // The proactive appendix only knows active|expired; reauthenticate maps to expired.
+      status: (integrationNeedsReconnect(i) ? "expired" : "active") as "active" | "expired",
     }));
   const linkedSocialPlatforms = socialIntegrations
     .filter((i) => i.status === "active")
@@ -160,6 +159,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `If the balance is under 20, proactively mention it and suggest asking the Karos team for a top-up. Never invent credit figures beyond these.`
     : "";
 
+  // Flatten measured analytics into the prompt's benchmark shape (Firestore
+  // types stay out of the pure prompt builder).
+  const toBenchmarkEntry = (r: (typeof benchmarks.top)[number]) => ({
+    label: r.assetLabel ?? r.assetId,
+    platform: r.platform,
+    assetType: r.assetType,
+    engagementScore: r.engagementScore,
+    impressions: r.metrics.impressions,
+    engagementRate: r.metrics.engagementRate,
+  });
+
   const systemPrompt =
     `${baseSystemPrompt}\n\n` +
     buildProactiveSystemAppendix({
@@ -171,6 +181,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       hasScheduledContent,
       activeTaskCount: boardCapacity.activeCount,
       maxActiveTasks: MAX_ACTIVE_TASKS,
+      historicalBenchmarks: {
+        top: benchmarks.top.map(toBenchmarkEntry),
+        bottom: benchmarks.bottom.map(toBenchmarkEntry),
+        sampleSize: benchmarks.sampleSize,
+      },
     }) +
     creditsAppendix;
 

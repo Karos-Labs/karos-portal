@@ -42,6 +42,8 @@ export function signOAuthState(payload: {
   clientId: string;
   uid: string;
   provider: string;
+  /** Employee-advocacy flows carry the target seat so the callback attaches tokens to it. */
+  seatId?: string;
 }): string {
   const nonce = randomBytes(16).toString("hex");
   const data = Buffer.from(
@@ -54,6 +56,7 @@ export function verifyOAuthState(state: string): {
   clientId: string;
   uid: string;
   provider: string;
+  seatId?: string;
   ts: number;
 } | null {
   const dot = state.lastIndexOf(".");
@@ -67,6 +70,7 @@ export function verifyOAuthState(state: string): {
       clientId: string;
       uid: string;
       provider: string;
+      seatId?: string;
       ts: number;
     };
     if (Date.now() - parsed.ts > 10 * 60 * 1000) return null; // 10-minute TTL
@@ -74,6 +78,11 @@ export function verifyOAuthState(state: string): {
   } catch {
     return null;
   }
+}
+
+/** Callback URL for the LinkedIn employee-advocacy OAuth flow (distinct path). */
+export function buildEmployeeCallbackUrl(): string {
+  return `${APP_URL}/api/integrations/linkedin/employee/callback`;
 }
 
 /* ── PKCE (Twitter OAuth 2.0) ────────────────────────────────────────── */

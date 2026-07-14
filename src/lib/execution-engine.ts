@@ -14,6 +14,7 @@ import {
   getClient,
   updateClientTask,
   listClientTasks,
+  listEmployeeSeats,
 } from "@/lib/data";
 import { sendEmail } from "@/lib/email";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
@@ -21,7 +22,7 @@ import { MANAGED_PRODUCTS, type ManagedProduct } from "@/lib/agent-service/produ
 import { taskExecutionCost } from "@/lib/credits";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
-import { buildArtifactGenerationPrompt } from "@/lib/ai/prompts/proactive-assistant";
+import { buildArtifactGenerationPrompt, type EmployeeAdvocacyProfile } from "@/lib/ai/prompts/proactive-assistant";
 import type { AppUser, ClientTask, ManagedTaskType, TaskOwner } from "@/lib/types";
 import { logger } from "@/services/logger";
 import type { ModelId } from "@/lib/constants";
@@ -245,6 +246,23 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
   }
 
   try {
+    // If this task targets a LinkedIn employee seat, load that seat and
+    // inject the employee's resume/background into the generation prompt so
+    // the model writes in their authentic personal voice.
+    let employeeAdvocacy: EmployeeAdvocacyProfile | undefined = undefined;
+    const seatId = task.metadata?.seatId as string | undefined;
+    if (seatId) {
+      const seats = await listEmployeeSeats(clientId);
+      const seat = seats.find((s) => s.id === seatId);
+      if (seat && seat.status === "active") {
+        employeeAdvocacy = {
+          name: seat.employeeName,
+          resumeText: seat.backgroundContext ?? null,
+          resumeUrl: seat.resumeUrl ?? null,
+        };
+      }
+    }
+
     const { text: artifact, usage } = await generateText({
       model: selectModel(task),
       prompt: buildArtifactGenerationPrompt(
@@ -259,6 +277,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
         client.brandVoice,
         adjustmentFeedback,
         previousArtifact,
+        employeeAdvocacy,
       ),
     });
 

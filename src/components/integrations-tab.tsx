@@ -11,6 +11,8 @@ import {
   setIntegrationAutoPublishAction,
 } from "@/lib/actions";
 import { PLATFORM_REGISTRY, OAUTH_SUPPORTED_PLATFORM_IDS, type PlatformConfig } from "@/lib/integrations/platforms";
+import { integrationNeedsReconnect } from "@/lib/integration-status";
+import { LinkedInSeatsWorkspace, type SeatView } from "@/components/linkedin-seats-workspace";
 import type { ClientIntegration, Role } from "@/lib/types";
 
 interface Props {
@@ -18,6 +20,11 @@ interface Props {
   integrations: ClientIntegration[];
   oauthEnabledPlatforms: string[];
   currentUserRole: Role;
+  /** Sanitized LinkedIn employee seats (no tokens) for the multi-seat workspace. */
+  linkedinSeats?: SeatView[];
+  /** Plan seat limit + per-extra-seat credit cost for the monetization gate UI. */
+  seatLimit?: number;
+  seatCost?: number;
 }
 
 /* ── Official SVG logos ──────────────────────────────────────────────── */
@@ -134,6 +141,9 @@ function PlatformCard({
   isAdmin,
   onOAuthConnect,
   onDisconnected,
+  linkedinSeats,
+  seatLimit,
+  seatCost,
 }: {
   platform: PlatformConfig;
   integration: ClientIntegration | undefined;
@@ -143,6 +153,9 @@ function PlatformCard({
   isAdmin: boolean;
   onOAuthConnect: () => void;
   onDisconnected: () => void;
+  linkedinSeats?: SeatView[];
+  seatLimit?: number;
+  seatCost?: number;
 }) {
   // True when this platform has an automated OAuth flow defined (static config).
   // Decoupled from isOAuthEnabled (env-var check) so all users can see the
@@ -257,10 +270,17 @@ function PlatformCard({
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-semibold leading-none">{platform.name}</p>
             {isConnected ? (
-              <Badge tone="neon">
-                <Icon name="CheckCircle2" className="h-3 w-3" />
-                Connected
-              </Badge>
+              integration && integrationNeedsReconnect(integration) ? (
+                <Badge tone="warning">
+                  <Icon name="TriangleAlert" className="h-3 w-3" />
+                  Reconnect needed
+                </Badge>
+              ) : (
+                <Badge tone="neon">
+                  <Icon name="CheckCircle2" className="h-3 w-3" />
+                  Connected
+                </Badge>
+              )
             ) : (
               <Badge tone="neutral">Not connected</Badge>
             )}
@@ -444,6 +464,16 @@ function PlatformCard({
           </div>
         </div>
       )}
+
+      {/* LinkedIn employee-advocacy multi-seat workspace (connected LinkedIn only) */}
+      {platform.id === "linkedin" && isConnected && (
+        <LinkedInSeatsWorkspace
+          clientId={clientId}
+          seats={linkedinSeats ?? []}
+          seatLimit={seatLimit ?? 2}
+          seatCost={seatCost ?? 100}
+        />
+      )}
     </div>
   );
 }
@@ -455,6 +485,9 @@ export function IntegrationsTab({
   integrations,
   oauthEnabledPlatforms,
   currentUserRole,
+  linkedinSeats = [],
+  seatLimit = 2,
+  seatCost = 100,
 }: Props) {
   const router = useRouter();
   const isAdmin = currentUserRole === "KAROS_ADMIN";
@@ -564,6 +597,7 @@ export function IntegrationsTab({
               isAdmin={isAdmin}
               onOAuthConnect={() => openOAuthPopup(platform.id)}
               onDisconnected={() => router.refresh()}
+              {...(platform.id === "linkedin" ? { linkedinSeats, seatLimit, seatCost } : {})}
             />
           );
         })}

@@ -25,12 +25,21 @@ export function inferPlatform(assetType: string, connectedPlatforms: string[]): 
   return candidates.find((p) => connectedPlatforms.includes(p)) ?? null;
 }
 
+/**
+ * Result of a successful publish. `postId` is the platform's own id for the new
+ * post when the API returns one (captured for later metrics fetching); null when
+ * the platform doesn't return one or we couldn't parse it.
+ */
+export interface PublishResult {
+  postId: string | null;
+}
+
 /* ── Instagram ───────────────────────────────────────────────────────── */
 
 async function publishToInstagram(
   credentials: Record<string, string>,
   asset: Asset,
-): Promise<void> {
+): Promise<PublishResult> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
   if (!asset.imageUrl) throw new Error("Instagram posts require an image");
@@ -97,6 +106,8 @@ async function publishToInstagram(
     const err = (await publishRes.json()) as { error?: { message?: string } };
     throw new Error(`Publish failed: ${err.error?.message ?? publishRes.status}`);
   }
+  const published = (await publishRes.json().catch(() => ({}))) as { id?: string };
+  return { postId: published.id ?? null };
 }
 
 /* ── Facebook ────────────────────────────────────────────────────────── */
@@ -104,7 +115,7 @@ async function publishToInstagram(
 async function publishToFacebook(
   credentials: Record<string, string>,
   asset: Asset,
-): Promise<void> {
+): Promise<PublishResult> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
 
@@ -141,6 +152,8 @@ async function publishToFacebook(
     const err = (await postRes.json()) as { error?: { message?: string } };
     throw new Error(`Post failed: ${err.error?.message ?? postRes.status}`);
   }
+  const published = (await postRes.json().catch(() => ({}))) as { id?: string };
+  return { postId: published.id ?? null };
 }
 
 /* ── LinkedIn ────────────────────────────────────────────────────────── */
@@ -148,7 +161,7 @@ async function publishToFacebook(
 async function publishToLinkedIn(
   credentials: Record<string, string>,
   asset: Asset,
-): Promise<void> {
+): Promise<PublishResult> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
 
@@ -203,6 +216,10 @@ async function publishToLinkedIn(
     const err = (await postRes.json()) as { message?: string };
     throw new Error(`LinkedIn post failed: ${err.message ?? postRes.status}`);
   }
+  // LinkedIn returns the UGC urn in the x-restli-id header and the body `id`.
+  const headerId = postRes.headers.get("x-restli-id") ?? postRes.headers.get("x-linkedin-id");
+  const published = (await postRes.json().catch(() => ({}))) as { id?: string };
+  return { postId: headerId ?? published.id ?? null };
 }
 
 /* ── Twitter / X ─────────────────────────────────────────────────────── */
@@ -210,7 +227,7 @@ async function publishToLinkedIn(
 async function publishToTwitter(
   credentials: Record<string, string>,
   asset: Asset,
-): Promise<void> {
+): Promise<PublishResult> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
 
@@ -231,6 +248,8 @@ async function publishToTwitter(
     const err = (await postRes.json()) as { detail?: string; title?: string };
     throw new Error(`Tweet failed: ${err.detail ?? err.title ?? postRes.status}`);
   }
+  const published = (await postRes.json().catch(() => ({}))) as { data?: { id?: string } };
+  return { postId: published.data?.id ?? null };
 }
 
 /* ── TikTok ──────────────────────────────────────────────────────────── */
@@ -238,7 +257,7 @@ async function publishToTwitter(
 async function publishToTikTok(
   credentials: Record<string, string>,
   asset: Asset,
-): Promise<void> {
+): Promise<PublishResult> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
 
@@ -277,10 +296,15 @@ async function publishToTikTok(
   }
   // A logical failure (e.g. url_ownership_unverified) still returns HTTP 200 with a
   // non-"ok" error code, so inspect the body rather than trusting the status alone.
-  const body = (await res.json()) as { error?: { code?: string; message?: string } };
+  const body = (await res.json()) as {
+    data?: { publish_id?: string };
+    error?: { code?: string; message?: string };
+  };
   if (body.error?.code && body.error.code !== "ok") {
     throw new Error(`TikTok publish failed: ${body.error.message ?? body.error.code}`);
   }
+  // TikTok returns a publish_id (an async publish-job handle), the closest thing to a post id here.
+  return { postId: body.data?.publish_id ?? null };
 }
 
 /* ── Dispatcher ──────────────────────────────────────────────────────── */
@@ -289,7 +313,7 @@ export async function publishAssetToPlatform(
   platform: string,
   integration: ClientIntegration,
   asset: Asset,
-): Promise<void> {
+): Promise<PublishResult> {
   switch (platform) {
     case "instagram":
       return publishToInstagram(integration.credentials, asset);

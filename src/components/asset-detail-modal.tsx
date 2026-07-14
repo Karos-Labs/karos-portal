@@ -1,10 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { Modal } from "@/components/modal";
 import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AudienceSimulation } from "@/components/audience-simulation";
 import { PLATFORM_LABELS } from "@/lib/integrations/platforms";
 import { assetImages } from "@/lib/asset-images";
+import { cn } from "@/lib/utils";
 import { templateForAsset } from "@/lib/post-chain";
 import type { Asset } from "@/lib/types";
 
@@ -81,6 +84,7 @@ export function AssetDetailModal({
   open: boolean;
   onClose: () => void;
 }) {
+  const [tab, setTab] = useState<"details" | "simulation">("details");
   if (!asset) return null;
 
   const template = templateForAsset(asset);
@@ -123,6 +127,19 @@ export function AssetDetailModal({
 
   return (
     <Modal open={open} onClose={onClose} title={asset.title} className="max-w-2xl">
+      {/* Tabs */}
+      <div className="mb-4 flex gap-1 border-b border-border">
+        <TabButton active={tab === "details"} onClick={() => setTab("details")} icon="FileText">
+          Details
+        </TabButton>
+        <TabButton active={tab === "simulation"} onClick={() => setTab("simulation")} icon="Users">
+          Audience Simulation
+        </TabButton>
+      </div>
+
+      {tab === "simulation" ? (
+        <AudienceSimulation key={asset.id} clientId={asset.clientId} assetId={asset.id} />
+      ) : (
       <div className="space-y-4">
         {/* Status + template + type row */}
         <div className="flex flex-wrap items-center gap-2">
@@ -213,7 +230,36 @@ export function AssetDetailModal({
           <AssetDownloadButtons asset={asset} />
         </div>
       </div>
+      )}
     </Modal>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+        active
+          ? "border-neon text-foreground"
+          : "border-transparent text-muted-2 hover:text-muted",
+      )}
+    >
+      <Icon name={icon} className="h-3.5 w-3.5" />
+      {children}
+    </button>
   );
 }
 

@@ -21,6 +21,35 @@ export interface AgentCatalogEntry {
   estimate?: string;
   /** Brief-field keys the agent accepts — the full input surface. */
   briefKeys?: string[];
+  /**
+   * "managed" = a karos-agents lab product (id is its ManagedTaskType/productType);
+   * "custom" = a client-assigned custom agent (id is its customAgent id, run via the
+   * agent-service custom flow — not a productType). Absent ⇒ treated as managed.
+   */
+  kind?: "managed" | "custom";
+}
+
+/** One ranked performance record, flattened for the prompt (no Firestore types). */
+export interface BenchmarkEntry {
+  /** Human-readable asset label (title / first line). */
+  label: string;
+  /** Canonical platform key, e.g. "linkedin". */
+  platform: string;
+  /** Asset format, e.g. "social_post". */
+  assetType?: string | null;
+  /** 0–100 weighted engagement score. */
+  engagementScore: number;
+  impressions: number;
+  /** 0–1 engagement fraction. */
+  engagementRate: number;
+}
+
+/** Top/bottom performers for the client, fed into the benchmarks block. */
+export interface HistoricalBenchmarks {
+  top: BenchmarkEntry[];
+  bottom: BenchmarkEntry[];
+  /** How many analytics records the ranking was drawn from. */
+  sampleSize: number;
 }
 
 export interface ProactiveSystemContext {
@@ -40,6 +69,13 @@ export interface ProactiveSystemContext {
   activeTaskCount: number;
   /** The per-client cap on active karos_managed tasks (MAX_ACTIVE_TASKS). */
   maxActiveTasks: number;
+  /**
+   * Measured performance of this client's published content, ranked into
+   * winners/losers. Drives the HISTORICAL PERFORMANCE BENCHMARKS block so the
+   * model biases new tasks toward proven styles. Omit (or sampleSize 0) when no
+   * analytics have been captured yet — the block is then suppressed entirely.
+   */
+  historicalBenchmarks?: HistoricalBenchmarks;
 }
 
 /* ── Dynamic system appendix builder ────────────────────────────── */
@@ -49,8 +85,11 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
   const agentCatalogBlock = ctx.agents.length > 0
     ? ctx.agents
         .map((a) => {
+          const ref = a.kind === "custom"
+            ? `**${a.name}** (custom agent — run by the Karos team, no productType)`
+            : `**${a.name}** (productType: \`${a.id}\`)`;
           const lines = [
-            `• **${a.name}** (productType: \`${a.id}\`) — ${a.description}`,
+            `• ${ref} — ${a.description}`,
             a.deliverables?.length ? `  produces: ${a.deliverables.join("; ")}` : "",
             [
               a.estimate ? `runtime: ${a.estimate}` : "",
@@ -88,6 +127,31 @@ GAP RULES:
 - TikTok is video/short-form first: a TikTok content gap MUST be filled with a media-heavy \`social_post\` explicitly tailored for TikTok (short-form video / vertical clip concept, hook-led caption). Set \`platform: "tiktok"\`, name TikTok in the title, and give it a HIGH weight (≥75, priority high) — an empty TikTok calendar starves the client's highest-velocity channel.
 - For connected platforms the products don't post to natively (linkedin, facebook, twitter, youtube), fill gaps with \`blog_article\` / \`social_post\` source content the team repurposes — name the target platform in the title and set \`platform\`.
 - A platform with a healthy pipeline needs nothing — never pad the board when the calendar is already covered.`;
+
+  /* Historical performance benchmarks — the self-improving feedback loop.
+     Suppressed entirely when there's no measured data, so the model never
+     reasons about (or hallucinates) results it doesn't have. */
+  const bm = ctx.historicalBenchmarks;
+  const fmtBenchmark = (b: BenchmarkEntry) =>
+    `• [${b.engagementScore.toFixed(1)}] ${b.platform}${b.assetType ? ` · ${b.assetType}` : ""} — "${b.label}" (${b.impressions.toLocaleString()} impressions, ${(b.engagementRate * 100).toFixed(1)}% engagement)`;
+  const benchmarksBlock =
+    bm && bm.sampleSize > 0 && (bm.top.length > 0 || bm.bottom.length > 0)
+      ? `### HISTORICAL PERFORMANCE BENCHMARKS — DATA-DRIVEN CONTENT STRATEGY
+
+Measured results from this client's published content, ranked by engagement score (0–100) across ${bm.sampleSize} tracked asset${bm.sampleSize === 1 ? "" : "s"}:
+
+TOP PERFORMERS — proven winners:
+${bm.top.length > 0 ? bm.top.map(fmtBenchmark).join("\n") : "• (none yet)"}
+
+LOWEST PERFORMERS — measurably underperforming:
+${bm.bottom.length > 0 ? bm.bottom.map(fmtBenchmark).join("\n") : "• (none yet)"}
+
+BENCHMARK RULES — you MUST apply these when proposing content tasks:
+- Dynamically analyse the wins and losses above and let them shape the task map. Bias new \`karos_managed\` content toward the platforms, formats, and angles in TOP PERFORMERS — double down on what is proven to convert for THIS client.
+- Intentionally phase out the structures/angles in LOWEST PERFORMERS. Do not propose more of what is measurably failing; if a losing format must be revisited, reframe it toward a winning pattern rather than repeating it.
+- When a benchmark motivates a task, cite the specific signal in the task description (e.g. "LinkedIn long-form outperforms static posts 3× for this client").
+- These are the ONLY performance figures you may reference — never invent metrics beyond them.`
+      : "";
 
   /* Social scenario */
   const hasSocial = ctx.linkedSocialPlatforms.length > 0;
@@ -219,6 +283,7 @@ CRITICAL RULE — CAPABILITIES ARE EXHAUSTIVE: karos_managed work is EXECUTED BY
 AGENT LINKAGE: The \`productType\` you pass in \`create_tasks\` is what routes execution to that agent when the task moves to In Progress. Omit \`productType\` only for staff deliverables and \`client_managed\` tasks.
 
 ${contentGapBlock}
+${benchmarksBlock ? `\n${benchmarksBlock}` : ""}
 ${onboardingBlock ? `\n${onboardingBlock}` : ""}
 
 ### KAROS EXECUTION QUEUE CAPACITY — HARD LIMIT
@@ -455,9 +520,24 @@ Under 300 words. Punchy and strategic — built for execution, not discussion.`.
 /* ── Artifact Generation prompt (called from execution-actions.ts) ────── */
 
 /**
+ * A LinkedIn employee-advocacy target — when set, the deliverable is written in
+ * this employee's authentic personal voice (matched to their background) rather
+ * than the brand's corporate voice.
+ */
+export interface EmployeeAdvocacyProfile {
+  name: string;
+  /** Raw resume / professional-background text, when on file. */
+  resumeText?: string | null;
+  /** Link to the employee's resume, when only a URL is available. */
+  resumeUrl?: string | null;
+}
+
+/**
  * Generates the actual deliverable content for a karos_managed task.
  * Flow A (content_generation): proposals, articles, copy, calendars, reports.
  * Flow B (integration_action): email drafts ready to be sent externally.
+ * When `employeeAdvocacy` is set (a LinkedIn employee seat), the content branch
+ * writes in that employee's personal professional voice instead of brand voice.
  */
 export function buildArtifactGenerationPrompt(
   taskTitle: string,
@@ -471,6 +551,7 @@ export function buildArtifactGenerationPrompt(
   brandVoice?: string,
   adjustmentFeedback?: string,
   previousArtifact?: string,
+  employeeAdvocacy?: EmployeeAdvocacyProfile,
 ): string {
   const context = [
     clientIndustry && `Industry: ${clientIndustry}`,
@@ -486,6 +567,24 @@ export function buildArtifactGenerationPrompt(
   const feedbackBlock = adjustmentFeedback
     ? `${previousBlock}\n\nCLIENT FEEDBACK ON PREVIOUS VERSION:\n"${adjustmentFeedback}"\n\nProduce a refined version: keep what the feedback doesn't challenge, and incorporate every point raised — do not ignore any of them.`
     : "";
+
+  // Employee-advocacy override: write as the person, not the brand.
+  const advocacyBlock = employeeAdvocacy
+    ? `\n\nEMPLOYEE ADVOCACY — WRITE AS THIS PERSON, NOT THE BRAND:
+This is a LinkedIn post published under ${employeeAdvocacy.name}'s PERSONAL handle. Write in ${employeeAdvocacy.name}'s authentic first-person professional voice — match the seniority, expertise, vocabulary, and industry depth implied by their background below. Do NOT use ${clientName}'s corporate/brand voice; it must read like ${employeeAdvocacy.name} personally wrote it.${
+        employeeAdvocacy.resumeText
+          ? `\n\n${employeeAdvocacy.name.toUpperCase()}'S PROFESSIONAL BACKGROUND (analyse to calibrate tone + depth):\n${employeeAdvocacy.resumeText.slice(0, 2000)}`
+          : employeeAdvocacy.resumeUrl
+            ? `\n\nBackground/resume reference on file: ${employeeAdvocacy.resumeUrl}`
+            : ""
+      }`
+    : "";
+  // Advocacy overrides brand voice; otherwise keep the brand voice guidance line.
+  const contentVoiceLine = employeeAdvocacy
+    ? advocacyBlock
+    : brandVoice
+      ? `BRAND VOICE GUIDANCE: ${brandVoice}`
+      : "";
 
   if (taskType === "integration_action") {
     return `You are the Karos AI Content Director producing a professional, ready-to-send email on behalf of ${clientName}${context ? ` (${context})` : ""}.
@@ -517,14 +616,14 @@ TASK: ${taskTitle}
 PRIORITY: ${taskPriority.toUpperCase()}
 SOURCE: ${taskSource.replace(/_/g, " ")}
 ${taskDescription ? `CONTEXT: ${taskDescription}` : ""}
-${brandVoice ? `BRAND VOICE GUIDANCE: ${brandVoice}` : ""}${feedbackBlock}
+${contentVoiceLine}${feedbackBlock}
 
 Produce the complete, polished deliverable for this task. Write the content directly — do not add meta-headers like "DELIVERABLE:" or "OUTPUT:". Present the content exactly as it would appear to the end reader or recipient.
 
 Standards:
 - Immediately usable — zero placeholders, no filler copy
 - Hyper-specific to ${clientName}'s business context and the ${clientIndustry ?? "relevant"} industry
-- Senior-CMO quality: a Tier 1 professional would approve without substantive edits
+${employeeAdvocacy ? `- Written in ${employeeAdvocacy.name}'s authentic first-person voice — personal, credible, matched to their expertise (NOT corporate brand voice)` : "- Senior-CMO quality: a Tier 1 professional would approve without substantive edits"}
 - Appropriate format and length for the deliverable type (use markdown for structure where it adds clarity)
 - Actionable language throughout — every line drives a result`.trim();
 }

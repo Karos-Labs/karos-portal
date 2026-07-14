@@ -11,6 +11,7 @@ import {
   markIntegrationExpired,
   claimAssetForPublish,
   releaseAssetPublishClaim,
+  getClientSettings,
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { requireStaff } from "./_shared";
@@ -20,6 +21,7 @@ import {
   publishAssetToPlatform,
 } from "@/lib/integrations/publishers";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
 import type { Asset, PublishMode } from "@/lib/types";
 
@@ -134,10 +136,17 @@ export async function approveAssetAction(
     const publishMode: PublishMode = opts.publishMode ?? (opts.platform ? "auto" : "placeholder");
     if (publishMode === "auto") {
       if (!opts.platform) throw new Error("Auto-publish requires a target platform");
-      // Enforce: auto-publish only when the required integration is connected and active.
+      // Enforce: auto-publish only when the client opted-in and the required
+      // integration is connected and active.
+      const settings = await getClientSettings(asset.clientId);
+      if (!settings?.autoScheduleEnabled) {
+        throw new Error(
+          `Client has not enabled auto-scheduling — approve as manual/placeholder or enable in Client Settings`,
+        );
+      }
       const integrations = await listClientIntegrations(asset.clientId);
       const active = integrations.find(
-        (i) => i.platform === opts.platform && i.status !== "expired",
+        (i) => i.platform === opts.platform && integrationIsUsable(i),
       );
       if (!active) {
         throw new Error(
@@ -148,17 +157,42 @@ export async function approveAssetAction(
     patch.scheduledAt = opts.scheduledAt;
     patch.publishMode = publishMode;
     if (opts.platform) patch.scheduledPlatform = opts.platform;
-  } else if (
-    asset.scheduledAt != null &&
-    asset.publishMode !== "manual" &&
-    asset.publishMode !== "placeholder"
-  ) {
-    // Cron-safety: approving a chain-dated draft (it already carries a
-    // scheduledAt) without an explicit slot must never leave it cron-eligible —
-    // absent == legacy "auto", and a stale explicit "auto" left over from a
-    // revert-to-draft is just as dangerous. Force "manual" so publishing
-    // stays an explicit staff action.
-    patch.publishMode = "manual";
+  } else {
+    // No explicit opts scheduledAt supplied — attempt to preserve any candidate
+    // scheduling (imported scheduledAt or agent recommendedAt) and, if an
+    // active integration exists for the preferred platform, mark it auto.
+    const candidateAt = asset.scheduledAt ?? (asset as unknown as { recommendedAt?: number }).recommendedAt ?? null;
+    if (candidateAt != null) {
+      // Decide platform preference and whether an active integration exists
+      const platform = preferredPlatform(asset);
+      const settings = await getClientSettings(asset.clientId);
+      const allowAuto = settings?.autoScheduleEnabled === true;
+      const integrations = await listClientIntegrations(asset.clientId);
+      const active =
+        allowAuto && platform
+          ? integrations.find((i) => i.platform === platform && integrationIsUsable(i))
+          : undefined;
+
+      patch.scheduledAt = candidateAt;
+      if (active) {
+        patch.publishMode = "auto";
+        if (platform) patch.scheduledPlatform = platform;
+      } else {
+        // No usable integration or client opted out — keep safety: land on the
+        // calendar but require an explicit Publish Now (manual) so nothing posts
+        // without a connection or an opt-in.
+        patch.publishMode = "manual";
+        if (platform) patch.scheduledPlatform = platform;
+      }
+    } else if (
+      asset.scheduledAt != null &&
+      asset.publishMode !== "manual" &&
+      asset.publishMode !== "placeholder"
+    ) {
+      // Cron-safety: approving a chain-dated draft without any candidate slot
+      // must never leave it cron-eligible — force manual.
+      patch.publishMode = "manual";
+    }
   }
 
   await updateAsset(id, patch);
@@ -191,7 +225,7 @@ export async function publishAssetNowAction(
   if (asset.status === "published") return { ok: false, error: "Already published" };
 
   const integrations = await listClientIntegrations(asset.clientId);
-  const valid = integrations.filter((i) => i.status !== "expired");
+  const valid = integrations.filter((i) => integrationIsUsable(i));
   const target =
     platform ??
     asset.scheduledPlatform ??
@@ -212,8 +246,9 @@ export async function publishAssetNowAction(
     return { ok: false, error: "This asset is already being published — give it a moment." };
   }
 
+  let publishResult: { postId: string | null };
   try {
-    await publishAssetToPlatform(target, integration, asset);
+    publishResult = await publishAssetToPlatform(target, integration, asset);
   } catch (e) {
     await releaseAssetPublishClaim(id).catch(() => {});
     const message = e instanceof Error ? e.message : "Unknown error";
@@ -224,7 +259,7 @@ export async function publishAssetNowAction(
     return { ok: false, error: message };
   }
 
-  await markAssetPublished(id);
+  await markAssetPublished(id, publishResult.postId);
   // Keep the calendar truthful: a manual push without a prior schedule still
   // lands on today's date, and the platform is recorded for the event chip.
   await updateAsset(id, {

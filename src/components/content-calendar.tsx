@@ -2,8 +2,10 @@
 
 import { useState, useMemo } from "react";
 import { Icon } from "@/components/icon";
+import { PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { cn } from "@/lib/utils";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
+import { CampaignCapsules } from "@/components/campaign-capsules";
 import { templateForAsset, isAssetUnlockedForClient } from "@/lib/post-chain";
 import { formatTimeHM, formatDayShort } from "@/lib/date-format";
 import type { Asset } from "@/lib/types";
@@ -170,6 +172,7 @@ function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: 
   }
 
   const modeStr = event.kind === "scheduled" && event.mode ? MODE_TOOLTIP[event.mode] : undefined;
+  const platformCfg = event.platform ? PLATFORM_REGISTRY.find((p) => p.id === event.platform) : null;
 
   return (
     <button
@@ -187,6 +190,11 @@ function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: 
         <span className="ml-auto max-w-[46%] shrink-0 truncate font-mono text-[9px] uppercase tracking-wide opacity-60">
           {event.templateName}
         </span>
+      )}
+      {platformCfg && (
+        <div className="ml-2 flex items-center">
+          <Icon name={platformCfg.icon} className="h-3 w-3 opacity-80" />
+        </div>
       )}
     </button>
   );
@@ -263,7 +271,11 @@ export function ContentCalendar({
   const isEmpty = events.length === 0 && scheduledCount === 0;
 
   return (
-    <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
+    <div className="space-y-4">
+      {/* Campaign capsules — unified cross-channel groups above the temporal grid */}
+      <CampaignCapsules assets={assets} onOpen={setOpenAssetId} />
+
+      <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2.5">
@@ -390,6 +402,7 @@ export function ContentCalendar({
         open={openAsset != null}
         onClose={() => setOpenAssetId(null)}
       />
+      </div>
     </div>
   );
 }

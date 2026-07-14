@@ -1,5 +1,5 @@
-import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
+import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import {
   getClient,
@@ -105,7 +105,7 @@ function liveTaskTypesFor(assets: Asset[], jobs: Job[]): ManagedTaskType[] {
  * ONLY from already-unlocked content; counts and next-upcoming dates are
  * metadata, so upcoming posts contribute their date but never their content.
  */
-function buildProductStatuses(assets: Asset[], jobs: Job[], now: number): ClientProductStatus[] {
+function buildProductStatuses(assets: Asset[], jobs: Job[], now: number = Date.now()): ClientProductStatus[] {
   return MANAGED_PRODUCTS.map((product) => {
     // Reference docs (template-ideas overviews) are documentation, not posts —
     // they neither count nor appear as templates, but any produced content
@@ -226,14 +226,14 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // as LIVE cards (no Run button — clients never launch managed products).
     // Liveness is asset-based, so it holds even when the agent service is
     // unconfigured; every summary is built server-side (no raw Asset crosses).
-    const productStatuses = buildProductStatuses(assets, jobs, Date.now());
+    const productStatuses = buildProductStatuses(assets, jobs);
     const anyProductLive = productStatuses.some((p) => p.live);
 
     return (
       <>
         <PageHeader
           title="AI Agents"
-          description="Your Karos team runs AI agents that research, produce, and deliver content for you."
+          description="The managed products and custom agents your Karos team runs for you."
         />
         {anyProductLive && <ClientManagedAgents products={productStatuses} />}
         {agents.length > 0 && agentServiceConfigured ? (
@@ -274,7 +274,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // Staff get the same clickable live-product cards (template detail included)
   // the client sees — and they must render even when the agent service is not
   // configured: visibility of produced content never depends on the run service.
-  const productStatuses = buildProductStatuses(assets, jobs, Date.now());
+  const productStatuses = buildProductStatuses(assets, jobs);
   const anyProductLive = productStatuses.some((p) => p.live);
 
   return (
