@@ -4,6 +4,7 @@ import { listJobs, listClients } from "@/lib/data";
 import { Card, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { JobStatusBadge } from "@/components/job-status";
+import { JobDeleteButton } from "@/components/job-delete";
 import { relativeTime } from "@/lib/utils";
 
 export default async function JobsPage() {
@@ -14,7 +15,8 @@ export default async function JobsPage() {
   ]);
   const allowed = new Set(clients.map((c) => c.id));
   const visible = user.role === "KAROS_EMPLOYEE" ? jobs.filter((j) => allowed.has(j.clientId)) : jobs;
-  const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "—";
+  const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "-";
+  const isAdmin = user.role === "KAROS_ADMIN";
 
   return (
     <>
@@ -25,8 +27,8 @@ export default async function JobsPage() {
         <Card className="p-0">
           <ul className="divide-y divide-border">
             {visible.map((job) => (
-              <li key={job.id}>
-                <Link href={`/jobs/${job.id}`} className="flex items-center justify-between gap-3 px-5 py-4 transition-colors hover:bg-surface-2/40">
+              <li key={job.id} className="flex items-center transition-colors hover:bg-surface-2/40">
+                <Link href={`/jobs/${job.id}`} className="flex min-w-0 flex-1 items-center justify-between gap-3 px-5 py-4">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{job.agentName}</p>
                     <p className="text-xs text-muted-2">
@@ -36,6 +38,11 @@ export default async function JobsPage() {
                   </div>
                   <JobStatusBadge status={job.status} />
                 </Link>
+                {isAdmin && (
+                  <div className="pr-3">
+                    <JobDeleteButton jobId={job.id} compact />
+                  </div>
+                )}
               </li>
             ))}
           </ul>

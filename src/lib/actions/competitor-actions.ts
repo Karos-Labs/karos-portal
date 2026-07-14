@@ -3,17 +3,20 @@
 import { revalidatePath } from "next/cache";
 import {
   getClient,
+  getClientCompetitor,
   createClientCompetitor,
   deleteClientCompetitor,
   listClientCompetitors,
   replaceReportCompetitors,
-  getClientContextDoc,
+  getClientContextDocByTier,
   upsertClientContextDoc,
   upsertClientReport,
 } from "@/lib/data";
 import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
 import type { ClientCompetitor } from "@/lib/types";
-import { requireStaff, logActivity } from "./_shared";
+import { requireStaff, requireClientAccess, logActivity } from "./_shared";
+import { MODELS } from "@/lib/constants";
+import { logger } from "@/services/logger";
 
 /** Core AI competitor analysis helper — not exported. */
 async function _analyzeCompetitors(clientId: string): Promise<void> {
@@ -59,8 +62,8 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
     client.description ? `— ${client.description}` : "",
   ].filter(Boolean).join(" ");
 
-  const { object } = await generateObject({
-    model: anthropic("claude-sonnet-4-6"),
+  const { object, usage } = await generateObject({
+    model: anthropic(MODELS.SONNET),
     schema,
     system:
       "You are a competitive intelligence analyst producing data for a compact UI dashboard table. " +
@@ -74,6 +77,12 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
       "• Data must be specific and scannable in under 2 seconds.",
     prompt: `Analyze these competitors for ${clientCtx}.\n\nCOMPETITORS: ${names}\n\nReturn one object per competitor.`,
     maxOutputTokens: 3500,
+  });
+
+  logger.logUsage({
+    clientId, agentId: null, agentName: "Competitor Analysis",
+    modelName: MODELS.SONNET, operation: "competitor_analysis",
+    inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
   });
 
   if (object.competitors.length === 0) return;
@@ -175,7 +184,8 @@ export async function addCompetitorAction(
   });
 
   try {
-    const existingDoc = await getClientContextDoc(clientId, "competitor-analysis");
+    // Target the internal doc specifically — this is analyst-grade data, not client-visible.
+    const existingDoc = await getClientContextDocByTier(clientId, "competitor-analysis", "internal");
     if (existingDoc) {
       const today = new Date().toISOString().slice(0, 10);
       const signal = [
@@ -196,9 +206,9 @@ export async function addCompetitorAction(
       await upsertClientContextDoc({
         clientId,
         docType: "competitor-analysis",
-        tier: existingDoc.tier,
+        tier: "internal",
         content: existingDoc.content + signal,
-        version: existingDoc.version,
+        version: (existingDoc.version ?? 1) + 1,
         sources: existingDoc.sources,
         createdAt: existingDoc.createdAt,
         updatedAt: now,
@@ -214,7 +224,9 @@ export async function addCompetitorAction(
 /** Remove a competitor from the tracker. */
 export async function deleteCompetitorAction(id: string): Promise<void> {
   await requireStaff();
+  const competitor = await getClientCompetitor(id);
   await deleteClientCompetitor(id);
+  if (competitor?.clientId) revalidatePath(`/clients/${competitor.clientId}`);
   revalidatePath("/clients");
 }
 
@@ -303,8 +315,8 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
     client.description ? `Description: ${client.description}` : "",
   ].filter(Boolean).join("\n");
 
-  const { object } = await generateObject({
-    model: anthropic("claude-sonnet-4-6"),
+  const { object, usage } = await generateObject({
+    model: anthropic(MODELS.SONNET),
     schema,
     system:
       "You are a market intelligence analyst producing data for a compact UI dashboard table. " +
@@ -316,6 +328,12 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
       "• NEVER write complete sentences or use filler words.",
     prompt: `${clientCtx}\n\nIdentify the top 5–7 direct competitors. Return one object per competitor.`,
     maxOutputTokens: 4500,
+  });
+
+  logger.logUsage({
+    clientId, agentId: null, agentName: "Competitor Discovery",
+    modelName: MODELS.SONNET, operation: "competitor_analysis",
+    inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
   });
 
   if (object.competitors.length === 0) throw new Error("No competitors discovered — try adding names manually.");
@@ -342,6 +360,58 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
     actor: "System AI",
     actorRole: "system",
   });
+
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/**
+ * Add a competitor by plain name — accessible to both staff and the client themselves.
+ * Staff trigger AI re-analysis after saving; CLIENT_USER saves the record only.
+ */
+export async function addCompetitorByNameAction(clientId: string, name: string): Promise<void> {
+  const user = await requireClientAccess(clientId);
+  if (!name.trim()) throw new Error("Competitor name required");
+
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+
+  await createClientCompetitor({
+    clientId,
+    company: name.trim(),
+    marketTier: "Challenger",
+    overlap: "Medium",
+    deepDive: false,
+    keyStrengths: [],
+    keyWeaknesses: [],
+    source: "manual",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  await logActivity({
+    clientId,
+    timestamp: Date.now(),
+    type: "COMPETITOR_ADDED",
+    title: `Competitor added: ${name.trim()}`,
+    actor: user.name,
+    actorRole: isStaff ? "staff" : "client",
+  });
+
+  if (isStaff) {
+    try {
+      await _analyzeCompetitors(clientId);
+      await logActivity({
+        clientId,
+        timestamp: Date.now(),
+        type: "COMPETITOR_ANALYZED",
+        title: "Competitor intelligence updated",
+        description: "AI analyzed all tracked competitors and refreshed profiles",
+        actor: "System AI",
+        actorRole: "system",
+      });
+    } catch {
+      // Analysis failed; competitor is saved, profiles will populate on next report run
+    }
+  }
 
   revalidatePath(`/clients/${clientId}`);
 }

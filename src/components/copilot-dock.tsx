@@ -4,12 +4,11 @@ import { useState } from "react";
 import { ChatbotWidget } from "@/components/chatbot-widget";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import type { Agent, Client, ClientReport } from "@/lib/types";
+import type { Client, ClientReport } from "@/lib/types";
 
 interface Props {
   clientId: string;
   clientName: string;
-  agents: Agent[];
   userName?: string;
   hasGoogleIntegration?: boolean;
   client?: Pick<Client, "name" | "website" | "industry">;
@@ -22,14 +21,13 @@ interface Props {
  * it, so nothing jumps or resizes. The chat stays mounted (state preserved) and
  * is simply clipped when collapsed. Desktop (lg+) only.
  */
-export function CopilotDock({ clientId, clientName, agents, userName, hasGoogleIntegration, client, report }: Props) {
+export function CopilotDock({ clientId, clientName, userName, hasGoogleIntegration, client, report }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const widgetProps = {
     clientId,
     clientName,
-    agents,
     userName,
     hasGoogleIntegration,
     client,

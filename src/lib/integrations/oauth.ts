@@ -2,8 +2,21 @@ import "server-only";
 
 import { createHmac, randomBytes, createHash } from "crypto";
 
-const STATE_SECRET =
-  process.env.OAUTH_STATE_SECRET ?? "dev-oauth-secret-change-in-prod";
+/**
+ * HMAC key for the OAuth `state` token. Falls back to a dev-only constant, but
+ * refuses that fallback in production: a public signing key would let an attacker
+ * forge a `state` for an arbitrary clientId and connect social credentials onto
+ * another client's account. Evaluated lazily (per sign/verify) so importing this
+ * module never crashes unrelated routes — only an actual OAuth flow trips the guard.
+ */
+function getStateSecret(): string {
+  const secret = process.env.OAUTH_STATE_SECRET;
+  if (secret) return secret;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("OAUTH_STATE_SECRET must be set in production");
+  }
+  return "dev-oauth-secret-change-in-prod";
+}
 
 const APP_URL = (
   process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
@@ -22,7 +35,7 @@ export function getAppOrigin(): string {
 /* ── State signing ───────────────────────────────────────────────────── */
 
 function sign(data: string): string {
-  return createHmac("sha256", STATE_SECRET).update(data).digest("hex");
+  return createHmac("sha256", getStateSecret()).update(data).digest("hex");
 }
 
 export function signOAuthState(payload: {
@@ -93,6 +106,17 @@ export interface OAuthPlatformConfig {
   requiresLongLivedExchange?: boolean;
   /** Additional params appended to the authorization URL */
   extraAuthParams?: Record<string, string>;
+  /**
+   * Query-param name for the app's client id on the authorize URL. Defaults to
+   * the OAuth-standard "client_id"; TikTok is the odd one out and calls it
+   * "client_key" (on both the authorize URL and the token request body).
+   */
+  clientIdParam?: string;
+  /**
+   * Separator joining the requested scopes. Defaults to a space (OAuth 2.0
+   * standard); TikTok requires a comma-separated list.
+   */
+  scopeSeparator?: string;
 }
 
 /**
@@ -147,6 +171,20 @@ export const OAUTH_CONFIGS: Record<string, OAuthPlatformConfig> = {
       "https://www.googleapis.com/auth/youtube",
     ],
     extraAuthParams: { access_type: "offline", prompt: "consent" },
+  },
+  tiktok: {
+    // TikTok Login Kit v2. Note the quirks handled via clientIdParam/scopeSeparator:
+    // the app credential is passed as `client_key` (not `client_id`) and scopes are
+    // comma-separated. PKCE is mandatory. video.publish/upload back the Content
+    // Posting API used by publishToTikTok().
+    envClientId: "TIKTOK_CLIENT_KEY",
+    envClientSecret: "TIKTOK_CLIENT_SECRET",
+    authUrl: "https://www.tiktok.com/v2/auth/authorize/",
+    tokenUrl: "https://open.tiktokapis.com/v2/oauth/token/",
+    scopes: ["user.info.basic", "video.upload", "video.publish"],
+    usePkce: true,
+    clientIdParam: "client_key",
+    scopeSeparator: ",",
   },
 };
 

@@ -1,12 +1,18 @@
 import { requireUser } from "@/lib/auth";
-import { listAssets, listClients, listJobs, listAgents } from "@/lib/data";
+import { listAssets, listClients } from "@/lib/data";
 import { EmptyState, PageHeader, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetCard } from "@/components/asset-card";
 import { AssetsView } from "@/components/assets-view";
+import { getClientLibraryAssets } from "@/lib/asset-visibility";
 
-export default async function AssetsPage() {
+export default async function AssetsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ clientId?: string }>;
+}) {
   const user = await requireUser();
+  const { clientId: viewClientId } = await searchParams;
 
   if (user.role === "CLIENT_USER") {
     if (!user.clientId) {
@@ -17,21 +23,40 @@ export default async function AssetsPage() {
         </>
       );
     }
-    const [assets, jobs, agents] = await Promise.all([
-      listAssets({ clientId: user.clientId }),
-      listJobs({ clientId: user.clientId }),
-      listAgents({ status: "published" }),
-    ]);
+    const allClientAssets = await listAssets({ clientId: user.clientId });
+    // THE serialization boundary for requirement H: future-dated posts are
+    // whitelist-redacted (no content / imageUrl / meta / real title) before they
+    // cross to the client browser. Never pass allClientAssets to a client
+    // component in this branch — only the redacted set.
+    const assets = getClientLibraryAssets(allClientAssets, { forClient: true });
     return (
       <>
         <PageHeader title="Library" description="Your content library and delivery calendar." />
-        <AssetsView assets={assets} jobs={jobs} agents={agents} />
+        <AssetsView assets={assets} viewerIsClient />
       </>
     );
   }
 
   const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
-  const [allAssets, clients] = await Promise.all([listAssets(), listClients(employeeFilter)]);
+  const clients = await listClients(employeeFilter);
+
+  // Staff arriving via the sidebar's "View as client" nav get the same
+  // library/calendar toggle a client sees, scoped to that one client.
+  const viewClient = viewClientId ? clients.find((c) => c.id === viewClientId) : undefined;
+  if (viewClient) {
+    // Staff "view as client" keeps FULL visibility (invariant A10.6) so they can
+    // review/approve upcoming posts — no forClient redaction, no viewerIsClient.
+    // Route through getClientLibraryAssets only for the same recency ordering.
+    const clientAssets = getClientLibraryAssets(await listAssets({ clientId: viewClient.id }));
+    return (
+      <>
+        <PageHeader title={`${viewClient.name} · Library`} description="Content library and delivery calendar." />
+        <AssetsView assets={clientAssets} />
+      </>
+    );
+  }
+
+  const allAssets = await listAssets();
   const clientIds = new Set(clients.map((c) => c.id));
   const assets = user.role === "KAROS_EMPLOYEE" ? allAssets.filter((a) => clientIds.has(a.clientId)) : allAssets;
   const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "Unknown";

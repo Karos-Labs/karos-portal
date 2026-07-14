@@ -3,7 +3,7 @@ import { adminAuth } from "@/lib/firebase/admin";
 import { getClient } from "@/lib/data";
 import { SettingsForm } from "@/components/settings-form";
 
-export const metadata = { title: "Settings — Karos CMO" };
+export const metadata = { title: "Settings · Karos CMO" };
 
 export default async function SettingsPage() {
   const user = await requireUser();

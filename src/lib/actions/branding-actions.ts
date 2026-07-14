@@ -16,7 +16,7 @@ import {
   type BrandingGenResult,
 } from "@/lib/branding";
 import type { BrandingGuidelines } from "@/lib/types";
-import { requireStaff, requireAdmin, logActivity } from "./_shared";
+import { requireStaff, requireAdmin, requireClientAccess, logActivity } from "./_shared";
 
 /** Save or update branding guidelines for a client. Single source of truth:
  *  writes the structured client field AND keeps both context docs in sync so
@@ -26,7 +26,7 @@ export async function saveBrandingGuidelinesAction(
   clientId: string,
   guidelines: Omit<BrandingGuidelines, "updatedAt">,
 ): Promise<void> {
-  const user = await requireStaff();
+  const user = await requireClientAccess(clientId);
 
   const fullGuidelines: BrandingGuidelines = { ...guidelines, updatedAt: Date.now() };
   const now = Date.now();
@@ -72,7 +72,7 @@ export async function saveBrandingGuidelinesAction(
     title: "Brand guidelines updated",
     description: "Colors, fonts and tone keywords manually saved",
     actor: user.name,
-    actorRole: "staff",
+    actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
   });
 
   revalidatePath(`/clients/${clientId}`);
@@ -91,10 +91,10 @@ export async function generateBrandingAction(clientId: string): Promise<Branding
     timestamp: Date.now(),
     type: "BRANDING_UPDATED",
     title: "Brand guidelines generated via AI",
-    description: `AI generated brand profile from domain knowledge${result.primaryColor ? ` · ${result.primaryColor}` : ""}${result.visualStyle ? ` · ${result.visualStyle}` : ""}`,
+    description: `AI generated brand profile from domain knowledge${result.primaryAccent ? ` · ${result.primaryAccent}` : ""}${result.visualStyle ? ` · ${result.visualStyle}` : ""}`,
     actor: user.name,
     actorRole: "staff",
-    metadata: { source: result.source, primaryColor: result.primaryColor },
+    metadata: { source: result.source, primaryAccent: result.primaryAccent },
   });
 
   revalidatePath(`/clients/${clientId}`);
@@ -109,7 +109,7 @@ export async function backfillBrandingForAllClientsAction(): Promise<{
   total: number;
   generated: number;
   failed: number;
-  results: Array<{ clientId: string; name: string; status: "ai_generated" | "failed"; primaryColor?: string }>;
+  results: Array<{ clientId: string; name: string; status: "ai_generated" | "failed"; primaryAccent?: string }>;
 }> {
   await requireAdmin();
 
@@ -118,13 +118,13 @@ export async function backfillBrandingForAllClientsAction(): Promise<{
     clientId: string;
     name: string;
     status: "ai_generated" | "failed";
-    primaryColor?: string;
+    primaryAccent?: string;
   }> = [];
 
   for (const client of clients) {
     try {
       const r = await applyBrandingForClient(client.id, client);
-      results.push({ clientId: client.id, name: client.name, status: r.source, primaryColor: r.primaryColor });
+      results.push({ clientId: client.id, name: client.name, status: r.source, primaryAccent: r.primaryAccent });
     } catch (err) {
       console.error(`[backfill] Failed for ${client.name} (${client.id}):`, err);
       results.push({ clientId: client.id, name: client.name, status: "failed" });

@@ -1,6 +1,7 @@
 import { type NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { upsertClientIntegration } from "@/lib/data";
+import { autoCompleteTasksOnIntegrationConnect } from "@/lib/task-sync";
 import {
   OAUTH_CONFIGS,
   verifyOAuthState,
@@ -125,6 +126,38 @@ async function exchangeCode(
     return { accessToken: data.access_token, refreshToken: data.refresh_token };
   }
 
+  if (provider === "tiktok") {
+    // TikTok v2: credential is `client_key`, PKCE code_verifier is required, and
+    // the response is a flat JSON object (access_token + refresh_token at top level).
+    const body = new URLSearchParams({
+      client_key: appClientId,
+      client_secret: appClientSecret,
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+    });
+    if (codeVerifier) body.set("code_verifier", codeVerifier);
+    const res = await fetch(config.tokenUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Cache-Control": "no-cache",
+      },
+      body,
+    });
+    if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
+    const data = (await res.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+      error?: string;
+      error_description?: string;
+    };
+    if (!data.access_token) {
+      throw new Error(data.error_description ?? data.error ?? "Token exchange failed");
+    }
+    return { accessToken: data.access_token, refreshToken: data.refresh_token };
+  }
+
   throw new Error(`Unsupported provider: ${provider}`);
 }
 
@@ -168,6 +201,17 @@ async function fetchAccountName(provider: string, accessToken: string): Promise<
       if (res.ok) {
         const d = (await res.json()) as { items?: Array<{ snippet?: { title?: string } }> };
         return d.items?.[0]?.snippet?.title ?? "";
+      }
+    }
+    if (provider === "tiktok") {
+      const res = await fetch(
+        "https://open.tiktokapis.com/v2/user/info/?fields=display_name",
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      if (res.ok) {
+        const d = (await res.json()) as { data?: { user?: { display_name?: string } } };
+        const name = d.data?.user?.display_name;
+        return name ? `@${name}` : "";
       }
     }
   } catch {
@@ -243,10 +287,19 @@ export async function GET(
       credentials,
       accountName: accountName || undefined,
       method: "oauth",
+      // Set status explicitly: consumers that filter `status === "active"`
+      // (analytics, copilot context, proactive assistant) drop status-less
+      // integrations, so a freshly-connected OAuth channel must be marked active
+      // — mirroring saveGoogleOAuthTokenAction.
+      status: "active",
       connectedBy: parsed.uid,
       connectedAt: Date.now(),
       updatedAt: Date.now(),
     });
+
+    // Task Map sync: the client just did this work — flip any matching
+    // "Connect <platform>" onboarding task to Done automatically.
+    await autoCompleteTasksOnIntegrationConnect(parsed.clientId, provider).catch(() => {});
 
     return successPage(provider, accountName, origin);
   } catch (e) {

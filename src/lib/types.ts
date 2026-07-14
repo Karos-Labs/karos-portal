@@ -32,6 +32,12 @@ export interface AppUser {
   approvedAt?: number | null;
   createdAt: number;
   lastLoginAt?: number;
+  /**
+   * Transient, never persisted: set by auth when a KAROS_ADMIN is viewing as
+   * this client user ("View as Client"). Charge gates use it so impersonated
+   * sessions never spend the client's real credits.
+   */
+  impersonatedBy?: string;
 }
 
 /** Client-editable social handles / profile URLs. */
@@ -65,6 +71,8 @@ export interface Client {
   description?: string;
   brandVoice?: string;
   logoUrl?: string;
+  /** Firebase Storage path for the client logo — used to delete the old file on replacement. */
+  logoStoragePath?: string;
   accentColor?: string;
   brandingGuidelines?: BrandingGuidelines;
   assignedEmployeeIds: string[];
@@ -84,6 +92,20 @@ export interface Client {
    *   failed   — one or more stages threw; check server logs for details
    */
   onboardingStatus?: "pending" | "running" | "done" | "failed";
+  /** Human-readable reason for the last onboarding failure (truncated). Cleared when a new run starts. */
+  onboardingError?: string;
+  /**
+   * This client's folder slug in the karos-agents lab repo (clients/<slug>/).
+   * Used by the external agent service to load the client's profile + emitted
+   * sub-skills. Absent ⇒ jobs run against client_context/ only.
+   */
+  agentsRepoSlug?: string;
+  /**
+   * CustomAgent ids this client's users may run themselves (billed in
+   * credits). Managed by admins from the client settings page; absent/empty ⇒
+   * the client sees no runnable agents.
+   */
+  customAgentIds?: string[];
   createdAt: number;
   createdBy: string;
 }
@@ -109,59 +131,6 @@ export interface ClientRequest {
   reviewNotes?: string;
 }
 
-/** A field collected from the user before an agent runs. */
-export interface AgentField {
-  key: string;
-  label: string;
-  type: "text" | "textarea" | "number" | "select";
-  placeholder?: string;
-  required?: boolean;
-  options?: string[];
-  defaultValue?: string;
-}
-
-export type AgentCapability =
-  | "generate" // produce text/structured content
-  | "generate_images" // generate a real image per Instagram post from its visual brief
-  | "email_client" // deliver the result to the client by email
-  | "create_assets" // persist outputs to the client's asset library
-  | "use_transcripts" // ground the run on the client's meeting transcripts
-  | "use_brand_voice"; // ground the run on the client's brand voice
-
-/** An "agent" is a reusable skill that employees build inside the app. */
-export interface Agent {
-  id: string;
-  name: string;
-  description: string;
-  /** lucide icon name, e.g. "Instagram" */
-  icon: string;
-  color: string;
-  /** Anthropic model id. */
-  model: string;
-  systemPrompt: string;
-  /** Structured-output contract the agent should produce (freeform guidance for the model). */
-  outputKind: "instagram_posts" | "email" | "article" | "social_posts" | "freeform";
-  fields: AgentField[];
-  capabilities: AgentCapability[];
-  /** Lifecycle: drafts are in-development (test-only); published agents are live & runnable. */
-  status: "draft" | "published";
-  /** Only meaningful once published — pause/resume runnability. */
-  isActive: boolean;
-  /** When true, available to every employee. Only meaningful once published. */
-  shared: boolean;
-  createdBy: string;
-  createdAt: number;
-  updatedAt: number;
-  runCount?: number;
-  /** Provenance + idempotency key when seeded from the karos-labs skill library (see labs-import.ts). */
-  labsSkillId?: string;
-  /**
-   * When true: this is an internal Karos system agent (e.g. the Intel Report Agent).
-   * Hidden from client-facing views; visible to admins for configuration.
-   */
-  isSystem?: boolean;
-}
-
 export type JobStatus =
   | "queued"
   | "running"
@@ -174,6 +143,79 @@ export interface JobRunEvent {
   at: number;
   level: "info" | "error" | "success";
   message: string;
+}
+
+/** Task types the external agent service (agent-service/) can run. */
+export type ManagedTaskType = "social_post" | "newsletter_issue" | "blog_article" | "landing_page" | "custom";
+
+/**
+ * A platform-defined agent: a stored system prompt bound to an entry skill in
+ * the karos-agents repo, runnable through the agent service's "custom" task
+ * type with a free-text prompt. Created by admins — imported from the repo's
+ * catalog (catalog/agent-runtime-manifest.json) or written by hand. Clients
+ * may run one only when its id is in their Client.customAgentIds allowlist.
+ */
+export interface CustomAgent {
+  id: string;
+  /** Stable slug (the repo skill_name for imports), unique across agents. */
+  key: string;
+  name: string;
+  description: string;
+  /** lucide icon name (see components/icon.tsx). */
+  icon: string;
+  /** Badge/chip hex color. */
+  color: string;
+  /** Repo-relative entry skill directory, e.g. "products/live/instagram-agent". */
+  entrySkillDir: string;
+  /** Extra repo-relative skill roots linked into the run (vendor packs). */
+  skillRoots: string[];
+  /** Also link the client's emitted skills (clients/<slug>/skills/). */
+  includeClientSkills: boolean;
+  /** The agent's system-prompt text, appended after the service's common preamble. */
+  instructions: string;
+  /** Per-run price for billable client actors; null ⇒ CREDIT_COSTS.customAgentRun. */
+  creditCost?: number | null;
+  /** Hidden from run surfaces when false (still editable by admins). */
+  enabled: boolean;
+  /** Import provenance (absent on hand-written agents). */
+  source?: {
+    path: string;
+    /** Runtime-manifest status at import time (ready / blocked / unreviewed). */
+    status?: string;
+    repoSha?: string;
+  } | null;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One deliverable file produced by an external agent-service job. */
+export interface ExternalJobArtifact {
+  name: string;
+  /** agents-repo-relative path the agent wrote (provenance). */
+  path: string;
+  bytes: number;
+  sha256: string;
+  contentType?: string;
+  /** Per the lab contract, only files under an outputs client/ folder are client-visible. */
+  clientFacing: boolean;
+  /** Platform-hosted URL (client-facing, re-hosted) or service URL (internal). */
+  url?: string;
+}
+
+/** Provenance + results of a job executed by the external agent service. */
+export interface ExternalJobInfo {
+  serviceJobId: string;
+  taskType: ManagedTaskType;
+  /** karos-agents commit the job ran against. */
+  agentsRepoSha?: string;
+  model?: string;
+  /** SDK cost estimate; token counts are the authoritative record. */
+  totalCostUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  artifacts?: ExternalJobArtifact[];
+  transcriptUrl?: string;
 }
 
 export interface Job {
@@ -190,6 +232,8 @@ export interface Job {
   emailedTo?: string | null;
   events: JobRunEvent[];
   error?: string | null;
+  /** Present when this job runs on the external agent service. */
+  external?: ExternalJobInfo;
   createdBy: string;
   assignedTo?: string | null;
   createdAt: number;
@@ -202,6 +246,18 @@ export type AssetType =
   | "article"
   | "social_post"
   | "note";
+
+/**
+ * Three-tier publishing flow for scheduled content:
+ *   auto        — the publish cron pushes to the platform API at scheduledAt
+ *                 (requires a connected integration with autoPublish enabled)
+ *   manual      — lives on the calendar; a user triggers "Publish Now" through
+ *                 the platform API when they choose
+ *   placeholder — calendar-only roadmap item; Karos never touches the
+ *                 client's social accounts for it
+ * Legacy assets (scheduled before this field existed) are treated as "auto".
+ */
+export type PublishMode = "auto" | "manual" | "placeholder";
 
 export interface Asset {
   id: string;
@@ -216,11 +272,72 @@ export interface Asset {
   meta?: Record<string, unknown>;
   /** Public URL of the generated visual (Vercel Blob), when one exists. */
   imageUrl?: string | null;
+  /**
+   * MIME type of the primary downloadable payload, when the asset is a binary file
+   * (e.g. "image/jpeg", "video/mp4"). Drives the native download action's format +
+   * extension. Absent ⇒ derive from type/imageUrl (image) or fall back to text.
+   */
+  mimeType?: string;
+  /**
+   * Distribution channels for this asset — platform ids copied from the generating
+   * agent (Agent.channels) at creation. Advisory: pre-selects the target platform in
+   * the approve/schedule flow and is surfaced in the calendar detail modal.
+   */
+  channels?: string[];
   status: "draft" | "approved" | "delivered" | "published" | "scheduled";
-  /** Epoch millis — set when status is "scheduled". Cron publishes when this time passes. */
+  /**
+   * Epoch millis — the designated publication slot. Set when an asset is scheduled OR
+   * approved onto the calendar. The auto-publish cron pushes it once this time passes
+   * (publishMode "auto" only), for both "scheduled" and "approved" assets.
+   */
   scheduledAt?: number;
-  /** Which platform to auto-publish to (matches ClientIntegration.platform). */
+  /** Which platform to publish to (matches ClientIntegration.platform). */
   scheduledPlatform?: string;
+  /** How this asset reaches the platform once scheduled. Absent on legacy assets ⇒ "auto". */
+  publishMode?: PublishMode;
+  /**
+   * Agent-recommended optimal publish time (epoch millis), stamped at generation.
+   * Advisory only — becomes real once a user schedules the asset (it pre-fills the
+   * schedule form and renders as a "suggested" chip on the calendar).
+   */
+  recommendedAt?: number;
+  /** One-line rationale for recommendedAt, e.g. "LinkedIn engagement peaks Tue–Thu mornings". */
+  recommendedReason?: string;
+  /** Epoch millis when the asset was actually pushed to a platform (auto cron or Publish Now). */
+  publishedAt?: number;
+  /** Last publish failure (manual or cron), surfaced on the asset card. Cleared on success. */
+  publishError?: string;
+  /**
+   * Epoch millis when a publish attempt claimed this asset. Set transactionally by
+   * `claimAssetForPublish` so the auto-cron, a manual "Publish Now", or two overlapping
+   * cron ticks can never double-post the same asset. Cleared on success or failure; a
+   * stale claim (older than the claim TTL) can be re-taken so a crashed run never wedges.
+   */
+  publishClaimedAt?: number;
+  /**
+   * Stable slug identifying the template/format that produced this post
+   * (e.g. "by-the-numbers", or the managed taskType for agent-service posts).
+   * Derived at creation from the lab item folder / data.json / managed product;
+   * backfilled on legacy assets by the re-date migration. Renders as a chip.
+   */
+  templateKey?: string;
+  /** Human chip label for templateKey (e.g. "By The Numbers", "Social posts"). Always paired with templateKey. */
+  templateName?: string;
+  /**
+   * Lexicographically sortable internal-generation-order key driving the
+   * one-post-per-day content chain. Lab imports: `${runName}#${itemKey}`
+   * (run names lead with YYYY-MM-DD; item keys keep their zero-padded/ISO-date
+   * prefix). Other sources: `${ISO-timestamp}#${uniq}`. Both forms lead with a
+   * sortable date so cross-source sorting interleaves chronologically. Legacy
+   * assets without one are covered by deriveOrderKey() fallbacks at read time.
+   */
+  orderKey?: string;
+  /**
+   * DERIVED ONLY — never persisted to Firestore. Set true by the client-facing
+   * redaction layer (redactLockedAsset) on copies of future-dated assets so
+   * client components can render the locked-placeholder treatment.
+   */
+  locked?: boolean;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -323,18 +440,51 @@ export interface CustomerSentimentEntry {
   wouldReturn?: string;
 }
 
+/**
+ * A single entry in the brand's dominant color palette.
+ * Colors are ordered strictly by visual dominance (rank 1 = most prominent).
+ */
+export interface BrandColor {
+  /** 6-digit lowercase hex, e.g. "#e91e8c". */
+  hex: string;
+  /** 1 = most dominant/signature, 2 = supporting, etc. */
+  dominanceRank: number;
+  /** Optional semantic role if unambiguous, e.g. "Logo fill", "Primary CTA". */
+  role?: string;
+}
+
 export interface BrandingGuidelines {
-  /** Vibrant brand accent color (AI-generated from domain knowledge). */
+  /**
+   * Dynamic palette: up to 4 dominant brand colors ordered strictly by visual
+   * dominance (rank 1 = most prominent). Slots left empty when a brand genuinely
+   * uses fewer colors — never padded with hallucinated values.
+   * Prefer this field over the legacy scalar color fields.
+   */
+  dominantColors?: BrandColor[];
+  // Legacy scalar color fields — kept for Firestore backward compatibility.
+  // New writes always populate dominantColors; these are mirrored from it.
+  /** @deprecated Use dominantColors[0].hex */
+  primaryAccent?: string;
+  /** @deprecated Use dominantColors[1].hex */
+  secondaryAccent?: string;
+  /** @deprecated Use dominantColors[2].hex */
+  brandNeutralDark?: string;
+  /** @deprecated Use dominantColors[3].hex */
+  brandNeutralLight?: string;
+  /** @deprecated Use primaryAccent */
   primaryColor?: string;
-  /** Canvas background color — light (#ffffff/#f4f4f5) or dark (#09090b/#0a0a0a). */
-  uiBackground?: string;
-  /** High-contrast text color that pairs with uiBackground. */
-  uiText?: string;
+  /** @deprecated Use secondaryAccent */
   secondaryColor?: string;
+  /** @deprecated Use brandNeutralDark / brandNeutralLight */
+  uiBackground?: string;
+  /** @deprecated Use brandNeutralDark / brandNeutralLight */
+  uiText?: string;
   fontHeading?: string;
   fontBody?: string;
   toneKeywords?: string[];
   logoUrl?: string;
+  /** Firebase Storage path for the uploaded logo — used to delete old files on replacement. */
+  logoStoragePath?: string;
   /** Free-form markdown: Brand Voice, Do's, Don'ts. */
   guidelines?: string;
   /** Visual aesthetic archetype. E.g. "Minimalist" | "Dark Mode" | "High-Tech" | "Corporate" | "Vibrant" | "Luxury" */
@@ -417,6 +567,7 @@ export type ContextDocType =
   | "competitor-analysis"
   | "product-information"
   | "branding-guidelines"
+  | "target-audience"
   | "client-guidelines"
   | "action-plan"
   | "meeting-notes";
@@ -444,6 +595,10 @@ export interface ClientContextDoc {
   version: number;
   /** Named sources cited (for "no guessed numbers" audit trail). */
   sources?: string[];
+  /** Persisted executive summary bullets; generated on demand via Claude Haiku. */
+  summary?: string[] | null;
+  /** doc.version at which the summary was generated; used to detect stale cache. */
+  summaryVersion?: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -475,6 +630,34 @@ export interface ActivityLog {
   metadata?: Record<string, unknown>;
 }
 
+/* ─────────────────────── Agent Feedback Store ───────────────────────── */
+
+/**
+ * Generic feedback / correction log written whenever a client or staff member
+ * provides verified corrections to agent-generated content.
+ * Intentionally agent-agnostic — any agent can write rows here.
+ */
+export interface Feedback {
+  id: string;
+  /** Which agent generated the content being corrected (e.g. "intel-report-agent"). */
+  agentId: string;
+  /** The client whose generated data is being corrected. */
+  clientId: string;
+  /** The raw correction text exactly as submitted. */
+  feedbackText: string;
+  /** Optional: which context doc type the correction targets (e.g. "brand-voice"). */
+  docType?: string;
+  /**
+   * single_doc — correction applied to one specific document.
+   * global    — correction applied across all documents for this client.
+   */
+  scope: "single_doc" | "global";
+  createdAt: number;
+  /** UID of the user who submitted the correction. */
+  createdBy: string;
+  creatorRole: "staff" | "client";
+}
+
 /* ─────────────────────── Social Integrations ────────────────────────── */
 
 export interface ClientIntegration {
@@ -493,6 +676,12 @@ export interface ClientIntegration {
    * "expired" — the publish cron received a 401/403; re-connect required.
    */
   status?: "active" | "expired";
+  /**
+   * When true (default / absent), the publish cron may auto-post scheduled content
+   * to this platform. When false, content targeting this platform can only go out
+   * via a manual "Publish Now" click — the cron skips it.
+   */
+  autoPublish?: boolean;
   /** Epoch millis when the cron first detected the token had expired. */
   expiredAt?: number;
   connectedBy: string;
@@ -547,6 +736,60 @@ export interface Transcript {
   createdAt: number;
 }
 
+/* ─────────────────── Managed Action Items ───────────────────────────── */
+
+/**
+ * Lifecycle status for a managed action item. "open" is the initial state;
+ * "done" mirrors back to the source transcript's completedItems.
+ */
+export type ActionItemStatus = "open" | "in_progress" | "in_review" | "done";
+
+/** A comment/note left on a managed action item. */
+export interface ActionItemComment {
+  id: string;
+  authorId: string;
+  authorName: string;
+  text: string;
+  createdAt: number;
+}
+
+/** One entry in an action item's audit trail. Append-only. */
+export interface ActionItemHistoryEntry {
+  at: number;
+  /** "system" for automated events (Fireflies ingestion). */
+  actorId: string;
+  actorName: string;
+  type: "created" | "status_changed" | "reassigned" | "comment_added";
+  /** Human-readable description, e.g. 'Marked Done and assigned to Y by Tomer'. */
+  detail: string;
+}
+
+/**
+ * A meeting action item promoted to a fully managed task (Firestore `actionItems`).
+ * Doc id is deterministic — `${transcriptId}_${sourceIndex}` — so ingestion and
+ * webhook retries are idempotent. The parallel arrays on Transcript remain the
+ * source used by the meeting detail page; changes are mirrored both ways.
+ */
+export interface ActionItem {
+  id: string;
+  transcriptId: string;
+  transcriptTitle: string;
+  /** Index into transcript.actionItems[] — keeps the meeting page and dashboard in sync. */
+  sourceIndex: number;
+  clientId?: string | null;
+  meetingDate?: number;
+  text: string;
+  status: ActionItemStatus;
+  assigneeUserId?: string | null;
+  assigneeName?: string | null;
+  comments: ActionItemComment[];
+  history: ActionItemHistoryEntry[];
+  /** Future client rollout: when true, the owning client's users may view this item. Staff-only while absent/false. */
+  visibleToClient?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /* ─────────────────── Notification Centre ───────────────────────────── */
 
 /** A single meeting action item assigned to a user that is not yet completed. */
@@ -589,7 +832,12 @@ export interface IntegrationExpiredNotification {
 
 /* ─────────────────── Proactive Task Board ───────────────────────── */
 
-export type TaskStatus = "pending" | "in_progress" | "review_pending" | "completed";
+/**
+ * "archived" — terminal storage state: tasks completed ≥7 days ago are swept
+ * there (archiveStaleCompletedTasks) so the active board stays clean. Hidden
+ * from listClientTasks unless explicitly requested.
+ */
+export type TaskStatus = "pending" | "in_progress" | "review_pending" | "completed" | "archived";
 export type TaskPriority = "high" | "medium" | "low";
 export type TaskSource =
   | "gmail"
@@ -617,6 +865,24 @@ export interface ClientTask {
   /** Which party is responsible for executing this task. Defaults to source-based inference. */
   owner?: TaskOwner;
   sourceLabel?: string;
+  /**
+   * Contextual priority weight 0–100 (how critical the underlying gap is —
+   * e.g. missing core integration ≈ 90, optional secondary post ≈ 30).
+   * Set by the Copilot at generation; drives board sorting within a column.
+   * Absent ⇒ derived from `priority` (high 80 / medium 50 / low 25).
+   */
+  weight?: number;
+  /**
+   * Freeform execution state. Well-known keys:
+   * `productType` — the managed product (ManagedTaskType) that executes this task;
+   * `platform` — canonical integration platform key the task concerns;
+   * `completionTrigger` — auto-complete hook: "integration_connected:<platform>" or
+   * "product_run:<taskType>" (see task-sync.ts);
+   * `externalJobId` — platform Job id of the agent-service run dispatched for this task;
+   * `agentName`, `executing`, `type`, `artifact`, `artifactImageUrl`, `artifactAssetIds`,
+   * `approvedAssetId`, `adjustmentFeedback`, `executionError`, `aiPlan`, `recipient`,
+   * `failedUpload*`, `published*`, `autoCompletedReason`.
+   */
   metadata?: Record<string, unknown>;
   completedAt?: number | null;
   createdBy: string;
@@ -640,4 +906,60 @@ export interface ClientSettings {
   clientId: string;
   autopilot: boolean;
   updatedAt: number;
+}
+
+/* ─────────────────────── Client Credits ─────────────────────────── */
+
+/**
+ * A client's credit balance + spend caps. Stored in `clientCredits`, doc ID =
+ * clientId. Created lazily with defaults on the first charge or grant.
+ * CLIENT_USER-initiated AI actions charge this balance; staff work never does.
+ * Weekly/monthly caps are the per-client rate limit (null = uncapped); spend
+ * counters reset when their UTC window key rolls over.
+ */
+export interface ClientCredits {
+  clientId: string;
+  balance: number;
+  weeklyLimit: number | null;
+  monthlyLimit: number | null;
+  /** ISO week of the current spend window, e.g. "2026-W28". */
+  weekKey: string;
+  weekSpent: number;
+  /** Calendar month of the current spend window, e.g. "2026-07". */
+  monthKey: string;
+  monthSpent: number;
+  updatedAt: number;
+}
+
+export type CreditEntryKind = "grant" | "charge" | "refund" | "adjustment";
+
+export type CreditOperation =
+  /** Legacy — in-app agent runs no longer exist; kept so old ledger entries still render. */
+  | "agent_run"
+  | "chat_message"
+  | "task_execution"
+  | "doc_correction"
+  /** Client-fired custom agent run on the agent service (jobId = platform job doc id). */
+  | "custom_agent_run"
+  | "manual";
+
+/**
+ * Append-only audit trail of every balance change. Stored in `creditLedger`
+ * (its own retained collection — usageLogs are purged after 30 days).
+ */
+export interface CreditLedgerEntry {
+  id: string;
+  clientId: string;
+  /** Signed change: positive for grants/refunds, negative for charges. */
+  delta: number;
+  balanceAfter: number;
+  kind: CreditEntryKind;
+  operation: CreditOperation;
+  /** Human label shown in the ledger, e.g. "Agent run · Instagram Pack". */
+  reason: string;
+  agentId?: string | null;
+  jobId?: string | null;
+  actorUid: string;
+  actorName?: string;
+  createdAt: number;
 }

@@ -2,6 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import type { DecodedIdToken } from "firebase-admin/auth";
 import { adminAuth } from "@/lib/firebase/admin";
 import { getUser, upsertUser, countUsers, getClientByKeyId } from "@/lib/data";
 import type { AppUser, Role } from "@/lib/types";
@@ -21,6 +22,25 @@ export interface SignupIntent {
   requestedRole?: "KAROS_EMPLOYEE" | "CLIENT_USER";
   /** Raw invitation key entered by the user — validated server-side. */
   invitationKey?: string;
+}
+
+/**
+ * Mandatory email verification for native (email/password) self-registration.
+ *
+ * A password account whose email is not yet verified must NOT be granted a
+ * session. Social identities (Google) arrive pre-verified from the provider,
+ * and admin-created accounts are minted with `emailVerified: true`
+ * (see createTeamMemberAction) — both pass this gate. So the check is scoped
+ * strictly to the `password` sign-in provider: only self-signups can be caught
+ * here, which is exactly the population the verification mandate targets.
+ */
+export function isEmailUnverified(decoded: DecodedIdToken): boolean {
+  return decoded.firebase?.sign_in_provider === "password" && decoded.email_verified !== true;
+}
+
+/** Verify a Firebase ID token and return its decoded claims. */
+export function verifyIdToken(idToken: string): Promise<DecodedIdToken> {
+  return adminAuth().verifyIdToken(idToken);
 }
 
 /**
@@ -77,7 +97,7 @@ async function ensureUserDoc(
   if (intent?.requestedRole === "KAROS_EMPLOYEE") {
     const staffKey = process.env.KAROS_STAFF_KEY;
     const validKey = !!(staffKey && key === staffKey);
-    const isCompanyAlias = email === "hello@karoslabs.com";
+    const isCompanyAlias = email === (process.env.KAROS_COMPANY_ALIAS ?? "hello@karoslabs.com");
     const role: Role = validKey && isCompanyAlias ? "KAROS_ADMIN" : "KAROS_EMPLOYEE";
     const user: AppUser = {
       uid: claims.uid,
@@ -183,8 +203,7 @@ export async function clearSession(): Promise<void> {
  * Returns the resulting AppUser so the session route can tell the client
  * the final role for routing decisions.
  */
-export async function provisionFromSignup(idToken: string, intent: SignupIntent): Promise<AppUser> {
-  const decoded = await adminAuth().verifyIdToken(idToken);
+export async function provisionFromSignup(decoded: DecodedIdToken, intent: SignupIntent): Promise<AppUser> {
   return await ensureUserDoc(
     {
       uid: decoded.uid,
@@ -205,8 +224,7 @@ export async function provisionFromSignup(idToken: string, intent: SignupIntent)
  * creates docs is ensureUserDoc, called exclusively from provisionFromSignup
  * (the /signup flow) and getSessionUser (for already-provisioned sessions).
  */
-export async function getUserFromToken(idToken: string): Promise<AppUser | null> {
-  const decoded = await adminAuth().verifyIdToken(idToken);
+export async function getUserFromToken(decoded: DecodedIdToken): Promise<AppUser | null> {
   return await getUser(decoded.uid);
 }
 
@@ -216,6 +234,9 @@ async function getSessionUser(): Promise<AppUser | null> {
   if (!cookie) return null;
   try {
     const decoded = await adminAuth().verifySessionCookie(cookie, true);
+    // Defence in depth: an unverified password account should never hold a
+    // session cookie (the session route refuses to mint one), but never trust it.
+    if (isEmailUnverified(decoded)) return null;
     return await ensureUserDoc({
       uid: decoded.uid,
       email: decoded.email,
@@ -236,7 +257,9 @@ export async function getCurrentUser(): Promise<AppUser | null> {
     const impUid = store.get(IMPERSONATE_COOKIE)?.value;
     if (impUid) {
       const target = await getUser(impUid);
-      if (target && !target.disabled) return target;
+      // impersonatedBy is transient — it marks the session so credit charges
+      // and other client-billed actions know a staff member is behind it.
+      if (target && !target.disabled) return { ...target, impersonatedBy: realUser.uid };
       store.delete(IMPERSONATE_COOKIE);
     }
   }
@@ -256,6 +279,7 @@ export async function getViewingContext(): Promise<{
   let realUser: AppUser | null = null;
   try {
     const decoded = await adminAuth().verifySessionCookie(cookie, true);
+    if (isEmailUnverified(decoded)) redirect("/login");
     realUser = await ensureUserDoc({
       uid: decoded.uid,
       email: decoded.email,
@@ -274,7 +298,11 @@ export async function getViewingContext(): Promise<{
     if (impUid) {
       const target = await getUser(impUid);
       if (target && !target.disabled) {
-        return { user: target, isImpersonating: true, realAdmin: realUser };
+        return {
+          user: { ...target, impersonatedBy: realUser.uid },
+          isImpersonating: true,
+          realAdmin: realUser,
+        };
       }
       store.delete(IMPERSONATE_COOKIE);
     }

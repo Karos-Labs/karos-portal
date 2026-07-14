@@ -1,8 +1,8 @@
-/**
- * Client-safe Markdown → styled HTML helpers for rendering client context docs.
- * Mirrors the renderer in context-docs-section.tsx so the read-only document
- * overlay can share the same look without pulling in that component's controls.
- */
+/** Client-safe Markdown → styled HTML helpers for rendering client context docs. */
+
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
 export interface DocSection {
   heading: string;
@@ -46,7 +46,9 @@ export function parseDocSections(content: string): DocSection[] {
 
 /** Render a single section body (no `##` headings expected inside) to HTML. */
 export function renderSectionBody(md: string): string {
-  let out = md.replace(/^---+$/gm, "");
+  // HTML-escape the raw Markdown before processing so any user-supplied < > & "
+  // in the source text cannot break out into the surrounding HTML structure.
+  let out = esc(md).replace(/^---+$/gm, "");
 
   out = out.replace(
     /^###\s+(.+)$/gm,
@@ -84,18 +86,27 @@ export function renderSectionBody(md: string): string {
     return `<div class="overflow-x-auto my-3 rounded-[8px] border border-border"><table class="w-full border-collapse">${thead}${tbody}</table></div>\n`;
   });
 
-  out = out.replace(/^[-*+]\s+(.+)$/gm, "<li>$1</li>");
+  // Bullet lists — sentinel bytes \x02/\x03 keep these items isolated from the ordered-list
+  // pass below. Without sentinels the second wrap regex re-matches the <li> elements already
+  // inside <ul>, producing invalid <ul><ol><li>…</li></ol></ul> that browsers parse by moving
+  // the <ol> out, leaving an empty <ul> and hiding all bullet content.
+  out = out.replace(/^[-*+]\s+(.+)$/gm, "\x02$1\x03");
   out = out.replace(
-    /(<li>[\s\S]*?<\/li>\n?)+/g,
-    (block) =>
-      `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-muted-2 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${block}</ul>\n`,
+    /(\x02[\s\S]*?\x03\n?)+/g,
+    (block) => {
+      const items = block.replace(/\x02([\s\S]*?)\x03/g, "<li>$1</li>");
+      return `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-neon/50 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${items}</ul>\n`;
+    },
   );
 
-  out = out.replace(/^\d+\.\s+(.+)$/gm, "<li>$1</li>");
+  // Ordered lists — sentinel bytes \x04/\x05, distinct from the bullet sentinels above.
+  out = out.replace(/^\d+\.\s+(.+)$/gm, "\x04$1\x05");
   out = out.replace(
-    /(<li>[\s\S]*?<\/li>\n?)+/g,
-    (block) =>
-      `<ol class="my-2 space-y-1.5 ml-4 list-decimal [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] marker:text-muted-2">${block}</ol>\n`,
+    /(\x04[\s\S]*?\x05\n?)+/g,
+    (block) => {
+      const items = block.replace(/\x04([\s\S]*?)\x05/g, "<li>$1</li>");
+      return `<ol class="my-2 space-y-1.5 ml-4 list-decimal [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] marker:text-neon/50">${items}</ol>\n`;
+    },
   );
 
   out = out.replace(
@@ -114,14 +125,24 @@ export function renderSectionBody(md: string): string {
 /** Full-document HTML: `## headings` become labelled sections. */
 export function renderFullDoc(content: string): string {
   const clean = stripDocPreamble(content);
-  const parts = clean.split(/^##\s+(.+)$/m);
+  const headingRe = /^##\s+(.+)$/gm;
   let out = "";
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1) {
-      out += `<h2 class="text-base font-semibold mt-7 mb-2.5 text-foreground">${parts[i]}</h2>`;
-    } else {
-      out += renderSectionBody(parts[i]);
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = headingRe.exec(clean)) !== null) {
+    // Body text before this heading
+    if (match.index > cursor) {
+      out += renderSectionBody(clean.slice(cursor, match.index));
     }
+    out += `<h2 class="text-base font-semibold mt-7 mb-2.5 text-neon/90">${esc(match[1])}</h2>`;
+    cursor = match.index + match[0].length;
   }
+
+  // Remaining body after last heading (or the whole doc if no headings)
+  if (cursor < clean.length) {
+    out += renderSectionBody(clean.slice(cursor));
+  }
+
   return out;
 }

@@ -18,7 +18,7 @@ export async function sendEmail(input: SendEmailInput): Promise<
   { ok: true; id: string } | { ok: false; error: string }
 > {
   const key = process.env.RESEND_API_KEY;
-  const from = process.env.EMAIL_FROM || "Karos CMO <onboarding@resend.dev>";
+  const from = process.env.EMAIL_FROM || "Karos CMO <donotreply@karoslabs.com>";
   if (!key) {
     return { ok: false, error: "RESEND_API_KEY is not set" };
   }
@@ -38,6 +38,10 @@ export async function sendEmail(input: SendEmailInput): Promise<
   }
 }
 
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 /** Branded HTML wrapper for client-facing deliveries. */
 export function emailShell(opts: {
   clientName: string;
@@ -52,9 +56,9 @@ export function emailShell(opts: {
         <span style="color:#FF6B2C;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos<span style="color:#e8f0ec;">CMO</span></span>
       </div>
       <div style="padding:28px;color:#e8f0ec;">
-        <p style="color:#9c9ca3;font-size:13px;margin:0 0 6px;">Prepared for ${opts.clientName}</p>
-        <h1 style="font-size:22px;margin:0 0 12px;color:#e8f0ec;">${opts.heading}</h1>
-        <p style="color:#aebfc4;font-size:15px;line-height:1.6;margin:0 0 20px;">${opts.intro}</p>
+        <p style="color:#9c9ca3;font-size:13px;margin:0 0 6px;">Prepared for ${esc(opts.clientName)}</p>
+        <h1 style="font-size:22px;margin:0 0 12px;color:#e8f0ec;">${esc(opts.heading)}</h1>
+        <p style="color:#aebfc4;font-size:15px;line-height:1.6;margin:0 0 20px;">${esc(opts.intro)}</p>
         <div style="background:#131a22;border:1px solid #20303a;border-radius:12px;padding:20px;color:#e8f0ec;font-size:15px;line-height:1.7;">
           ${opts.body}
         </div>

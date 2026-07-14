@@ -72,6 +72,9 @@ substitutions:
   _REGION: us-central1
   _REPO: karos-cmo
   _SERVICE: karos-cmo
+  # Set after the agent service is deployed (empty ⇒ managed products stay hidden):
+  _AGENT_SERVICE_URL: ""
+  _APP_URL: ""
   # Override at trigger level: --substitutions _REGION=europe-west1,...
 
 options:
@@ -122,10 +125,16 @@ steps:
       - --cpu=1
       - --timeout=300                 # max request timeout; AI generation can be slow
       - --concurrency=80              # Cloud Run default; tune based on observed p99 latency
-      # Runtime secrets — mounted from Secret Manager, never in the image
-      - --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest
-      # Non-secret runtime env vars (not baked into image; can change without rebuild)
-      - --set-env-vars=EMAIL_FROM=Karos CMO <hello@karoslabs.com>,NODE_ENV=production
+      # Runtime secrets — mounted from Secret Manager, never in the image.
+      # AGENT_SERVICE_TOKEN + AGENT_WEBHOOK_SECRET are the same secrets the agent
+      # service uses (agent-service-tokens / agent-webhook-secret).
+      - --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest,CRON_SECRET=CRON_SECRET:latest,AGENT_SERVICE_TOKEN=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest
+      # Non-secret runtime env vars (not baked into image; can change without rebuild).
+      # AGENT_SERVICE_URL + AGENT_SERVICE_AUDIENCE = the deployed agent api URL
+      # (both empty until the agent service is deployed; the managed-products UI
+      # stays hidden until AGENT_SERVICE_URL is set). NEXT_PUBLIC_APP_URL is the
+      # webhook callback base.
+      - --set-env-vars=EMAIL_FROM=Karos CMO <donotreply@karoslabs.com>,ADMIN_EMAIL=hello@karoslabs.com,NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},NEXT_PUBLIC_APP_URL=${_APP_URL}
     waitFor: [docker-push]
 
 images:

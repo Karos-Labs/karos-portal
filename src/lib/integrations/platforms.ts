@@ -38,7 +38,32 @@ export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
   "instagram",
   "twitter",
   "youtube",
+  "tiktok",
 ]);
+
+/**
+ * Which platforms each asset type can be pushed to (auto cron or Publish Now).
+ * Single source of truth — the publish cron, the asset card, and the schedule
+ * form all read this map. Order matters: first connected match wins when a
+ * platform has to be inferred.
+ */
+export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
+  instagram_post: ["instagram", "tiktok"],
+  social_post: ["twitter", "linkedin", "facebook", "tiktok"],
+  article: ["linkedin"],
+  email: [],
+  note: [],
+};
+
+/** Human-readable platform names for badges / pickers. */
+export const PLATFORM_LABELS: Record<string, string> = {
+  instagram: "Instagram",
+  facebook: "Facebook",
+  linkedin: "LinkedIn",
+  twitter: "X (Twitter)",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+};
 
 export const PLATFORM_REGISTRY: PlatformConfig[] = [
   {
@@ -120,29 +145,11 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
     description: "Schedule and publish posts to your X account.",
     fields: [
       {
-        key: "apiKey",
-        label: "API Key",
-        type: "text",
-        required: true,
-        hint: "From your X Developer Portal → Project & Apps → Keys and Tokens",
-      },
-      {
-        key: "apiSecret",
-        label: "API Key Secret",
-        type: "password",
-        required: true,
-      },
-      {
         key: "accessToken",
-        label: "Access Token",
-        type: "text",
-        required: true,
-      },
-      {
-        key: "accessTokenSecret",
-        label: "Access Token Secret",
+        label: "OAuth 2.0 Bearer Token",
         type: "password",
         required: true,
+        hint: "Generate via the X Developer Portal → OAuth 2.0 Tools, or reconnect via Connect above",
       },
     ],
   },
@@ -172,6 +179,28 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         type: "text",
         placeholder: "UC...",
         hint: "Found in YouTube Studio → Settings → Channel → Advanced settings",
+      },
+    ],
+  },
+  {
+    id: "tiktok",
+    name: "TikTok",
+    icon: "Video",
+    color: "#000000",
+    description: "Publish short-form videos to your TikTok account.",
+    fields: [
+      {
+        key: "accessToken",
+        label: "OAuth Access Token",
+        type: "password",
+        required: true,
+        hint: "Connect via the button above, or paste a token from the TikTok Developer Portal → Content Posting API",
+      },
+      {
+        key: "refreshToken",
+        label: "Refresh Token",
+        type: "password",
+        hint: "Required for long-lived access — captured automatically during the OAuth consent flow",
       },
     ],
   },

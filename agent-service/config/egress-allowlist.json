@@ -1,0 +1,50 @@
+{
+  "_comment": "Outbound domains job sandboxes may reach, grouped by capability. Derived from Phase 0 discovery of karos-agents skills. Task types map to groups in src/task-types.ts (egressGroups). Regenerate config/proxy-filter.txt with `npm run gen:proxy-filter` after editing.",
+  "groups": {
+    "core": [
+      "api.anthropic.com",
+      "statsig.anthropic.com",
+      "firebasestorage.googleapis.com"
+    ],
+    "research": [
+      "api.perplexity.ai",
+      "api.x.ai",
+      "api.openai.com",
+      "api.apify.com",
+      "api.scrapecreators.com",
+      "www.reddit.com",
+      "reddit.com",
+      "oauth.reddit.com",
+      "hn.algolia.com",
+      "news.ycombinator.com",
+      "html.duckduckgo.com",
+      "duckduckgo.com",
+      "suggestqueries.google.com"
+    ],
+    "image_sourcing": [
+      "commons.wikimedia.org",
+      "upload.wikimedia.org",
+      "api.openverse.org",
+      "api.unsplash.com",
+      "images.unsplash.com",
+      "www.pexels.com",
+      "images.pexels.com",
+      "www.flickr.com",
+      "live.staticflickr.com"
+    ],
+    "social_platforms": [
+      "www.instagram.com",
+      "www.tiktok.com",
+      "www.youtube.com",
+      "i.ytimg.com"
+    ],
+    "fonts": [
+      "fonts.googleapis.com",
+      "fonts.gstatic.com",
+      "api.fontshare.com",
+      "cdn.fontshare.com"
+    ],
+    "npm": ["registry.npmjs.org"]
+  },
+  "_deferred_task_types_note": "seo_audit / onboarding / website-redesign class skills WebFetch arbitrary client and press domains and cannot run behind a static allowlist; enabling them requires an egress policy decision (see docs/agent-integration.md)."
+}

@@ -1,0 +1,516 @@
+import "server-only";
+
+import { streamText, stepCountIs } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
+import { MODELS } from "@/lib/constants";
+import type { Client } from "@/lib/types";
+import {
+  ENGINE_LABELS,
+  ENGINE_PROVIDERS,
+  GEO_READINESS_CHECKS,
+  SEO_CHECKS,
+  analyzeAnswer,
+  buildGazetteer,
+  computeCheckGaps,
+  computeCheckScore,
+  computePerEngineVisibility,
+  computePresence,
+  computeRosterSharePct,
+  computeVisibilityGaps,
+  computeVisibilityIndex,
+  type EngineId,
+  type GeoProbe,
+  type SeoGeoCheck,
+  type SeoGeoInsights,
+  type VisibilityGap,
+} from "@/lib/seo-geo";
+import { configuredEngines, probeEngine } from "./seo-geo-providers";
+import { logger } from "@/services/logger";
+
+/**
+ * SEO & GEO research vertical for the onboarding pipeline — the platform port of
+ * the karos-agents lab product a3 (products/onboarding/step-02-seo-geo).
+ *
+ * Two agents, matching the lab's two phases:
+ *   1. Site audit (Sonnet + live web tools): technical SEO + GEO-readiness checks,
+ *      each with real evidence (URL, HTTP code, observed value) → seo_score +
+ *      geo_readiness via the ported a3 scoring weights.
+ *   2. Visibility capture (multi-model): buyer-intent prompts asked to OpenAI,
+ *      Gemini and Claude; deterministic gazetteer parsing → per-engine visibility,
+ *      share-of-voice vs competitors, and computed gap values. Every data point
+ *      carries the provider that produced it (source: "OpenAI" | "Gemini" | "Anthropic").
+ */
+
+/** Engines probed per run — the a3 five-engine roster, filtered to wired connectors. */
+const ENGINE_ROSTER: EngineId[] = ["chatgpt", "gemini", "claude", "perplexity", "copilot"];
+
+/** Prompts per capture run. Bounded: N prompts × M engines calls per run. */
+const PROMPT_SET_SIZE = 6;
+
+/** Max competitors in the share-of-voice roster (a3 confirms 3–8). */
+const MAX_ROSTER_COMPETITORS = 6;
+
+// The audit emits a ~900-word brief PLUS a ~40-entry JSON check block. With live
+// web-tool overhead this can exceed a tight budget and truncate the JSON mid-block
+// (the old cause of "no JSON check block"). Give it full headroom.
+const AUDIT_MAX_TOKENS = 16_000;
+
+/* ── Helpers ──────────────────────────────────────────────────────── */
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Robustly extract the checks JSON from a model response. Tolerant of: ```json or
+ * bare ``` fences (any case), an UNTERMINATED fence (model truncated before the
+ * closing ```), and raw unfenced JSON. Prefers a block that actually contains the
+ * check keys. Returns null only when no `{…"seoChecks"…}` object can be recovered.
+ */
+function extractJsonBlock(text: string): string | null {
+  const hasKeys = (s: string) => s.includes("seoChecks") || s.includes("geoChecks");
+
+  // 1. Properly fenced blocks (```json … ``` or ``` … ```), last matching one wins.
+  const fenced = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((m) => m[1].trim());
+  for (let i = fenced.length - 1; i >= 0; i--) if (hasKeys(fenced[i])) return fenced[i];
+
+  // 2. Unterminated fence — the model started ```json but got cut off before ```.
+  const open = text.lastIndexOf("```json");
+  if (open >= 0) {
+    const tail = text.slice(open + "```json".length).replace(/```\s*$/, "").trim();
+    if (hasKeys(tail)) return tail;
+  }
+
+  // 3. Unfenced: brace-match the object that contains the check keys.
+  const anchor = text.search(/"?seoChecks"?\s*:/);
+  if (anchor >= 0) {
+    const start = text.lastIndexOf("{", anchor);
+    if (start >= 0) {
+      let depth = 0;
+      for (let i = start; i < text.length; i++) {
+        if (text[i] === "{") depth++;
+        else if (text[i] === "}" && --depth === 0) return text.slice(start, i + 1).trim();
+      }
+      // Truncated object: return what we have; JSON.parse will fail and trigger the retry.
+      return text.slice(start).trim();
+    }
+  }
+  return null;
+}
+
+/** Pull the first JSON array literal out of a model response (tolerates code fences + prose). */
+function extractJsonArray(text: string): string | null {
+  const unfenced = text.replace(/```(?:json)?/gi, "").replace(/```/g, "");
+  const start = unfenced.indexOf("[");
+  const end = unfenced.lastIndexOf("]");
+  return start >= 0 && end > start ? unfenced.slice(start, end + 1) : null;
+}
+
+/** JSON.parse that tolerates trailing commas (the most common LLM JSON glitch). */
+function tolerantJsonParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return JSON.parse(s.replace(/,(\s*[}\]])/g, "$1"));
+  }
+}
+
+const VALID_TIERS = new Set(["MEASURED", "ESTIMATED", "PENDING"]);
+const VALID_CONFIDENCE = new Set(["CONFIRMED", "LIKELY", "HYPOTHESIS"]);
+
+function sanitizeChecks(raw: unknown): SeoGeoCheck[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SeoGeoCheck[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const c = item as Record<string, unknown>;
+    const norm = Number(c.norm);
+    if (typeof c.id !== "string" || !Number.isFinite(norm)) continue;
+    out.push({
+      id: c.id,
+      bucket: typeof c.bucket === "string" ? c.bucket : "",
+      label: typeof c.label === "string" ? c.label : c.id,
+      evidence: typeof c.evidence === "string" ? c.evidence : "",
+      norm: Math.min(Math.max(norm, 0), 1),
+      tier: VALID_TIERS.has(String(c.tier)) ? (c.tier as SeoGeoCheck["tier"]) : "PENDING",
+      confidence: VALID_CONFIDENCE.has(String(c.confidence))
+        ? (c.confidence as SeoGeoCheck["confidence"])
+        : "HYPOTHESIS",
+    });
+  }
+  return out;
+}
+
+function checklistBlock(defs: Array<{ id: string; bucket: string; label: string }>): string {
+  return defs.map((d) => `- ${d.id} · bucket:${d.bucket} · ${d.label}`).join("\n");
+}
+
+/* ── Agent 1: SEO + GEO-readiness site audit ──────────────────────── */
+
+interface AuditResult {
+  brief: string;
+  seoChecks: SeoGeoCheck[];
+  geoChecks: SeoGeoCheck[];
+}
+
+async function runSiteAudit(client: Client, rules: string): Promise<AuditResult> {
+  const auditStream = streamText({
+    model: anthropic(MODELS.SONNET),
+    system: `${rules}\n\nYou are a senior technical SEO and GEO (generative engine optimization) auditor with LIVE web access. You measure, you never guess: every check verdict cites what you actually observed this run (a URL, an HTTP behavior, a literal element). What you could not measure is marked PENDING — never a fabricated pass or fail. Findings are labeled CONFIRMED (verified from fetched data), LIKELY (strong signal, not directly verified), or HYPOTHESIS (pattern-based inference).`,
+    tools: {
+      web_search: anthropic.tools.webSearch_20250305({ maxUses: 10 }),
+      web_fetch: anthropic.tools.webFetch_20250910({ maxUses: 12, maxContentTokens: 6000 }),
+    },
+    // Continue past Anthropic pause_turn while the audit crawls (default stepCountIs(1)
+    // would stop at the first pause with an empty, JSON-less stub).
+    stopWhen: stepCountIs(24),
+    messages: [
+      {
+        role: "user",
+        content: `Audit the search and AI-answer readiness of ${client.name} (${client.website ?? "no website"}).
+
+MEASUREMENT PLAN (execute in order):
+1. Fetch the homepage — capture title tag, meta description, H1 count, heading structure, visible dateModified/schema, internal links, content structure (section lengths, answer capsules under H2s), image alt coverage.
+2. Fetch /robots.txt — check rules for Googlebot, Bingbot, OAI-SearchBot, PerplexityBot, ClaudeBot; find the Sitemap: line.
+3. Fetch the sitemap URL — verify it returns valid XML.
+4. Fetch 2-3 key inner pages (about, pricing, blog/services) — same on-page checks; note evidence density (stats, cited sources, quotes, bylines) and freshness signals.
+5. Search for the brand's off-site entity footprint: Wikipedia/Wikidata presence, review-platform ratings, authoritative mentions.
+
+Then evaluate EVERY check in both registries below. For each check output:
+- "id" and "bucket" exactly as listed
+- "norm": 0 to 1 (1 = fully passes the target; fractional = partial)
+- "tier": "MEASURED" only if you directly observed the evidence THIS run via fetch/search; "ESTIMATED" if inferred from partial signals; "PENDING" if it cannot be measured with the tools available (e.g. CrUX p75 field data, Bing/Brave index counts, backlink exports)
+- "evidence": the concrete observation ("robots.txt (fetched ${todayISO()}) has no Disallow for ClaudeBot", "homepage title is 74 chars: '…'")
+- "confidence": CONFIRMED / LIKELY / HYPOTHESIS
+
+SEO SCORE CHECKS:
+${checklistBlock(SEO_CHECKS)}
+
+GEO READINESS CHECKS:
+${checklistBlock(GEO_READINESS_CHECKS)}
+
+OUTPUT FORMAT — two parts, in this order:
+1. A markdown audit brief: "## Technical SEO Findings" and "## GEO Readiness Findings" — the most important observations, each with its evidence, labeled "web-observed (URL, ${todayISO()})", plus the top fixes you would prioritize and why. Keep it under 900 words.
+2. A single fenced \`\`\`json block:
+{
+  "seoChecks": [ { "id": "...", "bucket": "...", "label": "...", "norm": 0.0, "tier": "MEASURED", "evidence": "...", "confidence": "CONFIRMED" }, ... ],
+  "geoChecks": [ ...same shape, one entry per GEO readiness check... ]
+}
+Every check id from both registries MUST appear exactly once in the JSON. The JSON block must be the last thing in your output.`,
+      },
+    ],
+    maxOutputTokens: AUDIT_MAX_TOKENS,
+  });
+
+  const text = await auditStream.text;
+  logger.trackStream(auditStream, {
+    clientId: client.id, agentId: null, agentName: "SEO/GEO Site Audit",
+    modelName: MODELS.SONNET, operation: "seo_audit",
+  });
+  const json = extractJsonBlock(text);
+  if (!json) throw new Error("Site audit returned no JSON check block");
+
+  let parsed: { seoChecks?: unknown; geoChecks?: unknown };
+  try {
+    parsed = tolerantJsonParse(json) as { seoChecks?: unknown; geoChecks?: unknown };
+  } catch (err) {
+    throw new Error(`Site audit JSON block failed to parse: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const seoChecks = sanitizeChecks(parsed.seoChecks);
+  const geoChecks = sanitizeChecks(parsed.geoChecks);
+  const measuredCount = [...seoChecks, ...geoChecks].filter((c) => c.tier === "MEASURED").length;
+  // Integrity gate: an audit that measured nothing is a failed audit, not a low score.
+  if (measuredCount < 5) {
+    throw new Error(`Site audit produced only ${measuredCount} MEASURED checks — treated as a failed crawl`);
+  }
+
+  const brief = text.replace(/```json[\s\S]*?```/g, "").trim();
+  return { brief, seoChecks, geoChecks };
+}
+
+/* ── Agent 2: buyer-intent prompt set + multi-engine capture ──────── */
+
+/** Deterministic fallback prompt set when generation fails — never blocks the capture. */
+function fallbackPromptSet(client: Client): string[] {
+  const category = client.industry?.trim() || "this category";
+  return [
+    `What are the best ${category} companies right now?`,
+    `Which ${category} provider should I choose and why?`,
+    `Compare the top ${category} options for a new customer.`,
+    `Is ${client.name} a good choice for ${category}? What are the alternatives?`,
+    `What should I look for when picking a ${category} provider?`,
+    `Who are the most trusted names in ${category}?`,
+  ].slice(0, PROMPT_SET_SIZE);
+}
+
+/** Generate the buyer-intent prompt set (a3 Phase 1: drafted per client, never hardcoded). */
+async function generatePromptSet(client: Client, competitors: string[]): Promise<string[]> {
+  try {
+    const promptStream = streamText({
+      model: anthropic(MODELS.HAIKU),
+      system:
+        "You write realistic, high-intent questions that real buyers type into AI assistants (ChatGPT, Gemini, Claude). Questions must be category-level (what a buyer asks BEFORE knowing the brand), in the language the client's customers actually use, and must never embed the answer.",
+      messages: [
+        {
+          role: "user",
+          content: `Client: ${client.name} (${client.website ?? "no website"})
+Industry: ${client.industry ?? "unknown"}
+Description: ${client.description ?? "—"}
+Known competitors: ${competitors.join(", ") || "—"}
+
+Write exactly ${PROMPT_SET_SIZE} buyer-intent questions covering these intents: discovery ("best X"), comparison ("X vs alternatives"), problem-driven ("how do I solve …"), and one brand question naming ${client.name} directly. Use the customers' language (match the client's market/locale).
+
+Return ONLY a fenced \`\`\`json block containing an array of ${PROMPT_SET_SIZE} strings.`,
+        },
+      ],
+      maxOutputTokens: 800,
+    });
+    const text = await promptStream.text;
+    logger.trackStream(promptStream, {
+      clientId: client.id, agentId: null, agentName: "GEO Prompt Set",
+      modelName: MODELS.HAIKU, operation: "geo_promptset",
+    });
+    // The prompt set is a bare JSON array (no seoChecks/geoChecks keys), so use the
+    // generic array extractor rather than extractJsonBlock (which targets the audit).
+    const json = extractJsonArray(text);
+    if (json) {
+      const arr = tolerantJsonParse(json) as unknown;
+      if (Array.isArray(arr)) {
+        const prompts = arr.filter((p): p is string => typeof p === "string" && p.trim().length > 8);
+        if (prompts.length >= 3) return prompts.slice(0, PROMPT_SET_SIZE);
+      }
+    }
+    throw new Error("prompt set could not be parsed or was too small");
+  } catch (err) {
+    console.warn("[seo-geo] Prompt-set generation failed — using deterministic fallback:", err);
+    return fallbackPromptSet(client);
+  }
+}
+
+interface CaptureResult {
+  probes: GeoProbe[];
+  promptSet: string[];
+  roster: string[];
+}
+
+async function runVisibilityCapture(
+  client: Client,
+  competitors: Array<{ company: string; url?: string }>,
+): Promise<CaptureResult> {
+  const roster = competitors.slice(0, MAX_ROSTER_COMPETITORS);
+  const promptSet = await generatePromptSet(client, roster.map((c) => c.company));
+  const gazetteer = buildGazetteer(client.name, client.website, roster);
+
+  const live = new Set(configuredEngines());
+  const engines = ENGINE_ROSTER.filter((e) => live.has(e));
+  if (engines.length === 0) {
+    throw new Error(
+      "GEO visibility capture has no configured engines — set OPENAI_API_KEY / GEMINI_API_KEY (ANTHROPIC_API_KEY is required platform-wide)",
+    );
+  }
+
+  // Full fan-out: every prompt to every configured engine. probeEngine never throws;
+  // a dead engine yields UNAVAILABLE cells that show up in dataCoveragePct.
+  const answers = await Promise.all(
+    engines.flatMap((engine) => promptSet.map((prompt) => probeEngine(engine, prompt, client.id))),
+  );
+
+  const probes = answers.map((a) => analyzeAnswer(a, gazetteer));
+  const measured = probes.filter((p) => p.captureTier !== "UNAVAILABLE");
+  if (measured.length === 0) {
+    throw new Error("GEO visibility capture failed: every engine call errored — no measured answers this run");
+  }
+
+  return { probes, promptSet, roster: [client.name, ...roster.map((c) => c.company)] };
+}
+
+/* ── Brief builders (markdown fed to downstream doc generation) ───── */
+
+function pct(v: number): string {
+  return `${Math.round(v * 100)}%`;
+}
+
+function buildSeoBrief(audit: AuditResult, insights: SeoGeoInsights): string {
+  const seoGaps = insights.gaps.filter((g) => g.lever === "SEO").slice(0, 8);
+  return [
+    `## SEO Snapshot (measured ${todayISO()})`,
+    `- **SEO score: ${insights.seoScore}/100** (data coverage ${insights.seoDataCoveragePct}% — MEASURED checks only)`,
+    `- **GEO readiness: ${insights.geoReadiness}/100** (data coverage ${insights.geoReadinessCoveragePct}%)`,
+    "",
+    audit.brief,
+    "",
+    seoGaps.length
+      ? "## Prioritized SEO Gaps (computed, score-lift ordered)\n" +
+        seoGaps
+          .map((g) => `- [${g.severity.toUpperCase()}] ${g.title} — measured: ${g.measured} (confidence: ${g.confidence})`)
+          .join("\n")
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildGeoBrief(insights: SeoGeoInsights): string {
+  const lines: string[] = [
+    `## AI Answer-Engine Visibility (multi-model capture, ${todayISO()})`,
+    "",
+    `Buyer-intent prompts were asked live to each configured answer engine. Every row below is labeled with the model provider that produced it — treat the provider label as data provenance.`,
+    "",
+    `- **GEO visibility index: ${insights.geoVisibilityIndex}/100** (${insights.geoVisibilityModel})`,
+    `- Engines measured: ${insights.geoVisibilityEnginesMeasured} of ${insights.geoVisibilityEnginesTotal} first-party (${insights.geoVisibilityEnginesScored} scored this run)`,
+    `- Roster share of voice (client vs tracked competitors): ${insights.rosterSharePct}%`,
+    `- Brand-query presence: named in ${insights.brandPresence.named}/${insights.brandPresence.total} brand prompts · Category presence: ${insights.categoryPresence.named}/${insights.categoryPresence.total} non-brand prompts`,
+    "",
+    "| Engine | Provider (source) | Tier | Named in answers | Share of voice | Cited as source | Ranked first | Leading competitor |",
+    "|---|---|---|---|---|---|---|---|",
+  ];
+  for (const e of insights.perEngine) {
+    if (e.captureTier === "UNAVAILABLE") {
+      lines.push(`| ${ENGINE_LABELS[e.engine]} | ${e.source ?? "—"} | UNAVAILABLE | — | — | — | — | — |`);
+      continue;
+    }
+    lines.push(
+      `| ${ENGINE_LABELS[e.engine]} | ${e.source} | ${e.captureTier} | ${pct(e.mentionRate)} | ${Math.round(e.shareOfVoice)}% | ${pct(e.citationRate)} | ${pct(e.firstPositionRate)} | ${e.topCompetitor ? `${e.topCompetitor.name} (${Math.round(e.topCompetitor.shareOfVoice)}% SOV)` : "—"} |`,
+    );
+  }
+
+  const geoGaps = insights.gaps.filter((g) => g.lever === "GEO").slice(0, 8);
+  if (geoGaps.length) {
+    lines.push(
+      "",
+      "## Search-Visibility Gaps (computed from client-vs-competitor capture data)",
+      ...geoGaps.map(
+        (g) =>
+          `- [${g.severity.toUpperCase()}] ${g.title} — ${g.measured}; target: ${g.target}${g.source ? ` (source: ${g.source})` : ""}`,
+      ),
+    );
+  }
+
+  lines.push(
+    "",
+    "## Frozen prompt set (what buyers asked)",
+    ...insights.promptSet.map((p) => `- "${p}"`),
+    "",
+    `Roster for share-of-voice: ${insights.roster.join(", ")}.`,
+  );
+  return lines.join("\n");
+}
+
+/* ── Public orchestrator ──────────────────────────────────────────── */
+
+export interface SeoGeoResearch {
+  /** Markdown SEO brief — flows into downstream context-document generation. */
+  seoBrief: string;
+  /** Markdown GEO brief — flows into downstream context-document generation. */
+  geoBrief: string;
+  /** Structured metrics + gaps, persisted for the comparative-graph UI. */
+  insights: SeoGeoInsights;
+}
+
+/**
+ * Run the full SEO/GEO research vertical: site audit + multi-engine visibility
+ * capture in parallel, then score, compute gaps, and compose the two briefs.
+ *
+ * Resilience matches the other research verticals: the audit gets one retry;
+ * individual engine failures degrade to UNAVAILABLE cells; only a total failure
+ * (no audit AND no capture) throws to the caller.
+ */
+export async function runSeoGeoResearch(
+  client: Client,
+  rules: string,
+  competitors: Array<{ company: string; url?: string }> = [],
+): Promise<SeoGeoResearch> {
+  const auditWithRetry = async (): Promise<AuditResult> => {
+    try {
+      return await runSiteAudit(client, rules);
+    } catch (err) {
+      console.warn("[seo-geo] Site audit attempt 1/2 failed:", err);
+      return runSiteAudit(client, rules);
+    }
+  };
+
+  const [auditResult, captureResult] = await Promise.allSettled([
+    auditWithRetry(),
+    runVisibilityCapture(client, competitors),
+  ]);
+
+  if (auditResult.status === "rejected" && captureResult.status === "rejected") {
+    throw new Error(
+      `SEO/GEO research failed on both legs — audit: ${String(auditResult.reason)}; capture: ${String(captureResult.reason)}`,
+    );
+  }
+
+  const audit: AuditResult =
+    auditResult.status === "fulfilled"
+      ? auditResult.value
+      : { brief: "> RESEARCH UNAVAILABLE: the technical site audit failed for this run. Do NOT fabricate SEO findings.", seoChecks: [], geoChecks: [] };
+
+  const capture: CaptureResult =
+    captureResult.status === "fulfilled"
+      ? captureResult.value
+      : { probes: [], promptSet: [], roster: [client.name] };
+
+  if (auditResult.status === "rejected") console.error("[seo-geo] Site audit failed after retry:", auditResult.reason);
+  if (captureResult.status === "rejected") console.error("[seo-geo] Visibility capture failed:", captureResult.reason);
+
+  // Score + gaps (pure maths over the frozen run data).
+  const gazetteer = buildGazetteer(
+    client.name,
+    client.website,
+    competitors.slice(0, MAX_ROSTER_COMPETITORS),
+  );
+  const perEngine = ENGINE_ROSTER.map((engine) => {
+    const computed = computePerEngineVisibility(engine, capture.probes, gazetteer);
+    // Engines with no wired connector surface as explicit UNAVAILABLE columns.
+    return computed.promptsTotal > 0 ? computed : { ...computed, source: ENGINE_PROVIDERS[engine] };
+  });
+
+  const seoScore = computeCheckScore(SEO_CHECKS, audit.seoChecks);
+  const geoReadiness = computeCheckScore(GEO_READINESS_CHECKS, audit.geoChecks);
+  // enginesTotal is the ENGINE roster (a3's five), not the competitor roster.
+  const visibility = computeVisibilityIndex(perEngine, ENGINE_ROSTER.length);
+  const presence = computePresence(capture.probes, gazetteer);
+  const rosterSharePct = computeRosterSharePct(capture.probes, gazetteer);
+
+  const gaps: VisibilityGap[] = [
+    ...computeCheckGaps(SEO_CHECKS, audit.seoChecks, "SEO"),
+    ...computeCheckGaps(GEO_READINESS_CHECKS, audit.geoChecks, "GEO"),
+    ...computeVisibilityGaps(perEngine),
+  ].sort((a, b) => b.scoreLift - a.scoreLift);
+
+  const now = Date.now();
+  const insights: SeoGeoInsights = {
+    clientId: client.id,
+    capturedAt: now,
+    seoScore: seoScore.score,
+    seoDataCoveragePct: seoScore.dataCoveragePct,
+    geoReadiness: geoReadiness.score,
+    geoReadinessCoveragePct: geoReadiness.dataCoveragePct,
+    geoVisibilityIndex: visibility.index,
+    geoVisibilityCoveragePct: visibility.dataCoveragePct,
+    geoVisibilityModel: visibility.model,
+    geoVisibilityEnginesMeasured: visibility.enginesMeasured,
+    geoVisibilityEnginesScored: visibility.enginesScored,
+    geoVisibilityEnginesTotal: visibility.enginesTotal,
+    rosterSharePct,
+    categoryPresence: presence.category,
+    brandPresence: presence.brand,
+    perEngine,
+    gaps,
+    seoChecks: audit.seoChecks,
+    geoChecks: audit.geoChecks,
+    promptSet: capture.promptSet,
+    roster: capture.roster,
+    updatedAt: now,
+  };
+
+  return {
+    seoBrief: buildSeoBrief(audit, insights),
+    geoBrief:
+      capture.probes.length > 0
+        ? buildGeoBrief(insights)
+        : "> RESEARCH UNAVAILABLE: the AI answer-engine visibility capture failed for this run. Do NOT fabricate GEO visibility findings — use '—' for any visibility metric.",
+    insights,
+  };
+}

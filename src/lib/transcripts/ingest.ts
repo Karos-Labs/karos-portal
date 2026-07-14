@@ -4,7 +4,10 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
 
-import { createTranscript, getClientContextDoc, listClients, listUsers, upsertClientContextDoc } from "@/lib/data";
+import { createTranscript, findDuplicateTranscript, getClientContextDoc, listClients, listUsers, upsertClientContextDoc } from "@/lib/data";
+import { createActionItemDocsForTranscript } from "@/lib/action-items";
+import { MODELS } from "@/lib/constants";
+import { logger } from "@/services/logger";
 import type { FirefliesTranscript } from "@/lib/transcripts/fireflies";
 import type { AppUser, Client, Transcript } from "@/lib/types";
 
@@ -15,14 +18,20 @@ const analysisSchema = z.object({
 });
 
 /** Produce summary/action-items/keywords, preferring the AI pass but falling back to provider data. */
-async function analyze(t: FirefliesTranscript) {
+async function analyze(t: FirefliesTranscript, clientId: string | null) {
+  const model = process.env.TRANSCRIPT_MODEL || MODELS.SONNET;
   try {
-    const { object } = await generateObject({
-      model: anthropic(process.env.TRANSCRIPT_MODEL || "claude-sonnet-4-6"),
+    const { object, usage } = await generateObject({
+      model: anthropic(model),
       schema: analysisSchema,
       system:
         "You are an analyst for a marketing agency. Summarise client meeting transcripts and extract action items and key topics that the agency should act on.",
       prompt: `Meeting: ${t.title}\nParticipants: ${t.participants.join(", ")}\n\nTranscript:\n${t.text.slice(0, 18000)}`,
+    });
+    logger.logUsage({
+      clientId, agentId: null, agentName: "Transcript Analysis",
+      modelName: model, operation: "transcript_analysis",
+      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
     });
     return object;
   } catch {
@@ -204,14 +213,29 @@ export async function appendMeetingSignalToContextDoc(
  * Full ingestion: analyse the transcript, match client by company name (text-based, unambiguous),
  * and persist. Returns the created transcript id and the match.
  *
+ * Duplicate guard: skips only when the same recording (externalId) or the same
+ * title AND timestamp already exist — same-title recurring meetings at different
+ * times are always ingested. Returns `duplicate: true` with the existing id.
+ *
  * Default assignment is "unassigned". Client is only set when exactly one client name is found
  * in the transcript title/text.
  */
 export async function ingestTranscript(
   t: FirefliesTranscript,
   source: Transcript["source"] = "fireflies",
-): Promise<{ id: string; clientId: string | null; matched: boolean }> {
-  const analysis = await analyze(t);
+): Promise<{ id: string; clientId: string | null; matched: boolean; duplicate?: boolean }> {
+  const existing = await findDuplicateTranscript({
+    externalId: t.externalId,
+    title: t.title,
+    meetingDate: t.date,
+  });
+  if (existing) {
+    return { id: existing.id, clientId: existing.clientId ?? null, matched: !!existing.clientId, duplicate: true };
+  }
+
+  // clientId is resolved by name-matching further below; transcript analysis runs
+  // before that match, so it is logged as an unattributed (system) ingestion cost.
+  const analysis = await analyze(t, null);
   const actionItemsByOwner = parseActionItemsByOwner(analysis.actionItems);
 
   // Build per-item parallel owners array
@@ -229,12 +253,12 @@ export async function ingestTranscript(
   // Map owner names to user accounts
   const actionItemUserMap = matchOwnersToUsers(actionItemsByOwner, users);
 
-  const id = await createTranscript({
+  const transcriptData = {
     title: t.title,
     source,
     externalId: t.externalId,
     clientId: matchedClient?.id ?? null,
-    assignment: matchedClient ? "auto" : "unassigned",
+    assignment: matchedClient ? "auto" : ("unassigned" as const),
     meetingDate: t.date,
     durationMin: t.durationMin,
     participants: t.participants,
@@ -246,7 +270,16 @@ export async function ingestTranscript(
     actionItemUserMap,
     keywords: analysis.keywords,
     createdAt: Date.now(),
-  });
+  } satisfies Omit<Transcript, "id">;
+
+  const id = await createTranscript(transcriptData);
+
+  // Promote extracted items to managed action-item docs (status / comments / history).
+  try {
+    await createActionItemDocsForTranscript(id, transcriptData);
+  } catch (e) {
+    console.error("[ingest] managed action-item creation failed (transcript stored)", e);
+  }
 
   return { id, clientId: matchedClient?.id ?? null, matched: !!matchedClient };
 }

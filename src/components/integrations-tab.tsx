@@ -5,7 +5,11 @@ import { useRouter } from "next/navigation";
 import { Button, Badge, Input, Label } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { saveIntegrationAction, deleteIntegrationAction } from "@/lib/actions";
+import {
+  saveIntegrationAction,
+  deleteIntegrationAction,
+  setIntegrationAutoPublishAction,
+} from "@/lib/actions";
 import { PLATFORM_REGISTRY, OAUTH_SUPPORTED_PLATFORM_IDS, type PlatformConfig } from "@/lib/integrations/platforms";
 import type { ClientIntegration, Role } from "@/lib/types";
 
@@ -58,12 +62,21 @@ function YouTubeLogo() {
   );
 }
 
+function TikTokLogo() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
+      <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" />
+    </svg>
+  );
+}
+
 const PLATFORM_LOGOS: Record<string, React.ReactNode> = {
   linkedin: <LinkedInLogo />,
   twitter: <XLogo />,
   facebook: <FacebookLogo />,
   instagram: <InstagramLogo />,
   youtube: <YouTubeLogo />,
+  tiktok: <TikTokLogo />,
 };
 
 /* ── Branded connect button ──────────────────────────────────────────── */
@@ -136,6 +149,9 @@ function PlatformCard({
   // Connect button regardless of whether the server env vars are wired up.
   const hasOAuthSupport = OAUTH_SUPPORTED_PLATFORM_IDS.has(platform.id);
   const isConnected = !!integration;
+  // Absent flag = enabled (pre-toggle integrations keep auto-publishing).
+  const [autoPublish, setAutoPublish] = useState(integration?.autoPublish !== false);
+  const [togglingAuto, setTogglingAuto] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -153,6 +169,7 @@ function PlatformCard({
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional re-sync when integration prop changes
     setAccountName(integration?.accountName ?? "");
+    setAutoPublish(integration?.autoPublish !== false);
     const next: Record<string, string> = {};
     for (const f of platform.fields) {
       next[f.key] = f.type === "password" ? "" : (integration?.credentials[f.key] ?? "");
@@ -162,11 +179,6 @@ function PlatformCard({
 
   function setField(key: string, value: string) {
     setFields((prev) => ({ ...prev, [key]: value }));
-  }
-
-  function openAdvanced() {
-    setFormError(null);
-    setAdvancedOpen(true);
   }
 
   async function handleManualSave() {
@@ -192,9 +204,22 @@ function PlatformCard({
       await saveIntegrationAction(clientId, platform.id, merged, accountName || undefined);
       setAdvancedOpen(false);
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : "Save failed — please try again.");
+      setFormError(e instanceof Error ? e.message : "Save failed. Please try again.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleAutoPublishToggle() {
+    const next = !autoPublish;
+    setAutoPublish(next); // optimistic — revalidation corrects on failure
+    setTogglingAuto(true);
+    try {
+      await setIntegrationAutoPublishAction(clientId, platform.id, next);
+    } catch {
+      setAutoPublish(!next);
+    } finally {
+      setTogglingAuto(false);
     }
   }
 
@@ -267,8 +292,43 @@ function PlatformCard({
         {/* Admin-only hint when OAuth flow exists but env vars aren't configured yet */}
         {isAdmin && hasOAuthSupport && !isOAuthEnabled && (
           <p className="text-[11px] text-warning/80">
-            OAuth env vars not set — the button above will fail until configured.
+            OAuth env vars not set. The button above will fail until configured.
           </p>
+        )}
+
+        {/* Three-tier publishing control: on = the cron auto-posts scheduled
+            content here; off = content goes out only via manual Publish Now. */}
+        {isConnected && (
+          <button
+            onClick={handleAutoPublishToggle}
+            disabled={togglingAuto}
+            className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-foreground/[0.03] px-3 py-2 transition-colors hover:border-border-strong disabled:opacity-60"
+            title={
+              autoPublish
+                ? "Scheduled content posts automatically at its slot"
+                : "Auto-posting is off. Publish through the Publish Now button only"
+            }
+          >
+            <span className="flex items-center gap-1.5 text-xs text-muted">
+              <Icon name="Zap" className="h-3.5 w-3.5" />
+              Auto-publish scheduled content
+            </span>
+            <span
+              className={cn(
+                "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors",
+                autoPublish ? "bg-neon/80" : "bg-foreground/15",
+              )}
+              aria-checked={autoPublish}
+              role="switch"
+            >
+              <span
+                className={cn(
+                  "inline-block h-3 w-3 transform rounded-full bg-surface transition-transform",
+                  autoPublish ? "translate-x-3.5" : "translate-x-0.5",
+                )}
+              />
+            </span>
+          </button>
         )}
 
         {isConnected && (
@@ -442,7 +502,7 @@ export function IntegrationsTab({
 
     if (!popup || popup.closed) {
       setConnectingPlatform(null);
-      setPopupError("Popup was blocked — please allow popups for this site and try again.");
+      setPopupError("Popup was blocked. Please allow popups for this site and try again.");
       return;
     }
 

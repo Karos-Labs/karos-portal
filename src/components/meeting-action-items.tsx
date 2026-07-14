@@ -157,7 +157,6 @@ function OwnerGroup({
   indices,
   actionItems,
   completed,
-  owners,
   assignedIds,
   pendingToggle,
   pendingAssign,

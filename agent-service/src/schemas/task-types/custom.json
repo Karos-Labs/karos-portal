@@ -1,0 +1,56 @@
+{
+  "$id": "brief/custom",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["entry_skill_dir", "instructions", "prompt"],
+  "properties": {
+    "agent_key": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Platform identifier of the stored agent definition (echoed into the run prompt label)."
+    },
+    "label": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Human-readable name of the agent, e.g. 'Instagram Agent'."
+    },
+    "entry_skill_dir": {
+      "type": "string",
+      "maxLength": 300,
+      "pattern": "^(?!.*\\.\\.)(?!.*//)(products|skills|clients)/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+      "description": "Repo-relative directory of the entry skill (must contain SKILL.md). Restricted to products/, skills/, clients/ subtrees; no traversal."
+    },
+    "skill_roots": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "maxLength": 300,
+        "pattern": "^(?!.*\\.\\.)(?!.*//)(products|skills|clients)/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
+      },
+      "description": "Additional repo-relative skill roots (vendor packs) linked into the shim."
+    },
+    "include_client_skills": {
+      "type": "boolean",
+      "default": true,
+      "description": "Also link every skill under clients/<slug>/skills/."
+    },
+    "instructions": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 12000,
+      "description": "The stored agent system-prompt text appended after the common preamble. Kept small: the whole JobSpec travels as one env var (Cloud Run override limit)."
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "description": "The user's request for this run, e.g. 'create 3 instagram posts about the new offer'."
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Optional extra notes for the agent."
+    }
+  }
+}

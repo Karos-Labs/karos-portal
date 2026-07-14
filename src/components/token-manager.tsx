@@ -50,7 +50,7 @@ export function TokenManager({ tokens, mcpUrl }: { tokens: AccessToken[]; mcpUrl
         <div className="space-y-2 rounded-md border border-neon/40 bg-neon-soft p-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-neon">
             <Icon name="KeyRound" className="h-3.5 w-3.5" />
-            Copy this token now — you won&apos;t see it again.
+            Copy this token now. You won&apos;t see it again.
           </p>
           <div className="flex items-center gap-2">
             <code className="flex-1 overflow-x-auto rounded-md bg-surface-2 px-2.5 py-2 text-xs">{fresh}</code>

@@ -4,6 +4,8 @@ import {
   clearSession,
   provisionFromSignup,
   getUserFromToken,
+  verifyIdToken,
+  isEmailUnverified,
   type SignupIntent,
 } from "@/lib/auth";
 
@@ -18,16 +20,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
     }
 
-    // Signup: provision user doc first, then create session.
-    // Login: look up existing doc first — reject if not found (forces sign-up).
-    const user = intent?.requestedRole
-      ? await provisionFromSignup(idToken, intent)
-      : await getUserFromToken(idToken);
+    const decoded = await verifyIdToken(idToken);
+    const isSignup = !!intent?.requestedRole;
+
+    // Signup: provision the user doc first (so a later post-verification login
+    // finds it), then create the session. Login: look up the existing doc —
+    // reject if not found (forces sign-up).
+    const user = isSignup
+      ? await provisionFromSignup(decoded, intent!)
+      : await getUserFromToken(decoded);
 
     if (!user) {
       return NextResponse.json(
         { error: "No account found for this email. Please sign up with an invitation key first." },
         { status: 404 },
+      );
+    }
+
+    // Mandatory email verification: a native email/password account that hasn't
+    // verified its address gets NO session cookie and cannot reach the workspace.
+    // Social logins and admin-created accounts (emailVerified: true) sail through.
+    if (isEmailUnverified(decoded)) {
+      return NextResponse.json(
+        {
+          needsEmailVerification: true,
+          error: isSignup
+            ? "Verify your email to finish setting up your account."
+            : "Please verify your email before logging in.",
+        },
+        { status: 403 },
       );
     }
 

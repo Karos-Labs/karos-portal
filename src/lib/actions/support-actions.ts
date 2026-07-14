@@ -1,11 +1,10 @@
 "use server";
 
 import { z } from "zod";
+import { getCurrentUser } from "@/lib/auth";
 import { sendEmail } from "@/lib/email";
 
 const schema = z.object({
-  name: z.string().min(1, "Name is required").max(100),
-  email: z.string().email("A valid email is required"),
   subject: z.string().min(1, "Subject is required").max(200),
   message: z.string().min(10, "Message must be at least 10 characters").max(5000),
 });
@@ -13,16 +12,22 @@ const schema = z.object({
 export async function sendSupportEmailAction(
   input: unknown,
 ): Promise<{ ok: boolean; error?: string }> {
+  const user = await getCurrentUser();
+  if (!user) {
+    return { ok: false, error: "You must be signed in to contact support." };
+  }
+
   const parsed = schema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  const { name, email, subject, message } = parsed.data;
+  const { subject, message } = parsed.data;
+  // Identity comes from the authenticated session, never from client input —
+  // a support request can't be used to spoof another user's name/email.
+  const { name, email } = user;
 
-  // Extract bare address from "Display Name <addr@domain>" or use as-is
-  const emailFrom = process.env.EMAIL_FROM ?? "hello@karoslabs.com";
-  const to = emailFrom.match(/<([^>]+)>/)?.[1] ?? emailFrom;
+  const to = process.env.ADMIN_EMAIL ?? "hello@karoslabs.com";
 
   const safeMessage = message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const html = `
@@ -52,6 +57,12 @@ export async function sendSupportEmailAction(
   const result = await sendEmail({ to, subject: `[Support] ${subject}`, html, replyTo: email });
 
   if (!result.ok) {
+    // Surface the real delivery error to server logs for diagnosis (bad/missing
+    // RESEND_API_KEY, unverified domain, Resend outage) while keeping the client
+    // message generic. Never leak provider internals to the browser.
+    console.error(
+      `[support] Failed to deliver support email from ${email} (to ${to}): ${result.error}`,
+    );
     return { ok: false, error: "Failed to send your message. Please try again." };
   }
   return { ok: true };

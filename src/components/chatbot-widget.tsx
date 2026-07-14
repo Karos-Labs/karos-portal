@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
-import type { Agent, Client, ClientReport } from "@/lib/types";
+import type { Client, ClientReport } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
 
@@ -14,10 +14,6 @@ interface Message {
   role: "user" | "assistant";
   content: string;
 }
-
-type CopilotMode =
-  | { type: "general" }
-  | { type: "agent"; agent: Agent };
 
 /* ── Proactive action chip definitions ───────────────────────────────── */
 
@@ -47,7 +43,7 @@ function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[]
       label: "Competitor Deep-Dive",
       sublabel: "Generate intel brief + counter-strategy tasks",
       trigger:
-        "Help me research a competitor. I'll give you their URL or company name — start by asking me which competitor to focus on.",
+        "Help me research a competitor. I'll give you their URL or company name. Start by asking me which competitor to focus on.",
       color: "#6b9fd4",
     },
     {
@@ -63,9 +59,9 @@ function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[]
       id: "content_dispatch",
       icon: "Zap",
       label: "AI Content Dispatch",
-      sublabel: "Propose & queue AI agent content runs for this week",
+      sublabel: "Propose & queue managed content runs for this week",
       trigger:
-        "Propose which AI marketing agents to dispatch for content creation this week. Review our active agents and suggest a concrete content plan.",
+        "Propose which Karos managed products (social posts, newsletter, blog article, landing page) to dispatch for content creation this week, and suggest a concrete content plan.",
       color: "#e5484d",
     },
   ];
@@ -75,11 +71,10 @@ function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[]
 
 function useCopilot(
   clientId: string,
-  agentId: string | null,
   onBrandingChange: () => void,
-  onJobStarted: () => void,
   onTasksCreated: () => void,
 ) {
+  const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -116,7 +111,7 @@ function useCopilot(
         const response = await fetch(`/api/clients/${clientId}/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history, agentId }),
+          body: JSON.stringify({ messages: history }),
           signal: controller.signal,
         });
 
@@ -129,7 +124,6 @@ function useCopilot(
         const decoder = new TextDecoder();
         let accumulated = "";
         let brandingUpdated = false;
-        let jobStarted = false;
         let tasksCreated = false;
 
         while (true) {
@@ -137,7 +131,6 @@ function useCopilot(
           if (done) break;
           const chunk = decoder.decode(value, { stream: true });
           if (chunk.includes("Branding guidelines updated")) brandingUpdated = true;
-          if (chunk.includes("Run started successfully")) jobStarted = true;
           if (chunk.includes("Created") && chunk.includes("task")) tasksCreated = true;
           accumulated += chunk;
           setMessages((prev) =>
@@ -146,8 +139,10 @@ function useCopilot(
         }
 
         if (brandingUpdated) onBrandingChange();
-        if (jobStarted) onJobStarted();
         if (tasksCreated) onTasksCreated();
+        // Chat messages charge credits — refresh so the rail's balance pill
+        // reflects the new balance.
+        router.refresh();
       } catch (e) {
         if ((e as Error).name === "AbortError") {
           setMessages((prev) => prev.filter((m) => m.id !== assistantId));
@@ -159,7 +154,7 @@ function useCopilot(
         setStreaming(false);
       }
     },
-    [clientId, agentId, messages, streaming, onBrandingChange, onJobStarted, onTasksCreated],
+    [clientId, messages, streaming, onBrandingChange, onTasksCreated, router],
   );
 
   return { messages, input, setInput, send, streaming, error, reset };
@@ -178,107 +173,6 @@ function TypingDots() {
         />
       ))}
     </span>
-  );
-}
-
-/* ── Mode selector ───────────────────────────────────────────────────── */
-
-function ModeSelector({
-  mode,
-  agents,
-  onChange,
-}: {
-  mode: CopilotMode;
-  agents: Agent[];
-  onChange: (mode: CopilotMode) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDown(e: PointerEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [open]);
-
-  const isAgent = mode.type === "agent";
-  const agentColor = isAgent ? (mode.agent.color ?? "#FF6B2C") : null;
-  const label = isAgent ? mode.agent.name : "General Client Assistant";
-
-  return (
-    <div ref={ref} className="relative shrink-0 border-b border-border">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-2 text-left transition-colors hover:bg-surface-2"
-      >
-        {isAgent ? (
-          <span
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px]"
-            style={{ background: agentColor! + "1f", color: agentColor! }}
-          >
-            <Icon name={mode.agent.icon} className="h-3 w-3" />
-          </span>
-        ) : (
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border border-foreground/10 bg-foreground/[0.04]">
-            <Icon name="Bot" className="h-3 w-3 text-foreground/70" />
-          </span>
-        )}
-        <span className="flex-1 truncate text-xs font-medium text-muted">{label}</span>
-        <span className="text-[10px] text-muted-2 shrink-0 mr-1">Mode</span>
-        <Icon
-          name="ChevronDown"
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform duration-200",
-            open && "rotate-180",
-          )}
-        />
-      </button>
-
-      {open && (
-        <div className="absolute left-0 right-0 top-full z-50 border-b border-border bg-surface shadow-xl animate-fade-up">
-          <button
-            className={cn(
-              "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-xs transition-colors hover:bg-surface-2",
-              mode.type === "general" && "text-foreground",
-            )}
-            onClick={() => { onChange({ type: "general" }); setOpen(false); }}
-          >
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border border-foreground/10 bg-foreground/[0.04]">
-              <Icon name="Bot" className="h-3 w-3 text-foreground/70" />
-            </span>
-            <span className="flex-1">General Client Assistant</span>
-            {mode.type === "general" && <Icon name="Check" className="h-3 w-3 shrink-0 text-foreground/70" />}
-          </button>
-          {agents.length > 0 && <div className="mx-3 h-px bg-border" />}
-          {agents.map((agent) => {
-            const color = agent.color ?? "#FF6B2C";
-            const selected = mode.type === "agent" && mode.agent.id === agent.id;
-            return (
-              <button
-                key={agent.id}
-                className={cn(
-                  "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-xs transition-colors hover:bg-surface-2",
-                  selected && "text-foreground",
-                )}
-                onClick={() => { onChange({ type: "agent", agent }); setOpen(false); }}
-              >
-                <span
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px]"
-                  style={{ background: color + "1f", color }}
-                >
-                  <Icon name={agent.icon} className="h-3 w-3" />
-                </span>
-                <span className="flex-1 truncate">{agent.name}</span>
-                {selected && <Icon name="Check" className="h-3 w-3 shrink-0 text-foreground/70" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -452,43 +346,26 @@ const GENERAL_SUGGESTIONS = [
   "Update our primary color",
 ];
 
-const AGENT_SUGGESTIONS = [
-  "Show pending drafts",
-  "/run new generation",
-  "Rewrite draft #1 caption",
-];
-
 function ChatEmptyState({
-  mode,
   clientName,
   send,
 }: {
-  mode: CopilotMode;
   clientName: string;
   send: (t: string) => void;
 }) {
-  const isAgent = mode.type === "agent";
-  const agentColor = isAgent ? (mode.agent.color ?? "#FF6B2C") : null;
-  const title = isAgent ? `${mode.agent.name} Copilot` : "Ask me anything";
-  const desc = isAgent
-    ? `I can show drafts, trigger new runs, and help you edit content for the ${mode.agent.name} pipeline.`
-    : `I have full context on ${clientName}'s brand, competitors, strategy documents, and content history.`;
-  const suggestions = isAgent ? AGENT_SUGGESTIONS : GENERAL_SUGGESTIONS;
-
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center">
-      <div
-        className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70"
-        style={agentColor ? { background: agentColor + "1f", color: agentColor } : undefined}
-      >
-        <Icon name={isAgent ? mode.agent.icon : "Sparkles"} className="h-6 w-6" />
+      <div className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
+        <Icon name="Sparkles" className="h-6 w-6" />
       </div>
       <div>
-        <p className="text-sm font-medium">{title}</p>
-        <p className="mt-1 text-xs text-muted-2">{desc}</p>
+        <p className="text-sm font-medium">Ask me anything</p>
+        <p className="mt-1 text-xs text-muted-2">
+          I have full context on {clientName}&apos;s brand, competitors, strategy documents, and content history.
+        </p>
       </div>
       <div className="mt-1 flex flex-wrap justify-center gap-1.5">
-        {suggestions.map((prompt) => (
+        {GENERAL_SUGGESTIONS.map((prompt) => (
           <button
             key={prompt}
             onClick={() => send(prompt)}
@@ -507,8 +384,6 @@ function ChatEmptyState({
 interface Props {
   clientId: string;
   clientName: string;
-  /** Active, non-system agents shown as selectable modes. */
-  agents: Agent[];
   /** When true the chat panel opens automatically on mount (CLIENT_USER login). */
   defaultOpen?: boolean;
   /** Display name of the currently logged-in user (for personalised greeting). */
@@ -530,12 +405,9 @@ interface Props {
 export function ChatbotWidget({
   clientId,
   clientName,
-  agents,
   defaultOpen = false,
   userName,
   hasGoogleIntegration = false,
-  client: _client,
-  report: _report,
   docked = false,
   onCollapse,
   floatingPosition = "bottom-6 right-6",
@@ -544,33 +416,20 @@ export function ChatbotWidget({
   const [open, setOpen] = useState(defaultOpen);
   // Docked mode is permanently open and never shows the floating bubble.
   const panelOpen = docked || open;
-  const [mode, setMode] = useState<CopilotMode>({ type: "general" });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const onBrandingChange = useCallback(() => router.refresh(), [router]);
-  const onJobStarted = useCallback(() => router.refresh(), [router]);
   const onTasksCreated = useCallback(() => router.refresh(), [router]);
-
-  const agentId = mode.type === "agent" ? mode.agent.id : null;
-  const agentColor = mode.type === "agent" ? (mode.agent.color ?? "#FF6B2C") : null;
 
   const { messages, input, setInput, send, streaming, error, reset } = useCopilot(
     clientId,
-    agentId,
     onBrandingChange,
-    onJobStarted,
     onTasksCreated,
   );
 
   // Whether to show the proactive welcome instead of the standard empty state
-  const isProactiveMode = defaultOpen && mode.type === "general";
-  const showProactiveWelcome = isProactiveMode && messages.length === 0;
-
-  function handleModeChange(newMode: CopilotMode) {
-    reset();
-    setMode(newMode);
-  }
+  const showProactiveWelcome = defaultOpen && messages.length === 0;
 
   // Auto-scroll
   useEffect(() => {
@@ -608,7 +467,7 @@ export function ChatbotWidget({
           aria-label={open ? "Close AI Copilot" : "Open AI Copilot"}
         >
           <Icon
-            name={open ? "X" : mode.type === "agent" ? mode.agent.icon : "MessageCircle"}
+            name={open ? "X" : "MessageCircle"}
             className={cn("h-6 w-6 transition-colors", open ? "text-foreground" : "text-primary-foreground")}
           />
         </button>
@@ -669,9 +528,6 @@ export function ChatbotWidget({
             </div>
           </div>
 
-          {/* Mode selector bar */}
-          <ModeSelector mode={mode} agents={agents} onChange={handleModeChange} />
-
           {/* Messages / Welcome */}
           {messages.length === 0 ? (
             showProactiveWelcome ? (
@@ -684,7 +540,7 @@ export function ChatbotWidget({
                 onTasksCreated={onTasksCreated}
               />
             ) : (
-              <ChatEmptyState mode={mode} clientName={clientName} send={send} />
+              <ChatEmptyState clientName={clientName} send={send} />
             )
           ) : (
             <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
@@ -732,11 +588,9 @@ export function ChatbotWidget({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                mode.type === "agent"
-                  ? "Ask about drafts, type /run to generate…"
-                  : showProactiveWelcome
-                    ? "Or type your own question…"
-                    : "Ask about performance, brand, competitors…"
+                showProactiveWelcome
+                  ? "Or type your own question…"
+                  : "Ask about performance, brand, competitors…"
               }
               disabled={streaming}
               className="flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-foreground/25 disabled:opacity-50"

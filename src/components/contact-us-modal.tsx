@@ -6,7 +6,15 @@ import { Headphones, X, CheckCircle } from "lucide-react";
 import { Button, Input, Textarea, Label } from "@/components/ui";
 import { sendSupportEmailAction } from "@/lib/actions";
 
-export function ContactUsButton({ variant = "icon" }: { variant?: "icon" | "row" }) {
+export function ContactUsButton({
+  variant = "icon",
+  userName,
+  userEmail,
+}: {
+  variant?: "icon" | "row";
+  userName: string;
+  userEmail: string;
+}) {
   const [open, setOpen] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,8 +49,6 @@ export function ContactUsButton({ variant = "icon" }: { variant?: "icon" | "row"
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     const input = {
-      name: (fd.get("name") as string).trim(),
-      email: (fd.get("email") as string).trim(),
       subject: (fd.get("subject") as string).trim(),
       message: (fd.get("message") as string).trim(),
     };
@@ -135,33 +141,16 @@ export function ContactUsButton({ variant = "icon" }: { variant?: "icon" | "row"
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label htmlFor="cs-name">Your name</Label>
-                      <Input
-                        ref={firstFieldRef}
-                        id="cs-name"
-                        name="name"
-                        placeholder="Jane Smith"
-                        autoComplete="name"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="cs-email">Your email</Label>
-                      <Input
-                        id="cs-email"
-                        name="email"
-                        type="email"
-                        placeholder="jane@company.com"
-                        autoComplete="email"
-                        required
-                      />
-                    </div>
+                  <div className="flex items-center gap-2 rounded-md border border-foreground/10 bg-foreground/[0.03] px-3 py-2 text-xs text-muted">
+                    Sending as
+                    <span className="font-medium text-foreground">{userName}</span>
+                    <span className="text-muted-2">·</span>
+                    <span>{userEmail}</span>
                   </div>
                   <div>
                     <Label htmlFor="cs-subject">Subject</Label>
                     <Input
+                      ref={firstFieldRef}
                       id="cs-subject"
                       name="subject"
                       placeholder="What can we help with?"

@@ -15,32 +15,79 @@ export interface AgentCatalogEntry {
   outputKind: string;
   description: string;
   capabilities: string[];
+  /** Exact deliverables the agent produces (from the managed-product registry). */
+  deliverables?: string[];
+  /** Typical wall-clock runtime, e.g. "~10–15 min". */
+  estimate?: string;
+  /** Brief-field keys the agent accepts — the full input surface. */
+  briefKeys?: string[];
 }
 
 export interface ProactiveSystemContext {
-  /** Published, active, non-system agents available for task dispatch. */
+  /** Managed-product agents available for karos_managed execution. */
   agents: AgentCatalogEntry[];
   /** Social platform names with active OAuth connections, e.g. ["instagram", "linkedin"]. */
   linkedSocialPlatforms: string[];
+  /** Connected integrations with health, e.g. [{ platform: "linkedin", status: "expired" }]. */
+  integrations: Array<{ platform: string; status: "active" | "expired" }>;
+  /** Scheduled/approved calendar items in the NEXT 14 DAYS, per platform ("unassigned" bucket for platformless). */
+  scheduledNext14ByPlatform: Record<string, number>;
   /** Whether a Gmail/Google OAuth integration is currently active. */
   hasGmailIntegration: boolean;
   /** Whether any content assets are currently scheduled for publication. */
   hasScheduledContent: boolean;
+  /** karos_managed tasks currently active (pending / in_progress / review_pending). */
+  activeTaskCount: number;
+  /** The per-client cap on active karos_managed tasks (MAX_ACTIVE_TASKS). */
+  maxActiveTasks: number;
 }
 
 /* ── Dynamic system appendix builder ────────────────────────────── */
 
 export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): string {
-  /* Agent catalog */
+  /* Agent catalog — the productType id is what routes execution via create_tasks */
   const agentCatalogBlock = ctx.agents.length > 0
     ? ctx.agents
-        .map(
-          (a) =>
-            `• **${a.name}** — ${a.description} | output: ${a.outputKind}` +
-            (a.capabilities.length ? ` | caps: ${a.capabilities.join(", ")}` : ""),
-        )
+        .map((a) => {
+          const lines = [
+            `• **${a.name}** (productType: \`${a.id}\`) — ${a.description}`,
+            a.deliverables?.length ? `  produces: ${a.deliverables.join("; ")}` : "",
+            [
+              a.estimate ? `runtime: ${a.estimate}` : "",
+              a.briefKeys?.length ? `brief inputs: ${a.briefKeys.join(", ")}` : "",
+            ]
+              .filter(Boolean)
+              .map((s) => `  ${s}`)
+              .join(" | "),
+          ];
+          return lines.filter(Boolean).join("\n");
+        })
         .join("\n")
     : "• No AI agents are currently active — recommend setting up an agent as the first karos_managed task.";
+
+  /* Task board capacity */
+  const slotsFree = Math.max(0, ctx.maxActiveTasks - ctx.activeTaskCount);
+
+  /* Content-gap detection — connected platforms vs the next-14-day calendar */
+  const activeIntegrations = ctx.integrations.filter((i) => i.status === "active");
+  const expiredIntegrations = ctx.integrations.filter((i) => i.status === "expired");
+  const gapLines = activeIntegrations.map(({ platform }) => {
+    const count = ctx.scheduledNext14ByPlatform[platform] ?? 0;
+    return `• ${platform}: ${count === 0 ? "⚠ NO content scheduled in the next 14 days — CONTENT GAP" : `${count} item${count === 1 ? "" : "s"} scheduled in the next 14 days`}`;
+  });
+  const unassignedCount = ctx.scheduledNext14ByPlatform["unassigned"] ?? 0;
+  const contentGapBlock = `### CALENDAR & INTEGRATION STATE — CONTENT GAP DETECTION
+
+Connected platforms vs the live content calendar (next 14 days):
+${gapLines.length > 0 ? gapLines.join("\n") : "• No social platforms connected yet — onboarding tasks come first."}
+${unassignedCount > 0 ? `• ${unassignedCount} scheduled item${unassignedCount === 1 ? "" : "s"} without a platform assignment` : ""}
+${expiredIntegrations.length > 0 ? `\n⚠ EXPIRED integrations needing re-authentication: ${expiredIntegrations.map((i) => i.platform).join(", ")} — create one client_managed "Re-authenticate <platform> connection" task each (priority: high, weight: 95). Do NOT create content tasks targeting an expired platform until it is reconnected.` : ""}
+
+GAP RULES:
+- A connected platform with NO scheduled content in the next 14 days is a critical gap → create a karos_managed task to fill it, linked to the right product: instagram/tiktok gaps → \`social_post\`; blog/website cadence gaps → \`blog_article\`; email cadence gaps → \`newsletter_issue\`.
+- TikTok is video/short-form first: a TikTok content gap MUST be filled with a media-heavy \`social_post\` explicitly tailored for TikTok (short-form video / vertical clip concept, hook-led caption). Set \`platform: "tiktok"\`, name TikTok in the title, and give it a HIGH weight (≥75, priority high) — an empty TikTok calendar starves the client's highest-velocity channel.
+- For connected platforms the products don't post to natively (linkedin, facebook, twitter, youtube), fill gaps with \`blog_article\` / \`social_post\` source content the team repurposes — name the target platform in the title and set \`platform\`.
+- A platform with a healthy pipeline needs nothing — never pad the board when the calendar is already covered.`;
 
   /* Social scenario */
   const hasSocial = ctx.linkedSocialPlatforms.length > 0;
@@ -57,6 +104,7 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
     { key: "linkedin",  display: "LinkedIn"    },
     { key: "x",         display: "X (Twitter)" },
     { key: "youtube",   display: "YouTube"     },
+    { key: "tiktok",    display: "TikTok"      },
   ];
   const linkedNorm = ctx.linkedSocialPlatforms.map((p) => p.toLowerCase());
   const missingPlatforms = CANONICAL_PLATFORMS.filter(
@@ -77,7 +125,7 @@ HARD RULES for these onboarding tasks:
 - Title must name the exact platform: "Connect [Platform] account to Karos"
 - owner = client_managed (OAuth requires the client's own credentials)
 - priority = high (missing channels block all content distribution to that platform)
-- These tasks are always created in a Scan & Refresh regardless of other task counts`
+- These tasks are always created in a Scan & Refresh — client_managed tasks are exempt from the Karos-managed capacity cap`
     : "";
 
   const scenarioA = hasSocial
@@ -164,19 +212,37 @@ Every \`karos_managed\` task title must use execution-dispatch language. Describ
   "Explore opportunities for content repurposing"
   "Assess brand voice consistency across channels"
 
-### AVAILABLE AI EXECUTION AGENTS
+### AVAILABLE AI EXECUTION AGENTS — THE COMPLETE CAPABILITY REGISTRY
 ${agentCatalogBlock}
 
-CRITICAL RULE: Every \`karos_managed\` task MUST either (a) name one of the agents above as the executor, or (b) describe a direct Karos staff deliverable (drafting, editing, publishing, technical fix). If neither applies, set \`owner: "client_managed"\` instead.
+CRITICAL RULE — CAPABILITIES ARE EXHAUSTIVE: karos_managed work is EXECUTED BY THE AGENTS ABOVE, and the deliverables listed are the ONLY things they can produce. NEVER invent actions outside this registry: no ad buying, no DM/outreach campaigns, no analytics reports, no follower-growth "management", no video editing, no platform-side configuration. Every \`karos_managed\` content task MUST carry the executing agent's \`productType\`. Only when no agent's purpose fits may a karos_managed task describe a direct Karos staff deliverable (editing, publishing, technical fix) — and if neither applies, set \`owner: "client_managed"\` instead.
+AGENT LINKAGE: The \`productType\` you pass in \`create_tasks\` is what routes execution to that agent when the task moves to In Progress. Omit \`productType\` only for staff deliverables and \`client_managed\` tasks.
+
+${contentGapBlock}
 ${onboardingBlock ? `\n${onboardingBlock}` : ""}
 
+### KAROS EXECUTION QUEUE CAPACITY — HARD LIMIT
+At most **${ctx.maxActiveTasks} active karos_managed tasks** (pending, in progress, or awaiting review) per client — this bounds the AI-agent execution queue. There are currently **${ctx.activeTaskCount} active** — **${slotsFree} slot${slotsFree === 1 ? "" : "s"} free**. \`client_managed\` tasks are exempt and uncapped.
+- NEVER propose more karos_managed tasks than there are free slots; rank by impact and cut the rest
+- ${slotsFree === 0 ? "The queue is AT CAPACITY: do not propose new karos_managed tasks — tell the user to complete or approve existing tasks first (client_managed tasks may still be created)" : "karos_managed proposals beyond the free slots will be rejected by the platform, so prioritise ruthlessly"}
+- The cap is enforced server-side; exceeding it is impossible, not just discouraged
+
 ### TASK QUALITY STANDARDS
-- Generate **5–10 substantive tasks** per major action trigger, plus all mandatory platform onboarding tasks
+- Generate **up to ${Math.min(10, Math.max(slotsFree, 0))} substantive karos_managed tasks** per major action trigger (never more than the free queue capacity above); client_managed tasks (e.g. platform onboarding) are additional and uncapped
 - Every task must be hyper-specific to this client — zero generic placeholders
 - Each task receives the correct **owner** field:
   - **karos_managed**: executed by Karos AI agents or staff (content creation, research, drafting, analysis, publishing)
   - **client_managed**: executed by the client or their team (website edits, OAuth connections, approval workflows, vendor meetings)
 - Never create duplicate tasks — the client's recent task history is in your context
+
+### CONTEXTUAL PRIORITY SCORING (\`weight\`, 0–100)
+Score every task by how critical the underlying gap is — the board sorts by it:
+- 90–100: broken/expired core integration, revenue-blocking demand, hard deadline
+- 75–89: missing core integration, complete content gap on a connected platform
+- 50–74: cadence reinforcement, competitor counter-moves, standard deliverables
+- 25–49: amplification, repurposing, optional secondary content
+- 0–24: nice-to-have polish
+The \`priority\` field must agree with the weight band (≥75 → high, 40–74 → medium, <40 → low).
 
 ### CONTEXT-DRIVEN SCANNING RULES
 
@@ -404,6 +470,7 @@ export function buildArtifactGenerationPrompt(
   clientWebsite?: string,
   brandVoice?: string,
   adjustmentFeedback?: string,
+  previousArtifact?: string,
 ): string {
   const context = [
     clientIndustry && `Industry: ${clientIndustry}`,
@@ -412,8 +479,12 @@ export function buildArtifactGenerationPrompt(
     .filter(Boolean)
     .join(" · ");
 
+  const previousBlock = adjustmentFeedback && previousArtifact
+    ? `\n\nPREVIOUS VERSION OF THE DELIVERABLE (being revised):\n---\n${previousArtifact}\n---`
+    : "";
+
   const feedbackBlock = adjustmentFeedback
-    ? `\n\nCLIENT FEEDBACK ON PREVIOUS VERSION:\n"${adjustmentFeedback}"\n\nIncorporate this feedback fully into the revised output — do not ignore any point raised.`
+    ? `${previousBlock}\n\nCLIENT FEEDBACK ON PREVIOUS VERSION:\n"${adjustmentFeedback}"\n\nProduce a refined version: keep what the feedback doesn't challenge, and incorporate every point raised — do not ignore any of them.`
     : "";
 
   if (taskType === "integration_action") {

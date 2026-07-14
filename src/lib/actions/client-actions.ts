@@ -3,10 +3,11 @@
 import { randomBytes } from "crypto";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createClient, updateClient, getClientByKeyId } from "@/lib/data";
+import { createClient, updateClient, deleteClient, getClientByKeyId } from "@/lib/data";
 import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
 import type { Client, SocialLinks } from "@/lib/types";
+import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import { requireStaff } from "./_shared";
 
 export async function createClientAction(input: {
@@ -41,9 +42,13 @@ export async function createClientAction(input: {
     createdBy: user.uid,
   });
 
+  // Onboarding trigger: fires immediately after the client record (with its
+  // initial details/parameters) is persisted. runIntelReportPipeline re-fetches
+  // the client from Firestore at execution time, so the Intel Report Agent
+  // always operates on the live, current client state — never a captured copy.
   after(async () => {
-    await updateClient(id, { onboardingStatus: "running" });
-    const { runIntelReportPipeline } = await import("@/lib/intel-report");
+    await updateClient(id, { onboardingStatus: "running", onboardingError: "" });
+    const { runIntelReportPipeline } = await import("@/lib/intel");
     const [brandingResult, intelResult] = await Promise.allSettled([
       applyBrandingForClient(id),
       runIntelReportPipeline(id),
@@ -52,10 +57,22 @@ export async function createClientAction(input: {
       console.error("[onboard] Branding generation failed (non-fatal):", brandingResult.reason);
     }
     if (intelResult.status === "rejected") {
-      console.error("[onboard] Intel Report generation failed (non-fatal):", intelResult.reason);
+      console.error("[onboard] Intel Report generation failed:", intelResult.reason);
     }
     const anyFailed = brandingResult.status === "rejected" || intelResult.status === "rejected";
-    await updateClient(id, { onboardingStatus: anyFailed ? "failed" : "done" });
+    // Persist WHY the run failed so the UI can surface it — a silent "failed"
+    // badge with the reason buried in server logs is exactly what we're avoiding.
+    const failureReasons = [
+      brandingResult.status === "rejected" ? `branding: ${String((brandingResult.reason as Error)?.message ?? brandingResult.reason)}` : "",
+      intelResult.status === "rejected" ? `intel: ${String((intelResult.reason as Error)?.message ?? intelResult.reason)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ")
+      .slice(0, 500);
+    await updateClient(id, {
+      onboardingStatus: anyFailed ? "failed" : "done",
+      onboardingError: anyFailed ? failureReasons : "",
+    });
   });
 
   revalidatePath("/clients");
@@ -78,7 +95,19 @@ export async function regenerateClientKeyAction(clientId: string): Promise<{ cli
  */
 export async function updateClientProfileAction(
   id: string,
-  input: { category?: string; teamSize?: string; description?: string; socialLinks?: SocialLinks },
+  input: {
+    category?: string;
+    teamSize?: string;
+    description?: string;
+    socialLinks?: SocialLinks;
+    // Brand profile fields — editable by the client's own users as well as staff.
+    brandVoice?: string;
+    contactEmail?: string;
+    website?: string;
+    industry?: string;
+    /** Comma-separated meeting domains, e.g. "company.com, sub.company.com" */
+    domainsCsv?: string;
+  },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const user = await requireUser();
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
@@ -91,6 +120,13 @@ export async function updateClientProfileAction(
   if (input.category !== undefined) patch.category = clean(input.category);
   if (input.teamSize !== undefined) patch.teamSize = clean(input.teamSize);
   if (input.description !== undefined) patch.description = clean(input.description);
+  if (input.brandVoice !== undefined) patch.brandVoice = clean(input.brandVoice);
+  if (input.contactEmail !== undefined) patch.contactEmail = clean(input.contactEmail)?.toLowerCase();
+  if (input.website !== undefined) patch.website = clean(input.website);
+  if (input.industry !== undefined) patch.industry = clean(input.industry);
+  if (input.domainsCsv !== undefined) {
+    patch.domains = input.domainsCsv.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
+  }
   if (input.socialLinks !== undefined) {
     const links: SocialLinks = {};
     for (const [k, val] of Object.entries(input.socialLinks)) {
@@ -113,9 +149,28 @@ export async function updateClientAction(id: string, input: Partial<Client> & { 
     delete (patch as { domainsCsv?: string }).domainsCsv;
   }
   if (patch.contactEmail) patch.contactEmail = patch.contactEmail.toLowerCase();
+  // Store just the client folder slug even if a full repo URL/path was pasted.
+  if (patch.agentsRepoSlug !== undefined) patch.agentsRepoSlug = normalizeLabSlug(patch.agentsRepoSlug);
+  // Immutable / security-sensitive fields — only dedicated actions may change these.
+  delete (patch as Partial<Client> & { clientKeyId?: string }).clientKeyId;
+  delete (patch as Partial<Client> & { createdAt?: number }).createdAt;
+  delete (patch as Partial<Client> & { createdBy?: string }).createdBy;
   await updateClient(id, patch);
   revalidatePath(`/clients/${id}`);
   revalidatePath("/clients");
+}
+
+/**
+ * Permanently delete a client and revalidate the clients listing.
+ * Orphaned sub-documents (jobs, assets, context docs, etc.) referencing
+ * this clientId remain in Firestore but are no longer surfaced in the UI.
+ * Staff-only — admin or employee access required.
+ */
+export async function deleteClientAction(clientId: string): Promise<void> {
+  await requireStaff();
+  await deleteClient(clientId);
+  revalidatePath("/clients");
+  revalidatePath(`/clients/${clientId}`);
 }
 
 /**

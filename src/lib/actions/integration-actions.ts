@@ -4,11 +4,13 @@ import { revalidatePath } from "next/cache";
 import {
   upsertClientIntegration,
   deleteClientIntegration,
+  setIntegrationAutoPublish,
   listAccessTokens,
   updateAccessToken,
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { issueAccessToken } from "@/lib/tokens";
+import { autoCompleteTasksOnIntegrationConnect } from "@/lib/task-sync";
 import { requireStaff } from "./_shared";
 
 /**
@@ -39,6 +41,30 @@ export async function saveIntegrationAction(
     updatedAt: Date.now(),
   });
 
+  // Task Map sync: connecting the platform completes any matching
+  // "Connect <platform>" onboarding task without a manual drag.
+  await autoCompleteTasksOnIntegrationConnect(clientId, platform).catch(() => {});
+
+  revalidatePath(`/clients/${clientId}`);
+  revalidatePath("/tasks");
+}
+
+/**
+ * Toggle auto-publishing for a connected platform. Off ⇒ the publish cron skips
+ * it and content goes out only via manual "Publish Now" (or stays a placeholder).
+ * Clients may toggle their own integrations — opting out of automated posting is
+ * their decision, not just staff's.
+ */
+export async function setIntegrationAutoPublishAction(
+  clientId: string,
+  platform: string,
+  enabled: boolean,
+): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  if (!isStaff && user.clientId !== clientId) throw new Error("Forbidden");
+  await setIntegrationAutoPublish(clientId, platform, enabled);
   revalidatePath(`/clients/${clientId}`);
 }
 

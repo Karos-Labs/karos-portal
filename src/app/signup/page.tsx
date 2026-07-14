@@ -1,15 +1,15 @@
 "use client";
 
-import { useState, useTransition, useEffect } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   createUserWithEmailAndPassword,
   signInWithPopup,
+  sendEmailVerification,
   updateProfile,
-  getRedirectResult,
 } from "firebase/auth";
-import { auth, googleProvider, appleProvider } from "@/lib/firebase/client";
+import { auth, googleProvider } from "@/lib/firebase/client";
 import { validateInvitationKeyAction } from "@/lib/actions";
 import { Button, Input, Label } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -27,14 +27,6 @@ function GoogleLogo() {
   );
 }
 
-function AppleLogo() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="shrink-0">
-      <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701z" />
-    </svg>
-  );
-}
-
 /* ── Types ───────────────────────────────────────────────────────── */
 
 type ValidatedKey =
@@ -42,7 +34,7 @@ type ValidatedKey =
   | { role: "CLIENT_USER"; clientId: string; label: string; invitationKey: string };
 
 type Step = "key" | "auth";
-type LoadingState = "validate" | "email" | "google" | "apple" | null;
+type LoadingState = "validate" | "email" | "google" | null;
 
 /* ── Helper ──────────────────────────────────────────────────────── */
 
@@ -54,10 +46,10 @@ function routeAfterAuth(role: string | null, clientId: string | null): string {
 function friendly(err: unknown): string {
   const code = (err as { code?: string })?.code ?? "";
   const map: Record<string, string> = {
-    "auth/email-already-in-use": "That email is already registered — try signing in instead.",
+    "auth/email-already-in-use": "That email is already registered. Try signing in instead.",
     "auth/weak-password": "Password must be at least 6 characters.",
     "auth/popup-closed-by-user": "Sign-in cancelled.",
-    "auth/popup-blocked": "Popup blocked — allow popups for this site and try again.",
+    "auth/popup-blocked": "Popup blocked. Allow popups for this site and try again.",
     "auth/cancelled-popup-request": "",
     "auth/invalid-api-key": "Firebase isn't configured. Add your keys to .env.local.",
   };
@@ -80,18 +72,10 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Catch redirect-based auth results (e.g. Apple on some browsers).
-  useEffect(() => {
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result && validated) handlePostAuth();
-      })
-      .catch((err) => {
-        const msg = friendly(err);
-        if (msg) setError(msg);
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Set once a native email/password signup has been created and its
+  // verification email dispatched — flips the card to the "check your inbox" view.
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [resent, setResent] = useState(false);
 
   /* ── Step 1: validate the invitation key ─────────────────────── */
 
@@ -110,8 +94,16 @@ export default function SignupPage() {
 
   /* ── Step 2: create Firebase credential + establish session ───── */
 
-  async function handlePostAuth() {
-    if (!validated) return;
+  // Provisions the Firestore user doc server-side and returns the session
+  // decision. For native email/password signups the server withholds the
+  // session until the email is verified (needsEmailVerification: true); the
+  // provisioned doc still persists so a post-verification login resolves.
+  type SessionResult =
+    | { needsEmailVerification: true }
+    | { needsEmailVerification: false; role: string; clientId: string | null; disabled?: boolean };
+
+  async function establishSession(): Promise<SessionResult> {
+    if (!validated) throw new Error("Missing invitation context.");
     const idToken = await auth.currentUser!.getIdToken(true);
     const res = await fetch("/api/auth/session", {
       method: "POST",
@@ -124,13 +116,14 @@ export default function SignupPage() {
         },
       }),
     });
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      throw new Error(j.error || "Could not establish session.");
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403 && data.needsEmailVerification) {
+      return { needsEmailVerification: true };
     }
-    const { role, clientId } = await res.json();
-    router.push(routeAfterAuth(role, clientId));
-    router.refresh();
+    if (!res.ok) {
+      throw new Error(data.error || "Could not establish session.");
+    }
+    return { needsEmailVerification: false, ...data };
   }
 
   async function handleEmail(e: React.FormEvent) {
@@ -140,7 +133,14 @@ export default function SignupPage() {
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       if (name.trim()) await updateProfile(cred.user, { displayName: name.trim() });
-      await handlePostAuth();
+      // Fire the verification email immediately, then provision the account.
+      await sendEmailVerification(cred.user);
+      await establishSession();
+      // The server withholds a session cookie until the email is verified, so the
+      // workspace stays locked. We keep the client credential (no signOut) only so
+      // the "resend" button below can reach auth.currentUser.
+      setVerificationSent(true);
+      setLoading(null);
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);
@@ -148,16 +148,38 @@ export default function SignupPage() {
     }
   }
 
-  async function handleSocial(provider: "google" | "apple") {
+  async function handleGoogle() {
     setError(null);
-    setLoading(provider);
+    setLoading("google");
     try {
-      await signInWithPopup(auth, provider === "google" ? googleProvider : appleProvider);
-      await handlePostAuth();
+      await signInWithPopup(auth, googleProvider);
+      const result = await establishSession();
+      if (result.needsEmailVerification) {
+        // Extremely unlikely for Google (pre-verified), but handle it safely.
+        setVerificationSent(true);
+        setLoading(null);
+        return;
+      }
+      // A freshly-provisioned account that landed disabled (pending approval)
+      // must go to /pending, not into the workspace — mirroring the login page.
+      // Otherwise the server guard bounces it back, causing a confusing flash.
+      router.push(result.disabled ? "/pending" : routeAfterAuth(result.role, result.clientId));
+      router.refresh();
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);
       setLoading(null);
+    }
+  }
+
+  async function handleResend() {
+    if (!auth.currentUser) return;
+    try {
+      await sendEmailVerification(auth.currentUser);
+      setResent(true);
+    } catch (err) {
+      const msg = friendly(err);
+      if (msg) setError(msg);
     }
   }
 
@@ -167,16 +189,22 @@ export default function SignupPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm animate-fade-up">
 
-        {/* Logo */}
+        {/* Wordmark lockup — head disc + Spectral (brand §2.2), matches /login */}
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md bg-neon-soft neon-glow">
-            <Icon name="Sparkles" className="h-6 w-6 text-neon" />
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Karos<span className="neon-text">CMO</span>
-          </h1>
-          <p className="mt-1 text-sm text-muted">
-            {step === "key" ? "Enter your invitation key to get started." : "Create your account."}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="mx-auto mb-4 h-12 w-12 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+          />
+          <p className="eyebrow mb-2">Your AI CMO</p>
+          <h1 className="text-2xl">Karos Labs</h1>
+          <p className="mt-1.5 text-sm text-muted">
+            {verificationSent
+              ? "Almost there — verify your email."
+              : step === "key"
+                ? "Enter your invitation key to get started."
+                : "Create your account."}
           </p>
         </div>
 
@@ -223,7 +251,7 @@ export default function SignupPage() {
           )}
 
           {/* ── Step 2: Auth options ──────────────────────────── */}
-          {step === "auth" && validated && (
+          {!verificationSent && step === "auth" && validated && (
             <div className="space-y-4">
               {/* Validated key badge + back */}
               <div className="flex items-center justify-between">
@@ -301,28 +329,50 @@ export default function SignupPage() {
                 <Button
                   variant="subtle"
                   className="w-full"
-                  onClick={() => handleSocial("google")}
+                  onClick={handleGoogle}
                   loading={loading === "google"}
                   disabled={busy}
                 >
                   <GoogleLogo />
                   Continue with Google
                 </Button>
-
-                <div title="Apple Sign-In coming soon">
-                  <Button
-                    variant="subtle"
-                    className="w-full opacity-50 cursor-not-allowed"
-                    disabled
-                  >
-                    <AppleLogo />
-                    Continue with Apple
-                    <span className="ml-auto text-[10px] font-normal tracking-wide text-muted-2">
-                      Soon
-                    </span>
-                  </Button>
-                </div>
               </div>
+            </div>
+          )}
+
+          {/* ── Email verification sent ───────────────────────── */}
+          {verificationSent && (
+            <div className="space-y-4 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md bg-neon-soft">
+                <Icon name="Mail" className="h-6 w-6 text-neon" />
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium text-foreground">Check your inbox</p>
+                <p className="text-[13px] text-muted">
+                  We sent a verification link to{" "}
+                  <span className="text-foreground">{email}</span>. Click it to activate your
+                  account, then sign in.
+                </p>
+              </div>
+
+              {error && <p className="text-xs text-danger">{error}</p>}
+
+              {resent ? (
+                <p className="text-[11px] text-neon">Verification email sent again.</p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleResend}
+                  className="text-[11px] text-neon underline-offset-2 hover:underline"
+                >
+                  Didn&apos;t get it? Resend verification email
+                </button>
+              )}
+
+              <Button className="w-full" onClick={() => router.push("/login")}>
+                Go to sign in
+                <Icon name="ArrowRight" className="h-4 w-4" />
+              </Button>
             </div>
           )}
         </div>

@@ -34,11 +34,19 @@ const PRIORITY_BADGE: Record<string, { tone: "danger" | "warning" | "neon" | "ne
   low:    { tone: "neutral" },
 };
 
-const COLUMNS: { status: TaskStatus; label: string; icon: string }[] = [
+/** Karos-managed pipeline: AI executes, deliverables pause in Review before Done. */
+const KAROS_COLUMNS: { status: TaskStatus; label: string; icon: string }[] = [
   { status: "pending",        label: "Pending",        icon: "Circle"      },
   { status: "in_progress",    label: "In Progress",    icon: "Clock"       },
   { status: "review_pending", label: "Review Pending", icon: "Eye"         },
-  { status: "completed",      label: "Completed",      icon: "CheckCircle" },
+  { status: "completed",      label: "Done",           icon: "CheckCircle" },
+];
+
+/** Client-managed board: no review stage — strictly To Do / In Progress / Done. */
+const CLIENT_COLUMNS: { status: TaskStatus; label: string; icon: string }[] = [
+  { status: "pending",     label: "To Do",       icon: "Circle"      },
+  { status: "in_progress", label: "In Progress", icon: "Clock"       },
+  { status: "completed",   label: "Done",        icon: "CheckCircle" },
 ];
 
 /** Infer the owner from task source when the owner field is absent (backward compat). */
@@ -47,26 +55,49 @@ function inferOwner(task: ClientTask): TaskOwner {
   return task.source === "manual" ? "client_managed" : "karos_managed";
 }
 
-function nextStatusFor(current: TaskStatus): TaskStatus {
+function nextStatusFor(current: TaskStatus, owner: TaskOwner): TaskStatus {
+  if (owner === "client_managed") {
+    // No review stage on the client board.
+    switch (current) {
+      case "pending":     return "in_progress";
+      case "in_progress": return "completed";
+      default:            return "pending";
+    }
+  }
   switch (current) {
     case "pending":        return "in_progress";
     case "in_progress":    return "review_pending";
     case "review_pending": return "completed";
-    case "completed":      return "pending";
+    default:               return "pending";
   }
+}
+
+/** Weight-first ordering inside a column (fallback: priority, then recency). */
+const PRIORITY_RANK: Record<string, number> = { high: 80, medium: 50, low: 25 };
+function taskWeight(t: ClientTask): number {
+  return typeof t.weight === "number" ? t.weight : PRIORITY_RANK[t.priority] ?? 0;
+}
+function byWeight(a: ClientTask, b: ClientTask): number {
+  return taskWeight(b) - taskWeight(a) || b.createdAt - a.createdAt;
 }
 
 /* ── Autopilot toggle ────────────────────────────────────────────── */
 
 function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boolean }) {
   const [isOn, setIsOn] = useState(enabled);
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function toggle() {
     const next = !isOn;
     setIsOn(next);
+    setError(null);
     startTransition(async () => {
-      await updateAutopilotAction(clientId, next);
+      const res = await updateAutopilotAction(clientId, next);
+      if (!res.ok) {
+        setIsOn(!next);
+        setError(res.error ?? "Could not update Autopilot");
+      }
     });
   }
 
@@ -85,8 +116,9 @@ function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boo
         <p className="text-xs text-muted truncate">
           {isOn
             ? "Karos AI is executing pending tasks automatically"
-            : "Tasks are queued — toggle on to execute automatically"}
+            : "Tasks are queued. Toggle on to execute automatically"}
         </p>
+        {error && <p className="mt-0.5 text-xs text-danger">{error}</p>}
       </div>
       <button
         onClick={toggle}
@@ -140,12 +172,13 @@ function TaskCard({
   const prio = PRIORITY_BADGE[task.priority] ?? { tone: "neutral" as const };
   const isExecuting = task.metadata?.executing === true;
   const hasError = Boolean(task.metadata?.executionError);
-  const nextStatus = nextStatusFor(task.status);
+  const nextStatus = nextStatusFor(task.status, inferOwner(task));
   const isReviewPending = task.status === "review_pending";
+  const autoCompletedReason = task.metadata?.autoCompletedReason as string | undefined;
 
   return (
     <div
-      draggable={isDraggable}
+      draggable={isDraggable && !isExecuting}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onClick}
@@ -173,7 +206,7 @@ function TaskCard({
       {hasError && !isExecuting && (
         <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-danger/10 px-2 py-1">
           <Icon name="AlertTriangle" className="h-3 w-3 text-danger" />
-          <span className="text-[10px] font-medium text-danger">Execution failed — click to retry</span>
+          <span className="text-[10px] font-medium text-danger">Execution failed. Click to retry</span>
         </div>
       )}
 
@@ -182,6 +215,14 @@ function TaskCard({
         <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-warning/10 px-2 py-1">
           <Icon name="Eye" className="h-3 w-3 text-warning" />
           <span className="text-[10px] font-medium text-warning">Ready for review</span>
+        </div>
+      )}
+
+      {/* Auto-completed badge (state sync flipped this card without a drag) */}
+      {task.status === "completed" && autoCompletedReason && (
+        <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-success/10 px-2 py-1">
+          <Icon name="Zap" className="h-3 w-3 text-success" />
+          <span className="text-[10px] font-medium text-success truncate">{autoCompletedReason}</span>
         </div>
       )}
 
@@ -393,13 +434,16 @@ export function TasksBoard({
   const router = useRouter();
   const [localTasks, setLocalTasks] = useState(tasks);
   const [activeTab, setActiveTab] = useState<"karos" | "client">("karos");
+  const [execError, setExecError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<TaskStatus | null>(null);
   const [, startTransition] = useTransition();
 
-  const canDelete =
-    currentUserRole === "KAROS_ADMIN" || currentUserRole === "KAROS_EMPLOYEE";
+  // Everyone can dismiss a task they're not interested in — the server action
+  // scopes clients to their own board.
+  const canDelete = true;
+  void currentUserRole;
 
   // Sync local state when the server re-fetches tasks (e.g., after router.refresh()).
   // Uses the "store previous prop" pattern (react.dev/learn/you-might-not-need-an-effect)
@@ -426,11 +470,12 @@ export function TasksBoard({
     return () => clearInterval(id);
   }, [hasExecuting, stableRefresh]);
 
-  /* Status change handler — detects karos execution path */
+  /* Status change handler — detects karos execution path.
+     Moving any karos_managed task into In Progress (drag, card button, or
+     modal footer) triggers its mapped ecosystem agent. */
   function handleStatusChange(id: string, status: TaskStatus, cid: string) {
     const task = localTasks.find((t) => t.id === id);
     const isKarosExecution =
-      activeTab === "karos" &&
       status === "in_progress" &&
       task &&
       inferOwner(task) === "karos_managed" &&
@@ -445,12 +490,25 @@ export function TasksBoard({
             : t,
         ),
       );
+      setExecError(null);
       startTransition(async () => {
-        await startTaskExecutionAction(id, cid);
+        const res = await startTaskExecutionAction(id, cid);
+        if (!res.ok) {
+          // Revert the optimistic in_progress flip and show why (e.g. credits).
+          setLocalTasks((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? { ...t, status: "pending", metadata: { ...(t.metadata ?? {}), executing: false } }
+                : t,
+            ),
+          );
+          setExecError(res.error ?? "Could not start the task");
+        }
         // Refresh layout so notification bell reflects updated task counts.
         router.refresh();
       });
     } else {
+      const previous = task;
       setLocalTasks((prev) =>
         prev.map((t) =>
           t.id === id
@@ -458,8 +516,14 @@ export function TasksBoard({
             : t,
         ),
       );
+      setExecError(null);
       startTransition(async () => {
-        await updateTaskStatusAction(id, status, cid);
+        const res = await updateTaskStatusAction(id, status, cid);
+        if (!res.ok && previous) {
+          // Revert the optimistic move and say why (claim lost, credits, …).
+          setLocalTasks((prev) => prev.map((t) => (t.id === id ? previous : t)));
+          setExecError(res.error ?? "Could not update the task");
+        }
         // Refresh layout so notification bell reflects updated task counts.
         router.refresh();
       });
@@ -467,9 +531,16 @@ export function TasksBoard({
   }
 
   function handleDelete(id: string, cid: string) {
+    const previous = localTasks.find((t) => t.id === id);
     setLocalTasks((prev) => prev.filter((t) => t.id !== id));
+    setExecError(null);
     startTransition(async () => {
-      await deleteTaskAction(id, cid);
+      const res = await deleteTaskAction(id, cid);
+      if (!res.ok && previous) {
+        // Put the card back — e.g. the task is mid-execution and undeletable.
+        setLocalTasks((prev) => [...prev, previous]);
+        setExecError(res.error ?? "Could not delete the task");
+      }
       router.refresh();
     });
   }
@@ -561,10 +632,28 @@ export function TasksBoard({
         </div>
       )}
 
-      {/* DnD hint for client tab */}
-      {activeTab === "client" && (
+      {/* Execution error (e.g. credit denial) */}
+      {execError && (
+        <div className="mb-4 flex items-start justify-between gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
+          <p className="text-xs text-danger">{execError}</p>
+          <button
+            onClick={() => setExecError(null)}
+            className="shrink-0 text-xs text-danger/70 hover:text-danger"
+            aria-label="Dismiss"
+          >
+            <Icon name="X" className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* DnD hint */}
+      {activeTab === "client" ? (
         <p className="mb-4 text-xs text-muted-2">
           Drag cards between columns to update status, or click any card to open the detail view.
+        </p>
+      ) : (
+        <p className="mb-4 text-xs text-muted-2">
+          Drag a card to In Progress to dispatch its AI agent, or click any card to open the detail view.
         </p>
       )}
 
@@ -573,23 +662,36 @@ export function TasksBoard({
         <div className="mb-4 flex items-center gap-2 rounded-md border border-neon/20 bg-neon/5 px-3 py-2">
           <Icon name="Loader" className="h-3.5 w-3.5 animate-spin text-neon" />
           <p className="text-xs text-neon">
-            Karos AI is generating deliverables — cards will update automatically.
+            Karos AI is generating deliverables. Cards will update automatically.
           </p>
         </div>
       )}
 
-      {/* Kanban grid — 4 columns */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {COLUMNS.map(({ status, label, icon }) => (
+      {/* Kanban grid — 4 columns on the Karos pipeline, 3 on the client board */}
+      <div
+        className={cn(
+          "grid gap-4 sm:grid-cols-2",
+          activeTab === "karos" ? "xl:grid-cols-4" : "xl:grid-cols-3",
+        )}
+      >
+        {(activeTab === "karos" ? KAROS_COLUMNS : CLIENT_COLUMNS).map(({ status, label, icon }) => (
           <KanbanColumn
             key={status}
             status={status}
             label={label}
             icon={icon}
-            tasks={visibleTasks.filter((t) => t.status === status)}
+            tasks={visibleTasks
+              .filter((t) =>
+                // The client board has no review column — bucket any stray
+                // review_pending task under In Progress so it stays visible.
+                activeTab === "client" && status === "in_progress"
+                  ? t.status === "in_progress" || t.status === "review_pending"
+                  : t.status === status,
+              )
+              .sort(byWeight)}
             canDelete={canDelete}
             showClientName={showClientName}
-            enableDnD={activeTab === "client"}
+            enableDnD
             draggingId={draggingId}
             dropTarget={dropTarget}
             onStatusChange={handleStatusChange}

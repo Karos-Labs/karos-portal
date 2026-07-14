@@ -34,30 +34,24 @@ cp .env.example .env.local   # then fill in the values below
 
 No composite indexes are required; queries are sorted in application code.
 
-## 3. Anthropic (the agents' brain)
+## 3. Anthropic (the platform's brain)
 
-Add `ANTHROPIC_API_KEY` from <https://console.anthropic.com>. Every agent runs on Claude.
-
-## 3b. Image generation (Instagram visuals)
-
-Instagram posts get a real image generated from each post's art-direction brief
-via Higgsfield "Soul" (text-to-image), called through Segmind. Images are stored
-in your Firebase Storage bucket and served via a public download URL.
-
-1. Create a key at <https://www.segmind.com> → `SEGMIND_API_KEY`.
-2. Enable **Storage** in the Firebase console (Build → Storage → Get started) if
-   you haven't already. No extra credentials are needed — uploads use the same
-   Admin SDK service account, and `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` is
-   already set from the Firebase config above.
-
-Without `SEGMIND_API_KEY` the agent still runs — posts just come back with
-captions and no images (the previous behavior).
+Add `ANTHROPIC_API_KEY` from <https://console.anthropic.com>. The copilot, task
+autopilot, and intel research pipeline all run on Claude. (Content-producing
+agents run in the external agent service — see the agent-service section of
+`.env.example`.)
 
 ## 4. Resend (emailing clients)
 
 1. Create a key at <https://resend.com> → `RESEND_API_KEY`.
-2. Verify a sending domain and set `EMAIL_FROM` (e.g. `Karos CMO <hello@yourdomain.com>`).
-   For quick tests you can use `onboarding@resend.dev`.
+2. Verify a sending domain and set `EMAIL_FROM` to a do-not-reply address on it, e.g.
+   `Karos CMO <donotreply@yourdomain.com>`. All outbound mail (agent deliveries, client
+   replies, execution notifications) goes through `sendEmail()` in `src/lib/email.ts`, so
+   this one var controls the sender everywhere. For quick tests you can use
+   `onboarding@resend.dev`.
+3. Set `ADMIN_EMAIL` to a real, monitored inbox (e.g. `hello@yourdomain.com`) — this is
+   where support requests and copilot escalations are delivered. Keep it separate from
+   `EMAIL_FROM` since replies to the do-not-reply address won't be seen.
 
 ## 5. Fireflies (transcript ingestion)
 

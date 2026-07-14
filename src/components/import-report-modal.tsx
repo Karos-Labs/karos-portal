@@ -110,7 +110,7 @@ export function ImportReportModal({ open, onClose, clientId }: Props) {
               ) : (
                 <>
                   <p className="text-sm text-muted-2">Click to upload PDF</p>
-                  <p className="text-xs text-muted-2">Saved to Storage — enables the Export PDF button</p>
+                  <p className="text-xs text-muted-2">Saved to Storage: enables the Export PDF button</p>
                 </>
               )}
             </div>

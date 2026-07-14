@@ -4,10 +4,12 @@ import { revalidatePath } from "next/cache";
 import {
   updateTranscript,
   getTranscript,
-  getTranscriptByExternalId,
+  findDuplicateTranscript,
   getUser,
+  updateActionItem,
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
+import { ensureActionItemDoc, historyEntry } from "@/lib/action-items";
 import { ingestTranscript, appendMeetingSignalToContextDoc, buildActionItemsByOwner } from "@/lib/transcripts/ingest";
 import { listFirefliesTranscripts, fetchFirefliesTranscript } from "@/lib/transcripts/fireflies";
 import type { Transcript } from "@/lib/types";
@@ -58,7 +60,8 @@ export async function ingestManualTranscriptAction(input: {
 /**
  * Bulk-sync recent Fireflies transcripts. The @karoslabs.com invariant is applied inside
  * listFirefliesTranscripts — only agency-attended meetings are ever processed.
- * Deduplicates by externalId; transcripts already in Firestore are skipped.
+ * Deduplicates by externalId (same recording) or title + timestamp: same-title
+ * meetings at different times (recurring "Weekly Sync" etc.) are always ingested.
  */
 export async function syncFirefliesAction(): Promise<{ synced: number; skipped: number }> {
   await requireStaff();
@@ -67,7 +70,11 @@ export async function syncFirefliesAction(): Promise<{ synced: number; skipped: 
   let skipped = 0;
 
   for (const h of headers) {
-    const existing = await getTranscriptByExternalId(h.externalId);
+    const existing = await findDuplicateTranscript({
+      externalId: h.externalId,
+      title: h.title,
+      meetingDate: h.date,
+    });
     if (existing) {
       skipped++;
       continue;
@@ -75,6 +82,7 @@ export async function syncFirefliesAction(): Promise<{ synced: number; skipped: 
     const t = await fetchFirefliesTranscript(h.externalId);
     if (!t) { skipped++; continue; }
     const result = await ingestTranscript(t, "fireflies");
+    if (result.duplicate) { skipped++; continue; }
     if (result.clientId) {
       const stored = await getTranscript(result.id);
       if (stored) {
@@ -157,7 +165,29 @@ export async function toggleActionItemCompletionAction(
   if (allDone) patch.archived = true;
 
   await updateTranscript(transcriptId, patch);
+
+  // Mirror onto the managed action-item doc (audit trail included). Non-fatal.
+  try {
+    const doc = await ensureActionItemDoc(t, itemIndex);
+    if (doc && (doc.status === "done") !== completed) {
+      const status = completed ? "done" : "open";
+      await updateActionItem(doc.id, {
+        status,
+        updatedAt: Date.now(),
+        history: [
+          ...doc.history,
+          historyEntry(
+            "status_changed",
+            `Marked ${completed ? "Done" : "Open"} by ${user.name}`,
+            { id: user.uid, name: user.name },
+          ),
+        ],
+      });
+    }
+  } catch { /* Non-fatal — transcript update already persisted */ }
+
   revalidatePath(`/transcripts/${transcriptId}`);
+  revalidatePath("/dashboard");
   if (allDone) revalidatePath("/transcripts");
   return { allDone };
 }
@@ -238,7 +268,27 @@ export async function assignActionItemToUserAction(
     assignedUserIds,
   });
 
+  // Mirror onto the managed action-item doc (audit trail included). Non-fatal.
+  try {
+    const doc = await ensureActionItemDoc(t, itemIndex);
+    if (doc && (doc.assigneeUserId ?? null) !== assignedUserId) {
+      const newName = newOwners[itemIndex];
+      const detail = assignedUserId
+        ? doc.assigneeName
+          ? `Reassigned from ${doc.assigneeName} to ${newName} by ${viewer.name}`
+          : `Assigned to ${newName} by ${viewer.name}`
+        : `Unassigned by ${viewer.name}`;
+      await updateActionItem(doc.id, {
+        assigneeUserId: assignedUserId,
+        assigneeName: assignedUserId ? newName : null,
+        updatedAt: Date.now(),
+        history: [...doc.history, historyEntry("reassigned", detail, { id: viewer.uid, name: viewer.name })],
+      });
+    }
+  } catch { /* Non-fatal — transcript update already persisted */ }
+
   revalidatePath(`/transcripts/${transcriptId}`);
+  revalidatePath("/dashboard");
 }
 
 /**
@@ -262,4 +312,20 @@ export async function dismissAssignedActionItemAction(
   const completed = new Set(t.completedItems ?? []);
   completed.add(itemIndex);
   await updateTranscript(transcriptId, { completedItems: [...completed] });
+
+  // Mirror onto the managed action-item doc (audit trail included). Non-fatal.
+  try {
+    const doc = await ensureActionItemDoc(t, itemIndex);
+    if (doc && doc.status !== "done") {
+      await updateActionItem(doc.id, {
+        status: "done",
+        updatedAt: Date.now(),
+        history: [
+          ...doc.history,
+          historyEntry("status_changed", `Marked Done by ${viewer.name}`, { id: viewer.uid, name: viewer.name }),
+        ],
+      });
+    }
+  } catch { /* Non-fatal */ }
+  revalidatePath("/dashboard");
 }
