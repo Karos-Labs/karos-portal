@@ -520,9 +520,24 @@ Under 300 words. Punchy and strategic — built for execution, not discussion.`.
 /* ── Artifact Generation prompt (called from execution-actions.ts) ────── */
 
 /**
+ * A LinkedIn employee-advocacy target — when set, the deliverable is written in
+ * this employee's authentic personal voice (matched to their background) rather
+ * than the brand's corporate voice.
+ */
+export interface EmployeeAdvocacyProfile {
+  name: string;
+  /** Raw resume / professional-background text, when on file. */
+  resumeText?: string | null;
+  /** Link to the employee's resume, when only a URL is available. */
+  resumeUrl?: string | null;
+}
+
+/**
  * Generates the actual deliverable content for a karos_managed task.
  * Flow A (content_generation): proposals, articles, copy, calendars, reports.
  * Flow B (integration_action): email drafts ready to be sent externally.
+ * When `employeeAdvocacy` is set (a LinkedIn employee seat), the content branch
+ * writes in that employee's personal professional voice instead of brand voice.
  */
 export function buildArtifactGenerationPrompt(
   taskTitle: string,
@@ -536,6 +551,7 @@ export function buildArtifactGenerationPrompt(
   brandVoice?: string,
   adjustmentFeedback?: string,
   previousArtifact?: string,
+  employeeAdvocacy?: EmployeeAdvocacyProfile,
 ): string {
   const context = [
     clientIndustry && `Industry: ${clientIndustry}`,
@@ -551,6 +567,24 @@ export function buildArtifactGenerationPrompt(
   const feedbackBlock = adjustmentFeedback
     ? `${previousBlock}\n\nCLIENT FEEDBACK ON PREVIOUS VERSION:\n"${adjustmentFeedback}"\n\nProduce a refined version: keep what the feedback doesn't challenge, and incorporate every point raised — do not ignore any of them.`
     : "";
+
+  // Employee-advocacy override: write as the person, not the brand.
+  const advocacyBlock = employeeAdvocacy
+    ? `\n\nEMPLOYEE ADVOCACY — WRITE AS THIS PERSON, NOT THE BRAND:
+This is a LinkedIn post published under ${employeeAdvocacy.name}'s PERSONAL handle. Write in ${employeeAdvocacy.name}'s authentic first-person professional voice — match the seniority, expertise, vocabulary, and industry depth implied by their background below. Do NOT use ${clientName}'s corporate/brand voice; it must read like ${employeeAdvocacy.name} personally wrote it.${
+        employeeAdvocacy.resumeText
+          ? `\n\n${employeeAdvocacy.name.toUpperCase()}'S PROFESSIONAL BACKGROUND (analyse to calibrate tone + depth):\n${employeeAdvocacy.resumeText.slice(0, 2000)}`
+          : employeeAdvocacy.resumeUrl
+            ? `\n\nBackground/resume reference on file: ${employeeAdvocacy.resumeUrl}`
+            : ""
+      }`
+    : "";
+  // Advocacy overrides brand voice; otherwise keep the brand voice guidance line.
+  const contentVoiceLine = employeeAdvocacy
+    ? advocacyBlock
+    : brandVoice
+      ? `BRAND VOICE GUIDANCE: ${brandVoice}`
+      : "";
 
   if (taskType === "integration_action") {
     return `You are the Karos AI Content Director producing a professional, ready-to-send email on behalf of ${clientName}${context ? ` (${context})` : ""}.
@@ -582,14 +616,14 @@ TASK: ${taskTitle}
 PRIORITY: ${taskPriority.toUpperCase()}
 SOURCE: ${taskSource.replace(/_/g, " ")}
 ${taskDescription ? `CONTEXT: ${taskDescription}` : ""}
-${brandVoice ? `BRAND VOICE GUIDANCE: ${brandVoice}` : ""}${feedbackBlock}
+${contentVoiceLine}${feedbackBlock}
 
 Produce the complete, polished deliverable for this task. Write the content directly — do not add meta-headers like "DELIVERABLE:" or "OUTPUT:". Present the content exactly as it would appear to the end reader or recipient.
 
 Standards:
 - Immediately usable — zero placeholders, no filler copy
 - Hyper-specific to ${clientName}'s business context and the ${clientIndustry ?? "relevant"} industry
-- Senior-CMO quality: a Tier 1 professional would approve without substantive edits
+${employeeAdvocacy ? `- Written in ${employeeAdvocacy.name}'s authentic first-person voice — personal, credible, matched to their expertise (NOT corporate brand voice)` : "- Senior-CMO quality: a Tier 1 professional would approve without substantive edits"}
 - Appropriate format and length for the deliverable type (use markdown for structure where it adds clarity)
 - Actionable language throughout — every line drives a result`.trim();
 }

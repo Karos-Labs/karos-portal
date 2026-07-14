@@ -11,13 +11,15 @@ import {
   removeEmployeeSeatAction,
 } from "@/lib/actions/seat-actions";
 
-/** Client-safe seat view — never carries tokens. */
+/** Client-safe seat view — never carries tokens, only whether one is present. */
 export interface SeatView {
   id: string;
   employeeName: string;
   employeeEmail: string;
   status: "active" | "paused";
   resumeUrl?: string | null;
+  /** True when the employee has completed "Sign in with LinkedIn" (token on file). */
+  connected: boolean;
 }
 
 function initials(name: string): string {
@@ -167,6 +169,20 @@ export function LinkedInSeatsWorkspace({
                 <p className="truncate text-sm font-medium text-foreground">{seat.employeeName}</p>
                 <p className="truncate text-[11px] text-muted-2">{seat.employeeEmail}</p>
               </div>
+              {seat.connected ? (
+                <Badge tone="neon">
+                  <Icon name="CheckCircle2" className="h-3 w-3" />
+                  Linked
+                </Badge>
+              ) : (
+                <a
+                  href={`/api/integrations/linkedin/employee/auth?clientId=${encodeURIComponent(clientId)}&seatId=${encodeURIComponent(seat.id)}`}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[#0A66C2] px-2 py-1 text-[11px] font-medium text-white transition-opacity hover:opacity-90"
+                >
+                  <Icon name="LogIn" className="h-3 w-3" />
+                  Sign in with LinkedIn
+                </a>
+              )}
               <Badge tone={seat.status === "active" ? "success" : "neutral"}>{seat.status}</Badge>
               <button
                 type="button"

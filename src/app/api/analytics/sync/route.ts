@@ -8,7 +8,9 @@ import {
   markIntegrationForReauth,
   getEmployeeSeatsForSync,
   updateEmployeeSeat,
+  reconcileAssetPublished,
 } from "@/lib/data";
+import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { fetchPlatformMetrics, fetchSeatMetrics } from "@/lib/integrations/analytics-providers";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
 import { integrationIsUsable } from "@/lib/integration-status";
@@ -42,7 +44,7 @@ type SyncResult = {
   clientId: string;
   platform: string;
   assetId: string;
-  action: "written" | "skipped" | "expired";
+  action: "written" | "skipped" | "expired" | "published";
   source?: "live" | "mock";
   detail?: string;
 };
@@ -62,6 +64,7 @@ export async function GET(req: NextRequest) {
   let expired = 0;
   let assetsScanned = 0;
   let seatsScanned = 0;
+  let publishedReconciled = 0;
 
   for (const client of clients) {
     try {
@@ -69,6 +72,29 @@ export async function GET(req: NextRequest) {
         listClientIntegrations(client.id),
         listAssets({ clientId: client.id }),
       ]);
+
+      // Lifecycle reconciliation (runs regardless of integrations): flip assets
+      // whose auto-publish slot has passed — or that carry a captured platform
+      // post id — to "published", completing the parent task in the same
+      // transaction, so nothing stays stuck on Approved/Scheduled after it's live.
+      for (const a of assets) {
+        if (!shouldReconcilePublished(a, now)) continue;
+        try {
+          const r = await reconcileAssetPublished(a.id, now);
+          if (r.changed) {
+            publishedReconciled++;
+            results.push({ clientId: client.id, platform: a.scheduledPlatform ?? "-", assetId: a.id, action: "published" });
+          }
+        } catch (e) {
+          results.push({
+            clientId: client.id,
+            platform: a.scheduledPlatform ?? "-",
+            assetId: a.id,
+            action: "skipped",
+            detail: `reconcile: ${e instanceof Error ? e.message : "unknown"}`,
+          });
+        }
+      }
 
       // Connected, non-expired social integrations, keyed by platform. Gmail is
       // an operational integration, not a distribution channel — exclude it.
@@ -206,6 +232,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     checked: { clients: clients.length, assetsScanned, seatsScanned },
+    publishedReconciled,
     recordsWritten: written,
     sources: { live, mock },
     integrationsExpired: expired,

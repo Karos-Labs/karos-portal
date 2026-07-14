@@ -45,6 +45,7 @@ import {
   rollCreditWindows,
 } from "@/lib/credits";
 import { engagementScore, rankByEngagement } from "@/lib/analytics";
+import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { computeBoardCapacity } from "@/lib/task-dedup";
 import { encryptCredentials, decryptCredentials } from "@/lib/crypto/token-cipher";
 import { randomUUID } from "node:crypto";
@@ -372,6 +373,60 @@ export async function markAssetPublished(id: string, platformPostId?: string | n
     publishError: FieldValue.delete(),
     publishClaimedAt: FieldValue.delete(),
     updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Reconcile a single asset (and its parent task) to "published" when it has
+ * demonstrably gone live — its auto-publish slot passed, or a platform post id
+ * was captured/verified. Transactional: re-reads the asset inside the tx (guard
+ * against a racing publish), flips the asset to published, and completes the
+ * parent task (asset.meta.taskId) in the SAME transaction so the client never
+ * sees a published asset whose task is still "in progress". Idempotent —
+ * returns { changed:false } when the asset is already published or no longer
+ * qualifies. `verifiedPostId` (from live ingestion) is stored when provided.
+ */
+export async function reconcileAssetPublished(
+  assetId: string,
+  now: number = Date.now(),
+  verifiedPostId?: string | null,
+): Promise<{ changed: boolean; taskCompleted: boolean }> {
+  const assetRef = col.assets().doc(assetId);
+  return adminDb().runTransaction(async (tx) => {
+    // Firestore requires ALL reads before ANY writes — read asset (and its
+    // parent task) first, then decide, then write.
+    const snap = await tx.get(assetRef);
+    if (!snap.exists) return { changed: false, taskCompleted: false };
+    const asset = withId<Asset>(snap);
+
+    const withPostId: Asset = verifiedPostId ? { ...asset, platformPostId: verifiedPostId } : asset;
+    if (asset.status === "published" || !shouldReconcilePublished(withPostId, now)) {
+      return { changed: false, taskCompleted: false };
+    }
+
+    const taskId = asset.meta?.taskId as string | undefined;
+    const taskRef = taskId ? col.clientTasks().doc(taskId) : null;
+    const taskSnap = taskRef ? await tx.get(taskRef) : null;
+
+    tx.set(
+      assetRef,
+      {
+        status: "published",
+        publishedAt: asset.publishedAt ?? now,
+        ...(verifiedPostId ? { platformPostId: verifiedPostId } : {}),
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+
+    if (taskRef && taskSnap?.exists) {
+      const task = taskSnap.data() as ClientTask;
+      if (task.status !== "completed" && task.status !== "archived") {
+        tx.set(taskRef, { status: "completed", completedAt: now, updatedAt: now }, { merge: true });
+        return { changed: true, taskCompleted: true };
+      }
+    }
+    return { changed: true, taskCompleted: false };
   });
 }
 

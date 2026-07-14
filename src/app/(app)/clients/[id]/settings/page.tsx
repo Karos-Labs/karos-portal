@@ -54,6 +54,8 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       employeeEmail: s.employeeEmail,
       status: s.status,
       resumeUrl: s.resumeUrl ?? null,
+      // Only whether a token is present crosses to the client — never the token.
+      connected: !!s.credentials?.accessToken,
     }),
   );
 
