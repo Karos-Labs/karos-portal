@@ -91,16 +91,22 @@ export function LinkedInSeatsWorkspace({
 
   return (
     <div className="border-t border-border bg-surface-2/40 p-4">
-      {/* Header */}
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Icon name="Users" className="h-4 w-4 text-neon" />
+      {/* Header — wraps so the Add button never overflows narrow cards */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Icon name="Users" className="h-4 w-4 shrink-0 text-neon" />
           <p className="text-sm font-medium text-foreground">Company Employee Roster</p>
           <Badge tone={atLimit ? "warning" : "neutral"}>
             {seats.length}/{seatLimit} seats
           </Badge>
         </div>
-        <Button size="sm" variant="accent" onClick={() => setAdding((a) => !a)} disabled={pending}>
+        <Button
+          size="sm"
+          variant="accent"
+          onClick={() => setAdding((a) => !a)}
+          disabled={pending}
+          className="shrink-0 whitespace-nowrap"
+        >
           <Icon name="Plus" className="h-3.5 w-3.5" />
           Add Employee Seat
         </Button>
