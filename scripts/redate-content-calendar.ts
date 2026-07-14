@@ -398,7 +398,6 @@ interface ClientReport {
 
 function processClient(client: Client, assets: Asset[], now: number): ClientReport {
   const skipSet = new Set(SKIP_IDS);
-  const byId = new Map(assets.map((a) => [a.id, a]));
   const labTemplateById = buildLabTemplates(assets);
 
   // DATES come exclusively from the pure planner (single source of truth).

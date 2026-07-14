@@ -22,6 +22,8 @@ import { ClientAgentAccessCard } from "@/components/custom-agents";
 import { ClientEditor } from "@/components/client-editor";
 import { LogoutButton } from "@/components/logout-button";
 import { relativeTime } from "@/lib/utils";
+import type { ClientIntegration, Transcript, ClientCredits, CreditLedgerEntry, CustomAgent, ClientSettings, EmployeeSeat } from "@/lib/types";
+import type { SeatView } from "@/components/linkedin-seats-workspace";
 
 export default async function ClientSettingsPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -38,7 +40,6 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
 
   const isAdmin = user.role === "KAROS_ADMIN";
   const isStaff = isAdmin || user.role === "KAROS_EMPLOYEE";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [integrations, transcripts, credits, creditLedger, customAgents, settings] = (await Promise.all([
     listClientIntegrations(id),
     listTranscripts({ clientId: id }),
@@ -46,23 +47,22 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
     listCreditLedger(id, 15),
     isAdmin ? listCustomAgents() : Promise.resolve([]),
     getClientSettings(id),
-  ])) as any;
+  ])) as [ClientIntegration[], Transcript[], ClientCredits, CreditLedgerEntry[], CustomAgent[], ClientSettings | null];
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
   // Sanitized LinkedIn seats for the multi-seat workspace — strip tokens; the UI
   // never needs (and must never receive) the credentials, encrypted or not.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const linkedinSeats = ((await Promise.resolve(integrations)).find((i: any) => i.platform === "linkedin")?.employeeSeats ?? []).map(
-    (s: any) => ({
-      id: s.id,
-      employeeName: s.employeeName,
-      employeeEmail: s.employeeEmail,
-      status: s.status,
-      resumeUrl: s.resumeUrl ?? null,
-      // Only whether a token is present crosses to the client — never the token.
-      connected: !!s.credentials?.accessToken,
-    }),
-  );
+  const linkedIntegration = integrations.find((i) => i.platform === "linkedin") as ClientIntegration | undefined;
+  const rawSeats = linkedIntegration?.employeeSeats ?? [];
+  const sanitizedLinkedinSeats: SeatView[] = (rawSeats as EmployeeSeat[]).map((s) => ({
+    id: s.id,
+    employeeName: s.employeeName,
+    employeeEmail: s.employeeEmail ?? "",
+    status: (s.status as "active" | "paused") ?? "active",
+    resumeUrl: s.resumeUrl ?? null,
+    // Only whether a token is present crosses to the client — never the token.
+    connected: !!s.credentials?.accessToken,
+  }));
 
   return (
     <>
@@ -116,7 +116,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
         integrations={integrations}
         oauthEnabledPlatforms={oauthEnabledPlatforms}
         currentUserRole={user.role}
-        linkedinSeats={linkedinSeats}
+        linkedinSeats={sanitizedLinkedinSeats}
         seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
         seatCost={CREDIT_COSTS.employeeSeat}
       />

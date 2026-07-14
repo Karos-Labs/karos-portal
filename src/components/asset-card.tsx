@@ -412,15 +412,6 @@ export function AssetCard({
     );
   }
 
-  async function setStatus(status: "approved" | "delivered" | "published") {
-    setBusy(true);
-    try {
-      await updateAssetAction(asset.id, { status });
-      router.refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
 
   /** Approve a non-schedulable draft (e.g. a note) straight through — no calendar slot. */
   async function handleSimpleApprove() {

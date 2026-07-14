@@ -439,6 +439,8 @@ export function TasksBoard({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<TaskStatus | null>(null);
   const [, startTransition] = useTransition();
+  // Staff-only advanced board toggle (keeps simplified view as default for clients)
+  const [showKanban, setShowKanban] = useState(false);
 
   // Everyone can dismiss a task they're not interested in — the server action
   // scopes clients to their own board.
@@ -667,25 +669,73 @@ export function TasksBoard({
         </div>
       )}
 
-      {/* Simplified Task Map — show pending items only with clear action buttons */}
-      <div className="flex flex-col gap-3">
-        {visibleTasks
-          .filter((t) => t.status === "pending")
-          .sort(byWeight)
-          .map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
+      {/* Toggle for staff to show advanced Kanban — clients keep simplified list */}
+      {currentUserRole !== "CLIENT_USER" && (
+        <div className="mb-4 flex items-center gap-3">
+          <label className="text-sm font-medium">Advanced board</label>
+          <button
+            onClick={() => setShowKanban((v) => !v)}
+            className={cn(
+              "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
+              showKanban ? "bg-success" : "bg-surface-3",
+            )}
+            aria-pressed={showKanban}
+          >
+            <span
+              className={cn(
+                "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-primary shadow-md transition-transform duration-200",
+                showKanban ? "translate-x-5" : "translate-x-0",
+              )}
+            />
+          </button>
+          <p className="text-xs text-muted-2">Toggle to view the full Kanban workflow (staff only)</p>
+        </div>
+      )}
+
+      {showKanban ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          {(activeTab === "karos" ? KAROS_COLUMNS : CLIENT_COLUMNS).map((col) => (
+            <KanbanColumn
+              key={col.status}
+              status={col.status}
+              label={col.label}
+              icon={col.icon}
+              tasks={localTasks.filter((t) => t.status === col.status && (activeTab === "karos" ? inferOwner(t) === "karos_managed" : inferOwner(t) === "client_managed"))}
               canDelete={canDelete}
               showClientName={showClientName}
-              draggable={false}
-              isDragging={false}
+              enableDnD={activeTab === "client"}
+              draggingId={draggingId}
+              dropTarget={dropTarget}
               onStatusChange={handleStatusChange}
               onDelete={handleDelete}
-              onClick={() => setSelectedTaskId(task.id)}
+              onCardClick={(id) => setSelectedTaskId(id)}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
             />
           ))}
-      </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {visibleTasks
+            .filter((t) => t.status === "pending")
+            .sort(byWeight)
+            .map((task) => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                canDelete={canDelete}
+                showClientName={showClientName}
+                draggable={false}
+                isDragging={false}
+                onStatusChange={handleStatusChange}
+                onDelete={handleDelete}
+                onClick={() => setSelectedTaskId(task.id)}
+              />
+            ))}
+        </div>
+      )}
 
       {/* Ticket modal */}
       {selectedTask && (

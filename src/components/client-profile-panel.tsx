@@ -216,6 +216,7 @@ export function ClientProfilePanel({ client }: { client: Client }) {
       {/* Company header */}
       <div className="mb-2.5 flex items-center gap-2.5">
         {client.logoUrl || client.brandingGuidelines?.logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={(client.logoUrl || client.brandingGuidelines?.logoUrl)!}
             alt={client.name}

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase/client";
 import { Icon } from "@/components/icon";
+import Image from "next/image";
 import { cn, initials } from "@/lib/utils";
 import { useActiveClient } from "@/lib/active-client-context";
 import { ClientDocuments } from "@/components/client-documents";
@@ -146,10 +147,13 @@ function ClientContextPicker({ clients }: { clients: Client[] }) {
                       )}
                     >
                       {logoUrl ? (
-                        <img
-                          src={logoUrl}
+                        <Image
+                          src={logoUrl!}
                           alt=""
+                          width={24}
+                          height={24}
                           className="h-6 w-6 shrink-0 rounded-[5px] border border-border bg-surface-2 object-contain"
+                          unoptimized
                         />
                       ) : (
                         <div
@@ -208,11 +212,14 @@ function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
         )}
       >
         {user.photoURL ? (
-          <img
-            src={user.photoURL}
-            alt=""
-            className="h-9 w-9 shrink-0 rounded-full object-cover"
-          />
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={user.photoURL}
+              alt=""
+              className="h-9 w-9 shrink-0 rounded-full object-cover"
+            />
+          </>
         ) : (
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-neon">
             {initials(user.name)}
@@ -354,10 +361,13 @@ export function Sidebar({
       <div className="border-t border-border pt-4">
         <div className="mb-1 flex items-center gap-2 px-1">
           {activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl ? (
-            <img
+            <Image
               src={(activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl)!}
               alt=""
+              width={24}
+              height={24}
               className="h-6 w-6 shrink-0 rounded-[5px] border border-border bg-surface-2 object-contain"
+              unoptimized
             />
           ) : (
             <div
@@ -411,11 +421,13 @@ export function Sidebar({
       {/* Logo — fixed top */}
       <div className="shrink-0 px-4 pb-2 pt-4">
         <Link href="/dashboard" className="flex items-center gap-2.5 px-2 py-1">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <Image
             src="/brand/kairos-head-disc-dark.svg"
             alt=""
+            width={26}
+            height={26}
             className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+            unoptimized
           />
           <span className="font-serif text-xl font-normal leading-none text-foreground">
             Karos Labs
@@ -444,11 +456,13 @@ export function Sidebar({
       {/* Mobile top bar */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
         <Link href="/dashboard" className="flex items-center gap-2.5">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <Image
             src="/brand/kairos-head-disc-dark.svg"
             alt=""
+            width={26}
+            height={26}
             className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+            unoptimized
           />
           <span className="font-serif text-xl font-normal leading-none text-foreground">Karos Labs</span>
         </Link>
