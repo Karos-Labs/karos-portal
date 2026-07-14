@@ -8,10 +8,12 @@ import {
   listCreditLedger,
   listCustomAgents,
   listTranscripts,
+  getClientSettings,
 } from "@/lib/data";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import { Card, CardTitle, PageHeader } from "@/components/ui";
+import AutoScheduleToggle from "@/components/auto-schedule-toggle";
 import { Icon } from "@/components/icon";
 import { IntegrationsTab } from "@/components/integrations-tab";
 import { ClientKeyInline } from "@/components/client-key-inline";
@@ -36,19 +38,22 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
 
   const isAdmin = user.role === "KAROS_ADMIN";
   const isStaff = isAdmin || user.role === "KAROS_EMPLOYEE";
-  const [integrations, transcripts, credits, creditLedger, customAgents] = await Promise.all([
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [integrations, transcripts, credits, creditLedger, customAgents, settings] = (await Promise.all([
     listClientIntegrations(id),
     listTranscripts({ clientId: id }),
     getClientCredits(id),
     listCreditLedger(id, 15),
     isAdmin ? listCustomAgents() : Promise.resolve([]),
-  ]);
+    getClientSettings(id),
+  ])) as any;
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
   // Sanitized LinkedIn seats for the multi-seat workspace — strip tokens; the UI
   // never needs (and must never receive) the credentials, encrypted or not.
-  const linkedinSeats = (integrations.find((i) => i.platform === "linkedin")?.employeeSeats ?? []).map(
-    (s) => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const linkedinSeats = ((await Promise.resolve(integrations)).find((i: any) => i.platform === "linkedin")?.employeeSeats ?? []).map(
+    (s: any) => ({
       id: s.id,
       employeeName: s.employeeName,
       employeeEmail: s.employeeEmail,
@@ -115,6 +120,14 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
         seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
         seatCost={CREDIT_COSTS.employeeSeat}
       />
+
+      {/* Auto-schedule opt-in toggle */}
+      <div className="mt-6">
+        {/* Render client-side toggle so the user gets immediate UI feedback */}
+        <div>
+          <AutoScheduleToggle clientId={client.id} enabled={settings?.autoScheduleEnabled} />
+        </div>
+      </div>
 
       {/* Meetings */}
       <div className="mt-8">
