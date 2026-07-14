@@ -20,6 +20,7 @@ import {
   publishAssetToPlatform,
 } from "@/lib/integrations/publishers";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
 import type { Asset, PublishMode } from "@/lib/types";
 
@@ -134,7 +135,7 @@ export async function approveAssetAction(
       // Enforce: auto-publish only when the required integration is connected and active.
       const integrations = await listClientIntegrations(asset.clientId);
       const active = integrations.find(
-        (i) => i.platform === opts.platform && i.status !== "expired",
+        (i) => i.platform === opts.platform && integrationIsUsable(i),
       );
       if (!active) {
         throw new Error(
@@ -177,7 +178,7 @@ export async function publishAssetNowAction(
   if (asset.status === "published") return { ok: false, error: "Already published" };
 
   const integrations = await listClientIntegrations(asset.clientId);
-  const valid = integrations.filter((i) => i.status !== "expired");
+  const valid = integrations.filter((i) => integrationIsUsable(i));
   const target =
     platform ??
     asset.scheduledPlatform ??
@@ -198,8 +199,9 @@ export async function publishAssetNowAction(
     return { ok: false, error: "This asset is already being published — give it a moment." };
   }
 
+  let publishResult: { postId: string | null };
   try {
-    await publishAssetToPlatform(target, integration, asset);
+    publishResult = await publishAssetToPlatform(target, integration, asset);
   } catch (e) {
     await releaseAssetPublishClaim(id).catch(() => {});
     const message = e instanceof Error ? e.message : "Unknown error";
@@ -210,7 +212,7 @@ export async function publishAssetNowAction(
     return { ok: false, error: message };
   }
 
-  await markAssetPublished(id);
+  await markAssetPublished(id, publishResult.postId);
   // Keep the calendar truthful: a manual push without a prior schedule still
   // lands on today's date, and the platform is recorded for the event chip.
   await updateAsset(id, {

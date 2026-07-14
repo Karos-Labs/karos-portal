@@ -10,6 +10,7 @@ import {
   listTranscripts,
 } from "@/lib/data";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
+import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import { Card, CardTitle, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { IntegrationsTab } from "@/components/integrations-tab";
@@ -43,6 +44,18 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
     isAdmin ? listCustomAgents() : Promise.resolve([]),
   ]);
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
+
+  // Sanitized LinkedIn seats for the multi-seat workspace — strip tokens; the UI
+  // never needs (and must never receive) the credentials, encrypted or not.
+  const linkedinSeats = (integrations.find((i) => i.platform === "linkedin")?.employeeSeats ?? []).map(
+    (s) => ({
+      id: s.id,
+      employeeName: s.employeeName,
+      employeeEmail: s.employeeEmail,
+      status: s.status,
+      resumeUrl: s.resumeUrl ?? null,
+    }),
+  );
 
   return (
     <>
@@ -96,6 +109,9 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
         integrations={integrations}
         oauthEnabledPlatforms={oauthEnabledPlatforms}
         currentUserRole={user.role}
+        linkedinSeats={linkedinSeats}
+        seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
+        seatCost={CREDIT_COSTS.employeeSeat}
       />
 
       {/* Meetings */}

@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
+import { CampaignCapsules } from "@/components/campaign-capsules";
 import type { Asset } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -210,7 +211,11 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
   const isEmpty = events.length === 0 && scheduledCount === 0;
 
   return (
-    <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
+    <div className="space-y-4">
+      {/* Campaign capsules — unified cross-channel groups above the temporal grid */}
+      <CampaignCapsules assets={assets} onOpen={setOpenAssetId} />
+
+      <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2.5">
@@ -337,6 +342,7 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
         open={openAsset != null}
         onClose={() => setOpenAssetId(null)}
       />
+      </div>
     </div>
   );
 }

@@ -19,7 +19,10 @@ export async function GET(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const clientId = new URL(req.url).searchParams.get("clientId");
+  const url = new URL(req.url);
+  const clientId = url.searchParams.get("clientId");
+  // Optional explicit trend/event — when present the run builds a campaign bundle.
+  const trend = url.searchParams.get("trend");
   if (!clientId) {
     return Response.json({ error: "clientId is required" }, { status: 400 });
   }
@@ -33,7 +36,7 @@ export async function GET(req: Request) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        const context = await buildSwarmContext(clientId);
+        const context = await buildSwarmContext(clientId, trend);
         for await (const event of runSwarm({ clientId, createdBy: user.uid, context })) {
           controller.enqueue(frame(event));
         }

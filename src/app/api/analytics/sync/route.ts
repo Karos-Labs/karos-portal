@@ -5,12 +5,18 @@ import {
   listClientIntegrations,
   listAssets,
   upsertClientMarketingAnalytics,
-  markIntegrationExpired,
+  markIntegrationForReauth,
+  getEmployeeSeatsForSync,
+  updateEmployeeSeat,
 } from "@/lib/data";
-import { fetchPlatformMetrics } from "@/lib/integrations/analytics-providers";
+import { fetchPlatformMetrics, fetchSeatMetrics } from "@/lib/integrations/analytics-providers";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
+import { integrationIsUsable } from "@/lib/integration-status";
+import { logger } from "@/services/logger";
 
-export const maxDuration = 60;
+// Long-running batch: on GCP Cloud Run the request can run well past Vercel's
+// old 60s ceiling. Cloud Scheduler triggers it and the container timeout governs.
+export const maxDuration = 300;
 
 /**
  * Analytics sync engine — the ingestion half of the Self-Improving Marketing
@@ -55,6 +61,7 @@ export async function GET(req: NextRequest) {
   let live = 0;
   let expired = 0;
   let assetsScanned = 0;
+  let seatsScanned = 0;
 
   for (const client of clients) {
     try {
@@ -67,7 +74,7 @@ export async function GET(req: NextRequest) {
       // an operational integration, not a distribution channel — exclude it.
       const byPlatform = new Map(
         integrations
-          .filter((i) => i.platform !== "google" && i.status !== "expired")
+          .filter((i) => i.platform !== "google" && integrationIsUsable(i))
           .map((i) => [i.platform, i]),
       );
       if (byPlatform.size === 0) continue;
@@ -115,7 +122,14 @@ export async function GET(req: NextRequest) {
           results.push({ clientId: client.id, platform, assetId: asset.id, action: "written", source });
         } catch (e) {
           if (e instanceof TokenExpiredError) {
-            await markIntegrationExpired(client.id, platform).catch(() => {});
+            await markIntegrationForReauth(client.id, platform).catch(() => {});
+            logger.logError({
+              clientId: client.id,
+              agentId: null,
+              operation: "analytics_sync",
+              errorMessage: `${platform} token expired/revoked — marked for reauthentication`,
+              severity: "WARN",
+            });
             expired++;
             results.push({
               clientId: client.id,
@@ -135,6 +149,50 @@ export async function GET(req: NextRequest) {
           }
         }
       }
+
+      // LinkedIn employee-advocacy: measure every ACTIVE seat on its own handle.
+      // Per-seat records aggregate dynamically through the per-client analytics
+      // queries. A dead seat token pauses that seat and moves on (resilient).
+      if (byPlatform.has("linkedin")) {
+        const seats = await getEmployeeSeatsForSync(client.id);
+        for (const seat of seats) {
+          seatsScanned++;
+          const seatAssetId = `seat_${seat.id}`;
+          try {
+            const { metrics, source } = await fetchSeatMetrics(seat);
+            await upsertClientMarketingAnalytics({
+              clientId: client.id,
+              assetId: seatAssetId,
+              taskId: null,
+              platform: "linkedin",
+              assetType: "employee_advocacy",
+              assetLabel: seat.employeeName,
+              metrics,
+              source,
+              capturedAt: now,
+            });
+            written++;
+            if (source === "mock") mock++;
+            else live++;
+            results.push({ clientId: client.id, platform: "linkedin", assetId: seatAssetId, action: "written", source });
+          } catch (e) {
+            if (e instanceof TokenExpiredError) {
+              await updateEmployeeSeat(client.id, seat.id, { status: "paused" }).catch(() => {});
+              logger.logError({
+                clientId: client.id,
+                agentId: null,
+                operation: "analytics_sync",
+                errorMessage: `LinkedIn seat "${seat.employeeName}" token expired — seat paused`,
+                severity: "WARN",
+              });
+              expired++;
+              results.push({ clientId: client.id, platform: "linkedin", assetId: seatAssetId, action: "expired", detail: "seat token expired — paused" });
+            } else {
+              results.push({ clientId: client.id, platform: "linkedin", assetId: seatAssetId, action: "skipped", detail: `error: ${e instanceof Error ? e.message : "unknown"}` });
+            }
+          }
+        }
+      }
     } catch (e) {
       results.push({
         clientId: client.id,
@@ -147,7 +205,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
-    checked: { clients: clients.length, assetsScanned },
+    checked: { clients: clients.length, assetsScanned, seatsScanned },
     recordsWritten: written,
     sources: { live, mock },
     integrationsExpired: expired,

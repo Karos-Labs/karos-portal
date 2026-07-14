@@ -29,6 +29,8 @@ import type { ClientCredits } from "@/lib/types";
 import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { getClientCustomAgents, buildAgentCatalog } from "@/lib/agent-roster";
+import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { sendEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
 import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
@@ -58,7 +60,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   };
   const messages = (body.messages ?? []) as ModelMessage[];
 
-  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks] =
+  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks, customAgents] =
     await Promise.all([
       getClient(clientId),
       getClientReport(clientId),
@@ -69,6 +71,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       listClientIntegrations(clientId),
       getTaskBoardCapacity(clientId),
       getClientPerformanceBenchmarks(clientId),
+      getClientCustomAgents(clientId),
     ]);
 
   if (!client) {
@@ -103,28 +106,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   /* ── Shared Google integration lookup ────────────────────────────── */
   const googleIntegration = integrations.find(
-    (i) => i.platform === "google" && i.status === "active",
+    (i) => i.platform === "google" && integrationIsUsable(i),
   );
 
   // Build dynamic proactive appendix with the managed-product catalog (karos-agents
   // lab products run by the Karos team), social integrations, calendar state, and
   // Gmail status so the AI follows the correct scenario rules.
-  const agentCatalog = MANAGED_PRODUCTS.map((p) => ({
-    id: p.taskType,
-    name: p.name,
-    outputKind: p.taskType,
-    description: `${p.tagline}. ${p.description}`,
-    capabilities: [] as string[],
-    deliverables: p.deliverables,
-    estimate: p.estimate,
-    briefKeys: p.briefFields.map((f) => f.key),
-  }));
+  // Unified roster: the managed lab products PLUS the client's assigned custom
+  // agents (git-imported), so the copilot plans around the full agent set.
+  const agentCatalog = buildAgentCatalog(customAgents);
 
   const socialIntegrations = integrations
     .filter((i) => i.platform !== "google")
     .map((i) => ({
       platform: i.platform,
-      status: (i.status === "expired" ? "expired" : "active") as "active" | "expired",
+      // The proactive appendix only knows active|expired; reauthenticate maps to expired.
+      status: (integrationNeedsReconnect(i) ? "expired" : "active") as "active" | "expired",
     }));
   const linkedSocialPlatforms = socialIntegrations
     .filter((i) => i.status === "active")

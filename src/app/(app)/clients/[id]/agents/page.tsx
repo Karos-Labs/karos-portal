@@ -1,5 +1,4 @@
 import { notFound, redirect } from "next/navigation";
-import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import {
   getClient,
@@ -9,9 +8,10 @@ import {
   listJobs,
 } from "@/lib/data";
 import { availableCredits, isBillableClientActor } from "@/lib/credits";
-import { Button, EmptyState, PageHeader } from "@/components/ui";
+import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ManagedProducts } from "@/components/managed-products";
+import { ManagedProductsOverview } from "@/components/managed-products-overview";
 import {
   ClientCustomAgents,
   type CustomAgentRunRow,
@@ -94,29 +94,29 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       <>
         <PageHeader
           title="AI Agents"
-          description="Your Karos team runs AI agents that research, produce, and deliver content for you."
+          description="The managed products and custom agents your Karos team runs for you."
         />
-        {agents.length > 0 && agentServiceConfigured ? (
-          <ClientCustomAgents
-            clientId={id}
-            agents={agents}
-            runs={runs}
-            contextItems={contextItems}
-            viewerIsClient
-            {...(spendable !== undefined ? { availableCredits: spendable } : {})}
-          />
-        ) : (
-          <EmptyState
-            icon={<Icon name="Bot" className="h-7 w-7" />}
-            title="Your team is on it"
-            description="Karos runs managed AI agents for your account. Deliverables appear in your Library once they're approved."
-            action={
-              <Link href="/assets">
-                <Button>Open Library</Button>
-              </Link>
-            }
-          />
-        )}
+        <div className="space-y-8">
+          <ManagedProductsOverview />
+          {agents.length > 0 && agentServiceConfigured && (
+            <section className="space-y-3">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Your custom agents</p>
+                <p className="mt-1 text-sm text-muted">
+                  Bespoke agents your Karos team enabled for your account — run them on demand.
+                </p>
+              </div>
+              <ClientCustomAgents
+                clientId={id}
+                agents={agents}
+                runs={runs}
+                contextItems={contextItems}
+                viewerIsClient
+                {...(spendable !== undefined ? { availableCredits: spendable } : {})}
+              />
+            </section>
+          )}
+        </div>
       </>
     );
   }

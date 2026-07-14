@@ -28,6 +28,9 @@ import {
   createClientTask,
 } from "@/lib/data";
 import { findDuplicateReason, normalizeTitleForDedup } from "@/lib/task-dedup";
+import { getClientCustomAgents, type ClientCustomAgentSummary } from "@/lib/agent-roster";
+import { generateCampaignBundle, type CampaignTrend } from "@/lib/campaign-engine";
+import { integrationIsUsable } from "@/lib/integration-status";
 import type { TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
 
 /* ── Constants ───────────────────────────────────────────────────────── */
@@ -40,6 +43,12 @@ export const DEFAULT_ROUNDS = 2;
 /** The consensus target — aligned with the karos_managed active-task cap. */
 export const MAX_CONSENSUS_TASKS = MAX_ACTIVE_TASKS;
 
+/**
+ * Trend weight at/above which the engine SHIFTS from isolated tasks to a cohesive
+ * omnichannel campaign bundle for that theme (blog anchor + newsletter + socials).
+ */
+export const CAMPAIGN_TREND_MIN_WEIGHT = 80;
+
 /* ── Output schema (strict) ──────────────────────────────────────────── */
 
 export const swarmTaskSchema = z.object({
@@ -47,6 +56,8 @@ export const swarmTaskSchema = z.object({
   description: z.string().min(1).max(800),
   priority: z.enum(["high", "medium", "low"]),
   productType: z.enum(PRODUCT_TYPES).optional(),
+  /** Assign a CUSTOM agent by its id (from the roster) INSTEAD of a managed productType. */
+  customAgentId: z.string().optional(),
   platform: z.enum(PLATFORMS).optional(),
   weight: z.number().int().min(0).max(100),
 });
@@ -74,7 +85,8 @@ export interface SwarmPersona {
 const TURN_DISCIPLINE = `
 You are one voice in a three-agent strategy debate producing a marketing Task Map. On your turn you receive the current DRAFT task array and must return the FULL revised array plus a short, punchy console-style MESSAGE (first person) describing what you changed and why — as if speaking in a war-room terminal.
 Rules:
-- Every task is karos_managed content the Karos AI agents execute. A content task MUST carry a productType from: social_post, newsletter_issue, blog_article, landing_page.
+- Every task is karos_managed content the Karos AI agents execute. A content task normally carries a productType from: social_post, newsletter_issue, blog_article, landing_page.
+- When an AVAILABLE CUSTOM AGENTS list is provided and one fits the task better, assign it by setting customAgentId to that agent's exact id INSTEAD of a productType — never set both on the same task. Only use ids from that list; never invent one.
 - Set platform to the target channel when relevant. Set weight (0-100) by how critical the underlying gap is (90+ = urgent, 75-89 = high, 50-74 = standard, <50 = optional); priority must agree (>=75 high, 40-74 medium, <40 low).
 - Keep tasks hyper-specific to THIS client. No generic filler. Never exceed 20 tasks in the array; the panel will trim to the best ${MAX_CONSENSUS_TASKS}.
 - Return the COMPLETE array every turn (keep what works, revise what doesn't) — do not return only your deltas.
@@ -124,6 +136,14 @@ export interface SwarmContext {
   brandingSummary: string;
   /** Top/bottom historical performers for the Data Analyst. */
   benchmarkSummary: string;
+  /** Custom agents assigned to this client — assignable via a task's customAgentId. */
+  customAgents: ClientCustomAgentSummary[];
+  /**
+   * A high-weight trend/event detected for this client, if any. When its weight
+   * clears CAMPAIGN_TREND_MIN_WEIGHT the run also generates a cohesive campaign
+   * bundle for it (in addition to the standalone consensus tasks). null ⇒ none.
+   */
+  campaignTrend?: CampaignTrend | null;
 }
 
 export interface SwarmInput {
@@ -149,6 +169,7 @@ export type SwarmEvent =
     }
   | { type: "consensus"; taskCount: number }
   | { type: "persisted"; created: number; duplicatesSkipped: number; capSkipped: number; note: string }
+  | { type: "campaign"; campaignId: string; title: string; themeScope: string; taskCount: number }
   | { type: "done"; created: number }
   | { type: "error"; message: string };
 
@@ -187,6 +208,11 @@ function buildTurnPrompt(
     tasks.length === 0
       ? "(empty — no tasks proposed yet; you are opening the debate)"
       : JSON.stringify(tasks, null, 2);
+  const customAgentsBlock =
+    ctx.customAgents.length > 0
+      ? ctx.customAgents.map((a) => `- ${a.id}: ${a.name} — ${a.description}`).join("\n")
+      : "(none assigned to this client — use managed productTypes only)";
+
   return `CLIENT: ${ctx.clientName}${ctx.industry ? ` — ${ctx.industry}` : ""}
 DEBATE ROUND: ${round} of ${totalRounds}
 
@@ -198,6 +224,9 @@ ${ctx.brandingSummary}
 
 HISTORICAL PERFORMANCE BENCHMARKS:
 ${ctx.benchmarkSummary}
+
+AVAILABLE CUSTOM AGENTS (assign a task to one via customAgentId):
+${customAgentsBlock}
 
 CURRENT DRAFT TASK ARRAY:
 ${draft}
@@ -281,8 +310,45 @@ export async function* runSwarm(input: SwarmInput): AsyncGenerator<SwarmEvent, v
   yield { type: "consensus", taskCount: consensus.length };
 
   try {
-    const persisted = await persistSwarmTasks(input.clientId, input.createdBy, consensus);
+    const persisted = await persistSwarmTasks(
+      input.clientId,
+      input.createdBy,
+      consensus,
+      input.context.customAgents,
+    );
     yield { type: "persisted", ...persisted };
+
+    // High-weight trend ⇒ shift up to a cohesive omnichannel campaign bundle
+    // (anchor blog + newsletter + socials) alongside the standalone tasks.
+    const trend = input.context.campaignTrend;
+    if (trend && trend.weight >= CAMPAIGN_TREND_MIN_WEIGHT) {
+      try {
+        const campaign = await generateCampaignBundle({
+          clientId: input.clientId,
+          createdBy: input.createdBy,
+          trend,
+        });
+        yield {
+          type: "campaign",
+          campaignId: campaign.campaignId,
+          title: campaign.title,
+          themeScope: campaign.themeScope,
+          taskCount: campaign.taskIds.length,
+        };
+      } catch (e) {
+        // A campaign failure must not sink the whole run — the task map still landed.
+        yield {
+          type: "agent_message",
+          round: totalRounds,
+          agent: "creative",
+          agentName: "Campaign Director",
+          emoji: "🎬",
+          message: `Campaign bundle for "${trend.theme}" couldn't be assembled (${e instanceof Error ? e.message : "unknown"}); the standalone task map still shipped.`,
+          taskCount: consensus.length,
+        };
+      }
+    }
+
     yield { type: "done", created: persisted.created };
   } catch (e) {
     yield { type: "error", message: e instanceof Error ? e.message : "Failed to save the task map" };
@@ -309,10 +375,14 @@ export async function persistSwarmTasks(
   clientId: string,
   createdBy: string,
   drafts: SwarmTaskDraft[],
+  customAgents: ClientCustomAgentSummary[] = [],
 ): Promise<PersistResult> {
   if (drafts.length === 0) {
     return { created: 0, duplicatesSkipped: 0, capSkipped: 0, note: "No tasks to create." };
   }
+
+  // Only ids the client actually has can be assigned — drops any hallucinated id.
+  const customById = new Map(customAgents.map((a) => [a.id, a]));
 
   const { activeCount, tasks: boardTasks } = await getTaskBoardCapacity(clientId);
   const pool = [...boardTasks];
@@ -355,7 +425,14 @@ export async function persistSwarmTasks(
   await Promise.all(
     fresh.map((t) => {
       const metadata: Record<string, unknown> = {};
-      if (t.productType) {
+      const customAgent = t.customAgentId ? customById.get(t.customAgentId) : undefined;
+      if (customAgent) {
+        // Custom agents run through the agent-service custom flow, not the four
+        // in-process productTypes — record the intended executor for display and
+        // for staff to run it; no product_run trigger (that flow is separate).
+        metadata.customAgentId = customAgent.id;
+        metadata.customAgentName = customAgent.name;
+      } else if (t.productType) {
         metadata.productType = t.productType;
         metadata.completionTrigger = `product_run:${t.productType}`;
       }
@@ -396,12 +473,16 @@ export async function persistSwarmTasks(
  * brand guidance, and historical performance benchmarks — the same signals the
  * copilot's proactive appendix uses, distilled into prose the personas read.
  */
-export async function buildSwarmContext(clientId: string): Promise<{ clientName: string } & SwarmContext> {
-  const [client, assets, integrations, benchmarks] = await Promise.all([
+export async function buildSwarmContext(
+  clientId: string,
+  trendOverride?: string | null,
+): Promise<{ clientName: string } & SwarmContext> {
+  const [client, assets, integrations, benchmarks, customAgents] = await Promise.all([
     getClient(clientId),
     listAssets({ clientId }),
     listClientIntegrations(clientId),
     getClientPerformanceBenchmarks(clientId),
+    getClientCustomAgents(clientId),
   ]);
   if (!client) throw new Error("Client not found");
 
@@ -415,7 +496,7 @@ export async function buildSwarmContext(clientId: string): Promise<{ clientName:
     const key = a.scheduledPlatform ?? "unassigned";
     scheduledByPlatform[key] = (scheduledByPlatform[key] ?? 0) + 1;
   }
-  const active = integrations.filter((i) => i.platform !== "google" && i.status !== "expired");
+  const active = integrations.filter((i) => i.platform !== "google" && integrationIsUsable(i));
   const gapLines = active.map((i) => {
     const count = scheduledByPlatform[i.platform] ?? 0;
     return `- ${i.platform}: ${count === 0 ? "NO content scheduled in the next 14 days — GAP" : `${count} scheduled`}`;
@@ -442,11 +523,30 @@ export async function buildSwarmContext(clientId: string): Promise<{ clientName:
       ? `TOP PERFORMERS:\n${benchmarks.top.map(fmt).join("\n") || "- none"}\n\nLOWEST PERFORMERS:\n${benchmarks.bottom.map(fmt).join("\n") || "- none"}`
       : "No performance analytics captured yet — weight by strategic judgment.";
 
+  // Campaign trend detection: an explicit override wins; otherwise a
+  // measurably dominant top performer (score ≥ threshold) is treated as the
+  // high-weight trend worth building a full campaign around.
+  let campaignTrend: CampaignTrend | null = null;
+  if (trendOverride && trendOverride.trim()) {
+    campaignTrend = { theme: trendOverride.trim(), weight: 90, rationale: "Operator-specified trend/event." };
+  } else {
+    const top = benchmarks.top[0];
+    if (top && top.engagementScore >= CAMPAIGN_TREND_MIN_WEIGHT) {
+      campaignTrend = {
+        theme: top.assetLabel ?? top.assetType ?? "top-performing theme",
+        weight: Math.round(top.engagementScore),
+        rationale: `Highest-engaging recent content (score ${top.engagementScore.toFixed(1)}) — worth amplifying into a full campaign.`,
+      };
+    }
+  }
+
   return {
     clientName: client.name,
     industry: client.industry,
     gapSummary,
     brandingSummary,
     benchmarkSummary,
+    customAgents,
+    campaignTrend,
   };
 }

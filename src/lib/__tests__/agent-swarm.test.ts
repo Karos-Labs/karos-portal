@@ -1,19 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { generateObjectMock, logUsageMock, getTaskBoardCapacityMock, createClientTaskMock } = vi.hoisted(
-  () => ({
-    generateObjectMock: vi.fn(),
-    logUsageMock: vi.fn(),
-    getTaskBoardCapacityMock: vi.fn(),
-    createClientTaskMock: vi.fn(),
-  }),
-);
+const {
+  generateObjectMock,
+  logUsageMock,
+  getTaskBoardCapacityMock,
+  createClientTaskMock,
+  generateCampaignBundleMock,
+} = vi.hoisted(() => ({
+  generateObjectMock: vi.fn(),
+  logUsageMock: vi.fn(),
+  getTaskBoardCapacityMock: vi.fn(),
+  createClientTaskMock: vi.fn(),
+  generateCampaignBundleMock: vi.fn(),
+}));
 
 vi.mock("server-only", () => ({}));
 vi.mock("ai", () => ({ generateObject: generateObjectMock }));
 vi.mock("@ai-sdk/anthropic", () => ({ anthropic: vi.fn(() => "mock-model") }));
 vi.mock("next/server", () => ({ after: (fn: () => void) => fn() }));
 vi.mock("@/services/logger", () => ({ logger: { logUsage: logUsageMock } }));
+// Campaign generation is exercised in its own test file; mock it here.
+vi.mock("@/lib/campaign-engine", () => ({ generateCampaignBundle: generateCampaignBundleMock }));
 // Real task-dedup (pure) is used; only the Firestore I/O is mocked.
 vi.mock("@/lib/data", () => ({
   getTaskBoardCapacity: getTaskBoardCapacityMock,
@@ -55,6 +62,7 @@ const input: SwarmInput = {
     gapSummary: "- linkedin: GAP",
     brandingSummary: "Tone: bold",
     benchmarkSummary: "No data",
+    customAgents: [],
   },
 };
 
@@ -183,6 +191,48 @@ describe("runSwarm — multi-round state machine", () => {
   });
 });
 
+describe("runSwarm — campaign shift on a high-weight trend", () => {
+  const withTrend = (weight: number): SwarmInput => ({
+    ...input,
+    context: { ...input.context, campaignTrend: { theme: "Black Friday", weight } },
+  });
+
+  it("generates a campaign bundle and emits a campaign event above the threshold", async () => {
+    generateCampaignBundleMock.mockResolvedValue({
+      campaignId: "camp1",
+      title: "Black Friday Blitz",
+      themeScope: "Black Friday 2026",
+      taskIds: ["a", "b", "c", "d"],
+    });
+
+    const events = await collect(runSwarm(withTrend(92)));
+
+    expect(generateCampaignBundleMock).toHaveBeenCalledTimes(1);
+    expect(generateCampaignBundleMock).toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: "c1", createdBy: "u1", trend: { theme: "Black Friday", weight: 92 } }),
+    );
+    const campaign = events.find((e) => e.type === "campaign");
+    expect(campaign).toMatchObject({ type: "campaign", campaignId: "camp1", taskCount: 4 });
+    // Campaign lands after persistence, before done; done stays last.
+    expect(events.at(-1)?.type).toBe("done");
+  });
+
+  it("stays with standalone tasks when the trend weight is below the threshold", async () => {
+    const events = await collect(runSwarm(withTrend(79)));
+    expect(generateCampaignBundleMock).not.toHaveBeenCalled();
+    expect(events.some((e) => e.type === "campaign")).toBe(false);
+  });
+
+  it("survives a campaign-generation failure without failing the run", async () => {
+    generateCampaignBundleMock.mockRejectedValue(new Error("blueprint boom"));
+    const events = await collect(runSwarm(withTrend(90)));
+    expect(events.some((e) => e.type === "campaign")).toBe(false);
+    expect(events.at(-1)?.type).toBe("done");
+    const note = events.find((e) => e.type === "agent_message" && e.agentName === "Campaign Director");
+    expect(note).toBeTruthy();
+  });
+});
+
 describe("persistSwarmTasks — dedup + capacity", () => {
   it("skips tasks that duplicate the live board", async () => {
     const existing: ClientTask = {
@@ -218,5 +268,35 @@ describe("persistSwarmTasks — dedup + capacity", () => {
     const result = await persistSwarmTasks("c1", "u1", []);
     expect(result.created).toBe(0);
     expect(getTaskBoardCapacityMock).not.toHaveBeenCalled();
+  });
+
+  it("records a custom-agent linkage when a draft assigns a granted custom agent", async () => {
+    const drafts: SwarmTaskDraft[] = [
+      { title: "Run bespoke brand video", description: "d", priority: "high", customAgentId: "ca_1", weight: 90 },
+    ];
+    await persistSwarmTasks("c1", "u1", drafts, [
+      { id: "ca_1", name: "Brand Video Agent", description: "Makes videos" },
+    ]);
+    expect(createClientTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: "karos_managed",
+        metadata: expect.objectContaining({ customAgentId: "ca_1", customAgentName: "Brand Video Agent" }),
+      }),
+    );
+    // Custom-agent tasks don't carry a managed product_run trigger.
+    const arg = createClientTaskMock.mock.calls[0][0] as { metadata?: Record<string, unknown> };
+    expect(arg.metadata?.productType).toBeUndefined();
+    expect(arg.metadata?.completionTrigger).toBeUndefined();
+  });
+
+  it("ignores a hallucinated customAgentId not granted to the client", async () => {
+    const drafts: SwarmTaskDraft[] = [
+      { title: "Ghost agent task", description: "d", priority: "medium", customAgentId: "nope", productType: "blog_article", weight: 50 },
+    ];
+    await persistSwarmTasks("c1", "u1", drafts, [{ id: "ca_1", name: "Real", description: "d" }]);
+    const arg = createClientTaskMock.mock.calls[0][0] as { metadata?: Record<string, unknown> };
+    // Falls back to the managed productType path; no bogus customAgentId persisted.
+    expect(arg.metadata?.customAgentId).toBeUndefined();
+    expect(arg.metadata?.productType).toBe("blog_article");
   });
 });

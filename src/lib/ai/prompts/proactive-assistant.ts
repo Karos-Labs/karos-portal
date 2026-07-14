@@ -21,6 +21,12 @@ export interface AgentCatalogEntry {
   estimate?: string;
   /** Brief-field keys the agent accepts — the full input surface. */
   briefKeys?: string[];
+  /**
+   * "managed" = a karos-agents lab product (id is its ManagedTaskType/productType);
+   * "custom" = a client-assigned custom agent (id is its customAgent id, run via the
+   * agent-service custom flow — not a productType). Absent ⇒ treated as managed.
+   */
+  kind?: "managed" | "custom";
 }
 
 /** One ranked performance record, flattened for the prompt (no Firestore types). */
@@ -79,8 +85,11 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
   const agentCatalogBlock = ctx.agents.length > 0
     ? ctx.agents
         .map((a) => {
+          const ref = a.kind === "custom"
+            ? `**${a.name}** (custom agent — run by the Karos team, no productType)`
+            : `**${a.name}** (productType: \`${a.id}\`)`;
           const lines = [
-            `• **${a.name}** (productType: \`${a.id}\`) — ${a.description}`,
+            `• ${ref} — ${a.description}`,
             a.deliverables?.length ? `  produces: ${a.deliverables.join("; ")}` : "",
             [
               a.estimate ? `runtime: ${a.estimate}` : "",

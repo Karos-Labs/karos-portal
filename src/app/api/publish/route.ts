@@ -6,6 +6,7 @@ import {
   publishAssetToPlatform,
 } from "@/lib/integrations/publishers";
 import { requireCronSecret } from "@/lib/cron-auth";
+import { integrationIsUsable } from "@/lib/integration-status";
 
 /**
  * Auto-publish cron (tier "auto" of the three-tier publishing flow).
@@ -61,7 +62,7 @@ export async function GET(req: NextRequest) {
       // Auto-eligible = valid token AND the client hasn't turned off auto-publish
       // for that platform (absent flag = enabled, for pre-toggle integrations).
       const autoEligible = integrations.filter(
-        (i) => i.status !== "expired" && i.autoPublish !== false,
+        (i) => integrationIsUsable(i) && i.autoPublish !== false,
       );
       const connectedPlatforms = autoEligible.map((i) => i.platform);
 
@@ -104,8 +105,8 @@ export async function GET(req: NextRequest) {
       }
 
       try {
-        await publishAssetToPlatform(platform, integration, asset);
-        await markAssetPublished(asset.id);
+        const { postId } = await publishAssetToPlatform(platform, integration, asset);
+        await markAssetPublished(asset.id, postId);
         return { assetId: asset.id, platform, status: "published" };
       } catch (e) {
         // Release the claim so a later attempt can retry this asset.

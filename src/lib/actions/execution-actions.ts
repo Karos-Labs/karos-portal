@@ -18,6 +18,7 @@ import {
   listClientIntegrations,
 } from "@/lib/data";
 import { CreditError, isBillableClientActor } from "@/lib/credits";
+import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
 import type { AppUser, Asset, AssetType, ClientTask, ManagedTaskType } from "@/lib/types";
 import { sendEmail } from "@/lib/email";
@@ -145,7 +146,7 @@ async function scheduleFieldsForApproval(
     listAssets({ clientId }),
     listClientIntegrations(clientId),
   ]);
-  const activeIntegrations = integrations.filter((i) => i.status !== "expired");
+  const activeIntegrations = integrations.filter((i) => integrationIsUsable(i));
   const activePlatforms = new Set(activeIntegrations.map((i) => i.platform));
   const taskPlatform = task.metadata?.platform as string | undefined;
   const platform =
@@ -232,6 +233,14 @@ export async function approveTaskArtifactAction(
         imageUrl: (task.metadata?.artifactImageUrl as string | undefined) ?? null,
         status: "approved",
         ...schedule,
+        // Carry the campaign linkage onto the asset so the content calendar can
+        // group it into its campaign capsule without a task join.
+        ...(task.campaignId
+          ? {
+              campaignId: task.campaignId,
+              campaignTitle: (task.metadata?.campaignTitle as string | undefined) ?? null,
+            }
+          : {}),
         meta: { taskId, ...(productType ? { taskType: productType } : {}) },
         createdBy: user.uid,
         createdAt: Date.now(),

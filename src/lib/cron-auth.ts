@@ -30,9 +30,21 @@ export function checkWebhookSecret(opts: {
   return null;
 }
 
-/** Convenience for the `Authorization: Bearer <CRON_SECRET>` pattern used by the cron routes. */
+/**
+ * Cron auth for GCP Cloud Scheduler. Accepts the shared secret via either the
+ * `Authorization: Bearer <CRON_SECRET>` header (the convention our Cloud
+ * Scheduler jobs use — see agent-service/DEPLOY.md) or an `X-Cron-Secret`
+ * header, so scheduler jobs configured either way authenticate. Fails closed in
+ * production when the secret is unset (checkWebhookSecret).
+ *
+ * We intentionally do NOT trust `X-CloudScheduler*` marker headers on their own:
+ * they're set by the scheduler but any caller can forge them, so the secret is
+ * always required. Their presence is only used to prefer the header-secret path.
+ */
 export function requireCronSecret(req: Request, envVar = "CRON_SECRET"): NextResponse | null {
   const auth = req.headers.get("authorization") ?? "";
-  const provided = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : null;
+  const bearer = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : null;
+  const headerSecret = req.headers.get("x-cron-secret");
+  const provided = bearer ?? headerSecret ?? null;
   return checkWebhookSecret({ envVar, provided });
 }

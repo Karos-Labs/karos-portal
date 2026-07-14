@@ -15,9 +15,11 @@ import type {
   ClientCompetitor,
   ClientContextDoc,
   ClientCredits,
+  Campaign,
   ClientIntegration,
   ClientMarketingAnalytics,
   ClientReport,
+  EmployeeSeat,
   ClientRequest,
   ClientSettings,
   ClientTask,
@@ -44,6 +46,8 @@ import {
 } from "@/lib/credits";
 import { engagementScore, rankByEngagement } from "@/lib/analytics";
 import { computeBoardCapacity } from "@/lib/task-dedup";
+import { encryptCredentials, decryptCredentials } from "@/lib/crypto/token-cipher";
+import { randomUUID } from "node:crypto";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 
 /* ----------------------------- helpers ----------------------------- */
@@ -83,6 +87,8 @@ const col = {
   // Marketing performance analytics: one doc per (client, asset, platform),
   // doc ID = `${clientId}_${platform}_${assetId}`, written by /api/analytics/sync.
   clientMarketingAnalytics: () => adminDb().collection("clientMarketingAnalytics"),
+  // Omnichannel campaigns: themed bundles of dependent tasks/assets per client.
+  campaigns: () => adminDb().collection("campaigns"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -298,12 +304,17 @@ export async function listScheduledAssets(opts?: {
   return opts?.limit != null ? due.slice(0, opts.limit) : due;
 }
 
-/** Record a successful platform push: status → published, stamp publishedAt, clear any stale error. */
-export async function markAssetPublished(id: string): Promise<void> {
+/**
+ * Record a successful platform push: status → published, stamp publishedAt,
+ * clear any stale error, and (when the platform returned one) store the
+ * platform's post id so the analytics sync can fetch this post's metrics later.
+ */
+export async function markAssetPublished(id: string, platformPostId?: string | null): Promise<void> {
   const { FieldValue } = await import("firebase-admin/firestore");
   await col.assets().doc(id).update({
     status: "published",
     publishedAt: Date.now(),
+    ...(platformPostId ? { platformPostId } : {}),
     publishError: FieldValue.delete(),
     publishClaimedAt: FieldValue.delete(),
     updatedAt: Date.now(),
@@ -634,6 +645,30 @@ export async function getClientPerformanceBenchmarks(
   return { clientId, top, bottom, sampleSize: records.length };
 }
 
+/* ------------------------------ campaigns --------------------------- */
+
+/** All campaigns for a client, newest first. */
+export async function listCampaigns(clientId: string): Promise<Campaign[]> {
+  const snap = await col.campaigns().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<Campaign>(d))
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+export async function getCampaign(id: string): Promise<Campaign | null> {
+  const doc = await col.campaigns().doc(id).get();
+  return doc.exists ? withId<Campaign>(doc) : null;
+}
+
+export async function createCampaign(data: Omit<Campaign, "id">): Promise<string> {
+  const ref = await col.campaigns().add(data);
+  return ref.id;
+}
+
+export async function updateCampaign(id: string, data: Partial<Campaign>): Promise<void> {
+  await col.campaigns().doc(id).set(data, { merge: true });
+}
+
 /* --------------------- client competitors -------------------------- */
 
 export async function listClientCompetitors(clientId: string): Promise<ClientCompetitor[]> {
@@ -844,6 +879,20 @@ export async function markIntegrationExpired(clientId: string, platform: string)
   );
 }
 
+/**
+ * Mark a platform integration as needing re-authentication (401/403 seen by the
+ * analytics sync). Same operational meaning as expired — the integration-status
+ * helpers treat both as "needs reconnect" — but recorded distinctly so we can
+ * trace which subsystem detected the dead token.
+ */
+export async function markIntegrationForReauth(clientId: string, platform: string): Promise<void> {
+  const docId = `${clientId}_${platform}`;
+  await col.clientIntegrations().doc(docId).set(
+    { status: "reauthenticate", expiredAt: Date.now() },
+    { merge: true },
+  );
+}
+
 /** Toggle whether the publish cron may auto-post to this platform (Publish Now always works). */
 export async function setIntegrationAutoPublish(
   clientId: string,
@@ -864,6 +913,97 @@ export async function deleteClientIntegration(
 ): Promise<void> {
   const docId = `${clientId}_${platform}`;
   await col.clientIntegrations().doc(docId).delete();
+}
+
+/* ---------------- LinkedIn employee-advocacy seats ------------------ */
+/*
+ * Seats live as an array on the client's `${clientId}_linkedin` integration doc.
+ * All mutations are transactional read-modify-write so concurrent adds/edits
+ * can't clobber the array. Seat OAuth tokens are ENCRYPTED at rest via the token
+ * cipher on the way in and DECRYPTED only by getEmployeeSeatsForSync.
+ */
+
+const linkedinDocId = (clientId: string) => `${clientId}_linkedin`;
+
+/** All seats for a client's LinkedIn integration, tokens left encrypted. */
+export async function listEmployeeSeats(clientId: string): Promise<EmployeeSeat[]> {
+  const doc = await col.clientIntegrations().doc(linkedinDocId(clientId)).get();
+  if (!doc.exists) return [];
+  return (doc.data() as ClientIntegration).employeeSeats ?? [];
+}
+
+/** Active seats with DECRYPTED tokens — for the analytics sync only (server-side). */
+export async function getEmployeeSeatsForSync(clientId: string): Promise<EmployeeSeat[]> {
+  const seats = await listEmployeeSeats(clientId);
+  return seats
+    .filter((s) => s.status === "active")
+    .map((s) => ({ ...s, credentials: decryptCredentials(s.credentials) }));
+}
+
+/**
+ * Append an employee seat to the LinkedIn integration (tokens encrypted).
+ * Requires the LinkedIn integration to exist. Transactional so parallel adds
+ * don't drop each other.
+ */
+export async function addEmployeeSeat(
+  clientId: string,
+  input: Omit<EmployeeSeat, "id" | "addedAt" | "updatedAt">,
+): Promise<EmployeeSeat> {
+  const ref = col.clientIntegrations().doc(linkedinDocId(clientId));
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) {
+      throw new Error("Connect the client's LinkedIn account before adding employee seats.");
+    }
+    const seats = (snap.data() as ClientIntegration).employeeSeats ?? [];
+    const now = Date.now();
+    const seat: EmployeeSeat = {
+      ...input,
+      id: randomUUID(),
+      credentials: encryptCredentials(input.credentials ?? {}),
+      addedAt: now,
+      updatedAt: now,
+    };
+    tx.set(ref, { employeeSeats: [...seats, seat], updatedAt: now }, { merge: true });
+    return seat;
+  });
+}
+
+/** Patch one seat (status/resume/background, or re-encrypt new credentials). */
+export async function updateEmployeeSeat(
+  clientId: string,
+  seatId: string,
+  patch: Partial<Pick<EmployeeSeat, "status" | "resumeUrl" | "backgroundContext" | "employeeName" | "employeeEmail" | "credentials">>,
+): Promise<void> {
+  const ref = col.clientIntegrations().doc(linkedinDocId(clientId));
+  await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const seats = (snap.data() as ClientIntegration).employeeSeats ?? [];
+    const now = Date.now();
+    const next = seats.map((s) =>
+      s.id === seatId
+        ? {
+            ...s,
+            ...patch,
+            ...(patch.credentials ? { credentials: encryptCredentials(patch.credentials) } : {}),
+            updatedAt: now,
+          }
+        : s,
+    );
+    tx.set(ref, { employeeSeats: next, updatedAt: now }, { merge: true });
+  });
+}
+
+/** Remove a seat from the LinkedIn integration. */
+export async function removeEmployeeSeat(clientId: string, seatId: string): Promise<void> {
+  const ref = col.clientIntegrations().doc(linkedinDocId(clientId));
+  await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const seats = (snap.data() as ClientIntegration).employeeSeats ?? [];
+    tx.set(ref, { employeeSeats: seats.filter((s) => s.id !== seatId), updatedAt: Date.now() }, { merge: true });
+  });
 }
 
 /* -------------------- client activity logs -------------------------- */
