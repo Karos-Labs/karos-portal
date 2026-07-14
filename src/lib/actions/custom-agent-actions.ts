@@ -3,9 +3,7 @@
 import { revalidatePath } from "next/cache";
 import {
   createCustomAgent,
-  createJob,
   deleteCustomAgent,
-  deleteJob,
   getClient,
   getContextItem,
   getCustomAgent,
@@ -14,13 +12,7 @@ import {
   removeCustomAgentFromClients,
   updateClient,
   updateCustomAgent,
-  updateJob,
 } from "@/lib/data";
-import {
-  cancelAgentServiceJob,
-  isAgentServiceConfigured,
-  submitAgentServiceJob,
-} from "@/lib/agent-service/client";
 import {
   defaultInstructionsFor,
   fetchSkillFrontmatter,
@@ -28,15 +20,13 @@ import {
   listCustomAgentImportCandidates,
   type CustomAgentImportCandidate,
 } from "@/lib/agent-service/custom-agent-import";
+import { submitCustomAgentRun } from "@/lib/agent-service/run-custom-agent";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
-import { chargeClientCredits } from "@/lib/data";
-import { refundJobCharge } from "@/lib/credit-reconcile";
-import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
-import { logActivity, requireAdmin, requireClientAccess } from "./_shared";
+import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
+import { requireAdmin, requireClientAccess } from "./_shared";
 
 /* ── limits (mirror agent-service/src/schemas/task-types/custom.json) ── */
 const MAX_INSTRUCTIONS_CHARS = 12_000;
-const MAX_PROMPT_CHARS = 4_000;
 const MAX_KEY_CHARS = 120; // brief agent_key
 const MAX_NAME_CHARS = 200; // brief label
 const MAX_SKILL_DIR_CHARS = 300;
@@ -297,10 +287,11 @@ export async function setClientCustomAgentsAction(
 /* ─────────────────────────── run flow ───────────────────────────── */
 
 /**
- * Fires a custom agent for a client: mirrors submitManagedJobAction's job-doc +
- * agent-service submit flow, with two additions — CLIENT_USER callers are
- * authorized against the client's agent allowlist, and billable client actors
- * are charged upfront (jobId-paired for the refund/reconcile contract).
+ * Fires a custom agent for a client interactively: authorizes the caller
+ * (CLIENT_USERs are checked against the client's agent allowlist), resolves the
+ * client's context files, decides billing (billable client actors are charged;
+ * staff and admin "view as client" are free), then delegates the job-doc +
+ * agent-service submit + refund contract to submitCustomAgentRun.
  */
 export async function runCustomAgentAction(input: {
   agentId: string;
@@ -309,9 +300,6 @@ export async function runCustomAgentAction(input: {
   contextItemIds?: string[];
 }): Promise<{ jobId?: string; error?: string }> {
   const user = await requireClientAccess(input.clientId);
-  if (!isAgentServiceConfigured()) {
-    return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
-  }
 
   const agent = await getCustomAgent(input.agentId);
   if (!agent || !agent.enabled) return { error: "Agent not found." };
@@ -320,17 +308,6 @@ export async function runCustomAgentAction(input: {
   if (user.role === "CLIENT_USER" && !(client.customAgentIds ?? []).includes(agent.id)) {
     // Same message as missing — don't leak which agents exist beyond the allowlist.
     return { error: "Agent not found." };
-  }
-
-  const prompt = input.prompt.trim();
-  if (!prompt) return { error: "Describe what you want the agent to produce." };
-  if (prompt.length > MAX_PROMPT_CHARS) {
-    return { error: `Prompt is too long (max ${MAX_PROMPT_CHARS.toLocaleString()} characters).` };
-  }
-
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
-  if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
   }
 
   const contextFiles: AgentServiceContextFile[] = [];
@@ -347,111 +324,16 @@ export async function runCustomAgentAction(input: {
     });
   }
 
-  const now = Date.now();
-  const jobId = await createJob({
-    clientId: input.clientId,
-    agentId: "agent-service",
-    agentName: agent.name,
-    title: `${agent.name} — ${client.name}`,
-    status: "queued",
-    input: { agent: agent.name, prompt },
-    assetIds: [],
-    events: [{ at: now, level: "info", message: "Submitted to agent service" }],
-    createdBy: user.uid,
-    createdAt: now,
-    updatedAt: now,
+  const charge = isBillableClientActor(user)
+    ? { amount: agent.creditCost ?? CREDIT_COSTS.customAgentRun }
+    : null;
+
+  return submitCustomAgentRun({
+    agent,
+    client,
+    prompt: input.prompt,
+    actor: { uid: user.uid, name: user.name, role: user.role === "CLIENT_USER" ? "client" : "staff" },
+    contextFiles,
+    charge,
   });
-
-  // Charge upfront (client actors only) with jobId pairing so the webhook's
-  // failure refund and the reconcile sweeps can hand the credits back.
-  const runCost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
-  if (isBillableClientActor(user)) {
-    try {
-      await chargeClientCredits({
-        clientId: input.clientId,
-        amount: runCost,
-        operation: "custom_agent_run",
-        reason: `Agent run · ${agent.name}`.slice(0, 120),
-        agentId: agent.id,
-        jobId,
-        actorUid: user.uid,
-        actorName: user.name,
-      });
-    } catch (e) {
-      await deleteJob(jobId); // nothing submitted yet — no orphan to keep
-      if (e instanceof CreditError) return { error: e.message };
-      throw e;
-    }
-  }
-
-  let submittedServiceJobId: string | undefined;
-  try {
-    const submitted = await submitAgentServiceJob({
-      task_type: "custom",
-      client_id: input.clientId,
-      ...(client.agentsRepoSlug ? { client_slug: client.agentsRepoSlug } : {}),
-      brief: {
-        agent_key: agent.key.slice(0, MAX_KEY_CHARS),
-        label: agent.name.slice(0, MAX_NAME_CHARS),
-        entry_skill_dir: agent.entrySkillDir,
-        ...(agent.skillRoots.length > 0 ? { skill_roots: agent.skillRoots } : {}),
-        include_client_skills: agent.includeClientSkills,
-        instructions: agent.instructions.slice(0, MAX_INSTRUCTIONS_CHARS),
-        prompt,
-      },
-      callback_url: `${appUrl.replace(/\/$/, "")}/api/agent-service/webhook`,
-      ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),
-      metadata: { platform_job_id: jobId },
-    });
-    submittedServiceJobId = submitted.job_id;
-    await updateJob(jobId, {
-      external: { serviceJobId: submitted.job_id, taskType: "custom" },
-      updatedAt: Date.now(),
-    });
-  } catch (e) {
-    // Same cleanup contract as submitManagedJobAction, plus the charge refund.
-    if (submittedServiceJobId) {
-      try {
-        await cancelAgentServiceJob(submittedServiceJobId);
-      } catch {
-        // best effort — the webhook receiver's metadata fallback still matches
-      }
-    }
-    const message = e instanceof Error ? e.message : "Agent service submission failed";
-    // Refund BEFORE flipping the job to failed: the credits sweep
-    // (/api/credits/reconcile) only revisits queued/running jobs, so a job
-    // marked failed with a lost refund would strand the charge forever. If the
-    // refund write fails, leave the job queued — the sweep fails AND refunds
-    // it in one transaction (listStuckLocalJobs covers agent-service jobs
-    // that never recorded a serviceJobId).
-    try {
-      await refundJobCharge(jobId, `Auto-refund · submission failed · ${agent.name}`.slice(0, 120));
-    } catch {
-      return { jobId, error: message };
-    }
-    await updateJob(jobId, {
-      status: "failed",
-      error: message,
-      events: [
-        { at: now, level: "info", message: "Submitted to agent service" },
-        { at: Date.now(), level: "error", message },
-      ],
-      updatedAt: Date.now(),
-    });
-    return { jobId, error: message };
-  }
-
-  void logActivity({
-    clientId: input.clientId,
-    timestamp: Date.now(),
-    type: "CAMPAIGN_CREATED",
-    title: `Agent run started: ${agent.name}`,
-    actor: user.name,
-    actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
-    metadata: { jobId, taskType: "custom", agentKey: agent.key },
-  });
-  revalidatePath("/jobs");
-  revalidatePath(`/clients/${input.clientId}`);
-  revalidatePath(`/clients/${input.clientId}/agents`);
-  return { jobId };
 }

@@ -19,5 +19,6 @@ export * from "./execution-actions";
 export * from "./job-actions";
 export * from "./external-job-actions";
 export * from "./custom-agent-actions";
+export * from "./scheduled-run-actions";
 export * from "./lab-output-actions";
 export * from "./credit-actions";

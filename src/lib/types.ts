@@ -189,6 +189,53 @@ export interface CustomAgent {
   updatedAt: number;
 }
 
+/**
+ * A recurring weekly cadence, local to `timezone`. Days are 0=Sun..6=Sat.
+ * e.g. { daysOfWeek: [2,3,4], hour: 9, minute: 0, timezone: "America/Sao_Paulo" }
+ * fires Tue/Wed/Thu at 09:00 BRT.
+ */
+export interface RunCadence {
+  daysOfWeek: number[];
+  hour: number;
+  minute: number;
+  /** IANA timezone id. */
+  timezone: string;
+}
+
+/**
+ * A recurring generator run: a CustomAgent fired for a client on a cadence by
+ * the /api/scheduler cron. System-fired (never charges the client's credits),
+ * always draft-first — the produced asset lands as a draft for human approval.
+ * Reuses the referenced agent's entry skill / instructions / skill roots, so a
+ * client-scoped generator (entrySkillDir under clients/<slug>/skills/…) runs
+ * exactly like any custom agent.
+ */
+export interface ScheduledRun {
+  id: string;
+  clientId: string;
+  /** The CustomAgent supplying entry_skill_dir / instructions / skill roots. */
+  agentId: string;
+  /** Denormalized for display + the job title (the agent may be renamed/deleted). */
+  label: string;
+  /** Denormalized entry dir for at-a-glance display (source of truth = the agent). */
+  entrySkillDir: string;
+  /** The per-run brief prompt, e.g. "Draft the next company-page post." */
+  prompt: string;
+  cadence: RunCadence;
+  /** Asset type the webhook assigns to deliverables (overrides the custom "note" default). */
+  assetType: AssetType;
+  /** Platform hint for channels + the recommended publish window (e.g. "linkedin"). */
+  platform?: string;
+  enabled: boolean;
+  /** Epoch millis of the next fire; advanced atomically as each run is claimed. */
+  nextRunAt: number;
+  lastRunAt?: number | null;
+  lastJobId?: string | null;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** One deliverable file produced by an external agent-service job. */
 export interface ExternalJobArtifact {
   name: string;

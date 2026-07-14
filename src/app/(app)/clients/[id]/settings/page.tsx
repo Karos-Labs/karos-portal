@@ -7,6 +7,7 @@ import {
   listClientIntegrations,
   listCreditLedger,
   listCustomAgents,
+  listScheduledRuns,
   listTranscripts,
 } from "@/lib/data";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
@@ -16,6 +17,7 @@ import { IntegrationsTab } from "@/components/integrations-tab";
 import { ClientKeyInline } from "@/components/client-key-inline";
 import { CreditsPanel } from "@/components/credits-panel";
 import { ClientAgentAccessCard } from "@/components/custom-agents";
+import { ScheduledRunsCard } from "@/components/scheduled-runs";
 import { ClientEditor } from "@/components/client-editor";
 import { LogoutButton } from "@/components/logout-button";
 import { relativeTime } from "@/lib/utils";
@@ -35,12 +37,13 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
 
   const isAdmin = user.role === "KAROS_ADMIN";
   const isStaff = isAdmin || user.role === "KAROS_EMPLOYEE";
-  const [integrations, transcripts, credits, creditLedger, customAgents] = await Promise.all([
+  const [integrations, transcripts, credits, creditLedger, customAgents, scheduledRuns] = await Promise.all([
     listClientIntegrations(id),
     listTranscripts({ clientId: id }),
     getClientCredits(id),
     listCreditLedger(id, 15),
     isAdmin ? listCustomAgents() : Promise.resolve([]),
+    isAdmin ? listScheduledRuns({ clientId: id }) : Promise.resolve([]),
   ]);
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
@@ -85,6 +88,26 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
               clientId={client.id}
               agents={customAgents}
               allowedIds={client.customAgentIds ?? []}
+            />
+          </Card>
+        </div>
+      )}
+
+      {/* Scheduled runs (admin) — recurring generators fired on a cadence, draft-first + free */}
+      {isAdmin && (
+        <div className="mb-8">
+          <Card>
+            <CardTitle className="mb-1">Scheduled runs</CardTitle>
+            <p className="mb-3 text-sm text-muted-2">
+              Fire a custom agent for this client on a recurring cadence (e.g. the LinkedIn
+              company-page generator, Tue–Thu). Runs are draft-first and never charge credits.
+            </p>
+            <ScheduledRunsCard
+              clientId={client.id}
+              runs={scheduledRuns}
+              agents={customAgents
+                .filter((a) => a.enabled)
+                .map((a) => ({ id: a.id, name: a.name, entrySkillDir: a.entrySkillDir }))}
             />
           </Card>
         </div>

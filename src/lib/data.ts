@@ -29,6 +29,7 @@ import type {
   JobStatus,
   LoginLog,
   Role,
+  ScheduledRun,
   TaskComment,
   TaskStatus,
   Transcript,
@@ -74,6 +75,8 @@ const col = {
   actionItems: () => adminDb().collection("actionItems"),
   // Platform-defined agents runnable via the agent service's "custom" task type.
   customAgents: () => adminDb().collection("customAgents"),
+  // Recurring generator runs fired on a cadence by /api/scheduler.
+  scheduledRuns: () => adminDb().collection("scheduledRuns"),
   // SEO & GEO insights: one doc per client (doc ID = clientId), written by the onboarding pipeline.
   clientSeoGeo: () => adminDb().collection("clientSeoGeo"),
 };
@@ -1031,6 +1034,77 @@ export async function removeCustomAgentFromClients(agentId: string): Promise<voi
       return doc.ref.update({ customAgentIds: ids });
     }),
   );
+}
+
+/* ─────────────────────── Scheduled Runs ─────────────────────────── */
+
+export async function createScheduledRun(data: Omit<ScheduledRun, "id">): Promise<string> {
+  const ref = await col.scheduledRuns().add(data);
+  return ref.id;
+}
+
+export async function getScheduledRun(id: string): Promise<ScheduledRun | null> {
+  const doc = await col.scheduledRuns().doc(id).get();
+  return doc.exists ? withId<ScheduledRun>(doc) : null;
+}
+
+export async function listScheduledRuns(opts?: { clientId?: string }): Promise<ScheduledRun[]> {
+  const snap = opts?.clientId
+    ? await col.scheduledRuns().where("clientId", "==", opts.clientId).get()
+    : await col.scheduledRuns().get();
+  return snap.docs
+    .map((d) => withId<ScheduledRun>(d))
+    .sort((a, b) => a.nextRunAt - b.nextRunAt);
+}
+
+export async function updateScheduledRun(id: string, data: Partial<ScheduledRun>): Promise<void> {
+  await col.scheduledRuns().doc(id).set(data, { merge: true });
+}
+
+export async function deleteScheduledRun(id: string): Promise<void> {
+  await col.scheduledRuns().doc(id).delete();
+}
+
+/**
+ * Enabled runs whose nextRunAt is at or before `before` (default now).
+ * Filtered + sorted in memory (mirrors listScheduledAssets) so no composite
+ * index is required; capped by `limit` to bound each cron tick.
+ */
+export async function listDueScheduledRuns(opts?: {
+  before?: number;
+  limit?: number;
+}): Promise<ScheduledRun[]> {
+  const before = opts?.before ?? Date.now();
+  const snap = await col.scheduledRuns().where("enabled", "==", true).get();
+  const due = snap.docs
+    .map((d) => withId<ScheduledRun>(d))
+    .filter((r) => r.nextRunAt <= before)
+    .sort((a, b) => a.nextRunAt - b.nextRunAt);
+  return opts?.limit != null ? due.slice(0, opts.limit) : due;
+}
+
+/**
+ * Atomically claim a due run so overlapping cron ticks never double-fire it.
+ * Succeeds only when the row is still enabled AND its nextRunAt still equals
+ * the value the cron read (compare-and-set); on success it advances nextRunAt
+ * and stamps lastRunAt in the same transaction. Returns false if another tick
+ * already claimed it, it was disabled/deleted, or the cadence moved on.
+ */
+export async function claimScheduledRun(
+  id: string,
+  expectedNextRunAt: number,
+  newNextRunAt: number,
+): Promise<boolean> {
+  const ref = col.scheduledRuns().doc(id);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const run = snap.data() as ScheduledRun;
+    if (!run.enabled) return false;
+    if (run.nextRunAt !== expectedNextRunAt) return false;
+    tx.update(ref, { nextRunAt: newNextRunAt, lastRunAt: Date.now(), updatedAt: Date.now() });
+    return true;
+  });
 }
 
 /* ─────────────────────── Client Credits ─────────────────────────── */

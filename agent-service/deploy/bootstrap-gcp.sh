@@ -87,6 +87,16 @@ if ! have secrets describe github-token --project "$PROJECT_ID"; then
   read -rsp "  GitHub token with read access to karoslabs/karos-agents: " GH_TOKEN; echo
   secret_put github-token "$GH_TOKEN"
 fi
+if ! have secrets describe apify-token --project "$PROJECT_ID"; then
+  # LinkedIn seat voice-collection (Path B) + the IG/TikTok Apify legs. One company token.
+  # The worker mounts it as APIFY_TOKEN; skills degrade to no-posts when it is unset.
+  read -rsp "  Apify token (apify_api_…; blank to skip, disables seat voice-collection): " APIFY_KEY; echo
+  if [ -n "$APIFY_KEY" ]; then
+    secret_put apify-token "$APIFY_KEY"
+  else
+    echo "  skipped apify-token — remove APIFY_TOKEN from cloudbuild.yaml deploy-worker --set-secrets or the deploy will fail"
+  fi
+fi
 
 say "IAM bindings"
 # Both runtimes read their secrets.
