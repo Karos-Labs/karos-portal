@@ -35,6 +35,10 @@ const MODE_LABELS: Record<PublishMode, string> = {
   placeholder: "Placeholder",
 };
 
+// Slide metadata used by the carousel and rendering logic
+type SlideMeta = { role?: string; headline?: string; body?: string | null; imageUrl?: string | null; attribution?: string | null };
+
+
 /** epoch millis → value for <input type="datetime-local"> in the user's timezone */
 function toLocalInputValue(t: number): string {
   const d = new Date(t);
