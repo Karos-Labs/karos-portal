@@ -186,7 +186,7 @@ findAndLoadEnv();
 /* ── Firebase Admin SDK (backfill-branding.ts pattern) ─────────────────────────── */
 
 import { initializeApp, getApps, cert } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 function initAdmin() {
   if (getApps().length) return;
@@ -220,6 +220,7 @@ import {
   templateFromItemKey,
   startOfDayMs,
   chainFamilyFor,
+  isReferenceDocAsset,
   type ChainFamily,
 } from "../src/lib/post-chain";
 import { MANAGED_PRODUCTS, getManagedProduct } from "../src/lib/agent-service/products";
@@ -333,7 +334,14 @@ function buildLabTemplates(assets: Asset[]): Map<string, { key: string; name: st
 
 /* ── the planned write for one asset ───────────────────────────────────────────── */
 
-type Role = "reassigned" | "pinned-posted" | "pinned-before-start" | "skipped" | "legacy-occupies" | "placeholder";
+type Role =
+  | "reassigned"
+  | "pinned-posted"
+  | "pinned-before-start"
+  | "skipped"
+  | "legacy-occupies"
+  | "placeholder"
+  | "reference-doc";
 
 interface PlannedWrite {
   id: string;
@@ -512,6 +520,48 @@ function processClient(client: Client, assets: Asset[], now: number): ClientRepo
     } else if (pinnedBeforeStart) {
       role = "pinned-before-start";
       reason = "dated before start";
+    } else if (isLab && a.status === "draft" && isReferenceDocAsset(a)) {
+      // Overview/explainer item ("template-ideas"): documentation, not a post.
+      // Undate it so it leaves the calendar and lives in the library instead.
+      const patch: Record<string, unknown> = {};
+      if (a.scheduledAt != null) patch.scheduledAt = FieldValue.delete();
+      if (a.recommendedAt != null) patch.recommendedAt = FieldValue.delete();
+      if (a.recommendedReason != null) patch.recommendedReason = FieldValue.delete();
+      if (a.orderKey !== bf.orderKey) patch.orderKey = bf.orderKey;
+      if (!a.templateKey && bf.template) {
+        patch.templateKey = bf.template.key;
+        patch.templateName = bf.template.name;
+      }
+      if (bf.cleanedTitle !== a.title) patch.title = bf.cleanedTitle;
+      if (Object.keys(patch).length > 0) {
+        const after = snapshotKeys(a);
+        after.scheduledAt = null;
+        after.recommendedAt = null;
+        after.recommendedReason = null;
+        if ("orderKey" in patch) after.orderKey = bf.orderKey;
+        if ("templateKey" in patch) {
+          after.templateKey = patch.templateKey;
+          after.templateName = patch.templateName;
+        }
+        if ("title" in patch) after.title = patch.title;
+        report.writes.push({
+          id: a.id,
+          clientId: client.id,
+          role: "reference-doc",
+          patch,
+          before: snapshotKeys(a),
+          after,
+          resStatus: a.status,
+          resScheduledAt: null,
+          resPublishMode: a.publishMode ?? null,
+          titleChanged: bf.cleanedTitle !== a.title,
+        });
+        if (bf.cleanedTitle !== a.title) report.titlesCleaned++;
+      }
+      report.warnings.push(
+        `REFERENCE DOC undated: ${a.id} ("${bf.cleanedTitle}") — overview/explainer, removed from the posting chain (still in the library).`,
+      );
+      continue;
     } else if (!hasChainProvenance(a)) {
       role = "legacy-occupies";
       reason = `legacy/no-provenance (source=${metaStr(a, "source") ?? "?"})`;

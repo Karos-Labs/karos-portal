@@ -31,7 +31,13 @@ import {
   AGENT_SERVICE_AGENT_ID,
   MANAGED_PRODUCTS,
 } from "@/lib/agent-service/products";
-import { isAssetUnlockedForClient, productForAsset, templateForAsset } from "@/lib/post-chain";
+import {
+  isAssetUnlockedForClient,
+  isReferenceDocAsset,
+  isReferenceDocSlug,
+  productForAsset,
+  templateForAsset,
+} from "@/lib/post-chain";
 import type { Asset, CustomAgent, Job, ManagedTaskType } from "@/lib/types";
 
 /** Strip an agent to the client-safe summary — never the instructions/skill paths. */
@@ -101,8 +107,12 @@ function liveTaskTypesFor(assets: Asset[], jobs: Job[]): ManagedTaskType[] {
  */
 function buildProductStatuses(assets: Asset[], jobs: Job[], now: number): ClientProductStatus[] {
   return MANAGED_PRODUCTS.map((product) => {
-    const productAssets = assets.filter((a) => productForAsset(a) === product.taskType);
-    const live = productAssets.length > 0 || hasActiveManagedJob(jobs, product.taskType);
+    // Reference docs (template-ideas overviews) are documentation, not posts —
+    // they neither count nor appear as templates, but any produced content
+    // (docs included) still marks the product live.
+    const allProductAssets = assets.filter((a) => productForAsset(a) === product.taskType);
+    const productAssets = allProductAssets.filter((a) => !isReferenceDocAsset(a));
+    const live = allProductAssets.length > 0 || hasActiveManagedJob(jobs, product.taskType);
 
     // Canonical template keys already stamped on assets — passed to templateForAsset
     // so one-off run slugs collapse onto the series they belong to.
@@ -120,6 +130,9 @@ function buildProductStatuses(assets: Asset[], jobs: Job[], now: number): Client
     for (const a of productAssets) {
       const template = templateForAsset(a, knownKeys);
       if (!template) continue;
+      // Overview/explainer items ("template-ideas") describe the templates —
+      // they are not templates themselves and never appear in the plan list.
+      if (isReferenceDocSlug(template.key)) continue;
       const bucket = byTemplate.get(template.key);
       if (bucket) bucket.assets.push(a);
       else byTemplate.set(template.key, { name: template.name, assets: [a] });

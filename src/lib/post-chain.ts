@@ -226,8 +226,14 @@ export function planClientChain(
 
   for (const family of familyOrder) {
     if (familyFilter && !familyFilter.has(family)) continue;
+    // Placeholders AND reference docs (overview/explainer items like
+    // "template-ideas") are removed from the family entirely: never candidates,
+    // never day occupancy — they are not calendar entities.
     const familyAssets = assets.filter(
-      (a) => chainFamilyFor(a.type) === family && a.publishMode !== "placeholder",
+      (a) =>
+        chainFamilyFor(a.type) === family &&
+        a.publishMode !== "placeholder" &&
+        !isReferenceDocAsset(a),
     );
     if (familyAssets.length === 0) continue;
 
@@ -349,6 +355,34 @@ export function templateForAsset(
     return { key: taskType, name: product.name };
   }
   return null;
+}
+
+/* ─────────────────────── reference docs ─────────────────────────────── */
+
+/**
+ * First-round lab runs usually ship an overview/"read this first" item that
+ * DESCRIBES the proposed templates (slug "template-ideas" or similar). It is
+ * documentation, not a posting template: reference docs are never chain
+ * candidates (no calendar day) and never appear in a client's template list —
+ * they stay in the library as plain undated deliverables.
+ */
+const REFERENCE_DOC_SLUGS = new Set([
+  "template-ideas",
+  "template-idea",
+  "template-overview",
+  "templates-overview",
+  "read-me-first",
+]);
+
+export function isReferenceDocSlug(slug: string): boolean {
+  return REFERENCE_DOC_SLUGS.has(slug);
+}
+
+export function isReferenceDocAsset(
+  a: Pick<Asset, "templateKey" | "templateName" | "meta" | "type">,
+): boolean {
+  const template = templateForAsset(a);
+  return template !== null && isReferenceDocSlug(template.key);
 }
 
 /* ─────────────────────────── agent labels ──────────────────────────── */

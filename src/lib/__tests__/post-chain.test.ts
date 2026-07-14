@@ -195,7 +195,7 @@ function karosFixture(): { assets: Asset[]; skipIds: string[] } {
 }
 
 describe("planClientChain — migrate mode (Karos oracle)", () => {
-  it("re-dates all 12 candidates one-per-day from 2026-07-14 in internal order", () => {
+  it("re-dates all 11 posting candidates one-per-day from 2026-07-14 in internal order", () => {
     const { assets, skipIds } = karosFixture();
     const plan = planClientChain(assets, { now: NOW, mode: "migrate", startDayMs: START, skipIds });
 
@@ -205,34 +205,48 @@ describe("planClientChain — migrate mode (Karos oracle)", () => {
       ["tl-03", slot(2026, 7, 16)],
       ["tl-04", slot(2026, 7, 17)],
       ["tl-05", slot(2026, 7, 18)],
-      ["tl-06", slot(2026, 7, 19)],
-      ["w23-03", slot(2026, 7, 20)],
-      ["w23-04", slot(2026, 7, 21)],
-      ["w23-05", slot(2026, 7, 22)],
-      ["w23-06", slot(2026, 7, 23)],
-      ["w23-07", slot(2026, 7, 24)],
-      ["w23-08", slot(2026, 7, 25)],
+      ["w23-03", slot(2026, 7, 19)],
+      ["w23-04", slot(2026, 7, 20)],
+      ["w23-05", slot(2026, 7, 21)],
+      ["w23-06", slot(2026, 7, 22)],
+      ["w23-07", slot(2026, 7, 23)],
+      ["w23-08", slot(2026, 7, 24)],
     ];
     expect(plan.map((p) => [p.id, p.scheduledAt])).toEqual(expected);
-    // Pinned/skipped items never appear.
-    for (const frozen of ["w23-01", "w23-02", "launch"]) {
+    // Pinned/skipped items never appear — nor does the template-ideas
+    // reference doc (an overview/explainer, not a posting template).
+    for (const frozen of ["w23-01", "w23-02", "launch", "tl-06"]) {
       expect(plan.some((p) => p.id === frozen)).toBe(false);
     }
+  });
+
+  it("reference docs (template-ideas) never take a chain day and never block one", () => {
+    const overview = labAsset("instagram-agent/2026-07-06-run#06-template-ideas", {
+      id: "ref-1",
+      scheduledAt: at(2026, 7, 15, 11), // stale chain date — planner must not re-place it
+    });
+    const post = labAsset("instagram-agent/2026-07-06-run#01-campaign-story", { id: "post-1" });
+
+    const plan = planClientChain([overview, post], { now: NOW, mode: "migrate", startDayMs: START });
+
+    expect(plan.map((p) => p.id)).toEqual(["post-1"]);
+    expect(plan[0].scheduledAt).toBe(slot(2026, 7, 14));
   });
 
   it("in reflow mode the same data keeps every staff-booked date pinned", () => {
     const { assets, skipIds } = karosFixture();
     const plan = planClientChain(assets, { now: NOW, skipIds });
 
-    // Only undated drafts move at runtime; scheduled items are staff-booked.
+    // Only undated drafts move at runtime; scheduled items are staff-booked
+    // (tl-06 is the template-ideas reference doc — never a candidate).
     expect(plan.map((p) => p.id).sort()).toEqual(
-      ["tl-01", "tl-02", "tl-03", "tl-04", "tl-05", "tl-06", "w23-07"].sort(),
+      ["tl-01", "tl-02", "tl-03", "tl-04", "tl-05", "w23-07"].sort(),
     );
     // Occupied days (14, 15, 16 hold scheduled items) are skipped.
     const byId = new Map(plan.map((p) => [p.id, p.scheduledAt]));
     expect(byId.get("tl-01")).toBe(slot(2026, 7, 17));
     expect(byId.get("tl-02")).toBe(slot(2026, 7, 18));
-    expect(byId.get("w23-07")).toBe(slot(2026, 7, 23));
+    expect(byId.get("w23-07")).toBe(slot(2026, 7, 22));
   });
 });
 
