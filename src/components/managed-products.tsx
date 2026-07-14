@@ -14,7 +14,7 @@ import {
   getManagedProduct,
   type ManagedProduct,
 } from "@/lib/agent-service/products";
-import type { ContextItem, Job } from "@/lib/types";
+import type { ContextItem, Job, ManagedTaskType } from "@/lib/types";
 import { cn, relativeTime } from "@/lib/utils";
 
 /**
@@ -25,10 +25,17 @@ export function ManagedProducts({
   clientId,
   contextItems,
   jobs,
+  liveTaskTypes,
 }: {
   clientId: string;
   contextItems: ContextItem[];
   jobs: Job[];
+  /**
+   * Task types this client is "live" on — computed server-side from assets
+   * (productForAsset) OR non-failed agent-service jobs, so lab-imported content
+   * (no job) still marks the product live. Omitted ⇒ fall back to job history.
+   */
+  liveTaskTypes?: ManagedTaskType[];
 }) {
   const [activeProduct, setActiveProduct] = useState<ManagedProduct | null>(null);
 
@@ -39,6 +46,8 @@ export function ManagedProducts({
         .sort((a, b) => b.createdAt - a.createdAt),
     [jobs],
   );
+
+  const liveSet = useMemo(() => (liveTaskTypes ? new Set(liveTaskTypes) : null), [liveTaskTypes]);
 
   return (
     <section className="mt-10">
@@ -56,6 +65,7 @@ export function ManagedProducts({
         {MANAGED_PRODUCTS.map((product) => {
           const productJobs = managedJobs.filter((j) => j.external?.taskType === product.taskType);
           const lastRun = productJobs[0];
+          const isLive = liveSet ? liveSet.has(product.taskType) : productJobs.length > 0;
           return (
             <div
               key={product.taskType}
@@ -69,7 +79,18 @@ export function ManagedProducts({
                   <Icon name={product.icon} className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium">{product.name}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-medium">{product.name}</p>
+                    {isLive && (
+                      <Badge tone="success">
+                        <span
+                          className="h-1.5 w-1.5 rounded-full bg-success animate-pulse-neon"
+                          aria-hidden="true"
+                        />{" "}
+                        Live
+                      </Badge>
+                    )}
+                  </div>
                   <p className="mt-0.5 text-xs text-muted">{product.tagline}</p>
                 </div>
               </div>

@@ -49,16 +49,20 @@ function ext(name: string): string {
 /**
  * Picks the asset body + hero image for an item group. caption.txt wins as the
  * body (that's what the portal shows next to a post); otherwise the largest
- * text deliverable. about.txt is kept separately for meta.
+ * text deliverable. about.txt is kept separately for meta, and data.json (when
+ * the lab emits it) carries the item's declared template `format` and internal
+ * `date` for the content chain.
  */
 export function pickPrimaryFiles(files: LabFile[]): {
   captionFile?: LabFile;
   aboutFile?: LabFile;
   textFile?: LabFile;
+  dataJsonFile?: LabFile;
   imageFiles: LabFile[];
 } {
   const captionFile = files.find((f) => f.name.toLowerCase() === "caption.txt");
   const aboutFile = files.find((f) => f.name.toLowerCase() === "about.txt");
+  const dataJsonFile = files.find((f) => f.name.toLowerCase() === "data.json");
   const textFile = files
     .filter((f) => TEXT_EXT.has(ext(f.name)) && f !== captionFile && f !== aboutFile)
     .sort((a, b) => b.size - a.size)[0];
@@ -67,6 +71,7 @@ export function pickPrimaryFiles(files: LabFile[]): {
   if (captionFile) result.captionFile = captionFile;
   if (aboutFile) result.aboutFile = aboutFile;
   if (textFile) result.textFile = textFile;
+  if (dataJsonFile) result.dataJsonFile = dataJsonFile;
   return result;
 }
 

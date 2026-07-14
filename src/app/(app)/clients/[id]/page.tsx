@@ -13,6 +13,7 @@ import { ClientAnalytics } from "@/components/client-analytics";
 import { AiInsights } from "@/components/ai-insights";
 import { ClientHomeOverview } from "@/components/client-home-overview";
 import { SeoGeoPanel } from "@/components/seo-geo-panel";
+import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import type { ClientTask } from "@/lib/types";
 
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -43,6 +44,18 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
 
   const firstName = user.name?.trim().split(/\s+/)[0];
 
+  // Client viewers must never receive un-redacted future content across the RSC
+  // boundary (requirement H / amendment A6). The home overview gets whitelist-
+  // redacted placeholders for locked (future-dated) posts; analytics is fed only
+  // currently-unlocked assets so upcoming volume isn't revealed in its counts.
+  // Staff keep full visibility (invariant A10.6).
+  const overviewAssets = isClientViewer
+    ? getClientLibraryAssets(assets, { forClient: true })
+    : assets;
+  const analyticsAssets = isClientViewer
+    ? overviewAssets.filter((a) => !a.locked)
+    : assets;
+
   return (
     <>
       {isClientViewer ? (
@@ -57,7 +70,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         {isClientViewer && (
           <section className="space-y-3">
             <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Overview</p>
-            <ClientHomeOverview jobs={jobs} tasks={tasks} assets={assets} />
+            <ClientHomeOverview jobs={jobs} tasks={tasks} assets={overviewAssets} />
           </section>
         )}
         <section className="space-y-3">
@@ -67,7 +80,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           <ClientAnalytics
             clientId={client.id}
             clientName={client.name}
-            assets={assets}
+            assets={analyticsAssets}
             jobs={jobs}
             integrations={integrations}
           />

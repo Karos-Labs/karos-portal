@@ -24,11 +24,15 @@ export default async function AssetsPage({
       );
     }
     const allClientAssets = await listAssets({ clientId: user.clientId });
-    const assets = getClientLibraryAssets(allClientAssets);
+    // THE serialization boundary for requirement H: future-dated posts are
+    // whitelist-redacted (no content / imageUrl / meta / real title) before they
+    // cross to the client browser. Never pass allClientAssets to a client
+    // component in this branch — only the redacted set.
+    const assets = getClientLibraryAssets(allClientAssets, { forClient: true });
     return (
       <>
         <PageHeader title="Library" description="Your content library and delivery calendar." />
-        <AssetsView assets={assets} />
+        <AssetsView assets={assets} viewerIsClient />
       </>
     );
   }
@@ -40,7 +44,10 @@ export default async function AssetsPage({
   // library/calendar toggle a client sees, scoped to that one client.
   const viewClient = viewClientId ? clients.find((c) => c.id === viewClientId) : undefined;
   if (viewClient) {
-    const clientAssets = await listAssets({ clientId: viewClient.id });
+    // Staff "view as client" keeps FULL visibility (invariant A10.6) so they can
+    // review/approve upcoming posts — no forClient redaction, no viewerIsClient.
+    // Route through getClientLibraryAssets only for the same recency ordering.
+    const clientAssets = getClientLibraryAssets(await listAssets({ clientId: viewClient.id }));
     return (
       <>
         <PageHeader title={`${viewClient.name} · Library`} description="Content library and delivery calendar." />

@@ -14,6 +14,7 @@ import {
   publishAssetNowAction,
 } from "@/lib/actions";
 import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS } from "@/lib/integrations/platforms";
+import { templateForAsset } from "@/lib/post-chain";
 import { relativeTime, cn } from "@/lib/utils";
 import type { Asset, PublishMode } from "@/lib/types";
 
@@ -371,6 +372,43 @@ export function AssetCard({
     return slides.slice(0, slideIndex).filter((s) => s.imageUrl).length;
   }
 
+  // Template/format chip (e.g. "By The Numbers") — data-driven, legacy-safe.
+  const template = templateForAsset(asset);
+
+  // Locked upcoming post: a future-dated deliverable the client can't open yet.
+  // The server already redacted content/images/meta before this reached the
+  // browser; render a placeholder with no content, images, or controls, and no
+  // expand affordance. (Staff never receive locked assets.)
+  if (asset.locked) {
+    const unlockStr =
+      asset.scheduledAt != null
+        ? new Date(asset.scheduledAt).toLocaleDateString([], {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          })
+        : null;
+    return (
+      <Card className="overflow-hidden">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-muted-2">
+            <Icon name="Lock" className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              {template && <Badge tone="neutral">{template.name}</Badge>}
+              <p className="truncate text-sm font-medium text-muted">Upcoming post</p>
+            </div>
+            <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-2">
+              <Icon name="CalendarClock" className="h-3.5 w-3.5 shrink-0" />
+              {unlockStr ? `Unlocks ${unlockStr}` : "Unlocks on its scheduled date"}
+            </p>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
   async function setStatus(status: "approved" | "delivered" | "published") {
     setBusy(true);
     try {
@@ -445,8 +483,17 @@ export function AssetCard({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
-            <p className="truncate text-sm font-medium">{asset.title}</p>
-            <Badge tone={statusTone(asset.status)}>{asset.status}</Badge>
+            <div className="flex min-w-0 items-center gap-2">
+              <p className="truncate text-sm font-medium">{asset.title}</p>
+              {template && (
+                <Badge tone="neutral" className="shrink-0">
+                  {template.name}
+                </Badge>
+              )}
+            </div>
+            <Badge tone={statusTone(asset.status)} className="shrink-0">
+              {asset.status}
+            </Badge>
           </div>
           <div className="group/caption relative">
             <p

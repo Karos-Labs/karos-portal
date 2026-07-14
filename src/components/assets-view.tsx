@@ -5,24 +5,30 @@ import { Icon } from "@/components/icon";
 import { EmptyState } from "@/components/ui";
 import { AssetCard } from "@/components/asset-card";
 import { ContentCalendar } from "@/components/content-calendar";
+import { TodaySection } from "@/components/today-section";
 import { cn } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
 
-type View = "library" | "calendar";
+type View = "calendar" | "library";
 
 /**
- * Client-facing Assets view — a segmented toggle between the full asset library
- * and the deliverable calendar (scheduled + published content across all agents).
+ * Client-facing Assets view — a segmented toggle between the deliverable calendar
+ * (primary: scheduled + published content across all agents, plus a "Today"
+ * strip) and the full asset archive. Calendar leads so clients land on what's
+ * planned; the Assets tab is the secondary browse-everything view.
  */
 export function AssetsView({
   assets,
   canApprove = false,
+  viewerIsClient = false,
 }: {
   assets: Asset[];
   /** Staff-only: show approve/schedule controls on each card. Clients never approve. */
   canApprove?: boolean;
+  /** Client viewers get locked placeholders + "drafted you this" attribution. */
+  viewerIsClient?: boolean;
 }) {
-  const [view, setView] = useState<View>("library");
+  const [view, setView] = useState<View>("calendar");
 
   return (
     <>
@@ -30,8 +36,8 @@ export function AssetsView({
       <div className="mb-5 inline-flex items-center gap-1 rounded-lg border border-border bg-surface-2 p-1">
         {(
           [
-            { id: "library", label: "Assets", icon: "FolderOpen" },
             { id: "calendar", label: "Calendar", icon: "Calendar" },
+            { id: "library", label: "Assets", icon: "FolderOpen" },
           ] as { id: View; label: string; icon: string }[]
         ).map((tab) => (
           <button
@@ -50,22 +56,23 @@ export function AssetsView({
         ))}
       </div>
 
-      {view === "library" ? (
-        assets.length === 0 ? (
-          <EmptyState
-            icon={<Icon name="FolderOpen" className="h-7 w-7" />}
-            title="Nothing here yet"
-            description="Your deliverables will show up here as your team creates them."
-          />
-        ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {assets.map((a) => (
-              <AssetCard key={a.id} asset={a} canApprove={canApprove} />
-            ))}
-          </div>
-        )
+      {view === "calendar" ? (
+        <>
+          <ContentCalendar assets={assets} viewerIsClient={viewerIsClient} />
+          <TodaySection assets={assets} viewerIsClient={viewerIsClient} />
+        </>
+      ) : assets.length === 0 ? (
+        <EmptyState
+          icon={<Icon name="FolderOpen" className="h-7 w-7" />}
+          title="Nothing here yet"
+          description="Your deliverables will show up here as your team creates them."
+        />
       ) : (
-        <ContentCalendar assets={assets} />
+        <div className="grid gap-3 lg:grid-cols-2">
+          {assets.map((a) => (
+            <AssetCard key={a.id} asset={a} canApprove={canApprove} />
+          ))}
+        </div>
       )}
     </>
   );

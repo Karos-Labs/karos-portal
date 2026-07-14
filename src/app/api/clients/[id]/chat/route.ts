@@ -27,6 +27,7 @@ import { findDuplicateReason } from "@/lib/task-dedup";
 import { CREDIT_COSTS, TASK_EXECUTION_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
 import type { ClientCredits } from "@/lib/types";
 import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
+import { isAssetUnlockedForClient } from "@/lib/post-chain";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { getClientCustomAgents, buildAgentCatalog } from "@/lib/agent-roster";
@@ -102,7 +103,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     credits = await getClientCredits(clientId);
   }
 
-  const baseSystemPrompt = buildCopilotSystemPrompt(client, report, competitors, jobs, assets, contextDocs);
+  // Locked (future-dated) content never reaches a client-facing model prompt.
+  const promptAssets =
+    user.role === "CLIENT_USER" ? assets.filter((a) => isAssetUnlockedForClient(a, Date.now())) : assets;
+  const baseSystemPrompt = buildCopilotSystemPrompt(client, report, competitors, jobs, promptAssets, contextDocs);
 
   /* ── Shared Google integration lookup ────────────────────────────── */
   const googleIntegration = integrations.find(

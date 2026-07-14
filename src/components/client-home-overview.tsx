@@ -23,6 +23,12 @@ const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info">
 /**
  * Client-portal welcome widgets: what needs the client's attention right now,
  * plus the latest deliverables produced for them.
+ *
+ * `assets` MUST arrive already redacted for client viewers — the page passes
+ * getClientLibraryAssets(assets, { forClient: true }), so locked (future-dated)
+ * posts surface here only as whitelist placeholders (template name as title,
+ * type, status — no content/image/meta). Titles are rendered verbatim below, so
+ * an un-redacted future title would leak; the redaction stays at the page.
  */
 export function ClientHomeOverview({
   jobs,
