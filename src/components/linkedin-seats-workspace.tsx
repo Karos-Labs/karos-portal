@@ -156,52 +156,67 @@ export function LinkedInSeatsWorkspace({
           No employee seats yet. Add a teammate to publish and measure content on their LinkedIn handle.
         </p>
       ) : (
-        <ul className="space-y-1.5">
+        <ul className="space-y-2">
           {seats.map((seat) => (
             <li
               key={seat.id}
-              className="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2"
+              className="rounded-md border border-border bg-surface p-3"
             >
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neon/15 text-[11px] font-semibold text-neon">
-                {initials(seat.employeeName) || "?"}
+              {/* Row 1: Employee Info (Left) + Connection Status/Button (Right) */}
+              <div className="mb-2 flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neon/15 text-sm font-semibold text-neon">
+                    {initials(seat.employeeName) || "?"}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-foreground">{seat.employeeName}</p>
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  {seat.connected ? (
+                    <Badge tone="neon">
+                      <Icon name="CheckCircle2" className="h-3 w-3" />
+                      Linked
+                    </Badge>
+                  ) : (
+                    <a
+                      href={`/api/integrations/linkedin/employee/auth?clientId=${encodeURIComponent(clientId)}&seatId=${encodeURIComponent(seat.id)}`}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-[#0A66C2] px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                    >
+                      <Icon name="LogIn" className="h-3.5 w-3.5" />
+                      Sign in
+                    </a>
+                  )}
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">{seat.employeeName}</p>
-                <p className="truncate text-[11px] text-muted-2">{seat.employeeEmail}</p>
+
+              {/* Row 2: Email (Left) + Status Badge + Action Icons (Right) */}
+              <div className="flex items-center justify-between gap-3">
+                <p className="truncate text-xs text-muted-2">{seat.employeeEmail}</p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Badge tone={seat.status === "active" ? "success" : "neutral"}>
+                    {seat.status.toUpperCase()}
+                  </Badge>
+                  <button
+                    type="button"
+                    onClick={() => toggleStatus(seat)}
+                    disabled={pending}
+                    className="text-muted-2 transition-colors hover:text-foreground disabled:opacity-40"
+                    title={seat.status === "active" ? "Pause seat" : "Activate seat"}
+                  >
+                    <Icon name={seat.status === "active" ? "Pause" : "Play"} className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => remove(seat)}
+                    disabled={pending}
+                    className={cn("text-muted-2 transition-colors hover:text-danger disabled:opacity-40")}
+                    title="Remove seat"
+                  >
+                    <Icon name="Trash2" className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
-              {seat.connected ? (
-                <Badge tone="neon">
-                  <Icon name="CheckCircle2" className="h-3 w-3" />
-                  Linked
-                </Badge>
-              ) : (
-                <a
-                  href={`/api/integrations/linkedin/employee/auth?clientId=${encodeURIComponent(clientId)}&seatId=${encodeURIComponent(seat.id)}`}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[#0A66C2] px-2 py-1 text-[11px] font-medium text-white transition-opacity hover:opacity-90"
-                >
-                  <Icon name="LogIn" className="h-3 w-3" />
-                  Sign in with LinkedIn
-                </a>
-              )}
-              <Badge tone={seat.status === "active" ? "success" : "neutral"}>{seat.status}</Badge>
-              <button
-                type="button"
-                onClick={() => toggleStatus(seat)}
-                disabled={pending}
-                className="text-muted-2 transition-colors hover:text-foreground disabled:opacity-40"
-                title={seat.status === "active" ? "Pause seat" : "Activate seat"}
-              >
-                <Icon name={seat.status === "active" ? "Pause" : "Play"} className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => remove(seat)}
-                disabled={pending}
-                className={cn("text-muted-2 transition-colors hover:text-danger disabled:opacity-40")}
-                title="Remove seat"
-              >
-                <Icon name="Trash2" className="h-3.5 w-3.5" />
-              </button>
             </li>
           ))}
         </ul>
