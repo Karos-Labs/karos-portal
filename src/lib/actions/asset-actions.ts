@@ -149,17 +149,38 @@ export async function approveAssetAction(
     patch.scheduledAt = opts.scheduledAt;
     patch.publishMode = publishMode;
     if (opts.platform) patch.scheduledPlatform = opts.platform;
-  } else if (
-    asset.scheduledAt != null &&
-    asset.publishMode !== "manual" &&
-    asset.publishMode !== "placeholder"
-  ) {
-    // Cron-safety: approving a chain-dated draft (it already carries a
-    // scheduledAt) without an explicit slot must never leave it cron-eligible —
-    // absent == legacy "auto", and a stale explicit "auto" left over from a
-    // revert-to-draft is just as dangerous. Force "manual" so publishing
-    // stays an explicit staff action.
-    patch.publishMode = "manual";
+  } else {
+    // No explicit opts scheduledAt supplied — attempt to preserve any candidate
+    // scheduling (imported scheduledAt or agent recommendedAt) and, if an
+    // active integration exists for the preferred platform, mark it auto.
+    const candidateAt = asset.scheduledAt ?? (asset as unknown as { recommendedAt?: number }).recommendedAt ?? null;
+    if (candidateAt != null) {
+      // Decide platform preference and whether an active integration exists
+      const platform = preferredPlatform(asset);
+      const integrations = await listClientIntegrations(asset.clientId);
+      const active = platform
+        ? integrations.find((i) => i.platform === platform && integrationIsUsable(i))
+        : undefined;
+
+      patch.scheduledAt = candidateAt;
+      if (active) {
+        patch.publishMode = "auto";
+        if (platform) patch.scheduledPlatform = platform;
+      } else {
+        // No usable integration — keep safety: land on the calendar but require
+        // an explicit Publish Now (manual) so nothing posts without a connection.
+        patch.publishMode = "manual";
+        if (platform) patch.scheduledPlatform = platform;
+      }
+    } else if (
+      asset.scheduledAt != null &&
+      asset.publishMode !== "manual" &&
+      asset.publishMode !== "placeholder"
+    ) {
+      // Cron-safety: approving a chain-dated draft without any candidate slot
+      // must never leave it cron-eligible — force manual.
+      patch.publishMode = "manual";
+    }
   }
 
   await updateAsset(id, patch);

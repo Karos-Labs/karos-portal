@@ -591,7 +591,7 @@ export function TasksBoard({
 
   return (
     <>
-      {/* Tab switcher */}
+      {/* Tab switcher (renamed for Task Map UX) */}
       <div className="mb-5 flex items-center gap-1 rounded-md border border-border bg-surface-2 p-1">
         <button
           onClick={() => setActiveTab("karos")}
@@ -603,7 +603,7 @@ export function TasksBoard({
           )}
         >
           <Icon name="Sparkles" className="h-3.5 w-3.5" />
-          Karos Managed
+          Automated
           <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
             {karosTasks.length}
           </span>
@@ -618,7 +618,7 @@ export function TasksBoard({
           )}
         >
           <Icon name="User" className="h-3.5 w-3.5" />
-          Client Managed
+          Depending on you
           <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
             {clientTasks.length}
           </span>
@@ -667,42 +667,24 @@ export function TasksBoard({
         </div>
       )}
 
-      {/* Kanban grid — 4 columns on the Karos pipeline, 3 on the client board */}
-      <div
-        className={cn(
-          "grid gap-4 sm:grid-cols-2",
-          activeTab === "karos" ? "xl:grid-cols-4" : "xl:grid-cols-3",
-        )}
-      >
-        {(activeTab === "karos" ? KAROS_COLUMNS : CLIENT_COLUMNS).map(({ status, label, icon }) => (
-          <KanbanColumn
-            key={status}
-            status={status}
-            label={label}
-            icon={icon}
-            tasks={visibleTasks
-              .filter((t) =>
-                // The client board has no review column — bucket any stray
-                // review_pending task under In Progress so it stays visible.
-                activeTab === "client" && status === "in_progress"
-                  ? t.status === "in_progress" || t.status === "review_pending"
-                  : t.status === status,
-              )
-              .sort(byWeight)}
-            canDelete={canDelete}
-            showClientName={showClientName}
-            enableDnD
-            draggingId={draggingId}
-            dropTarget={dropTarget}
-            onStatusChange={handleStatusChange}
-            onDelete={handleDelete}
-            onCardClick={setSelectedTaskId}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-          />
-        ))}
+      {/* Simplified Task Map — show pending items only with clear action buttons */}
+      <div className="flex flex-col gap-3">
+        {visibleTasks
+          .filter((t) => t.status === "pending")
+          .sort(byWeight)
+          .map((task) => (
+            <TaskCard
+              key={task.id}
+              task={task}
+              canDelete={canDelete}
+              showClientName={showClientName}
+              draggable={false}
+              isDragging={false}
+              onStatusChange={handleStatusChange}
+              onDelete={handleDelete}
+              onClick={() => setSelectedTaskId(task.id)}
+            />
+          ))}
       </div>
 
       {/* Ticket modal */}

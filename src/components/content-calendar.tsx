@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { Icon } from "@/components/icon";
+import { PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { cn } from "@/lib/utils";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { CampaignCapsules } from "@/components/campaign-capsules";
@@ -171,6 +172,7 @@ function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: 
   }
 
   const modeStr = event.kind === "scheduled" && event.mode ? MODE_TOOLTIP[event.mode] : undefined;
+  const platformCfg = event.platform ? PLATFORM_REGISTRY.find((p) => p.id === event.platform) : null;
 
   return (
     <button
@@ -188,6 +190,11 @@ function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: 
         <span className="ml-auto max-w-[46%] shrink-0 truncate font-mono text-[9px] uppercase tracking-wide opacity-60">
           {event.templateName}
         </span>
+      )}
+      {platformCfg && (
+        <div className="ml-2 flex items-center">
+          <Icon name={platformCfg.icon} className="h-3 w-3 opacity-80" />
+        </div>
       )}
     </button>
   );
