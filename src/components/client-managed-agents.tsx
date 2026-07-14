@@ -57,7 +57,15 @@ export interface ClientProductStatus {
  * previews are derived from unlocked content only — no upcoming content or raw
  * Asset ever crosses the RSC boundary.
  */
-export function ClientManagedAgents({ products }: { products: ClientProductStatus[] }) {
+export function ClientManagedAgents({
+  products,
+  heading = "Your content agents",
+  subheading = "The managed AI agents producing content for your brand. Open one to see the formats in your plan.",
+}: {
+  products: ClientProductStatus[];
+  heading?: string;
+  subheading?: string;
+}) {
   const [active, setActive] = useState<ClientProductStatus | null>(null);
 
   const liveProducts = products.filter((p) => p.live);
@@ -67,10 +75,8 @@ export function ClientManagedAgents({ products }: { products: ClientProductStatu
   return (
     <section className="mt-10">
       <div className="mb-4">
-        <h2 className="text-xl text-foreground">Your content agents</h2>
-        <p className="mt-0.5 text-sm text-muted">
-          The managed AI agents producing content for your brand. Open one to see the formats in your plan.
-        </p>
+        <h2 className="text-xl text-foreground">{heading}</h2>
+        <p className="mt-0.5 text-sm text-muted">{subheading}</p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">

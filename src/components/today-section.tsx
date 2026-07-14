@@ -10,6 +10,7 @@ import {
   agentLabelForAsset,
   isAssetUnlockedForClient,
 } from "@/lib/post-chain";
+import { formatTimeHM, formatDayLong } from "@/lib/date-format";
 import type { Asset } from "@/lib/types";
 
 /* Same type→icon map the cards use — brand-neutral lucide glyphs (no brand marks). */
@@ -63,12 +64,11 @@ export function TodaySection({
         <p className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted-2">
           Today
         </p>
-        <span className="text-[11px] text-muted-2">
-          {new Date(nowMs).toLocaleDateString([], {
-            weekday: "long",
-            month: "short",
-            day: "numeric",
-          })}
+        {/* Wall-clock text: format is deterministic, but the timezone is the
+            renderer's — suppress so the browser's value wins without a
+            hydration error when the server runs in another tz (prod = UTC). */}
+        <span className="text-[11px] text-muted-2" suppressHydrationWarning>
+          {formatDayLong(nowMs)}
         </span>
         <span className="ml-auto text-[11px] text-muted-2">
           {rows.length} {rows.length === 1 ? "post" : "posts"}
@@ -116,10 +116,7 @@ function TodayRow({
     : viewerIsClient
       ? "Drafted for you"
       : "Drafted";
-  const timeStr =
-    asset.scheduledAt != null
-      ? new Date(asset.scheduledAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-      : null;
+  const timeStr = asset.scheduledAt != null ? formatTimeHM(asset.scheduledAt) : null;
 
   const body = (
     <>
@@ -135,7 +132,7 @@ function TodayRow({
           )}
           <p className="truncate text-sm font-medium">{locked ? "Upcoming post" : asset.title}</p>
         </div>
-        <p className="mt-0.5 truncate text-[11px] text-muted-2">
+        <p className="mt-0.5 truncate text-[11px] text-muted-2" suppressHydrationWarning>
           {attribution}
           {timeStr ? ` · ${timeStr}` : ""}
         </p>

@@ -5,6 +5,7 @@ import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { templateForAsset, isAssetUnlockedForClient } from "@/lib/post-chain";
+import { formatTimeHM, formatDayShort } from "@/lib/date-format";
 import type { Asset } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -148,19 +149,15 @@ const MODE_TOOLTIP: Record<string, string> = {
 };
 
 function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: string) => void }) {
-  const timeStr = new Date(event.scheduledAt).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  // Deterministic format — toLocale* differs between server and browser and
+  // breaks hydration now that the calendar is the SSR'd default tab.
+  const timeStr = formatTimeHM(event.scheduledAt);
 
   // Locked = future-dated placeholder: show the template name behind a lock, no
   // click-through, no content — the actual asset never opens (requirement H).
   if (event.locked) {
     const label = event.templateName ?? event.title;
-    const dateStr = new Date(event.scheduledAt).toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-    });
+    const dateStr = formatDayShort(event.scheduledAt);
     return (
       <div
         className="flex w-full items-center gap-1 truncate rounded border border-dashed border-border bg-surface-2 px-1 py-0.5 text-[10px] leading-tight text-muted-2"

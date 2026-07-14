@@ -258,6 +258,11 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // Same asset-OR-job liveness the client sees, so the staff "Live" badge lights
   // up for lab-imported products (which have no job) too. Run stays for staff.
   const liveTaskTypes = liveTaskTypesFor(assets, jobs);
+  // Staff get the same clickable live-product cards (template detail included)
+  // the client sees — and they must render even when the agent service is not
+  // configured: visibility of produced content never depends on the run service.
+  const productStatuses = buildProductStatuses(assets, jobs, Date.now());
+  const anyProductLive = productStatuses.some((p) => p.live);
 
   return (
     <>
@@ -277,6 +282,13 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           </div>
         }
       />
+      {anyProductLive && (
+        <ClientManagedAgents
+          products={productStatuses}
+          heading="Live for this client"
+          subheading="What the managed agents have set up and produced. Open one to see its templates and upcoming deliveries."
+        />
+      )}
       {agentServiceConfigured ? (
         <>
           <ManagedProducts
@@ -297,7 +309,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         <EmptyState
           icon={<Icon name="Bot" className="h-7 w-7" />}
           title="Agent service not configured"
-          description="Set the agent-service environment variables to run managed lab agents from here."
+          description="Run controls are unavailable until the agent-service environment variables are set. Existing deliverables and calendars above are unaffected."
         />
       )}
     </>
