@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import {
+  getAsset,
   getClient,
   getClientCredits,
   listContextItems,
@@ -9,6 +10,8 @@ import {
   listJobs,
 } from "@/lib/data";
 import { availableCredits, isBillableClientActor } from "@/lib/credits";
+import { assetImages } from "@/lib/asset-images";
+import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
 import { Button, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ManagedProducts } from "@/components/managed-products";
@@ -128,6 +131,28 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   ]);
   const labImportAvailable = isLabOutputsConfigured();
 
+  // Thumbnail previews of what the managed agents have actually delivered, so
+  // the "Live" view can show the formats a running agent produces. Keyed by
+  // jobId → the first few image URLs across that run's deliverable assets.
+  const managedAssetIds = Array.from(
+    new Set(
+      jobs
+        .filter((j) => j.agentId === AGENT_SERVICE_AGENT_ID)
+        .flatMap((j) => j.assetIds),
+    ),
+  );
+  const managedAssets = await Promise.all(managedAssetIds.map((aid) => getAsset(aid)));
+  const assetById = new Map(managedAssets.filter(Boolean).map((a) => [a!.id, a!]));
+  const jobPreviews: Record<string, string[]> = {};
+  for (const job of jobs) {
+    if (job.agentId !== AGENT_SERVICE_AGENT_ID) continue;
+    const urls = job.assetIds
+      .map((aid) => assetById.get(aid))
+      .filter(Boolean)
+      .flatMap((a) => assetImages(a!).map((img) => img.url));
+    if (urls.length > 0) jobPreviews[job.id] = urls.slice(0, 6);
+  }
+
   return (
     <>
       <PageHeader
@@ -147,7 +172,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       />
       {agentServiceConfigured ? (
         <>
-          <ManagedProducts clientId={id} contextItems={contextItems} jobs={jobs} />
+          <ManagedProducts clientId={id} contextItems={contextItems} jobs={jobs} jobPreviews={jobPreviews} />
           <ClientCustomAgents
             clientId={id}
             agents={customAgents.filter((a) => a.enabled).map(toSummary)}
