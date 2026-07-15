@@ -106,6 +106,12 @@ export interface Client {
    * the client sees no runnable agents.
    */
   customAgentIds?: string[];
+  /**
+   * Plan capacity for LinkedIn employee-advocacy seats. Seats within this limit
+   * are free; adding beyond it charges credits per seat (the monetization gate).
+   * Absent ⇒ DEFAULT_LINKEDIN_SEAT_LIMIT. Admin-set from client settings.
+   */
+  linkedinSeatLimit?: number;
   createdAt: number;
   createdBy: string;
 }
@@ -350,10 +356,56 @@ export interface Asset {
   recommendedAt?: number;
   /** One-line rationale for recommendedAt, e.g. "LinkedIn engagement peaks Tue–Thu mornings". */
   recommendedReason?: string;
+  /**
+   * Campaign this asset belongs to (campaigns collection id), denormalized from
+   * the producing task so the content calendar can group pieces into a capsule
+   * without a task join. Absent ⇒ standalone.
+   */
+  campaignId?: string | null;
+  /** Denormalized campaign title for the calendar capsule header. */
+  campaignTitle?: string | null;
   /** Epoch millis when the asset was actually pushed to a platform (auto cron or Publish Now). */
   publishedAt?: number;
+  /**
+   * The platform's own id for the published post (LinkedIn UGC urn, tweet id, IG
+   * media id, FB post id, TikTok publish id). Captured at publish time so the
+   * analytics sync can fetch this exact post's metrics later. Absent for assets
+   * published before this was captured, or platforms that don't return one.
+   */
+  platformPostId?: string | null;
   /** Last publish failure (manual or cron), surfaced on the asset card. Cleared on success. */
   publishError?: string;
+  /**
+   * Epoch millis when a publish attempt claimed this asset. Set transactionally by
+   * `claimAssetForPublish` so the auto-cron, a manual "Publish Now", or two overlapping
+   * cron ticks can never double-post the same asset. Cleared on success or failure; a
+   * stale claim (older than the claim TTL) can be re-taken so a crashed run never wedges.
+   */
+  publishClaimedAt?: number;
+  /**
+   * Stable slug identifying the template/format that produced this post
+   * (e.g. "by-the-numbers", or the managed taskType for agent-service posts).
+   * Derived at creation from the lab item folder / data.json / managed product;
+   * backfilled on legacy assets by the re-date migration. Renders as a chip.
+   */
+  templateKey?: string;
+  /** Human chip label for templateKey (e.g. "By The Numbers", "Social posts"). Always paired with templateKey. */
+  templateName?: string;
+  /**
+   * Lexicographically sortable internal-generation-order key driving the
+   * one-post-per-day content chain. Lab imports: `${runName}#${itemKey}`
+   * (run names lead with YYYY-MM-DD; item keys keep their zero-padded/ISO-date
+   * prefix). Other sources: `${ISO-timestamp}#${uniq}`. Both forms lead with a
+   * sortable date so cross-source sorting interleaves chronologically. Legacy
+   * assets without one are covered by deriveOrderKey() fallbacks at read time.
+   */
+  orderKey?: string;
+  /**
+   * DERIVED ONLY — never persisted to Firestore. Set true by the client-facing
+   * redaction layer (redactLockedAsset) on copies of future-dated assets so
+   * client components can render the locked-placeholder treatment.
+   */
+  locked?: boolean;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -676,6 +728,29 @@ export interface Feedback {
 
 /* ─────────────────────── Social Integrations ────────────────────────── */
 
+/**
+ * A LinkedIn employee-advocacy seat: one company employee's connected LinkedIn
+ * account, used to publish + measure content under their personal handle. Stored
+ * as an array on the client's LinkedIn ClientIntegration doc. Tokens in
+ * `credentials` are ENCRYPTED at rest (see src/lib/crypto/token-cipher.ts) —
+ * always run them through decryptCredentials before use.
+ */
+export interface EmployeeSeat {
+  id: string;
+  employeeName: string;
+  employeeEmail: string;
+  /** Encrypted OAuth tokens (accessToken, refreshToken) — decrypt before use. */
+  credentials: Record<string, string>;
+  /** "active" seats are published to + measured; "paused" are skipped. */
+  status: "active" | "paused";
+  /** Optional placeholder for future enrichment (parsed resume / background). */
+  resumeUrl?: string | null;
+  backgroundContext?: string | null;
+  addedBy: string;
+  addedAt: number;
+  updatedAt: number;
+}
+
 export interface ClientIntegration {
   id: string;
   clientId: string;
@@ -690,8 +765,11 @@ export interface ClientIntegration {
   /**
    * "active" (default / absent) — credentials are valid and operational.
    * "expired" — the publish cron received a 401/403; re-connect required.
+   * "reauthenticate" — the analytics sync received a 401/403; same meaning as
+   *   expired (needs reconnect), surfaced separately so the source is traceable.
+   * Use the `integration-status` helpers rather than comparing this directly.
    */
-  status?: "active" | "expired";
+  status?: "active" | "expired" | "reauthenticate";
   /**
    * When true (default / absent), the publish cron may auto-post scheduled content
    * to this platform. When false, content targeting this platform can only go out
@@ -700,9 +778,80 @@ export interface ClientIntegration {
   autoPublish?: boolean;
   /** Epoch millis when the cron first detected the token had expired. */
   expiredAt?: number;
+  /**
+   * LinkedIn employee-advocacy seats (only meaningful on the `linkedin`
+   * integration). Each is a connected employee handle we publish + measure under.
+   */
+  employeeSeats?: EmployeeSeat[];
   connectedBy: string;
   connectedAt: number;
   updatedAt: number;
+}
+
+/* ──────────────────── Marketing performance analytics ──────────────────── */
+
+/**
+ * Unified, platform-agnostic performance metrics for one published asset.
+ * Every social network reports engagement with a different shape (LinkedIn's
+ * `impressionCount`, TikTok's `video_views`, Twitter's `impression_count`, …);
+ * the analytics ingestion layer normalizes all of them into these four fields
+ * (see `normalizePlatformMetrics` in `src/lib/analytics.ts`).
+ */
+export interface MarketingMetrics {
+  /** Times the content was served/rendered on the platform. */
+  impressions: number;
+  /** Outbound clicks (link clicks, profile taps, CTA presses). */
+  clicks: number;
+  /** Engagements ÷ impressions as a 0–1 fraction (likes+comments+shares+saves). */
+  engagementRate: number;
+  /** Total watch time in seconds summed across all views (0 for non-video). */
+  videoViewTime: number;
+}
+
+/**
+ * One performance record per (client, asset, platform) — the analytics half of
+ * the Self-Improving Marketing Loop. Written by the analytics sync cron
+ * (`/api/analytics/sync`), read by the Task Map engine (`getClientPerformanceBenchmarks`)
+ * to bias new content suggestions toward proven winners and away from losers.
+ *
+ * Doc ID is deterministic `${clientId}_${platform}_${assetId}` so re-syncs upsert
+ * in place (one living metrics row per asset+platform, not an append log). The
+ * per-client history is queried by the `clientId` field then sorted in JS — the
+ * denormalized `engagementScore` makes top/bottom-N ranking a single cheap read,
+ * matching this repo's "avoid composite indexes" convention.
+ */
+export interface ClientMarketingAnalytics {
+  id: string;
+  clientId: string;
+  /** The asset these metrics belong to (assets collection id). */
+  assetId: string;
+  /** The Task Map task that produced the asset, when known (clientTasks id). */
+  taskId?: string | null;
+  /** Canonical integration platform key, e.g. "linkedin", "tiktok". */
+  platform: string;
+  /** Asset type snapshot (e.g. "social_post"), for grouping wins/losses by format. */
+  assetType?: string | null;
+  /** Human-readable asset label (title / first line) surfaced in benchmarks + insights. */
+  assetLabel?: string | null;
+  /** Unified metrics, normalized across platforms. */
+  metrics: MarketingMetrics;
+  /** Denormalized 0–100 weighted engagement score (see `engagementScore`) for cheap ranking. */
+  engagementScore: number;
+  /** Data provenance: "mock" until the live platform Insights APIs are wired in. */
+  source: "mock" | "live";
+  /** Epoch millis when the upstream metrics were captured/fetched. */
+  capturedAt: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Top/bottom performers for a client, ranked by `engagementScore`. */
+export interface PerformanceBenchmarks {
+  clientId: string;
+  top: ClientMarketingAnalytics[];
+  bottom: ClientMarketingAnalytics[];
+  /** Total analytics records considered when ranking. */
+  sampleSize: number;
 }
 
 /* ────────────────────────────────────────────────────────────────────── */
@@ -848,7 +997,12 @@ export interface IntegrationExpiredNotification {
 
 /* ─────────────────── Proactive Task Board ───────────────────────── */
 
-export type TaskStatus = "pending" | "in_progress" | "review_pending" | "completed";
+/**
+ * "archived" — terminal storage state: tasks completed ≥7 days ago are swept
+ * there (archiveStaleCompletedTasks) so the active board stays clean. Hidden
+ * from listClientTasks unless explicitly requested.
+ */
+export type TaskStatus = "pending" | "in_progress" | "review_pending" | "completed" | "archived";
 export type TaskPriority = "high" | "medium" | "low";
 export type TaskSource =
   | "gmail"
@@ -877,14 +1031,60 @@ export interface ClientTask {
   owner?: TaskOwner;
   sourceLabel?: string;
   /**
+   * Contextual priority weight 0–100 (how critical the underlying gap is —
+   * e.g. missing core integration ≈ 90, optional secondary post ≈ 30).
+   * Set by the Copilot at generation; drives board sorting within a column.
+   * Absent ⇒ derived from `priority` (high 80 / medium 50 / low 25).
+   */
+  weight?: number;
+  /**
    * Freeform execution state. Well-known keys:
-   * `agentId`/`agentName` — the ecosystem agent mapped to execute this task (set by the
-   * Copilot at creation or by the engine after a name match); `jobId` — the Job created
-   * by the last agent execution; `executing`, `type`, `artifact`, `adjustmentFeedback`,
-   * `executionError`, `aiPlan`, `recipient`, `failedUpload*`, `published*`.
+   * `productType` — the managed product (ManagedTaskType) that executes this task;
+   * `platform` — canonical integration platform key the task concerns;
+   * `completionTrigger` — auto-complete hook: "integration_connected:<platform>" or
+   * "product_run:<taskType>" (see task-sync.ts);
+   * `externalJobId` — platform Job id of the agent-service run dispatched for this task;
+   * `agentName`, `executing`, `type`, `artifact`, `artifactImageUrl`, `artifactAssetIds`,
+   * `approvedAssetId`, `adjustmentFeedback`, `executionError`, `aiPlan`, `recipient`,
+   * `failedUpload*`, `published*`, `autoCompletedReason`.
    */
   metadata?: Record<string, unknown>;
+  /**
+   * Campaign this task belongs to (campaigns collection id) when it's part of a
+   * cohesive omnichannel bundle rather than a standalone task. Absent ⇒ standalone.
+   */
+  campaignId?: string | null;
+  /**
+   * Task ids this task depends on within its campaign — e.g. a newsletter or
+   * social piece depends on the anchor blog being produced first. Advisory
+   * ordering for the campaign flow; empty/absent ⇒ no dependencies.
+   */
+  dependsOnTaskIds?: string[];
   completedAt?: number | null;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * An omnichannel campaign — a themed bundle of dependent tasks (and the assets
+ * they produce) that ship together across channels. One anchor (e.g. a blog),
+ * a distribution vehicle (e.g. a newsletter), and matching social pieces, wired
+ * with relational dependencies. Lives in the `campaigns` collection.
+ */
+export interface Campaign {
+  id: string;
+  clientId: string;
+  title: string;
+  /** The unifying theme/topic scope, e.g. "Black Friday launch" or a detected trend. */
+  themeScope: string;
+  /** ISO week key the campaign targets (taskWeekKey format), e.g. "2026-W28". */
+  targetWeek: string;
+  /** Tasks explicitly linked into this campaign. */
+  taskIds: string[];
+  /** Assets produced for this campaign (populated as its tasks execute). */
+  assetIds: string[];
+  status?: "planned" | "active" | "done";
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -905,6 +1105,8 @@ export interface TaskComment {
 export interface ClientSettings {
   clientId: string;
   autopilot: boolean;
+  /** Whether the client has opted into auto-scheduling (approve → auto when integrations exist). */
+  autoScheduleEnabled?: boolean;
   updatedAt: number;
 }
 
@@ -941,6 +1143,8 @@ export type CreditOperation =
   | "doc_correction"
   /** Client-fired custom agent run on the agent service (jobId = platform job doc id). */
   | "custom_agent_run"
+  /** Purchase of an additional LinkedIn employee-advocacy seat beyond the plan limit. */
+  | "seat_purchase"
   | "manual";
 
 /**

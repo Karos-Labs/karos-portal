@@ -14,7 +14,7 @@ import {
   getManagedProduct,
   type ManagedProduct,
 } from "@/lib/agent-service/products";
-import type { ContextItem, Job, JobStatus } from "@/lib/types";
+import type { ContextItem, Job, JobStatus, ManagedTaskType } from "@/lib/types";
 import { cn, relativeTime } from "@/lib/utils";
 
 /** Statuses that mean the agent produced (or is producing) deliverables. */
@@ -34,12 +34,19 @@ export function ManagedProducts({
   contextItems,
   jobs,
   jobPreviews = {},
+  liveTaskTypes,
 }: {
   clientId: string;
   contextItems: ContextItem[];
   jobs: Job[];
   /** jobId → deliverable image URLs, for the Live view's format previews. */
   jobPreviews?: Record<string, string[]>;
+  /**
+   * Task types this client is "live" on — computed server-side from assets
+   * (productForAsset) OR non-failed agent-service jobs, so lab-imported content
+   * (no job) still marks the product live. Omitted ⇒ fall back to job history.
+   */
+  liveTaskTypes?: ManagedTaskType[];
 }) {
   // Which product's run form is open, and which product's Live detail is open.
   const [runProduct, setRunProduct] = useState<ManagedProduct | null>(null);
@@ -62,6 +69,7 @@ export function ManagedProducts({
     }
     return map;
   }, [managedJobs]);
+  const liveSet = useMemo(() => (liveTaskTypes ? new Set(liveTaskTypes) : null), [liveTaskTypes]);
 
   return (
     <section className="mt-10">
@@ -79,9 +87,12 @@ export function ManagedProducts({
         {MANAGED_PRODUCTS.map((product) => {
           const productJobs = jobsByProduct.get(product.taskType) ?? [];
           const lastRun = productJobs[0];
-          // Live = the client has at least one run that didn't fail (produced
-          // deliverables or is producing them now).
-          const isLive = productJobs.some((j) => j.status !== "failed");
+          // Live = server-computed (liveTaskTypes covers lab-imported content
+          // with no job); when the prop is omitted, fall back to "has a run that
+          // didn't fail" (produced deliverables or is producing them now).
+          const isLive = liveSet
+            ? liveSet.has(product.taskType)
+            : productJobs.some((j) => j.status !== "failed");
           const running = productJobs.some((j) => IN_PROGRESS_STATUSES.includes(j.status));
           const thumbs = productJobs.flatMap((j) => jobPreviews[j.id] ?? []).slice(0, 4);
           return (
@@ -100,7 +111,18 @@ export function ManagedProducts({
                   <Icon name={product.icon} className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium">{product.name}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-medium">{product.name}</p>
+                    {isLive && (
+                      <Badge tone="success">
+                        <span
+                          className="h-1.5 w-1.5 rounded-full bg-success animate-pulse-neon"
+                          aria-hidden="true"
+                        />{" "}
+                        Live
+                      </Badge>
+                    )}
+                  </div>
                   <p className="mt-0.5 text-xs text-muted">{product.tagline}</p>
                 </div>
                 {isLive && <LiveDot running={running} />}

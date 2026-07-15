@@ -12,7 +12,7 @@
  * The transactional balance mutations live in src/lib/data.ts.
  */
 
-import type { AppUser, ClientCredits } from "@/lib/types";
+import type { AppUser, ClientCredits, ManagedTaskType } from "@/lib/types";
 
 /**
  * True when this actor's AI actions should charge the client's balance:
@@ -36,7 +36,12 @@ export function isBillableClientActor(
 export const CREDIT_COSTS = {
   /** One copilot chat message (Sonnet, up to 6 tool steps). */
   chatMessage: 1,
-  /** One karos_managed task execution (also adjustment re-runs + autopilot items). */
+  /**
+   * BASELINE karos_managed task execution — the in-process (single Sonnet/Haiku
+   * call) path only. Tasks dispatched to a managed product cost more: see
+   * TASK_EXECUTION_COSTS / taskExecutionCost() — always resolve through that,
+   * never charge this flat rate for a product run.
+   */
   taskExecution: 5,
   /** Targeted correction of a single context document. */
   targetedCorrection: 2,
@@ -50,7 +55,89 @@ export const CREDIT_COSTS = {
    * admins can override per agent via CustomAgent.creditCost.
    */
   customAgentRun: 25,
+  /**
+   * One additional LinkedIn employee-advocacy seat beyond the plan's included
+   * limit (~$29/mo equivalent). Charged once per seat added over the limit.
+   */
+  employeeSeat: 100,
 } as const;
+
+/* ── LinkedIn employee-advocacy seats ────────────────────────────── */
+
+/** Seats included free in the base plan when a client has no explicit limit set. */
+export const DEFAULT_LINKEDIN_SEAT_LIMIT = 2;
+
+export interface SeatAdditionAssessment {
+  /** Whether the seat may be added right now. */
+  allowed: boolean;
+  /** Whether adding it requires spending credits (i.e. it's beyond the plan limit). */
+  requiresCharge: boolean;
+  /** Credits it costs (0 when within the plan). */
+  cost: number;
+  /** Set when blocked — a human-readable upgrade prompt. */
+  reason?: string;
+}
+
+/**
+ * Pure monetization gate for adding a LinkedIn employee seat. Seats within
+ * `seatLimit` are free; the first seat at/over the limit costs `seatCost` credits
+ * (the "explicit charging ledger event"). When the client can't afford it, the
+ * addition is blocked with an upgrade prompt. `billable` = false (staff/admin
+ * operating the account) bypasses the charge entirely.
+ */
+export function evaluateSeatAddition(args: {
+  currentSeatCount: number;
+  seatLimit: number;
+  availableCredits: number;
+  seatCost?: number;
+  billable?: boolean;
+}): SeatAdditionAssessment {
+  const cost = args.seatCost ?? CREDIT_COSTS.employeeSeat;
+  const withinPlan = args.currentSeatCount < args.seatLimit;
+  if (withinPlan) return { allowed: true, requiresCharge: false, cost: 0 };
+
+  // Beyond the plan limit.
+  if (args.billable === false) {
+    // Staff/admin managing the account — allowed without a charge.
+    return { allowed: true, requiresCharge: false, cost: 0 };
+  }
+  if (args.availableCredits >= cost) {
+    return { allowed: true, requiresCharge: true, cost };
+  }
+  return {
+    allowed: false,
+    requiresCharge: true,
+    cost,
+    reason: `You've reached your plan's ${args.seatLimit}-seat limit. Adding another employee seat costs ${cost} credits (≈ $29/mo) — top up credits or upgrade your plan to continue.`,
+  };
+}
+
+/**
+ * Per-product execution prices for task runs dispatched to the agent service.
+ * Scaled to real compute: a product run is a full sandboxed agent session
+ * (research + generation, ~$0.50–2), not one model call — text-only products
+ * sit at 2× the baseline, media-heavy generation higher still.
+ */
+export const TASK_EXECUTION_COSTS: Record<Exclude<ManagedTaskType, "custom">, number> = {
+  /** Text + research (markdown/HTML article). */
+  blog_article: 10,
+  /** Text + research + HTML render (dark/light variants). */
+  newsletter_issue: 10,
+  /** Research + per-post VISUAL generation — media-heavy. */
+  social_post: 15,
+  /** Heaviest: full page build with brand kit + static build (~15–30 min). */
+  landing_page: 20,
+} as const;
+
+/**
+ * Resolve what one task execution costs given the product that will actually
+ * run it. No product (in-process generic path) or "custom" (custom agents
+ * have their own per-agent pricing) ⇒ the flat baseline.
+ */
+export function taskExecutionCost(productType?: ManagedTaskType | null): number {
+  if (!productType || productType === "custom") return CREDIT_COSTS.taskExecution;
+  return TASK_EXECUTION_COSTS[productType] ?? CREDIT_COSTS.taskExecution;
+}
 
 /** Applied to new clients on their first charge/grant (lazy doc creation). */
 export const CREDIT_DEFAULTS = {

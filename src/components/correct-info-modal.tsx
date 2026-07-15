@@ -31,7 +31,6 @@ export function CorrectInfoModal({
     } else {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setCorrections("");
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(null);
     }
   }, [open]);

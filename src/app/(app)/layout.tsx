@@ -13,6 +13,7 @@ import {
   listClientCompetitors,
 } from "@/lib/data";
 import { ActiveClientProvider } from "@/lib/active-client-context";
+import { integrationIsUsable } from "@/lib/integration-status";
 import { Sidebar } from "@/components/sidebar";
 import { ClientRail } from "@/components/client-rail";
 import { CopilotDock } from "@/components/copilot-dock";
@@ -99,7 +100,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               clientName={client.name}
               userName={user.name}
               hasGoogleIntegration={integrations.some(
-                (i) => i.platform === "google" && i.status === "active",
+                (i) => i.platform === "google" && integrationIsUsable(i),
               )}
               client={{ name: client.name, website: client.website, industry: client.industry }}
               report={
@@ -130,6 +131,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             actionItems={actionItems as ActionItemNotification[]}
             reviewJobs={reviewJobs}
             taskAlerts={taskAlerts}
+            userName={user.name}
+            userEmail={user.email}
           />
           <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
             <div className="mx-auto w-full max-w-6xl animate-fade-up">{children}</div>

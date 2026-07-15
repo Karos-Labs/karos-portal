@@ -43,6 +43,9 @@ env.*.local
 # vercel
 .vercel
 
+# one-off migration backups (contain client content — never commit)
+scripts/backups/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

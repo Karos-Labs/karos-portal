@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
+import { z } from "zod";
 import {
   claimExternalJobCompletion,
   createAsset,
@@ -17,7 +18,11 @@ import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/age
 import type { AssetType, ExternalJobArtifact, JobStatus, ManagedTaskType } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
+import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { orderKeyForCreatedAt } from "@/lib/post-chain";
+import { reflowClientChain } from "@/lib/chain";
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
 import { logger } from "@/services/logger";
 
 export const maxDuration = 120;
@@ -49,6 +54,54 @@ const VALID_HINT_TYPES = new Set<AssetType>(["social_post", "instagram_post", "e
 const TEXT_EXTENSIONS = [".md", ".html", ".txt"];
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
 
+/**
+ * Structural validation of the (signature-verified) webhook body. The HMAC proves the
+ * sender, not the shape — a malformed-but-signed payload previously reached `.map`/`.reduce`
+ * on `artifacts`/`usage.models` and could throw mid-handler after the job was claimed.
+ * Required fields are the ones the handler routes on; secondary fields stay lenient (with
+ * defaults) so a valid delivery is never rejected over an optional field.
+ */
+const artifactSchema = z.object({
+  name: z.string(),
+  path: z.string().default(""),
+  bytes: z.number().default(0),
+  sha256: z.string().default(""),
+  content_type: z.string().optional(),
+  client_facing: z.boolean().default(false),
+  url: z.string(),
+});
+const usageSchema = z.object({
+  totalCostUsd: z.number().optional(),
+  numTurns: z.number().optional(),
+  models: z
+    .record(
+      z.string(),
+      z.object({
+        inputTokens: z.number().default(0),
+        outputTokens: z.number().default(0),
+        cacheReadInputTokens: z.number().default(0),
+        cacheCreationInputTokens: z.number().default(0),
+        costUsd: z.number().optional(),
+      }),
+    )
+    .default({}),
+});
+const webhookPayloadSchema = z.object({
+  event: z.literal("job.completed"),
+  job_id: z.string().min(1),
+  status: z.enum(["done", "failed", "cancelled", "dead_letter"]),
+  task_type: z.enum(["social_post", "newsletter_issue", "blog_article", "landing_page", "custom"]),
+  client_id: z.string().min(1),
+  metadata: z.record(z.string(), z.string()).optional(),
+  artifacts: z.array(artifactSchema).default([]),
+  usage: usageSchema.optional(),
+  agents_repo_sha: z.string().optional(),
+  model: z.string().optional(),
+  error: z.string().optional(),
+  transcript_url: z.string().optional(),
+  attempt: z.number().default(0),
+});
+
 function extension(name: string): string {
   const i = name.lastIndexOf(".");
   return i >= 0 ? name.slice(i).toLowerCase() : "";
@@ -76,15 +129,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  let payload: AgentServiceWebhookPayload;
+  let rawPayload: unknown;
   try {
-    payload = JSON.parse(rawBody) as AgentServiceWebhookPayload;
+    rawPayload = JSON.parse(rawBody);
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  if (payload.event !== "job.completed" || !payload.job_id) {
-    return NextResponse.json({ error: "Unsupported payload" }, { status: 400 });
+  const parsed = webhookPayloadSchema.safeParse(rawPayload);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Unsupported payload", detail: parsed.error.issues[0]?.message },
+      { status: 400 },
+    );
   }
+  const payload = parsed.data;
 
   let job = await getJobByExternalServiceId(payload.job_id);
   if (!job) {
@@ -146,6 +204,11 @@ export async function POST(req: NextRequest) {
   const artifacts: ExternalJobArtifact[] = [];
   const assetIds: string[] = [...job.assetIds];
   let rehostedTotal = 0;
+  // Captured for the Task Map sync below (the run may have been dispatched by
+  // a board task — its ticket gets the deliverable for client preview).
+  let createdAssetId: string | null = null;
+  let taskArtifactContent = "";
+  let taskArtifactImage: string | null = null;
 
   if (payload.status === "done") {
     let primaryText: { artifact: AgentServiceArtifact; content: string } | null = null;
@@ -228,12 +291,24 @@ export async function POST(req: NextRequest) {
           ? hintedType
           : (ASSET_TYPE_MAP[payload.task_type] ?? "note");
       const platform = payload.metadata?.platform || undefined;
+      // job.title is `${job.agentName} — ${clientName}` (submit-managed.ts /
+      // custom-agent-actions.ts). Strip only that exact appended " — <client>"
+      // suffix — never a blind split on " — " (agent/client names may contain
+      // legitimate em-dashes). The job doc keeps its full title.
+      const clientSuffix = " — ";
+      const assetTitle =
+        job.agentName && job.title.startsWith(job.agentName + clientSuffix)
+          ? job.agentName
+          : job.title;
+      // Only real catalog products get a template chip; "custom" runs have no
+      // managed product (getManagedProduct would fall back to the first one).
+      const managedProduct = MANAGED_PRODUCTS.find((p) => p.taskType === payload.task_type);
       const assetId = await createAsset({
         clientId: job.clientId,
         jobId: job.id,
         agentId: "agent-service",
         type: assetType,
-        title: job.title,
+        title: assetTitle,
         content: primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "",
         meta: {
           taskType: payload.task_type,
@@ -244,13 +319,30 @@ export async function POST(req: NextRequest) {
         imageUrl: orderedImageUrls[0] ?? null,
         ...(platform ? { channels: [platform] } : {}),
         status: "draft",
+        ...(managedProduct
+          ? { templateKey: payload.task_type, templateName: managedProduct.name }
+          : {}),
+        orderKey: orderKeyForCreatedAt(now, job.id),
         ...recommendedScheduleFields(assetType, 0, platform),
         createdBy: "agent-service",
         createdAt: now,
         updatedAt: now,
       });
       assetIds.push(assetId);
+      createdAssetId = assetId;
+      // Auto-assign the new post its one-per-day chain date. Best-effort: the
+      // job is already claimed (single delivery), so a reflow failure must not
+      // fail the webhook — it self-heals on the next import/webhook/staff reflow.
+      await reflowClientChain(job.clientId).catch(() =>
+        events.push({
+          at: Date.now(),
+          level: "error",
+          message: "Calendar reflow failed — run the staff reflow action",
+        }),
+      );
     }
+    taskArtifactContent = primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "";
+    taskArtifactImage = orderedImageUrls[0] ?? null;
     events.push({
       at: now,
       level: "success",
@@ -294,6 +386,55 @@ export async function POST(req: NextRequest) {
     },
     updatedAt: now,
   });
+
+  // ── Task Map sync ──
+  // 1. A run dispatched BY a board task lands its deliverable on the ticket
+  //    for client preview + approve/re-run; failures release the task and
+  //    refund the execution charge. Matched by metadata.externalJobId with
+  //    the karos_task_id echo as the race-proof fallback.
+  // 2. INDEPENDENT successful runs (not dispatched by a task) auto-complete
+  //    pending "watch" tasks whose completionTrigger matches this product,
+  //    scoped to the run's platform — a task-dispatched run must not close
+  //    sibling tasks of the same product, and an Instagram run must not close
+  //    a TikTok watcher.
+  // Best-effort: the job is already claimed, so a sync error must not fail the
+  // delivery (redelivery would be skipped as already-processed anyway).
+  try {
+    const dispatchingTaskId = payload.metadata?.karos_task_id;
+    if (payload.status === "done") {
+      const taskSynced = await syncTaskForJobOutcome(
+        job.id,
+        job.clientId,
+        {
+          ok: true,
+          assetId: createdAssetId,
+          content: taskArtifactContent,
+          imageUrl: taskArtifactImage,
+        },
+        dispatchingTaskId,
+      );
+      if (!taskSynced && !dispatchingTaskId) {
+        await autoCompleteTasksByTrigger(
+          job.clientId,
+          `product_run:${payload.task_type}`,
+          `Auto-completed — ${job.agentName} run delivered`,
+          { platform: typeof job.input?.platform === "string" ? job.input.platform : undefined },
+        );
+      }
+    } else {
+      await syncTaskForJobOutcome(
+        job.id,
+        job.clientId,
+        {
+          ok: false,
+          error: payload.error ?? `Agent run ${payload.status.replace("_", " ")}`,
+        },
+        dispatchingTaskId,
+      );
+    }
+  } catch (e) {
+    console.error("[webhook] task sync failed:", e);
+  }
 
   const jobId = job.id;
   const clientId = job.clientId;

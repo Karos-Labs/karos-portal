@@ -16,11 +16,17 @@ import {
   getTaskBoardCapacity,
   listTaskComments,
   createTaskComment,
-  normalizeTitleForDedup,
   chargeClientCredits,
+  claimTaskForExecution,
+  releaseTaskClaim,
 } from "@/lib/data";
+import { findDuplicateReason } from "@/lib/task-dedup";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
-import { runTaskExecution, inferOwnerEngine } from "@/lib/execution-engine";
+import {
+  runTaskExecution,
+  inferOwnerEngine,
+  plannedTaskExecutionCost,
+} from "@/lib/execution-engine";
 import {
   buildTaskExecutionPlanPrompt,
   buildTaskIngestionRoutingPrompt,
@@ -56,7 +62,10 @@ async function chargeTaskAssist(user: AppUser, clientId: string, reason: string)
  * Update a task's status. Accessible to the owning client user and staff.
  * Moving a karos_managed task into In Progress automatically triggers its
  * mapped ecosystem agent — every UI path (drag, card button, modal footer)
- * lands here, so the trigger cannot be bypassed client-side.
+ * lands here, so the trigger cannot be bypassed client-side. The trigger goes
+ * through the SAME atomic claim + product-aware charge as the primary
+ * execution actions: dragging a Review/Done card back to In Progress is a
+ * re-run and is claimed and priced like one — never a free side door.
  */
 export async function updateTaskStatusAction(
   id: string,
@@ -65,24 +74,60 @@ export async function updateTaskStatusAction(
 ): Promise<{ ok: boolean; error?: string }> {
   const access = await requireTaskAccess(id, clientId);
   if (!access.ok) return { ok: false, error: access.error };
-  const { task } = access;
+  const { user, task } = access;
+
+  // "archived" is a system state set by the archiving sweep — staff may force
+  // it manually, clients may not.
+  if (status === "archived" && user.role === "CLIENT_USER") {
+    return { ok: false, error: "Forbidden" };
+  }
 
   const triggersExecution =
-    status === "in_progress" &&
-    inferOwnerEngine(task) === "karos_managed" &&
-    task.metadata?.executing !== true;
+    status === "in_progress" && inferOwnerEngine(task) === "karos_managed";
+
+  if (triggersExecution) {
+    // Atomic claim (verifies not already executing, flips to in_progress) —
+    // two tabs can't double-dispatch, and the charge matches what runs.
+    const claimed = await claimTaskForExecution(id, clientId, [
+      "pending",
+      "review_pending",
+      "completed",
+    ]);
+    if (!claimed) {
+      return { ok: false, error: "Task is already running or not in a runnable state" };
+    }
+    if (isBillableClientActor(user)) {
+      try {
+        await chargeClientCredits({
+          clientId,
+          amount: plannedTaskExecutionCost(claimed),
+          operation: "task_execution",
+          reason: `Task execution · ${claimed.title.slice(0, 80)}`,
+          jobId: id,
+          actorUid: user.uid,
+          actorName: user.name,
+        });
+      } catch (e) {
+        await releaseTaskClaim(id, claimed.status);
+        if (e instanceof CreditError) return { ok: false, error: e.message };
+        throw e;
+      }
+    }
+    // Re-opening a Done card clears its completion timestamp.
+    if (claimed.status === "completed" || claimed.completedAt != null) {
+      await updateClientTask(id, { completedAt: null, updatedAt: Date.now() });
+    }
+    after(() => runTaskExecution(clientId, id).catch(console.error));
+    revalidatePath("/tasks");
+    revalidatePath(`/clients/${clientId}`);
+    return { ok: true };
+  }
 
   const patch: Partial<ClientTask> = { status, updatedAt: Date.now() };
   if (status === "completed") patch.completedAt = Date.now();
   if (status !== "completed") patch.completedAt = null;
-  if (triggersExecution) {
-    patch.metadata = { ...(task.metadata ?? {}), executing: true, executionError: null };
-  }
 
   await updateClientTask(id, patch);
-  if (triggersExecution) {
-    after(() => runTaskExecution(clientId, id).catch(console.error));
-  }
   revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };
@@ -123,13 +168,28 @@ export async function createTaskAction(input: {
   return { ok: true, id };
 }
 
-/** Delete a task. Staff-only from the UI; clients can only update status. */
+/**
+ * Delete/dismiss a task. Staff can delete any; a client user can dismiss
+ * tasks on their own board (requireTaskAccess verifies the task belongs to
+ * the clientId AND the caller may act for that client).
+ */
 export async function deleteTaskAction(
   id: string,
   clientId: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
-  void user; // authorization handled by requireUser role check
+  const access = await requireTaskAccess(id, clientId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { task } = access;
+
+  // Never delete mid-execution: the run would keep burning compute, its
+  // webhook would find no task to land on, and the upfront charge could
+  // never be refunded through any path. Let it finish (or fail) first.
+  if (task.metadata?.executing === true) {
+    return {
+      ok: false,
+      error: "This task is currently executing — wait for the run to finish before dismissing it.",
+    };
+  }
 
   await deleteClientTask(id);
   revalidatePath("/tasks");
@@ -230,7 +290,7 @@ export async function generateTaskPlanAction(
 /**
  * Ingest a free-text task description from the user, classify it with Claude Haiku,
  * route it to the correct owner (karos_managed vs client_managed), and persist it.
- * Respects normalizeTitleForDedup() to prevent duplicates.
+ * Runs the three-tier dedup (task-dedup.ts) to prevent duplicate intents.
  */
 export async function ingestCustomUserTaskAction(
   clientId: string,
@@ -296,10 +356,11 @@ export async function ingestCustomUserTaskAction(
     };
   }
 
-  // Dedup check against the AI-extracted title
-  const normalizedTitle = normalizeTitleForDedup(parsed.title);
-  if (capacity.existingTitles.has(normalizedTitle)) {
-    return { ok: false, error: "A similar task already exists on your board" };
+  // Three-tier dedup (exact title, near-identical wording, product scope)
+  // against the same snapshot the cap was computed from.
+  const dupReason = findDuplicateReason({ title: parsed.title }, capacity.tasks);
+  if (dupReason) {
+    return { ok: false, error: `A similar task already exists on your board (${dupReason}).` };
   }
 
   const now = Date.now();
@@ -330,6 +391,25 @@ export async function saveGoogleOAuthTokenAction(
   // Only meaningful for client users with a linked clientId
   if (user.role !== "CLIENT_USER" || !user.clientId) {
     return { ok: true }; // no-op for staff
+  }
+
+  // Verify the token is a real Google-issued token for THIS user before storing it.
+  // Without this a client could inject an arbitrary bearer that we later replay
+  // server-side (Gmail fetch) — a credential-injection / SSRF-adjacent vector.
+  try {
+    const res = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`,
+      { signal: AbortSignal.timeout(8000) },
+    );
+    if (!res.ok) {
+      return { ok: false, error: "Could not verify your Google sign-in. Please reconnect." };
+    }
+    const info = (await res.json()) as { email?: string };
+    if (info.email && user.email && info.email.toLowerCase() !== user.email.toLowerCase()) {
+      return { ok: false, error: "That Google account doesn't match your Karos account." };
+    }
+  } catch {
+    return { ok: false, error: "Couldn't reach Google to verify your sign-in. Please try again." };
   }
 
   const { upsertClientIntegration } = await import("@/lib/data");

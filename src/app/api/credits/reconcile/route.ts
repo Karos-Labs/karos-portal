@@ -6,6 +6,8 @@ import {
   reconcileStuckTaskExecution,
   type ReconcileResult,
 } from "@/lib/credit-reconcile";
+import { archiveStaleCompletedTasks } from "@/lib/data";
+import { requireCronSecret } from "@/lib/cron-auth";
 
 export const maxDuration = 60;
 
@@ -34,12 +36,8 @@ export const maxDuration = 60;
 const STALE_AFTER_MS = 30 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    if (req.headers.get("Authorization") !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
 
   const staleBefore = Date.now() - STALE_AFTER_MS;
   const [tasks, jobs] = await Promise.all([
@@ -82,9 +80,20 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Task-board archiving sweep rides the same maintenance cron: the active
+  // view already hides tasks Done ≥7d at query level (listClientTasks), so
+  // this just catches the stored documents up — detached from any page load.
+  let archived = 0;
+  try {
+    archived = await archiveStaleCompletedTasks();
+  } catch (e) {
+    console.error("[reconcile] archive sweep failed:", e);
+  }
+
   return NextResponse.json({
     checked: { tasks: tasks.length, jobs: jobs.length },
     creditsRefunded: refunded,
+    tasksArchived: archived,
     results,
   });
 }

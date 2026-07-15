@@ -63,6 +63,13 @@ const PLATFORM_SCHEDULES: Record<string, PlatformSchedule> = {
     ],
     reason: "YouTube views ramp up Thu–Sat in the late afternoon ahead of evening watch time",
   },
+  tiktok: {
+    windows: [
+      { days: [2, 3, 4], hour: 18, minute: 0 },
+      { days: WEEKDAYS, hour: 20, minute: 0 },
+    ],
+    reason: "TikTok watch time peaks on weekday evenings when short-form scrolling spikes",
+  },
 };
 
 /** Fallback platform used to pick a window when no platform is known yet. */
@@ -143,8 +150,12 @@ function sameLocalDay(a: number, b: number): boolean {
   );
 }
 
-/** No more than this many pieces should land on a single day before we spread to the next. */
-const MAX_PER_DAY = 2;
+/**
+ * No more than this many pieces should land on a single day before we spread
+ * to the next. Matches the content chain's one-post-per-day rule
+ * (lib/post-chain.ts) so staff density suggestions agree with chain dates.
+ */
+const MAX_PER_DAY = 1;
 /** Keep publications at least this far apart so a day never feels spammy. */
 const MIN_GAP_MS = 90 * 60 * 1000;
 

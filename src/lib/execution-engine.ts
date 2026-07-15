@@ -14,10 +14,16 @@ import {
   getClient,
   updateClientTask,
   listClientTasks,
+  listEmployeeSeats,
 } from "@/lib/data";
 import { sendEmail } from "@/lib/email";
-import { buildArtifactGenerationPrompt } from "@/lib/ai/prompts/proactive-assistant";
-import type { ClientTask, TaskOwner } from "@/lib/types";
+import { isAgentServiceConfigured } from "@/lib/agent-service/client";
+import { MANAGED_PRODUCTS, type ManagedProduct } from "@/lib/agent-service/products";
+import { taskExecutionCost } from "@/lib/credits";
+import { refundJobCharge } from "@/lib/credit-reconcile";
+import { submitManagedJob } from "@/lib/jobs/submit-managed";
+import { buildArtifactGenerationPrompt, type EmployeeAdvocacyProfile } from "@/lib/ai/prompts/proactive-assistant";
+import type { AppUser, ClientTask, ManagedTaskType, TaskOwner } from "@/lib/types";
 import { logger } from "@/services/logger";
 import type { ModelId } from "@/lib/constants";
 
@@ -60,12 +66,116 @@ function selectModelName(task: ClientTask): ModelId {
   return usesSonnet(task) ? MODELS.SONNET : MODELS.HAIKU;
 }
 
+/* ── Task → managed product mapping ──────────────────────────────── */
+
+/** Actor stamped on jobs the task engine dispatches without a user in scope. */
+const TASK_ENGINE_ACTOR: AppUser = {
+  uid: "karos_task_engine",
+  email: "system@karoslabs.com",
+  name: "Karos Task Engine",
+  role: "KAROS_ADMIN",
+  createdAt: 0,
+};
+
+/** Keyword heuristics for tasks created before productType linking existed. */
+const PRODUCT_KEYWORDS: Array<{ taskType: ManagedTaskType; pattern: RegExp }> = [
+  { taskType: "newsletter_issue", pattern: /newsletter/i },
+  { taskType: "blog_article", pattern: /\bblog\b|\barticle\b|\bseo\b/i },
+  { taskType: "landing_page", pattern: /landing\s*page/i },
+  { taskType: "social_post", pattern: /instagram|tiktok|social\s*(media\s*)?post|\bcarousel\b|\breel\b/i },
+];
+
+/**
+ * The credit price of executing this task, resolved against what will ACTUALLY
+ * run: a task that dispatches to a managed product charges that product's
+ * rate (media-heavy > text-only); everything else — integration actions, tasks
+ * no product fits, or the service being unconfigured — charges the flat
+ * in-process baseline. Charging call sites (start, re-run, autopilot) must all
+ * price through here so the charge always matches the dispatch decision in
+ * runTaskExecution below.
+ */
+export function plannedTaskExecutionCost(task: ClientTask): number {
+  const dispatchesToProduct =
+    resolveTaskType(task) === "content_generation" && isAgentServiceConfigured();
+  const product = dispatchesToProduct ? resolveTaskProduct(task) : null;
+  return taskExecutionCost(product?.taskType ?? null);
+}
+
+/**
+ * Map a karos_managed task to the managed product (ecosystem agent) that
+ * executes it: the Copilot's explicit `metadata.productType` link first, then
+ * keyword inference. Null ⇒ no product fits (research, analysis, email
+ * dispatch) and the in-process engine handles it.
+ */
+export function resolveTaskProduct(task: ClientTask): ManagedProduct | null {
+  const linked = task.metadata?.productType as ManagedTaskType | undefined;
+  const byLink = linked && MANAGED_PRODUCTS.find((p) => p.taskType === linked);
+  if (byLink) return byLink;
+
+  const text = `${task.title} ${task.description ?? ""}`;
+  for (const { taskType, pattern } of PRODUCT_KEYWORDS) {
+    if (pattern.test(text)) {
+      const product = MANAGED_PRODUCTS.find((p) => p.taskType === taskType);
+      if (product) return product;
+    }
+  }
+  return null;
+}
+
+/**
+ * Build the product brief from the task. On a re-run, the client's feedback is
+ * appended as an explicit revision request so the agent refines rather than
+ * repeats.
+ */
+function buildTaskBrief(
+  task: ClientTask,
+  product: ManagedProduct,
+  adjustmentFeedback?: string,
+): Record<string, unknown> {
+  const topic =
+    task.description && task.description.trim()
+      ? `${task.title} — ${task.description.trim()}`
+      : task.title;
+  const revision = adjustmentFeedback
+    ? `\n\nREVISION REQUEST — a previous version was reviewed by the client; incorporate every point: "${adjustmentFeedback}"`
+    : "";
+
+  switch (product.taskType) {
+    case "social_post": {
+      const countMatch = task.title.match(/\b([1-9]|10)\b\s*(posts?|reels?|carousels?)/i);
+      const text = `${task.title} ${task.description ?? ""}`.toLowerCase();
+      const platform = text.includes("tiktok") && !text.includes("instagram")
+        ? "tiktok"
+        : text.includes("instagram") && !text.includes("tiktok")
+          ? "instagram"
+          : "both";
+      return {
+        count: countMatch ? Number(countMatch[1]) : 3,
+        platform,
+        topic: `${topic}${revision}`,
+      };
+    }
+    case "newsletter_issue":
+      return { issue_theme: `${task.title}${revision}`, must_include: task.description ?? "" };
+    case "blog_article":
+      return { topic: `${topic}${revision}` };
+    case "landing_page":
+      return { page_goal: `${task.title}${revision}`, offer: task.description ?? "" };
+    default:
+      return { topic: `${topic}${revision}` };
+  }
+}
+
 /* ── Core single-task runner ─────────────────────────────────────── */
 
 /**
- * Executes a single karos_managed task via Claude:
- * - Generates an artifact (Flow A: content; Flow B: email/publish draft)
- * - On a re-run (adjustment feedback present), feeds the model both the
+ * Executes a single karos_managed task:
+ * - Content tasks that map to a managed product (the ecosystem agents) are
+ *   dispatched to the agent service; the signed webhook injects the deliverable
+ *   into the task ticket (review_pending) when the run lands — see task-sync.ts.
+ * - Everything else (or when the service isn't configured) generates in-process
+ *   via Claude (Flow A: content; Flow B: email/publish draft).
+ * - On a re-run (adjustment feedback present), feeds the executor both the
  *   original task context AND the previous output + client feedback.
  * - Advances status to review_pending on success
  * - Records error in metadata on failure (status returns to pending)
@@ -84,7 +194,75 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
     ? (task.metadata?.artifact as string | undefined)
     : undefined;
 
+  // ── Path 1: dispatch to the mapped ecosystem agent (managed product) ──
+  // The task stays in_progress + executing; the webhook (or the agent-service
+  // reconciler on a missed webhook) resolves it. On submission failure the
+  // task is released and the charge refunded — NOT silently downgraded to the
+  // in-process engine: the client paid the product rate for a product run,
+  // and a retry is one click away.
+  if (taskType === "content_generation" && isAgentServiceConfigured()) {
+    const product = resolveTaskProduct(task);
+    if (product) {
+      const result = await submitManagedJob(TASK_ENGINE_ACTOR, {
+        clientId,
+        taskType: product.taskType,
+        brief: buildTaskBrief(task, product, adjustmentFeedback),
+        taskId,
+      }).catch((e) => ({ jobId: undefined, error: e instanceof Error ? e.message : "submit failed" }));
+
+      if (result.jobId && !result.error) {
+        await updateClientTask(taskId, {
+          metadata: {
+            ...(task.metadata ?? {}),
+            executing: true,
+            type: "content_generation",
+            productType: product.taskType,
+            agentName: product.name,
+            externalJobId: result.jobId,
+            executionError: null,
+          },
+          updatedAt: Date.now(),
+        });
+      } else {
+        await updateClientTask(taskId, {
+          status: "pending",
+          metadata: {
+            ...(task.metadata ?? {}),
+            executing: false,
+            externalJobId: null,
+            executionError: `The ${product.name} agent couldn't be reached — please try again. (${result.error ?? "submission failed"})`,
+          },
+          updatedAt: Date.now(),
+        });
+        await refundJobCharge(
+          taskId,
+          `Auto-refund · agent dispatch failed · ${task.title.slice(0, 80)}`,
+        ).catch((e) => console.error(`[engine] dispatch-failure refund failed for ${taskId}:`, e));
+      }
+      revalidatePath("/tasks");
+      revalidatePath(`/clients/${clientId}`);
+      return;
+    }
+  }
+
   try {
+    // If this task targets a LinkedIn employee seat, load that seat and
+    // inject the employee's resume/background into the generation prompt so
+    // the model writes in their authentic personal voice.
+    let employeeAdvocacy: EmployeeAdvocacyProfile | undefined = undefined;
+    const seatId = task.metadata?.seatId as string | undefined;
+    if (seatId) {
+      const seats = await listEmployeeSeats(clientId);
+      const seat = seats.find((s) => s.id === seatId);
+      if (seat && seat.status === "active") {
+        employeeAdvocacy = {
+          name: seat.employeeName,
+          resumeText: seat.backgroundContext ?? null,
+          resumeUrl: seat.resumeUrl ?? null,
+        };
+      }
+    }
+
     const { text: artifact, usage } = await generateText({
       model: selectModel(task),
       prompt: buildArtifactGenerationPrompt(
@@ -99,6 +277,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
         client.brandVoice,
         adjustmentFeedback,
         previousArtifact,
+        employeeAdvocacy,
       ),
     });
 
@@ -115,6 +294,8 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
         executing: false,
         type: taskType,
         artifact,
+        agentName: (task.metadata?.agentName as string | undefined) ?? "Karos AI",
+        externalJobId: null,
         adjustmentFeedback: null,
         executionError: null,
       },
@@ -127,10 +308,17 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
       metadata: {
         ...(task.metadata ?? {}),
         executing: false,
+        externalJobId: null,
         executionError: message,
       },
       updatedAt: Date.now(),
     });
+    // Mirror the external failure path: the client paid upfront and got no
+    // deliverable — refund (idempotent; no-op for staff-triggered runs).
+    await refundJobCharge(
+      taskId,
+      `Auto-refund · execution failed · ${task.title.slice(0, 80)}`,
+    ).catch((e) => console.error(`[engine] failure refund failed for ${taskId}:`, e));
   }
 
   revalidatePath("/tasks");

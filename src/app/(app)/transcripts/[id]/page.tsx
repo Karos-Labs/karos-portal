@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getTranscript, listClients, listUsers } from "@/lib/data";
-import { Card, CardTitle, Badge, Button } from "@/components/ui";
+import { Card, CardTitle, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { TranscriptAssign, TranscriptSignalButton, HideFromClientToggle } from "@/components/transcript-tools";
 import { MeetingActionItems } from "@/components/meeting-action-items";

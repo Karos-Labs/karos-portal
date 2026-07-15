@@ -731,7 +731,6 @@ export async function applyBrandingForClient(
     role: c.role,
   }));
 
-  const existing = client.brandingGuidelines;
   const now = Date.now();
 
   const fullGuidelines: BrandingGuidelines = {

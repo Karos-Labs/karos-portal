@@ -100,7 +100,7 @@ export default function SignupPage() {
   // provisioned doc still persists so a post-verification login resolves.
   type SessionResult =
     | { needsEmailVerification: true }
-    | { needsEmailVerification: false; role: string; clientId: string | null };
+    | { needsEmailVerification: false; role: string; clientId: string | null; disabled?: boolean };
 
   async function establishSession(): Promise<SessionResult> {
     if (!validated) throw new Error("Missing invitation context.");
@@ -160,7 +160,10 @@ export default function SignupPage() {
         setLoading(null);
         return;
       }
-      router.push(routeAfterAuth(result.role, result.clientId));
+      // A freshly-provisioned account that landed disabled (pending approval)
+      // must go to /pending, not into the workspace — mirroring the login page.
+      // Otherwise the server guard bounces it back, causing a confusing flash.
+      router.push(result.disabled ? "/pending" : routeAfterAuth(result.role, result.clientId));
       router.refresh();
     } catch (err) {
       const msg = friendly(err);

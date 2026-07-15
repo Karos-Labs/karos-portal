@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
+import { StrategyWarRoom } from "@/components/strategy-war-room";
 import type { Client, ClientReport } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -185,6 +186,7 @@ function ProactiveWelcome({
   hasGoogleIntegration,
   send,
   onTasksCreated,
+  onRefreshTaskMap,
 }: {
   clientId: string;
   clientName: string;
@@ -192,6 +194,8 @@ function ProactiveWelcome({
   hasGoogleIntegration: boolean;
   send: (t: string) => void;
   onTasksCreated: () => void;
+  /** Launches the multi-agent Strategy War Room instead of a single-shot chat scan. */
+  onRefreshTaskMap: () => void;
 }) {
   const actions = buildProactiveActions(hasGoogleIntegration);
   const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
@@ -297,7 +301,7 @@ function ProactiveWelcome({
         {actions.map((action) => (
           <button
             key={action.id}
-            onClick={() => send(action.trigger)}
+            onClick={() => (action.id === "scan_inbox" ? onRefreshTaskMap() : send(action.trigger))}
             className="group flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150 hover:border-border-strong hover:bg-surface-3 active:scale-[0.98]"
           >
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70 transition-all duration-150">
@@ -408,14 +412,13 @@ export function ChatbotWidget({
   defaultOpen = false,
   userName,
   hasGoogleIntegration = false,
-  client: _client,
-  report: _report,
   docked = false,
   onCollapse,
   floatingPosition = "bottom-6 right-6",
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(defaultOpen);
+  const [warRoomOpen, setWarRoomOpen] = useState(false);
   // Docked mode is permanently open and never shows the floating bubble.
   const panelOpen = docked || open;
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -423,6 +426,7 @@ export function ChatbotWidget({
 
   const onBrandingChange = useCallback(() => router.refresh(), [router]);
   const onTasksCreated = useCallback(() => router.refresh(), [router]);
+  const openWarRoom = useCallback(() => setWarRoomOpen(true), []);
 
   const { messages, input, setInput, send, streaming, error, reset } = useCopilot(
     clientId,
@@ -540,6 +544,7 @@ export function ChatbotWidget({
                 hasGoogleIntegration={hasGoogleIntegration}
                 send={send}
                 onTasksCreated={onTasksCreated}
+                onRefreshTaskMap={openWarRoom}
               />
             ) : (
               <ChatEmptyState clientName={clientName} send={send} />
@@ -611,6 +616,14 @@ export function ChatbotWidget({
             </button>
           </form>
         </div>
+      )}
+
+      {warRoomOpen && (
+        <StrategyWarRoom
+          clientId={clientId}
+          onClose={() => setWarRoomOpen(false)}
+          onComplete={() => router.refresh()}
+        />
       )}
 
       <style>{`

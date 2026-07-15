@@ -38,6 +38,7 @@ export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
   "instagram",
   "twitter",
   "youtube",
+  "tiktok",
 ]);
 
 /**
@@ -47,8 +48,8 @@ export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
  * platform has to be inferred.
  */
 export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
-  instagram_post: ["instagram"],
-  social_post: ["twitter", "linkedin", "facebook"],
+  instagram_post: ["instagram", "tiktok"],
+  social_post: ["twitter", "linkedin", "facebook", "tiktok"],
   article: ["linkedin"],
   email: [],
   note: [],
@@ -61,6 +62,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   linkedin: "LinkedIn",
   twitter: "X (Twitter)",
   youtube: "YouTube",
+  tiktok: "TikTok",
 };
 
 export const PLATFORM_REGISTRY: PlatformConfig[] = [
@@ -177,6 +179,28 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         type: "text",
         placeholder: "UC...",
         hint: "Found in YouTube Studio → Settings → Channel → Advanced settings",
+      },
+    ],
+  },
+  {
+    id: "tiktok",
+    name: "TikTok",
+    icon: "Video",
+    color: "#000000",
+    description: "Publish short-form videos to your TikTok account.",
+    fields: [
+      {
+        key: "accessToken",
+        label: "OAuth Access Token",
+        type: "password",
+        required: true,
+        hint: "Connect via the button above, or paste a token from the TikTok Developer Portal → Content Posting API",
+      },
+      {
+        key: "refreshToken",
+        label: "Refresh Token",
+        type: "password",
+        hint: "Required for long-lived access — captured automatically during the OAuth consent flow",
       },
     ],
   },

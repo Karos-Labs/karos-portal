@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
+import { requireCronSecret } from "@/lib/cron-auth";
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const BATCH_SIZE = 400; // well under the 500-op Firestore batch limit
@@ -24,13 +25,8 @@ async function purgeBefore(collectionName: string, cutoff: number): Promise<numb
 }
 
 export async function GET(req: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = req.headers.get("authorization") ?? "";
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
 
   const cutoff = Date.now() - RETENTION_MS;
   const [usageDeleted, errorDeleted] = await Promise.all([

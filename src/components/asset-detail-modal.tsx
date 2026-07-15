@@ -1,10 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import { Modal } from "@/components/modal";
 import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AudienceSimulation } from "@/components/audience-simulation";
 import { PLATFORM_LABELS } from "@/lib/integrations/platforms";
 import { assetImages } from "@/lib/asset-images";
+import { cn } from "@/lib/utils";
+import { templateForAsset } from "@/lib/post-chain";
 import type { Asset } from "@/lib/types";
 
 const TYPE_ICON: Record<string, string> = {
@@ -80,7 +84,40 @@ export function AssetDetailModal({
   open: boolean;
   onClose: () => void;
 }) {
+  const [tab, setTab] = useState<"details" | "simulation">("details");
   if (!asset) return null;
+
+  const template = templateForAsset(asset);
+
+  // Defensive lock guard: the calendar/Today never open a locked asset, but if
+  // one reaches here (belt-and-braces) show only the template placeholder + the
+  // unlock date — never content, images, hashtags, or the download buttons.
+  if (asset.locked) {
+    const unlockStr =
+      asset.scheduledAt != null
+        ? new Date(asset.scheduledAt).toLocaleDateString([], {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          })
+        : null;
+    return (
+      <Modal open={open} onClose={onClose} title={template?.name ?? "Upcoming post"} className="max-w-md">
+        <div className="flex flex-col items-center gap-3 py-6 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-surface-2 text-muted-2">
+            <Icon name="Lock" className="h-5 w-5" />
+          </div>
+          {template && <Badge tone="neutral">{template.name}</Badge>}
+          <p className="text-sm font-medium text-foreground">Upcoming post</p>
+          <p className="max-w-xs text-xs text-muted-2">
+            {unlockStr
+              ? `This deliverable unlocks on ${unlockStr}. You'll be able to view and download it then.`
+              : "This deliverable unlocks on its scheduled date."}
+          </p>
+        </div>
+      </Modal>
+    );
+  }
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
@@ -90,10 +127,24 @@ export function AssetDetailModal({
 
   return (
     <Modal open={open} onClose={onClose} title={asset.title} className="max-w-2xl">
+      {/* Tabs */}
+      <div className="mb-4 flex gap-1 border-b border-border">
+        <TabButton active={tab === "details"} onClick={() => setTab("details")} icon="FileText">
+          Details
+        </TabButton>
+        <TabButton active={tab === "simulation"} onClick={() => setTab("simulation")} icon="Users">
+          Audience Simulation
+        </TabButton>
+      </div>
+
+      {tab === "simulation" ? (
+        <AudienceSimulation key={asset.id} clientId={asset.clientId} assetId={asset.id} />
+      ) : (
       <div className="space-y-4">
-        {/* Status + type row */}
+        {/* Status + template + type row */}
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={statusTone(asset.status)}>{asset.status}</Badge>
+          {template && <Badge tone="neutral">{template.name}</Badge>}
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-2">
             <Icon name={TYPE_ICON[asset.type] ?? "FileText"} className="h-3.5 w-3.5" />
             {asset.type.replace(/_/g, " ")}
@@ -179,7 +230,36 @@ export function AssetDetailModal({
           <AssetDownloadButtons asset={asset} />
         </div>
       </div>
+      )}
     </Modal>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+        active
+          ? "border-neon text-foreground"
+          : "border-transparent text-muted-2 hover:text-muted",
+      )}
+    >
+      <Icon name={icon} className="h-3.5 w-3.5" />
+      {children}
+    </button>
   );
 }
 

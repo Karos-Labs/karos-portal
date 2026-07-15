@@ -1,0 +1,432 @@
+/**
+ * The content chain — pure, deterministic one-post-per-day planning.
+ *
+ * Every schedulable asset carries a stable lexicographic `orderKey`
+ * reconstructing internal lab generation order (`${runName}#${itemKey}`; run
+ * names lead with YYYY-MM-DD), and `planClientChain` assigns exactly one asset
+ * per server-local calendar day per client PER FAMILY (social / email /
+ * article chains are independent, so one Instagram post and one newsletter may
+ * share a day). The planner only ever proposes dates — it never touches
+ * status, so the /api/publish cron (status IN [scheduled, approved] only) can
+ * never pick up a chain-planned draft.
+ *
+ * CLIENT-SAFE: no firebase-admin, no data.ts. May be imported by client
+ * components, server actions, and scripts alike. All day math is server-local
+ * (matches scheduling.ts and the staff datetime-local form). Timestamps are
+ * epoch millis.
+ */
+
+import type { Asset, AssetType, ManagedTaskType } from "@/lib/types";
+import { MANAGED_PRODUCTS, getManagedProduct } from "@/lib/agent-service/products";
+
+/* ────────────────────────── day / slot math ────────────────────────── */
+
+/** Hour of day (server-local) at which chain-assigned posts are slotted. */
+export const CHAIN_SLOT_HOUR = 11;
+
+/** Server-local midnight of the day containing `t`. */
+export function startOfDayMs(t: number): number {
+  return new Date(t).setHours(0, 0, 0, 0);
+}
+
+/** True when both timestamps fall on the same server-local calendar day. */
+export function sameLocalDay(a: number, b: number): boolean {
+  return startOfDayMs(a) === startOfDayMs(b);
+}
+
+/** The chain publication slot within a day: local midnight + CHAIN_SLOT_HOUR. */
+export function chainSlotForDay(dayStartMs: number): number {
+  const d = new Date(dayStartMs);
+  d.setHours(CHAIN_SLOT_HOUR, 0, 0, 0);
+  return d.getTime();
+}
+
+/** The following server-local midnight (DST-safe: uses Date#setDate, not +86400000). */
+function nextDayStart(dayStartMs: number): number {
+  const d = new Date(dayStartMs);
+  d.setDate(d.getDate() + 1);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/* ─────────────────────────── chain families ────────────────────────── */
+
+/**
+ * Chains are planned per content family so a client can receive e.g. one
+ * Instagram post AND one newsletter on the same day.
+ */
+export type ChainFamily = "social" | "email" | "article";
+
+/** Which chain (if any) an asset type belongs to. "note" and unknown types are never chained. */
+export function chainFamilyFor(type: AssetType): ChainFamily | null {
+  switch (type) {
+    case "instagram_post":
+    case "social_post":
+      return "social";
+    case "email":
+      return "email";
+    case "article":
+      return "article";
+    default:
+      return null;
+  }
+}
+
+/** True for every asset type that participates in a content chain. */
+export function isChainSchedulable(type: AssetType): boolean {
+  return chainFamilyFor(type) !== null;
+}
+
+/* ──────────────────────────── order keys ───────────────────────────── */
+
+/** Leading date (YYYY-MM-DD) or index (01-, 2., 3_) prefix on a lab item folder name. */
+const ITEM_PREFIX_RE = /^(\d{4}-\d{2}-\d{2}|\d+)([-_.]|$)/;
+
+/**
+ * Order key for a lab-imported item: `${runName}#${itemKey}`. Run names lead
+ * with YYYY-MM-DD and item keys keep their zero-padded/date prefix, so plain
+ * localeCompare reproduces internal generation order. When the item folder has
+ * NO date/number prefix but the run's data.json carried an internal date, the
+ * date is injected so bare-slug items still sort by their internal date.
+ */
+export function orderKeyForLabItem(runName: string, itemKey: string, internalDate?: string): string {
+  if (internalDate && !ITEM_PREFIX_RE.test(itemKey)) {
+    return `${runName}#${internalDate}-${itemKey}`;
+  }
+  return `${runName}#${itemKey}`;
+}
+
+/**
+ * Order key for non-lab sources (agent-service webhook, MCP): ISO timestamp +
+ * unique suffix. Leads with a date like lab keys, so cross-source sorting
+ * interleaves chronologically.
+ */
+export function orderKeyForCreatedAt(createdAt: number, uniq: string): string {
+  return `${new Date(createdAt).toISOString()}#${uniq}`;
+}
+
+/**
+ * Best-available order key for any asset, including legacy ones written before
+ * orderKey existed: stored orderKey → meta.labRun (shape
+ * `${agentFolder}/${runName}#${itemKey}`, agent folder stripped) → createdAt+id.
+ */
+export function deriveOrderKey(a: Pick<Asset, "orderKey" | "meta" | "createdAt" | "id">): string {
+  if (typeof a.orderKey === "string" && a.orderKey.length > 0) return a.orderKey;
+  const labRun = a.meta?.labRun;
+  if (typeof labRun === "string" && labRun.includes("#")) {
+    const slash = labRun.indexOf("/");
+    return slash >= 0 ? labRun.slice(slash + 1) : labRun;
+  }
+  return orderKeyForCreatedAt(a.createdAt, a.id);
+}
+
+/* ─────────────────────────── the planner ───────────────────────────── */
+
+export interface ChainAssignment {
+  id: string;
+  /** The designated chain slot (day start + CHAIN_SLOT_HOUR, server-local). */
+  scheduledAt: number;
+  /** deriveOrderKey(asset) — persisted alongside so legacy assets get backfilled. */
+  orderKey: string;
+}
+
+const MANAGED_TASK_TYPES = new Set<string>(MANAGED_PRODUCTS.map((p) => p.taskType));
+
+function metaString(a: Pick<Asset, "meta">, key: string): string | null {
+  const v = a.meta?.[key];
+  return typeof v === "string" ? v : null;
+}
+
+/**
+ * Provenance guard: only assets the chain system created (or that already
+ * carry a chain orderKey) may ever be (re-)dated. Legacy assets from removed
+ * systems (e.g. meta.source === "content-engine") are never chain-assigned —
+ * but their dated instances still occupy their family's days (see
+ * planClientChain) so the chain never double-books a staff-filled day.
+ *
+ * A bare managed meta.taskType does NOT qualify: webhook assets created since
+ * the chain shipped carry an orderKey, while pre-chain staff-dated managed
+ * singles (no order signal) must keep the dates staff gave them.
+ */
+function hasChainProvenance(a: Pick<Asset, "meta" | "orderKey">): boolean {
+  if (metaString(a, "source") === "lab-import") return true;
+  return typeof a.orderKey === "string" && a.orderKey.length > 0;
+}
+
+/**
+ * Plan a client's content chains — pure and deterministic (no Date.now()
+ * inside; same inputs → same outputs; planning its own output emits nothing).
+ *
+ * Per family:
+ *   PINNED (never moved):
+ *     mode "reflow" (default, runtime): published assets (status or
+ *       publishedAt), any non-draft asset with a scheduledAt (staff-booked),
+ *       and drafts whose scheduledAt day is on/before today (already
+ *       client-visible).
+ *     mode "migrate" (one-off script): published assets, plus anything dated
+ *       strictly before the chain start day.
+ *   IGNORED entirely: publishMode "placeholder" roadmap items — they are
+ *     calendar decorations, never chain candidates and never day occupancy.
+ *   CANDIDATES: chain-schedulable, non-pinned, chain-provenance assets, not in
+ *     opts.skipIds; drafts only in "reflow", any status in "migrate". Sorted by
+ *     deriveOrderKey (id tiebreak).
+ *   OCCUPANCY: every non-candidate (pinned or provenance-excluded or skipped)
+ *     with a date occupies startOfDayMs(scheduledAt ?? publishedAt) for its
+ *     family.
+ *
+ * The day cursor walks from opts.startDayMs ?? today, skipping occupied days,
+ * assigning chainSlotForDay(day) to each candidate in order. Assignments are
+ * emitted ONLY when they change the asset (different scheduledAt, or stored
+ * orderKey missing/different), so re-planning planned output is a no-op.
+ */
+export function planClientChain(
+  assets: Asset[],
+  opts: {
+    now: number;
+    mode?: "reflow" | "migrate";
+    startDayMs?: number;
+    /**
+     * Asset ids excluded from candidacy (dates untouched) while still counting
+     * toward day occupancy — the migration's --skip flag (e.g. a post the data
+     * says is unposted but a human knows went out).
+     */
+    skipIds?: string[];
+    /** Restrict planning to these families (e.g. the migration's --family social). */
+    families?: ChainFamily[];
+  },
+): ChainAssignment[] {
+  const mode = opts.mode ?? "reflow";
+  const startDay = startOfDayMs(opts.startDayMs ?? opts.now);
+  const today = startOfDayMs(opts.now);
+  const skip = new Set(opts.skipIds ?? []);
+  const familyFilter = opts.families ? new Set(opts.families) : null;
+
+  const isPinned = (a: Asset): boolean => {
+    if (a.status === "published" || a.publishedAt != null) return true;
+    if (mode === "migrate") {
+      return a.scheduledAt != null && startOfDayMs(a.scheduledAt) < startDay;
+    }
+    // reflow: staff-booked dates and already-client-visible drafts never move.
+    if (a.scheduledAt == null) return false;
+    if (a.status !== "draft") return true;
+    return startOfDayMs(a.scheduledAt) <= today;
+  };
+
+  const isCandidate = (a: Asset): boolean => {
+    if (skip.has(a.id)) return false;
+    if (a.publishMode === "placeholder") return false;
+    if (!hasChainProvenance(a)) return false;
+    if (isPinned(a)) return false;
+    if (mode === "reflow" && a.status !== "draft") return false;
+    return true;
+  };
+
+  const assignments: ChainAssignment[] = [];
+  const familyOrder: ChainFamily[] = ["social", "email", "article"];
+
+  for (const family of familyOrder) {
+    if (familyFilter && !familyFilter.has(family)) continue;
+    // Placeholders AND reference docs (overview/explainer items like
+    // "template-ideas") are removed from the family entirely: never candidates,
+    // never day occupancy — they are not calendar entities.
+    const familyAssets = assets.filter(
+      (a) =>
+        chainFamilyFor(a.type) === family &&
+        a.publishMode !== "placeholder" &&
+        !isReferenceDocAsset(a),
+    );
+    if (familyAssets.length === 0) continue;
+
+    const candidates = familyAssets
+      .filter(isCandidate)
+      .sort((a, b) => {
+        const cmp = deriveOrderKey(a).localeCompare(deriveOrderKey(b));
+        return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
+      });
+
+    const occupied = new Set<number>();
+    for (const a of familyAssets) {
+      if (candidates.includes(a)) continue;
+      const at = a.scheduledAt ?? a.publishedAt;
+      if (at != null) occupied.add(startOfDayMs(at));
+    }
+
+    let cursor = startDay;
+    for (const a of candidates) {
+      while (occupied.has(cursor)) cursor = nextDayStart(cursor);
+      const slot = chainSlotForDay(cursor);
+      occupied.add(cursor);
+      cursor = nextDayStart(cursor);
+      const derived = deriveOrderKey(a);
+      if (a.scheduledAt !== slot || a.orderKey !== derived) {
+        assignments.push({ id: a.id, scheduledAt: slot, orderKey: derived });
+      }
+    }
+  }
+
+  return assignments;
+}
+
+/* ─────────────────────── client-facing gating ──────────────────────── */
+
+/**
+ * Whether a client may see this asset's actual content. Locked = future-dated:
+ * the asset unlocks at server-local midnight of its scheduledAt day. Published
+ * and undated (legacy) assets are always visible.
+ */
+export function isAssetUnlockedForClient(
+  a: Pick<Asset, "status" | "scheduledAt" | "publishedAt">,
+  now: number,
+): boolean {
+  if (a.status === "published" || a.publishedAt != null) return true;
+  if (a.scheduledAt == null) return true;
+  return startOfDayMs(a.scheduledAt) <= now;
+}
+
+/* ───────────────────────────── templates ───────────────────────────── */
+
+function titleCaseWords(slug: string): string {
+  return slug
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/**
+ * Template identity from a lab item folder name: strips the same date/index
+ * prefixes as humanizeItemName (lab-outputs-shared.ts), then slugs the rest.
+ * "01-by-the-numbers" → { key: "by-the-numbers", name: "By The Numbers" }.
+ *
+ * `knownKeys` (the template keys this client already has): after
+ * prefix-stripping, a slug that starts with a known key + "-" collapses to
+ * that key — longest match wins — so one-off run slugs like
+ * "voce-sabia-renda-fixa-nao-e-sem-risco" land on the existing "voce-sabia"
+ * template instead of minting a new one.
+ */
+export function templateFromItemKey(
+  itemKey: string,
+  knownKeys?: string[],
+): { key: string; name: string } | null {
+  if (itemKey === "run") return null;
+  const cleaned = itemKey
+    .replace(/^\d{4}-\d{2}-\d{2}[-_]?/, "") // run-name date prefix
+    .replace(/^\d+[-_.]?\s*/, "") // item index prefix
+    .trim();
+  if (!cleaned) return null;
+  const slug = cleaned
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (!slug) return null;
+  if (knownKeys && knownKeys.length > 0) {
+    const match = knownKeys
+      .filter((k) => k.length > 0 && (slug === k || slug.startsWith(`${k}-`)))
+      .sort((a, b) => b.length - a.length)[0];
+    if (match) return { key: match, name: titleCaseWords(match) };
+  }
+  return { key: slug, name: titleCaseWords(slug) };
+}
+
+/**
+ * Template chip for any asset, legacy included: stored templateKey/Name pair →
+ * lab item key (meta.labRun's part after "#") → managed product name
+ * (meta.taskType) → null.
+ */
+export function templateForAsset(
+  a: Pick<Asset, "templateKey" | "templateName" | "meta" | "type">,
+  knownKeys?: string[],
+): { key: string; name: string } | null {
+  if (typeof a.templateKey === "string" && a.templateKey.length > 0) {
+    return { key: a.templateKey, name: a.templateName ?? titleCaseWords(a.templateKey) };
+  }
+  const labRun = a.meta?.labRun;
+  if (typeof labRun === "string") {
+    const hash = labRun.indexOf("#");
+    if (hash >= 0) {
+      const fromKey = templateFromItemKey(labRun.slice(hash + 1), knownKeys);
+      if (fromKey) return fromKey;
+    }
+  }
+  const taskType = metaString(a, "taskType");
+  if (taskType !== null && MANAGED_TASK_TYPES.has(taskType)) {
+    const product = getManagedProduct(taskType as ManagedTaskType);
+    return { key: taskType, name: product.name };
+  }
+  return null;
+}
+
+/* ─────────────────────── reference docs ─────────────────────────────── */
+
+/**
+ * First-round lab runs usually ship an overview/"read this first" item that
+ * DESCRIBES the proposed templates (slug "template-ideas" or similar). It is
+ * documentation, not a posting template: reference docs are never chain
+ * candidates (no calendar day) and never appear in a client's template list —
+ * they stay in the library as plain undated deliverables.
+ */
+const REFERENCE_DOC_SLUGS = new Set([
+  "template-ideas",
+  "template-idea",
+  "template-overview",
+  "templates-overview",
+  "read-me-first",
+]);
+
+export function isReferenceDocSlug(slug: string): boolean {
+  return REFERENCE_DOC_SLUGS.has(slug);
+}
+
+export function isReferenceDocAsset(
+  a: Pick<Asset, "templateKey" | "templateName" | "meta" | "type">,
+): boolean {
+  const template = templateForAsset(a);
+  return template !== null && isReferenceDocSlug(template.key);
+}
+
+/* ─────────────────────────── agent labels ──────────────────────────── */
+
+/**
+ * Which managed product family produced an asset. Asset-based (lab-imported
+ * content has no job yet still counts): meta.taskType → lab agent-folder
+ * keywords → asset type. Table kept local so this file stays client-safe.
+ */
+export function productForAsset(a: Pick<Asset, "meta" | "type">): ManagedTaskType | null {
+  const taskType = metaString(a, "taskType");
+  if (taskType !== null && MANAGED_TASK_TYPES.has(taskType)) return taskType as ManagedTaskType;
+  const folder = metaString(a, "agentFolder")?.toLowerCase();
+  if (folder) {
+    if (folder.includes("instagram") || folder.includes("social")) return "social_post";
+    if (folder.includes("newsletter") || folder.includes("email")) return "newsletter_issue";
+    if (folder.includes("blog") || folder.includes("article")) return "blog_article";
+    if (folder.includes("landing")) return "landing_page";
+  }
+  switch (a.type) {
+    case "instagram_post":
+    case "social_post":
+      return "social_post";
+    case "email":
+      return "newsletter_issue";
+    case "article":
+      return "blog_article";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Human label for "who drafted this": the humanized lab agent folder
+ * ("instagram-agent" → "Instagram agent"), else the managed product name.
+ * Fully data-driven — no client or agent names hardcoded.
+ */
+export function agentLabelForAsset(a: Pick<Asset, "agentId" | "meta" | "type">): string | null {
+  const folder = metaString(a, "agentFolder");
+  if (folder) {
+    const words = folder.replace(/[-_]+/g, " ").trim();
+    if (words) return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase();
+  }
+  const product = productForAsset(a);
+  if (product) return getManagedProduct(product).name;
+  return null;
+}

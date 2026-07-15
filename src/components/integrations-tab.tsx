@@ -11,6 +11,8 @@ import {
   setIntegrationAutoPublishAction,
 } from "@/lib/actions";
 import { PLATFORM_REGISTRY, OAUTH_SUPPORTED_PLATFORM_IDS, type PlatformConfig } from "@/lib/integrations/platforms";
+import { integrationNeedsReconnect } from "@/lib/integration-status";
+import { LinkedInSeatsWorkspace, type SeatView } from "@/components/linkedin-seats-workspace";
 import type { ClientIntegration, Role } from "@/lib/types";
 
 interface Props {
@@ -18,6 +20,11 @@ interface Props {
   integrations: ClientIntegration[];
   oauthEnabledPlatforms: string[];
   currentUserRole: Role;
+  /** Sanitized LinkedIn employee seats (no tokens) for the multi-seat workspace. */
+  linkedinSeats?: SeatView[];
+  /** Plan seat limit + per-extra-seat credit cost for the monetization gate UI. */
+  seatLimit?: number;
+  seatCost?: number;
 }
 
 /* ── Official SVG logos ──────────────────────────────────────────────── */
@@ -62,12 +69,21 @@ function YouTubeLogo() {
   );
 }
 
+function TikTokLogo() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
+      <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" />
+    </svg>
+  );
+}
+
 const PLATFORM_LOGOS: Record<string, React.ReactNode> = {
   linkedin: <LinkedInLogo />,
   twitter: <XLogo />,
   facebook: <FacebookLogo />,
   instagram: <InstagramLogo />,
   youtube: <YouTubeLogo />,
+  tiktok: <TikTokLogo />,
 };
 
 /* ── Branded connect button ──────────────────────────────────────────── */
@@ -125,6 +141,9 @@ function PlatformCard({
   isAdmin,
   onOAuthConnect,
   onDisconnected,
+  linkedinSeats,
+  seatLimit,
+  seatCost,
 }: {
   platform: PlatformConfig;
   integration: ClientIntegration | undefined;
@@ -134,6 +153,9 @@ function PlatformCard({
   isAdmin: boolean;
   onOAuthConnect: () => void;
   onDisconnected: () => void;
+  linkedinSeats?: SeatView[];
+  seatLimit?: number;
+  seatCost?: number;
 }) {
   // True when this platform has an automated OAuth flow defined (static config).
   // Decoupled from isOAuthEnabled (env-var check) so all users can see the
@@ -170,11 +192,6 @@ function PlatformCard({
 
   function setField(key: string, value: string) {
     setFields((prev) => ({ ...prev, [key]: value }));
-  }
-
-  function openAdvanced() {
-    setFormError(null);
-    setAdvancedOpen(true);
   }
 
   async function handleManualSave() {
@@ -253,10 +270,17 @@ function PlatformCard({
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-semibold leading-none">{platform.name}</p>
             {isConnected ? (
-              <Badge tone="neon">
-                <Icon name="CheckCircle2" className="h-3 w-3" />
-                Connected
-              </Badge>
+              integration && integrationNeedsReconnect(integration) ? (
+                <Badge tone="warning">
+                  <Icon name="TriangleAlert" className="h-3 w-3" />
+                  Reconnect needed
+                </Badge>
+              ) : (
+                <Badge tone="neon">
+                  <Icon name="CheckCircle2" className="h-3 w-3" />
+                  Connected
+                </Badge>
+              )
             ) : (
               <Badge tone="neutral">Not connected</Badge>
             )}
@@ -440,6 +464,16 @@ function PlatformCard({
           </div>
         </div>
       )}
+
+      {/* LinkedIn employee-advocacy multi-seat workspace (connected LinkedIn only) */}
+      {platform.id === "linkedin" && isConnected && (
+        <LinkedInSeatsWorkspace
+          clientId={clientId}
+          seats={linkedinSeats ?? []}
+          seatLimit={seatLimit ?? 2}
+          seatCost={seatCost ?? 100}
+        />
+      )}
     </div>
   );
 }
@@ -451,6 +485,9 @@ export function IntegrationsTab({
   integrations,
   oauthEnabledPlatforms,
   currentUserRole,
+  linkedinSeats = [],
+  seatLimit = 2,
+  seatCost = 100,
 }: Props) {
   const router = useRouter();
   const isAdmin = currentUserRole === "KAROS_ADMIN";
@@ -560,6 +597,7 @@ export function IntegrationsTab({
               isAdmin={isAdmin}
               onOAuthConnect={() => openOAuthPopup(platform.id)}
               onDisconnected={() => router.refresh()}
+              {...(platform.id === "linkedin" ? { linkedinSeats, seatLimit, seatCost } : {})}
             />
           );
         })}

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card, CardTitle, StatCard, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
+import { integrationIsUsable } from "@/lib/integration-status";
 import type { Asset, ClientIntegration, Job } from "@/lib/types";
 
 /* Judgment scale: in-progress = amber, live/done = green, in-between = slate. */
@@ -28,7 +29,7 @@ export function ClientAnalytics({
 }) {
   const published = assets.filter((a) => a.status === "published").length;
   const scheduled = assets.filter((a) => a.status === "scheduled").length;
-  const activeChannels = integrations.filter((i) => i.status === "active");
+  const activeChannels = integrations.filter((i) => integrationIsUsable(i));
 
   // Content-by-status breakdown
   const byStatus = new Map<string, number>();

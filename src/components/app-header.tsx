@@ -7,12 +7,14 @@ interface Props {
   actionItems: ActionItemNotification[];
   reviewJobs: AgentReviewNotification[];
   taskAlerts: ClientTask[];
+  userName: string;
+  userEmail: string;
 }
 
-export function AppHeader({ actionItems, reviewJobs, taskAlerts }: Props) {
+export function AppHeader({ actionItems, reviewJobs, taskAlerts, userName, userEmail }: Props) {
   return (
     <header className="sticky top-0 z-30 flex items-center justify-end gap-1 border-b border-border bg-background/80 px-4 py-2 backdrop-blur-sm md:px-8">
-      <ContactUsButton />
+      <ContactUsButton userName={userName} userEmail={userEmail} />
       <ThemeToggle />
       <NotificationBell actionItems={actionItems} reviewJobs={reviewJobs} taskAlerts={taskAlerts} />
     </header>

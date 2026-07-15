@@ -59,11 +59,17 @@ export type ReconcileResult = {
  * Client tasks claimed for a charged execution (`metadata.executing`) whose
  * last update predates `staleBefore`. Equality-only query + in-memory recency
  * filter — no composite index needed (same idiom as listStuckManagedJobs).
+ *
+ * Tasks dispatched to the agent service (metadata.externalJobId) are excluded:
+ * their runs legitimately outlive the in-process staleness window, and the
+ * webhook / agent-service reconciler own their resolution (including the task
+ * release + refund via syncTaskForJobOutcome) — same split as jobs below.
  */
 export async function listStuckTaskExecutions(staleBefore: number, limit = 25): Promise<ClientTask[]> {
   const snap = await tasksCol().where("metadata.executing", "==", true).get();
   return snap.docs
     .map((d) => ({ ...(d.data() as ClientTask), id: d.id }))
+    .filter((t) => !t.metadata?.externalJobId)
     .filter((t) => (t.updatedAt ?? t.createdAt ?? 0) < staleBefore)
     .sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))
     .slice(0, limit);
@@ -210,6 +216,13 @@ export async function reconcileStuckTaskExecution(
     const task = taskSnap.data() as ClientTask;
     if (task.metadata?.executing !== true) {
       return { action: "skipped", detail: "no longer executing", refunded: false };
+    }
+    if (task.metadata?.externalJobId) {
+      return {
+        action: "skipped",
+        detail: "dispatched to the agent service — webhook/agent-service reconciler owns it",
+        refunded: false,
+      };
     }
     if ((task.updatedAt ?? task.createdAt ?? 0) >= staleBefore) {
       return { action: "skipped", detail: "updated since sweep — not stale", refunded: false };

@@ -15,8 +15,11 @@ import type {
   ClientCompetitor,
   ClientContextDoc,
   ClientCredits,
+  Campaign,
   ClientIntegration,
+  ClientMarketingAnalytics,
   ClientReport,
+  EmployeeSeat,
   ClientRequest,
   ClientSettings,
   ClientTask,
@@ -28,6 +31,7 @@ import type {
   Job,
   JobStatus,
   LoginLog,
+  PerformanceBenchmarks,
   Role,
   ScheduledRun,
   TaskComment,
@@ -41,6 +45,11 @@ import {
   defaultClientCredits,
   rollCreditWindows,
 } from "@/lib/credits";
+import { engagementScore, rankByEngagement } from "@/lib/analytics";
+import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
+import { computeBoardCapacity } from "@/lib/task-dedup";
+import { encryptCredentials, decryptCredentials } from "@/lib/crypto/token-cipher";
+import { randomUUID } from "node:crypto";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 
 /* ----------------------------- helpers ----------------------------- */
@@ -79,6 +88,11 @@ const col = {
   scheduledRuns: () => adminDb().collection("scheduledRuns"),
   // SEO & GEO insights: one doc per client (doc ID = clientId), written by the onboarding pipeline.
   clientSeoGeo: () => adminDb().collection("clientSeoGeo"),
+  // Marketing performance analytics: one doc per (client, asset, platform),
+  // doc ID = `${clientId}_${platform}_${assetId}`, written by /api/analytics/sync.
+  clientMarketingAnalytics: () => adminDb().collection("clientMarketingAnalytics"),
+  // Omnichannel campaigns: themed bundles of dependent tasks/assets per client.
+  campaigns: () => adminDb().collection("campaigns"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -270,6 +284,82 @@ export async function updateAsset(id: string, data: Partial<Asset>): Promise<voi
 }
 
 /**
+ * Persist content-chain assignments (see lib/post-chain.ts planClientChain).
+ *
+ * CRON-SAFETY INVARIANT: only DRAFT assets are ever written — each target doc
+ * is re-read and skipped (with a warning) if its live status is anything else,
+ * so a race with staff approval can never re-date a calendar-armed asset.
+ * NEVER writes status; forces publishMode "manual" unless already
+ * manual/placeholder — absent = legacy auto, and a stale explicit "auto" on a
+ * draft must be downgraded too, or either would arm the /api/publish cron the
+ * moment the draft is approved with a past date. recommendedAt mirrors the
+ * chain slot so the calendar's draft bucketing and the approve form agree
+ * with the chain date.
+ */
+import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { integrationIsUsable } from "@/lib/integration-status";
+
+export async function applyChainAssignments(
+  assignments: Array<{ id: string; scheduledAt: number; orderKey?: string }>,
+): Promise<void> {
+  if (assignments.length === 0) return;
+  const db = adminDb();
+  const CHUNK = 300; // getAll + batch limits are 500; stay comfortably under.
+  for (let i = 0; i < assignments.length; i += CHUNK) {
+    const chunk = assignments.slice(i, i + CHUNK);
+    const snaps = await db.getAll(...chunk.map((a) => col.assets().doc(a.id)));
+    const batch = db.batch();
+    let writes = 0;
+    for (let j = 0; j < chunk.length; j++) {
+      const assignment = chunk[j];
+      const snap = snaps[j];
+      const doc = snap.exists ? (snap.data() as Asset) : null;
+      if (!doc || doc.status !== "draft") {
+        console.warn(
+          `[chain] skipping assignment for asset ${assignment.id}: status is ${doc?.status ?? "missing"}, not draft`,
+        );
+        continue;
+      }
+
+      // Decide a preferred platform for this asset (explicit scheduledPlatform wins,
+      // else the first agent channel compatible with the asset type).
+      const compatible = PUBLISHABLE_PLATFORMS[doc.type] ?? [];
+      const preferredPlatform = doc.scheduledPlatform ?? (doc.channels ?? []).find((c) => compatible.includes(c));
+
+      // Check if the client has an active integration for this preferred platform.
+      const integrations = await listClientIntegrations(doc.clientId);
+      const settings = await getClientSettings(doc.clientId);
+      const allowAuto = settings?.autoScheduleEnabled === true;
+      const activeIntegration =
+        allowAuto && preferredPlatform
+          ? integrations.find((i) => i.platform === preferredPlatform && integrationIsUsable(i))
+          : undefined;
+
+      batch.set(
+        snap.ref,
+        {
+          scheduledAt: assignment.scheduledAt,
+          ...(assignment.orderKey ? { orderKey: assignment.orderKey } : {}),
+          // If an active integration exists for the preferred platform AND the client
+          // opted in to auto-scheduling, allow auto. Otherwise keep safety: mark
+          // manual so nothing auto-posts without a connection or explicit opt-in.
+          ...(activeIntegration
+            ? { publishMode: "auto" as const }
+            : { publishMode: doc.publishMode !== "manual" && doc.publishMode !== "placeholder" ? "manual" as const : doc.publishMode }),
+          ...(preferredPlatform ? { scheduledPlatform: preferredPlatform } : {}),
+          recommendedAt: assignment.scheduledAt,
+          recommendedReason: "One post per day — assigned by the content chain",
+          updatedAt: Date.now(),
+        },
+        { merge: true },
+      );
+      writes++;
+    }
+    if (writes > 0) await batch.commit();
+  }
+}
+
+/**
  * All calendar-booked assets (status "scheduled" OR "approved") whose scheduledAt is
  * at or before `before` (default: now). Approval places an asset on the calendar at a
  * designated time, so approved auto-mode assets are auto-published just like scheduled
@@ -294,13 +384,112 @@ export async function listScheduledAssets(opts?: {
   return opts?.limit != null ? due.slice(0, opts.limit) : due;
 }
 
-/** Record a successful platform push: status → published, stamp publishedAt, clear any stale error. */
-export async function markAssetPublished(id: string): Promise<void> {
+/**
+ * Record a successful platform push: status → published, stamp publishedAt,
+ * clear any stale error, and (when the platform returned one) store the
+ * platform's post id so the analytics sync can fetch this post's metrics later.
+ */
+export async function markAssetPublished(id: string, platformPostId?: string | null): Promise<void> {
   const { FieldValue } = await import("firebase-admin/firestore");
   await col.assets().doc(id).update({
     status: "published",
     publishedAt: Date.now(),
+    ...(platformPostId ? { platformPostId } : {}),
     publishError: FieldValue.delete(),
+    publishClaimedAt: FieldValue.delete(),
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Reconcile a single asset (and its parent task) to "published" when it has
+ * demonstrably gone live — its auto-publish slot passed, or a platform post id
+ * was captured/verified. Transactional: re-reads the asset inside the tx (guard
+ * against a racing publish), flips the asset to published, and completes the
+ * parent task (asset.meta.taskId) in the SAME transaction so the client never
+ * sees a published asset whose task is still "in progress". Idempotent —
+ * returns { changed:false } when the asset is already published or no longer
+ * qualifies. `verifiedPostId` (from live ingestion) is stored when provided.
+ */
+export async function reconcileAssetPublished(
+  assetId: string,
+  now: number = Date.now(),
+  verifiedPostId?: string | null,
+): Promise<{ changed: boolean; taskCompleted: boolean }> {
+  const assetRef = col.assets().doc(assetId);
+  return adminDb().runTransaction(async (tx) => {
+    // Firestore requires ALL reads before ANY writes — read asset (and its
+    // parent task) first, then decide, then write.
+    const snap = await tx.get(assetRef);
+    if (!snap.exists) return { changed: false, taskCompleted: false };
+    const asset = withId<Asset>(snap);
+
+    const withPostId: Asset = verifiedPostId ? { ...asset, platformPostId: verifiedPostId } : asset;
+    if (asset.status === "published" || !shouldReconcilePublished(withPostId, now)) {
+      return { changed: false, taskCompleted: false };
+    }
+
+    const taskId = asset.meta?.taskId as string | undefined;
+    const taskRef = taskId ? col.clientTasks().doc(taskId) : null;
+    const taskSnap = taskRef ? await tx.get(taskRef) : null;
+
+    tx.set(
+      assetRef,
+      {
+        status: "published",
+        publishedAt: asset.publishedAt ?? now,
+        ...(verifiedPostId ? { platformPostId: verifiedPostId } : {}),
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+
+    if (taskRef && taskSnap?.exists) {
+      const task = taskSnap.data() as ClientTask;
+      if (task.status !== "completed" && task.status !== "archived") {
+        tx.set(taskRef, { status: "completed", completedAt: now, updatedAt: now }, { merge: true });
+        return { changed: true, taskCompleted: true };
+      }
+    }
+    return { changed: true, taskCompleted: false };
+  });
+}
+
+/**
+ * How long a publish claim is honored before it's considered stale and re-claimable.
+ * Longer than any single platform push, shorter than the cron interval, so a run that
+ * crashes mid-publish never permanently wedges an asset.
+ */
+const PUBLISH_CLAIM_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Atomically claim an asset for a single publish attempt. Returns true ONLY for the
+ * caller that wins the claim; concurrent callers (a manual "Publish Now" racing the
+ * auto-cron, or two overlapping cron ticks) get false and must not publish. Prevents
+ * duplicate posts to a client's real social accounts. Uses a transaction so the
+ * check-and-set is atomic. Callers must release the claim on failure (or it self-heals
+ * after PUBLISH_CLAIM_TTL_MS).
+ */
+export async function claimAssetForPublish(id: string): Promise<boolean> {
+  const ref = col.assets().doc(id);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const asset = snap.data() as Asset;
+    if (asset.status === "published") return false;
+    const now = Date.now();
+    const claimedAt = asset.publishClaimedAt;
+    if (claimedAt != null && now - claimedAt < PUBLISH_CLAIM_TTL_MS) return false;
+    tx.update(ref, { publishClaimedAt: now, updatedAt: now });
+    return true;
+  });
+}
+
+/** Release a publish claim after a failed attempt so a later run can retry. */
+export async function releaseAssetPublishClaim(id: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.assets().doc(id).update({
+    publishClaimedAt: FieldValue.delete(),
     updatedAt: Date.now(),
   });
 }
@@ -500,9 +689,118 @@ export async function getClientSeoGeo(clientId: string): Promise<SeoGeoInsights 
   return doc.exists ? (doc.data() as SeoGeoInsights) : null;
 }
 
-/** Save (or overwrite) the SEO/GEO insight set; document ID = clientId. */
+/**
+ * Save the SEO/GEO insight set (document ID = clientId). Guarded by a transaction so a
+ * slower or degraded intel run can't clobber a fresher capture: when two runs overlap,
+ * last-writer-wins would silently downgrade coverage. We keep whichever capture started
+ * later (higher capturedAt), regardless of which one finishes writing last.
+ */
 export async function upsertClientSeoGeo(data: SeoGeoInsights): Promise<void> {
-  await col.clientSeoGeo().doc(data.clientId).set(data);
+  const ref = col.clientSeoGeo().doc(data.clientId);
+  await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists) {
+      const existing = snap.data() as SeoGeoInsights;
+      if (existing.capturedAt > data.capturedAt) return; // a newer capture already landed
+    }
+    tx.set(ref, data);
+  });
+}
+
+/* ----------------- marketing performance analytics ----------------- */
+
+/** Deterministic doc id so a re-sync upserts one asset+platform row in place. */
+function analyticsDocId(clientId: string, platform: string, assetId: string): string {
+  return `${clientId}_${platform}_${assetId}`;
+}
+
+/** All performance records for a client, newest capture first. */
+export async function listClientMarketingAnalytics(
+  clientId: string,
+): Promise<ClientMarketingAnalytics[]> {
+  const snap = await col
+    .clientMarketingAnalytics()
+    .where("clientId", "==", clientId)
+    .get();
+  return snap.docs
+    .map((d) => withId<ClientMarketingAnalytics>(d))
+    .sort((a, b) => (b.capturedAt ?? 0) - (a.capturedAt ?? 0));
+}
+
+/**
+ * Upsert one asset+platform metrics row. Idempotent on the deterministic doc id
+ * and last-writer-wins guarded by `capturedAt` (mirrors `upsertClientSeoGeo`) so
+ * an out-of-order or replayed sync can't overwrite fresher metrics with stale
+ * ones. The 0–100 `engagementScore` is (re)derived from the metrics here so the
+ * denormalized ranking field can never drift from the numbers it summarizes.
+ */
+export async function upsertClientMarketingAnalytics(
+  input: Omit<ClientMarketingAnalytics, "id" | "engagementScore" | "createdAt" | "updatedAt">,
+): Promise<void> {
+  const id = analyticsDocId(input.clientId, input.platform, input.assetId);
+  const ref = col.clientMarketingAnalytics().doc(id);
+  const score = engagementScore(input.metrics);
+  await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const now = Date.now();
+    if (snap.exists) {
+      const existing = snap.data() as ClientMarketingAnalytics;
+      if ((existing.capturedAt ?? 0) > input.capturedAt) return; // a newer capture already landed
+      tx.set(
+        ref,
+        { ...input, id, engagementScore: score, updatedAt: now },
+        { merge: true },
+      );
+    } else {
+      tx.set(ref, {
+        ...input,
+        id,
+        engagementScore: score,
+        createdAt: now,
+        updatedAt: now,
+      } satisfies ClientMarketingAnalytics);
+    }
+  });
+}
+
+/**
+ * Top-N and bottom-N performers for a client, ranked by `engagementScore`.
+ * Reads the whole per-client history with a single indexed `clientId` query and
+ * ranks in JS (see the "avoid composite indexes" convention) — cheap because the
+ * score is stored, not recomputed. Fed into the Task Map prompt so the model
+ * doubles down on proven winners and phases out failing structures.
+ */
+export async function getClientPerformanceBenchmarks(
+  clientId: string,
+  count = 5,
+): Promise<PerformanceBenchmarks> {
+  const records = await listClientMarketingAnalytics(clientId);
+  const { top, bottom } = rankByEngagement(records, count);
+  return { clientId, top, bottom, sampleSize: records.length };
+}
+
+/* ------------------------------ campaigns --------------------------- */
+
+/** All campaigns for a client, newest first. */
+export async function listCampaigns(clientId: string): Promise<Campaign[]> {
+  const snap = await col.campaigns().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<Campaign>(d))
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+export async function getCampaign(id: string): Promise<Campaign | null> {
+  const doc = await col.campaigns().doc(id).get();
+  return doc.exists ? withId<Campaign>(doc) : null;
+}
+
+export async function createCampaign(data: Omit<Campaign, "id">): Promise<string> {
+  const ref = await col.campaigns().add(data);
+  return ref.id;
+}
+
+export async function updateCampaign(id: string, data: Partial<Campaign>): Promise<void> {
+  await col.campaigns().doc(id).set(data, { merge: true });
 }
 
 /* --------------------- client competitors -------------------------- */
@@ -678,12 +976,29 @@ export async function listClientIntegrations(clientId: string): Promise<ClientIn
 /**
  * Create or overwrite one integration (keyed on clientId + platform).
  * Uses a deterministic doc ID so upserts are idempotent.
+ *
+ * The client's auto-publish opt-out SURVIVES reconnects: a full overwrite
+ * would silently re-enable posting (absent flag ⇒ enabled everywhere), so the
+ * previous `autoPublish` is carried over unless the caller sets it
+ * explicitly. `status`/`expiredAt` are deliberately NOT carried — a fresh
+ * connect clears the expired state.
  */
 export async function upsertClientIntegration(
   data: Omit<ClientIntegration, "id">,
 ): Promise<void> {
   const docId = `${data.clientId}_${data.platform}`;
-  await col.clientIntegrations().doc(docId).set({ id: docId, ...data });
+  const ref = col.clientIntegrations().doc(docId);
+  const existing = await ref.get();
+  const previousAutoPublish = existing.exists
+    ? (existing.data() as ClientIntegration).autoPublish
+    : undefined;
+  await ref.set({
+    id: docId,
+    ...(data.autoPublish === undefined && previousAutoPublish !== undefined
+      ? { autoPublish: previousAutoPublish }
+      : {}),
+    ...data,
+  });
 }
 
 /**
@@ -694,6 +1009,20 @@ export async function markIntegrationExpired(clientId: string, platform: string)
   const docId = `${clientId}_${platform}`;
   await col.clientIntegrations().doc(docId).set(
     { status: "expired", expiredAt: Date.now() },
+    { merge: true },
+  );
+}
+
+/**
+ * Mark a platform integration as needing re-authentication (401/403 seen by the
+ * analytics sync). Same operational meaning as expired — the integration-status
+ * helpers treat both as "needs reconnect" — but recorded distinctly so we can
+ * trace which subsystem detected the dead token.
+ */
+export async function markIntegrationForReauth(clientId: string, platform: string): Promise<void> {
+  const docId = `${clientId}_${platform}`;
+  await col.clientIntegrations().doc(docId).set(
+    { status: "reauthenticate", expiredAt: Date.now() },
     { merge: true },
   );
 }
@@ -718,6 +1047,97 @@ export async function deleteClientIntegration(
 ): Promise<void> {
   const docId = `${clientId}_${platform}`;
   await col.clientIntegrations().doc(docId).delete();
+}
+
+/* ---------------- LinkedIn employee-advocacy seats ------------------ */
+/*
+ * Seats live as an array on the client's `${clientId}_linkedin` integration doc.
+ * All mutations are transactional read-modify-write so concurrent adds/edits
+ * can't clobber the array. Seat OAuth tokens are ENCRYPTED at rest via the token
+ * cipher on the way in and DECRYPTED only by getEmployeeSeatsForSync.
+ */
+
+const linkedinDocId = (clientId: string) => `${clientId}_linkedin`;
+
+/** All seats for a client's LinkedIn integration, tokens left encrypted. */
+export async function listEmployeeSeats(clientId: string): Promise<EmployeeSeat[]> {
+  const doc = await col.clientIntegrations().doc(linkedinDocId(clientId)).get();
+  if (!doc.exists) return [];
+  return (doc.data() as ClientIntegration).employeeSeats ?? [];
+}
+
+/** Active seats with DECRYPTED tokens — for the analytics sync only (server-side). */
+export async function getEmployeeSeatsForSync(clientId: string): Promise<EmployeeSeat[]> {
+  const seats = await listEmployeeSeats(clientId);
+  return seats
+    .filter((s) => s.status === "active")
+    .map((s) => ({ ...s, credentials: decryptCredentials(s.credentials) }));
+}
+
+/**
+ * Append an employee seat to the LinkedIn integration (tokens encrypted).
+ * Requires the LinkedIn integration to exist. Transactional so parallel adds
+ * don't drop each other.
+ */
+export async function addEmployeeSeat(
+  clientId: string,
+  input: Omit<EmployeeSeat, "id" | "addedAt" | "updatedAt">,
+): Promise<EmployeeSeat> {
+  const ref = col.clientIntegrations().doc(linkedinDocId(clientId));
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) {
+      throw new Error("Connect the client's LinkedIn account before adding employee seats.");
+    }
+    const seats = (snap.data() as ClientIntegration).employeeSeats ?? [];
+    const now = Date.now();
+    const seat: EmployeeSeat = {
+      ...input,
+      id: randomUUID(),
+      credentials: encryptCredentials(input.credentials ?? {}),
+      addedAt: now,
+      updatedAt: now,
+    };
+    tx.set(ref, { employeeSeats: [...seats, seat], updatedAt: now }, { merge: true });
+    return seat;
+  });
+}
+
+/** Patch one seat (status/resume/background, or re-encrypt new credentials). */
+export async function updateEmployeeSeat(
+  clientId: string,
+  seatId: string,
+  patch: Partial<Pick<EmployeeSeat, "status" | "resumeUrl" | "backgroundContext" | "employeeName" | "employeeEmail" | "credentials">>,
+): Promise<void> {
+  const ref = col.clientIntegrations().doc(linkedinDocId(clientId));
+  await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const seats = (snap.data() as ClientIntegration).employeeSeats ?? [];
+    const now = Date.now();
+    const next = seats.map((s) =>
+      s.id === seatId
+        ? {
+            ...s,
+            ...patch,
+            ...(patch.credentials ? { credentials: encryptCredentials(patch.credentials) } : {}),
+            updatedAt: now,
+          }
+        : s,
+    );
+    tx.set(ref, { employeeSeats: next, updatedAt: now }, { merge: true });
+  });
+}
+
+/** Remove a seat from the LinkedIn integration. */
+export async function removeEmployeeSeat(clientId: string, seatId: string): Promise<void> {
+  const ref = col.clientIntegrations().doc(linkedinDocId(clientId));
+  await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    const seats = (snap.data() as ClientIntegration).employeeSeats ?? [];
+    tx.set(ref, { employeeSeats: seats.filter((s) => s.id !== seatId), updatedAt: Date.now() }, { merge: true });
+  });
 }
 
 /* -------------------- client activity logs -------------------------- */
@@ -861,6 +1281,8 @@ export async function listClientTasks(opts: {
   /** Single status or array of statuses — filtered in JS to avoid composite indexes. */
   status?: TaskStatus | TaskStatus[];
   limit?: number;
+  /** Archived tasks are hidden unless requested (or explicitly asked for via status). */
+  includeArchived?: boolean;
 }): Promise<ClientTask[]> {
   // Avoid composite-index requirement by filtering in JS after a simple query.
   let q = col.clientTasks() as FirebaseFirestore.Query;
@@ -873,31 +1295,67 @@ export async function listClientTasks(opts: {
     const allowed = new Set<TaskStatus>(opts.status);
     results = results.filter((t) => allowed.has(t.status));
   }
+  // Archived is a storage state, not a board state — exclude it unless the
+  // caller opted in or explicitly filtered for it. Tasks completed past the
+  // archive threshold are treated as archived AT QUERY TIME, so the active
+  // view is clean immediately — the physical sweep (cron) merely catches the
+  // documents up to what this filter already decided.
+  const askedForArchived =
+    opts.status === "archived" ||
+    (Array.isArray(opts.status) && opts.status.includes("archived"));
+  if (!opts.includeArchived && !askedForArchived) {
+    const archiveCutoff = Date.now() - TASK_ARCHIVE_AFTER_MS;
+    results = results.filter(
+      (t) =>
+        t.status !== "archived" &&
+        !(t.status === "completed" && (t.completedAt ?? t.updatedAt ?? 0) < archiveCutoff),
+    );
+  }
   return results
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, opts.limit ?? 200);
 }
 
+/** Tasks marked Done stay on the board this long before the sweep archives them. */
+export const TASK_ARCHIVE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
- * Delete ALL tasks for a client in batched Firestore writes.
- * Used by the Scan & Refresh flow to clear stale tasks before generating a fresh map.
- * Returns the number of documents deleted.
+ * Archiving pipeline: move tasks that have been completed for ≥7 days into the
+ * "archived" state so the active board stays clean. Batched; safe to call
+ * lazily on page load (after()) or from a cron. Returns the number archived.
  */
-export async function deleteAllClientTasks(clientId: string): Promise<number> {
-  const snap = await col.clientTasks().where("clientId", "==", clientId).get();
-  if (snap.empty) return 0;
+export async function archiveStaleCompletedTasks(clientId?: string): Promise<number> {
+  const cutoff = Date.now() - TASK_ARCHIVE_AFTER_MS;
+  let q = col.clientTasks().where("status", "==", "completed") as FirebaseFirestore.Query;
+  if (clientId) q = q.where("clientId", "==", clientId);
+  const snap = await q.get();
+  const stale = snap.docs.filter((d) => {
+    const t = d.data() as ClientTask;
+    return (t.completedAt ?? t.updatedAt ?? 0) < cutoff;
+  });
+  if (stale.length === 0) return 0;
 
   const db = adminDb();
-  const CHUNK = 400; // stay well under Firestore's 500-write limit
-  const docs = snap.docs;
-
-  for (let i = 0; i < docs.length; i += CHUNK) {
+  const CHUNK = 400;
+  const now = Date.now();
+  for (let i = 0; i < stale.length; i += CHUNK) {
     const batch = db.batch();
-    docs.slice(i, i + CHUNK).forEach((d) => batch.delete(d.ref));
+    stale.slice(i, i + CHUNK).forEach((d) =>
+      batch.update(d.ref, { status: "archived", updatedAt: now }),
+    );
     await batch.commit();
   }
+  return stale.length;
+}
 
-  return docs.length;
+/** Resolve the task that dispatched a given agent-service run (metadata.externalJobId). */
+export async function findTaskByExternalJobId(jobId: string): Promise<ClientTask | null> {
+  const snap = await col
+    .clientTasks()
+    .where("metadata.externalJobId", "==", jobId)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<ClientTask>(snap.docs[0]);
 }
 
 export async function getClientTask(id: string): Promise<ClientTask | null> {
@@ -927,7 +1385,45 @@ export async function claimTaskForExecution(
     if (task.metadata?.executing === true) return null;
     tx.update(ref, {
       status: "in_progress",
-      metadata: { ...(task.metadata ?? {}), executing: true, executionError: null },
+      metadata: {
+        ...(task.metadata ?? {}),
+        executing: true,
+        executionError: null,
+        // Clear the previous dispatch's link at claim time: a stale id would
+        // exempt this claim from the stuck-execution sweep (which skips
+        // externalJobId tasks) if the deferred run dies before re-dispatching.
+        externalJobId: null,
+      },
+      updatedAt: Date.now(),
+    });
+    return task;
+  });
+}
+
+/**
+ * Atomically claim a review_pending task for its terminal transition
+ * (approve / publish): verifies ownership, review_pending status, and that no
+ * re-run is executing, then flips to completed in the same transaction.
+ * Returns the task as it was BEFORE the claim, or null when the claim loses —
+ * this is what stops approve racing a charged Re-run (or a second approve tab)
+ * into double side effects.
+ */
+export async function claimTaskCompletion(
+  taskId: string,
+  clientId: string,
+): Promise<ClientTask | null> {
+  const ref = col.clientTasks().doc(taskId);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return null;
+    const task = withId<ClientTask>(snap);
+    if (task.clientId !== clientId) return null;
+    if (task.status !== "review_pending") return null;
+    if (task.metadata?.executing === true) return null;
+    tx.update(ref, {
+      status: "completed",
+      completedAt: Date.now(),
+      metadata: { ...(task.metadata ?? {}), failedUpload: null },
       updatedAt: Date.now(),
     });
     return task;
@@ -1248,56 +1744,25 @@ export async function listCreditLedger(clientId: string, limit = 50): Promise<Cr
     .slice(0, limit);
 }
 
-/* ─────────────────────── Task capacity helper ───────────────────── */
+/* ─────────────────────── Task capacity / dedup ──────────────────── */
 
-/** Statuses that count against the per-client active-task cap. */
-export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
-  "pending",
-  "in_progress",
-  "review_pending",
-];
+// The rules are pure and unit-tested in src/lib/task-dedup.ts; data.ts only
+// owns the fetch. ACTIVE_TASK_STATUSES + normalizeTitleForDedup re-exported
+// for existing consumers.
+export { ACTIVE_TASK_STATUSES, normalizeTitleForDedup } from "@/lib/task-dedup";
 
 /**
- * One fetch that powers both task-creation guards: how many KAROS-MANAGED
+ * One fetch that powers the task-creation guards: how many KAROS-MANAGED
  * tasks are still active (for the MAX_ACTIVE_TASKS cap — client_managed tasks
- * are exempt and uncapped) and the normalized titles of every existing task —
- * completed included — for deduplication.
+ * are exempt and uncapped), the normalized titles of every existing task for
+ * the exact-match dedup tier, and the raw task list for the similarity /
+ * product-scope dedup tiers (findDuplicateReason).
  */
 export async function getTaskBoardCapacity(clientId: string): Promise<{
   activeCount: number;
   existingTitles: Set<string>;
+  tasks: ClientTask[];
 }> {
   const existing = await listClientTasks({ clientId, limit: 500 });
-  const active = new Set<TaskStatus>(ACTIVE_TASK_STATUSES);
-  // Owner inference mirrors inferOwnerEngine (execution-engine.ts) — kept
-  // inline because data.ts sits below the engine in the import graph.
-  const isKarosManaged = (t: ClientTask) =>
-    (t.owner ?? (t.source === "manual" ? "client_managed" : "karos_managed")) === "karos_managed";
-  return {
-    activeCount: existing.filter((t) => active.has(t.status) && isKarosManaged(t)).length,
-    existingTitles: new Set(existing.map((t) => normalizeTitleForDedup(t.title))),
-  };
-}
-
-/* ─────────────────────── Deduplication helper ───────────────────── */
-
-/** Normalize a task title to a canonical form for dedup comparison. */
-export function normalizeTitleForDedup(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^\w\s]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Returns true when an existing task for this client has a normalized title
- * that exactly matches the given normalized title.
- */
-export async function taskTitleExists(
-  clientId: string,
-  normalizedTitle: string,
-): Promise<boolean> {
-  const existing = await listClientTasks({ clientId, limit: 500 });
-  return existing.some((t) => normalizeTitleForDedup(t.title) === normalizedTitle);
+  return { ...computeBoardCapacity(existing), tasks: existing };
 }

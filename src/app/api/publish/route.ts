@@ -1,10 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { listScheduledAssets, listClientIntegrations, updateAsset, markAssetPublished, markIntegrationExpired } from "@/lib/data";
+import { listScheduledAssets, listClientIntegrations, updateAsset, markAssetPublished, markIntegrationExpired, claimAssetForPublish, releaseAssetPublishClaim } from "@/lib/data";
 import {
   TokenExpiredError,
   inferPlatform,
   publishAssetToPlatform,
 } from "@/lib/integrations/publishers";
+import { requireCronSecret } from "@/lib/cron-auth";
+import { integrationIsUsable } from "@/lib/integration-status";
 
 /**
  * Auto-publish cron (tier "auto" of the three-tier publishing flow).
@@ -19,15 +21,10 @@ import {
  * "Publish Now".
  */
 export async function GET(req: NextRequest) {
-  // Auth: Vercel Cron sends Authorization: Bearer <CRON_SECRET>
-  // In dev, CRON_SECRET can be any value or omitted entirely
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const authHeader = req.headers.get("Authorization");
-    if (authHeader !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  // Auth: Vercel Cron sends Authorization: Bearer <CRON_SECRET>. Fails closed in
+  // production if CRON_SECRET is unset; open only for local dev convenience.
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
 
   const now = Date.now();
   // Limit to 50 assets per cron tick — prevents timeouts on large backlogs.
@@ -65,7 +62,7 @@ export async function GET(req: NextRequest) {
       // Auto-eligible = valid token AND the client hasn't turned off auto-publish
       // for that platform (absent flag = enabled, for pre-toggle integrations).
       const autoEligible = integrations.filter(
-        (i) => i.status !== "expired" && i.autoPublish !== false,
+        (i) => integrationIsUsable(i) && i.autoPublish !== false,
       );
       const connectedPlatforms = autoEligible.map((i) => i.platform);
 
@@ -95,11 +92,25 @@ export async function GET(req: NextRequest) {
         };
       }
 
+      // Atomically claim the asset so a manual "Publish Now" or an overlapping
+      // cron tick can't publish the same asset in parallel (→ duplicate post).
+      const claimed = await claimAssetForPublish(asset.id);
+      if (!claimed) {
+        return {
+          assetId: asset.id,
+          platform,
+          status: "skipped",
+          error: "Skipped — already claimed by a concurrent publish",
+        };
+      }
+
       try {
-        await publishAssetToPlatform(platform, integration, asset);
-        await markAssetPublished(asset.id);
+        const { postId } = await publishAssetToPlatform(platform, integration, asset);
+        await markAssetPublished(asset.id, postId);
         return { assetId: asset.id, platform, status: "published" };
       } catch (e) {
+        // Release the claim so a later attempt can retry this asset.
+        await releaseAssetPublishClaim(asset.id).catch(() => {});
         if (e instanceof TokenExpiredError) {
           // Mark the integration expired so the UI surfaces it and the next
           // cron tick skips the dead token rather than retrying indefinitely.

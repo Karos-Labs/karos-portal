@@ -2,7 +2,9 @@ import { type NextRequest, NextResponse } from "next/server";
 import { claimExternalJobCompletion, listStuckManagedJobs, updateJob } from "@/lib/data";
 import { getAgentServiceJob, isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { syncTaskForJobOutcome } from "@/lib/task-sync";
 import type { JobStatus } from "@/lib/types";
+import { requireCronSecret } from "@/lib/cron-auth";
 
 export const maxDuration = 60;
 
@@ -31,12 +33,8 @@ const FAILURE_MAP: Record<string, JobStatus> = {
 };
 
 export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    if (req.headers.get("Authorization") !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
   if (!isAgentServiceConfigured()) {
     return NextResponse.json({ skipped: true, reason: "agent service not configured" });
   }
@@ -97,6 +95,12 @@ export async function GET(req: NextRequest) {
         },
         updatedAt: Date.now(),
       });
+      // Release the board task that dispatched this run (if any) and refund
+      // its execution charge — mirrors the webhook's failure path.
+      await syncTaskForJobOutcome(job.id, job.clientId, {
+        ok: false,
+        error: `Agent run ${remote.status} (webhook missed)`,
+      }).catch(() => {});
       results.push({ jobId: job.id, action: `reconciled → ${mapped}` });
     } catch (e) {
       results.push({ jobId: job.id, action: `error: ${e instanceof Error ? e.message : "unknown"}` });

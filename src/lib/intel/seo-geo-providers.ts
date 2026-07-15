@@ -100,10 +100,12 @@ async function askOpenAI(prompt: string, clientId: string): Promise<{ answerText
 interface GeminiResponse {
   candidates?: Array<{
     content?: { parts?: Array<{ text?: string }> };
+    finishReason?: string;
     groundingMetadata?: {
       groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>;
     };
   }>;
+  promptFeedback?: { blockReason?: string };
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number };
 }
 
@@ -150,7 +152,19 @@ async function askGemini(prompt: string, clientId: string): Promise<{ answerText
     .map((p) => p.text ?? "")
     .join("")
     .trim();
-  if (!answerText) throw new Error("Gemini capture returned an empty answer");
+  if (!answerText) {
+    // Distinguish a real empty answer from a truncated/blocked one: a MAX_TOKENS
+    // (grounding overhead ate the budget), SAFETY, or RECITATION finishReason — or a
+    // prompt-level block — is a capture problem, not a genuine "engine had nothing to
+    // say". Surface it so the UNAVAILABLE cell is diagnosable in logs rather than silent.
+    const reason =
+      data.promptFeedback?.blockReason
+        ? `blocked: ${data.promptFeedback.blockReason}`
+        : candidate?.finishReason
+          ? `finishReason: ${candidate.finishReason}`
+          : "no content returned";
+    throw new Error(`Gemini capture returned an empty answer (${reason})`);
+  }
 
   // Grounding chunks carry the real cited sources; title is usually the bare domain.
   const cited = new Set<string>(domainsFromText(answerText));

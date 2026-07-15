@@ -1,0 +1,171 @@
+import { describe, expect, it } from "vitest";
+import {
+  ENGAGEMENT_WEIGHTS,
+  VIDEO_REFERENCE_SECONDS,
+  engagementScore,
+  mockRawMetrics,
+  normalizePlatformMetrics,
+  rankByEngagement,
+} from "../analytics";
+import type { MarketingMetrics } from "../types";
+
+function metrics(patch: Partial<MarketingMetrics> = {}): MarketingMetrics {
+  return { impressions: 1000, clicks: 0, engagementRate: 0, videoViewTime: 0, ...patch };
+}
+
+describe("engagementScore", () => {
+  it("is 0 for a post with no engagement, clicks, or views", () => {
+    expect(engagementScore(metrics())).toBe(0);
+  });
+
+  it("weights a perfect engagement rate at exactly its configured weight (×100)", () => {
+    // engagementRate=1, no clicks, no video ⇒ score = 0.5 * 1 * 100 = 50
+    expect(engagementScore(metrics({ engagementRate: 1 }))).toBe(ENGAGEMENT_WEIGHTS.engagementRate * 100);
+  });
+
+  it("credits click-through as clicks ÷ impressions", () => {
+    // ctr = 500/1000 = 0.5 ⇒ 0.3 * 0.5 * 100 = 15
+    expect(engagementScore(metrics({ clicks: 500 }))).toBe(15);
+  });
+
+  it("saturates the video term at the reference watch time and clamps beyond it", () => {
+    const atRef = engagementScore(metrics({ videoViewTime: VIDEO_REFERENCE_SECONDS }));
+    const wayOver = engagementScore(metrics({ videoViewTime: VIDEO_REFERENCE_SECONDS * 10 }));
+    // 0.2 * 1 * 100 = 20, and clamped so more watch time can't exceed it.
+    expect(atRef).toBe(ENGAGEMENT_WEIGHTS.videoRetention * 100);
+    expect(wayOver).toBe(atRef);
+  });
+
+  it("combines all three signals onto a 0–100 scale", () => {
+    // eng=1 (→50) + ctr=1 (→30) + video=full (→20) = 100
+    const perfect = engagementScore(
+      metrics({ clicks: 1000, engagementRate: 1, videoViewTime: VIDEO_REFERENCE_SECONDS }),
+    );
+    expect(perfect).toBe(100);
+  });
+
+  it("never divides by zero when impressions are 0", () => {
+    expect(engagementScore(metrics({ impressions: 0, clicks: 50 }))).toBe(0);
+  });
+
+  it("guards against negative / non-finite inputs", () => {
+    expect(engagementScore(metrics({ engagementRate: -1 }))).toBe(0);
+    expect(engagementScore(metrics({ engagementRate: Number.NaN }))).toBe(0);
+  });
+});
+
+describe("rankByEngagement", () => {
+  const rec = (id: string, engagementScore: number) => ({ id, engagementScore });
+
+  it("returns top descending and bottom worst-first", () => {
+    const records = [rec("a", 10), rec("b", 90), rec("c", 50), rec("d", 30), rec("e", 70)];
+    const { top, bottom } = rankByEngagement(records, 2);
+    expect(top.map((r) => r.id)).toEqual(["b", "e"]);
+    expect(bottom.map((r) => r.id)).toEqual(["a", "d"]);
+  });
+
+  it("never reports the same record as both a win and a loss with a small history", () => {
+    const records = [rec("a", 10), rec("b", 20), rec("c", 30)];
+    const { top, bottom } = rankByEngagement(records, 5);
+    const overlap = top.filter((t) => bottom.some((b) => b.id === t.id));
+    expect(overlap).toEqual([]);
+  });
+
+  it("handles fewer records than the requested count", () => {
+    const { top, bottom } = rankByEngagement([rec("a", 5)], 5);
+    expect(top.map((r) => r.id)).toEqual(["a"]);
+    expect(bottom).toEqual([]);
+  });
+});
+
+describe("normalizePlatformMetrics", () => {
+  it("maps LinkedIn's native field names onto the unified shape", () => {
+    const m = normalizePlatformMetrics("linkedin", {
+      impressionCount: 1000,
+      clickCount: 100,
+      likeCount: 30,
+      commentCount: 10,
+      shareCount: 10,
+    });
+    expect(m.impressions).toBe(1000);
+    expect(m.clicks).toBe(100);
+    expect(m.engagementRate).toBeCloseTo(0.05); // (30+10+10)/1000
+    expect(m.videoViewTime).toBe(0);
+  });
+
+  it("maps TikTok's video-first payload including watch time", () => {
+    const m = normalizePlatformMetrics("tiktok", {
+      video_views: 5000,
+      profile_views: 200,
+      likes: 400,
+      comments: 50,
+      shares: 50,
+      total_time_watched: 12_000,
+    });
+    expect(m.impressions).toBe(5000);
+    expect(m.clicks).toBe(200);
+    expect(m.engagementRate).toBeCloseTo(0.1); // 500/5000
+    expect(m.videoViewTime).toBe(12_000);
+  });
+
+  it("converts YouTube watch minutes to seconds", () => {
+    const m = normalizePlatformMetrics("youtube", {
+      views: 2000,
+      clicks: 40,
+      likes: 100,
+      comments: 20,
+      estimatedMinutesWatched: 500,
+    });
+    expect(m.videoViewTime).toBe(30_000); // 500 min × 60
+  });
+
+  it("clamps an impossible engagement rate to 1", () => {
+    const m = normalizePlatformMetrics("twitter", {
+      impression_count: 100,
+      url_link_clicks: 0,
+      like_count: 500,
+      retweet_count: 0,
+      reply_count: 0,
+    });
+    expect(m.engagementRate).toBe(1);
+  });
+
+  it("returns zeroes rather than NaN when impressions are absent", () => {
+    const m = normalizePlatformMetrics("facebook", { reactions: 5 });
+    expect(m.impressions).toBe(0);
+    expect(m.engagementRate).toBe(0);
+  });
+
+  it("falls back to a generic mapping for an unknown platform", () => {
+    const m = normalizePlatformMetrics("mastodon", {
+      impressions: 800,
+      clicks: 40,
+      likes: 20,
+      comments: 20,
+    });
+    expect(m.impressions).toBe(800);
+    expect(m.clicks).toBe(40);
+    expect(m.engagementRate).toBeCloseTo(0.05);
+  });
+});
+
+describe("mockRawMetrics", () => {
+  it("is deterministic for a given platform + seed", () => {
+    expect(mockRawMetrics("linkedin", "asset-1")).toEqual(mockRawMetrics("linkedin", "asset-1"));
+  });
+
+  it("varies by seed and by platform", () => {
+    expect(mockRawMetrics("linkedin", "asset-1")).not.toEqual(mockRawMetrics("linkedin", "asset-2"));
+    expect(mockRawMetrics("linkedin", "asset-1")).not.toEqual(mockRawMetrics("tiktok", "asset-1"));
+  });
+
+  it("emits each platform's native field names so normalization round-trips", () => {
+    const raw = mockRawMetrics("tiktok", "seed");
+    expect(raw).toHaveProperty("video_views");
+    expect(raw).toHaveProperty("total_time_watched");
+    const m = normalizePlatformMetrics("tiktok", raw);
+    expect(m.impressions).toBeGreaterThan(0);
+    expect(engagementScore(m)).toBeGreaterThanOrEqual(0);
+    expect(engagementScore(m)).toBeLessThanOrEqual(100);
+  });
+});

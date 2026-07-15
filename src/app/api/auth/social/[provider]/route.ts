@@ -48,11 +48,12 @@ export async function GET(
   const redirectUri = buildCallbackUrl(provider);
   const authParams = new URLSearchParams({
     response_type: "code",
-    client_id: appClientId,
     redirect_uri: redirectUri,
-    scope: config.scopes.join(" "),
+    scope: config.scopes.join(config.scopeSeparator ?? " "),
     state,
   });
+  // Most providers use "client_id"; TikTok uses "client_key" (config-driven).
+  authParams.set(config.clientIdParam ?? "client_id", appClientId);
 
   for (const [k, v] of Object.entries(config.extraAuthParams ?? {})) {
     authParams.set(k, v);

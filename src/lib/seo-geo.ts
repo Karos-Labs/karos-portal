@@ -87,15 +87,49 @@ export interface Gazetteer {
   competitors: Record<string, string[]>;
 }
 
+/**
+ * Aliases derived from a brand's website so answers that name a brand by its domain
+ * ("rivalone.com") or compressed label ("rivalone") still match. Previously the URL was
+ * discarded and only the display name was matched, under-counting share-of-voice whenever
+ * a model referred to a competitor by domain/short form. Root domain is always safe; the
+ * bare label is only added when it's distinctive enough (≥4 chars) to avoid false hits on
+ * common words.
+ */
+function aliasesFromWebsite(url: string | undefined | null): string[] {
+  const domain = rootDomain(url);
+  if (!domain) return [];
+  const aliases = [domain];
+  const label = domain.split(".")[0];
+  if (label.length >= 4) aliases.push(label);
+  return aliases;
+}
+
+/** Case-insensitive alias dedupe, preserving first-seen order and dropping blanks. */
+function uniqueAliases(aliases: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of aliases) {
+    const a = raw.trim();
+    const key = a.toLowerCase();
+    if (a && !seen.has(key)) {
+      seen.add(key);
+      out.push(a);
+    }
+  }
+  return out;
+}
+
 export function buildGazetteer(
   clientName: string,
   clientWebsite: string | undefined,
   competitors: Array<{ company: string; url?: string }>,
 ): Gazetteer {
   return {
-    client: [clientName],
+    client: uniqueAliases([clientName, ...aliasesFromWebsite(clientWebsite)]),
     clientDomain: rootDomain(clientWebsite),
-    competitors: Object.fromEntries(competitors.map((c) => [c.company, [c.company]])),
+    competitors: Object.fromEntries(
+      competitors.map((c) => [c.company, uniqueAliases([c.company, ...aliasesFromWebsite(c.url)])]),
+    ),
   };
 }
 

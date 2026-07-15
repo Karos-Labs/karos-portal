@@ -35,13 +35,15 @@ const STATUS_NEXT: Record<TaskStatus, TaskStatus> = {
   in_progress:    "review_pending",
   review_pending: "completed",
   completed:      "pending",
+  archived:       "pending",
 };
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   pending:        "Pending",
   in_progress:    "In Progress",
   review_pending: "Review Pending",
-  completed:      "Completed",
+  completed:      "Done",
+  archived:       "Archived",
 };
 
 const STATUS_ICON: Record<TaskStatus, string> = {
@@ -49,6 +51,7 @@ const STATUS_ICON: Record<TaskStatus, string> = {
   in_progress:    "Clock",
   review_pending: "Eye",
   completed:      "CheckCircle",
+  archived:       "Archive",
 };
 
 const ROLE_BADGE: Record<string, string> = {
@@ -65,16 +68,22 @@ const ROLE_LABEL: Record<string, string> = {
 
 /* ── Artifact section (Review Pending — Flow A & B) ──────────────── */
 
+const VIDEO_EXT = /\.(mp4|webm|mov|m4v)(\?|$)/i;
+
 function ArtifactSection({
   artifact,
   taskType,
   agentName,
+  mediaUrl,
 }: {
   artifact: string;
   taskType: string;
   agentName?: string;
+  /** Visual deliverable (image or video URL) produced by the agent run. */
+  mediaUrl?: string | null;
 }) {
   const isEmailArtifact = taskType === "integration_action";
+  const isVideo = mediaUrl ? VIDEO_EXT.test(mediaUrl) : false;
 
   return (
     <div className="rounded-md border border-neon/20 bg-neon/[0.03] p-4">
@@ -92,6 +101,19 @@ function ArtifactSection({
           </span>
         )}
       </div>
+
+      {/* Visual deliverable preview (image / video) */}
+      {mediaUrl && (
+        <div className="mb-3 overflow-hidden rounded-md border border-border bg-surface-2">
+          {isVideo ? (
+            <video src={mediaUrl} controls className="max-h-72 w-full object-contain" />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element -- remote agent artifact; dimensions unknown
+            <img src={mediaUrl} alt="Generated visual" className="max-h-72 w-full object-contain" />
+          )}
+        </div>
+      )}
+
       <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
         <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
           {artifact}
@@ -123,15 +145,19 @@ function ReviewPanel({
   const [showAdjustForm, setShowAdjustForm] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [adjustError, setAdjustError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [autoPublish, setAutoPublish] = useState(false);
   const [approving, startApproveTransition] = useTransition();
   const [adjusting, startAdjustTransition] = useTransition();
   const [publishing, startPublishTransition] = useTransition();
   const isIntegration = taskType === "integration_action";
 
   function approve() {
+    setActionError(null);
     startApproveTransition(async () => {
-      const res = await approveTaskArtifactAction(taskId, clientId);
+      const res = await approveTaskArtifactAction(taskId, clientId, { autoPublish });
       if (res.ok) onApprove();
+      else setActionError(res.error ?? "Could not approve the deliverable");
     });
   }
 
@@ -153,9 +179,11 @@ function ReviewPanel({
   }
 
   function publish() {
+    setActionError(null);
     startPublishTransition(async () => {
       const res = await publishIntegrationAction(taskId, clientId);
       if (res.ok) onApprove();
+      else setActionError(res.error ?? "Could not send the email");
     });
   }
 
@@ -175,6 +203,35 @@ function ReviewPanel({
             </p>
           </div>
         </div>
+      )}
+
+      {/* Approve / publish failure */}
+      {actionError && (
+        <div className="flex items-start gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
+          <Icon name="AlertTriangle" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
+          <p className="text-xs text-danger break-words">{actionError}</p>
+        </div>
+      )}
+
+      {/* Pre-approval publish intent (content deliverables only) */}
+      {!isIntegration && (
+        <label className="flex cursor-pointer items-start gap-2 rounded-md border border-border bg-surface-2 px-3 py-2">
+          <input
+            type="checkbox"
+            checked={autoPublish}
+            onChange={(e) => setAutoPublish(e.target.checked)}
+            className="mt-0.5 h-3.5 w-3.5 accent-[var(--color-neon,#39d98a)]"
+          />
+          <span className="min-w-0">
+            <span className="block text-xs font-medium text-foreground">
+              Auto-publish at the scheduled time
+            </span>
+            <span className="block text-[11px] text-muted">
+              Requires the target channel to be connected with auto-publish enabled — otherwise it
+              lands on the calendar for a manual Publish Now.
+            </span>
+          </span>
+        </label>
       )}
 
       {/* Primary actions */}
@@ -203,7 +260,7 @@ function ReviewPanel({
             ) : (
               <Icon name="Check" className="h-3.5 w-3.5" />
             )}
-            {approving ? "Approving…" : "Approve"}
+            {approving ? "Approving…" : "Approve & Schedule"}
           </button>
         )}
         <button
@@ -454,6 +511,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   const artifact = (task.metadata?.artifact as string | undefined) ?? null;
   const taskType = (task.metadata?.type as string | undefined) ?? "content_generation";
   const executingAgentName = (task.metadata?.agentName as string | undefined) ?? undefined;
+  const artifactMediaUrl = (task.metadata?.artifactImageUrl as string | undefined) ?? null;
   const isReviewPending = task.status === "review_pending";
   const isExecuting = task.metadata?.executing === true;
   const failedUpload = task.metadata?.failedUpload as boolean | undefined;
@@ -478,7 +536,14 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   }, []);
 
   function handleApprove() {
-    onStatusChange(task.id, "completed", task.clientId);
+    // The approve/publish server action already completed the task — only
+    // reflect it locally (a second updateTaskStatusAction would double-write).
+    onLocalUpdate({
+      ...task,
+      status: "completed",
+      completedAt: Date.now(),
+      metadata: { ...(task.metadata ?? {}), failedUpload: null },
+    });
     onClose();
   }
 
@@ -580,7 +645,12 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
 
           {/* Generated artifact (review_pending only) */}
           {isReviewPending && artifact && !isExecuting && (
-            <ArtifactSection artifact={artifact} taskType={taskType} agentName={executingAgentName} />
+            <ArtifactSection
+              artifact={artifact}
+              taskType={taskType}
+              agentName={executingAgentName}
+              mediaUrl={artifactMediaUrl}
+            />
           )}
 
           {/* Review / approval panel (review_pending only) */}

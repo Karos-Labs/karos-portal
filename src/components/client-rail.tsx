@@ -79,7 +79,7 @@ export function ClientRail({
 
   return (
     <>
-      {/* ── Desktop left rail ── */}
+      {/* ── Desktop left rail (z-30 so its menus/panels sit above the center column) ── */}
       <aside className="relative z-30 hidden w-72 shrink-0 border-r border-border bg-background md:block">
         <div className="sticky top-0 flex h-screen flex-col">
           {/* Logo */}
@@ -200,7 +200,7 @@ export function ClientRail({
         </div>
       </div>
 
-      {/* ── Mobile bottom tab bar ── */}
+      {/* ── Mobile bottom tab bar (last tab = Company sheet) ── */}
       <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-border bg-background/95 backdrop-blur-sm md:hidden">
         {primaryNav.map((item) => {
           const active = isActive(pathname, item);
@@ -285,7 +285,7 @@ export function ClientRail({
                 </Link>
               )}
               <div className="px-0">
-                <ContactUsButton variant="row" />
+                <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
               </div>
               <ThemeSwitch />
             </div>

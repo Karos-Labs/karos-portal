@@ -2,8 +2,12 @@
 
 import { useState, useMemo } from "react";
 import { Icon } from "@/components/icon";
+import { PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { cn } from "@/lib/utils";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
+import { CampaignCapsules } from "@/components/campaign-capsules";
+import { templateForAsset, isAssetUnlockedForClient } from "@/lib/post-chain";
+import { formatTimeHM, formatDayShort } from "@/lib/date-format";
 import type { Asset } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -12,10 +16,11 @@ import type { Asset } from "@/lib/types";
  * kind maps the three-tier publishing flow (+ agent suggestions) onto chips:
  *   published   — went live (auto cron or Publish Now)
  *   scheduled   — auto/manual item awaiting its slot
+ *   failed      — scheduled item whose last publish attempt errored (needs attention)
  *   placeholder — calendar-only roadmap entry (never auto-posted)
  *   suggested   — draft with an agent-recommended slot, not yet scheduled
  */
-type EventKind = "published" | "scheduled" | "placeholder" | "suggested";
+type EventKind = "published" | "scheduled" | "failed" | "placeholder" | "suggested";
 
 interface CalendarEvent {
   assetId: string;
@@ -25,6 +30,11 @@ interface CalendarEvent {
   mode?: string;
   agentColor: string;
   platform?: string;
+  /** Template/format chip label (e.g. "By The Numbers"), when resolvable. */
+  templateName?: string;
+  /** True when this asset is a future-dated placeholder for the viewer — render
+      a non-clickable "upcoming" chip and never open the detail modal. */
+  locked?: boolean;
 }
 
 /* ── Constants ───────────────────────────────────────────────────────── */
@@ -42,30 +52,56 @@ const PLATFORM_COLORS: Record<string, string> = {
   linkedin: "#FF6B2C",
   twitter: "#FF6B2C",
   youtube: "#FF6B2C",
+  tiktok: "#FF6B2C",
 };
 
 /* ── Event builder ───────────────────────────────────────────────────── */
 
-function eventKind(a: Asset): EventKind | null {
+function eventKind(a: Asset, now: number): EventKind | null {
   if (a.status === "published" && (a.scheduledAt != null || a.publishedAt != null)) return "published";
   // Approving a draft onto the calendar and legacy "scheduled" both land here.
   if ((a.status === "scheduled" || a.status === "approved") && a.scheduledAt != null) {
-    return a.publishMode === "placeholder" ? "placeholder" : "scheduled";
+    if (a.publishMode === "placeholder") return "placeholder";
+    // publishError is cleared on a successful push, so its presence on a still-scheduled
+    // item means the last auto/manual attempt failed — surface it instead of a calm chip.
+    if (a.publishError) return "failed";
+    // Time-based resolution: an auto-publish slot in the past reads as live on the
+    // calendar even before the next publish-cron tick has flipped the stored status,
+    // so clients see a history of what actually went live vs. what's still upcoming.
+    // Manual items are intentionally excluded — they only go live once a staffer hits
+    // "Publish Now", so we never claim they auto-published just because time passed.
+    // (Legacy assets with no publishMode are treated as auto, matching the cron.)
+    const isAuto = a.publishMode === "auto" || a.publishMode == null;
+    if (isAuto && a.scheduledAt <= now) return "published";
+    return "scheduled";
   }
-  // Draft with an agent-recommended slot — advisory until someone schedules it.
-  if (a.status === "draft" && a.recommendedAt != null) return "suggested";
+  // Draft with a planned chain slot (scheduledAt) or an agent-recommended slot —
+  // advisory until a staffer approves it. The one-post-per-day chain writes
+  // scheduledAt onto drafts, so bucketing drafts by scheduledAt ?? recommendedAt
+  // makes the chain visible on every viewer's calendar (staff included).
+  if (a.status === "draft" && (a.scheduledAt != null || a.recommendedAt != null)) return "suggested";
   return null;
 }
 
-function buildEvents(assets: Asset[]): CalendarEvent[] {
+/** A future-dated placeholder for this viewer: the server already redacts client
+    copies (asset.locked), and we defensively re-derive it for client viewers. */
+function isLockedForViewer(a: Asset, viewerIsClient: boolean, now: number): boolean {
+  return a.locked === true || (viewerIsClient && !isAssetUnlockedForClient(a, now));
+}
+
+function buildEvents(assets: Asset[], now: number, viewerIsClient: boolean): CalendarEvent[] {
   return assets
     .map((a): CalendarEvent | null => {
-      const kind = eventKind(a);
+      const locked = isLockedForViewer(a, viewerIsClient, now);
+      let kind = eventKind(a, now);
+      // A locked upcoming asset always earns a calendar slot (rendered as a
+      // non-clickable placeholder) even if its status wouldn't otherwise chip.
+      if (!kind && locked && a.scheduledAt != null) kind = "scheduled";
       if (!kind) return null;
       const platformColor = a.scheduledPlatform ? PLATFORM_COLORS[a.scheduledPlatform] : undefined;
       const at =
         kind === "suggested"
-          ? a.recommendedAt!
+          ? (a.scheduledAt ?? a.recommendedAt!)
           : (a.scheduledAt ?? a.publishedAt!);
       return {
         assetId: a.id,
@@ -75,6 +111,8 @@ function buildEvents(assets: Asset[]): CalendarEvent[] {
         mode: a.publishMode,
         agentColor: platformColor ?? "#FF6B2C",
         platform: a.scheduledPlatform,
+        templateName: templateForAsset(a)?.name,
+        locked,
       };
     })
     .filter((e): e is CalendarEvent => e != null)
@@ -83,18 +121,26 @@ function buildEvents(assets: Asset[]): CalendarEvent[] {
 
 /* ── Event chip ──────────────────────────────────────────────────────── */
 
-/** Chip styling per kind: published = live green, scheduled = upcoming info,
-    placeholder = neutral roadmap entry, suggested = faint advisory. */
+/** Chip styling per kind — each lifecycle state gets its own hue from the
+    judgment scale so they're distinguishable at a glance, with the border
+    style (solid / dashed / dotted) as a secondary cue:
+      published   = solid green   (live)
+      scheduled   = dashed blue   (upcoming, confirmed slot)
+      failed      = solid red     (needs attention)
+      placeholder = dashed amber   (roadmap entry, never auto-posted)
+      suggested   = dotted orange (agent advisory, not yet scheduled) */
 const KIND_CHIP_CLASS: Record<EventKind, string> = {
-  published: "bg-success/15 text-success",
-  scheduled: "border border-dashed border-info/50 bg-info/10 text-info",
-  placeholder: "border border-dashed border-muted-2/50 bg-foreground/[0.04] text-muted",
-  suggested: "border border-dotted border-neon/40 bg-neon/5 text-muted-2 italic",
+  published: "border border-success/40 bg-success/25 text-success",
+  scheduled: "border border-dashed border-info/60 bg-info/25 text-info",
+  failed: "border border-danger/60 bg-danger/25 text-danger",
+  placeholder: "border border-dashed border-warning/60 bg-warning/20 text-warning",
+  suggested: "border border-dotted border-neon/60 bg-neon/20 text-neon italic",
 };
 
 const KIND_TOOLTIP: Record<EventKind, string> = {
   published: "Published",
   scheduled: "Scheduled",
+  failed: "Publish failed — open to review",
   placeholder: "Placeholder (not auto-posted)",
   suggested: "Agent-suggested slot (draft)",
 };
@@ -105,11 +151,28 @@ const MODE_TOOLTIP: Record<string, string> = {
 };
 
 function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: string) => void }) {
-  const timeStr = new Date(event.scheduledAt).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  // Deterministic format — toLocale* differs between server and browser and
+  // breaks hydration now that the calendar is the SSR'd default tab.
+  const timeStr = formatTimeHM(event.scheduledAt);
+
+  // Locked = future-dated placeholder: show the template name behind a lock, no
+  // click-through, no content — the actual asset never opens (requirement H).
+  if (event.locked) {
+    const label = event.templateName ?? event.title;
+    const dateStr = formatDayShort(event.scheduledAt);
+    return (
+      <div
+        className="flex w-full items-center gap-1 truncate rounded border border-dashed border-border bg-surface-2 px-1 py-0.5 text-[10px] leading-tight text-muted-2"
+        title={`Upcoming · ${label} · unlocks ${dateStr}`}
+      >
+        <Icon name="Lock" className="h-2.5 w-2.5 shrink-0 opacity-70" />
+        <span className="truncate">{label}</span>
+      </div>
+    );
+  }
+
   const modeStr = event.kind === "scheduled" && event.mode ? MODE_TOOLTIP[event.mode] : undefined;
+  const platformCfg = event.platform ? PLATFORM_REGISTRY.find((p) => p.id === event.platform) : null;
 
   return (
     <button
@@ -119,23 +182,47 @@ function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: 
         "flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate text-left transition-opacity hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-neon/50",
         KIND_CHIP_CLASS[event.kind],
       )}
-      title={`${KIND_TOOLTIP[event.kind]}${modeStr ? ` · ${modeStr}` : ""} · ${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""}`}
+      title={`${KIND_TOOLTIP[event.kind]}${modeStr ? ` · ${modeStr}` : ""}${event.templateName ? ` · ${event.templateName}` : ""} · ${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""}`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{event.title}</span>
+      {event.templateName && (
+        <span className="ml-auto max-w-[46%] shrink-0 truncate font-mono text-[9px] uppercase tracking-wide opacity-60">
+          {event.templateName}
+        </span>
+      )}
+      {platformCfg && (
+        <div className="ml-2 flex items-center">
+          <Icon name={platformCfg.icon} className="h-3 w-3 opacity-80" />
+        </div>
+      )}
     </button>
   );
 }
 
 /* ── Main component ──────────────────────────────────────────────────── */
 
-export function ContentCalendar({ assets }: { assets: Asset[] }) {
+export function ContentCalendar({
+  assets,
+  viewerIsClient = false,
+}: {
+  assets: Asset[];
+  /** Client viewers see future-dated posts as non-clickable locked placeholders. */
+  viewerIsClient?: boolean;
+}) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
 
-  const events = useMemo(() => buildEvents(assets), [assets]);
+  // Snapshot "now" once at mount (lazy initializer — a render-time Date.now() is
+  // impure and would change every render, breaking the memo). Resolves past
+  // auto-publish slots to "published" as of page load, without self-flipping mid-session.
+  const [nowMs] = useState(() => Date.now());
+  const events = useMemo(
+    () => buildEvents(assets, nowMs, viewerIsClient),
+    [assets, nowMs, viewerIsClient],
+  );
   const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
   const openAsset = openAssetId ? assetById.get(openAssetId) ?? null : null;
 
@@ -184,7 +271,11 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
   const isEmpty = events.length === 0 && scheduledCount === 0;
 
   return (
-    <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
+    <div className="space-y-4">
+      {/* Campaign capsules — unified cross-channel groups above the temporal grid */}
+      <CampaignCapsules assets={assets} onOpen={setOpenAssetId} />
+
+      <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2.5">
@@ -289,19 +380,19 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
         <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <div className="h-2.5 w-3.5 rounded-sm border border-dashed border-info/60 bg-info/10" />
-          Scheduled
-        </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <div className="h-2.5 w-3.5 rounded-sm bg-success opacity-80" />
+          <div className="h-2.5 w-3.5 rounded-sm border border-success/40 bg-success/25" />
           Published
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <div className="h-2.5 w-3.5 rounded-sm border border-dashed border-muted-2/60 bg-foreground/[0.04]" />
+          <div className="h-2.5 w-3.5 rounded-sm border border-dashed border-info/60 bg-info/25" />
+          Scheduled
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
+          <div className="h-2.5 w-3.5 rounded-sm border border-dashed border-warning/60 bg-warning/20" />
           Placeholder
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <div className="h-2.5 w-3.5 rounded-sm border border-dotted border-neon/50 bg-neon/5" />
+          <div className="h-2.5 w-3.5 rounded-sm border border-dotted border-neon/60 bg-neon/20" />
           Suggested
         </div>
       </div>
@@ -311,6 +402,7 @@ export function ContentCalendar({ assets }: { assets: Asset[] }) {
         open={openAsset != null}
         onClose={() => setOpenAssetId(null)}
       />
+      </div>
     </div>
   );
 }

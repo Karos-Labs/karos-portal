@@ -8,6 +8,7 @@ import {
 } from "@/lib/data";
 import { submitCustomAgentRun } from "@/lib/agent-service/run-custom-agent";
 import { computeNextRunAt } from "@/lib/run-cadence";
+import { requireCronSecret } from "@/lib/cron-auth";
 
 export const maxDuration = 120;
 
@@ -22,14 +23,10 @@ export const maxDuration = 120;
  * nextRunAt, so only one tick advances a given run and no window double-fires.
  */
 export async function GET(req: NextRequest) {
-  // Auth: Vercel Cron sends Authorization: Bearer <CRON_SECRET>.
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const authHeader = req.headers.get("Authorization");
-    if (authHeader !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  // Auth: Cloud Scheduler sends the shared CRON_SECRET (Bearer or X-Cron-Secret);
+  // fails closed in production when the secret is unset. See lib/cron-auth.ts.
+  const unauthorized = requireCronSecret(req);
+  if (unauthorized) return unauthorized;
 
   const now = Date.now();
   const due = await listDueScheduledRuns({ before: now, limit: 25 });

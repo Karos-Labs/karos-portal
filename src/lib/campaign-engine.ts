@@ -1,0 +1,258 @@
+/**
+ * Omnichannel Campaign engine.
+ *
+ * When a high-weight trend or event warrants more than a single post, this turns
+ * it into a cohesive, dependent bundle across MANAGED_PRODUCTS: a core authority
+ * anchor (a blog article), a distribution vehicle (a newsletter summarizing it),
+ * and matching social pieces — with explicit relational dependencies (the
+ * newsletter and socials depend on the anchor). It runs the Creative Entropy
+ * Guard first so a repetitive theme is pushed toward a fresh angle before any
+ * tasks are written.
+ *
+ * The dependency assembly is pure (`buildCampaignTaskDrafts`) and unit-tested;
+ * persistence + the model call live in `generateCampaignBundle`. Server-only.
+ */
+
+import "server-only";
+import { generateObject } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
+import { z } from "zod";
+import { after } from "next/server";
+import { MODELS } from "@/lib/constants";
+import { logger } from "@/services/logger";
+import { getClient, listAssets, createCampaign, createClientTask, updateCampaign } from "@/lib/data";
+import { taskWeekKey } from "@/lib/task-dedup";
+import { freshnessGuard } from "@/lib/entropy-guard";
+import type { TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
+
+const SOCIAL_PLATFORMS = ["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"] as const;
+
+/** How far back the entropy guard looks at the client's own text output. */
+const FRESHNESS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/* ── Blueprint schema (the model's structured proposal) ──────────────── */
+
+const pieceSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().min(1).max(800),
+  weight: z.number().int().min(0).max(100),
+});
+
+export const campaignBlueprintSchema = z.object({
+  title: z.string().min(1).max(120),
+  themeScope: z.string().min(1).max(160),
+  /** Authority anchor — a blog article. */
+  anchor: pieceSchema,
+  /** Distribution vehicle — a newsletter summarizing the anchor. */
+  newsletter: pieceSchema,
+  /** Matching social snippets across channels (1–4). */
+  socials: z
+    .array(pieceSchema.extend({ platform: z.enum(SOCIAL_PLATFORMS) }))
+    .min(1)
+    .max(4),
+});
+export type CampaignBlueprint = z.infer<typeof campaignBlueprintSchema>;
+
+/* ── Pure dependency assembly ────────────────────────────────────────── */
+
+export type CampaignRole = "anchor" | "distribution" | "social";
+
+export interface CampaignTaskDraft {
+  role: CampaignRole;
+  title: string;
+  description: string;
+  productType: "blog_article" | "newsletter_issue" | "social_post";
+  platform?: string;
+  weight: number;
+  /** Roles this piece depends on — resolved to real task ids at persist time. */
+  dependsOnRoles: CampaignRole[];
+}
+
+function weightToPriority(weight: number): TaskPriority {
+  if (weight >= 75) return "high";
+  if (weight >= 40) return "medium";
+  return "low";
+}
+
+/**
+ * Assemble the ordered, dependency-wired task drafts for a campaign:
+ * anchor (blog, no deps) → newsletter (depends on anchor) → socials (each
+ * depends on anchor). Anchor is always first so id resolution is trivial.
+ */
+export function buildCampaignTaskDrafts(blueprint: CampaignBlueprint): CampaignTaskDraft[] {
+  const anchor: CampaignTaskDraft = {
+    role: "anchor",
+    title: blueprint.anchor.title,
+    description: blueprint.anchor.description,
+    productType: "blog_article",
+    weight: blueprint.anchor.weight,
+    dependsOnRoles: [],
+  };
+  const newsletter: CampaignTaskDraft = {
+    role: "distribution",
+    title: blueprint.newsletter.title,
+    description: blueprint.newsletter.description,
+    productType: "newsletter_issue",
+    weight: blueprint.newsletter.weight,
+    dependsOnRoles: ["anchor"],
+  };
+  const socials: CampaignTaskDraft[] = blueprint.socials.map((s) => ({
+    role: "social",
+    title: s.title,
+    description: s.description,
+    productType: "social_post",
+    platform: s.platform,
+    weight: s.weight,
+    dependsOnRoles: ["anchor"],
+  }));
+  return [anchor, newsletter, ...socials];
+}
+
+/* ── Generation + persistence ────────────────────────────────────────── */
+
+export interface CampaignTrend {
+  theme: string;
+  weight: number;
+  rationale?: string;
+}
+
+export interface GenerateCampaignInput {
+  clientId: string;
+  createdBy: string;
+  trend: CampaignTrend;
+  /** ISO week key the campaign targets; defaults to the current week. */
+  targetWeek?: string;
+  now?: number;
+}
+
+export interface GeneratedCampaign {
+  campaignId: string;
+  title: string;
+  themeScope: string;
+  targetWeek: string;
+  taskIds: string[];
+}
+
+function buildCampaignPrompt(
+  clientName: string,
+  industry: string | null | undefined,
+  trend: CampaignTrend,
+): string {
+  return `CLIENT: ${clientName}${industry ? ` — ${industry}` : ""}
+TREND / EVENT TO BUILD AROUND: ${trend.theme}${trend.rationale ? `\nWhy it matters: ${trend.rationale}` : ""}
+
+Design ONE cohesive omnichannel campaign around this trend. Produce:
+- anchor: a substantial authority blog article (the campaign's cornerstone)
+- newsletter: an issue that summarizes and drives traffic to the anchor
+- socials: 1–4 platform-native snippets that tease the anchor (pick the best-fit platforms)
+
+Every piece must ladder up to the same theme and reference the anchor's angle. Set weight (0-100) by strategic importance. Be hyper-specific to this client — no generic filler.`;
+}
+
+/**
+ * Generate and persist a full campaign bundle for a detected trend. Runs the
+ * entropy guard against the client's last-30-days text first (appending
+ * freshness constraints when the theme is repetitive), asks the model for a
+ * blueprint, then writes the Campaign doc and its dependency-wired tasks.
+ */
+export async function generateCampaignBundle(
+  input: GenerateCampaignInput,
+): Promise<GeneratedCampaign> {
+  const now = input.now ?? Date.now();
+  const client = await getClient(input.clientId);
+  if (!client) throw new Error("Client not found");
+
+  // Entropy guard: compare the trend theme to the client's recent text output.
+  const assets = await listAssets({ clientId: input.clientId });
+  const recentTexts = assets
+    .filter((a) => a.createdAt >= now - FRESHNESS_WINDOW_MS && !!a.content)
+    .map((a) => `${a.title} ${a.content}`);
+  const { constraints } = freshnessGuard(input.trend.theme, recentTexts);
+
+  const system =
+    "You are the Karos AI Campaign Director. You design tight, cohesive omnichannel campaigns where every channel reinforces one theme and one anchor. Return only the structured blueprint." +
+    (constraints ? `\n\n${constraints}` : "");
+
+  const { object: blueprint, usage } = await generateObject({
+    model: anthropic(MODELS.SONNET),
+    schema: campaignBlueprintSchema,
+    system,
+    prompt: buildCampaignPrompt(client.name, client.industry, input.trend),
+  });
+
+  after(() =>
+    logger.logUsage({
+      clientId: input.clientId,
+      agentId: null,
+      agentName: "Campaign Director",
+      modelName: MODELS.SONNET,
+      operation: "campaign_generation",
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+    }),
+  );
+
+  const drafts = buildCampaignTaskDrafts(blueprint);
+  const targetWeek = input.targetWeek ?? taskWeekKey(now);
+
+  // Create the campaign shell first so tasks can carry campaignId on write.
+  const campaignId = await createCampaign({
+    clientId: input.clientId,
+    title: blueprint.title,
+    themeScope: blueprint.themeScope,
+    targetWeek,
+    taskIds: [],
+    assetIds: [],
+    status: "planned",
+    createdBy: input.createdBy,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // Persist the anchor first so dependents can reference its real id.
+  const roleToId: Partial<Record<CampaignRole, string>> = {};
+  const orderedTaskIds: string[] = [];
+  for (const draft of drafts) {
+    const dependsOnTaskIds = draft.dependsOnRoles
+      .map((r) => roleToId[r])
+      .filter((id): id is string => !!id);
+    const metadata: Record<string, unknown> = {
+      productType: draft.productType,
+      completionTrigger: `product_run:${draft.productType}`,
+      campaignRole: draft.role,
+      // Denormalized so the producing asset can carry the capsule label without a join.
+      campaignTitle: blueprint.title,
+    };
+    if (draft.platform) metadata.platform = draft.platform;
+
+    const taskId = await createClientTask({
+      clientId: input.clientId,
+      title: draft.title,
+      description: draft.description,
+      status: "pending",
+      priority: weightToPriority(draft.weight),
+      source: "content_dispatch" as TaskSource,
+      owner: "karos_managed" as TaskOwner,
+      weight: draft.weight,
+      campaignId,
+      dependsOnTaskIds,
+      metadata,
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Anchor is first, so its id is available for the dependents that follow.
+    if (draft.role === "anchor") roleToId.anchor = taskId;
+    orderedTaskIds.push(taskId);
+  }
+
+  await updateCampaign(campaignId, { taskIds: orderedTaskIds, updatedAt: Date.now() });
+
+  return {
+    campaignId,
+    title: blueprint.title,
+    themeScope: blueprint.themeScope,
+    targetWeek,
+    taskIds: orderedTaskIds,
+  };
+}

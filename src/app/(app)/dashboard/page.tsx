@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listClients, listJobs, listAssets, listTranscripts, listActionItemsByAssignee, listUsers } from "@/lib/data";
+import { listClients, listJobs, listActionItemsByAssignee, listUsers } from "@/lib/data";
 import { Card, CardTitle, StatCard, Badge, EmptyState, Button, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { JobStatusBadge } from "@/components/job-status";
@@ -131,46 +131,6 @@ export default async function DashboardPage() {
           </ul>
         </Card>
       </div>
-    </>
-  );
-}
-
-async function ClientDashboard({ clientId, name }: { clientId: string; name: string }) {
-  const [assets, transcripts] = await Promise.all([
-    clientId ? listAssets({ clientId }) : Promise.resolve([]),
-    clientId ? listTranscripts({ clientId }) : Promise.resolve([]),
-  ]);
-  const delivered = assets.filter((a) => a.status === "delivered" || a.status === "approved" || a.status === "published");
-
-  return (
-    <>
-      <PageHeader title={`Hi ${name.split(" ")[0]}`} description="Everything your Karos team has prepared for you." />
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <StatCard label="Assets" value={assets.length} icon={<Icon name="FolderOpen" className="h-5 w-5" />} />
-        <StatCard label="Approved & live" value={delivered.length} icon={<Icon name="CircleCheckBig" className="h-5 w-5" />} />
-        <StatCard label="Meetings" value={transcripts.length} icon={<Icon name="Mic" className="h-5 w-5" />} />
-      </div>
-      <Card className="mt-6">
-        <div className="mb-4 flex items-center justify-between">
-          <CardTitle>Latest assets</CardTitle>
-          <Link href="/assets" className="text-xs text-neon hover:underline">View all</Link>
-        </div>
-        {assets.length === 0 ? (
-          <EmptyState icon={<Icon name="FolderOpen" className="h-6 w-6" />} title="Nothing here yet" description="Your team's deliverables will appear here." />
-        ) : (
-          <ul className="divide-y divide-border">
-            {assets.slice(0, 6).map((a) => (
-              <li key={a.id} className="flex items-center justify-between py-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{a.title}</p>
-                  <p className="text-xs text-muted-2">{relativeTime(a.createdAt)}</p>
-                </div>
-                <Badge tone={a.status === "draft" ? "warning" : "neon"}>{a.status}</Badge>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
     </>
   );
 }
