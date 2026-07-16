@@ -2,11 +2,12 @@
 
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { BrandingModal } from "@/components/branding-modal";
-import { addCompetitorByNameAction } from "@/lib/actions";
+import { addCompetitorByNameAction, removeCompetitorAction } from "@/lib/actions";
+import { computeTrackedCompetitors } from "@/lib/competitor-priority";
 import type { BrandColor, BrandingGuidelines, ClientCompetitor } from "@/lib/types";
 
 /* ── Competitor favicon with fallback ────────────────────────────────── */
@@ -58,22 +59,47 @@ export function CompetitorTrack({
   isStaff: boolean;
 }) {
   const router = useRouter();
-  const [showAll, setShowAll] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [addName, setAddName] = useState("");
   const [adding, startAdd] = useTransition();
   const [addError, setAddError] = useState<string | null>(null);
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [, startRemove] = useTransition();
 
-  const threatOrder: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
-  const sorted = [...competitors].sort(
-    (a, b) => (threatOrder[a.threatLevel ?? ""] ?? 3) - (threatOrder[b.threatLevel ?? ""] ?? 3),
+  // Strict top-5 view: manually added competitors always take priority, remaining
+  // slots backfill from the highest-priority auto-seeded rivals. Recomputed from
+  // whatever's left after a removal so the next-best rival fills the freed slot.
+  const active = useMemo(
+    () => competitors.filter((c) => !removedIds.has(c.id)),
+    [competitors, removedIds],
   );
+  const displayed = useMemo(() => computeTrackedCompetitors(active), [active]);
 
-  // Show the top 3 by priority (HIGH first, then MEDIUM, then LOW) so lower-priority
-  // competitors fill in when there aren't 3 HIGH-threat ones.
-  const defaultItems = sorted.slice(0, 3);
-  const extraItems = sorted.slice(3);
-  const displayed = showAll ? sorted : defaultItems;
+  function handleRemove(competitor: ClientCompetitor) {
+    setRemoveError(null);
+    setRemovingId(competitor.id);
+    // Optimistic: hide immediately so a lower-priority rival backfills without layout shift.
+    setRemovedIds((prev) => new Set(prev).add(competitor.id));
+    startRemove(async () => {
+      try {
+        await removeCompetitorAction(clientId, competitor.id);
+      } catch (e) {
+        // Roll back on failure.
+        setRemovedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(competitor.id);
+          return next;
+        });
+        setRemoveError(e instanceof Error ? e.message : "Failed to remove competitor");
+        setRemovingId(null);
+        return;
+      }
+      setRemovingId(null);
+      router.refresh();
+    });
+  }
 
   function openAdd() {
     setAddOpen(true);
@@ -159,7 +185,7 @@ export function CompetitorTrack({
         </div>
       )}
 
-      {competitors.length === 0 && (
+      {active.length === 0 && (
         <p className="px-1 py-1 text-xs text-muted-2">
           No competitors tracked yet. Click + to add one.
         </p>
@@ -173,7 +199,8 @@ export function CompetitorTrack({
                 ? c.url
                 : `https://${c.url}`
               : null;
-            const inner = (
+            const isRemoving = removingId === c.id;
+            const linkContent = (
               <>
                 <CompetitorFavicon url={c.url} />
                 <span className="flex-1 truncate text-xs text-muted group-hover:text-foreground">
@@ -188,20 +215,37 @@ export function CompetitorTrack({
               </>
             );
             return (
-              <li key={c.id}>
+              <li
+                key={c.id}
+                className="group flex items-center gap-1 rounded-md px-2 py-1.5 transition-colors hover:bg-surface-2"
+              >
                 {href ? (
                   <a
                     href={href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-surface-2"
+                    className="flex min-w-0 flex-1 items-center gap-2.5"
                   >
-                    {inner}
+                    {linkContent}
                   </a>
                 ) : (
-                  <div className="group flex items-center gap-2.5 rounded-md px-2 py-1.5">
-                    {inner}
-                  </div>
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">{linkContent}</div>
+                )}
+                {(isStaff || c.source === "manual") && (
+                <button
+                  type="button"
+                  onClick={() => handleRemove(c)}
+                  disabled={isRemoving}
+                  aria-label={`Stop tracking ${c.company}`}
+                  title="Stop tracking"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 opacity-0 transition-colors group-hover:opacity-100 hover:bg-danger/10 hover:text-danger disabled:opacity-50"
+                >
+                  {isRemoving ? (
+                    <Icon name="Loader" className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Icon name="Trash2" className="h-3 w-3" />
+                  )}
+                </button>
                 )}
               </li>
             );
@@ -209,15 +253,7 @@ export function CompetitorTrack({
         </ul>
       )}
 
-      {extraItems.length > 0 && (
-        <button
-          onClick={() => setShowAll((v) => !v)}
-          className="mt-1.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-        >
-          <Icon name={showAll ? "ChevronUp" : "ChevronDown"} className="h-3 w-3" />
-          {showAll ? "Show less" : `+${extraItems.length} more`}
-        </button>
-      )}
+      {removeError && <p className="mt-1 px-1 text-[11px] text-danger">{removeError}</p>}
     </div>
   );
 }

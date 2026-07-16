@@ -120,6 +120,12 @@ const EVENT_CONFIG: Record<
     iconClass: "text-foreground/70",
     label: "Competitor Added",
   },
+  COMPETITOR_REMOVED: {
+    icon: "UserMinus",
+    dotClass: "bg-foreground/[0.04]",
+    iconClass: "text-foreground/70",
+    label: "Competitor Removed",
+  },
   COMPETITOR_ANALYZED: {
     icon: "Sparkles",
     dotClass: "bg-foreground/[0.04]",

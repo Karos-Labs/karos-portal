@@ -221,13 +221,50 @@ export async function addCompetitorAction(
   revalidatePath(`/clients/${clientId}`);
 }
 
-/** Remove a competitor from the tracker. */
+/** Remove a competitor from the tracker (staff back office — any client). */
 export async function deleteCompetitorAction(id: string): Promise<void> {
   await requireStaff();
   const competitor = await getClientCompetitor(id);
   await deleteClientCompetitor(id);
   if (competitor?.clientId) revalidatePath(`/clients/${competitor.clientId}`);
   revalidatePath("/clients");
+}
+
+/**
+ * Stop tracking a competitor from the dashboard widget — accessible to staff and
+ * the client's own CLIENT_USER. Re-fetches the competitor server-side and verifies
+ * it actually belongs to `clientId` (mirrors requireTaskAccess) so a CLIENT_USER
+ * can't delete another client's competitor by pairing a foreign id with their own
+ * clientId; the same error is thrown whether the id is missing or belongs to
+ * someone else, so foreign ids aren't leaked. A non-staff client may only remove
+ * their own manually-added ("manual") competitors — staff-curated/report-imported
+ * rows carry analyst work (deepDive, keyStrengths, etc.) and are only removable via
+ * the staff-only deleteCompetitorAction above. Removing a row is sufficient to
+ * trigger the dashboard's backfill — the tracked-list view is recomputed from
+ * whatever remains, so the next highest-priority auto-seeded rival fills the slot.
+ */
+export async function removeCompetitorAction(clientId: string, id: string): Promise<void> {
+  const user = await requireClientAccess(clientId);
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+
+  const competitor = await getClientCompetitor(id);
+  if (!competitor || competitor.clientId !== clientId) throw new Error("Competitor not found");
+  if (!isStaff && competitor.source !== "manual") {
+    throw new Error("Only staff can remove report-sourced competitors");
+  }
+
+  await deleteClientCompetitor(id);
+
+  await logActivity({
+    clientId,
+    timestamp: Date.now(),
+    type: "COMPETITOR_REMOVED",
+    title: `Competitor removed: ${competitor.company}`,
+    actor: user.name,
+    actorRole: isStaff ? "staff" : "client",
+  });
+
+  revalidatePath(`/clients/${clientId}`);
 }
 
 /** Add a competitor by name and trigger AI analysis for the full tracked list. */
