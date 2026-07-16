@@ -96,11 +96,22 @@ admin automatically (yours is pre-filled). Everyone else who signs up lands in a
 
 ---
 
-## Deploy to Vercel
+## Deploy to Google Cloud Run
+
+Deployment is Cloud Build → Artifact Registry → Cloud Run, driven by `cloudbuild.yaml`.
+A trigger on `main` builds and deploys automatically; the file's header comments cover the
+one-time GCP setup (APIs, Artifact Registry repo, IAM bindings, Secret Manager entries).
+
+To deploy manually:
 
 ```bash
-vercel
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions _REGION=europe-west1,_APP_URL=https://<your-cloud-run-url>
 ```
 
-Add every variable from `.env.local` in the Vercel project's Environment Variables, then
-redeploy. Point your Fireflies webhook at the production URL.
+Server-side secrets are mounted from Secret Manager (see the `--set-secrets` list in
+`cloudbuild.yaml`); the public `NEXT_PUBLIC_FIREBASE_*` values come from `.env.production`
+at build time. Point your Fireflies webhook at the production URL.
+
+Vercel is not used. `vercel.json` sets `git.deploymentEnabled: false` so pushes don't
+trigger Vercel builds.
