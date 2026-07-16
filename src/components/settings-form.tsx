@@ -6,6 +6,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardTitle, Button, Input, Label, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AvatarUploader } from "@/components/avatar-uploader";
+import { ResumeUploader } from "@/components/resume-uploader";
 import { cn, initials } from "@/lib/utils";
 import { updateUserProfileAction, updatePasswordAction } from "@/lib/actions";
 import type { AppUser, Role } from "@/lib/types";
@@ -76,11 +78,16 @@ function ProfileTab({
   const router = useRouter();
   const [name, setName] = useState(user.name);
   const [savedName, setSavedName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone ?? "");
+  const [savedPhone, setSavedPhone] = useState(user.phone ?? "");
+  const [photoURL, setPhotoURL] = useState<string | null>(user.photoURL ?? null);
+  const [resumeUrl, setResumeUrl] = useState<string | null>(user.resumeUrl ?? null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  const dirty = name.trim() !== savedName.trim() && name.trim().length > 0;
+  const dirty =
+    (name.trim() !== savedName.trim() && name.trim().length > 0) || phone.trim() !== savedPhone.trim();
 
   function save(e: React.FormEvent) {
     e.preventDefault();
@@ -88,8 +95,9 @@ function ProfileTab({
     setSuccess(false);
     startTransition(async () => {
       try {
-        await updateUserProfileAction(name);
+        await updateUserProfileAction(name, phone);
         setSavedName(name.trim());
+        setSavedPhone(phone.trim());
         setSuccess(true);
         router.refresh();
         setTimeout(() => setSuccess(false), 3500);
@@ -104,38 +112,42 @@ function ProfileTab({
       {/* Avatar card */}
       <Card>
         <CardTitle className="mb-4">Profile Picture</CardTitle>
-        <div className="flex items-center gap-5">
-          <Avatar photoURL={user.photoURL} name={user.name} size="lg" />
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-foreground">{savedName}</p>
-            <p className="text-xs text-muted-2">{user.email}</p>
-            {user.photoURL ? (
-              <p className="mt-2 text-[11px] text-muted-2">
-                Synced from your sign-in provider.
-              </p>
-            ) : (
-              <p className="mt-2 text-[11px] text-muted-2">
-                Avatar shows your initials.
-              </p>
-            )}
-          </div>
-        </div>
+        <AvatarUploader
+          name={savedName}
+          value={photoURL}
+          onChange={(url) => {
+            setPhotoURL(url);
+            router.refresh();
+          }}
+        />
       </Card>
 
       {/* Editable fields */}
       <Card>
         <CardTitle className="mb-4">Personal Information</CardTitle>
         <form onSubmit={save} className="space-y-4">
-          <div>
-            <Label htmlFor="settings-name">Full name</Label>
-            <Input
-              id="settings-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your name"
-              autoComplete="name"
-              required
-            />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="settings-name">Full name</Label>
+              <Input
+                id="settings-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Your name"
+                autoComplete="name"
+                required
+              />
+            </div>
+            <div>
+              <Label htmlFor="settings-phone">Phone (optional)</Label>
+              <Input
+                id="settings-phone"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+1 555 000 0000"
+                autoComplete="tel"
+              />
+            </div>
           </div>
           <div>
             <Label htmlFor="settings-email">Email address</Label>
@@ -167,6 +179,15 @@ function ProfileTab({
             Save changes
           </Button>
         </form>
+      </Card>
+
+      {/* Resume / CV — powers the LinkedIn advocacy voice */}
+      <Card>
+        <CardTitle className="mb-1">Resume / CV</CardTitle>
+        <p className="mb-3 text-xs text-muted-2">
+          Used to write LinkedIn advocacy content in your authentic voice.
+        </p>
+        <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
       </Card>
 
       {/* Account metadata — read-only */}

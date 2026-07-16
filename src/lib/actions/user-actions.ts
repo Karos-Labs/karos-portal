@@ -8,6 +8,7 @@ import {
   upsertUser,
   deleteUser,
   createClient,
+  clearUserPhone,
 } from "@/lib/data";
 import {
   getCurrentUser,
@@ -79,6 +80,8 @@ export async function approveRegistrationAction(
   };
 
   if (input.role === "CLIENT_USER") {
+    // First time this account gets real client access — run the onboarding wizard.
+    patch.hasCompletedOnboarding = false;
     let clientId = input.clientId ?? null;
     const newName = input.newClientName?.trim();
     if (newName) {
@@ -164,14 +167,16 @@ export async function stopImpersonationAction() {
   redirect("/team");
 }
 
-/** Update the current user's display name in both Firestore and Firebase Auth. */
-export async function updateUserProfileAction(name: string): Promise<void> {
+/** Update the current user's display name (and optional phone) in Firestore + Firebase Auth. */
+export async function updateUserProfileAction(name: string, phone?: string): Promise<void> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Name cannot be empty.");
   if (trimmed.length > 100) throw new Error("Name is too long (max 100 characters).");
-  await upsertUser({ ...user, name: trimmed });
+  const trimmedPhone = phone?.trim();
+  await upsertUser({ ...user, name: trimmed, ...(trimmedPhone ? { phone: trimmedPhone } : {}) });
+  if (!trimmedPhone && user.phone) await clearUserPhone(user.uid);
   await adminAuth().updateUser(user.uid, { displayName: trimmed });
   revalidatePath("/settings");
 }

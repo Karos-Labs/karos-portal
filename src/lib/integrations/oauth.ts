@@ -44,6 +44,8 @@ export function signOAuthState(payload: {
   provider: string;
   /** Employee-advocacy flows carry the target seat so the callback attaches tokens to it. */
   seatId?: string;
+  /** Where the callback should send the browser back to. Defaults to client settings. */
+  returnTo?: "onboarding" | "settings";
 }): string {
   const nonce = randomBytes(16).toString("hex");
   const data = Buffer.from(
@@ -57,6 +59,7 @@ export function verifyOAuthState(state: string): {
   uid: string;
   provider: string;
   seatId?: string;
+  returnTo?: "onboarding" | "settings";
   ts: number;
 } | null {
   const dot = state.lastIndexOf(".");
@@ -71,6 +74,7 @@ export function verifyOAuthState(state: string): {
       uid: string;
       provider: string;
       seatId?: string;
+      returnTo?: "onboarding" | "settings";
       ts: number;
     };
     if (Date.now() - parsed.ts > 10 * 60 * 1000) return null; // 10-minute TTL

@@ -25,6 +25,8 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const clientId = url.searchParams.get("clientId");
   const seatId = url.searchParams.get("seatId");
+  const returnToParam = url.searchParams.get("returnTo");
+  const returnTo = returnToParam === "onboarding" ? "onboarding" : undefined;
   if (!clientId || !seatId) {
     return NextResponse.json({ error: "clientId and seatId are required" }, { status: 400 });
   }
@@ -48,7 +50,7 @@ export async function GET(req: NextRequest) {
   }
 
   const cfg = OAUTH_CONFIGS.linkedin;
-  const state = signOAuthState({ clientId, uid: user.uid, provider: "linkedin", seatId });
+  const state = signOAuthState({ clientId, uid: user.uid, provider: "linkedin", seatId, returnTo });
 
   const authUrl = new URL(cfg.authUrl);
   authUrl.searchParams.set("response_type", "code");

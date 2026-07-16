@@ -112,6 +112,23 @@ export async function deleteUser(uid: string): Promise<void> {
   await col.users().doc(uid).delete();
 }
 
+/** Actually clears the field (unlike `upsertUser({ ...user, photoURL: undefined })`,
+ * which ignoreUndefinedProperties silently no-ops on). */
+export async function clearUserAvatar(uid: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.users().doc(uid).set({ photoURL: FieldValue.delete() }, { merge: true });
+}
+
+export async function clearUserResume(uid: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.users().doc(uid).set({ resumeUrl: FieldValue.delete() }, { merge: true });
+}
+
+export async function clearUserPhone(uid: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.users().doc(uid).set({ phone: FieldValue.delete() }, { merge: true });
+}
+
 export async function listUsers(role?: Role): Promise<AppUser[]> {
   const q = role ? col.users().where("role", "==", role) : col.users();
   const snap = await q.get();
@@ -154,6 +171,31 @@ export async function createClient(data: Omit<Client, "id">): Promise<string> {
 
 export async function updateClient(id: string, data: Partial<Client>): Promise<void> {
   await col.clients().doc(id).set(data, { merge: true });
+}
+
+/**
+ * Finish the onboarding wizard: flip `hasCompletedOnboarding` on the user doc and
+ * apply the workspace patch to the client doc in ONE transaction, so a mid-flight
+ * failure never leaves a user marked "done" with an unsaved workspace (or vice
+ * versa). Verifies the user actually belongs to clientId before writing anything.
+ */
+export async function completeOnboarding(
+  uid: string,
+  clientId: string,
+  clientPatch: Partial<Pick<Client, "name" | "industry" | "brandVoice">>,
+): Promise<void> {
+  const userRef = col.users().doc(uid);
+  const clientRef = col.clients().doc(clientId);
+  await adminDb().runTransaction(async (tx) => {
+    // All reads before any writes (Firestore transaction requirement).
+    const userSnap = await tx.get(userRef);
+    if (!userSnap.exists) throw new Error("User not found");
+    const user = userSnap.data() as AppUser;
+    if (user.clientId !== clientId) throw new Error("Forbidden — not this user's workspace");
+
+    tx.set(userRef, { hasCompletedOnboarding: true }, { merge: true });
+    tx.set(clientRef, clientPatch, { merge: true });
+  });
 }
 
 export async function deleteClient(id: string): Promise<void> {

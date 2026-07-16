@@ -13,6 +13,7 @@ export function ClientEditor({ client }: { client: Client }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
+    name: client.name ?? "",
     contactEmail: client.contactEmail ?? "",
     website: client.website ?? "",
     industry: client.industry ?? "",
@@ -122,6 +123,7 @@ export function ClientEditor({ client }: { client: Client }) {
           </div>
         )}
 
+        <Field label="Company name" value={client.name} />
         <Field label="Brand voice" value={client.brandVoice} multiline />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Contact email" value={client.contactEmail} />
@@ -229,6 +231,10 @@ export function ClientEditor({ client }: { client: Client }) {
         {logoError && <p className="mt-1 text-xs text-danger">{logoError}</p>}
       </div>
 
+      <div>
+        <Label>Company name</Label>
+        <Input value={form.name} onChange={(e) => set("name", e.target.value)} />
+      </div>
       <div>
         <Label>Brand voice</Label>
         <Textarea value={form.brandVoice} onChange={(e) => set("brandVoice", e.target.value)} className="min-h-[120px]" placeholder="Tone, vocabulary, rules…" />

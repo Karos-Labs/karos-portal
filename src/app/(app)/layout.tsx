@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { getViewingContext } from "@/lib/auth";
 import {
   listUsers,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/data";
 import { ActiveClientProvider } from "@/lib/active-client-context";
 import { integrationIsUsable } from "@/lib/integration-status";
+import { shouldBlockForOnboarding } from "@/lib/onboarding";
 import { Sidebar } from "@/components/sidebar";
 import { ClientRail } from "@/components/client-rail";
 import { CopilotDock } from "@/components/copilot-dock";
@@ -24,6 +26,12 @@ import type { ActionItemNotification, AgentReviewNotification, Client, ClientTas
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, isImpersonating, realAdmin } = await getViewingContext();
+
+  // Block the entire portal until a freshly-created client account finishes the
+  // 2-step onboarding wizard. Checked first — before any other data fetching.
+  // Exempt impersonation: staff "viewing as" an unonboarded client must land on
+  // the real dashboard, not get funneled into (and stuck in) that client's wizard.
+  if (shouldBlockForOnboarding({ isImpersonating, user })) redirect("/onboarding");
 
   let pendingCount = 0;
   let clients: Client[] = [];

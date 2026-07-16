@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { updateEmployeeSeat } from "@/lib/data";
+import { updateEmployeeSeat, getUser, upsertUser } from "@/lib/data";
 import {
   OAUTH_CONFIGS,
   verifyOAuthState,
@@ -27,18 +27,18 @@ export async function GET(req: NextRequest) {
   if (!verified || verified.provider !== "linkedin" || !verified.seatId) {
     return NextResponse.redirect(`${origin}/dashboard?linkedin_seat=invalid_state`);
   }
-  const { clientId, seatId } = verified;
-  const settingsUrl = `${origin}/clients/${clientId}/settings`;
+  const { clientId, seatId, uid, returnTo } = verified;
+  const returnUrl = returnTo === "onboarding" ? `${origin}/onboarding` : `${origin}/clients/${clientId}/settings`;
 
   if (oauthError || !code) {
-    return NextResponse.redirect(`${settingsUrl}?linkedin_seat=denied`);
+    return NextResponse.redirect(`${returnUrl}?linkedin_seat=denied`);
   }
 
   const cfg = OAUTH_CONFIGS.linkedin;
   const clientKey = process.env[cfg.envClientId];
   const clientSecret = process.env[cfg.envClientSecret];
   if (!clientKey || !clientSecret) {
-    return NextResponse.redirect(`${settingsUrl}?linkedin_seat=not_configured`);
+    return NextResponse.redirect(`${returnUrl}?linkedin_seat=not_configured`);
   }
 
   try {
@@ -70,7 +70,16 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.redirect(`${settingsUrl}?linkedin_seat=connected`);
+    // Best-effort: mark the CONNECTING USER's own profile as LinkedIn-connected —
+    // only when they connected their own seat (primarySeatId === seatId). A staff
+    // member linking a co-worker's seat on the client's behalf must never have
+    // this stamped onto their own unrelated profile.
+    const initiator = await getUser(uid).catch(() => null);
+    if (initiator && initiator.primarySeatId === seatId) {
+      await upsertUser({ ...initiator, linkedInConnected: true }).catch(() => {});
+    }
+
+    return NextResponse.redirect(`${returnUrl}?linkedin_seat=connected`);
   } catch (e) {
     logger.logError({
       clientId,
@@ -79,6 +88,6 @@ export async function GET(req: NextRequest) {
       errorMessage: `Employee seat ${seatId} OAuth failed: ${e instanceof Error ? e.message : "unknown"}`,
       severity: "ERROR",
     });
-    return NextResponse.redirect(`${settingsUrl}?linkedin_seat=error`);
+    return NextResponse.redirect(`${returnUrl}?linkedin_seat=error`);
   }
 }

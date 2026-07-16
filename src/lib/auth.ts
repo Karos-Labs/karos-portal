@@ -133,6 +133,9 @@ async function ensureUserDoc(
         approvedAt: Date.now(),
         createdAt: Date.now(),
         lastLoginAt: Date.now(),
+        // Fresh client account — send them through the personal profile +
+        // workspace setup wizard on first login.
+        hasCompletedOnboarding: false,
       };
       await upsertUser(user);
       return user;

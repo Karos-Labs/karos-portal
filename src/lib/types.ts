@@ -38,6 +38,21 @@ export interface AppUser {
    * sessions never spend the client's real credits.
    */
   impersonatedBy?: string;
+  /**
+   * Onboarding wizard gate. Set to `false` ONLY at creation time for CLIENT_USER
+   * accounts (self-signup via clientKeyId, or admin approval of a pending
+   * registration) — the population the 2-step wizard (personal profile + workspace
+   * setup) targets. Absent ⇒ never subject to the guard (staff, and all accounts
+   * that predate this field). See needsOnboarding() in lib/onboarding.ts.
+   */
+  hasCompletedOnboarding?: boolean;
+  phone?: string;
+  /** Uploaded CV/resume URL — powers the employee-advocacy LLM voice. */
+  resumeUrl?: string;
+  /** Set true once this user completes the LinkedIn employee-seat OAuth flow. */
+  linkedInConnected?: boolean;
+  /** The EmployeeSeat (within their own client's LinkedIn integration) this user owns. */
+  primarySeatId?: string;
 }
 
 /** Client-editable social handles / profile URLs. */
