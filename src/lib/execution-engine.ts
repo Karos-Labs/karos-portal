@@ -15,6 +15,7 @@ import {
   updateClientTask,
   listClientTasks,
   listEmployeeSeats,
+  getClientPerformanceBenchmarks,
 } from "@/lib/data";
 import { sendEmail } from "@/lib/email";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
@@ -263,6 +264,25 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
       }
     }
 
+    // Self-improving loop (Phase 1): pull this client's measured top performers
+    // from the analytics collection and inject them as "successful past content
+    // examples" so new content emulates proven patterns. Non-fatal: no analytics
+    // (or a read failure) simply omits the block.
+    let topPerformerExamples: string | undefined;
+    try {
+      const benchmarks = await getClientPerformanceBenchmarks(clientId, 3);
+      if (benchmarks.top.length > 0) {
+        topPerformerExamples = benchmarks.top
+          .map(
+            (r) =>
+              `- [engagement ${r.engagementScore.toFixed(1)}/100 · ${r.platform}${r.assetType ? ` · ${r.assetType}` : ""}] "${r.assetLabel ?? r.assetId}" (${(r.metrics.engagementRate * 100).toFixed(1)}% engagement, ${r.metrics.impressions.toLocaleString()} impressions)`,
+          )
+          .join("\n");
+      }
+    } catch {
+      /* analytics unavailable — generate without the winners block */
+    }
+
     const { text: artifact, usage } = await generateText({
       model: selectModel(task),
       prompt: buildArtifactGenerationPrompt(
@@ -278,6 +298,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
         adjustmentFeedback,
         previousArtifact,
         employeeAdvocacy,
+        topPerformerExamples,
       ),
     });
 

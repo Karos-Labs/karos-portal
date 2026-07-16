@@ -552,6 +552,8 @@ export function buildArtifactGenerationPrompt(
   adjustmentFeedback?: string,
   previousArtifact?: string,
   employeeAdvocacy?: EmployeeAdvocacyProfile,
+  /** Pre-formatted "measured winners" block from the analytics loop (Phase 1) — lines of past top performers. */
+  topPerformerExamples?: string,
 ): string {
   const context = [
     clientIndustry && `Industry: ${clientIndustry}`,
@@ -586,6 +588,14 @@ This is a LinkedIn post published under ${employeeAdvocacy.name}'s PERSONAL hand
       ? `BRAND VOICE GUIDANCE: ${brandVoice}`
       : "";
 
+  // Self-improving loop (Phase 1): measured winners from the analytics collection
+  // steer new content toward proven patterns. Emulate structure/angle — never copy.
+  const winnersBlock = topPerformerExamples
+    ? `\n\nSUCCESSFUL PAST CONTENT EXAMPLES — MEASURED WINNERS FOR THIS CLIENT:
+${topPerformerExamples}
+Analyse WHY these performed (hook style, format, angle, platform fit) and emulate those underlying patterns in this deliverable. Do NOT copy their wording — produce fresh content that repeats what measurably works.`
+    : "";
+
   if (taskType === "integration_action") {
     return `You are the Karos AI Content Director producing a professional, ready-to-send email on behalf of ${clientName}${context ? ` (${context})` : ""}.
 
@@ -616,7 +626,7 @@ TASK: ${taskTitle}
 PRIORITY: ${taskPriority.toUpperCase()}
 SOURCE: ${taskSource.replace(/_/g, " ")}
 ${taskDescription ? `CONTEXT: ${taskDescription}` : ""}
-${contentVoiceLine}${feedbackBlock}
+${contentVoiceLine}${winnersBlock}${feedbackBlock}
 
 Produce the complete, polished deliverable for this task. Write the content directly — do not add meta-headers like "DELIVERABLE:" or "OUTPUT:". Present the content exactly as it would appear to the end reader or recipient.
 
