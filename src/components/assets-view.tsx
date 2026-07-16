@@ -68,7 +68,10 @@ export function AssetsView({
           description="Your deliverables will show up here as your team creates them."
         />
       ) : (
-        <div className="grid gap-3 lg:grid-cols-2">
+        /* items-start: cards size to their own content. Under the default
+           stretch, a short card is dragged to the height of its row neighbour
+           and reads as broken rather than short. */
+        <div className="grid items-start gap-3 lg:grid-cols-2">
           {assets.map((a) => (
             <AssetCard key={a.id} asset={a} canApprove={canApprove} />
           ))}

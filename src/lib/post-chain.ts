@@ -267,6 +267,87 @@ export function planClientChain(
   return assignments;
 }
 
+/* ─────────────────────── publish ordering gate ─────────────────────── */
+
+/**
+ * The earlier post in this asset's SERIES that hasn't gone out yet, or null when
+ * the asset is clear to publish.
+ *
+ * The chain plans a client's posts into a deliberate order (deriveOrderKey), but
+ * nothing downstream ever enforced it: the publish cron selects on
+ * `scheduledAt` alone, so a post whose predecessor was still sitting in drafts
+ * published anyway and a numbered series went out starting at no. 2. Sequence is
+ * the whole point of a series — "the playbook, no. 2" is wrong if no. 1 never
+ * ran — so ordering has to be checked at the moment of publishing, not just at
+ * planning time.
+ *
+ * Scoped to the TEMPLATE, not the whole chain family. A family-wide rule reads
+ * as stricter but is unusable: a backlog of un-approved chain drafts is the
+ * normal steady state after every lab import, so any post staff deliberately
+ * rushed ahead of that backlog would be held forever with no way out. A
+ * template ("Playbook", "By The Numbers") is what actually carries a numbered
+ * sequence, and it's what the reported break was. An asset with no template has
+ * no series identity, so nothing can be established about its order and it is
+ * never held.
+ *
+ * A candidate is blocked by any asset that is:
+ *   • the same template, for the same client, in the same chain family, and
+ *   • a real calendar entity (not a placeholder, not a reference doc), and
+ *   • part of the chain (hasChainProvenance — legacy assets from removed
+ *     systems carry no order signal and must not wedge the queue), and
+ *   • ordered before it (deriveOrderKey, id tiebreak — matching planClientChain
+ *     exactly, so the gate agrees with the plan), and
+ *   • not published.
+ *
+ * `assets` must be the candidate's whole client, unfiltered — a predecessor the
+ * caller filtered out is a predecessor the gate can't see.
+ *
+ * This holds the post rather than reordering it: publishing out of order is
+ * public and permanent, while holding is visible and reversible. The hold
+ * releases as soon as the predecessor publishes. It does NOT release by
+ * unscheduling the predecessor — clearAssetSchedule reverts it to "draft",
+ * which is still an unpublished state and still blocks — so a series truly
+ * abandoned mid-way holds its successors until someone publishes or deletes the
+ * predecessor. That's deliberate (the alternative is posting the series out of
+ * order), and the caller names the blocker so the hold is actionable.
+ */
+export function blockingPredecessor(candidate: Asset, assets: Asset[]): Asset | null {
+  const family = chainFamilyFor(candidate.type);
+  if (family === null) return null;
+  if (candidate.publishMode === "placeholder") return null;
+  if (!hasChainProvenance(candidate)) return null;
+
+  const series = templateForAsset(candidate);
+  if (series === null || isReferenceDocSlug(series.key)) return null;
+
+  const candidateKey = deriveOrderKey(candidate);
+  const isBefore = (a: Asset): boolean => {
+    const cmp = deriveOrderKey(a).localeCompare(candidateKey);
+    return cmp !== 0 ? cmp < 0 : a.id.localeCompare(candidate.id) < 0;
+  };
+
+  const blockers = assets.filter(
+    (a) =>
+      a.id !== candidate.id &&
+      a.clientId === candidate.clientId &&
+      chainFamilyFor(a.type) === family &&
+      templateForAsset(a)?.key === series.key &&
+      a.publishMode !== "placeholder" &&
+      !isReferenceDocAsset(a) &&
+      hasChainProvenance(a) &&
+      a.status !== "published" &&
+      isBefore(a),
+  );
+  if (blockers.length === 0) return null;
+
+  // Report the nearest predecessor: it's the one that has to move first, and
+  // naming it is what makes the hold actionable.
+  return blockers.sort((a, b) => {
+    const cmp = deriveOrderKey(b).localeCompare(deriveOrderKey(a));
+    return cmp !== 0 ? cmp : b.id.localeCompare(a.id);
+  })[0];
+}
+
 /* ─────────────────────── client-facing gating ──────────────────────── */
 
 /**
