@@ -104,8 +104,17 @@ export async function getUserByEmail(email: string): Promise<AppUser | null> {
   return snap.empty ? null : (snap.docs[0].data() as AppUser);
 }
 
+/** `impersonatedBy` marks a session, never the stored user: callers routinely spread a
+ * session user in here, and persisting it would exempt that client from credit billing
+ * for good. Deleted rather than omitted, so a doc corrupted by an earlier write heals. */
 export async function upsertUser(user: AppUser): Promise<void> {
-  await col.users().doc(user.uid).set(user, { merge: true });
+  const { FieldValue } = await import("firebase-admin/firestore");
+  const stored: Record<string, unknown> = { ...user };
+  delete stored.impersonatedBy;
+  await col
+    .users()
+    .doc(user.uid)
+    .set({ ...stored, impersonatedBy: FieldValue.delete() }, { merge: true });
 }
 
 export async function deleteUser(uid: string): Promise<void> {
