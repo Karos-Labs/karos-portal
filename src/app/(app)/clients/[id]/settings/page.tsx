@@ -11,11 +11,12 @@ import {
   getClientSettings,
 } from "@/lib/data";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
+import { PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import { Card, CardTitle, PageHeader } from "@/components/ui";
 import AutoScheduleToggle from "@/components/auto-schedule-toggle";
 import { Icon } from "@/components/icon";
-import { IntegrationsTab } from "@/components/integrations-tab";
+import { IntegrationsTab, type IntegrationView } from "@/components/integrations-tab";
 import { ClientKeyInline } from "@/components/client-key-inline";
 import { CreditsPanel } from "@/components/credits-panel";
 import { ClientAgentAccessCard } from "@/components/custom-agents";
@@ -63,6 +64,33 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
     // Only whether a token is present crosses to the client — never the token.
     connected: !!s.credentials?.accessToken,
   }));
+
+  // Same rule for the integrations themselves: the docs carry OAuth access/refresh
+  // tokens and pasted API keys in `credentials`, so only the non-secret fields cross
+  // — plus which secrets are set, for the form's placeholder.
+  //
+  // Allowlist, not denylist: the OAuth flow writes keys the registry never declares
+  // (`refreshToken` on most providers), so anything undeclared is treated as secret.
+  const sanitizedIntegrations: IntegrationView[] = integrations.map((i) => {
+    const fields = PLATFORM_REGISTRY.find((p) => p.id === i.platform)?.fields ?? [];
+    const publicKeys = fields.filter((f) => f.type !== "password").map((f) => f.key);
+    const secretKeys = fields.filter((f) => f.type === "password").map((f) => f.key);
+    return {
+      id: i.id,
+      clientId: i.clientId,
+      platform: i.platform,
+      accountName: i.accountName,
+      autoPublish: i.autoPublish,
+      status: i.status,
+      method: i.method,
+      credentials: Object.fromEntries(
+        publicKeys
+          .filter((k) => i.credentials?.[k] !== undefined)
+          .map((k) => [k, i.credentials[k]]),
+      ),
+      secretsSet: secretKeys.filter((k) => !!i.credentials?.[k]),
+    };
+  });
 
   return (
     <>
@@ -113,7 +141,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       {/* Integrations */}
       <IntegrationsTab
         clientId={client.id}
-        integrations={integrations}
+        integrations={sanitizedIntegrations}
         oauthEnabledPlatforms={oauthEnabledPlatforms}
         currentUserRole={user.role}
         linkedinSeats={sanitizedLinkedinSeats}

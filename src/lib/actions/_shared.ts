@@ -13,7 +13,8 @@ export async function requireStaff(): Promise<AppUser> {
 
 export async function requireAdmin(): Promise<AppUser> {
   const user = await getCurrentUser();
-  if (!user || user.role !== "KAROS_ADMIN") throw new Error("Forbidden");
+  if (!user || user.disabled) throw new Error("Unauthorized");
+  if (user.role !== "KAROS_ADMIN") throw new Error("Forbidden");
   return user;
 }
 

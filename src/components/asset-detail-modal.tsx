@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
 import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AudienceSimulation } from "@/components/audience-simulation";
+import { CopyCaptionButton } from "@/components/copy-caption-button";
+import { markAssetPostedAction } from "@/lib/actions";
 import { PLATFORM_LABELS } from "@/lib/integrations/platforms";
 import { assetImages } from "@/lib/asset-images";
 import { cn } from "@/lib/utils";
@@ -124,6 +127,13 @@ export function AssetDetailModal({
   const slides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
   const channels = asset.channels ?? [];
   const when = asset.scheduledAt ?? asset.recommendedAt;
+  const images = assetImages(asset);
+  // The lead photo whenever this isn't a structured meta.slides carousel. NOT
+  // `length === 1`: a post with several photos and no meta.slides (every
+  // multi-photo lab import) would then show nothing at all, where the old
+  // asset.imageUrl-only cover at least showed the first one. The rest stay
+  // reachable via Download all below.
+  const coverImageUrl = images.length > 0 ? images[0].url : null;
 
   return (
     <Modal open={open} onClose={onClose} title={asset.title} className="max-w-2xl">
@@ -180,15 +190,23 @@ export function AssetDetailModal({
           </p>
         )}
 
-        {/* Cover image (non-carousel) */}
-        {slides.length === 0 && asset.imageUrl && (
+        {/* Cover image (non-carousel). Sourced from assetImages() rather than
+            asset.imageUrl alone, which missed any import whose photos landed in
+            meta.files — the same gap that rendered those assets' cards blank. */}
+        {slides.length === 0 && coverImageUrl && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={asset.imageUrl} alt={asset.title} className="w-full rounded-lg border border-border" />
+          <img src={coverImageUrl} alt={asset.title} className="w-full rounded-lg border border-border" />
         )}
 
         {/* Content */}
         <div>
-          <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Content</p>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Content</p>
+            {/* Posting happens by hand from a phone, and this modal is the
+                phone's way into a post — so copy is a primary action here, not
+                the card's hover-revealed icon. */}
+            <CopyCaptionButton asset={asset} variant="full" />
+          </div>
           <p className="whitespace-pre-wrap text-sm text-foreground/90">{asset.content}</p>
         </div>
 
@@ -225,13 +243,69 @@ export function AssetDetailModal({
         )}
 
         {/* Downloads */}
-        <div className="border-t border-border pt-3">
-          <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Download</p>
-          <AssetDownloadButtons asset={asset} />
-        </div>
+        {images.length > 0 && (
+          <div className="border-t border-border pt-3">
+            <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Download</p>
+            <AssetDownloadButtons asset={asset} />
+          </div>
+        )}
+
+        <MarkPostedRow asset={asset} />
       </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * "I posted this myself." The calendar → modal path is how a post gets read on
+ * a phone, and posting is done by hand from there (copy the caption, paste it
+ * into the platform), so this is where the loop has to be closed — without it
+ * nothing the user does can ever move the asset off approved/scheduled.
+ */
+function MarkPostedRow({ asset }: { asset: Asset }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const eligible =
+    (asset.status === "approved" || asset.status === "scheduled") &&
+    asset.publishMode !== "placeholder";
+  if (!eligible) return null;
+
+  async function markPosted() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await markAssetPostedAction(asset.id);
+      if (!result.ok) setError(result.error);
+      else router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't mark this as posted");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-border pt-3">
+      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+        Already posted it?
+      </p>
+      <button
+        type="button"
+        onClick={markPosted}
+        disabled={busy}
+        className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
+      >
+        <Icon name="CheckCheck" className="h-3.5 w-3.5" />
+        {busy ? "Marking…" : "Mark as posted"}
+      </button>
+      <p className="mt-1.5 text-[11px] text-muted-2">
+        Moves it to Published so the calendar shows what&apos;s live.
+      </p>
+      {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
+    </div>
   );
 }
 

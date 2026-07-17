@@ -67,7 +67,10 @@ export default async function AssetsPage({
       {assets.length === 0 ? (
         <EmptyState icon={<Icon name="FolderOpen" className="h-7 w-7" />} title="No assets yet" description="Run an agent on a client to generate deliverables." />
       ) : (
-        <div className="grid gap-3 lg:grid-cols-2">
+        /* items-start: cards size to their own content. Under the default
+           stretch, a short card is dragged to the height of its row neighbour
+           and reads as broken rather than short. */
+        <div className="grid items-start gap-3 lg:grid-cols-2">
           {assets.map((a) => (
             <div key={a.id}>
               <div className="mb-1 flex items-center gap-2">

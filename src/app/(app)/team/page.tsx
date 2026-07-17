@@ -13,7 +13,7 @@ export default async function TeamPage() {
 
   const isAdmin = user.role === "KAROS_ADMIN";
 
-  const [allUsers, clients, accessRequests] = await Promise.all([
+  const [allUsers, allClients, accessRequests] = await Promise.all([
     listUsers(),
     listClients(),
     isAdmin ? listClientRequests("PENDING_APPROVAL") : Promise.resolve([]),
@@ -23,13 +23,19 @@ export default async function TeamPage() {
   const pending = isAdmin ? allUsers.filter((u) => u.disabled && !u.approvedAt) : [];
 
   let users;
+  let clients;
   if (isAdmin) {
     users = allUsers.filter((u) => !(u.disabled && !u.approvedAt));
+    clients = allClients;
   } else {
     // Group admin: only their client group, approved only
     users = allUsers.filter(
       (u) => u.clientId === user.clientId && !(u.disabled && !u.approvedAt),
     );
+    // Scope the roster's clients too: it crosses to a client component, so every
+    // client doc handed over here — clientKeyId included, which is enough to join
+    // that client's workspace — is readable in the RSC payload.
+    clients = allClients.filter((c) => c.id === user.clientId);
   }
 
   return (

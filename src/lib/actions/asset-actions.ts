@@ -11,7 +11,9 @@ import {
   markIntegrationExpired,
   claimAssetForPublish,
   releaseAssetPublishClaim,
+  reconcileAssetPublished,
   getClientSettings,
+  PUBLISH_CLAIM_TTL_MS,
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { requireStaff } from "./_shared";
@@ -198,6 +200,57 @@ export async function approveAssetAction(
   await updateAsset(id, patch);
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
+}
+
+/**
+ * "I posted this myself" — record that an asset went live by hand.
+ *
+ * Every other route to "published" runs through a platform integration: the
+ * auto-publish cron, publishAssetNowAction, and the analytics reconciler each
+ * require a connected account, and shouldReconcilePublished deliberately
+ * excludes manual-mode assets. So a client who copies the caption and posts
+ * from their phone — no integration anywhere in the loop — had NO path to
+ * "published" at all, and their assets sat on approved/scheduled forever with
+ * the portal unable to say what was live and what was still waiting.
+ *
+ * This is the human-in-the-loop half of that transition, so unlike the other
+ * publish actions it is deliberately NOT staff-only: the person who did the
+ * posting is usually the client, and requireAssetAccess already confines them
+ * to their own client's assets. It touches no platform API — it only records
+ * what the user is telling us already happened.
+ */
+export async function markAssetPostedAction(
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const asset = await requireAssetAccess(id);
+  if (asset.status === "published") return { ok: false, error: "Already marked as posted" };
+  if (asset.publishMode === "placeholder") {
+    return { ok: false, error: "This is a placeholder — put it on the calendar before marking it posted" };
+  }
+  // Only a post that has actually been approved onto the calendar can have been
+  // posted. Without this a CLIENT_USER could force one of their own DRAFTS
+  // straight to published — self-approving unreviewed work and completing the
+  // parent staff task with it — since force skips shouldReconcilePublished,
+  // which is what would otherwise reject a draft. The UI hides the button for
+  // drafts, but a server action is a public endpoint: the UI is not the guard.
+  // (Compare updateAssetAction and approveAssetAction, which keep every other
+  // status transition staff-only for exactly this reason.)
+  if (asset.status !== "approved" && asset.status !== "scheduled") {
+    return { ok: false, error: "Only an approved or scheduled post can be marked as posted" };
+  }
+  // Don't race an in-flight push: the auto-cron may be mid-publish under a
+  // claim right now, and flipping status to published here wouldn't stop it —
+  // we'd attest "already posted by hand" AND post again for real.
+  if (asset.publishClaimedAt != null && Date.now() - asset.publishClaimedAt < PUBLISH_CLAIM_TTL_MS) {
+    return { ok: false, error: "This post is being published right now — give it a moment." };
+  }
+
+  const { changed } = await reconcileAssetPublished(id, Date.now(), null, { force: true });
+  if (!changed) return { ok: false, error: "Already marked as posted" };
+
+  revalidatePath("/assets");
+  revalidatePath(`/clients/${asset.clientId}`);
+  return { ok: true };
 }
 
 /** Revert a scheduled asset back to draft and clear its schedule. */

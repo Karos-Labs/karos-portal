@@ -15,9 +15,27 @@ import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { LinkedInSeatsWorkspace, type SeatView } from "@/components/linkedin-seats-workspace";
 import type { ClientIntegration, Role } from "@/lib/types";
 
+/**
+ * An integration stripped of everything secret — OAuth tokens, pasted API keys and
+ * employee-seat tokens stay on the server. Props cross into the RSC payload, so
+ * anything here is readable by the end user whether or not the UI renders it.
+ *
+ * Deliberately a Pick (allowlist), not an Omit: a field added to ClientIntegration
+ * later must be opted in here rather than silently shipped to the browser.
+ */
+export type IntegrationView = Pick<
+  ClientIntegration,
+  "id" | "clientId" | "platform" | "accountName" | "autoPublish" | "status" | "method"
+> & {
+  /** Non-secret (text) credential fields only, keyed as in PLATFORM_REGISTRY. */
+  credentials: Record<string, string>;
+  /** Which secret fields are stored, so the form can show "leave blank to keep". */
+  secretsSet: string[];
+};
+
 interface Props {
   clientId: string;
-  integrations: ClientIntegration[];
+  integrations: IntegrationView[];
   oauthEnabledPlatforms: string[];
   currentUserRole: Role;
   /** Sanitized LinkedIn employee seats (no tokens) for the multi-seat workspace. */
@@ -146,7 +164,7 @@ function PlatformCard({
   seatCost,
 }: {
   platform: PlatformConfig;
-  integration: ClientIntegration | undefined;
+  integration: IntegrationView | undefined;
   clientId: string;
   isOAuthEnabled: boolean;
   isConnecting: boolean;
@@ -205,16 +223,9 @@ function PlatformCard({
     setSaving(true);
     setFormError(null);
     try {
-      // Merge: blank password field = keep existing value
-      const merged: Record<string, string> = { ...fields };
-      if (isConnected) {
-        for (const f of platform.fields) {
-          if (f.type === "password" && !fields[f.key].trim()) {
-            merged[f.key] = integration!.credentials[f.key] ?? "";
-          }
-        }
-      }
-      await saveIntegrationAction(clientId, platform.id, merged, accountName || undefined);
+      // A blank password field means "keep the stored secret" — the server carries
+      // it over, since secrets are never sent here to merge back.
+      await saveIntegrationAction(clientId, platform.id, fields, accountName || undefined);
       setAdvancedOpen(false);
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "Save failed. Please try again.");
@@ -430,7 +441,7 @@ function PlatformCard({
                     value={fields[f.key] ?? ""}
                     onChange={(e) => setField(f.key, e.target.value)}
                     placeholder={
-                      f.type === "password" && isConnected
+                      f.type === "password" && integration?.secretsSet.includes(f.key)
                         ? "Leave blank to keep existing"
                         : f.placeholder
                     }

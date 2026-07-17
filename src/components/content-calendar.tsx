@@ -121,26 +121,73 @@ function buildEvents(assets: Asset[], now: number, viewerIsClient: boolean): Cal
 
 /* ── Event chip ──────────────────────────────────────────────────────── */
 
-/** Chip styling per kind — each lifecycle state gets its own hue from the
-    judgment scale so they're distinguishable at a glance, with the border
-    style (solid / dashed / dotted) as a secondary cue:
-      published   = solid green   (live)
-      scheduled   = dashed blue   (upcoming, confirmed slot)
-      failed      = solid red     (needs attention)
-      placeholder = dashed amber   (roadmap entry, never auto-posted)
-      suggested   = dotted orange (agent advisory, not yet scheduled) */
-const KIND_CHIP_CLASS: Record<EventKind, string> = {
-  published: "border border-success/40 bg-success/25 text-success",
-  scheduled: "border border-dashed border-info/60 bg-info/25 text-info",
-  failed: "border border-danger/60 bg-danger/25 text-danger",
-  placeholder: "border border-dashed border-warning/60 bg-warning/20 text-warning",
-  suggested: "border border-dotted border-neon/60 bg-neon/20 text-neon italic",
+/**
+ * Chip styling per kind. The fill carries the hue and has to do it at a 10px
+ * chip: the previous /20–/25 tints all composited to within a few points of
+ * each other over the grid's surface (every one of them a near-black), which
+ * left the 1px dashed/dotted border as the only real cue — and that cue does
+ * not survive at chip size. Fills are strong enough to read as a colour, and
+ * text is paper-white on top so the fill is free to be saturated.
+ *
+ *   published   = green  (live)
+ *   scheduled   = slate  (upcoming, confirmed slot)
+ *   failed      = red    (needs attention)
+ *   suggested   = amber  (agent advisory, not yet scheduled)
+ *   placeholder = grey   (roadmap decoration, never auto-posted — deliberately
+ *                         hue-less so it recedes behind real calendar entries)
+ *
+ * `suggested` was orange: that both collided with amber `placeholder` in the
+ * same warm bucket and broke the rule that orange stays out of the judgment
+ * scale (globals.css). The dot repeats the hue at full strength, and the border
+ * STYLE (solid / dashed / dotted) is the secondary cue. `label` feeds the
+ * legend so it can never drift from the chips.
+ *
+ * Deliberately no border-COLOUR utilities here: globals.css sets
+ * `* { border-color: var(--border) }` unlayered, which outranks every layered
+ * `border-<colour>` utility in the app, so the old chips' `border-success/40`
+ * &co. silently rendered the same grey as everything else. That's a big part of
+ * why these five read as identical. Fixing the cascade is an app-wide change
+ * (~180 usages light up at once) and doesn't belong in this fix, so the fill
+ * carries the hue instead — which works today, and keeps working either way.
+ */
+const KIND_STYLE: Record<EventKind, { chip: string; dot: string; label: string }> = {
+  published: {
+    chip: "border bg-success/60 text-foreground",
+    dot: "bg-success",
+    label: "Published",
+  },
+  scheduled: {
+    chip: "border border-dashed bg-info/55 text-foreground",
+    dot: "bg-info",
+    label: "Scheduled",
+  },
+  failed: {
+    chip: "border bg-danger/60 text-foreground",
+    dot: "bg-danger",
+    label: "Failed",
+  },
+  suggested: {
+    chip: "border border-dotted bg-warning/45 text-foreground italic",
+    dot: "bg-warning",
+    label: "Suggested",
+  },
+  placeholder: {
+    chip: "border border-dashed bg-surface-3 text-muted",
+    dot: "bg-muted-2",
+    label: "Placeholder",
+  },
 };
+
+/** The states worth explaining in the legend, in lifecycle order. "failed" is
+    omitted: it's an exception state whose chip carries its own tooltip. */
+const LEGEND_KINDS: EventKind[] = ["published", "scheduled", "suggested", "placeholder"];
 
 const KIND_TOOLTIP: Record<EventKind, string> = {
   published: "Published",
   scheduled: "Scheduled",
-  failed: "Publish failed — open to review",
+  // Covers both a failed push and a post held back by the ordering gate — open
+  // it for the reason, which publishError spells out either way.
+  failed: "Needs attention — open to review",
   placeholder: "Placeholder (not auto-posted)",
   suggested: "Agent-suggested slot (draft)",
 };
@@ -180,11 +227,11 @@ function EventChip({ event, onOpen }: { event: CalendarEvent; onOpen: (assetId: 
       onClick={() => onOpen(event.assetId)}
       className={cn(
         "flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate text-left transition-opacity hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-neon/50",
-        KIND_CHIP_CLASS[event.kind],
+        KIND_STYLE[event.kind].chip,
       )}
       title={`${KIND_TOOLTIP[event.kind]}${modeStr ? ` · ${modeStr}` : ""}${event.templateName ? ` · ${event.templateName}` : ""} · ${event.title} · ${timeStr}${event.platform ? ` on ${event.platform}` : ""}`}
     >
-      <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
+      <div className={cn("h-1.5 w-1.5 shrink-0 rounded-full", KIND_STYLE[event.kind].dot)} />
       <span className="truncate">{event.title}</span>
       {event.templateName && (
         <span className="ml-auto max-w-[46%] shrink-0 truncate font-mono text-[9px] uppercase tracking-wide opacity-60">
@@ -379,22 +426,12 @@ export function ContentCalendar({
 
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <div className="h-2.5 w-3.5 rounded-sm border border-success/40 bg-success/25" />
-          Published
-        </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <div className="h-2.5 w-3.5 rounded-sm border border-dashed border-info/60 bg-info/25" />
-          Scheduled
-        </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <div className="h-2.5 w-3.5 rounded-sm border border-dashed border-warning/60 bg-warning/20" />
-          Placeholder
-        </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
-          <div className="h-2.5 w-3.5 rounded-sm border border-dotted border-neon/60 bg-neon/20" />
-          Suggested
-        </div>
+        {LEGEND_KINDS.map((kind) => (
+          <div key={kind} className="flex items-center gap-1.5 text-[11px] text-muted-2">
+            <div className={cn("h-2.5 w-3.5 rounded-sm", KIND_STYLE[kind].chip)} />
+            {KIND_STYLE[kind].label}
+          </div>
+        ))}
       </div>
 
       <AssetDetailModal
