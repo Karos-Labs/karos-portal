@@ -1,16 +1,15 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { listClients, listCustomAgents } from "@/lib/data";
-import { Badge, Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
+import { Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { isCustomAgentImportConfigured } from "@/lib/agent-service/custom-agent-import";
 import { CustomAgentsHub } from "@/components/custom-agents";
 
 /**
- * Staff catalog of the managed agents — the karos-agents lab products run by
- * the external agent service — plus the custom-agents library (stored system
+ * Staff entry point for running agents: a client picker (agents always run
+ * against a client's context) plus the custom-agents library (stored system
  * prompts, importable from the repo catalog, runnable with a plain prompt).
  */
 export default async function AgentsPage() {
@@ -28,35 +27,7 @@ export default async function AgentsPage() {
         description="Managed lab agents from the karos-agents repo, run by the agent service for a chosen client."
       />
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        {MANAGED_PRODUCTS.map((product) => (
-          <Card key={product.taskType} className="flex flex-col">
-            <div className="flex items-start gap-3">
-              <div
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md"
-                style={{ background: product.color + "1f", color: product.color }}
-              >
-                <Icon name={product.icon} className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="font-medium">{product.name}</p>
-                <p className="mt-0.5 text-xs text-muted">{product.tagline}</p>
-              </div>
-              <Badge tone="neutral">{product.estimate}</Badge>
-            </div>
-            <p className="mt-3 text-xs leading-relaxed text-muted-2">{product.description}</p>
-            <ul className="mt-3 space-y-0.5">
-              {product.deliverables.map((d) => (
-                <li key={d} className="flex items-center gap-1.5 text-xs text-foreground">
-                  <Icon name="Check" className="h-3 w-3 shrink-0 text-success" /> {d}
-                </li>
-              ))}
-            </ul>
-          </Card>
-        ))}
-      </div>
-
-      <Card className="mt-6">
+      <Card>
         <CardTitle className="mb-1">Run an agent</CardTitle>
         <p className="mb-4 text-xs text-muted">
           Agents always run against a client&apos;s context. Pick a client to launch one.
