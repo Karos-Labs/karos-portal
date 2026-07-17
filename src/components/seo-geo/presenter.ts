@@ -152,6 +152,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
 /* ── Capture context ──────────────────────────────────────────────── */
 
 export function formatCaptured(capturedAt: number): string {
+  if (!Number.isFinite(capturedAt)) return "an earlier run";
   return new Date(capturedAt).toISOString().slice(0, 10);
 }
 
@@ -170,7 +171,6 @@ export type EngineStatus = "measured" | "no-data" | "not-wired";
 export interface EngineBrandRow {
   name: string;
   isClient: boolean;
-  mentions: number;
   /** Bar width relative to the engine's most-mentioned brand, 0–100. */
   pctOfMax: number;
   line: string;
@@ -192,7 +192,8 @@ export interface EngineView {
   explainer: string;
   /** Why there is no data, for the no-data / not-wired states. */
   causeLine: string | null;
-  promptsMeasured: number;
+  /** Prefilled flag-to-team dialog content; null for measured engines. */
+  flagPrefill: FlagPrefill | null;
   allZero: boolean;
   brands: EngineBrandRow[];
   stats: EngineStatView[];
@@ -217,30 +218,46 @@ function fraction(count: number, total: number, noun: string): string {
   return `${count} of ${total} ${noun}`;
 }
 
+/** Closed status → copy map for the two unmeasured states. */
+const UNMEASURED_COPY = {
+  "not-wired": {
+    statusLabel: "not yet measured",
+    explainer: (name: string) =>
+      `We can't measure ${name} yet. Our connection to this engine isn't built. Your scores only count the engines we can actually measure, so nothing here is guessed.`,
+    causeLine: (name: string) =>
+      `We can't ask ${name} questions yet. Our connection to this engine isn't built.`,
+    prefill: engineFlagPrefill,
+  },
+  "no-data": {
+    statusLabel: "no answers this run",
+    explainer: (name: string) =>
+      `${name} returned no usable answers this run, so it is left out of your scores rather than guessed at.`,
+    causeLine: (name: string) =>
+      `${name} returned no usable answers this run. We'll retry on the next snapshot.`,
+    prefill: noDataFlagPrefill,
+  },
+} as const;
+
 export function buildEngineViews(insights: SeoGeoInsights): EngineView[] {
+  const byEngine = new Map(insights.perEngine.map((e) => [e.engine, e]));
   return ENGINE_ORDER.map((engine) => {
-    const row = insights.perEngine.find((e) => e.engine === engine) ?? null;
+    const row = byEngine.get(engine) ?? null;
     const name = ENGINE_LABELS[engine] ?? "Engine";
     const source = row?.source ?? ENGINE_PROVIDERS[engine] ?? null;
     const measured = !!row && row.captureTier !== "UNAVAILABLE" && row.promptsMeasured > 0;
     const status: EngineStatus = measured ? "measured" : source === null ? "not-wired" : "no-data";
 
     if (status !== "measured" || !row) {
+      const copy = UNMEASURED_COPY[status === "not-wired" ? "not-wired" : "no-data"];
       return {
         engine,
         name,
         status,
-        statusLabel: status === "not-wired" ? "not yet measured" : "no answers this run",
-        statusTone: "neutral",
-        explainer:
-          status === "not-wired"
-            ? `We can't measure ${name} yet. Our connection to this engine isn't built. Your scores only count the engines we can actually measure, so nothing here is guessed.`
-            : `${name} returned no usable answers this run, so it is left out of your scores rather than guessed at.`,
-        causeLine:
-          status === "not-wired"
-            ? `We can't ask ${name} questions yet. Our connection to this engine isn't built.`
-            : `${name} returned no usable answers this run. We'll retry on the next snapshot.`,
-        promptsMeasured: 0,
+        statusLabel: copy.statusLabel,
+        statusTone: "neutral" as Tone,
+        explainer: copy.explainer(name),
+        causeLine: copy.causeLine(name),
+        flagPrefill: copy.prefill(name, insights),
         allZero: true,
         brands: [],
         stats: [],
@@ -262,12 +279,11 @@ export function buildEngineViews(insights: SeoGeoInsights): EngineView[] {
       statusTone: "success" as Tone,
       explainer: `Measured ${providerPhrase(row.source)} by asking the same ${n} buyer questions we ask every engine.`,
       causeLine: null,
-      promptsMeasured: n,
+      flagPrefill: null,
       allZero,
       brands: row.brandMentions.map((b) => ({
         name: b.name,
         isClient: b.isClient,
-        mentions: b.mentions,
         pctOfMax: Math.round((b.mentions / max) * 100),
         line: `named in ${fraction(b.mentions, n, "answers")}`,
       })),
@@ -343,6 +359,9 @@ export function buildPresence(insights: SeoGeoInsights): PresenceView {
       takeaway = "Engines rarely name you even when asked directly. Improving your AI readiness comes first.";
     } else if (brandRate >= 0.5 && catRate >= 0.25) {
       takeaway = "You show up both by name and in open category questions. The work below protects that position.";
+    } else {
+      takeaway =
+        "You appear in category questions more often than when buyers ask about you by name. Strengthening your brand signals makes that recognition stick.";
     }
   }
 
@@ -504,14 +523,22 @@ export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[
 
 export interface PromptView {
   text: string;
-  tagLabel: string;
+  /**
+   * "mentions you" when the client's display name appears in the prompt;
+   * null otherwise. Deliberately makes no "category question" claim: the
+   * pipeline's brand/category split matches the full alias set (domain,
+   * short label), which isn't stored on the doc, so a definite tag here
+   * could contradict the presence tile above. Follow-up: persist per-prompt
+   * brand flags in clientSeoGeo so both surfaces classify identically.
+   */
+  tagLabel: string | null;
 }
 
 export function buildPromptViews(insights: SeoGeoInsights): PromptView[] {
   const clientName = insights.roster[0] ?? "";
   return insights.promptSet.map((prompt) => ({
     text: prompt,
-    tagLabel: clientName && findMention(prompt, clientName) >= 0 ? "mentions you" : "category question",
+    tagLabel: clientName && findMention(prompt, clientName) >= 0 ? "mentions you" : null,
   }));
 }
 
@@ -526,6 +553,22 @@ export function engineFlagPrefill(engineName: string, insights: SeoGeoInsights):
   return {
     subject: `Request: measure ${engineName} in our AI visibility snapshot`,
     message: `We'd like ${engineName} added to our AI visibility snapshot. It currently shows "not yet measured" on our dashboard (snapshot ${formatCaptured(insights.capturedAt)}).`,
+  };
+}
+
+export function noDataFlagPrefill(engineName: string, insights: SeoGeoInsights): FlagPrefill {
+  return {
+    subject: `Question about ${engineName} in our AI visibility snapshot`,
+    message: `${engineName} shows "no answers this run" on our dashboard (snapshot ${formatCaptured(insights.capturedAt)}). Can you take a look?`,
+  };
+}
+
+/** One request covering every unwired engine, for the capture-strip banner. */
+export function unwiredRequestPrefill(engineNames: string[], insights: SeoGeoInsights): FlagPrefill {
+  const names = engineNames.join(" and ");
+  return {
+    subject: `Request: measure ${names} in our AI visibility snapshot`,
+    message: `We'd like ${names} added to our AI visibility snapshot (snapshot ${formatCaptured(insights.capturedAt)}).`,
   };
 }
 

@@ -9,7 +9,10 @@ import {
   buildPromptViews,
   buildScoreViews,
   engineFlagPrefill,
+  formatCaptured,
+  genericFlagPrefill,
   scoreBand,
+  unwiredRequestPrefill,
 } from "@/components/seo-geo/presenter";
 import {
   GEO_READINESS_CHECKS,
@@ -359,9 +362,22 @@ describe("presence + prompts", () => {
     expect(buildPresence(insights()).rosterShare?.value).toBe("18%");
   });
 
-  it("tags prompts that mention the client by name", () => {
+  it("tags prompts that mention the client by name and stays silent otherwise", () => {
+    // No affirmative "category question" claim: the pipeline's brand/category
+    // split matches the full alias set, which the doc doesn't store, so a
+    // definite tag could contradict the presence tiles.
     const tags = buildPromptViews(insights()).map((p) => p.tagLabel);
-    expect(tags).toEqual(["category question", "mentions you"]);
+    expect(tags).toEqual([null, "mentions you"]);
+  });
+
+  it("covers the low-brand, high-category takeaway quadrant", () => {
+    const view = buildPresence(
+      insights({
+        brandPresence: { named: 0, total: 2 },
+        categoryPresence: { named: 4, total: 8 },
+      }),
+    );
+    expect(view.takeaway).toContain("Strengthening your brand signals");
   });
 });
 
@@ -370,5 +386,26 @@ describe("flag prefills (fix 4)", () => {
     const prefill = engineFlagPrefill("Perplexity", insights());
     expect(prefill.subject).toBe("Request: measure Perplexity in our AI visibility snapshot");
     expect(prefill.message).toContain("snapshot 2026-07-12");
+  });
+
+  it("attaches the right prefill to unmeasured engine views", () => {
+    const views = buildEngineViews(insights({ perEngine: [engineRow({ promptsMeasured: 0, brandMentions: [] })] }));
+    const chatgpt = views.find((v) => v.engine === "chatgpt");
+    const copilot = views.find((v) => v.engine === "copilot");
+    const measured = buildEngineViews(insights()).find((v) => v.engine === "chatgpt");
+    expect(chatgpt?.flagPrefill?.subject).toBe("Question about ChatGPT in our AI visibility snapshot");
+    expect(copilot?.flagPrefill?.subject).toBe("Request: measure Copilot in our AI visibility snapshot");
+    expect(measured?.flagPrefill).toBeNull();
+  });
+
+  it("builds one request covering every unwired engine", () => {
+    const prefill = unwiredRequestPrefill(["Perplexity", "Copilot"], insights());
+    expect(prefill.subject).toBe("Request: measure Perplexity and Copilot in our AI visibility snapshot");
+    expect(prefill.message).toContain("snapshot 2026-07-12");
+  });
+
+  it("degrades gracefully when capturedAt is invalid instead of throwing", () => {
+    expect(formatCaptured(Number.NaN)).toBe("an earlier run");
+    expect(genericFlagPrefill(insights({ capturedAt: Number.NaN })).subject).toContain("an earlier run");
   });
 });

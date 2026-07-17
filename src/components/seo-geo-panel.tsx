@@ -1,4 +1,4 @@
-import { Card, CardTitle, EmptyState } from "@/components/ui";
+import { Badge, Card, CardTitle, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 import {
@@ -8,13 +8,12 @@ import {
   buildPresence,
   buildPromptViews,
   buildScoreViews,
-  engineFlagPrefill,
-  formatCaptured,
   genericFlagPrefill,
+  unwiredRequestPrefill,
   type EngineView,
   type ScoreView,
-  type Tone,
 } from "@/components/seo-geo/presenter";
+import { TONE_COLORS } from "@/components/seo-geo/tones";
 import { Disclosure } from "@/components/seo-geo/disclosure";
 import { FlagButton } from "@/components/seo-geo/flag-button";
 import { GapList } from "@/components/seo-geo/gap-list";
@@ -26,14 +25,6 @@ import { GapList } from "@/components/seo-geo/gap-list";
  * reads is plain English by construction — internal run-record vocabulary is
  * mapped (never echoed) in seo-geo/presenter.ts, which is unit-tested for leaks.
  */
-
-const TONE_COLORS: Record<Tone, string> = {
-  success: "var(--success)",
-  warning: "var(--warning)",
-  danger: "var(--danger)",
-  info: "var(--info)",
-  neutral: "var(--muted-2)",
-};
 
 /** CSS-only hover/focus explainer. Supplementary by design: everything vital is also visible text. */
 function InfoTip({ text }: { text: string }) {
@@ -67,23 +58,6 @@ function Meter({ pct, color, className }: { pct: number; color: string; classNam
   );
 }
 
-function StatusBadge({ label, tone }: { label: string; tone: Tone }) {
-  const tones: Record<Tone, string> = {
-    success: "bg-success/10 text-success border-success/30",
-    warning: "bg-warning/10 text-warning border-warning/30",
-    danger: "bg-danger/10 text-danger border-danger/30",
-    info: "bg-info/10 text-info border-info/30",
-    neutral: "bg-surface-3 text-muted border-border",
-  };
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-[4px] border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em] ${tones[tone]}`}
-    >
-      {label}
-    </span>
-  );
-}
-
 /* ── 1 · Headline scores ─────────────────────────────────────────── */
 
 function ScoreTile({ view }: { view: ScoreView }) {
@@ -96,7 +70,7 @@ function ScoreTile({ view }: { view: ScoreView }) {
         <InfoTip text={view.explainer} />
       </div>
       {view.value === null ? (
-        <p className="mt-1.5 font-mono text-2xl font-medium text-muted-2">—</p>
+        <p className="mt-1.5 font-mono text-2xl font-medium text-muted-2">n/a</p>
       ) : (
         <p className="mt-1.5 font-mono text-2xl font-medium">
           <span style={{ color: TONE_COLORS[view.tone] }}>{view.value}</span>
@@ -120,7 +94,7 @@ function ScoreTile({ view }: { view: ScoreView }) {
                     {row.label}
                     {row.note && <span className="text-muted-2"> · {row.note}</span>}
                   </span>
-                  {row.pct !== null && <span className="font-mono text-foreground">{row.pct}</span>}
+                  {row.pct !== null && <span className="font-mono text-foreground">{row.pct}%</span>}
                 </div>
                 <Meter pct={row.pct ?? 0} color="var(--foreground)" className="opacity-40" />
               </li>
@@ -136,15 +110,10 @@ function ScoreTile({ view }: { view: ScoreView }) {
 
 function EngineChip({ view }: { view: EngineView }) {
   return (
-    <span className="group relative inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1">
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1">
       <span className="text-xs text-foreground">{view.name}</span>
-      <StatusBadge label={view.statusLabel} tone={view.statusTone} />
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute bottom-full left-0 z-20 mb-2 w-56 rounded-md border border-border bg-surface-3 px-2.5 py-2 text-left text-[11px] leading-relaxed text-foreground opacity-0 shadow-lg transition-opacity group-hover:opacity-100 motion-reduce:transition-none"
-      >
-        {view.explainer}
-      </span>
+      <Badge tone={view.statusTone}>{view.statusLabel}</Badge>
+      <InfoTip text={view.explainer} />
     </span>
   );
 }
@@ -159,7 +128,7 @@ function EngineCard({ view }: { view: EngineView }) {
           <span className="text-sm font-medium text-foreground">{view.name}</span>
           <InfoTip text={view.explainer} />
         </span>
-        <StatusBadge label={view.statusLabel} tone={view.statusTone} />
+        <Badge tone={view.statusTone}>{view.statusLabel}</Badge>
       </div>
       {view.allZero ? (
         <p className="text-xs text-muted-2">
@@ -208,24 +177,19 @@ function EngineCard({ view }: { view: EngineView }) {
   );
 }
 
-function UnmeasuredEngineCard({ view, insights }: { view: EngineView; insights: SeoGeoInsights }) {
-  const prefill =
-    view.status === "not-wired"
-      ? engineFlagPrefill(view.name, insights)
-      : {
-          subject: `Question about ${view.name} in our AI visibility snapshot`,
-          message: `${view.name} shows "no answers this run" on our dashboard (snapshot ${formatCaptured(insights.capturedAt)}). Can you take a look?`,
-        };
+function UnmeasuredEngineCard({ view }: { view: EngineView }) {
   return (
     <div className="rounded-md border border-dashed border-border p-3">
       <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-medium text-muted">{view.name}</span>
-        <StatusBadge label={view.statusLabel} tone={view.statusTone} />
+        <Badge tone={view.statusTone}>{view.statusLabel}</Badge>
       </div>
       <p className="text-xs text-muted-2">{view.causeLine}</p>
-      <div className="mt-2">
-        <FlagButton subject={prefill.subject} message={prefill.message} />
-      </div>
+      {view.flagPrefill && (
+        <div className="mt-2">
+          <FlagButton subject={view.flagPrefill.subject} message={view.flagPrefill.message} />
+        </div>
+      )}
     </div>
   );
 }
@@ -286,8 +250,7 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
         {unwiredNames.length > 0 && (
           <div className="mt-3">
             <FlagButton
-              subject={`Request: measure ${unwiredNames.join(" and ")} in our AI visibility snapshot`}
-              message={`We'd like ${unwiredNames.join(" and ")} added to our AI visibility snapshot (snapshot ${formatCaptured(insights.capturedAt)}).`}
+              {...unwiredRequestPrefill(unwiredNames, insights)}
               label={`Want ${unwiredNames.join(" or ")} coverage? Flag it to the Karos team`}
             />
           </div>
@@ -366,7 +329,7 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
         {unmeasuredEngines.length > 0 && (
           <div className={`grid gap-4 sm:grid-cols-2 ${measuredEngines.length > 0 ? "mt-4" : ""}`}>
             {unmeasuredEngines.map((view) => (
-              <UnmeasuredEngineCard key={view.engine} view={view} insights={insights} />
+              <UnmeasuredEngineCard key={view.engine} view={view} />
             ))}
           </div>
         )}
@@ -391,12 +354,14 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
       <Card>
         <Disclosure summary={`The ${prompts.length} buyer questions we asked`}>
           <ul className="space-y-1.5">
-            {prompts.map((p) => (
-              <li key={p.text} className="flex items-center justify-between gap-2 text-xs">
+            {prompts.map((p, i) => (
+              <li key={`q-${i}`} className="flex items-center justify-between gap-2 text-xs">
                 <span className="text-muted">{p.text}</span>
-                <span className="shrink-0 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
-                  {p.tagLabel}
-                </span>
+                {p.tagLabel && (
+                  <span className="shrink-0 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                    {p.tagLabel}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
@@ -407,7 +372,7 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
             <div className="flex flex-wrap gap-1.5">
               {insights.roster.map((name, i) => (
                 <span
-                  key={name}
+                  key={`${name}-${i}`}
                   className={
                     i === 0
                       ? "inline-flex items-center rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-neon"

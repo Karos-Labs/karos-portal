@@ -146,6 +146,7 @@ export function FlagButton({
                         placeholder="Tell us what looks off or what you'd like explained."
                         className="min-h-[120px]"
                         required
+                        minLength={10}
                       />
                     </div>
                     {error && (

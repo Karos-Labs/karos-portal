@@ -11,13 +11,11 @@ import { cn } from "@/lib/utils";
  */
 export function Disclosure({
   summary,
-  hint,
   defaultOpen = false,
   className,
   children,
 }: {
   summary: string;
-  hint?: string;
   defaultOpen?: boolean;
   className?: string;
   children: React.ReactNode;
@@ -33,10 +31,7 @@ export function Disclosure({
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center justify-between gap-2 rounded-md text-left text-xs text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
       >
-        <span>
-          {summary}
-          {hint && <span className="text-muted-2"> · {hint}</span>}
-        </span>
+        <span>{summary}</span>
         <Icon
           name="ChevronDown"
           className={cn(

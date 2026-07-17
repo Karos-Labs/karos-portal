@@ -5,7 +5,8 @@ import Link from "next/link";
 import { Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import type { GapChannel, GapView, Tone } from "./presenter";
+import { TONE_COLORS } from "./tones";
+import type { GapChannel, GapView } from "./presenter";
 
 /**
  * "What we're fixing" — interactive gap cards (SCRUM-52 fixes 1 + 5).
@@ -13,14 +14,6 @@ import type { GapChannel, GapView, Tone } from "./presenter";
  * this file owns filter/expand state and the funnel chip into the client's
  * agents page (SCRUM-52 amendment).
  */
-
-const TONE_COLORS: Record<Tone, string> = {
-  danger: "var(--danger)",
-  warning: "var(--warning)",
-  info: "var(--info)",
-  neutral: "var(--muted-2)",
-  success: "var(--success)",
-};
 
 const FILTERS: Array<{ id: "all" | GapChannel; label: string }> = [
   { id: "all", label: "All" },
