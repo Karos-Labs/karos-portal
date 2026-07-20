@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { listScheduledAssets, listClientIntegrations, updateAsset, markAssetPublished, markIntegrationExpired, claimAssetForPublish, releaseAssetPublishClaim } from "@/lib/data";
+import { listScheduledAssets, listAssets, listClientIntegrations, updateAsset, markAssetPublished, markIntegrationExpired, claimAssetForPublish, releaseAssetPublishClaim } from "@/lib/data";
+import { blockingPredecessor } from "@/lib/post-chain";
 import {
   TokenExpiredError,
   inferPlatform,
@@ -19,6 +20,13 @@ import { integrationIsUsable } from "@/lib/integration-status";
  * Per-integration gate: an integration with autoPublish === false is treated
  * as unavailable for auto-posting even though it stays fully usable for
  * "Publish Now".
+ *
+ * Ordering gate: a due post whose series predecessor hasn't gone out yet is HELD
+ * (see blockingPredecessor) rather than published, so a numbered series can't
+ * start at no. 2 because no. 1 was still in drafts. Held posts keep their
+ * status and are retried every tick, so the hold resolves itself as soon as the
+ * predecessor publishes. /api/analytics/sync applies the same gate — without it
+ * that cron's reconciler would flip a held post to "published" behind our back.
  */
 export async function GET(req: NextRequest) {
   // Auth: Vercel Cron sends Authorization: Bearer <CRON_SECRET>. Fails closed in
@@ -47,10 +55,23 @@ export async function GET(req: NextRequest) {
     ),
   );
 
+  // The ordering gate needs each client's WHOLE library, not just the due
+  // assets: the blocker we're looking for is precisely the post that ISN'T due
+  // (it's still a draft), so anything narrower can't see it. Same one-read-per-
+  // client shape as the integrations above.
+  const assetsByClient = new Map(
+    await Promise.all(
+      uniqueClientIds.map(async (clientId) => {
+        const assets = await listAssets({ clientId });
+        return [clientId, assets] as const;
+      }),
+    ),
+  );
+
   type PublishResult = {
     assetId: string;
     platform: string;
-    status: "published" | "failed" | "skipped" | "expired";
+    status: "published" | "failed" | "skipped" | "expired" | "held";
     error?: string;
   };
 
@@ -58,6 +79,18 @@ export async function GET(req: NextRequest) {
   // prevents other assets from being processed in the same cron tick.
   const settled = await Promise.allSettled(
     dueAssets.map(async (asset): Promise<PublishResult> => {
+      // Ordering gate — first, before any platform work: a post whose
+      // predecessor is still unpublished must not go out, and there's no point
+      // resolving an integration for it. The hold clears by itself on the next
+      // tick once the predecessor publishes (or is unscheduled), so this both
+      // waits AND flags without anyone having to intervene in the common case.
+      const blocker = blockingPredecessor(asset, assetsByClient.get(asset.clientId) ?? []);
+      if (blocker) {
+        const message = `Waiting for "${blocker.title}" — it comes earlier in this series and is still ${blocker.status}. This post goes out once that one is published (or removed).`;
+        await updateAsset(asset.id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
+        return { assetId: asset.id, platform: asset.scheduledPlatform ?? "none", status: "held", error: message };
+      }
+
       const integrations = integrationsByClient.get(asset.clientId) ?? [];
       // Auto-eligible = valid token AND the client hasn't turned off auto-publish
       // for that platform (absent flag = enabled, for pre-toggle integrations).
@@ -147,6 +180,7 @@ export async function GET(req: NextRequest) {
     published: results.filter((r) => r.status === "published").length,
     failed: results.filter((r) => r.status === "failed").length,
     expired: results.filter((r) => r.status === "expired").length,
+    held: results.filter((r) => r.status === "held").length,
     results,
   });
 }

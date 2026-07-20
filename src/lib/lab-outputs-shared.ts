@@ -38,7 +38,10 @@ export function groupRunFiles(files: LabFile[]): LabItemGroup[] {
     .sort((a, b) => a.key.localeCompare(b.key));
 }
 
-const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+/** Keep in step with the IMAGE_EXT regex in asset-images.ts — when this set is
+    narrower, an import silently drops photos the viewer can still find via
+    meta.files, and the asset renders with no cover. */
+const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]);
 const TEXT_EXT = new Set([".md", ".txt", ".html"]);
 
 function ext(name: string): string {

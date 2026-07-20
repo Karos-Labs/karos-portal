@@ -180,10 +180,15 @@ export function ClientRail({
 
       {/* ── Mobile top bar ── */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
-        <Link href={home} className="flex items-center gap-2">
-          <Icon name="Sparkles" className="h-5 w-5 text-neon" />
-          <span className="font-semibold">
-            Karos<span className="text-neon">CMO</span>
+        <Link href={home} className="flex items-center gap-2.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+          />
+          <span className="font-serif text-xl font-normal leading-none text-foreground">
+            Karos Labs
           </span>
         </Link>
         <div className="flex items-center gap-2">

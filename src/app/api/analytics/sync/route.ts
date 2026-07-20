@@ -12,6 +12,7 @@ import {
 } from "@/lib/data";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { DEFAULT_PLATFORM_FOR_TYPE } from "@/lib/scheduling";
+import { blockingPredecessor } from "@/lib/post-chain";
 import { fetchPlatformMetrics, fetchSeatMetrics } from "@/lib/integrations/analytics-providers";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
 import { integrationIsUsable } from "@/lib/integration-status";
@@ -80,6 +81,12 @@ export async function GET(req: NextRequest) {
       // transaction, so nothing stays stuck on Approved/Scheduled after it's live.
       for (const a of assets) {
         if (!shouldReconcilePublished(a, now)) continue;
+        // A post the publish cron is HOLDING for ordering looks exactly like a
+        // reconcile candidate (auto, on-calendar, slot passed) — so without this
+        // the two crons fight and this one wins, marking a post "published" that
+        // was deliberately never posted, and un-blocking its successors in the
+        // process. Same gate as /api/publish, same client-wide asset list.
+        if (blockingPredecessor(a, assets)) continue;
         try {
           const r = await reconcileAssetPublished(a.id, now);
           if (r.changed) {

@@ -110,8 +110,17 @@ export async function getUserByEmail(email: string): Promise<AppUser | null> {
   return snap.empty ? null : (snap.docs[0].data() as AppUser);
 }
 
+/** `impersonatedBy` marks a session, never the stored user: callers routinely spread a
+ * session user in here, and persisting it would exempt that client from credit billing
+ * for good. Deleted rather than omitted, so a doc corrupted by an earlier write heals. */
 export async function upsertUser(user: AppUser): Promise<void> {
-  await col.users().doc(user.uid).set(user, { merge: true });
+  const { FieldValue } = await import("firebase-admin/firestore");
+  const stored: Record<string, unknown> = { ...user };
+  delete stored.impersonatedBy;
+  await col
+    .users()
+    .doc(user.uid)
+    .set({ ...stored, impersonatedBy: FieldValue.delete() }, { merge: true });
 }
 
 export async function deleteUser(uid: string): Promise<void> {
@@ -490,11 +499,18 @@ export async function markAssetPublished(id: string, platformPostId?: string | n
  * sees a published asset whose task is still "in progress". Idempotent —
  * returns { changed:false } when the asset is already published or no longer
  * qualifies. `verifiedPostId` (from live ingestion) is stored when provided.
+ *
+ * `opts.force` skips the shouldReconcilePublished eligibility test for a user
+ * who is ATTESTING they posted the asset by hand. That evidence can't be
+ * derived — a manual-mode asset never qualifies on its own — but it's the only
+ * evidence that exists when there's no integration in the loop. The caller owns
+ * authorization; everything else about the write stays identical.
  */
 export async function reconcileAssetPublished(
   assetId: string,
   now: number = Date.now(),
   verifiedPostId?: string | null,
+  opts?: { force?: boolean },
 ): Promise<{ changed: boolean; taskCompleted: boolean }> {
   const assetRef = col.assets().doc(assetId);
   return adminDb().runTransaction(async (tx) => {
@@ -505,7 +521,8 @@ export async function reconcileAssetPublished(
     const asset = withId<Asset>(snap);
 
     const withPostId: Asset = verifiedPostId ? { ...asset, platformPostId: verifiedPostId } : asset;
-    if (asset.status === "published" || !shouldReconcilePublished(withPostId, now)) {
+    if (asset.status === "published") return { changed: false, taskCompleted: false };
+    if (!opts?.force && !shouldReconcilePublished(withPostId, now)) {
       return { changed: false, taskCompleted: false };
     }
 
@@ -513,12 +530,18 @@ export async function reconcileAssetPublished(
     const taskRef = taskId ? col.clientTasks().doc(taskId) : null;
     const taskSnap = taskRef ? await tx.get(taskRef) : null;
 
+    const { FieldValue } = await import("firebase-admin/firestore");
     tx.set(
       assetRef,
       {
         status: "published",
         publishedAt: asset.publishedAt ?? now,
         ...(verifiedPostId ? { platformPostId: verifiedPostId } : {}),
+        // The asset is live; a lingering publishError would keep rendering it
+        // as "needs attention", and a lingering claim is meaningless once
+        // published. markAssetPublished clears both — match it.
+        publishError: FieldValue.delete(),
+        publishClaimedAt: FieldValue.delete(),
         updatedAt: now,
       },
       { merge: true },
@@ -540,7 +563,7 @@ export async function reconcileAssetPublished(
  * Longer than any single platform push, shorter than the cron interval, so a run that
  * crashes mid-publish never permanently wedges an asset.
  */
-const PUBLISH_CLAIM_TTL_MS = 5 * 60 * 1000;
+export const PUBLISH_CLAIM_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Atomically claim an asset for a single publish attempt. Returns true ONLY for the

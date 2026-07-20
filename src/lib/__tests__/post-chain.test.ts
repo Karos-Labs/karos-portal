@@ -8,6 +8,7 @@ import {
   isChainSchedulable,
   orderKeyForCreatedAt,
   orderKeyForLabItem,
+  blockingPredecessor,
   planClientChain,
   sameLocalDay,
   startOfDayMs,
@@ -525,5 +526,187 @@ describe("day math", () => {
     expect(startOfDayMs(at(2026, 7, 14, 23, 59))).toBe(at(2026, 7, 14));
     expect(sameLocalDay(at(2026, 7, 14, 0, 1), at(2026, 7, 14, 23, 59))).toBe(true);
     expect(sameLocalDay(at(2026, 7, 14, 23, 59), at(2026, 7, 15, 0, 1))).toBe(false);
+  });
+});
+
+/* ──────────────────── publish ordering gate ────────────────────── */
+
+describe("blockingPredecessor", () => {
+  /** Two posts of one series ("Playbook", nos 1 and 2), in lab-import order. */
+  function series(overrides: { no1?: Partial<Asset>; no2?: Partial<Asset> } = {}) {
+    const no1 = makeAsset({
+      title: "The playbook, no 1",
+      orderKey: "2026-07-06-templates#01-playbook",
+      templateKey: "playbook",
+      meta: { source: "lab-import" },
+      ...overrides.no1,
+    });
+    const no2 = makeAsset({
+      title: "The playbook, no 2",
+      orderKey: "2026-07-06-templates#02-playbook",
+      templateKey: "playbook",
+      meta: { source: "lab-import" },
+      status: "approved",
+      publishMode: "auto",
+      scheduledAt: at(2026, 7, 10, 11),
+      ...overrides.no2,
+    });
+    return { no1, no2 };
+  }
+
+  it("holds a post whose predecessor is still a draft (the SCRUM-69 report)", () => {
+    const { no1, no2 } = series();
+    expect(blockingPredecessor(no2, [no1, no2])?.title).toBe("The playbook, no 1");
+  });
+
+  it("releases the post once the predecessor is published", () => {
+    const { no1, no2 } = series({ no1: { status: "published", publishedAt: at(2026, 7, 9, 11) } });
+    expect(blockingPredecessor(no2, [no1, no2])).toBeNull();
+  });
+
+  it("never holds the first post in a series", () => {
+    const { no1, no2 } = series();
+    expect(blockingPredecessor(no1, [no1, no2])).toBeNull();
+  });
+
+  it("reports the NEAREST predecessor, not the earliest", () => {
+    const a = makeAsset({ title: "no 1", orderKey: "run#01", templateKey: "playbook", meta: { source: "lab-import" } });
+    const b = makeAsset({ title: "no 2", orderKey: "run#02", templateKey: "playbook", meta: { source: "lab-import" } });
+    const c = makeAsset({
+      title: "no 3",
+      orderKey: "run#03",
+      templateKey: "playbook",
+      meta: { source: "lab-import" },
+      status: "approved",
+      scheduledAt: at(2026, 7, 10, 11),
+    });
+    expect(blockingPredecessor(c, [a, b, c])?.title).toBe("no 2");
+  });
+
+  it("does not hold across chain families — a stalled post blocks only its own", () => {
+    const { no2 } = series();
+    const newsletter = makeAsset({
+      title: "Newsletter no 1",
+      type: "email",
+      orderKey: "2026-07-06-templates#00-newsletter",
+      meta: { source: "lab-import" },
+    });
+    expect(blockingPredecessor(no2, [newsletter, no2])).toBeNull();
+  });
+
+  it("does not hold across clients", () => {
+    const { no1, no2 } = series({ no1: { clientId: "client-2" } });
+    expect(blockingPredecessor(no2, [no1, no2])).toBeNull();
+  });
+
+  it("is not blocked by placeholders or reference docs — neither is ever posted", () => {
+    const { no2 } = series();
+    // Same series as the candidate, so only the placeholder guard can spare it.
+    const placeholder = makeAsset({
+      title: "Roadmap slot",
+      orderKey: "2026-07-06-templates#00-slot",
+      templateKey: "playbook",
+      meta: { source: "lab-import" },
+      publishMode: "placeholder",
+    });
+    const referenceDoc = makeAsset({
+      title: "Template ideas",
+      orderKey: "2026-07-06-templates#00-ideas",
+      templateKey: "template-ideas",
+      meta: { source: "lab-import" },
+    });
+    expect(blockingPredecessor(no2, [placeholder, referenceDoc, no2])).toBeNull();
+  });
+
+  it("is not blocked by legacy assets that carry no order signal", () => {
+    const { no2 } = series();
+    const legacy = makeAsset({
+      title: "Old post",
+      meta: { source: "content-engine" },
+      createdAt: at(2020, 1, 1),
+    });
+    expect(blockingPredecessor(no2, [legacy, no2])).toBeNull();
+  });
+
+  it("agrees with planClientChain's ordering: same key → id tiebreak", () => {
+    const shared = { orderKey: "run#01", templateKey: "playbook", meta: { source: "lab-import" } };
+    const first = makeAsset({ ...shared, id: "aaa", title: "First" });
+    const second = makeAsset({
+      ...shared,
+      id: "bbb",
+      title: "Second",
+      status: "approved",
+      scheduledAt: at(2026, 7, 10, 11),
+    });
+    expect(blockingPredecessor(second, [first, second])?.id).toBe("aaa");
+    expect(blockingPredecessor(first, [first, second])).toBeNull();
+  });
+
+  it("does not hold across templates — a stalled series blocks only its own", () => {
+    const { no2 } = series();
+    const otherTemplate = makeAsset({
+      title: "By the numbers, no 1",
+      orderKey: "2026-07-06-templates#00-by-the-numbers",
+      templateKey: "by-the-numbers",
+      meta: { source: "lab-import" },
+    });
+    expect(blockingPredecessor(no2, [otherTemplate, no2])).toBeNull();
+  });
+
+  it("does not wedge on an unrelated backlog of drafts (the normal post-import state)", () => {
+    // Staff rush one post out ahead of a fresh import's un-approved drafts.
+    // None of them share its series, so none of them may hold it hostage.
+    const backlog = ["alpha", "beta", "gamma", "delta"].map((key, i) =>
+      makeAsset({
+        title: `Backlog ${key}`,
+        orderKey: `2026-07-06-templates#0${i}-${key}`,
+        templateKey: key,
+        meta: { source: "lab-import" },
+      }),
+    );
+    const rushed = makeAsset({
+      title: "Rushed post",
+      orderKey: "2026-07-06-templates#09-rushed",
+      templateKey: "rushed",
+      meta: { source: "lab-import" },
+      status: "approved",
+      publishMode: "auto",
+      scheduledAt: at(2026, 7, 10, 11),
+    });
+    expect(blockingPredecessor(rushed, [...backlog, rushed])).toBeNull();
+  });
+
+  it("never holds an asset with no series identity — order can't be established", () => {
+    const earlier = makeAsset({ title: "no 1", orderKey: "run#01", meta: { source: "lab-import" } });
+    const later = makeAsset({
+      title: "no 2",
+      orderKey: "run#02",
+      meta: { source: "lab-import" },
+      status: "approved",
+      scheduledAt: at(2026, 7, 10, 11),
+    });
+    expect(blockingPredecessor(later, [earlier, later])).toBeNull();
+  });
+
+  it("resolves the series from meta.labRun when no templateKey was stored", () => {
+    const no1 = makeAsset({
+      title: "The playbook, no 1",
+      orderKey: "2026-07-06-templates#01-playbook",
+      meta: { source: "lab-import", labRun: "instagram-agent/2026-07-06-templates#01-playbook" },
+    });
+    const no2 = makeAsset({
+      title: "The playbook, no 2",
+      orderKey: "2026-07-06-templates#02-playbook",
+      meta: { source: "lab-import", labRun: "instagram-agent/2026-07-06-templates#02-playbook" },
+      status: "approved",
+      scheduledAt: at(2026, 7, 10, 11),
+    });
+    expect(blockingPredecessor(no2, [no1, no2])?.title).toBe("The playbook, no 1");
+  });
+
+  it("ignores non-chain types entirely", () => {
+    const note = makeAsset({ type: "note", orderKey: "run#02", meta: { source: "lab-import" }, status: "approved" });
+    const earlier = makeAsset({ type: "note", orderKey: "run#01", meta: { source: "lab-import" } });
+    expect(blockingPredecessor(note, [earlier, note])).toBeNull();
   });
 });

@@ -3,11 +3,13 @@
 import { revalidatePath } from "next/cache";
 import {
   upsertClientIntegration,
+  listClientIntegrations,
   deleteClientIntegration,
   setIntegrationAutoPublish,
   listAccessTokens,
   updateAccessToken,
 } from "@/lib/data";
+import { PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { getCurrentUser } from "@/lib/auth";
 import { issueAccessToken } from "@/lib/tokens";
 import { autoCompleteTasksOnIntegrationConnect } from "@/lib/task-sync";
@@ -16,6 +18,10 @@ import { requireStaff } from "./_shared";
 /**
  * Save (create or overwrite) a social platform integration for a client.
  * Empty-string values are stripped before saving to avoid persisting blank fields.
+ *
+ * A blank password field means "keep the stored secret": secrets never reach the
+ * browser, so the form cannot send back what it was not given, and the carry-over
+ * happens here. The write is a full overwrite, hence the explicit re-merge.
  */
 export async function saveIntegrationAction(
   clientId: string,
@@ -28,6 +34,17 @@ export async function saveIntegrationAction(
   const cleaned: Record<string, string> = {};
   for (const [k, v] of Object.entries(credentials)) {
     if (v.trim()) cleaned[k] = v.trim();
+  }
+
+  const secretKeys = (PLATFORM_REGISTRY.find((p) => p.id === platform)?.fields ?? [])
+    .filter((f) => f.type === "password")
+    .map((f) => f.key);
+  if (secretKeys.length > 0) {
+    const existing = (await listClientIntegrations(clientId)).find((i) => i.platform === platform);
+    for (const key of secretKeys) {
+      const stored = existing?.credentials?.[key];
+      if (!cleaned[key] && stored) cleaned[key] = stored;
+    }
   }
 
   await upsertClientIntegration({

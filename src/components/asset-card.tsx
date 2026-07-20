@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ImageLightbox } from "@/components/image-lightbox";
+import { CopyCaptionButton } from "@/components/copy-caption-button";
 import { assetImages } from "@/lib/asset-images";
 import {
   updateAssetAction,
@@ -13,6 +14,7 @@ import {
   recommendAssetScheduleAction,
   unscheduleAssetAction,
   publishAssetNowAction,
+  markAssetPostedAction,
 } from "@/lib/actions";
 import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS, PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { templateForAsset } from "@/lib/post-chain";
@@ -421,21 +423,6 @@ export function AssetCard({
   const [approving, setApproving] = useState(false);
   const [content, setContent] = useState(asset.content);
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  async function copyCaption() {
-    const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
-    const text = hashtags.length
-      ? `${asset.content}\n\n${hashtags.map((h) => "#" + h).join(" ")}`
-      : asset.content;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard blocked — no-op */
-    }
-  }
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
@@ -450,6 +437,15 @@ export function AssetCard({
   const canPublishNow =
     canApprove && compatibleConnected.length > 0 && asset.status !== "published";
 
+  // Marking a by-hand post live needs no integration and no staff role — it's a
+  // statement about what the user already did, and for a client posting from
+  // their phone it's the ONLY thing that can move the asset off "approved".
+  // Drafts are excluded (nothing's been approved to post yet) as are
+  // placeholders (roadmap entries that were never meant to go out).
+  const canMarkPosted =
+    (asset.status === "approved" || asset.status === "scheduled") &&
+    asset.publishMode !== "placeholder";
+
   // Notes have no scheduling dimension; everything else can land on the calendar.
   const calendarEligible = asset.type !== "note";
 
@@ -458,26 +454,22 @@ export function AssetCard({
   type SlideMeta = { role?: string; headline?: string; body?: string | null; imageUrl?: string | null; attribution?: string | null };
   const metaSlides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
 
-  // When the webhook didn't write structured meta.slides, reconstruct the
-  // post's full set of photos from whatever the ingest path left behind, so a
-  // multi-photo post shows the whole post and not just its cover:
-  //   • meta.artifacts — legacy webhook posts (each photo an artifact entry)
-  //   • meta.images    — lab-imported posts (a plain list of hosted URLs)
-  // Both are natural-sorted (so slide-2 precedes slide-10).
-  const IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif)$/i;
-  type MetaArtifact = { name?: string; url?: string; contentType?: string };
-  const fallbackSlides: SlideMeta[] = (() => {
-    if (metaSlides.length > 0) return [];
-    const fromArtifacts = ((asset.meta?.artifacts as MetaArtifact[] | undefined) ?? [])
-      .filter((a) => a?.url && (a.contentType?.startsWith("image/") || (a.name && IMAGE_EXT.test(a.name))))
-      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", undefined, { numeric: true }))
-      .map((a) => ({ imageUrl: a.url as string }));
-    if (fromArtifacts.length > 0) return fromArtifacts;
-    return ((asset.meta?.images as string[] | undefined) ?? [])
-      .filter((u): u is string => typeof u === "string" && u.length > 0)
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-      .map((url) => ({ imageUrl: url }));
-  })();
+  // Every photo in the post, from whichever meta shape the ingest path left
+  // behind — assetImages() is the one definition shared with the download
+  // route and the lightbox. This card used to re-derive its own narrower
+  // fallback (meta.artifacts / meta.images only) and render the cover from
+  // asset.imageUrl alone, so an import whose photos landed in meta.files —
+  // which is every lab import whose files the importer didn't classify as
+  // images — drew a card with no preview at all while its Download button
+  // happily offered the very photos the card wasn't showing.
+  const galleryImages = assetImages(asset);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
+  // When the webhook didn't write structured meta.slides, treat the recovered
+  // photos as the slide list so a multi-photo post shows the whole post and
+  // not just its cover.
+  const fallbackSlides: SlideMeta[] =
+    metaSlides.length > 0 ? [] : galleryImages.map((g) => ({ imageUrl: g.url }));
 
   // Only treat as a carousel when there's genuinely more than one photo;
   // single-photo posts keep the cleaner full-width single-image rendering.
@@ -485,9 +477,19 @@ export function AssetCard({
   const isCarousel = slides.length > 0;
   const photoCount = slides.filter((s) => s.imageUrl).length;
 
-  // The lightbox pages through the same set the download route bundles.
-  const galleryImages = assetImages(asset);
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  // The single-photo cover: an explicit imageUrl wins, else the lone recovered
+  // photo (assetImages already applies that precedence).
+  const coverImageUrl = galleryImages.length === 1 ? galleryImages[0].url : null;
+
+  // Deliverables that aren't photos and aren't the caption — a reference doc's
+  // .pdf, a run's data.json. When they're ALL an asset has, they're the only
+  // thing standing between the reader and an empty card, so name them.
+  type MetaFile = { name?: string; relPath?: string; url?: string };
+  const attachments = [
+    ...((asset.meta?.files as MetaFile[] | undefined) ?? []),
+    ...((asset.meta?.artifacts as MetaFile[] | undefined) ?? []),
+  ].filter((f): f is MetaFile & { url: string } => typeof f?.url === "string");
+  const hasPreview = Boolean(asset.content) || isCarousel || coverImageUrl != null;
 
   // Map a slide's position (some slides have no photo) to its index within
   // galleryImages, so a thumbnail opens the right picture.
@@ -545,6 +547,22 @@ export function AssetCard({
       router.refresh();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Approval failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Record a by-hand post. See markAssetPostedAction — this is the only route
+   *  to "published" that doesn't go through a platform integration. */
+  async function handleMarkPosted() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const result = await markAssetPostedAction(asset.id);
+      if (!result.ok) setActionError(result.error);
+      else router.refresh();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Couldn't mark this as posted");
     } finally {
       setBusy(false);
     }
@@ -623,25 +641,13 @@ export function AssetCard({
             <p
               className={cn(
                 "mt-1 whitespace-pre-wrap text-sm text-muted",
-                asset.content && "pr-9",
+                asset.content && "pr-12",
                 !open && "line-clamp-2",
               )}
             >
               {asset.content}
             </p>
-            {asset.content && (
-              <button
-                type="button"
-                onClick={copyCaption}
-                title={copied ? "Copied" : "Copy caption"}
-                aria-label={copied ? "Caption copied" : "Copy caption"}
-                // Visible & tappable by default (touch devices have no hover); on
-                // hover-capable pointers it stays a subtle reveal on hover/focus.
-                className="absolute right-0 top-0 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-muted-2 transition-opacity hover:text-foreground [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-visible:opacity-100 [@media(hover:hover)]:group-hover/caption:opacity-100"
-              >
-                <Icon name={copied ? "Check" : "Copy"} className={cn("h-3.5 w-3.5", copied && "text-neon")} />
-              </button>
-            )}
+            <CopyCaptionButton asset={asset} className="absolute right-0 top-0" />
           </div>
 
           {isCarousel ? (
@@ -676,7 +682,7 @@ export function AssetCard({
                 {photoCount > 0 && " · tap a photo to view & download"}
               </p>
             </div>
-          ) : asset.imageUrl ? (
+          ) : coverImageUrl ? (
             <button
               type="button"
               onClick={() => setLightboxIndex(0)}
@@ -684,13 +690,40 @@ export function AssetCard({
               title="View full size"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={asset.imageUrl} alt={asset.title} className="w-full" />
+              <img src={coverImageUrl} alt={asset.title} className="w-full" />
               <span className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/50 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100">
                 <Icon name="Maximize2" className="h-3 w-3" />
                 View
               </span>
             </button>
           ) : null}
+
+          {/* No caption and no photo. Show the deliverables by name rather than
+              the empty body this used to render — an asset always has SOMETHING
+              (that's why it exists), it just isn't always inlineable. */}
+          {!hasPreview && (
+            <div className="mt-2 rounded-lg border border-dashed border-border px-3 py-2.5">
+              {attachments.length > 0 ? (
+                <ul className="space-y-1">
+                  {attachments.map((f, i) => (
+                    <li key={i}>
+                      <a
+                        href={f.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-foreground"
+                      >
+                        <Icon name="FileText" className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{f.name ?? f.relPath ?? "Attachment"}</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-muted-2">No preview — this asset has no caption or photos yet.</p>
+              )}
+            </div>
+          )}
 
           {open && (
             <>
@@ -874,6 +907,18 @@ export function AssetCard({
                 >
                   <Icon name="Send" className="h-3.5 w-3.5" />
                   Publish Now
+                </Button>
+              )}
+              {canMarkPosted && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleMarkPosted}
+                  loading={busy}
+                  title="You posted this yourself — mark it live so the calendar and status reflect it"
+                >
+                  <Icon name="CheckCheck" className="h-3.5 w-3.5" />
+                  Mark as posted
                 </Button>
               )}
               {canApprove && asset.status === "draft" && !approving && (
