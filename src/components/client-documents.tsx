@@ -494,10 +494,13 @@ export function ClientDocuments({
   contextDocs,
   isAdmin,
   clientId,
+  isAiProcessing,
 }: {
   contextDocs: ClientContextDoc[];
   isAdmin?: boolean;
   clientId?: string;
+  /** True while a background AI generation cycle is running — locks the Regenerate button. */
+  isAiProcessing?: boolean;
 }) {
   const router = useRouter();
   const [openDoc, setOpenDoc] = useState<{ doc: ClientContextDoc; label: string } | null>(null);
@@ -516,8 +519,13 @@ export function ClientDocuments({
         {isAdmin && clientId && (
           <button
             onClick={() => setRegenModalOpen(true)}
-            title="Re-run the Intel Report pipeline to regenerate all documents"
-            className="flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-medium text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
+            disabled={isAiProcessing}
+            title={
+              isAiProcessing
+                ? "Karos Agents are already building this workspace — please wait for it to finish"
+                : "Re-run the Intel Report pipeline to regenerate all documents"
+            }
+            className="flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-medium text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-2"
           >
             <Icon name="RefreshCw" className="h-3 w-3" />
             Regenerate

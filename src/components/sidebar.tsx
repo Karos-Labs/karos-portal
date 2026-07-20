@@ -399,6 +399,7 @@ export function Sidebar({
           contextDocs={activeClient.contextDocs}
           isAdmin={activeClient.isAdmin}
           clientId={activeClient.client.id}
+          isAiProcessing={activeClient.client.isAiProcessing}
         />
       </div>
 

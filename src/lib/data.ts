@@ -16,6 +16,7 @@ import type {
   ClientContextDoc,
   ClientCredits,
   Campaign,
+  ClientInsightsCache,
   ClientIntegration,
   ClientMarketingAnalytics,
   ClientReport,
@@ -45,6 +46,7 @@ import {
   rollCreditWindows,
 } from "@/lib/credits";
 import { engagementScore, rankByEngagement } from "@/lib/analytics";
+import { AI_PROCESSING_LOCK_STALE_MS } from "@/lib/constants";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { computeBoardCapacity } from "@/lib/task-dedup";
 import { encryptCredentials, decryptCredentials } from "@/lib/crypto/token-cipher";
@@ -90,6 +92,10 @@ const col = {
   clientMarketingAnalytics: () => adminDb().collection("clientMarketingAnalytics"),
   // Omnichannel campaigns: themed bundles of dependent tasks/assets per client.
   campaigns: () => adminDb().collection("campaigns"),
+  // Cached AI Insights briefing — one doc per client (doc ID = clientId), keyed
+  // by a snapshot of the digest that produced it so the LLM only reruns when
+  // there's actually something new to report (see /api/clients/[id]/insights).
+  clientInsightsCache: () => adminDb().collection("clientInsightsCache"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -196,6 +202,41 @@ export async function completeOnboarding(
     tx.set(userRef, { hasCompletedOnboarding: true }, { merge: true });
     tx.set(clientRef, clientPatch, { merge: true });
   });
+}
+
+/**
+ * Atomically claim the client-level AI-processing lock: returns false (no write)
+ * if a generation cycle is already running, otherwise flips `isAiProcessing` to
+ * true (stamping `aiProcessingStartedAt`) in the same transaction and returns
+ * true. Callers MUST release the lock (releaseAiProcessingLock) in a finally
+ * block — this is the guard that stops a manual Regenerate / Refresh Task Map
+ * click from overlapping the onboarding pipeline's own background run (or a
+ * second concurrent click of its own).
+ *
+ * A lock older than AI_PROCESSING_LOCK_STALE_MS is treated as abandoned (the
+ * background run that held it died without reaching its finally — a dev-server
+ * restart, an HMR-killed `after()`, a serverless timeout) and is silently
+ * reclaimed rather than blocking every future action forever.
+ */
+export async function tryAcquireAiProcessingLock(clientId: string): Promise<boolean> {
+  const ref = col.clients().doc(clientId);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const client = withId<Client>(snap);
+    const lockAge = Date.now() - (client.aiProcessingStartedAt ?? 0);
+    if (client.isAiProcessing && lockAge < AI_PROCESSING_LOCK_STALE_MS) return false;
+    tx.set(ref, { isAiProcessing: true, aiProcessingStartedAt: Date.now() }, { merge: true });
+    return true;
+  });
+}
+
+/** Release the client-level AI-processing lock. Safe to call even if never acquired. */
+export async function releaseAiProcessingLock(clientId: string): Promise<void> {
+  await col.clients().doc(clientId).set(
+    { isAiProcessing: false, aiProcessingStartedAt: null },
+    { merge: true },
+  );
 }
 
 export async function deleteClient(id: string): Promise<void> {
@@ -738,11 +779,15 @@ export async function upsertClientSeoGeo(data: SeoGeoInsights): Promise<void> {
   const ref = col.clientSeoGeo().doc(data.clientId);
   await adminDb().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
+    let priorSeries: number[] = [];
     if (snap.exists) {
       const existing = snap.data() as SeoGeoInsights;
       if (existing.capturedAt > data.capturedAt) return; // a newer capture already landed
+      // Carry the visibility trend forward (seed from the prior series, or its last score).
+      priorSeries = existing.visibilityHistory ?? [existing.geoVisibilityIndex];
     }
-    tx.set(ref, data);
+    const visibilityHistory = [...priorSeries, data.geoVisibilityIndex].slice(-12);
+    tx.set(ref, { ...data, visibilityHistory });
   });
 }
 
@@ -809,6 +854,20 @@ export async function upsertClientMarketingAnalytics(
  * score is stored, not recomputed. Fed into the Task Map prompt so the model
  * doubles down on proven winners and phases out failing structures.
  */
+/* ─────────────────────── AI Insights cache ──────────────────────────── */
+
+export async function getClientInsightsCache(clientId: string): Promise<ClientInsightsCache | null> {
+  const doc = await col.clientInsightsCache().doc(clientId).get();
+  return doc.exists ? (doc.data() as ClientInsightsCache) : null;
+}
+
+export async function upsertClientInsightsCache(
+  clientId: string,
+  patch: Omit<ClientInsightsCache, "clientId">,
+): Promise<void> {
+  await col.clientInsightsCache().doc(clientId).set({ clientId, ...patch }, { merge: true });
+}
+
 export async function getClientPerformanceBenchmarks(
   clientId: string,
   count = 5,

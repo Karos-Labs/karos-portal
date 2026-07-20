@@ -127,6 +127,17 @@ export interface Client {
    * Absent ⇒ DEFAULT_LINKEDIN_SEAT_LIMIT. Admin-set from client settings.
    */
   linkedinSeatLimit?: number;
+  /**
+   * Global workspace lock: true while any background AI generation cycle (Intel
+   * Report, SEO/GEO, Task Map swarm) is running for this client. Acquired via
+   * tryAcquireAiProcessingLock (data.ts) so concurrent triggers can't overlap;
+   * always released in a finally block. UI reads this to grey out
+   * Regenerate/Refresh Task Map controls and show a "building your workspace"
+   * banner for every user on the account.
+   */
+  isAiProcessing?: boolean;
+  /** Epoch millis the current AI-processing lock was acquired — used to detect a stale lock. */
+  aiProcessingStartedAt?: number;
   createdAt: number;
   createdBy: string;
 }
@@ -821,6 +832,20 @@ export interface PerformanceBenchmarks {
   bottom: ClientMarketingAnalytics[];
   /** Total analytics records considered when ranking. */
   sampleSize: number;
+}
+
+/**
+ * Cached AI Insights briefing (`/api/clients/[id]/insights`). Stored in
+ * `clientInsightsCache`, doc ID = clientId. `digestKey` is a stable JSON snapshot
+ * of whichever digest (performance or content-pipeline) produced `text` — the
+ * route only calls the LLM again when a freshly-computed digest differs from
+ * this, so a page reload doesn't re-spend tokens on an unchanged briefing.
+ */
+export interface ClientInsightsCache {
+  clientId: string;
+  digestKey: string;
+  text: string;
+  generatedAt: number;
 }
 
 /* ────────────────────────────────────────────────────────────────────── */

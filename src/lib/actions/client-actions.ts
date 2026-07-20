@@ -3,7 +3,14 @@
 import { randomBytes } from "crypto";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createClient, updateClient, deleteClient, getClientByKeyId } from "@/lib/data";
+import {
+  createClient,
+  updateClient,
+  deleteClient,
+  getClientByKeyId,
+  tryAcquireAiProcessingLock,
+  releaseAiProcessingLock,
+} from "@/lib/data";
 import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
 import type { Client, SocialLinks } from "@/lib/types";
@@ -47,32 +54,40 @@ export async function createClientAction(input: {
   // the client from Firestore at execution time, so the Intel Report Agent
   // always operates on the live, current client state — never a captured copy.
   after(async () => {
-    await updateClient(id, { onboardingStatus: "running", onboardingError: "" });
-    const { runIntelReportPipeline } = await import("@/lib/intel");
-    const [brandingResult, intelResult] = await Promise.allSettled([
-      applyBrandingForClient(id),
-      runIntelReportPipeline(id),
-    ]);
-    if (brandingResult.status === "rejected") {
-      console.error("[onboard] Branding generation failed (non-fatal):", brandingResult.reason);
+    // Guards against overlapping this pipeline with a manual Regenerate /
+    // Refresh Task Map click (or the client's own onboarding-completion run) —
+    // released in the finally below regardless of outcome.
+    if (!(await tryAcquireAiProcessingLock(id))) return;
+    try {
+      await updateClient(id, { onboardingStatus: "running", onboardingError: "" });
+      const { runIntelReportPipeline } = await import("@/lib/intel");
+      const [brandingResult, intelResult] = await Promise.allSettled([
+        applyBrandingForClient(id),
+        runIntelReportPipeline(id),
+      ]);
+      if (brandingResult.status === "rejected") {
+        console.error("[onboard] Branding generation failed (non-fatal):", brandingResult.reason);
+      }
+      if (intelResult.status === "rejected") {
+        console.error("[onboard] Intel Report generation failed:", intelResult.reason);
+      }
+      const anyFailed = brandingResult.status === "rejected" || intelResult.status === "rejected";
+      // Persist WHY the run failed so the UI can surface it — a silent "failed"
+      // badge with the reason buried in server logs is exactly what we're avoiding.
+      const failureReasons = [
+        brandingResult.status === "rejected" ? `branding: ${String((brandingResult.reason as Error)?.message ?? brandingResult.reason)}` : "",
+        intelResult.status === "rejected" ? `intel: ${String((intelResult.reason as Error)?.message ?? intelResult.reason)}` : "",
+      ]
+        .filter(Boolean)
+        .join(" | ")
+        .slice(0, 500);
+      await updateClient(id, {
+        onboardingStatus: anyFailed ? "failed" : "done",
+        onboardingError: anyFailed ? failureReasons : "",
+      });
+    } finally {
+      await releaseAiProcessingLock(id);
     }
-    if (intelResult.status === "rejected") {
-      console.error("[onboard] Intel Report generation failed:", intelResult.reason);
-    }
-    const anyFailed = brandingResult.status === "rejected" || intelResult.status === "rejected";
-    // Persist WHY the run failed so the UI can surface it — a silent "failed"
-    // badge with the reason buried in server logs is exactly what we're avoiding.
-    const failureReasons = [
-      brandingResult.status === "rejected" ? `branding: ${String((brandingResult.reason as Error)?.message ?? brandingResult.reason)}` : "",
-      intelResult.status === "rejected" ? `intel: ${String((intelResult.reason as Error)?.message ?? intelResult.reason)}` : "",
-    ]
-      .filter(Boolean)
-      .join(" | ")
-      .slice(0, 500);
-    await updateClient(id, {
-      onboardingStatus: anyFailed ? "failed" : "done",
-      onboardingError: anyFailed ? failureReasons : "",
-    });
   });
 
   revalidatePath("/clients");

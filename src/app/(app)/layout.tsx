@@ -20,6 +20,7 @@ import { Sidebar } from "@/components/sidebar";
 import { ClientRail } from "@/components/client-rail";
 import { CopilotDock } from "@/components/copilot-dock";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
+import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { AppHeader } from "@/components/app-header";
 import { StaffCopilotDock } from "@/components/staff-chatbot-widget";
 import type { ActionItemNotification, AgentReviewNotification, Client, ClientTask } from "@/lib/types";
@@ -99,7 +100,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 <ImpersonationBanner realAdmin={realAdmin} viewingAs={user} />
               )}
               <main className="flex-1 px-4 pb-28 pt-6 md:px-8 md:pt-8 md:pb-16 lg:pb-8">
-                <div className="mx-auto w-full max-w-5xl animate-fade-up">{children}</div>
+                <div className="mx-auto w-full max-w-5xl animate-fade-up">
+                  {client.isAiProcessing && <AiProcessingBanner />}
+                  {children}
+                </div>
               </main>
             </div>
 
@@ -110,7 +114,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               hasGoogleIntegration={integrations.some(
                 (i) => i.platform === "google" && integrationIsUsable(i),
               )}
-              client={{ name: client.name, website: client.website, industry: client.industry }}
+              client={{
+                name: client.name,
+                website: client.website,
+                industry: client.industry,
+                isAiProcessing: client.isAiProcessing,
+              }}
               report={
                 report ? { overallGrade: report.overallGrade, overallScore: report.overallScore } : null
               }

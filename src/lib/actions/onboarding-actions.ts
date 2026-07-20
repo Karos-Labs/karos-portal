@@ -1,9 +1,16 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { upsertUser, completeOnboarding, clearUserPhone } from "@/lib/data";
+import {
+  upsertUser,
+  completeOnboarding,
+  clearUserPhone,
+  tryAcquireAiProcessingLock,
+  releaseAiProcessingLock,
+} from "@/lib/data";
 import { adminAuth } from "@/lib/firebase/admin";
 import { addEmployeeSeatAction } from "./seat-actions";
 
@@ -79,6 +86,30 @@ export async function completeOnboardingAction(input: {
     name: clientName,
     industry: input.industry?.trim() || undefined,
     brandVoice: input.brandVoice?.trim() || undefined,
+  });
+
+  // Fire-and-forget: build the client's Intel Report + SEO/GEO + Task Map from
+  // the freshly-entered workspace details so they land in a tailored workspace
+  // without waiting on staff or a cron. `after()` runs once this response has
+  // been sent, so "Finish Setup" redirects instantly regardless of how long the
+  // pipeline takes. Guarded by the shared AI-processing lock so it can never
+  // overlap a manual Regenerate / Refresh Task Map click (or a duplicate
+  // "Finish Setup" submission) for the same client.
+  const clientId = user.clientId;
+  const createdBy = user.uid;
+  after(async () => {
+    if (!(await tryAcquireAiProcessingLock(clientId))) return;
+    try {
+      const { runIntelReportPipeline } = await import("@/lib/intel");
+      const { buildSwarmContext, runSwarmToCompletion } = await import("@/lib/agent-swarm");
+      await runIntelReportPipeline(clientId);
+      const context = await buildSwarmContext(clientId);
+      await runSwarmToCompletion({ clientId, createdBy, context });
+    } catch (e) {
+      console.error("[onboarding] Post-onboarding AI generation failed:", e);
+    } finally {
+      await releaseAiProcessingLock(clientId);
+    }
   });
 
   revalidatePath("/dashboard");

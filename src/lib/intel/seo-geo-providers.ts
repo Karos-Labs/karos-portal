@@ -61,17 +61,35 @@ async function withRetry<T>(name: string, fn: () => Promise<T>): Promise<T> {
 
 /* ── OpenAI (engine: chatgpt) ─────────────────────────────────────── */
 
+interface OpenAIResponsesResult {
+  output?: Array<{
+    type: string;
+    content?: Array<{
+      type: string;
+      text?: string;
+      annotations?: Array<{ type: string; url?: string; title?: string }>;
+    }>;
+  }>;
+  usage?: { input_tokens?: number; output_tokens?: number };
+}
+
 async function askOpenAI(prompt: string, clientId: string): Promise<{ answerText: string; citations: string[] }> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  // The ChatGPT column must be MEASURED via a FORCED web_search on the Responses API.
+  // A plain chat/completions call answers from parametric memory with ZERO citations
+  // (a3 dev handoff, 2026-07-14) — the tool MUST be forced via tool_choice, and real
+  // citations come back as url_citation annotations on the message output_text.
+  const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model: OPENAI_MODEL,
-      messages: [{ role: "user", content: prompt }],
-      max_completion_tokens: CAPTURE_MAX_TOKENS,
+      input: prompt,
+      tools: [{ type: "web_search" }],
+      tool_choice: { type: "web_search" },
+      max_output_tokens: CAPTURE_MAX_TOKENS,
     }),
     signal: AbortSignal.timeout(CAPTURE_TIMEOUT_MS),
   });
@@ -79,20 +97,33 @@ async function askOpenAI(prompt: string, clientId: string): Promise<{ answerText
     const body = await res.text().catch(() => "");
     throw new Error(`OpenAI capture failed: HTTP ${res.status} ${body.slice(0, 300)}`);
   }
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
-  };
+  const data = (await res.json()) as OpenAIResponsesResult;
   // Multi-model provenance: log OpenAI token usage against this client.
   logger.logUsage({
     clientId, agentId: null, agentName: "GEO Capture · ChatGPT",
     provider: "openai", modelName: OPENAI_MODEL, operation: "geo_capture",
-    inputTokens: data.usage?.prompt_tokens ?? 0,
-    outputTokens: data.usage?.completion_tokens ?? 0,
+    inputTokens: data.usage?.input_tokens ?? 0,
+    outputTokens: data.usage?.output_tokens ?? 0,
   });
-  const answerText = data.choices?.[0]?.message?.content ?? "";
+
+  let answerText = "";
+  const cited = new Set<string>();
+  for (const item of data.output ?? []) {
+    if (item.type !== "message") continue;
+    for (const part of item.content ?? []) {
+      if (part.type !== "output_text") continue;
+      answerText += part.text ?? "";
+      for (const ann of part.annotations ?? []) {
+        if (ann.type === "url_citation" && ann.url) {
+          const d = rootDomain(ann.url); // strips the ?utm_source=openai tracking suffix
+          if (d) cited.add(d);
+        }
+      }
+    }
+  }
   if (!answerText.trim()) throw new Error("OpenAI capture returned an empty answer");
-  return { answerText, citations: domainsFromText(answerText) };
+  for (const d of domainsFromText(answerText)) cited.add(d);
+  return { answerText, citations: [...cited] };
 }
 
 /* ── Gemini (engine: gemini, search-grounded) ─────────────────────── */

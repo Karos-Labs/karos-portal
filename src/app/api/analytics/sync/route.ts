@@ -11,6 +11,7 @@ import {
   reconcileAssetPublished,
 } from "@/lib/data";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
+import { DEFAULT_PLATFORM_FOR_TYPE } from "@/lib/scheduling";
 import { fetchPlatformMetrics, fetchSeatMetrics } from "@/lib/integrations/analytics-providers";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
 import { integrationIsUsable } from "@/lib/integration-status";
@@ -98,39 +99,38 @@ export async function GET(req: NextRequest) {
 
       // Connected, non-expired social integrations, keyed by platform. Gmail is
       // an operational integration, not a distribution channel — exclude it.
+      // NOTE: a client with none of these connected is NOT skipped below —
+      // fetchPlatformMetrics falls back to deterministic mock data when there's
+      // no access token, so demo/dev clients without live socials still get a
+      // working Self-Improving Loop (AI Insights, Task Map winners) off assets
+      // that reached "published" via auto-scheduling.
       const byPlatform = new Map(
         integrations
           .filter((i) => i.platform !== "google" && integrationIsUsable(i))
           .map((i) => [i.platform, i]),
       );
-      if (byPlatform.size === 0) continue;
 
-      // Recently-published assets that actually reached a platform.
-      const published = assets.filter(
-        (a) =>
-          a.status === "published" &&
-          a.publishedAt != null &&
-          a.publishedAt >= recentSince &&
-          !!a.scheduledPlatform,
-      );
+      // Recently-published assets that actually reached a platform. Some published
+      // assets (bulk-imported/legacy content marked "published" outside the normal
+      // schedule flow) never got `scheduledPlatform` set — infer it from the asset
+      // type (e.g. "instagram_post" → "instagram") rather than dropping them, so
+      // real published content still shows up in AI Insights / Task Map winners.
+      const published = assets
+        .map((a) => ({ asset: a, platform: a.scheduledPlatform ?? DEFAULT_PLATFORM_FOR_TYPE[a.type] }))
+        .filter(
+          (p): p is { asset: typeof p.asset; platform: string } =>
+            p.asset.status === "published" &&
+            p.asset.publishedAt != null &&
+            p.asset.publishedAt >= recentSince &&
+            !!p.platform,
+        );
 
-      for (const asset of published) {
-        const platform = asset.scheduledPlatform!;
+      for (const { asset, platform } of published) {
         const integration = byPlatform.get(platform);
         assetsScanned++;
-        if (!integration) {
-          results.push({
-            clientId: client.id,
-            platform,
-            assetId: asset.id,
-            action: "skipped",
-            detail: "no active integration for platform",
-          });
-          continue;
-        }
 
         try {
-          const { metrics, source } = await fetchPlatformMetrics(platform, integration, asset);
+          const { metrics, source } = await fetchPlatformMetrics(platform, integration?.credentials ?? {}, asset);
           await upsertClientMarketingAnalytics({
             clientId: client.id,
             assetId: asset.id,

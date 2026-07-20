@@ -1,10 +1,15 @@
+import Link from "next/link";
 import { Card, CardTitle, StatCard, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
   ENGINE_LABELS,
-  type GapSeverity,
+  INTENT_LABELS,
+  type ActionKind,
+  type CellState,
   type PerEngineVisibility,
   type ProviderSource,
+  type QuestionRow,
+  type RecImpact,
   type SeoGeoInsights,
 } from "@/lib/seo-geo";
 
@@ -13,20 +18,6 @@ import {
  * capture. Every engine column and every gap carries a provenance badge naming
  * the provider that produced the data point (OpenAI / Gemini / Anthropic).
  */
-
-const SEVERITY_COLORS: Record<GapSeverity, string> = {
-  critical: "var(--danger)",
-  high: "var(--warning)",
-  medium: "var(--info)",
-  low: "var(--muted-2)",
-};
-
-const SEVERITY_TONES: Record<GapSeverity, "danger" | "warning" | "info" | "neutral"> = {
-  critical: "danger",
-  high: "warning",
-  medium: "info",
-  low: "neutral",
-};
 
 function ProviderBadge({ source }: { source: ProviderSource | null }) {
   if (!source) return <Badge tone="neutral">no connector</Badge>;
@@ -42,6 +33,77 @@ function scoreColor(score: number): string {
   if (score >= 70) return "var(--success)";
   if (score >= 40) return "var(--warning)";
   return "var(--danger)";
+}
+
+/* ── Action-plan controls (dev-handoff §3b) ── */
+
+const IMPACT_TONES: Record<RecImpact, "danger" | "warning" | "neutral"> = {
+  high: "danger",
+  medium: "warning",
+  low: "neutral",
+};
+
+const ACTION_KIND_META: Record<ActionKind, { label: string; icon: string }> = {
+  one_click: { label: "Apply via agent", icon: "Zap" },
+  review_approve: { label: "Review & approve", icon: "PenLine" },
+  connect: { label: "Connect", icon: "Plug" },
+  guided_manual: { label: "Guided steps", icon: "ListChecks" },
+};
+
+/** Every plan item has a control (dev-handoff §3b). guided_manual is advisory (no link). */
+function controlHref(clientId: string, actionKind: ActionKind): string | null {
+  if (actionKind === "guided_manual") return null;
+  return actionKind === "connect" ? `/clients/${clientId}/settings` : `/clients/${clientId}/agents`;
+}
+
+/* ── Answer grid (per-question × per-engine, matching the report's matrix) ── */
+
+const CELL_META: Record<CellState, { glyph: string; color: string; title: string }> = {
+  named_first: { glyph: "●", color: "var(--neon)", title: "named first among competitors" },
+  named: { glyph: "●", color: "var(--foreground)", title: "named in the answer" },
+  cited_not_named: { glyph: "◍", color: "var(--warning)", title: "cited as a source but not named (ghost citation)" },
+  absent: { glyph: "○", color: "var(--muted-2)", title: "absent from the answer" },
+  unavailable: { glyph: "·", color: "var(--muted-2)", title: "engine not measured this run" },
+};
+
+function AnswerGrid({ grid, engines }: { grid: QuestionRow[]; engines: string[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="text-muted-2">
+            <th className="py-1 pr-2 text-left font-medium">Intent</th>
+            <th className="py-1 pr-3 text-left font-medium">Question</th>
+            {engines.map((e) => (
+              <th key={e} className="px-1 py-1 text-center font-medium">
+                {ENGINE_LABELS[e as keyof typeof ENGINE_LABELS] ?? e}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {grid.map((row, i) => (
+            <tr key={i} className="border-t border-border">
+              <td className="py-1 pr-2">
+                <span className="font-mono text-[10px] text-muted-2">{INTENT_LABELS[row.intent]}</span>
+              </td>
+              <td className="max-w-[22ch] truncate py-1 pr-3 text-muted" title={row.prompt}>
+                {row.prompt}
+              </td>
+              {row.cells.map((cell) => {
+                const meta = CELL_META[cell.state];
+                return (
+                  <td key={cell.engine} className="px-1 py-1 text-center" title={`${cell.engine}: ${meta.title}`}>
+                    <span style={{ color: meta.color }}>{meta.glyph}</span>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 /** Horizontal comparative bars: client vs competitors mentions on one engine. */
@@ -116,7 +178,23 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
 
   const capturedDate = new Date(insights.capturedAt).toISOString().slice(0, 10);
   const engines = insights.perEngine.filter((e) => e.source !== null || e.promptsTotal > 0);
-  const topGaps = insights.gaps.slice(0, 8);
+  // Client-facing action plan (dev-handoff §3b). Old docs pre-dating recommendations[] fall back to [].
+  const recommendations = insights.recommendations ?? [];
+  // Defensive defaults: insight docs captured before the PDF-contract fields existed
+  // won't carry these keys, so fall back rather than crash.
+  const answerGrid = insights.answerGrid ?? [];
+  const gridEngines = answerGrid[0]?.cells.map((c) => c.engine) ?? [];
+  const citationLeaderboard = insights.citationLeaderboard ?? [];
+  const cs = insights.citationSummary ?? {
+    totalMeasuredAnswers: 0,
+    answersCited: 0,
+    answersNamed: 0,
+    ghostCitations: 0,
+  };
+  // Trend: previous visibility index + delta (dev-handoff §3a).
+  const vh = insights.visibilityHistory ?? [];
+  const visPrev = vh.length >= 2 ? vh[vh.length - 2] : null;
+  const visDelta = visPrev !== null ? insights.geoVisibilityIndex - visPrev : null;
 
   return (
     <div className="space-y-6">
@@ -134,8 +212,18 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
         />
         <StatCard
           label="GEO visibility"
-          value={<span style={{ color: scoreColor(insights.geoVisibilityIndex) }}>{insights.geoVisibilityIndex}</span>}
-          hint={`of 100 · coverage ${insights.geoVisibilityCoveragePct}%`}
+          value={
+            <span style={{ color: scoreColor(insights.geoVisibilityIndex) }}>
+              {insights.geoVisibilityIndex}
+              {visDelta !== null && (
+                <span className="ml-1.5 align-middle text-xs font-medium" style={{ color: visDelta >= 0 ? "var(--success)" : "var(--danger)" }}>
+                  {visDelta >= 0 ? "+" : ""}
+                  {visDelta}
+                </span>
+              )}
+            </span>
+          }
+          hint={visPrev !== null ? `was ${visPrev} · coverage ${insights.geoVisibilityCoveragePct}%` : `of 100 · coverage ${insights.geoVisibilityCoveragePct}%`}
         />
         <StatCard label="Captured" value={capturedDate} hint={`${insights.promptSet.length} buyer-intent prompts`} />
       </div>
@@ -156,39 +244,104 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
         </div>
       </Card>
 
-      {/* Gap analysis */}
+      {/* Answer grid — per-question × per-engine (the report's central matrix) */}
+      {answerGrid.length > 0 && (
+        <Card>
+          <CardTitle className="mb-1">Where you rank in AI answers</CardTitle>
+          <p className="mb-3 text-xs text-muted-2">
+            Each cell is one answer.{" "}
+            <span style={{ color: "var(--neon)" }}>●</span> named first ·{" "}
+            <span style={{ color: "var(--foreground)" }}>●</span> named ·{" "}
+            <span style={{ color: "var(--warning)" }}>◍</span> cited, not named ·{" "}
+            <span style={{ color: "var(--muted-2)" }}>○</span> absent ·{" "}
+            <span style={{ color: "var(--muted-2)" }}>·</span> not measured
+          </p>
+          <AnswerGrid grid={answerGrid} engines={gridEngines} />
+        </Card>
+      )}
+
+      {/* Citation leaderboard + ghost summary */}
+      {citationLeaderboard.length > 0 && (
+        <Card>
+          <CardTitle className="mb-1">Who the engines quote</CardTitle>
+          <p className="mb-3 text-xs text-muted-2">
+            Cited domains across all measured answers. You were cited in {cs.answersCited}/{cs.totalMeasuredAnswers}{" "}
+            answers, named in {cs.answersNamed} — {cs.ghostCitations} ghost citation
+            {cs.ghostCitations === 1 ? "" : "s"} to convert.
+          </p>
+          <ul className="space-y-1.5">
+            {citationLeaderboard.map((r) => {
+              const max = Math.max(1, ...citationLeaderboard.map((x) => x.citations));
+              return (
+                <li key={r.domain}>
+                  <div className="mb-0.5 flex items-center justify-between text-xs">
+                    <span className={r.isClient ? "font-semibold text-foreground" : "text-muted"}>
+                      {r.domain}
+                      {r.isClient && <span className="ml-1 text-[10px] text-muted-2">(you)</span>}
+                    </span>
+                    <span className="font-mono text-muted-2">{r.citations}</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-sm bg-surface-3">
+                    <div
+                      className="h-full rounded-sm"
+                      style={{ width: `${(r.citations / max) * 100}%`, background: r.isClient ? "var(--neon)" : "var(--info)" }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      )}
+
+      {/* Action plan — client-facing recommendations[] (dev-handoff §3b). Renders ONLY
+          impact + vertical + title + a control per action_kind; every internal producer
+          field (fix_action, delivery, confidence, evidence, target, id) is excluded by
+          construction (§4). Each item's control links to the agent/credential that executes it. */}
       <Card>
-        <CardTitle className="mb-1">Search-visibility gaps</CardTitle>
+        <CardTitle className="mb-1">Action plan</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
-          Computed from the measured client-vs-competitor data, ordered by potential score lift.
+          What to improve, ordered by impact. Each item is executed by the Karos agent that owns it.
         </p>
-        {topGaps.length === 0 ? (
+        {recommendations.length === 0 ? (
           <EmptyState
             icon={<Icon name="CheckCircle2" className="h-6 w-6" />}
-            title="No measured gaps"
+            title="No open recommendations"
             description="Every measured check passed and no competitor out-ranks this brand in the capture."
           />
         ) : (
           <ul className="space-y-2">
-            {topGaps.map((g, i) => (
-              <li
-                key={`${g.id}-${i}`}
-                className="rounded-md border border-border bg-surface-2 px-3 py-2"
-                style={{ borderLeft: `3px solid ${SEVERITY_COLORS[g.severity]}` }}
-              >
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <Badge tone={SEVERITY_TONES[g.severity]}>{g.severity}</Badge>
-                  <Badge tone="neutral">{g.lever}</Badge>
-                  {g.fixAction !== "manual" && <Badge tone="neutral">fix: {g.fixAction}</Badge>}
-                  {g.source && <ProviderBadge source={g.source} />}
-                  <span className="text-sm font-medium text-foreground">{g.title}</span>
-                </div>
-                <p className="mt-1 text-xs text-muted">
-                  {g.measured}
-                  <span className="text-muted-2"> · goal: {g.benchmark} · {g.delivery} · confidence: {g.confidence}</span>
-                </p>
-              </li>
-            ))}
+            {recommendations.map((r, i) => {
+              const control = ACTION_KIND_META[r.actionKind];
+              const href = controlHref(insights.clientId, r.actionKind);
+              return (
+                <li
+                  key={`${r.recId}-${i}`}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-surface-2 px-3 py-2"
+                  style={{ borderLeft: `3px solid ${IMPACT_TONES[r.impact] === "danger" ? "var(--danger)" : IMPACT_TONES[r.impact] === "warning" ? "var(--warning)" : "var(--muted-2)"}` }}
+                >
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <Badge tone={IMPACT_TONES[r.impact]}>{r.impact}</Badge>
+                    <Badge tone="neutral">{r.vertical}</Badge>
+                    <span className="text-sm font-medium text-foreground">{r.title}</span>
+                  </div>
+                  {href ? (
+                    <Link
+                      href={href}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-surface-3"
+                    >
+                      <Icon name={control.icon} className="h-3 w-3" />
+                      {control.label}
+                    </Link>
+                  ) : (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-md px-2.5 py-1 text-xs text-muted-2">
+                      <Icon name={control.icon} className="h-3 w-3" />
+                      {control.label}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </Card>

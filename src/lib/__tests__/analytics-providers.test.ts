@@ -4,20 +4,10 @@ vi.mock("server-only", () => ({}));
 
 import { fetchPlatformMetrics, MetricsUnavailableError } from "@/lib/integrations/analytics-providers";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
-import type { Asset, ClientIntegration } from "@/lib/types";
+import type { Asset } from "@/lib/types";
 
-function integration(patch: Partial<ClientIntegration> = {}): ClientIntegration {
-  return {
-    id: "c1_twitter",
-    clientId: "c1",
-    platform: "twitter",
-    credentials: { accessToken: "tok" },
-    method: "oauth",
-    connectedBy: "u1",
-    connectedAt: 0,
-    updatedAt: 0,
-    ...patch,
-  };
+function credentials(patch: Record<string, string> = { accessToken: "tok" }): Record<string, string> {
+  return patch;
 }
 
 function asset(patch: Partial<Asset> = {}): Asset {
@@ -56,19 +46,25 @@ afterEach(() => {
 describe("fetchPlatformMetrics — live gating + fallback", () => {
   it("falls back to mock (never calls fetch) when live ingest is disabled", async () => {
     process.env.ANALYTICS_LIVE_INGEST = "0";
-    const res = await fetchPlatformMetrics("twitter", integration(), asset());
+    const res = await fetchPlatformMetrics("twitter", credentials(), asset());
     expect(res.source).toBe("mock");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("falls back to mock when the asset has no captured platformPostId", async () => {
-    const res = await fetchPlatformMetrics("twitter", integration(), asset({ platformPostId: null }));
+    const res = await fetchPlatformMetrics("twitter", credentials(), asset({ platformPostId: null }));
     expect(res.source).toBe("mock");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("falls back to mock when the integration has no access token", async () => {
-    const res = await fetchPlatformMetrics("twitter", integration({ credentials: {} }), asset());
+    const res = await fetchPlatformMetrics("twitter", credentials({}), asset());
+    expect(res.source).toBe("mock");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to mock when there's no integration for the platform at all (empty credentials)", async () => {
+    const res = await fetchPlatformMetrics("twitter", {}, asset());
     expect(res.source).toBe("mock");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -84,7 +80,7 @@ describe("fetchPlatformMetrics — live success", () => {
         },
       }),
     );
-    const res = await fetchPlatformMetrics("twitter", integration(), asset());
+    const res = await fetchPlatformMetrics("twitter", credentials(), asset());
     expect(res.source).toBe("live");
     expect(res.metrics.impressions).toBe(1000);
     expect(res.metrics.clicks).toBe(25);
@@ -97,7 +93,7 @@ describe("fetchPlatformMetrics — live success", () => {
     );
     const res = await fetchPlatformMetrics(
       "youtube",
-      integration({ platform: "youtube" }),
+      credentials(),
       asset({ platformPostId: "vid123" }),
     );
     expect(res.source).toBe("live");
@@ -109,14 +105,14 @@ describe("fetchPlatformMetrics — live success", () => {
 describe("fetchPlatformMetrics — resilience", () => {
   it("propagates TokenExpiredError on a 401 so the batch can mark reauth", async () => {
     fetchMock.mockResolvedValue(jsonResponse({}, 401));
-    await expect(fetchPlatformMetrics("twitter", integration(), asset())).rejects.toBeInstanceOf(
+    await expect(fetchPlatformMetrics("twitter", credentials(), asset())).rejects.toBeInstanceOf(
       TokenExpiredError,
     );
   });
 
   it("propagates a non-auth HTTP failure (batch skips, no fake mock data)", async () => {
     fetchMock.mockResolvedValue(jsonResponse({}, 500));
-    await expect(fetchPlatformMetrics("twitter", integration(), asset())).rejects.toThrow(/500/);
+    await expect(fetchPlatformMetrics("twitter", credentials(), asset())).rejects.toThrow(/500/);
   });
 
   it("MetricsUnavailableError is exported and is not a TokenExpiredError", () => {

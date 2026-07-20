@@ -135,6 +135,7 @@ export function ClientRail({
                 contextDocs={contextDocs}
                 isAdmin={isAdmin}
                 clientId={client.id}
+                isAiProcessing={client.isAiProcessing}
               />
             </div>
 
@@ -252,6 +253,7 @@ export function ClientRail({
                 contextDocs={contextDocs}
                 isAdmin={isAdmin}
                 clientId={client.id}
+                isAiProcessing={client.isAiProcessing}
               />
             </div>
 

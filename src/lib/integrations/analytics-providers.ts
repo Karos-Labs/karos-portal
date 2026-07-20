@@ -13,7 +13,7 @@
  */
 
 import "server-only";
-import type { Asset, ClientIntegration, EmployeeSeat, MarketingMetrics } from "@/lib/types";
+import type { Asset, EmployeeSeat, MarketingMetrics } from "@/lib/types";
 import { mockRawMetrics, normalizePlatformMetrics, type RawPlatformMetrics } from "@/lib/analytics";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
 
@@ -237,9 +237,10 @@ async function fetchLiveRaw(
  * Fetch and normalize the recent performance metrics for one asset on one
  * platform. Tries the live API first. `TokenExpiredError` propagates so the
  * batch marks the integration for reauth. `MetricsUnavailableError` (ingest
- * off / no token / no post id) falls back to deterministic mock so dev + demo
- * keep working. Any OTHER live failure propagates so the batch skips that asset
- * rather than persisting fake numbers as if they were real.
+ * off / no token / no post id — including when the client has no connected
+ * integration at all, i.e. `credentials` is `{}`) falls back to deterministic
+ * mock so dev + demo keep working. Any OTHER live failure propagates so the
+ * batch skips that asset rather than persisting fake numbers as if real.
  */
 /**
  * Fetch aggregate metrics for one LinkedIn employee-advocacy seat (its personal
@@ -271,11 +272,11 @@ export async function fetchSeatMetrics(seat: EmployeeSeat): Promise<PlatformMetr
 
 export async function fetchPlatformMetrics(
   platform: string,
-  integration: ClientIntegration,
+  credentials: Record<string, string>,
   asset: Asset,
 ): Promise<PlatformMetricsResult> {
   try {
-    const raw = await fetchLiveRaw(platform, integration.credentials, asset);
+    const raw = await fetchLiveRaw(platform, credentials, asset);
     return { metrics: normalizePlatformMetrics(platform, raw), source: "live" };
   } catch (err) {
     if (err instanceof MetricsUnavailableError) {

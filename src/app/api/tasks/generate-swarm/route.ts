@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/lib/auth";
 import { buildSwarmContext, runSwarm, type SwarmEvent } from "@/lib/agent-swarm";
+import { tryAcquireAiProcessingLock, releaseAiProcessingLock } from "@/lib/data";
 
 export const maxDuration = 120;
 
@@ -30,6 +31,16 @@ export async function GET(req: Request) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // Guards against overlapping the post-onboarding / manual Regenerate background
+  // pipelines for the same client — a second concurrent "Refresh Task Map" click
+  // is rejected up front instead of racing the debate.
+  if (!(await tryAcquireAiProcessingLock(clientId))) {
+    return Response.json(
+      { error: "AI generation is already running for this client. Please wait for it to finish." },
+      { status: 409 },
+    );
+  }
+
   const encoder = new TextEncoder();
   const frame = (event: SwarmEvent) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
 
@@ -45,6 +56,7 @@ export async function GET(req: Request) {
           frame({ type: "error", message: e instanceof Error ? e.message : "Swarm failed to start" }),
         );
       } finally {
+        await releaseAiProcessingLock(clientId);
         controller.close();
       }
     },

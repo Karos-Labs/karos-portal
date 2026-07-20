@@ -25,6 +25,7 @@ export function StaffCopilotDock({ userName }: { userName?: string }) {
         name: client.name,
         website: client.website,
         industry: client.industry,
+        isAiProcessing: client.isAiProcessing,
       }}
     />
   );

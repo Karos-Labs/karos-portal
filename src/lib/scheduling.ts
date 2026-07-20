@@ -72,8 +72,14 @@ const PLATFORM_SCHEDULES: Record<string, PlatformSchedule> = {
   },
 };
 
-/** Fallback platform used to pick a window when no platform is known yet. */
-const DEFAULT_PLATFORM_FOR_TYPE: Partial<Record<AssetType, string>> = {
+/**
+ * Fallback platform used to pick a window when no platform is known yet. Also
+ * reused by the analytics sync (src/app/api/analytics/sync/route.ts) to infer a
+ * distribution channel for assets that were marked "published" without ever
+ * having `scheduledPlatform` set (e.g. bulk-imported content) — otherwise those
+ * assets can never surface in AI Insights.
+ */
+export const DEFAULT_PLATFORM_FOR_TYPE: Partial<Record<AssetType, string>> = {
   instagram_post: "instagram",
   social_post: "linkedin",
   article: "linkedin",

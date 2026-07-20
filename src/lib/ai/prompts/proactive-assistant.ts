@@ -61,6 +61,8 @@ export interface ProactiveSystemContext {
   integrations: Array<{ platform: string; status: "active" | "expired" }>;
   /** Scheduled/approved calendar items in the NEXT 14 DAYS, per platform ("unassigned" bucket for platformless). */
   scheduledNext14ByPlatform: Record<string, number>;
+  /** Same, restricted to the NEXT 7 DAYS — lets the model see a week-2 cliff. */
+  scheduledNext7ByPlatform?: Record<string, number>;
   /** Whether a Gmail/Google OAuth integration is currently active. */
   hasGmailIntegration: boolean;
   /** Whether any content assets are currently scheduled for publication. */
@@ -107,12 +109,19 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
   /* Task board capacity */
   const slotsFree = Math.max(0, ctx.maxActiveTasks - ctx.activeTaskCount);
 
-  /* Content-gap detection — connected platforms vs the next-14-day calendar */
+  /* Content-gap detection — connected platforms vs the next-14-day calendar,
+     split by week so a "covered this week, empty next week" cliff is visible */
   const activeIntegrations = ctx.integrations.filter((i) => i.status === "active");
   const expiredIntegrations = ctx.integrations.filter((i) => i.status === "expired");
   const gapLines = activeIntegrations.map(({ platform }) => {
-    const count = ctx.scheduledNext14ByPlatform[platform] ?? 0;
-    return `• ${platform}: ${count === 0 ? "⚠ NO content scheduled in the next 14 days — CONTENT GAP" : `${count} item${count === 1 ? "" : "s"} scheduled in the next 14 days`}`;
+    const total = ctx.scheduledNext14ByPlatform[platform] ?? 0;
+    const week1 = ctx.scheduledNext7ByPlatform?.[platform] ?? total;
+    const week2 = Math.max(0, total - week1);
+    if (total === 0) return `• ${platform}: ⚠ NO content scheduled in the next 14 days — CONTENT GAP`;
+    if (week2 === 0 && ctx.scheduledNext7ByPlatform) {
+      return `• ${platform}: ${total} item${total === 1 ? "" : "s"} scheduled, ALL in the next 7 days — ⚠ week 2 is EMPTY (partial gap)`;
+    }
+    return `• ${platform}: ${total} item${total === 1 ? "" : "s"} scheduled (${week1} this week, ${week2} next week)`;
   });
   const unassignedCount = ctx.scheduledNext14ByPlatform["unassigned"] ?? 0;
   const contentGapBlock = `### CALENDAR & INTEGRATION STATE — CONTENT GAP DETECTION
@@ -161,12 +170,14 @@ BENCHMARK RULES — you MUST apply these when proposing content tasks:
         .join(", ")
     : "";
 
-  /* Individual per-platform onboarding tasks for every unlinked social channel */
+  /* Individual per-platform onboarding tasks for every unlinked social channel.
+     Keys are the CANONICAL integration platform keys (ClientIntegration.platform
+     and the create_tasks `platform` enum) — "twitter", never "x". */
   const CANONICAL_PLATFORMS: Array<{ key: string; display: string }> = [
     { key: "facebook",  display: "Facebook"    },
     { key: "instagram", display: "Instagram"   },
     { key: "linkedin",  display: "LinkedIn"    },
-    { key: "x",         display: "X (Twitter)" },
+    { key: "twitter",   display: "X (Twitter)" },
     { key: "youtube",   display: "YouTube"     },
     { key: "tiktok",    display: "TikTok"      },
   ];
@@ -176,21 +187,62 @@ BENCHMARK RULES — you MUST apply these when proposing content tasks:
   );
 
   const onboardingBlock = missingPlatforms.length > 0
-    ? `### SOCIAL PLATFORM ONBOARDING — MANDATORY INDIVIDUAL TASKS
+    ? `### SOCIAL PLATFORM ONBOARDING — "DEPENDING ON YOU" TASKS (MANDATORY, INDIVIDUAL)
 
 The following platforms are NOT yet connected. You MUST create one dedicated \`client_managed\` task per platform. NEVER bundle multiple platforms into a single task:
 
-${missingPlatforms.map(({ display }) =>
-  `• **Connect ${display} account** — title: "Connect ${display} account to Karos" | owner: client_managed | priority: high | description: Go to Settings → Integrations and connect ${display} credentials to enable publishing and analytics on this channel`,
+${missingPlatforms.map(({ key, display }) =>
+  `• **Connect ${display} account** — title: "Connect ${display} account to Karos" | owner: client_managed | platform: \`${key}\` | priority: high | weight: 90 | description: Go to Settings → Integrations and connect ${display} credentials to enable publishing and analytics on this channel`,
 ).join("\n")}
 
 HARD RULES for these onboarding tasks:
 - One task per platform — no exceptions, no bundling
 - Title must name the exact platform: "Connect [Platform] account to Karos"
 - owner = client_managed (OAuth requires the client's own credentials)
-- priority = high (missing channels block all content distribution to that platform)
+- ALWAYS set the \`platform\` field to the exact key shown above — it is what lets the board auto-complete the task the moment the client connects the channel
+- priority = high, weight ≈ 90 (missing channels block all content distribution to that platform)
 - These tasks are always created in a Scan & Refresh — client_managed tasks are exempt from the Karos-managed capacity cap`
     : "";
+
+  /* Deterministic Scan & Refresh coverage contract — the non-negotiable
+     checklist computed from live state, so required tasks never depend on the
+     model re-deriving them. */
+  const GAP_PRODUCT_FOR_PLATFORM: Record<string, string> = {
+    instagram: "social_post",
+    tiktok: "social_post",
+    facebook: "social_post",
+    twitter: "social_post",
+    linkedin: "blog_article",
+    youtube: "blog_article",
+  };
+  const gapPlatforms = activeIntegrations.filter(
+    ({ platform }) => (ctx.scheduledNext14ByPlatform[platform] ?? 0) === 0,
+  );
+  const contractLines = [
+    ...missingPlatforms.map(
+      ({ key, display }) =>
+        `□ client_managed · "Connect ${display} account to Karos" · platform: ${key} · weight 90`,
+    ),
+    ...expiredIntegrations.map(
+      ({ platform }) =>
+        `□ client_managed · "Re-authenticate ${platform} connection" · platform: ${platform} · weight 95`,
+    ),
+    ...gapPlatforms.map(
+      ({ platform }) =>
+        `□ karos_managed · fill the empty ${platform} calendar for the next 14 days · productType: ${GAP_PRODUCT_FOR_PLATFORM[platform] ?? "social_post"} · platform: ${platform} · weight 80`,
+    ),
+  ];
+  const coverageContractBlock = `### SCAN & REFRESH COVERAGE CONTRACT — NON-NEGOTIABLE CHECKLIST
+
+When the user asks to scan/refresh the task map, the board you produce MUST cover every line below (skip a line ONLY if the existing task board in your context already contains that exact task):
+${contractLines.length > 0 ? contractLines.join("\n") : "□ (no required onboarding/re-auth/gap items — all channels connected and covered; focus on the product sweep and signals)"}
+
+Then run the PRODUCT SWEEP — walk through EVERY agent in the registry above, one by one, and decide out loud in your analysis:
+- **Social posts**: is every connected social channel covered for the FULL next 14 days (both weeks)? One dispatch task per platform sized for the whole window ("Produce 6 Instagram posts covering the next two weeks via Social posts") — never two small tasks for the same platform+product in one week.
+- **Newsletter issue**: is an issue queued for this cycle? If no email content is scheduled and no newsletter task is active, create one.
+- **Blog article**: is the article cadence alive (≥1 in the pipeline)? SEO compounds — a silent blog is a gap.
+- **Landing page**: only when a concrete campaign, offer, or launch signal exists in context — never as filler.
+A product you skip must have a stated reason (covered / no fitting signal). "I didn't consider it" is not an outcome.`;
 
   const scenarioA = hasSocial
     ? `**Scenario A — Social Accounts Linked (${socialPlatformList})**
@@ -286,6 +338,8 @@ ${contentGapBlock}
 ${benchmarksBlock ? `\n${benchmarksBlock}` : ""}
 ${onboardingBlock ? `\n${onboardingBlock}` : ""}
 
+${coverageContractBlock}
+
 ### KAROS EXECUTION QUEUE CAPACITY — HARD LIMIT
 At most **${ctx.maxActiveTasks} active karos_managed tasks** (pending, in progress, or awaiting review) per client — this bounds the AI-agent execution queue. There are currently **${ctx.activeTaskCount} active** — **${slotsFree} slot${slotsFree === 1 ? "" : "s"} free**. \`client_managed\` tasks are exempt and uncapped.
 - NEVER propose more karos_managed tasks than there are free slots; rank by impact and cut the rest
@@ -316,11 +370,13 @@ ${scenarioBlock}
 ### FOUR ACTION TRIGGERS
 
 **Action 1 — Scan & Refresh Task Map** (user: "scan", "refresh", "market footprint", "task map")
+Execute this exact procedure:
 ${gmailScanRule}
-→ Call \`create_tasks\` with a synthesis across website CRO, content dispatch, operational priorities, and integrations
-→ Apply the Scenario rules above for content and social tasks
-→ Include all mandatory platform onboarding tasks (see SOCIAL PLATFORM ONBOARDING section)
-→ Target: 5–10 substantive tasks plus any onboarding tasks
+→ 1. Fulfil the SCAN & REFRESH COVERAGE CONTRACT above line by line — every unchecked box becomes a task (onboarding + re-auth first: they gate everything else)
+→ 2. Run the PRODUCT SWEEP — every agent in the registry gets an explicit dispatch-or-skip decision in your analysis
+→ 3. Layer in operational priorities (meetings, context docs, signals) and website/CRO items
+→ 4. Call \`create_tasks\` ONCE with the complete set — a healthy Scan & Refresh on a fresh account typically produces 10–18 tasks (the "depending on you" client_managed tasks are uncapped and never compete with content tasks for space)
+→ A thin result (≤4 tasks) is only correct when the contract shows no unchecked boxes AND the calendar is genuinely covered — say so explicitly if that's the case
 
 **Action 2 — Competitor Deep-Dive** (user: "competitor", "research", "deep-dive")
 → Request competitor name/URL if not already provided
@@ -344,7 +400,7 @@ ${gmailScanRule}
 ${gmailSilenceRule ? `- ${gmailSilenceRule}` : ""}
 - Never expose internal tool names, integration IDs, or platform credentials to the user
 - **Signal anchoring**: Every task you propose must be justified by a specific, observable signal — a concrete content gap, a missing integration, a silent calendar, a platform with no activity, or a business demand from a context document. If you cannot cite the specific signal for a task, omit it.
-- **Temporal consistency**: Before calling \`create_tasks\`, cross-reference your proposed tasks against the existing task board in context. If the board already covers all observable signals and no new data has surfaced (no new emails, no new content gaps, no new integration issues, no new business demands), call \`create_tasks\` with an empty array and state: "Your task board is fully optimised — no new signals detected." Never invent arbitrary tasks to reach a numerical quota.`.trim();
+- **Temporal consistency**: Before calling \`create_tasks\`, cross-reference your proposed tasks against the existing task board in context. Call \`create_tasks\` with an empty array ONLY when BOTH hold: (1) every line of the SCAN & REFRESH COVERAGE CONTRACT is already represented on the board, and (2) no new signals have surfaced (no new emails, content gaps, integration issues, or business demands) — then state: "Your task board is fully optimised — no new signals detected." An unchecked contract line always outranks this rule. Never invent arbitrary tasks beyond that to reach a numerical quota.`.trim();
 }
 
 /* ── Gmail / operational signals extraction prompt (Claude Haiku) ── */

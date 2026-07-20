@@ -13,13 +13,21 @@ import {
   buildGazetteer,
   computeCheckGaps,
   computeCheckScore,
+  INTENT_LABELS,
+  buildAnswerGrid,
+  buildRecommendations,
+  computeCitationLeaderboard,
+  computeCitationSummary,
+  computeCompetitorsNamed,
   computePerEngineVisibility,
   computePresence,
   computeRosterSharePct,
   computeVisibilityGaps,
   computeVisibilityIndex,
+  tagPromptIntents,
   type EngineId,
   type GeoProbe,
+  type IntentPrompt,
   type SeoGeoCheck,
   type SeoGeoInsights,
   type VisibilityGap,
@@ -44,8 +52,16 @@ import { logger } from "@/services/logger";
 /** Engines probed per run — the a3 five-engine roster, filtered to wired connectors. */
 const ENGINE_ROSTER: EngineId[] = ["chatgpt", "gemini", "claude", "perplexity", "copilot"];
 
-/** Prompts per capture run. Bounded: N prompts × M engines calls per run. */
-const PROMPT_SET_SIZE = 6;
+/**
+ * Prompts per capture run. The a3 spec + the client report use 20 buyer-intent
+ * questions across the intent taxonomy; keep this at the spec size. Cost/latency is
+ * bounded by CAPTURE_CONCURRENCY (probes fan out in bounded batches, not all at once).
+ */
+const PROMPT_SET_SIZE = 20;
+
+/** Max concurrent engine probes — bounds the N prompts × M engines fan-out so a
+ *  20-question run doesn't fire 60 simultaneous API calls into rate limits. */
+const CAPTURE_CONCURRENCY = 8;
 
 /** Max competitors in the share-of-voice roster (a3 confirms 3–8). */
 const MAX_ROSTER_COMPETITORS = 6;
@@ -59,6 +75,20 @@ const AUDIT_MAX_TOKENS = 16_000;
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** Map over items with a bounded number of concurrent workers, preserving input order. */
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /**
@@ -231,17 +261,41 @@ Every check id from both registries MUST appear exactly once in the JSON. The JS
 
 /* ── Agent 2: buyer-intent prompt set + multi-engine capture ──────── */
 
-/** Deterministic fallback prompt set when generation fails — never blocks the capture. */
+/**
+ * Deterministic fallback prompt set when generation fails — never blocks the capture.
+ * Spans the full a3 intent taxonomy (discovery / comparison / problem / brand / nav)
+ * so the answer grid still has representative rows even on a degraded run.
+ */
 function fallbackPromptSet(client: Client): string[] {
   const category = client.industry?.trim() || "this category";
-  return [
+  const name = client.name;
+  const domain = client.website?.replace(/^https?:\/\//, "").replace(/\/.*$/, "") || name;
+  const set = [
+    // discovery
     `What are the best ${category} companies right now?`,
-    `Which ${category} provider should I choose and why?`,
-    `Compare the top ${category} options for a new customer.`,
-    `Is ${client.name} a good choice for ${category}? What are the alternatives?`,
-    `What should I look for when picking a ${category} provider?`,
     `Who are the most trusted names in ${category}?`,
-  ].slice(0, PROMPT_SET_SIZE);
+    `Best ${category} options to consider this year`,
+    `Top-rated ${category} providers`,
+    // comparison
+    `Compare the top ${category} options for a new customer`,
+    `Best app or tool for ${category}`,
+    `${name} alternatives`,
+    `Which ${category} provider should I choose and why?`,
+    // problem
+    `How do I choose a ${category} provider near me?`,
+    `What should I look for when picking a ${category} provider?`,
+    `I need help with ${category} right now — where do I start?`,
+    `How do I get started with ${category}?`,
+    // brand
+    `What is ${name}?`,
+    `Is ${name} good?`,
+    `Is ${name} worth it?`,
+    `${name} reviews`,
+    // navigational
+    `${domain}`,
+    `${name} official site`,
+  ];
+  return set.slice(0, PROMPT_SET_SIZE);
 }
 
 /** Generate the buyer-intent prompt set (a3 Phase 1: drafted per client, never hardcoded). */
@@ -259,7 +313,13 @@ Industry: ${client.industry ?? "unknown"}
 Description: ${client.description ?? "—"}
 Known competitors: ${competitors.join(", ") || "—"}
 
-Write exactly ${PROMPT_SET_SIZE} buyer-intent questions covering these intents: discovery ("best X"), comparison ("X vs alternatives"), problem-driven ("how do I solve …"), and one brand question naming ${client.name} directly. Use the customers' language (match the client's market/locale).
+Write exactly ${PROMPT_SET_SIZE} buyer-intent questions spanning the FULL intent taxonomy (roughly balanced across the first three, plus a few of the last two):
+- discovery: "best X", "top X", "where to X" — what a buyer asks BEFORE knowing any brand
+- comparison: "best app/tool for X", "X vs alternatives", "${client.name} alternative"
+- problem: "how do I …", "… near me", "I need … right now"
+- brand: 2-3 that name ${client.name} directly ("what is ${client.name}", "is ${client.name} good")
+- navigational: 1-2 like the brand's site/name
+Use the customers' language (match the client's market/locale).
 
 Return ONLY a fenced \`\`\`json block containing an array of ${PROMPT_SET_SIZE} strings.`,
         },
@@ -310,10 +370,12 @@ async function runVisibilityCapture(
     );
   }
 
-  // Full fan-out: every prompt to every configured engine. probeEngine never throws;
-  // a dead engine yields UNAVAILABLE cells that show up in dataCoveragePct.
-  const answers = await Promise.all(
-    engines.flatMap((engine) => promptSet.map((prompt) => probeEngine(engine, prompt, client.id))),
+  // Fan out every prompt to every configured engine, but bounded to CAPTURE_CONCURRENCY
+  // so a 20-question run doesn't fire 60 simultaneous API calls into provider rate
+  // limits. probeEngine never throws; a dead engine yields UNAVAILABLE cells.
+  const jobs = engines.flatMap((engine) => promptSet.map((prompt) => ({ engine, prompt })));
+  const answers = await mapWithConcurrency(jobs, CAPTURE_CONCURRENCY, ({ engine, prompt }) =>
+    probeEngine(engine, prompt, client.id),
   );
 
   const probes = answers.map((a) => analyzeAnswer(a, gazetteer));
@@ -375,6 +437,31 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
     );
   }
 
+  // Client citation summary + ghost citations (cited but not named).
+  const cs = insights.citationSummary;
+  lines.push(
+    "",
+    `**Your citations:** cited as a source in ${cs.answersCited} of ${cs.totalMeasuredAnswers} measured answers, named in ${cs.answersNamed}. That leaves ${cs.ghostCitations} ghost citations (your content used without crediting you) to convert into named recommendations.`,
+  );
+
+  // "Who the engines quote instead" — citation-domain leaderboard.
+  if (insights.citationLeaderboard.length) {
+    lines.push(
+      "",
+      "## Who the engines quote (citation leaderboard, across all measured answers)",
+      ...insights.citationLeaderboard.map(
+        (r) => `- ${r.domain}${r.isClient ? " (you)" : ""}: ${r.citations} citation${r.citations === 1 ? "" : "s"}`,
+      ),
+    );
+  }
+  if (insights.competitorsNamed.length) {
+    lines.push(
+      "",
+      "Competitors named in the answers: " +
+        insights.competitorsNamed.map((c) => `${c.name} (${c.mentions})`).join(", "),
+    );
+  }
+
   const geoGaps = insights.gaps.filter((g) => g.lever === "GEO").slice(0, 8);
   if (geoGaps.length) {
     lines.push(
@@ -387,13 +474,15 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
     );
   }
 
-  lines.push(
-    "",
-    "## Frozen prompt set (what buyers asked)",
-    ...insights.promptSet.map((p) => `- "${p}"`),
-    "",
-    `Roster for share-of-voice: ${insights.roster.join(", ")}.`,
-  );
+  // Frozen prompt set, grouped by the intent taxonomy (DISC/COMP/PROB/BRAND/NAV).
+  lines.push("", "## Frozen prompt set by intent (what buyers asked)");
+  for (const intent of ["discovery", "comparison", "problem", "brand", "navigational"] as const) {
+    const rows = insights.intentPrompts.filter((ip) => ip.intent === intent);
+    if (rows.length) {
+      lines.push(`**${INTENT_LABELS[intent]}**`, ...rows.map((ip) => `- "${ip.prompt}"`));
+    }
+  }
+  lines.push("", `Roster for share-of-voice: ${insights.roster.join(", ")}.`);
   return lines.join("\n");
 }
 
@@ -473,6 +562,14 @@ export async function runSeoGeoResearch(
   const presence = computePresence(capture.probes, gazetteer);
   const rosterSharePct = computeRosterSharePct(capture.probes, gazetteer);
 
+  // PDF/report contract: intent-tagged prompts, the per-question × per-engine grid,
+  // the citation-domain leaderboard, ghost-citation summary, and competitors named.
+  const intentPrompts: IntentPrompt[] = tagPromptIntents(capture.promptSet, gazetteer);
+  const answerGrid = buildAnswerGrid(intentPrompts, ENGINE_ROSTER, capture.probes);
+  const citationLeaderboard = computeCitationLeaderboard(capture.probes, gazetteer);
+  const citationSummary = computeCitationSummary(capture.probes);
+  const competitorsNamed = computeCompetitorsNamed(capture.probes, gazetteer);
+
   const gaps: VisibilityGap[] = [
     ...computeCheckGaps(SEO_CHECKS, audit.seoChecks, "SEO"),
     ...computeCheckGaps(GEO_READINESS_CHECKS, audit.geoChecks, "GEO"),
@@ -498,9 +595,15 @@ export async function runSeoGeoResearch(
     brandPresence: presence.brand,
     perEngine,
     gaps,
+    recommendations: buildRecommendations(gaps),
     seoChecks: audit.seoChecks,
     geoChecks: audit.geoChecks,
     promptSet: capture.promptSet,
+    intentPrompts,
+    answerGrid,
+    citationLeaderboard,
+    citationSummary,
+    competitorsNamed,
     roster: capture.roster,
     updatedAt: now,
   };

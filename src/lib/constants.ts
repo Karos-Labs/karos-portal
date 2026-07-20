@@ -24,10 +24,10 @@ export const DOC_MAX_TOKENS = 16_000;
 export const SEO_GEO_CAPTURE = {
   /** Answers the "chatgpt" engine column. */
   OPENAI_MODEL: "gpt-4o-mini",
-  /** Answers the "gemini" engine column (search-grounded). gemini-2.5-flash and
-   *  older flash models are blocked for new API keys ("no longer available to new
-   *  users"); 3.5-flash is the current GA flash that supports google_search grounding. */
-  GEMINI_MODEL: "gemini-3.5-flash",
+  /** Answers the "gemini" engine column (search-grounded via tools:[{google_search:{}}]).
+   *  gemini-flash-latest is the model the a3 dev handoff (2026-07-14) verified live for
+   *  grounded capture; older pinned flash models (2.5-flash) are blocked for new keys. */
+  GEMINI_MODEL: "gemini-flash-latest",
 } as const;
 
 /** Max output tokens for condensed client-facing documents. */
@@ -50,6 +50,17 @@ export const COMPANY_ALIAS_EMAIL =
  * fetch_gmail_context tools and the quick-add ingester.
  */
 export const MAX_ACTIVE_TASKS = 15;
+
+/**
+ * Safety valve on the client-level AI-processing lock (Client.isAiProcessing).
+ * A lock older than this is treated as stale and silently overridden on the
+ * next acquire attempt instead of blocking forever — covers a background run
+ * that died without reaching its `finally` (dev-server restart, Turbopack HMR
+ * killing an in-flight `after()`, a serverless timeout). The real pipeline
+ * (Intel Report + SEO/GEO + Task Map swarm) normally finishes in a few
+ * minutes; 20 minutes gives generous headroom before treating it as dead.
+ */
+export const AI_PROCESSING_LOCK_STALE_MS = 20 * 60 * 1000;
 
 /**
  * Display labels for managed action-item statuses, in lifecycle order.

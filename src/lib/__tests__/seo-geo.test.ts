@@ -4,15 +4,22 @@ import {
   SEO_CHECKS,
   TARGET_MENTION,
   analyzeAnswer,
+  buildAnswerGrid,
   buildGazetteer,
+  buildRecommendations,
+  classifyIntent,
   computeCheckGaps,
   computeCheckScore,
+  computeCitationLeaderboard,
+  computeCitationSummary,
+  computeCompetitorsNamed,
   computePerEngineVisibility,
   computeVisibilityGaps,
   computeVisibilityIndex,
   findMention,
   ratioClamp,
   rootDomain,
+  tagPromptIntents,
   type EngineAnswer,
   type SeoGeoCheck,
 } from "../seo-geo";
@@ -200,5 +207,109 @@ describe("normalization primitives", () => {
     expect(ratioClamp(0.3, 0.1)).toBe(1);
     expect(ratioClamp(-1, 0.1)).toBe(0);
     expect(ratioClamp(1, 0)).toBe(0);
+  });
+});
+
+describe("PDF/report contract: intent taxonomy, answer grid, citations", () => {
+  it("classifies prompts into the DISC/COMP/PROB/BRAND/NAV taxonomy", () => {
+    expect(classifyIntent("best cafes to work from in Tel Aviv", gaz)).toBe("discovery");
+    expect(classifyIntent("best app to find work-friendly cafes", gaz)).toBe("comparison");
+    expect(classifyIntent("Acme Fintech alternative", gaz)).toBe("comparison"); // comparison wins over brand
+    expect(classifyIntent("where can I work with outlets right now", gaz)).toBe("problem");
+    expect(classifyIntent("is Acme Fintech good?", gaz)).toBe("brand");
+    expect(classifyIntent("acmefintech.com pricing", gaz)).toBe("navigational");
+  });
+
+  it("builds a per-question × per-engine grid with the right cell states", () => {
+    const prompts = tagPromptIntents(["best fintech?", "is Acme Fintech good?"], gaz);
+    const probes = [
+      analyzeAnswer(answer({ engine: "chatgpt", prompt: "best fintech?", answerText: "Acme Fintech leads the market.", citations: ["acmefintech.com"] }), gaz),
+      analyzeAnswer(answer({ engine: "gemini", source: "Gemini", prompt: "best fintech?", answerText: "Rival One is best; also see this guide.", citations: ["acmefintech.com"] }), gaz),
+      analyzeAnswer(answer({ engine: "claude", source: "Anthropic", prompt: "is Acme Fintech good?", answerText: "There are other options like Rival One." }), gaz),
+    ];
+    const grid = buildAnswerGrid(prompts, ["chatgpt", "gemini", "claude", "perplexity", "copilot"], probes);
+    expect(grid).toHaveLength(2);
+    const row0 = grid[0];
+    expect(row0.intent).toBe("discovery");
+    expect(row0.cells).toHaveLength(5);
+    // chatgpt: named + cited + sole roster mention → named_first
+    expect(row0.cells.find((c) => c.engine === "chatgpt")?.state).toBe("named_first");
+    // gemini: cited the client domain but named Rival One, not the client → ghost
+    expect(row0.cells.find((c) => c.engine === "gemini")?.state).toBe("cited_not_named");
+    // perplexity/copilot: no connector → unavailable
+    expect(row0.cells.find((c) => c.engine === "perplexity")?.state).toBe("unavailable");
+    // claude row: named a competitor, client absent
+    expect(grid[1].cells.find((c) => c.engine === "claude")?.state).toBe("absent");
+  });
+
+  it("computes the citation leaderboard and always keeps the client's own line", () => {
+    const probes = [
+      analyzeAnswer(answer({ answerText: "see these", citations: ["reddit.com", "acmefintech.com"] }), gaz),
+      analyzeAnswer(answer({ answerText: "and these", citations: ["reddit.com"] }), gaz),
+      analyzeAnswer(answer({ captureTier: "UNAVAILABLE", citations: ["ignored.com"] }), gaz),
+    ];
+    const board = computeCitationLeaderboard(probes, gaz);
+    expect(board[0]).toMatchObject({ domain: "reddit.com", citations: 2, isClient: false });
+    expect(board.find((r) => r.isClient)?.domain).toBe("acmefintech.com");
+    // UNAVAILABLE probes are excluded.
+    expect(board.find((r) => r.domain === "ignored.com")).toBeUndefined();
+  });
+
+  it("summarizes ghost citations (cited but not named) and competitors named", () => {
+    const probes = [
+      // cited + named → not ghost
+      analyzeAnswer(answer({ answerText: "Acme Fintech is great.", citations: ["acmefintech.com"] }), gaz),
+      // cited, not named (client absent, competitor named) → ghost
+      analyzeAnswer(answer({ answerText: "Rival One is great.", citations: ["acmefintech.com"] }), gaz),
+    ];
+    const summary = computeCitationSummary(probes);
+    expect(summary.totalMeasuredAnswers).toBe(2);
+    expect(summary.answersCited).toBe(2);
+    expect(summary.answersNamed).toBe(1);
+    expect(summary.ghostCitations).toBe(1);
+
+    const competitors = computeCompetitorsNamed(probes, gaz);
+    expect(competitors).toEqual([{ name: "Rival One", mentions: 1 }]);
+  });
+});
+
+describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
+  it("maps internal gaps to a client-safe action plan with the right controls", () => {
+    const seoChecks: SeoGeoCheck[] = [
+      { id: "SEO-06", bucket: "onPage", label: "Meta descriptions in range", evidence: "3 over limit", norm: 0.2, tier: "MEASURED", confidence: "CONFIRMED" },
+      { id: "GEO-41", bucket: "indexReach", label: "Indexed on Google", evidence: "not verified", norm: 0, tier: "MEASURED", confidence: "CONFIRMED" },
+      { id: "GEO-25", bucket: "offsiteEntity", label: "Wikipedia/Wikidata entity", evidence: "none", norm: 0, tier: "MEASURED", confidence: "CONFIRMED" },
+    ];
+    const gaps = computeCheckGaps(SEO_CHECKS.concat(GEO_READINESS_CHECKS), seoChecks, "SEO");
+    const recs = buildRecommendations(gaps);
+
+    const meta = recs.find((r) => r.title.includes("Meta descriptions"));
+    expect(meta?.actionKind).toBe("one_click"); // meta_description is machine-appliable
+    expect(meta?.productIds).toEqual(["a3"]);
+    expect(meta?.targetPlatform).toBe("site");
+
+    const index = recs.find((r) => r.title.includes("Indexed on Google"));
+    expect(index?.actionKind).toBe("connect"); // indexReach → existing-product → connect
+
+    const entity = recs.find((r) => r.title.includes("Wikipedia"));
+    expect(entity?.actionKind).toBe("guided_manual"); // offsiteEntity → advisory
+    expect(entity?.productIds).toEqual([]); // advisory has no runnable product
+
+    // The client-safe shape carries NO internal producer fields (§4).
+    for (const r of recs) {
+      expect(r).not.toHaveProperty("fixAction");
+      expect(r).not.toHaveProperty("delivery");
+      expect(r).not.toHaveProperty("confidence");
+      expect(r).not.toHaveProperty("evidence");
+    }
+  });
+
+  it("dedupes by title and caps the plan length", () => {
+    const dup: SeoGeoCheck[] = [
+      { id: "SEO-02", bucket: "onPage", label: "Title tags", evidence: "a", norm: 0.1, tier: "MEASURED", confidence: "CONFIRMED" },
+      { id: "SEO-02", bucket: "onPage", label: "Title tags", evidence: "b", norm: 0.1, tier: "MEASURED", confidence: "CONFIRMED" },
+    ];
+    const recs = buildRecommendations(computeCheckGaps(SEO_CHECKS, dup, "SEO"), 5);
+    expect(recs.filter((r) => r.title === "Title tags ≤ 60 chars, unique, keyword-placed").length).toBeLessThanOrEqual(1);
   });
 });

@@ -20,10 +20,14 @@ export function AiInsights({ clientId }: { clientId: string }) {
   // The fetch + stream itself. Every setState here happens after the first
   // `await`, so it's safe to kick off directly from an effect (the
   // set-state-in-effect rule only forbids synchronous updates on mount).
+  // `force` bypasses the server's content-based cache — only the explicit
+  // "Refresh" click sets it, so a plain page load never re-spends an LLM call
+  // on a briefing that hasn't changed.
   const run = useCallback(
-    async (controller: AbortController) => {
+    async (controller: AbortController, force: boolean) => {
       try {
-        const res = await fetch(`/api/clients/${clientId}/insights`, { signal: controller.signal });
+        const url = `/api/clients/${clientId}/insights${force ? "?force=1" : ""}`;
+        const res = await fetch(url, { signal: controller.signal });
         if (!res.ok) {
           const body = await res.json().catch(() => ({ error: "Request failed" }));
           throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
@@ -47,7 +51,8 @@ export function AiInsights({ clientId }: { clientId: string }) {
     [clientId],
   );
 
-  // Manual refresh (event handler — synchronous resets are fine here).
+  // Manual refresh (event handler — synchronous resets are fine here). Forces
+  // the server to regenerate rather than serve its cached briefing.
   const load = useCallback(() => {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -55,16 +60,17 @@ export function AiInsights({ clientId }: { clientId: string }) {
     setLoading(true);
     setError(null);
     setText("");
-    void run(controller);
+    void run(controller, true);
   }, [run]);
 
   // Initial fetch on mount. State already starts at loading/empty, so no
-  // synchronous setState is needed here — just start streaming.
+  // synchronous setState is needed here — just start streaming. Not forced:
+  // reuses the cached briefing when nothing's changed since last time.
   useEffect(() => {
     const controller = new AbortController();
     abortRef.current = controller;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- run() only sets state after its first await; starting the stream on mount is intentional
-    void run(controller);
+    void run(controller, false);
     return () => controller.abort();
   }, [run]);
 

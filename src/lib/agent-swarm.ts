@@ -355,6 +355,20 @@ export async function* runSwarm(input: SwarmInput): AsyncGenerator<SwarmEvent, v
   }
 }
 
+/**
+ * Drain `runSwarm` with no SSE consumer — for background triggers (e.g. the
+ * post-onboarding generation cycle) that need the debate to finish and its
+ * tasks persisted, but have no UI to stream turns to. Throws on the swarm's
+ * own `error` event instead of swallowing it.
+ */
+export async function runSwarmToCompletion(input: SwarmInput): Promise<{ created: number }> {
+  for await (const event of runSwarm(input)) {
+    if (event.type === "error") throw new Error(event.message);
+    if (event.type === "done") return { created: event.created };
+  }
+  return { created: 0 };
+}
+
 /* ── Persistence ─────────────────────────────────────────────────────── */
 
 export interface PersistResult {

@@ -134,15 +134,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const hasScheduledContent = assets.some((a) => a.status === "scheduled");
 
   // Live calendar state for content-gap detection: scheduled/approved items in
-  // the next 14 days, bucketed by target platform.
+  // the next 14 days, bucketed by target platform — with a 7-day sub-bucket so
+  // the prompt can flag a "covered this week, empty next week" cliff.
   const nowMs = Date.now();
+  const week1Ms = nowMs + 7 * 24 * 60 * 60 * 1000;
   const horizonMs = nowMs + 14 * 24 * 60 * 60 * 1000;
   const scheduledNext14ByPlatform: Record<string, number> = {};
+  const scheduledNext7ByPlatform: Record<string, number> = {};
   for (const a of assets) {
     if (a.scheduledAt == null || a.scheduledAt < nowMs || a.scheduledAt > horizonMs) continue;
     if (a.status !== "scheduled" && a.status !== "approved") continue;
     const key = a.scheduledPlatform ?? "unassigned";
     scheduledNext14ByPlatform[key] = (scheduledNext14ByPlatform[key] ?? 0) + 1;
+    if (a.scheduledAt <= week1Ms) {
+      scheduledNext7ByPlatform[key] = (scheduledNext7ByPlatform[key] ?? 0) + 1;
+    }
   }
 
   // Make the copilot credits-aware for client users: it can quote run costs,
@@ -177,6 +183,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       linkedSocialPlatforms,
       integrations: socialIntegrations,
       scheduledNext14ByPlatform,
+      scheduledNext7ByPlatform,
       hasGmailIntegration: !!googleIntegration,
       hasScheduledContent,
       activeTaskCount: boardCapacity.activeCount,
@@ -474,7 +481,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               .describe("Contextual priority weight per CONTEXTUAL PRIORITY SCORING — how critical the underlying gap is"),
           }),
         )
-        .max(10),
+        // Room for a full Scan & Refresh in ONE call: up to 6 "depending on
+        // you" onboarding/re-auth tasks PLUS the product sweep and signal
+        // tasks — with 10 they competed and onboarding tasks were dropped.
+        // The karos_managed cap is enforced separately below; client_managed
+        // tasks are uncapped.
+        .max(20),
     }),
     execute: async ({ tasks }) => {
       if (tasks.length === 0) {

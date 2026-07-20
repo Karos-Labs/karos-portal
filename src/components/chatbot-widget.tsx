@@ -187,6 +187,7 @@ function ProactiveWelcome({
   send,
   onTasksCreated,
   onRefreshTaskMap,
+  isAiProcessing,
 }: {
   clientId: string;
   clientName: string;
@@ -196,6 +197,8 @@ function ProactiveWelcome({
   onTasksCreated: () => void;
   /** Launches the multi-agent Strategy War Room instead of a single-shot chat scan. */
   onRefreshTaskMap: () => void;
+  /** True while a background AI generation cycle is running — locks the Refresh Task Map chip. */
+  isAiProcessing?: boolean;
 }) {
   const actions = buildProactiveActions(hasGoogleIntegration);
   const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
@@ -298,25 +301,37 @@ function ProactiveWelcome({
 
       {/* Action chips */}
       <div className="flex flex-col gap-2">
-        {actions.map((action) => (
-          <button
-            key={action.id}
-            onClick={() => (action.id === "scan_inbox" ? onRefreshTaskMap() : send(action.trigger))}
-            className="group flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150 hover:border-border-strong hover:bg-surface-3 active:scale-[0.98]"
-          >
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70 transition-all duration-150">
-              <Icon name={action.icon} className="h-4 w-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-foreground">{action.label}</p>
-              <p className="text-[11px] text-muted truncate">{action.sublabel}</p>
-            </div>
-            <Icon
-              name="ArrowRight"
-              className="h-3.5 w-3.5 shrink-0 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100"
-            />
-          </button>
-        ))}
+        {actions.map((action) => {
+          const locked = action.id === "scan_inbox" && isAiProcessing;
+          return (
+            <button
+              key={action.id}
+              disabled={locked}
+              onClick={() => (action.id === "scan_inbox" ? onRefreshTaskMap() : send(action.trigger))}
+              title={locked ? "Karos Agents are already building your workspace strategy" : undefined}
+              className={cn(
+                "group flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150",
+                locked
+                  ? "cursor-not-allowed opacity-50"
+                  : "hover:border-border-strong hover:bg-surface-3 active:scale-[0.98]",
+              )}
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70 transition-all duration-150">
+                <Icon name={locked ? "Loader" : action.icon} className={cn("h-4 w-4", locked && "animate-spin")} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-foreground">{action.label}</p>
+                <p className="text-[11px] text-muted truncate">
+                  {locked ? "Locked — a workspace build is already running" : action.sublabel}
+                </p>
+              </div>
+              <Icon
+                name="ArrowRight"
+                className="h-3.5 w-3.5 shrink-0 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100"
+              />
+            </button>
+          );
+        })}
       </div>
 
       {/* Quick text suggestions */}
@@ -395,7 +410,7 @@ interface Props {
   /** Whether this client has an active Google integration (shows Gmail chip). */
   hasGoogleIntegration?: boolean;
   /** Minimal client snapshot injected into the proactive welcome context. */
-  client?: Pick<Client, "name" | "website" | "industry">;
+  client?: Pick<Client, "name" | "website" | "industry" | "isAiProcessing">;
   /** Latest intel report headline data for greeting context. */
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
   /** Render as an always-open panel filling its container (right rail) instead of a floating popup. */
@@ -412,6 +427,7 @@ export function ChatbotWidget({
   defaultOpen = false,
   userName,
   hasGoogleIntegration = false,
+  client,
   docked = false,
   onCollapse,
   floatingPosition = "bottom-6 right-6",
@@ -545,6 +561,7 @@ export function ChatbotWidget({
                 send={send}
                 onTasksCreated={onTasksCreated}
                 onRefreshTaskMap={openWarRoom}
+                isAiProcessing={client?.isAiProcessing}
               />
             ) : (
               <ChatEmptyState clientName={clientName} send={send} />

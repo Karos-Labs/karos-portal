@@ -1,8 +1,8 @@
 import "server-only";
 
-import { streamText, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
+import { runGuardedReportPass, REPORT_IDLE_TIMEOUT_MS } from "./report-stream";
 import type { Client } from "@/lib/types";
 import type { ParsedReport } from "@/lib/report-parser";
 import {
@@ -295,46 +295,39 @@ export async function runIntelReportPipeline(
   let passSucceeded = false;
   let lastPassError: unknown;
   for (let attempt = 1; attempt <= 2 && !passSucceeded; attempt++) {
-    let streamError: unknown;
-    const firstPassStream = streamText({
-      model: anthropic(MODELS.SONNET),
+    const pass = await runGuardedReportPass(anthropic(MODELS.SONNET), {
       system: compiledPrompt,
-      tools: liveTools,
-      // Continue past Anthropic pause_turn / tool-use steps instead of stopping at
-      // the first pause (default stepCountIs(1)) with a truncated intro-only stub.
-      stopWhen: stepCountIs(REPORT_MAX_STEPS),
       messages: [{ role: "user", content: userMessage }],
+      tools: liveTools,
       maxOutputTokens: DOC_MAX_TOKENS,
-      onError: ({ error }) => {
-        streamError = error;
-      },
+      maxSteps: REPORT_MAX_STEPS,
     });
-    const passText = await firstPassStream.text;
-    logger.trackStream(firstPassStream, {
-      clientId, agentId: null, agentName: "Intel Report",
-      modelName: MODELS.SONNET, operation: "intel_report",
-    });
+    if (pass.stream) {
+      logger.trackStream(pass.stream, {
+        clientId, agentId: null, agentName: "Intel Report",
+        modelName: MODELS.SONNET, operation: "intel_report",
+      });
+    }
 
-    if (streamError) {
-      lastPassError = streamError;
+    if (pass.streamError || pass.timedOut) {
+      lastPassError = pass.streamError ?? new Error(`report stream stalled — no output for ${REPORT_IDLE_TIMEOUT_MS}ms`);
       console.warn(
-        `[intel] Report generation attempt ${attempt}/2 for ${client.name} failed upstream:`,
-        streamError,
+        `[intel] Report generation attempt ${attempt}/2 for ${client.name} failed${pass.timedOut ? " (stalled/timed out)" : " upstream"}:`,
+        lastPassError,
       );
       continue;
     }
-    if (passText.trim().length < MIN_REPORT_CHARS) {
-      firstPassText = passText;
+    if (pass.text.trim().length < MIN_REPORT_CHARS) {
+      firstPassText = pass.text;
       // Instrument the stub: with no stream error, a short pass means the model
       // ended the turn early. Capture WHY (finish reason, warnings, steps, tool
-      // usage, and the literal text) so the failure is self-diagnosing instead of
-      // an opaque "returned N chars".
-      const diag = await describeStub(firstPassStream, passText);
-      lastPassError = new Error(`returned ${passText.trim().length} chars (min ${MIN_REPORT_CHARS}) — ${diag}`);
+      // usage, and the literal text) so the failure is self-diagnosing.
+      const diag = pass.stream ? await describeStub(pass.stream, pass.text) : "(no stream)";
+      lastPassError = new Error(`returned ${pass.text.trim().length} chars (min ${MIN_REPORT_CHARS}) — ${diag}`);
       console.warn(`[intel] Report generation attempt ${attempt}/2 for ${client.name}: ${String(lastPassError)}`);
       continue;
     }
-    firstPassText = passText;
+    firstPassText = pass.text;
     passSucceeded = true;
   }
 
@@ -362,12 +355,8 @@ export async function runIntelReportPipeline(
     console.info(
       `[intel] Continuation pass triggered for ${client.name} (first pass: ${firstPassText.length} chars, missing: "${lastRequiredSection}")`,
     );
-    let contError: unknown;
-    const contStream = streamText({
-      model: anthropic(MODELS.SONNET),
+    const cont = await runGuardedReportPass(anthropic(MODELS.SONNET), {
       system: compiledPrompt,
-      tools: liveTools,
-      stopWhen: stepCountIs(REPORT_MAX_STEPS),
       messages: [
         { role: "user", content: userMessage },
         { role: "assistant", content: text },
@@ -377,22 +366,25 @@ export async function runIntelReportPipeline(
             "You stopped before completing all required sections. Continue the report from exactly where you left off. Do not repeat any content already written. Continue immediately:",
         },
       ],
+      tools: liveTools,
       maxOutputTokens: DOC_MAX_TOKENS,
-      onError: ({ error }) => {
-        contError = error;
-      },
+      maxSteps: REPORT_MAX_STEPS,
     });
-    const continuation = await contStream.text;
-    logger.trackStream(contStream, {
-      clientId, agentId: null, agentName: "Intel Report (continuation)",
-      modelName: MODELS.SONNET, operation: "intel_report",
-    });
+    if (cont.stream) {
+      logger.trackStream(cont.stream, {
+        clientId, agentId: null, agentName: "Intel Report (continuation)",
+        modelName: MODELS.SONNET, operation: "intel_report",
+      });
+    }
     // Non-fatal: the first pass already cleared the integrity gate. If the continuation
-    // errored upstream, log the real cause and keep the first pass rather than aborting.
-    if (contError) {
-      console.warn(`[intel] Continuation pass for ${client.name} failed upstream (using first pass as-is):`, contError);
+    // errored/timed out, log the real cause and keep the first pass rather than aborting.
+    if (cont.streamError || cont.timedOut) {
+      console.warn(
+        `[intel] Continuation pass for ${client.name} failed${cont.timedOut ? " (timed out)" : " upstream"} (using first pass as-is):`,
+        cont.streamError ?? "timeout",
+      );
     } else {
-      text = text + continuation;
+      text = text + cont.text;
     }
   }
 

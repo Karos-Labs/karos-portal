@@ -9,6 +9,7 @@ import {
   listClientTasks,
 } from "@/lib/data";
 import { PageHeader } from "@/components/ui";
+import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { ClientAnalytics } from "@/components/client-analytics";
 import { AiInsights } from "@/components/ai-insights";
 import { ClientHomeOverview } from "@/components/client-home-overview";
@@ -67,6 +68,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         <PageHeader title="Dashboard" description={`Workspace overview for ${client.name}.`} />
       )}
       <div className="space-y-8">
+        {/* CLIENT_USER already sees this via the (app) shell's own wrapper — only
+            render here for staff, who use the plain Sidebar shell with no such wrapper. */}
+        {!isClientViewer && client.isAiProcessing && <AiProcessingBanner />}
         {isClientViewer && (
           <section className="space-y-3">
             <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Overview</p>
@@ -84,13 +88,18 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             jobs={jobs}
             integrations={integrations}
           />
-          <AiInsights clientId={client.id} />
         </section>
         <section className="space-y-3">
           {isClientViewer && (
             <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Search &amp; AI visibility</p>
           )}
           <SeoGeoPanel insights={seoGeo} />
+        </section>
+        <section className="space-y-3">
+          {isClientViewer && (
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">AI Insights</p>
+          )}
+          <AiInsights clientId={client.id} />
         </section>
       </div>
     </>

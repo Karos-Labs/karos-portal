@@ -11,7 +11,7 @@ interface Props {
   clientName: string;
   userName?: string;
   hasGoogleIntegration?: boolean;
-  client?: Pick<Client, "name" | "website" | "industry">;
+  client?: Pick<Client, "name" | "website" | "industry" | "isAiProcessing">;
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
 }
 

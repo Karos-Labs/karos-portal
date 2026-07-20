@@ -74,6 +74,8 @@ export interface GeoProbe {
   mentionedBrands: string[];
   /** Net sentiment of brand-adjacent text: -1 | 0 | +1 (deterministic lexicon — ESTIMATED). */
   brandSentiment: number;
+  /** Registrable domains this engine cited in the answer (for the citation leaderboard). */
+  citations: string[];
 }
 
 /* ── Gazetteer (deterministic mention matching) ───────────────────── */
@@ -207,6 +209,7 @@ export function analyzeAnswer(answer: EngineAnswer, gazetteer: Gazetteer): GeoPr
     brandFirst: rosterHits.length > 0 && rosterHits[0].brand === gazetteer.client[0],
     mentionedBrands: rosterHits.map((h) => h.brand),
     brandSentiment: clientIdx >= 0 ? estimateMentionSentiment(answer.answerText, clientIdx) : 0,
+    citations: unavailable ? [] : answer.citations,
   };
 }
 
@@ -751,6 +754,250 @@ export function computeVisibilityGaps(perEngine: PerEngineVisibility[]): Visibil
   return gaps.sort((a, b) => b.scoreLift - a.scoreLift);
 }
 
+/* ── Client-facing recommendations (dev-handoff §3b) ──────────────── */
+
+/** The control a plan item renders (dev-handoff §3b action_kind). */
+export type ActionKind = "one_click" | "review_approve" | "connect" | "guided_manual";
+export type RecImpact = "high" | "medium" | "low";
+
+/**
+ * A CLIENT-FACING action-plan item (dev-handoff §3b `recommendations[]`). This is the
+ * ONLY plan shape a client ever sees — it deliberately excludes every internal
+ * producer/actuator field (§4: no fix_action, delivery, confidence, evidence, target,
+ * id). Those stay on the internal VisibilityGap and are resolved server-side.
+ */
+export interface Recommendation {
+  /** Opaque id (client never sees it rendered; used server-side to resolve the fix). */
+  recId: string;
+  title: string;
+  vertical: Lever;
+  impact: RecImpact;
+  /** Karos agent(s) that execute this fix — render as chips deep-linking to the agent. */
+  productIds: string[];
+  /** Which control the row renders. */
+  actionKind: ActionKind;
+  /** Where the fix lands ("site" | "off-site" | "search-console"). */
+  targetPlatform: string;
+  /** Whether the owning product is live (chip is actionable) vs advisory. */
+  live: boolean;
+}
+
+const MACHINE_APPLIABLE: ReadonlySet<FixAction> = new Set([
+  "meta_title",
+  "meta_description",
+  "canonical",
+  "sitemap",
+  "image_alt",
+  "indexing",
+  "schema",
+  "og_image",
+]);
+
+function actionKindFor(gap: VisibilityGap): ActionKind {
+  if (gap.delivery === "advisory") return "guided_manual";
+  if (gap.delivery === "existing-product") return "connect"; // needs a connected credential (e.g. GSC)
+  return MACHINE_APPLIABLE.has(gap.fixAction) ? "one_click" : "review_approve";
+}
+
+function impactFor(severity: GapSeverity): RecImpact {
+  return severity === "critical" || severity === "high" ? "high" : severity === "medium" ? "medium" : "low";
+}
+
+/**
+ * Derive the client-safe action plan from the internal gaps. Deduped by title,
+ * ordered by score lift (highest impact first). The internal gap fields never cross
+ * into the returned objects — only the §3b render contract does.
+ */
+export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recommendation[] {
+  const seen = new Set<string>();
+  const out: Recommendation[] = [];
+  for (const gap of [...gaps].sort((a, b) => b.scoreLift - a.scoreLift)) {
+    const key = gap.title.toLowerCase().trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const actionKind = actionKindFor(gap);
+    out.push({
+      recId: gap.id,
+      title: gap.title,
+      vertical: gap.lever,
+      impact: impactFor(gap.severity),
+      // a3 (the SEO/GEO agent) owns the on-page + capture fixes; advisory items have no
+      // runnable product. Kept minimal and honest — no fabricated product catalog.
+      productIds: gap.delivery === "advisory" ? [] : ["a3"],
+      actionKind,
+      targetPlatform: actionKind === "connect" ? "search-console" : gap.target === "off-site" ? "off-site" : "site",
+      live: gap.delivery !== "advisory",
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/* ── Answer grid + citation leaderboard (PDF/report contract) ─────── */
+
+/** Buyer-intent taxonomy from the a3 report (the DISC/COMP/PROB/BRAND/NAV tags). */
+export type PromptIntent = "discovery" | "comparison" | "problem" | "brand" | "navigational";
+
+/** Short label used in the report grid (matches the PDF's DISC/COMP/PROB/BRAND/NAV). */
+export const INTENT_LABELS: Record<PromptIntent, string> = {
+  discovery: "DISC",
+  comparison: "COMP",
+  problem: "PROB",
+  brand: "BRAND",
+  navigational: "NAV",
+};
+
+export interface IntentPrompt {
+  prompt: string;
+  intent: PromptIntent;
+}
+
+/**
+ * Deterministically classify a buyer-intent prompt into the a3 taxonomy. Order is
+ * significant, mirroring the PDF:
+ *   navigational (points at the site) → comparison ("X alternative"/"best app",
+ *   which stays COMP even when it names the brand, e.g. "Workfrom alternative") →
+ *   brand (names the client, no comparison signal) → problem ("how/near me/right
+ *   now") → discovery (the default "best X"). A bare "?" is NOT treated as problem —
+ *   most discovery/comparison queries are also questions.
+ */
+export function classifyIntent(prompt: string, gazetteer: Gazetteer): PromptIntent {
+  const p = prompt.toLowerCase();
+  if ((gazetteer.clientDomain && p.includes(gazetteer.clientDomain)) || /\bofficial (site|website)\b/.test(p)) {
+    return "navigational";
+  }
+  if (/\b(vs\.?|alternative|compare|comparison|best app|app to|apps? (for|to)|which app)\b/.test(p)) return "comparison";
+  if (gazetteer.client.some((a) => findMention(prompt, a) >= 0)) return "brand";
+  if (/\b(how (do|can|to)|near me|right now|can i find|where can i)\b/.test(p)) return "problem";
+  return "discovery";
+}
+
+export function tagPromptIntents(prompts: string[], gazetteer: Gazetteer): IntentPrompt[] {
+  return prompts.map((prompt) => ({ prompt, intent: classifyIntent(prompt, gazetteer) }));
+}
+
+/** One (question × engine) cell state, matching the PDF grid's dot legend. */
+export type CellState = "named_first" | "named" | "cited_not_named" | "absent" | "unavailable";
+
+export interface AnswerCell {
+  engine: EngineId;
+  source: ProviderSource | null;
+  tier: CaptureTier;
+  state: CellState;
+}
+
+export interface QuestionRow {
+  prompt: string;
+  intent: PromptIntent;
+  /** One cell per engine, in the given roster order. */
+  cells: AnswerCell[];
+}
+
+function cellState(probe: GeoProbe | undefined): CellState {
+  if (!probe || probe.captureTier === "UNAVAILABLE") return "unavailable";
+  if (probe.brandFirst) return "named_first";
+  if (probe.brandMentioned) return "named";
+  if (probe.brandCited) return "cited_not_named"; // ghost citation
+  return "absent";
+}
+
+/**
+ * Build the per-question × per-engine answer grid — the PDF's central matrix.
+ * Rows follow the prompt set order; cells follow the engine roster order.
+ */
+export function buildAnswerGrid(
+  intentPrompts: IntentPrompt[],
+  engines: EngineId[],
+  probes: GeoProbe[],
+): QuestionRow[] {
+  const byKey = new Map<string, GeoProbe>();
+  for (const p of probes) byKey.set(`${p.prompt} ${p.engine}`, p);
+  return intentPrompts.map(({ prompt, intent }) => ({
+    prompt,
+    intent,
+    cells: engines.map((engine) => {
+      const probe = byKey.get(`${prompt} ${engine}`);
+      return {
+        engine,
+        source: probe?.source ?? ENGINE_PROVIDERS[engine],
+        tier: probe?.captureTier ?? "UNAVAILABLE",
+        state: cellState(probe),
+      };
+    }),
+  }));
+}
+
+/** Domain citation leaderboard entry ("who the engines quote instead"). */
+export interface CitationLeader {
+  domain: string;
+  citations: number;
+  isClient: boolean;
+}
+
+/**
+ * Count every cited domain across all measured answers → the "who the engines quote"
+ * leaderboard. The client's own domain is flagged and always retained.
+ */
+export function computeCitationLeaderboard(probes: GeoProbe[], gazetteer: Gazetteer, limit = 12): CitationLeader[] {
+  const counts = new Map<string, number>();
+  for (const p of probes) {
+    if (p.captureTier === "UNAVAILABLE") continue;
+    for (const d of p.citations) counts.set(d, (counts.get(d) ?? 0) + 1);
+  }
+  const client = gazetteer.clientDomain;
+  const rows = [...counts.entries()]
+    .map(([domain, citations]) => ({
+      domain,
+      citations,
+      isClient: !!client && (domain === client || domain.endsWith(`.${client}`)),
+    }))
+    .sort((a, b) => b.citations - a.citations);
+  const top = rows.slice(0, limit);
+  // Ensure the client's own line is present even if it falls outside the top N.
+  if (client && !top.some((r) => r.isClient)) {
+    const clientRow = rows.find((r) => r.isClient);
+    if (clientRow) top.push(clientRow);
+  }
+  return top;
+}
+
+/** Client citation summary: cited in N answers, named in M, ghost = N − M. */
+export interface CitationSummary {
+  totalMeasuredAnswers: number;
+  answersCited: number;
+  answersNamed: number;
+  ghostCitations: number;
+}
+
+export function computeCitationSummary(probes: GeoProbe[]): CitationSummary {
+  const measured = probes.filter((p) => p.captureTier !== "UNAVAILABLE");
+  const answersCited = measured.filter((p) => p.brandCited).length;
+  const answersNamed = measured.filter((p) => p.brandMentioned).length;
+  const ghost = measured.filter((p) => p.brandCited && !p.brandMentioned).length;
+  return {
+    totalMeasuredAnswers: measured.length,
+    answersCited,
+    answersNamed,
+    ghostCitations: ghost,
+  };
+}
+
+/** Competitors named across measured answers, with counts (desc). */
+export function computeCompetitorsNamed(
+  probes: GeoProbe[],
+  gazetteer: Gazetteer,
+): Array<{ name: string; mentions: number }> {
+  const counts = new Map<string, number>(Object.keys(gazetteer.competitors).map((c) => [c, 0]));
+  for (const p of probes) {
+    if (p.captureTier === "UNAVAILABLE") continue;
+    for (const b of p.mentionedBrands) if (counts.has(b)) counts.set(b, (counts.get(b) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, mentions]) => ({ name, mentions }))
+    .filter((r) => r.mentions > 0)
+    .sort((a, b) => b.mentions - a.mentions);
+}
+
 /* ── Stored insights record ───────────────────────────────────────── */
 
 /**
@@ -768,6 +1015,10 @@ export interface SeoGeoInsights {
   geoReadinessCoveragePct: number;
   geoVisibilityIndex: number;
   geoVisibilityCoveragePct: number;
+  /** Append-only series of past geoVisibilityIndex values (oldest→newest), for the
+   *  trend line + delta (dev-handoff §3a: series[20,34] → big number + "+14" + sparkline).
+   *  Maintained by the data layer on write; the agent leaves it undefined. */
+  visibilityHistory?: number[];
   /** The visibility scoring model label (run-record `geo_visibility_model`). */
   geoVisibilityModel: string;
   /** First-party MEASURED engines behind the visibility index. */
@@ -784,13 +1035,26 @@ export interface SeoGeoInsights {
   brandPresence: { named: number; total: number };
   /** Per-engine sub-metrics with provider provenance — the chart series. */
   perEngine: PerEngineVisibility[];
-  /** Prioritized SEO + GEO gaps/issues (site checks + competitor visibility deltas), run-record `issues[]` shape. */
+  /** Prioritized SEO + GEO gaps/issues (site checks + competitor visibility deltas), run-record `issues[]` shape.
+   *  INTERNAL — never render raw to a client (dev-handoff §4). Use `recommendations` for the client view. */
   gaps: VisibilityGap[];
+  /** Client-facing action plan derived from `gaps` (dev-handoff §3b). Safe to render to clients. */
+  recommendations: Recommendation[];
   /** Audited site checks (evidence trail for the scores). */
   seoChecks: SeoGeoCheck[];
   geoChecks: SeoGeoCheck[];
   /** The frozen buyer-intent prompt set used for this capture. */
   promptSet: string[];
+  /** The prompt set tagged with the DISC/COMP/PROB/BRAND/NAV intent taxonomy. */
+  intentPrompts: IntentPrompt[];
+  /** Per-question × per-engine answer grid — the report's central matrix. */
+  answerGrid: QuestionRow[];
+  /** Domain citation leaderboard across all measured answers ("who the engines quote"). */
+  citationLeaderboard: CitationLeader[];
+  /** Client citation summary (cited/named/ghost across measured answers). */
+  citationSummary: CitationSummary;
+  /** Competitors named across measured answers, with counts. */
+  competitorsNamed: Array<{ name: string; mentions: number }>;
   /** Roster used for share-of-voice (client first). */
   roster: string[];
   updatedAt: number;

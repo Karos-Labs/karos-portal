@@ -13,6 +13,8 @@ import {
   updateContextDocContent,
   logFeedback,
   chargeClientCredits,
+  tryAcquireAiProcessingLock,
+  releaseAiProcessingLock,
 } from "@/lib/data";
 import { logger } from "@/services/logger";
 import { getCurrentUser } from "@/lib/auth";
@@ -126,20 +128,29 @@ export async function generateIntelReportAction(
   runSpecificContext?: string,
 ): Promise<void> {
   await requireStaff();
-  const { runIntelReportPipeline } = await import("@/lib/intel");
-  await runIntelReportPipeline(clientId, runSpecificContext);
-  const ctxNote = runSpecificContext?.trim()
-    ? ` — with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
-    : "";
-  await logActivity({
-    clientId,
-    timestamp: Date.now(),
-    type: "INTEL_GENERATION",
-    title: "Intel Report generated",
-    description: `Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical)${ctxNote}`,
-    actor: "System AI",
-    actorRole: "system",
-  });
+  // Same workspace lock the post-onboarding background trigger uses — stops this
+  // manual Regenerate from overlapping that run (or a second concurrent click).
+  if (!(await tryAcquireAiProcessingLock(clientId))) {
+    throw new Error("AI generation is already running for this client. Please wait for it to finish.");
+  }
+  try {
+    const { runIntelReportPipeline } = await import("@/lib/intel");
+    await runIntelReportPipeline(clientId, runSpecificContext);
+    const ctxNote = runSpecificContext?.trim()
+      ? ` — with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
+      : "";
+    await logActivity({
+      clientId,
+      timestamp: Date.now(),
+      type: "INTEL_GENERATION",
+      title: "Intel Report generated",
+      description: `Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical)${ctxNote}`,
+      actor: "System AI",
+      actorRole: "system",
+    });
+  } finally {
+    await releaseAiProcessingLock(clientId);
+  }
   revalidatePath(`/clients/${clientId}`);
 }
 

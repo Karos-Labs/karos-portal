@@ -13,6 +13,7 @@ import {
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import { Card, CardTitle, PageHeader } from "@/components/ui";
+import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import AutoScheduleToggle from "@/components/auto-schedule-toggle";
 import { Icon } from "@/components/icon";
 import { IntegrationsTab } from "@/components/integrations-tab";
@@ -79,6 +80,14 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
           </Link>
         }
       />
+
+      {/* CLIENT_USER already sees this via the (app) shell's own wrapper — only
+          render here for staff, who use the plain Sidebar shell with no such wrapper. */}
+      {user.role !== "CLIENT_USER" && client.isAiProcessing && (
+        <div className="mb-6">
+          <AiProcessingBanner />
+        </div>
+      )}
 
       {/* Brand profile (logo, voice, contact) — staff-managed */}
       {isStaff && (
