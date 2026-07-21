@@ -269,7 +269,7 @@ function MarkPostedRow({ asset }: { asset: Asset }) {
   const [error, setError] = useState<string | null>(null);
 
   const eligible =
-    (asset.status === "approved" || asset.status === "scheduled") &&
+    (asset.status === "approved" || asset.status === "scheduled" || asset.status === "delivered") &&
     asset.publishMode !== "placeholder";
   if (!eligible) return null;
 

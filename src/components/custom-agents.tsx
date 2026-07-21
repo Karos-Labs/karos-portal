@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AgentIdentity, AgentPlatformBadges } from "@/components/agent-identity";
 import { Modal } from "@/components/modal";
 import { JobStatusBadge } from "@/components/job-status";
 import {
@@ -27,9 +28,93 @@ import { cn, relativeTime } from "@/lib/utils";
  * Deliberately excludes instructions (the system prompt), skill paths, and
  * repo provenance — pages map full docs down to this before passing them.
  */
-export type RunnableAgentSummary = Pick<CustomAgent, "id" | "name" | "description" | "icon" | "color"> & {
+export type RunnableAgentSummary = Pick<CustomAgent, "id" | "key" | "name" | "description" | "icon" | "color"> & {
   creditCost?: number | null;
 };
+
+type AgentLaunchConfig = {
+  label: string;
+  helper: string;
+  placeholder: string;
+  quickStarts: string[];
+  attachmentLabel?: string;
+  attachmentHint?: string;
+};
+
+/**
+ * The agent service accepts one natural-language brief, but that does not mean
+ * every agent should make the user invent its own workflow. Known agents get
+ * prompts that describe their actual job; custom/imported agents retain a
+ * useful outcome-focused fallback based on their own name.
+ */
+function launchConfigFor(agent: Pick<RunnableAgentSummary, "key" | "name">): AgentLaunchConfig {
+  const identity = `${agent.key} ${agent.name}`.toLowerCase();
+
+  if (identity.includes("branded-short") || identity.includes("branded shorts")) {
+    return {
+      label: "What should this short communicate?",
+      helper: "Tell the editor the intended message, audience, and any moment that must make the cut.",
+      placeholder: "Turn the attached interview into a 30-second short about the new product launch.",
+      quickStarts: [
+        "Turn the attached talking-head video into a concise product-launch short.",
+        "Create a founder-led short that explains our strongest customer outcome.",
+        "Cut a social teaser from the attached video and keep the speaker's key point intact.",
+      ],
+      attachmentLabel: "Source video",
+      attachmentHint: "Attach the talking-head or source video the editor should use.",
+    };
+  }
+
+  if (identity.includes("instagram")) {
+    return {
+      label: "What should we create for Instagram?",
+      helper: "Pick the goal and topic. The agent applies the brand voice and prepares the post for review.",
+      placeholder: "Create a carousel that explains how our new offer solves [customer problem].",
+      quickStarts: [
+        "Create a carousel that introduces our new offer.",
+        "Create a founder story post that builds trust with our target audience.",
+        "Create a post around a customer pain point we solve.",
+      ],
+    };
+  }
+
+  if (identity.includes("linkedin")) {
+    return {
+      label: "What should we publish on LinkedIn?",
+      helper: "Choose the angle and audience. The agent will turn it into a credible, on-brand LinkedIn draft.",
+      placeholder: "Write a thought-leadership post about what we learned while solving [problem].",
+      quickStarts: [
+        "Write a thought-leadership post based on a lesson from our work.",
+        "Turn a recent company milestone into a LinkedIn update.",
+        "Draft a founder post that explains our point of view on [topic].",
+      ],
+    };
+  }
+
+  if (identity === "x" || /(^|[\s_-])x([\s_-]|$)|twitter/.test(identity)) {
+    return {
+      label: "What should the X agent set up or improve?",
+      helper: "This agent builds the X content system. Tell it which account, audience, or growth goal to focus on.",
+      placeholder: "Set up an X content plan for our founder account, focused on reaching [audience].",
+      quickStarts: [
+        "Set up an X content plan for our founder account.",
+        "Refresh our X strategy around a new audience or offer.",
+        "Build an X content system for our brand account.",
+      ],
+    };
+  }
+
+  return {
+    label: `What should ${agent.name} create?`,
+    helper: "Describe the outcome, audience, and any key details. The agent already knows its playbook and your brand.",
+    placeholder: "Describe the outcome you want, who it is for, and any must-have details.",
+    quickStarts: [
+      `Create a first draft for our current priority.`,
+      `Develop an idea for our target audience around [topic].`,
+      `Improve an existing asset using the attached context.`,
+    ],
+  };
+}
 
 /** One run-history row, pre-filtered and stripped server-side. */
 export interface CustomAgentRunRow {
@@ -46,14 +131,14 @@ function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
   return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
 }
 
-function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "icon" | "color">; className?: string }) {
+function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon" | "color">; className?: string }) {
   return (
-    <div
-      className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-md", className)}
-      style={{ background: agent.color + "1f", color: agent.color }}
-    >
-      <Icon name={agent.icon} className="h-5 w-5" />
-    </div>
+    <AgentIdentity
+      identity={`${agent.key} ${agent.name}`}
+      icon={agent.icon}
+      color={agent.color}
+      className={className}
+    />
   );
 }
 
@@ -125,12 +210,14 @@ export function CustomAgentsHub({
           {agents.map((agent) => (
             <div
               key={agent.id}
-              className="card-grad flex flex-col rounded-[var(--radius)] border border-border p-4 transition-colors hover:border-border-strong"
+              className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
             >
+              <span className="absolute inset-x-0 top-0 h-0.5 opacity-45 transition-opacity group-hover:opacity-80" style={{ background: agent.color }} aria-hidden="true" />
               <div className="flex items-start gap-3">
                 <AgentChip agent={agent} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{agent.name}</p>
+                  <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">AI agent</p>
+                  <p className="truncate text-base font-medium">{agent.name}</p>
                   <p className="mt-0.5 truncate font-mono text-[10px] text-muted-2">
                     {agent.entrySkillDir}
                   </p>
@@ -146,6 +233,9 @@ export function CustomAgentsHub({
               <p className="mt-3 line-clamp-2 text-xs leading-relaxed text-muted-2">
                 {agent.description || "No description."}
               </p>
+              <div className="mt-3">
+                <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
+              </div>
               <div className="mt-auto flex items-center justify-between gap-2 pt-4">
                 <p className="text-xs text-muted-2">
                   {agentRunCost(agent)} credits per client run
@@ -257,14 +347,19 @@ export function ClientCustomAgents({
             return (
               <div
                 key={agent.id}
-                className="card-grad flex flex-col rounded-[var(--radius)] border border-border p-4 transition-colors hover:border-border-strong"
+                className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
               >
+                <span className="absolute inset-x-0 top-0 h-0.5 opacity-45 transition-opacity group-hover:opacity-80" style={{ background: agent.color }} aria-hidden="true" />
                 <div className="flex items-start gap-3">
                   <AgentChip agent={agent} />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">{agent.name}</p>
+                    <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">AI agent</p>
+                    <p className="truncate text-base font-medium">{agent.name}</p>
                     <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agent.description}</p>
                   </div>
+                </div>
+                <div className="mt-3">
+                  <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
                 </div>
                 <div className="mt-auto flex items-center justify-between gap-2 pt-4">
                   <p className="text-xs text-muted-2">
@@ -296,16 +391,16 @@ export function ClientCustomAgents({
               const agent = agentByName.get(run.agentName);
               const row = (
                 <>
-                  <div
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                    style={
-                      agent
-                        ? { background: agent.color + "1f", color: agent.color }
-                        : { background: "var(--surface-3)" }
-                    }
-                  >
-                    <Icon name={agent?.icon ?? "Bot"} className="h-3.5 w-3.5" />
-                  </div>
+                  {agent ? (
+                    <AgentIdentity
+                      identity={`${agent.key} ${agent.name}`}
+                      icon={agent.icon}
+                      color={agent.color}
+                      size="sm"
+                    />
+                  ) : (
+                    <AgentIdentity identity={run.agentName} icon="Bot" color="#88888f" size="sm" />
+                  )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{run.agentName}</p>
                     <p className="truncate text-xs text-muted-2">
@@ -378,6 +473,7 @@ function RunCustomAgentModal({
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
+  const launcher = launchConfigFor(agent);
 
   function submit() {
     setError(null);
@@ -448,23 +544,41 @@ function RunCustomAgentModal({
         )}
 
         <div>
-          <Label htmlFor="ca-prompt">What should the agent do?</Label>
+          <Label htmlFor="ca-prompt">{launcher.label}</Label>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {launcher.quickStarts.map((quickStart) => (
+              <button
+                key={quickStart}
+                type="button"
+                onClick={() => setPrompt(quickStart)}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-left text-[11px] transition-colors",
+                  prompt === quickStart
+                    ? "border-neon/60 bg-neon/10 text-neon"
+                    : "border-border bg-surface-2 text-muted hover:border-border-strong hover:text-foreground",
+                )}
+              >
+                {quickStart}
+              </button>
+            ))}
+          </div>
           <Textarea
             id="ca-prompt"
             rows={3}
             maxLength={4000}
-            placeholder='e.g. "create 3 instagram posts about the new offer"'
+            placeholder={launcher.placeholder}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
           />
           <p className="mt-1 text-xs text-muted-2">
-            A plain-language request. The agent already knows the brand and its own playbook.
+            {launcher.helper}
           </p>
         </div>
 
         {contextItems.length > 0 && (
           <div>
-            <Label>Attach input files</Label>
+            <Label>{launcher.attachmentLabel ?? "Attach reference files"}</Label>
+            {launcher.attachmentHint && <p className="mb-1.5 text-xs text-muted-2">{launcher.attachmentHint}</p>}
             <div className="max-h-36 space-y-1 overflow-y-auto rounded-md border border-border p-2">
               {contextItems.map((item) => (
                 <label

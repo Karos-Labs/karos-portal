@@ -1,18 +1,23 @@
 import { requireUser } from "@/lib/auth";
 import { listAssets, listClients } from "@/lib/data";
-import { EmptyState, PageHeader, Badge } from "@/components/ui";
+import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { AssetCard } from "@/components/asset-card";
 import { AssetsView } from "@/components/assets-view";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import type { Asset } from "@/lib/types";
 
 export default async function AssetsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ clientId?: string }>;
+  searchParams: Promise<{ clientId?: string; view?: string; status?: string }>;
 }) {
   const user = await requireUser();
-  const { clientId: viewClientId } = await searchParams;
+  const { clientId: viewClientId, view, status } = await searchParams;
+  const initialView = view === "library" ? "library" : "calendar";
+  const initialStatus: Asset["status"] | undefined =
+    status === "draft" || status === "approved" || status === "scheduled" || status === "delivered" || status === "published"
+      ? status
+      : undefined;
 
   if (user.role === "CLIENT_USER") {
     if (!user.clientId) {
@@ -32,7 +37,7 @@ export default async function AssetsPage({
     return (
       <>
         <PageHeader title="Library" description="Your content library and delivery calendar." />
-        <AssetsView assets={assets} viewerIsClient />
+        <AssetsView assets={assets} viewerIsClient initialView={initialView} initialStatus={initialStatus} />
       </>
     );
   }
@@ -51,7 +56,7 @@ export default async function AssetsPage({
     return (
       <>
         <PageHeader title={`${viewClient.name} · Library`} description="Content library and delivery calendar." />
-        <AssetsView assets={clientAssets} />
+        <AssetsView assets={clientAssets} initialView={initialView} initialStatus={initialStatus} />
       </>
     );
   }
@@ -59,27 +64,19 @@ export default async function AssetsPage({
   const allAssets = await listAssets();
   const clientIds = new Set(clients.map((c) => c.id));
   const assets = user.role === "KAROS_EMPLOYEE" ? allAssets.filter((a) => clientIds.has(a.clientId)) : allAssets;
-  const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "Unknown";
-
   return (
     <>
       <PageHeader title="Assets" description="All content generated across your clients." />
       {assets.length === 0 ? (
         <EmptyState icon={<Icon name="FolderOpen" className="h-7 w-7" />} title="No assets yet" description="Run an agent on a client to generate deliverables." />
       ) : (
-        /* items-start: cards size to their own content. Under the default
-           stretch, a short card is dragged to the height of its row neighbour
-           and reads as broken rather than short. */
-        <div className="grid items-start gap-3 lg:grid-cols-2">
-          {assets.map((a) => (
-            <div key={a.id}>
-              <div className="mb-1 flex items-center gap-2">
-                <Badge tone="neutral">{clientName(a.clientId)}</Badge>
-              </div>
-              <AssetCard asset={a} canApprove />
-            </div>
-          ))}
-        </div>
+        <AssetsView
+          assets={assets}
+          canApprove
+          initialView={initialView}
+          initialStatus={initialStatus}
+          clientNames={Object.fromEntries(clients.map((client) => [client.id, client.name]))}
+        />
       )}
     </>
   );
