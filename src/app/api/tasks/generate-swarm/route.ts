@@ -46,17 +46,18 @@ export async function GET(req: Request) {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      let failure: string | undefined;
       try {
         const context = await buildSwarmContext(clientId, trend);
         for await (const event of runSwarm({ clientId, createdBy: user.uid, context })) {
+          if (event.type === "error") failure = event.message;
           controller.enqueue(frame(event));
         }
       } catch (e) {
-        controller.enqueue(
-          frame({ type: "error", message: e instanceof Error ? e.message : "Swarm failed to start" }),
-        );
+        failure = e instanceof Error ? e.message : "Swarm failed to start";
+        controller.enqueue(frame({ type: "error", message: failure }));
       } finally {
-        await releaseAiProcessingLock(clientId);
+        await releaseAiProcessingLock(clientId, failure);
         controller.close();
       }
     },

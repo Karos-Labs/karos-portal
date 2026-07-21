@@ -70,7 +70,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       <div className="space-y-8">
         {/* CLIENT_USER already sees this via the (app) shell's own wrapper — only
             render here for staff, who use the plain Sidebar shell with no such wrapper. */}
-        {!isClientViewer && client.isAiProcessing && <AiProcessingBanner />}
+        {!isClientViewer && <AiProcessingBanner client={client} />}
         {isClientViewer && (
           <section className="space-y-3">
             <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Overview</p>

@@ -46,7 +46,7 @@ import {
   rollCreditWindows,
 } from "@/lib/credits";
 import { engagementScore, rankByEngagement } from "@/lib/analytics";
-import { AI_PROCESSING_LOCK_STALE_MS } from "@/lib/constants";
+import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { computeBoardCapacity } from "@/lib/task-dedup";
 import { encryptCredentials, decryptCredentials } from "@/lib/crypto/token-cipher";
@@ -233,17 +233,30 @@ export async function tryAcquireAiProcessingLock(clientId: string): Promise<bool
     const snap = await tx.get(ref);
     if (!snap.exists) return false;
     const client = withId<Client>(snap);
-    const lockAge = Date.now() - (client.aiProcessingStartedAt ?? 0);
-    if (client.isAiProcessing && lockAge < AI_PROCESSING_LOCK_STALE_MS) return false;
-    tx.set(ref, { isAiProcessing: true, aiProcessingStartedAt: Date.now() }, { merge: true });
+    if (isAiProcessingLockActive(client)) return false;
+    // Starting a fresh run — clear any error left over from the previous one.
+    tx.set(
+      ref,
+      { isAiProcessing: true, aiProcessingStartedAt: Date.now(), aiProcessingError: null },
+      { merge: true },
+    );
     return true;
   });
 }
 
-/** Release the client-level AI-processing lock. Safe to call even if never acquired. */
-export async function releaseAiProcessingLock(clientId: string): Promise<void> {
+/**
+ * Release the client-level AI-processing lock. Safe to call even if never
+ * acquired. Pass `errorMessage` when the run failed so the UI can tell the
+ * user what went wrong (e.g. out of credits) instead of the lock just
+ * silently clearing with no explanation.
+ */
+export async function releaseAiProcessingLock(clientId: string, errorMessage?: string): Promise<void> {
   await col.clients().doc(clientId).set(
-    { isAiProcessing: false, aiProcessingStartedAt: null },
+    {
+      isAiProcessing: false,
+      aiProcessingStartedAt: null,
+      aiProcessingError: errorMessage ? errorMessage.slice(0, 500) : null,
+    },
     { merge: true },
   );
 }

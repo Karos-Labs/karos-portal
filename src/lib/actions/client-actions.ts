@@ -58,6 +58,7 @@ export async function createClientAction(input: {
     // Refresh Task Map click (or the client's own onboarding-completion run) —
     // released in the finally below regardless of outcome.
     if (!(await tryAcquireAiProcessingLock(id))) return;
+    let failure: string | undefined;
     try {
       await updateClient(id, { onboardingStatus: "running", onboardingError: "" });
       const { runIntelReportPipeline } = await import("@/lib/intel");
@@ -81,12 +82,16 @@ export async function createClientAction(input: {
         .filter(Boolean)
         .join(" | ")
         .slice(0, 500);
+      if (anyFailed) failure = failureReasons;
       await updateClient(id, {
         onboardingStatus: anyFailed ? "failed" : "done",
         onboardingError: anyFailed ? failureReasons : "",
       });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+      console.error("[onboard] Pipeline crashed unexpectedly:", e);
     } finally {
-      await releaseAiProcessingLock(id);
+      await releaseAiProcessingLock(id, failure);
     }
   });
 

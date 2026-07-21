@@ -11,6 +11,7 @@ import { cn, initials } from "@/lib/utils";
 import { useActiveClient } from "@/lib/active-client-context";
 import { ClientDocuments } from "@/components/client-documents";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
+import { isAiProcessingLockActive } from "@/lib/constants";
 import type { AppUser, Client, Role } from "@/lib/types";
 
 interface NavItem {
@@ -399,7 +400,7 @@ export function Sidebar({
           contextDocs={activeClient.contextDocs}
           isAdmin={activeClient.isAdmin}
           clientId={activeClient.client.id}
-          isAiProcessing={activeClient.client.isAiProcessing}
+          isAiProcessing={isAiProcessingLockActive(activeClient.client)}
         />
       </div>
 

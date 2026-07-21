@@ -2,6 +2,7 @@
 
 import { CopilotDock } from "@/components/copilot-dock";
 import { useActiveClient } from "@/lib/active-client-context";
+import { isAiProcessingLockActive } from "@/lib/constants";
 
 /**
  * Renders the docked AI Copilot right-rail (identical to the client portal
@@ -25,7 +26,7 @@ export function StaffCopilotDock({ userName }: { userName?: string }) {
         name: client.name,
         website: client.website,
         industry: client.industry,
-        isAiProcessing: client.isAiProcessing,
+        isAiProcessing: isAiProcessingLockActive(client),
       }}
     />
   );

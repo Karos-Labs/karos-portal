@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { getClient } from "@/lib/data";
+import { getClient, listClientIntegrations } from "@/lib/data";
+import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
+import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
 
 export const metadata = { title: "Welcome · Karos CMO" };
@@ -22,11 +24,22 @@ export default async function OnboardingPage({
   const user = await getCurrentUser();
   if (!user || !user.clientId) redirect("/dashboard");
 
-  const client = await getClient(user.clientId);
+  const [client, rawIntegrations] = await Promise.all([
+    getClient(user.clientId),
+    listClientIntegrations(user.clientId),
+  ]);
   if (!client) redirect("/dashboard");
 
   const notice =
     linkedinSeatStatus && linkedinSeatStatus !== "connected" ? NOTICE_COPY[linkedinSeatStatus] ?? null : null;
 
-  return <OnboardingWizard user={user} client={client} notice={notice} />;
+  return (
+    <OnboardingWizard
+      user={user}
+      client={client}
+      notice={notice}
+      integrations={sanitizeIntegrations(rawIntegrations)}
+      oauthEnabledPlatforms={getOAuthEnabledPlatforms()}
+    />
+  );
 }

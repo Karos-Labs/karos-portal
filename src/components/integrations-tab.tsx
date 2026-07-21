@@ -13,25 +13,10 @@ import {
 import { PLATFORM_REGISTRY, OAUTH_SUPPORTED_PLATFORM_IDS, type PlatformConfig } from "@/lib/integrations/platforms";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { LinkedInSeatsWorkspace, type SeatView } from "@/components/linkedin-seats-workspace";
-import type { ClientIntegration, Role } from "@/lib/types";
+import type { Role } from "@/lib/types";
 
-/**
- * An integration stripped of everything secret — OAuth tokens, pasted API keys and
- * employee-seat tokens stay on the server. Props cross into the RSC payload, so
- * anything here is readable by the end user whether or not the UI renders it.
- *
- * Deliberately a Pick (allowlist), not an Omit: a field added to ClientIntegration
- * later must be opted in here rather than silently shipped to the browser.
- */
-export type IntegrationView = Pick<
-  ClientIntegration,
-  "id" | "clientId" | "platform" | "accountName" | "autoPublish" | "status" | "method"
-> & {
-  /** Non-secret (text) credential fields only, keyed as in PLATFORM_REGISTRY. */
-  credentials: Record<string, string>;
-  /** Which secret fields are stored, so the form can show "leave blank to keep". */
-  secretsSet: string[];
-};
+export type { IntegrationView } from "@/lib/integrations/sanitize";
+import type { IntegrationView } from "@/lib/integrations/sanitize";
 
 interface Props {
   clientId: string;

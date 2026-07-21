@@ -15,6 +15,7 @@ import {
 } from "@/lib/data";
 import { ActiveClientProvider } from "@/lib/active-client-context";
 import { integrationIsUsable } from "@/lib/integration-status";
+import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldBlockForOnboarding } from "@/lib/onboarding";
 import { Sidebar } from "@/components/sidebar";
 import { ClientRail } from "@/components/client-rail";
@@ -101,7 +102,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               )}
               <main className="flex-1 px-4 pb-28 pt-6 md:px-8 md:pt-8 md:pb-16 lg:pb-8">
                 <div className="mx-auto w-full max-w-5xl animate-fade-up">
-                  {client.isAiProcessing && <AiProcessingBanner />}
+                  <AiProcessingBanner client={client} />
                   {children}
                 </div>
               </main>
@@ -118,7 +119,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 name: client.name,
                 website: client.website,
                 industry: client.industry,
-                isAiProcessing: client.isAiProcessing,
+                isAiProcessing: isAiProcessingLockActive(client),
               }}
               report={
                 report ? { overallGrade: report.overallGrade, overallScore: report.overallScore } : null
