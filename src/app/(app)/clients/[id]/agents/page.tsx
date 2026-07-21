@@ -23,6 +23,7 @@ import type { CustomAgent, Job } from "@/lib/types";
 function toSummary(agent: CustomAgent): RunnableAgentSummary {
   return {
     id: agent.id,
+    key: agent.key,
     name: agent.name,
     description: agent.description,
     icon: agent.icon,
