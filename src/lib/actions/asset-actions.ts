@@ -235,8 +235,12 @@ export async function markAssetPostedAction(
   // drafts, but a server action is a public endpoint: the UI is not the guard.
   // (Compare updateAssetAction and approveAssetAction, which keep every other
   // status transition staff-only for exactly this reason.)
-  if (asset.status !== "approved" && asset.status !== "scheduled") {
-    return { ok: false, error: "Only an approved or scheduled post can be marked as posted" };
+  if (
+    asset.status !== "approved" &&
+    asset.status !== "scheduled" &&
+    asset.status !== "delivered"
+  ) {
+    return { ok: false, error: "Only an approved, scheduled, or delivered post can be marked as posted" };
   }
   // Don't race an in-flight push: the auto-cron may be mid-publish under a
   // claim right now, and flipping status to published here wouldn't stop it —

@@ -443,7 +443,7 @@ export function AssetCard({
   // Drafts are excluded (nothing's been approved to post yet) as are
   // placeholders (roadmap entries that were never meant to go out).
   const canMarkPosted =
-    (asset.status === "approved" || asset.status === "scheduled") &&
+    (asset.status === "approved" || asset.status === "scheduled" || asset.status === "delivered") &&
     asset.publishMode !== "placeholder";
 
   // Notes have no scheduling dimension; everything else can land on the calendar.

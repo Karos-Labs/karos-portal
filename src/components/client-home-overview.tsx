@@ -75,7 +75,9 @@ export function ClientHomeOverview({
           <ul className="space-y-2">
             {awaitingApproval.length > 0 && (
               <AttentionRow
-                href="/jobs"
+                // Client users cannot open the staff-only Jobs screen. Draft
+                // deliverables are reviewed from their library instead.
+                href="/assets?view=library&status=draft"
                 icon="Sparkles"
                 label={`${awaitingApproval.length} post${awaitingApproval.length === 1 ? "" : "s"} awaiting your approval`}
                 hint="Review and approve to keep content moving."
