@@ -556,6 +556,28 @@ export function ClientDocuments({
         </ul>
       )}
 
+      {clientId && (
+        <>
+          <p className="mb-1.5 mt-4 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+            Agent data
+          </p>
+          <ul>
+            <li>
+              <a
+                href={`/clients/${clientId}/x-agent`}
+                className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
+              >
+                <Icon name="AtSign" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
+                <span className="flex-1 truncate text-sm text-muted group-hover:text-foreground">
+                  X agent data
+                </span>
+                <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+              </a>
+            </li>
+          </ul>
+        </>
+      )}
+
       {openDoc && (
         <DocOverlay
           doc={openDoc.doc}

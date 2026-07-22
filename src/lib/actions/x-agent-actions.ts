@@ -8,12 +8,16 @@
  */
 
 import { revalidatePath } from "next/cache";
+import { generateText } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
+import { MODELS } from "@/lib/constants";
 import {
   addXDraftFeedback,
   addXNewsUpdate,
   addXTake,
   createClientSeat,
   getClient,
+  getClientContextDoc,
   getClientSeat,
   listClientSeats,
   upsertAgentIntake,
@@ -60,12 +64,23 @@ function parseHandle(raw: string): string | null {
 
 /* ─────────────────────────── the forms ─────────────────────────── */
 
+/** Multiline box → clean rows, one per non-empty line, capped. */
+function parseLines(raw: string | undefined, cap: number): string[] {
+  return (raw ?? "")
+    .split("\n")
+    .map((l) => l.replace(/^[-*•]\s*/, "").trim())
+    .filter(Boolean)
+    .slice(0, cap);
+}
+
 export async function saveXCompanyIntakeAction(input: {
   clientId: string;
   handle: string;
   comeAcross: string;
   offLimits: string;
   roster: string;
+  /** First-time setup only: "anything worth announcing right now", one per line. */
+  announcements?: string;
 }): Promise<{ error?: string }> {
   const user = await requireClientAccess(input.clientId);
   if (!(await getClient(input.clientId))) return { error: "Client not found." };
@@ -84,6 +99,12 @@ export async function saveXCompanyIntakeAction(input: {
     roster: parseRoster(input.roster),
     createdBy: user.uid,
   });
+  const now = Date.now();
+  const date = new Date(now).toISOString().slice(0, 10);
+  for (const title of parseLines(input.announcements, 10)) {
+    if (title.length > MAX_TEXT) continue;
+    await addXNewsUpdate({ clientId: input.clientId, title, date, createdBy: user.uid, createdAt: now });
+  }
   revalidatePath(`/clients/${input.clientId}/x-agent`);
   return {};
 }
@@ -94,6 +115,8 @@ export async function addXSeatAction(input: {
   handle: string;
   offLimits: string;
   roster: string;
+  /** Setup: "your first 3-5 takes", one rough one-liner per line. */
+  firstTakes?: string;
 }): Promise<{ seatId?: string; error?: string }> {
   const user = await requireClientAccess(input.clientId);
   if (!(await getClient(input.clientId))) return { error: "Client not found." };
@@ -125,8 +148,75 @@ export async function addXSeatAction(input: {
     roster: parseRoster(input.roster),
     createdBy: user.uid,
   });
+  const date = new Date(now).toISOString().slice(0, 10);
+  for (const take of parseLines(input.firstTakes, 10)) {
+    if (take.length > MAX_TEXT) continue;
+    await addXTake({ clientId: input.clientId, seatId, take, date, createdBy: user.uid, createdAt: now });
+  }
   revalidatePath(`/clients/${input.clientId}/x-agent`);
   return { seatId };
+}
+
+/* ───────────────── roster proposal (propose, they approve) ───────────────── */
+
+/**
+ * Proposes 10-15 real X accounts for the engagement roster from what we
+ * already know about the client (onboarding docs + profile), grounded with
+ * live web search. The client approves or edits — nothing is engaged off an
+ * unapproved list, and the engine re-verifies every handle live at run time.
+ */
+export async function proposeXRosterAction(input: {
+  clientId: string;
+  /** When proposing for a person's seat rather than the company page. */
+  seatName?: string;
+}): Promise<{ handles?: Array<{ handle: string; why: string }>; error?: string }> {
+  await requireClientAccess(input.clientId);
+  const client = await getClient(input.clientId);
+  if (!client) return { error: "Client not found." };
+
+  const [audience, strategy] = await Promise.all([
+    getClientContextDoc(input.clientId, "target-audience"),
+    getClientContextDoc(input.clientId, "market-strategy"),
+  ]);
+  const context = [
+    `Company: ${client.name}${client.industry ? ` (${client.industry})` : ""}${client.website ? ` — ${client.website}` : ""}`,
+    client.brief ? `About: ${client.brief}` : "",
+    audience?.content ? `TARGET AUDIENCE (excerpt):\n${audience.content.slice(0, 4_000)}` : "",
+    strategy?.content ? `MARKET STRATEGY (excerpt):\n${strategy.content.slice(0, 4_000)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  if (!audience?.content && !strategy?.content && !client.brief) {
+    return { error: "Not enough client context yet — finish onboarding first, or type accounts manually." };
+  }
+
+  const forWhom = input.seatName
+    ? `a personal X account belonging to ${input.seatName}, a person at ${client.name}. Favor respected operators, founders, and voices this person would credibly reply to — people a notch or two bigger than them in the same space.`
+    : `the company X page of ${client.name}. Favor the loudest credible voices their buyers already follow in this niche.`;
+
+  try {
+    const { text } = await generateText({
+      model: anthropic(MODELS.SONNET),
+      tools: { web_search: anthropic.tools.webSearch_20250305({ maxUses: 4 }) },
+      system:
+        "You propose X (Twitter) engagement rosters. Only ever name accounts you are confident exist and are active — well-known people and companies. Use web search to confirm anyone you are less than certain about. Output STRICT JSON only: an array of {\"handle\": \"@...\", \"why\": \"one short line\"} with 10 to 15 entries, no other text.",
+      prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
+    });
+    const match = text.match(/\[[\s\S]*\]/);
+    if (!match) return { error: "Could not build a proposal — try again or type accounts manually." };
+    const parsed = JSON.parse(match[0]) as Array<{ handle?: string; why?: string }>;
+    const handles = parsed
+      .map((p) => ({
+        handle: `@${String(p.handle ?? "").replace(/^@+/, "").trim()}`,
+        why: String(p.why ?? "").slice(0, 200),
+      }))
+      .filter((p) => /^@[A-Za-z0-9_]{1,15}$/.test(p.handle))
+      .slice(0, 15);
+    if (handles.length < 5) return { error: "Proposal came back too thin — try again or type accounts manually." };
+    return { handles };
+  } catch {
+    return { error: "Could not build a proposal right now — try again or type accounts manually." };
+  }
 }
 
 export async function saveXSeatIntakeAction(input: {

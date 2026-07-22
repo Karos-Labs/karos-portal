@@ -12,8 +12,10 @@ import "server-only";
 import { randomUUID } from "crypto";
 import {
   getAgentIntake,
+  getAsset,
   listAgentIntake,
   listClientSeats,
+  listJobs,
   listXDraftFeedback,
   listXNewsUpdates,
   listXTakes,
@@ -73,12 +75,58 @@ async function upload(clientId: string, runKey: string, name: string, body: stri
   return url;
 }
 
+/** How many prior draft batches each run receives for anti-duplication. */
+const PRIOR_BATCHES = 3;
+const PRIOR_BATCH_MAX_CHARS = 20_000;
+
+/**
+ * Prior portal-run batches, newest first. The runner workspace is ephemeral —
+ * ledger appends made inside a run are discarded with it — so run-over-run
+ * anti-duplication only works if each run RECEIVES the previous batches. The
+ * webhook stores each batch's DRAFTS markdown as the job asset's content;
+ * that is the durable copy we re-inject.
+ */
+async function priorBatchFiles(
+  clientId: string,
+  agentName: string,
+  runKey: string,
+): Promise<AgentServiceContextFile[]> {
+  const jobs = (await listJobs({ clientId }))
+    .filter(
+      (j) =>
+        j.agentId === "agent-service" &&
+        j.external?.taskType === "custom" &&
+        j.agentName === agentName &&
+        ["review", "approved", "delivered"].includes(j.status) &&
+        j.assetIds.length > 0,
+    )
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, PRIOR_BATCHES);
+
+  const files: AgentServiceContextFile[] = [];
+  for (const job of jobs) {
+    const asset = await getAsset(job.assetIds[0]);
+    if (!asset?.content?.trim()) continue;
+    const when = new Date(job.createdAt).toISOString().slice(0, 10);
+    const name = `prior-batch-${when}-${job.id.slice(0, 6)}.md`;
+    files.push({
+      name,
+      url: await upload(clientId, runKey, name, asset.content.slice(0, PRIOR_BATCH_MAX_CHARS), "text/markdown"),
+      content_type: "text/markdown",
+      description: `A previous portal draft batch for this client (${when}). NEVER reuse its subjects, sources, quoted posts, or phrasings — treat every entry as already used.`,
+    });
+  }
+  return files;
+}
+
 /**
  * Builds the X agent's portal-data context files for one run. Returns [] when
- * nothing is stored, so callers can append unconditionally.
+ * nothing is stored, so callers can append unconditionally. `agentName` (the
+ * customAgents doc name) scopes the prior-batch lookup.
  */
 export async function buildXAgentContextFiles(
   clientId: string,
+  agentName?: string,
 ): Promise<AgentServiceContextFile[]> {
   const [seats, intakes, news, takes, feedback] = await Promise.all([
     listClientSeats(clientId),
@@ -94,6 +142,11 @@ export async function buildXAgentContextFiles(
 
   const files: AgentServiceContextFile[] = [];
   const runKey = randomUUID();
+
+  // 0. Prior batches first — the anti-duplication ground truth for this run.
+  if (agentName) {
+    files.push(...(await priorBatchFiles(clientId, agentName, runKey)));
+  }
 
   // 1. The intake forms + learning logs, one markdown file.
   const seatSections = await Promise.all(
