@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import {
   listClientTasks,
   listClients,
+  getClient,
   getClientSettings,
   listClientActivityLogs,
   listJobs,
@@ -15,20 +16,36 @@ import type { ClientTask } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export default async function TasksPage() {
+export default async function TasksPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ clientId?: string }>;
+}) {
   const user = await requireUser();
+  const { clientId: viewClientId } = await searchParams;
 
-  // CLIENT_USER sees only their client's tasks + activity, behind one Progress view.
-  // Archiving is handled at query level (listClientTasks hides tasks Done ≥7d)
-  // plus a physical sweep in the /api/credits/reconcile cron — no page-load work.
+  // CLIENT_USER sees only their own client's tasks. Staff browsing via the sidebar's
+  // "View as client" picker (clientViewNav → /tasks?clientId=…) get the identical scoped
+  // view — the id is re-validated against a real client here, never trusted from the
+  // query string alone, so it can't be used to peek at an arbitrary clientId.
+  let scopedClientId: string | undefined;
   if (user.role === "CLIENT_USER") {
     if (!user.clientId) redirect("/dashboard");
+    scopedClientId = user.clientId;
+  } else if (viewClientId) {
+    const client = await getClient(viewClientId);
+    if (client) scopedClientId = client.id;
+  }
+
+  // Archiving is handled at query level (listClientTasks hides tasks Done ≥7d)
+  // plus a physical sweep in the /api/credits/reconcile cron — no page-load work.
+  if (scopedClientId) {
     const [tasks, settings, activityLogs, jobs, report] = await Promise.all([
-      listClientTasks({ clientId: user.clientId }),
-      getClientSettings(user.clientId),
-      listClientActivityLogs(user.clientId),
-      listJobs({ clientId: user.clientId }),
-      getClientReport(user.clientId),
+      listClientTasks({ clientId: scopedClientId }),
+      getClientSettings(scopedClientId),
+      listClientActivityLogs(scopedClientId),
+      listJobs({ clientId: scopedClientId }),
+      getClientReport(scopedClientId),
     ]);
     return (
       <div>
@@ -39,7 +56,7 @@ export default async function TasksPage() {
         <ProgressView
           tasks={tasks}
           currentUserRole={user.role}
-          clientId={user.clientId}
+          clientId={scopedClientId}
           autopilotEnabled={settings?.autopilot ?? false}
           activityLogs={activityLogs}
           jobs={jobs}
@@ -49,7 +66,7 @@ export default async function TasksPage() {
     );
   }
 
-  // Staff: show all tasks across all clients
+  // Staff overview (no client selected): show all tasks across all clients
   const [allTasks, clients] = await Promise.all([
     listClientTasks({ limit: 500 }),
     listClients(),
