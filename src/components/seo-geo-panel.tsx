@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Card, CardTitle, StatCard, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import type { SeoGeoInsights } from "@/lib/seo-geo";
 import {
   ENGINE_LABELS,
   INTENT_LABELS,
@@ -14,25 +15,43 @@ import {
 } from "@/lib/seo-geo";
 
 /**
- * SEO & GEO insights panel — comparative graphs over the multi-model visibility
- * capture. Every engine column and every gap carries a provenance badge naming
- * the provider that produced the data point (OpenAI / Gemini / Anthropic).
+ * SEO & GEO insights panel (SCRUM-52 redesign). Server component: all domain
+ * markup renders here from presenter view-models; interactivity lives in the
+ * small client leaves (disclosure, gap list, flag dialog). Everything a client
+ * reads is plain English by construction — internal run-record vocabulary is
+ * mapped (never echoed) in seo-geo/presenter.ts, which is unit-tested for leaks.
  */
 
 function ProviderBadge({ source }: { source: ProviderSource | null }) {
   if (!source) return <Badge tone="neutral">no connector</Badge>;
   return (
-    <Badge tone="info">
-      <Icon name="Cpu" className="h-3 w-3" />
-      source: {source}
-    </Badge>
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label="What this means"
+        className="flex h-4 w-4 items-center justify-center rounded-full text-muted-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+      >
+        <Icon name="Info" className="h-3 w-3" />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-0 z-20 mb-2 w-56 rounded-md border border-border bg-surface-3 px-2.5 py-2 text-left font-sans text-[11px] font-normal normal-case leading-relaxed tracking-normal text-foreground opacity-0 shadow-lg transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
+      >
+        {text}
+      </span>
+    </span>
   );
 }
 
-function scoreColor(score: number): string {
-  if (score >= 70) return "var(--success)";
-  if (score >= 40) return "var(--warning)";
-  return "var(--danger)";
+function Meter({ pct, color, className }: { pct: number; color: string; className?: string }) {
+  return (
+    <div className={`h-1.5 w-full overflow-hidden rounded-full bg-surface-3 ${className ?? ""}`}>
+      <div
+        className="h-full rounded-full"
+        style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: color }}
+      />
+    </div>
+  );
 }
 
 /* ── Action-plan controls (dev-handoff §3b) ── */
@@ -110,57 +129,139 @@ function AnswerGrid({ grid, engines }: { grid: QuestionRow[]; engines: string[] 
 function EngineShareChart({ engine }: { engine: PerEngineVisibility }) {
   const max = Math.max(1, ...engine.brandMentions.map((b) => b.mentions));
   return (
-    <div className="rounded-md border border-border bg-surface-2 p-3">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm font-medium text-foreground">{ENGINE_LABELS[engine.engine]}</span>
-        <div className="flex items-center gap-1.5">
-          <ProviderBadge source={engine.source} />
-          <Badge tone={engine.captureTier === "UNAVAILABLE" ? "neutral" : "neon"}>
-            {engine.captureTier === "MEASURED_grounded" ? "measured · grounded" : engine.captureTier.toLowerCase()}
-          </Badge>
-        </div>
-      </div>
-      {engine.captureTier === "UNAVAILABLE" || engine.promptsMeasured === 0 ? (
-        <p className="text-xs text-muted-2">
-          No measured answers this run{engine.source ? "" : " — engine connector not wired yet"}.
+    <Card className="min-w-0">
+      <div className="flex items-center gap-1.5">
+        <p className="font-mono text-[10px] uppercase leading-snug tracking-[0.08em] text-muted [overflow-wrap:anywhere]">
+          {view.label}
         </p>
+        <InfoTip text={view.explainer} />
+      </div>
+      {view.value === null ? (
+        <p className="mt-1.5 font-mono text-2xl font-medium text-muted-2">n/a</p>
       ) : (
-        <>
+        <p className="mt-1.5 font-mono text-2xl font-medium">
+          <span style={{ color: TONE_COLORS[view.tone] }}>{view.value}</span>
+          <span className="ml-1 text-sm font-normal text-muted-2">/100</span>
+        </p>
+      )}
+      <p className="mt-0.5 text-[11px]" style={{ color: TONE_COLORS[view.tone] }}>
+        {view.bandLabel}
+      </p>
+      <div className="mt-2.5">
+        <Meter pct={view.coveragePct} color="var(--muted-2)" />
+        <p className="mt-1 text-[11px] text-muted-2">{view.coverageLine}</p>
+      </div>
+      {view.breakdown.length > 0 && (
+        <Disclosure summary={view.breakdownTitle} className="mt-3 border-t border-border pt-2.5">
           <ul className="space-y-2">
-            {engine.brandMentions.map((b) => (
-              <li key={b.name}>
-                <div className="mb-0.5 flex items-center justify-between text-xs">
-                  <span className={b.isClient ? "font-semibold text-foreground" : "text-muted"}>
-                    {b.name}
-                    {b.isClient && <span className="ml-1 text-[10px] text-muted-2">(client)</span>}
+            {view.breakdown.map((row) => (
+              <li key={row.label}>
+                <div className="mb-0.5 flex items-baseline justify-between gap-2 text-[11px]">
+                  <span className="text-muted">
+                    {row.label}
+                    {row.note && <span className="text-muted-2"> · {row.note}</span>}
                   </span>
-                  <span className="font-mono text-muted-2">
-                    {b.mentions}/{engine.promptsMeasured}
-                  </span>
+                  {row.pct !== null && <span className="font-mono text-foreground">{row.pct}%</span>}
                 </div>
-                <div className="h-2 overflow-hidden rounded-sm bg-surface-3">
-                  <div
-                    className="h-full rounded-sm"
-                    style={{
-                      width: `${(b.mentions / max) * 100}%`,
-                      background: b.isClient ? "var(--neon)" : "var(--info)",
-                      opacity: b.isClient ? 1 : 0.55,
-                    }}
-                  />
-                </div>
+                <Meter pct={row.pct ?? 0} color="var(--foreground)" className="opacity-40" />
               </li>
             ))}
           </ul>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-2">
-            <span>Share of voice: <span className="font-mono text-foreground">{Math.round(engine.shareOfVoice)}%</span></span>
-            <span>Cited as source: <span className="font-mono text-foreground">{Math.round(engine.citationRate * 100)}%</span></span>
-            <span>Ranked first: <span className="font-mono text-foreground">{Math.round(engine.firstPositionRate * 100)}%</span></span>
-          </div>
-        </>
+        </Disclosure>
+      )}
+    </Card>
+  );
+}
+
+/* ── 2 · Capture context strip ───────────────────────────────────── */
+
+function EngineChip({ view }: { view: EngineView }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1">
+      <span className="text-xs text-foreground">{view.name}</span>
+      <Badge tone={view.statusTone}>{view.statusLabel}</Badge>
+      <InfoTip text={view.explainer} />
+    </span>
+  );
+}
+
+/* ── 4 · Per-engine comparison ───────────────────────────────────── */
+
+function EngineCard({ view }: { view: EngineView }) {
+  return (
+    <div className="rounded-md border border-border bg-surface-2 p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5">
+          <span className="text-sm font-medium text-foreground">{view.name}</span>
+          <InfoTip text={view.explainer} />
+        </span>
+        <Badge tone={view.statusTone}>{view.statusLabel}</Badge>
+      </div>
+      {view.allZero ? (
+        <p className="text-xs text-muted-2">
+          No brands were named in {view.name}&apos;s answers this run.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {view.brands.map((b) => (
+            <li key={b.name}>
+              <div className="mb-0.5 flex items-center justify-between gap-2 text-xs">
+                <span className={b.isClient ? "font-semibold text-foreground" : "text-muted"}>
+                  {b.name}
+                  {b.isClient && <span className="ml-1 text-[10px] text-muted-2">(you)</span>}
+                </span>
+                <span className="whitespace-nowrap font-mono text-[11px] text-muted-2">{b.line}</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-sm bg-surface-3">
+                <div
+                  className="h-full rounded-sm"
+                  style={{
+                    width: `${b.pctOfMax}%`,
+                    background: b.isClient ? "var(--neon)" : "var(--info)",
+                    opacity: b.isClient ? 1 : 0.55,
+                  }}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+        {view.stats.map((s) => (
+          <span key={s.label} className="inline-flex items-center gap-1 text-muted-2">
+            {s.label}: <span className="font-mono text-foreground">{s.value}</span>
+            <InfoTip text={s.explainer} />
+          </span>
+        ))}
+      </div>
+      {view.ghost && (
+        <div className="mt-2 inline-flex items-center gap-1 rounded-[4px] border border-warning/30 bg-warning/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-warning">
+          {view.ghost.label}
+          <InfoTip text={view.ghost.explainer} />
+        </div>
       )}
     </div>
   );
 }
+
+function UnmeasuredEngineCard({ view }: { view: EngineView }) {
+  return (
+    <div className="rounded-md border border-dashed border-border p-3">
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm font-medium text-muted">{view.name}</span>
+        <Badge tone={view.statusTone}>{view.statusLabel}</Badge>
+      </div>
+      <p className="text-xs text-muted-2">{view.causeLine}</p>
+      {view.flagPrefill && (
+        <div className="mt-2">
+          <FlagButton subject={view.flagPrefill.subject} message={view.flagPrefill.message} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Panel ───────────────────────────────────────────────────────── */
 
 export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
   if (!insights) {
@@ -169,8 +270,15 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
         <CardTitle className="mb-4">Search &amp; AI visibility</CardTitle>
         <EmptyState
           icon={<Icon name="Radar" className="h-6 w-6" />}
-          title="No SEO/GEO capture yet"
-          description="Run the Intel Report pipeline to audit the site and measure how AI answer engines (ChatGPT, Gemini, Claude) talk about this brand vs its competitors."
+          title="No visibility snapshot yet"
+          description="Your first search and AI visibility snapshot usually appears within a day of onboarding. It measures how search engines and AI assistants like ChatGPT and Gemini talk about your brand versus competitors."
+          action={
+            <FlagButton
+              subject="Question about our search and AI visibility snapshot"
+              message=""
+              label="Ask the Karos team"
+            />
+          }
         />
       </Card>
     );
@@ -228,20 +336,28 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
         <StatCard label="Captured" value={capturedDate} hint={`${insights.promptSet.length} buyer-intent prompts`} />
       </div>
 
-      {/* Per-engine comparative graphs with provider provenance */}
+      {/* 2 · Where we looked: the "N of 5 engines" disclosure, all engines visible */}
       <Card>
-        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>AI answer-engine visibility — client vs competitors</CardTitle>
-        </div>
-        <p className="mb-4 text-xs text-muted-2">
-          How often each brand is named when buyers ask the engines real category questions. Each engine column is
-          labeled with the model provider that produced its data.
-        </p>
-        <div className="grid gap-4 lg:grid-cols-3">
-          {engines.map((e) => (
-            <EngineShareChart key={e.engine} engine={e} />
+        <p className="font-mono text-[11px] text-muted">{buildContextLine(insights)}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {engines.map((view) => (
+            <EngineChip key={view.engine} view={view} />
           ))}
         </div>
+        {unwiredNames.length > 0 && (
+          <div className="mt-3">
+            <FlagButton
+              {...unwiredRequestPrefill(unwiredNames, insights)}
+              label={`Want ${unwiredNames.join(" or ")} coverage? Flag it to the Karos team`}
+            />
+          </div>
+        )}
+        {noEnginesMeasured && (
+          <p className="mt-3 rounded-md border border-info/30 bg-info/10 px-3 py-2 text-xs text-info">
+            We couldn&apos;t capture any AI engine answers this run. Your search score and AI
+            readiness are unaffected. We&apos;ll retry on the next snapshot.
+          </p>
+        )}
       </Card>
 
       {/* Answer grid — per-question × per-engine (the report's central matrix) */}
@@ -343,8 +459,41 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
               );
             })}
           </ul>
-        )}
+          <div className="mt-3 border-t border-border pt-3">
+            <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+              Who we compare you against
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {insights.roster.map((name, i) => (
+                <span
+                  key={`${name}-${i}`}
+                  className={
+                    i === 0
+                      ? "inline-flex items-center rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-neon"
+                      : "inline-flex items-center rounded-[4px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted"
+                  }
+                >
+                  {name}
+                  {i === 0 && <span className="ml-1">(you)</span>}
+                </span>
+              ))}
+            </div>
+          </div>
+          <p className="mt-3 text-[11px] text-muted-2">
+            We ask every engine the same questions on every snapshot so results stay comparable run
+            to run.
+          </p>
+        </Disclosure>
       </Card>
+
+      {/* 7 · Catch-all flag affordance */}
+      <div className="flex justify-end">
+        <FlagButton
+          subject={generic.subject}
+          message={generic.message}
+          label="Something look off? Flag it to the Karos team"
+        />
+      </div>
     </div>
   );
 }
