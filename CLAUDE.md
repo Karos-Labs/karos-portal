@@ -14,13 +14,17 @@ AI marketing-agency OS. Next.js 16 (App Router, Turbopack) · Firebase Auth · F
   `requireUser(roles?)`. First user or `ADMIN_EMAILS` → admin; others land disabled (pending).
 - **Roles**: admin / employee / client. Route group `src/app/(app)/` is the workspace;
   pages guard with `requireUser([...])`.
-- **Agents** = ONLY the managed karos-agents lab products (social_post, newsletter_issue,
-  blog_article, landing_page) run by the external agent service (`agent-service/`). Catalog:
-  `src/lib/agent-service/products.ts`; submit/cancel: `src/lib/actions/external-job-actions.ts`;
-  results arrive via `/api/agent-service/webhook` and mirror into `jobs` (agentId
-  `"agent-service"`). The old in-app agent systems (builder agents + `lib/agents` engine,
-  intel system agent, Claude-platform launcher, content-engine e12, newsletter e11) were
-  removed 2026-07 — don't reintroduce them.
+- **Agents** = the managed karos-agents lab products (social_post, newsletter_issue,
+  blog_article, landing_page) plus **custom agents** (`customAgents` collection: lab-repo
+  skills imported via the manifest, granted per client via `client.customAgentIds`, run as
+  task_type `"custom"`), all executed by the external agent service (`agent-service/`).
+  Catalog: `src/lib/agent-service/products.ts`; submit/cancel:
+  `src/lib/actions/external-job-actions.ts` / `custom-agent-actions.ts`; results arrive via
+  `/api/agent-service/webhook` and mirror into `jobs` (agentId `"agent-service"`). The X
+  agent (e13) is a custom agent with portal intake surfaces — see `docs/x-agent-portal.md`.
+  The old in-app agent systems (builder agents + `lib/agents` engine, intel system agent,
+  Claude-platform launcher, content-engine e12, newsletter e11) were removed 2026-07 —
+  don't reintroduce them.
 - **Credits** = client-billed AI usage. Pricing + window maths are pure in `src/lib/credits.ts`
   (client-safe); transactional charge/grant/ledger in `src/lib/data.ts` (`clientCredits`,
   `creditLedger` collections). Only `isBillableClientActor()` sessions charge — staff and
