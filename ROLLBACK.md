@@ -39,6 +39,7 @@ whole seed = delete the listed docs; nothing else references them.
 | D6 | karos-x-agent instructions replaced with the production text (docs/x-agent-portal.md block) | `customAgents/Qv6qtlZOObDVlSUXDzbb` | restore the `instructions` field from `_backup/2026-07-22/customAgents-Qv6qtlZOObDVlSUXDzbb.json` (full pre-change doc) |
 | D7 | karos-x-agent instructions v2 (weekly menu + audit-driven craft gates) | `customAgents/Qv6qtlZOObDVlSUXDzbb` | restore `instructions` from `_backup/2026-07-22/customAgents-Qv6qtlZOObDVlSUXDzbb-v2-pre.json` |
 | D8 | Albert's seat handle set to @alberree (was null/pending) | `agentIntake/IPhXqmH8uGyuufsBZr5P` | restore from `_backup/2026-07-22/agentIntake-IPhXqmH8uGyuufsBZr5P-pre-handle.json` |
+| D9 | karos-x-agent instructions v3 ("a week of posts", no "menu") | `customAgents/Qv6qtlZOObDVlSUXDzbb` | restore `instructions` from `_backup/2026-07-22/customAgents-Qv6qtlZOObDVlSUXDzbb-v3-pre.json` |
 
 ## Deploy/config changes (applied 2026-07-22)
 
