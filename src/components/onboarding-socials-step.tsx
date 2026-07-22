@@ -3,12 +3,18 @@
 import { IntegrationsTab } from "@/components/integrations-tab";
 import type { IntegrationView } from "@/lib/integrations/sanitize";
 import type { Role } from "@/lib/types";
+import type { SeatView } from "@/components/linkedin-seats-workspace";
 
 interface Props {
   clientId: string;
   integrations: IntegrationView[];
   oauthEnabledPlatforms: string[];
   currentUserRole: Role;
+  /** Sanitized LinkedIn employee seats — same data Settings shows, so an
+   * existing workspace's roster never appears empty here by mistake. */
+  linkedinSeats?: SeatView[];
+  seatLimit?: number;
+  seatCost?: number;
 }
 
 /**
@@ -17,7 +23,15 @@ interface Props {
  * component, one OAuth flow, one Reconnect/Disconnect behavior. New platforms
  * added to PLATFORM_REGISTRY show up here automatically.
  */
-export function OnboardingSocialsStep({ clientId, integrations, oauthEnabledPlatforms, currentUserRole }: Props) {
+export function OnboardingSocialsStep({
+  clientId,
+  integrations,
+  oauthEnabledPlatforms,
+  currentUserRole,
+  linkedinSeats,
+  seatLimit,
+  seatCost,
+}: Props) {
   return (
     <div className="space-y-5">
       <div>
@@ -33,6 +47,9 @@ export function OnboardingSocialsStep({ clientId, integrations, oauthEnabledPlat
         integrations={integrations}
         oauthEnabledPlatforms={oauthEnabledPlatforms}
         currentUserRole={currentUserRole}
+        linkedinSeats={linkedinSeats}
+        seatLimit={seatLimit}
+        seatCost={seatCost}
       />
     </div>
   );

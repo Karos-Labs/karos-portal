@@ -578,7 +578,7 @@ export function IntegrationsTab({
       )}
 
       {/* Platform grid */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {PLATFORM_REGISTRY.map((platform) => {
           const integration = integrations.find((i) => i.platform === platform.id);
           const oauthEnabled = oauthEnabledPlatforms.includes(platform.id);

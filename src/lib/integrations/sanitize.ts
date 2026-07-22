@@ -1,5 +1,6 @@
-import type { ClientIntegration } from "@/lib/types";
+import type { ClientIntegration, EmployeeSeat } from "@/lib/types";
 import { PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
+import type { SeatView } from "@/components/linkedin-seats-workspace";
 
 /**
  * An integration stripped of everything secret — OAuth tokens, pasted API keys and
@@ -50,4 +51,22 @@ export function sanitizeIntegrations(integrations: ClientIntegration[]): Integra
       secretsSet: secretKeys.filter((k) => !!i.credentials?.[k]),
     };
   });
+}
+
+/**
+ * Strips tokens from a LinkedIn integration's raw employee seats before they
+ * cross into any client component's props — only whether a token is present
+ * (`connected`) crosses, never the token itself, encrypted or not. Shared by
+ * every surface that renders the Company Employee Roster (settings page,
+ * onboarding wizard) so a client's true seat state never drifts between them.
+ */
+export function sanitizeLinkedinSeats(seats: EmployeeSeat[] | undefined): SeatView[] {
+  return (seats ?? []).map((s) => ({
+    id: s.id,
+    employeeName: s.employeeName,
+    employeeEmail: s.employeeEmail ?? "",
+    status: (s.status as "active" | "paused") ?? "active",
+    resumeUrl: s.resumeUrl ?? null,
+    connected: !!s.credentials?.accessToken,
+  }));
 }

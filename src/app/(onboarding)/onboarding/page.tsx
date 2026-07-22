@@ -2,8 +2,10 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getClient, listClientIntegrations } from "@/lib/data";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
-import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
+import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
+import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
+import type { ClientIntegration, EmployeeSeat } from "@/lib/types";
 
 export const metadata = { title: "Welcome · Karos CMO" };
 
@@ -33,6 +35,11 @@ export default async function OnboardingPage({
   const notice =
     linkedinSeatStatus && linkedinSeatStatus !== "connected" ? NOTICE_COPY[linkedinSeatStatus] ?? null : null;
 
+  // Same rule as the Settings page: an existing workspace's LinkedIn Company
+  // Employee Roster must show its real seats here too, not an always-empty one.
+  const linkedIntegration = rawIntegrations.find((i) => i.platform === "linkedin") as ClientIntegration | undefined;
+  const linkedinSeats = sanitizeLinkedinSeats(linkedIntegration?.employeeSeats as EmployeeSeat[] | undefined);
+
   return (
     <OnboardingWizard
       user={user}
@@ -40,6 +47,9 @@ export default async function OnboardingPage({
       notice={notice}
       integrations={sanitizeIntegrations(rawIntegrations)}
       oauthEnabledPlatforms={getOAuthEnabledPlatforms()}
+      linkedinSeats={linkedinSeats}
+      seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
+      seatCost={CREDIT_COSTS.employeeSeat}
     />
   );
 }
