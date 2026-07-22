@@ -12,6 +12,7 @@ import { ThemeSwitch } from "@/components/theme-switch";
 import { NotificationBell } from "@/components/notification-bell";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
+import { isAiProcessingLockActive } from "@/lib/constants";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
@@ -135,7 +136,7 @@ export function ClientRail({
                 contextDocs={contextDocs}
                 isAdmin={isAdmin}
                 clientId={client.id}
-                isAiProcessing={client.isAiProcessing}
+                isAiProcessing={isAiProcessingLockActive(client)}
               />
             </div>
 
@@ -258,7 +259,7 @@ export function ClientRail({
                 contextDocs={contextDocs}
                 isAdmin={isAdmin}
                 clientId={client.id}
-                isAiProcessing={client.isAiProcessing}
+                isAiProcessing={isAiProcessingLockActive(client)}
               />
             </div>
 

@@ -13,7 +13,7 @@ export default async function OnboardingLayout({ children }: { children: React.R
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="w-full max-w-xl">{children}</div>
+      <div className="w-full max-w-2xl">{children}</div>
     </div>
   );
 }

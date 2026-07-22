@@ -138,6 +138,13 @@ export interface Client {
   isAiProcessing?: boolean;
   /** Epoch millis the current AI-processing lock was acquired — used to detect a stale lock. */
   aiProcessingStartedAt?: number;
+  /**
+   * Reason the last AI-processing run failed (e.g. out of credits), truncated.
+   * Cleared the moment a new run acquires the lock. Lets the UI show what went
+   * wrong and that Regenerate/Refresh Task Map are open again, instead of the
+   * run just silently vanishing.
+   */
+  aiProcessingError?: string;
   createdAt: number;
   createdBy: string;
 }

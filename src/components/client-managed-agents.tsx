@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AgentIdentity, AgentPlatformBadges } from "@/components/agent-identity";
 import { Modal } from "@/components/modal";
 import { formatDate } from "@/lib/utils";
 import type { ManagedTaskType } from "@/lib/types";
@@ -115,22 +116,23 @@ function LiveProductCard({
     <button
       type="button"
       onClick={onOpen}
-      className="card-grad flex flex-col rounded-[var(--radius)] border border-border p-4 text-left transition-colors hover:border-border-strong"
+      className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
     >
+      <span className="absolute inset-x-0 top-0 h-0.5 opacity-45 transition-opacity group-hover:opacity-80" style={{ background: product.color }} aria-hidden="true" />
       <div className="flex items-start gap-3">
-        <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md"
-          style={{ background: product.color + "1f", color: product.color }}
-        >
-          <Icon name={product.icon} className="h-5 w-5" />
-        </div>
+        <AgentIdentity identity={`${product.name} ${product.tagline}`} icon={product.icon} color={product.color} />
         <div className="min-w-0 flex-1">
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">Managed agent</p>
           <div className="flex flex-wrap items-center gap-2">
             <p className="truncate font-medium">{product.name}</p>
             <LiveBadge />
           </div>
           <p className="mt-0.5 line-clamp-2 text-xs text-muted">{product.tagline}</p>
         </div>
+      </div>
+
+      <div className="mt-3">
+        <AgentPlatformBadges identity={`${product.name} ${product.tagline}`} />
       </div>
 
       <div className="mt-auto flex items-center justify-between gap-2 pt-4">
@@ -153,11 +155,9 @@ function LiveProductCard({
 
 function DormantProductCard({ product }: { product: ClientProductStatus }) {
   return (
-    <div className="flex flex-col rounded-[var(--radius)] border border-dashed border-border p-4 opacity-70">
+    <div className="flex min-h-48 flex-col rounded-[var(--radius)] border border-dashed border-border p-5 opacity-70">
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-3 text-muted-2">
-          <Icon name={product.icon} className="h-5 w-5" />
-        </div>
+        <AgentIdentity identity={`${product.name} ${product.tagline}`} icon={product.icon} color={product.color} />
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium text-muted">{product.name}</p>
           <p className="mt-0.5 line-clamp-2 text-xs text-muted-2">{product.tagline}</p>

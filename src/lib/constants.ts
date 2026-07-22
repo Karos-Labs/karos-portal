@@ -63,6 +63,23 @@ export const MAX_ACTIVE_TASKS = 15;
 export const AI_PROCESSING_LOCK_STALE_MS = 20 * 60 * 1000;
 
 /**
+ * Single source of truth for "is the workspace lock actually still in effect" —
+ * used both by the server-side acquire check (data.ts) and every UI spot that
+ * greys out Regenerate/Refresh Task Map. Pure and import-safe from client
+ * components: reading `client.isAiProcessing` directly in the UI would keep
+ * showing a locked state forever once a run dies without releasing it, with no
+ * way for the user to even click Regenerate to clear it.
+ */
+export function isAiProcessingLockActive(client: {
+  isAiProcessing?: boolean;
+  aiProcessingStartedAt?: number;
+}): boolean {
+  if (!client.isAiProcessing) return false;
+  const age = Date.now() - (client.aiProcessingStartedAt ?? 0);
+  return age < AI_PROCESSING_LOCK_STALE_MS;
+}
+
+/**
  * Display labels for managed action-item statuses, in lifecycle order.
  * Shared by the dashboard UI and the audit-history writers.
  */

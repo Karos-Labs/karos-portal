@@ -172,6 +172,7 @@ export async function generateIntelReportAction(
   if (!(await tryAcquireAiProcessingLock(clientId))) {
     throw new Error("AI generation is already running for this client. Please wait for it to finish.");
   }
+  let failure: string | undefined;
   try {
     const { runIntelReportPipeline } = await import("@/lib/intel");
     await runIntelReportPipeline(clientId, runSpecificContext);
@@ -187,8 +188,13 @@ export async function generateIntelReportAction(
       actor: "System AI",
       actorRole: "system",
     });
+  } catch (e) {
+    failure = e instanceof Error ? e.message : String(e);
+    throw e;
   } finally {
-    await releaseAiProcessingLock(clientId);
+    // Persisted even though this action also throws synchronously to the modal —
+    // other tabs/teammates only learn what happened via the client doc.
+    await releaseAiProcessingLock(clientId, failure);
   }
   revalidatePath(`/clients/${clientId}`);
 }

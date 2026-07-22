@@ -24,7 +24,7 @@ export default async function AgentsPage() {
     <>
       <PageHeader
         title="Agents"
-        description="Managed lab agents from the karos-agents repo, run by the agent service for a chosen client."
+        description="Custom agents from your library, run against a chosen client's context."
       />
 
       <Card>

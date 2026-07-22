@@ -99,6 +99,7 @@ export async function completeOnboardingAction(input: {
   const createdBy = user.uid;
   after(async () => {
     if (!(await tryAcquireAiProcessingLock(clientId))) return;
+    let failure: string | undefined;
     try {
       const { runIntelReportPipeline } = await import("@/lib/intel");
       const { buildSwarmContext, runSwarmToCompletion } = await import("@/lib/agent-swarm");
@@ -106,9 +107,14 @@ export async function completeOnboardingAction(input: {
       const context = await buildSwarmContext(clientId);
       await runSwarmToCompletion({ clientId, createdBy, context });
     } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
       console.error("[onboarding] Post-onboarding AI generation failed:", e);
     } finally {
-      await releaseAiProcessingLock(clientId);
+      // Passing `failure` here (undefined on success) both releases the lock and
+      // persists WHY it failed — e.g. an out-of-credits error — so the UI can
+      // show the reason instead of the run just silently vanishing, and so
+      // Regenerate/Refresh Task Map are usable again the moment this exits.
+      await releaseAiProcessingLock(clientId, failure);
     }
   });
 

@@ -5,6 +5,7 @@ import { Card, Button, Input, Label, Textarea, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AvatarUploader } from "@/components/avatar-uploader";
 import { ResumeUploader } from "@/components/resume-uploader";
+import { OnboardingSocialsStep } from "@/components/onboarding-socials-step";
 import { cn } from "@/lib/utils";
 import {
   saveOnboardingProfileAction,
@@ -12,13 +13,15 @@ import {
   completeOnboardingAction,
 } from "@/lib/actions/onboarding-actions";
 import type { AppUser, Client } from "@/lib/types";
+import type { IntegrationView } from "@/lib/integrations/sanitize";
 
 const STEPS = [
   { id: 1, label: "Personal Profile", icon: "User" },
   { id: 2, label: "Company Workspace", icon: "Building2" },
+  { id: 3, label: "Social Channels", icon: "Share2" },
 ] as const;
 
-function StepIndicator({ step }: { step: 1 | 2 }) {
+function StepIndicator({ step }: { step: 1 | 2 | 3 }) {
   return (
     <div className="mb-8 flex items-center justify-center gap-3">
       {STEPS.map((s, i) => (
@@ -53,12 +56,16 @@ export function OnboardingWizard({
   user,
   client,
   notice,
+  integrations,
+  oauthEnabledPlatforms,
 }: {
   user: AppUser;
   client: Client;
   notice?: string | null;
+  integrations: IntegrationView[];
+  oauthEnabledPlatforms: string[];
 }) {
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -109,6 +116,19 @@ export function OnboardingWizard({
         setConnecting(false);
       }
     });
+  }
+
+  function goToSocials() {
+    setError(null);
+    if (!name.trim()) {
+      setError("Please enter your name.");
+      return;
+    }
+    if (!clientName.trim()) {
+      setError("Please enter your company name.");
+      return;
+    }
+    setStep(3);
   }
 
   function finish() {
@@ -203,7 +223,7 @@ export function OnboardingWizard({
               </Button>
             </div>
           </>
-        ) : (
+        ) : step === 2 ? (
           <>
             <div>
               <h2 className="text-base font-semibold">Company workspace</h2>
@@ -233,6 +253,28 @@ export function OnboardingWizard({
 
             <div className="flex items-center justify-between pt-2">
               <Button variant="ghost" onClick={() => setStep(1)} disabled={isPending}>
+                <Icon name="ArrowLeft" className="h-4 w-4" />
+                Back
+              </Button>
+              <Button onClick={goToSocials} disabled={isPending}>
+                Next
+                <Icon name="ArrowRight" className="h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <OnboardingSocialsStep
+              clientId={client.id}
+              integrations={integrations}
+              oauthEnabledPlatforms={oauthEnabledPlatforms}
+              currentUserRole={user.role}
+            />
+
+            {error && <p className="text-xs text-danger">{error}</p>}
+
+            <div className="flex items-center justify-between pt-2">
+              <Button variant="ghost" onClick={() => setStep(2)} disabled={isPending}>
                 <Icon name="ArrowLeft" className="h-4 w-4" />
                 Back
               </Button>
