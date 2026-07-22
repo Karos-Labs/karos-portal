@@ -1345,13 +1345,14 @@ export interface XTake {
 export interface XDraftFeedback {
   id: string;
   clientId: string;
-  /** "company" or a ClientSeat id. */
+  /** "company", "program" (applies to every account), or a ClientSeat id. */
   account: string;
   jobId?: string;
   assetId?: string;
   /** Which draft in the batch, e.g. "Avenue 3 · News-reaction". */
   draftRef?: string;
-  action: "posted" | "posted_with_edits" | "not_posted";
+  /** "note" = free-form client feedback, not tied to one draft. */
+  action: "posted" | "posted_with_edits" | "not_posted" | "note";
   /** posted_with_edits: the final text the client actually used. */
   finalText?: string;
   /** not_posted: why it was killed. */

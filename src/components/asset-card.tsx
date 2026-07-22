@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import type { KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Textarea } from "@/components/ui";
@@ -18,6 +18,8 @@ import {
 } from "@/lib/actions";
 import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS, PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { templateForAsset } from "@/lib/post-chain";
+import { parseXDrafts } from "@/lib/x-drafts";
+import { XDraftsBatch } from "@/components/x-drafts-review";
 import { relativeTime, cn } from "@/lib/utils";
 import type { Asset, PublishMode } from "@/lib/types";
 
@@ -424,6 +426,14 @@ export function AssetCard({
   const [content, setContent] = useState(asset.content);
   const [busy, setBusy] = useState(false);
 
+  // X agent draft batches carry a pinned markdown structure — render them as
+  // the drafts reader (pick / edit / skip per draft) instead of raw text.
+  const xBatch = useMemo(
+    () => (asset.content?.includes("# Account ") ? parseXDrafts(asset.content) : null),
+    [asset.content],
+  );
+  const xDraftCount = xBatch ? xBatch.accounts.reduce((n, a) => n + a.drafts.length, 0) : 0;
+
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
   const [publishError, setPublishError] = useState<string | null>(asset.publishError ?? null);
@@ -637,18 +647,36 @@ export function AssetCard({
               {asset.status}
             </Badge>
           </div>
-          <div className="group/caption relative">
-            <p
-              className={cn(
-                "mt-1 whitespace-pre-wrap text-sm text-muted",
-                asset.content && "pr-12",
-                !open && "line-clamp-2",
-              )}
-            >
-              {asset.content}
-            </p>
-            <CopyCaptionButton asset={asset} className="absolute right-0 top-0" />
-          </div>
+          {xBatch ? (
+            open ? (
+              <div className="mt-3">
+                <XDraftsBatch
+                  clientId={asset.clientId}
+                  {...(asset.jobId ? { jobId: asset.jobId } : {})}
+                  assetId={asset.id}
+                  accounts={xBatch.accounts}
+                />
+              </div>
+            ) : (
+              <p className="mt-1 text-sm text-muted">
+                {xDraftCount} drafts across {xBatch.accounts.length} accounts — about a week of posting.
+                Expand to read and pick favourites.
+              </p>
+            )
+          ) : (
+            <div className="group/caption relative">
+              <p
+                className={cn(
+                  "mt-1 whitespace-pre-wrap text-sm text-muted",
+                  asset.content && "pr-12",
+                  !open && "line-clamp-2",
+                )}
+              >
+                {asset.content}
+              </p>
+              <CopyCaptionButton asset={asset} className="absolute right-0 top-0" />
+            </div>
+          )}
 
           {isCarousel ? (
             <div className="mt-2">

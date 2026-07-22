@@ -2,7 +2,6 @@ import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import {
   getAgentIntake,
-  getAsset,
   getClient,
   getCustomAgentByKey,
   listAgentIntake,
@@ -19,8 +18,6 @@ import {
   type XRunRowView,
   type XSeatView,
 } from "@/components/x-agent-intake";
-import { XDraftsReview } from "@/components/x-drafts-review";
-import { parseXDrafts } from "@/lib/x-drafts";
 import type { AgentIntake, Job } from "@/lib/types";
 
 /** Strip an intake doc to the client-safe view. */
@@ -90,13 +87,6 @@ export default async function XAgentPage({ params }: { params: Promise<{ id: str
     ...(isStaff ? { href: `/jobs/${j.id}` } : {}),
   }));
 
-  // The latest completed batch, parsed into the reader. Falls through silently
-  // when there is no batch yet or the deliverable is not in the pinned shape.
-  const latestBatchJob = xJobs.find(
-    (j) => ["review", "approved", "delivered"].includes(j.status) && j.assetIds.length > 0,
-  );
-  const latestAsset = latestBatchJob ? await getAsset(latestBatchJob.assetIds[0]) : null;
-  const parsedBatch = latestAsset?.content ? parseXDrafts(latestAsset.content) : null;
 
   return (
     <>
@@ -112,18 +102,6 @@ export default async function XAgentPage({ params }: { params: Promise<{ id: str
           </a>
         }
       />
-      {parsedBatch && latestBatchJob && latestAsset ? (
-        <div className="mb-6">
-          <XDraftsReview
-            clientId={id}
-            jobId={latestBatchJob.id}
-            assetId={latestAsset.id}
-            ranAt={latestBatchJob.createdAt}
-            accounts={parsedBatch.accounts}
-            seats={seats.map((s) => ({ id: s.id, name: s.name }))}
-          />
-        </div>
-      ) : null}
       <XAgentIntake
         clientId={id}
         company={toIntakeView(companyIntake)}

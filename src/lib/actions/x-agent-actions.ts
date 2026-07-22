@@ -305,18 +305,30 @@ export async function addXTakeAction(input: {
 
 export async function addXDraftFeedbackAction(input: {
   clientId: string;
-  /** "company" or a seat id. */
-  account: string;
+  /** "company", "program" (applies to every account), or a seat id. */
+  account?: string;
+  /** Alternative to `account`: the batch section title ("Company page @…" / a seat's name) — resolved server-side. */
+  accountTitle?: string;
   jobId?: string;
   assetId?: string;
   draftRef?: string;
-  action: "posted" | "posted_with_edits" | "not_posted";
+  action: "posted" | "posted_with_edits" | "not_posted" | "note";
   finalText?: string;
   reason?: string;
 }): Promise<{ error?: string }> {
   const user = await requireClientAccess(input.clientId);
-  if (input.account !== "company") {
-    const seat = await getClientSeat(input.account);
+  let account = input.account;
+  if (!account && input.accountTitle) {
+    const title = input.accountTitle.toLowerCase();
+    if (title.includes("company page")) account = "company";
+    else {
+      const seats = await listClientSeats(input.clientId);
+      account = seats.find((s) => title.includes(s.name.toLowerCase()))?.id ?? "company";
+    }
+  }
+  if (!account) return { error: "Account is required." };
+  if (account !== "company" && account !== "program") {
+    const seat = await getClientSeat(account);
     if (!seat || seat.clientId !== input.clientId) return { error: "Account not found." };
   }
   if (input.action === "posted_with_edits" && !input.finalText?.trim()) {
@@ -325,12 +337,15 @@ export async function addXDraftFeedbackAction(input: {
   if (input.action === "not_posted" && !input.reason?.trim()) {
     return { error: "Tell us why this one did not run — that is what teaches the agent." };
   }
+  if (input.action === "note" && !input.reason?.trim()) {
+    return { error: "Write the feedback — as much detail as you like." };
+  }
   if ((input.finalText?.length ?? 0) > MAX_TEXT || (input.reason?.length ?? 0) > MAX_TEXT) {
     return { error: "Please keep each answer under 2,000 characters." };
   }
   await addXDraftFeedback({
     clientId: input.clientId,
-    account: input.account,
+    account,
     ...(input.jobId ? { jobId: input.jobId } : {}),
     ...(input.assetId ? { assetId: input.assetId } : {}),
     ...(input.draftRef?.trim() ? { draftRef: input.draftRef.trim() } : {}),

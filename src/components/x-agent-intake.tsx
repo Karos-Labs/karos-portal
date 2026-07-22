@@ -580,7 +580,7 @@ function NewsBox({ clientId, rows }: { clientId: string; rows: XNewsRowView[] })
   );
 }
 
-/* ───────────────────── per-draft feedback box ──────────────────── */
+/* ──────────────── feedback box (free-form, per account) ─────────────── */
 
 function FeedbackBox({
   clientId,
@@ -596,43 +596,35 @@ function FeedbackBox({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [account, setAccount] = useState("company");
-  const [action, setAction] = useState<"posted" | "posted_with_edits" | "not_posted">("posted");
-  const [draftRef, setDraftRef] = useState("");
-  const [finalText, setFinalText] = useState("");
-  const [reason, setReason] = useState("");
+  const [sent, setSent] = useState(false);
+  const [account, setAccount] = useState("program");
+  const [note, setNote] = useState("");
 
   const accountName = (id: string) =>
-    id === "company" ? "Company page" : (seats.find((s) => s.id === id)?.name ?? "Seat");
+    id === "company" ? "Company page" : id === "program" ? "Everything" : (seats.find((s) => s.id === id)?.name ?? "Seat");
 
   function submit() {
     setError(null);
+    setSent(false);
     start(async () => {
-      const result = await addXDraftFeedbackAction({
-        clientId,
-        account,
-        action,
-        draftRef,
-        finalText,
-        reason,
-      });
+      const result = await addXDraftFeedbackAction({ clientId, account, action: "note", reason: note });
       if (result.error) {
         setError(result.error);
         return;
       }
-      setDraftRef("");
-      setFinalText("");
-      setReason("");
+      setNote("");
+      setSent(true);
       router.refresh();
     });
   }
 
   return (
     <Card className="p-5">
-      <CardTitle>Draft feedback</CardTitle>
+      <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
-        Tell us what happened to each draft. Every answer trains that account&apos;s own voice; one
-        account&apos;s corrections never affect another&apos;s.
+        Tell us what is working and what is not — in your own words, as much detail as you like.
+        It goes straight into the agent&apos;s next run. Picking, editing, or skipping individual
+        drafts happens on the drafts themselves, in your Library.
       </p>
       {runs.length > 0 ? (
         <ul className="mt-3 space-y-1">
@@ -651,11 +643,10 @@ function FeedbackBox({
         </ul>
       ) : null}
       <div className="mt-4 space-y-3">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Select
-            value={account}
-            onChange={(e) => setAccount(e.target.value)}
-            >
+        <div className="max-w-xs">
+          <Label htmlFor="xf-account">This is about</Label>
+          <Select id="xf-account" value={account} onChange={(e) => setAccount(e.target.value)}>
+            <option value="program">Everything</option>
             <option value="company">Company page</option>
             {seats.map((s) => (
               <option key={s.id} value={s.id}>
@@ -663,47 +654,27 @@ function FeedbackBox({
               </option>
             ))}
           </Select>
-          <Select
-            value={action}
-            onChange={(e) => setAction(e.target.value as typeof action)}
-            >
-            <option value="posted">Posted as drafted</option>
-            <option value="posted_with_edits">Posted with edits</option>
-            <option value="not_posted">Did not post it</option>
-          </Select>
-          <Input
-            value={draftRef}
-            onChange={(e) => setDraftRef(e.target.value)}
-            placeholder="Which draft? (optional)"
-          />
         </div>
-        {action === "posted_with_edits" ? (
-          <Textarea
-            rows={2}
-            value={finalText}
-            onChange={(e) => setFinalText(e.target.value)}
-            placeholder="Paste the final text you actually posted."
-          />
-        ) : null}
-        {action === "not_posted" ? (
-          <Textarea
-            rows={2}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Why not? That is what teaches the agent."
-          />
-        ) : null}
+        <Textarea
+          rows={5}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Explain the problem or the win. Too salesy? Wrong topics? A draft style you want more of? Write it like you would to a teammate."
+        />
         {fieldError(error)}
-        <Button onClick={submit} disabled={pending} variant="subtle">
-          {pending ? "Sending…" : "Send feedback"}
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button onClick={submit} disabled={pending || !note.trim()}>
+            {pending ? "Sending…" : "Send feedback"}
+          </Button>
+          {sent ? <span className="text-xs text-muted">Sent — it feeds the next run.</span> : null}
+        </div>
       </div>
       {recent.length > 0 ? (
         <ul className="mt-4 space-y-2 border-t border-border pt-4">
           {recent.slice(0, 6).map((f) => (
             <li key={f.id} className="text-xs text-muted">
               <span className="text-foreground">{accountName(f.account)}</span> ·{" "}
-              {f.action.replace(/_/g, " ")}
+              {f.action === "note" ? "feedback" : f.action.replace(/_/g, " ")}
               {f.draftRef ? ` · ${f.draftRef}` : ""} ·{" "}
               {new Date(f.createdAt).toISOString().slice(0, 10)}
             </li>

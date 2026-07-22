@@ -559,7 +559,7 @@ export function ClientDocuments({
       {clientId && (
         <>
           <p className="mb-1.5 mt-4 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-            Agent data
+            Agent-specific documents
           </p>
           <ul>
             <li>
