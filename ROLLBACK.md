@@ -38,6 +38,7 @@ whole seed = delete the listed docs; nothing else references them.
 | D5 | Albert's 4 takes (verbatim lab takes.json) | `xTakes/GnRvPzKBzvzvJfPa5iHg`, `LJhwlUcYQQxYmPcQ7Ufw`, `oGfAkLFU7QZIcoa87saW`, `9B91v5GqzsDnkMS7q31H` | delete docs |
 | D6 | karos-x-agent instructions replaced with the production text (docs/x-agent-portal.md block) | `customAgents/Qv6qtlZOObDVlSUXDzbb` | restore the `instructions` field from `_backup/2026-07-22/customAgents-Qv6qtlZOObDVlSUXDzbb.json` (full pre-change doc) |
 | D7 | karos-x-agent instructions v2 (weekly menu + audit-driven craft gates) | `customAgents/Qv6qtlZOObDVlSUXDzbb` | restore `instructions` from `_backup/2026-07-22/customAgents-Qv6qtlZOObDVlSUXDzbb-v2-pre.json` |
+| D8 | Albert's seat handle set to @alberree (was null/pending) | `agentIntake/IPhXqmH8uGyuufsBZr5P` | restore from `_backup/2026-07-22/agentIntake-IPhXqmH8uGyuufsBZr5P-pre-handle.json` |
 
 ## Deploy/config changes (applied 2026-07-22)
 
