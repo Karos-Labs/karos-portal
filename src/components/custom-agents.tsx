@@ -95,12 +95,12 @@ function launchConfigFor(agent: Pick<RunnableAgentSummary, "key" | "name">): Age
     return {
       label: "What should the X agent draft?",
       helper:
-        "Fill in the X agent data first (Agent-specific documents → X agent data): the company page and any seats. The agent drafts from that and won't run without it. Draft-only — everything lands in review, nothing posts. The default run makes the week's menu, about a post per day to pick from.",
-      placeholder: "Draft this week's menu for the company page and every seat.",
+        "Fill in the X agent data first (Agent-specific documents → X agent data): the company page and any seats. The agent drafts from that and won't run without it. Draft-only — everything lands in review, nothing posts. The default run drafts about a week of posts, a post a day to pick from.",
+      placeholder: "Draft a week of posts for the company page and every seat.",
       quickStarts: [
-        "Draft this week's menu for the company page and every seat.",
-        "Draft this week's menu for the company page.",
-        "Draft this week's menu for [person]'s seat.",
+        "Draft a week of posts for the company page and every seat.",
+        "Draft a week of posts for the company page.",
+        "Draft a week of posts for [person]'s seat.",
       ],
     };
   }

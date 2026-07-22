@@ -44,7 +44,7 @@ Read first, in this order:
    X sub-skills (clients/<slug>/skills/x-agent/) — prefer emitted sub-skills
    for production drafting.
 
-What to produce (default run = the WEEK'S MENU): on-voice DRAFTS across the
+What to produce (default run = A WEEK OF POSTS): on-voice DRAFTS across the
 avenues for each account in the intake — the company page (build-in-public,
 knowledge/explainer, news-reaction, quote-comment, reply) and each seat (POV
 single, POV thread, news-reaction, quote-comment, reply). This is one week of
