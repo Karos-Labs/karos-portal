@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { getUser, listDueScheduledRuns, updateScheduledRun } from "@/lib/data";
+import { getUser, listDuePlannedScheduledRuns, updatePlannedScheduledRun } from "@/lib/data";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { computeNextRun } from "@/lib/scheduled-runs";
-import type { AppUser, ScheduledRun } from "@/lib/types";
+import type { AppUser, PlannedScheduledRun } from "@/lib/types";
 
 export const maxDuration = 120;
 
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
   }
 
   const now = Date.now();
-  const due = await listDueScheduledRuns(now, 25);
+  const due = await listDuePlannedScheduledRuns(now, 25);
   if (due.length === 0) {
     return NextResponse.json({ processed: 0, results: [] });
   }
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
   // The run's creator is the acting user (for provenance / activity logs).
   // Fall back to a synthetic system actor if that account is gone.
   const actorCache = new Map<string, AppUser>();
-  async function actorFor(run: ScheduledRun): Promise<AppUser> {
+  async function actorFor(run: PlannedScheduledRun): Promise<AppUser> {
     const cached = actorCache.get(run.createdBy);
     if (cached) return cached;
     const user = (await getUser(run.createdBy)) ?? ({ uid: run.createdBy || "scheduler", name: "Scheduler" } as AppUser);
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
         prompt: run.prompt,
       });
 
-      const advance: Partial<ScheduledRun> = {
+      const advance: Partial<PlannedScheduledRun> = {
         lastRunAt: now,
         ...(jobId ? { lastJobId: jobId } : {}),
         updatedAt: Date.now(),
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
           from: now,
         });
       }
-      await updateScheduledRun(run.id, advance);
+      await updatePlannedScheduledRun(run.id, advance);
 
       results.push(error ? { runId: run.id, status: "failed", error, jobId } : { runId: run.id, status: "submitted", jobId });
     } catch (e) {

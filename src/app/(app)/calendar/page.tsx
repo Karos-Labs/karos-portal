@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { listAssets, listClients, listCustomAgents, listJobs, listScheduledRuns } from "@/lib/data";
+import { listAssets, listClients, listCustomAgents, listJobs, listPlannedScheduledRuns } from "@/lib/data";
 import { assetImages } from "@/lib/asset-images";
 import { describeCadence } from "@/lib/scheduled-runs";
 import { PageHeader, EmptyState } from "@/components/ui";
@@ -86,7 +86,7 @@ export default async function CalendarPage({
   // ── Fetch (single-client scope uses a Firestore filter; broader scopes
   //    fetch-then-filter, matching the assets page) ─────────────────────
   const [runsRaw, jobsRaw, assetsRaw, customAgents] = await Promise.all([
-    listScheduledRuns(singleFilter),
+    listPlannedScheduledRuns(singleFilter),
     listJobs(singleFilter),
     listAssets(singleFilter),
     listCustomAgents(),

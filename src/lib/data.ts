@@ -33,6 +33,7 @@ import type {
   JobStatus,
   LoginLog,
   PerformanceBenchmarks,
+  PlannedScheduledRun,
   Role,
   ScheduledRun,
   TaskComment,
@@ -99,8 +100,9 @@ const col = {
   // by a snapshot of the digest that produced it so the LLM only reruns when
   // there's actually something new to report (see /api/clients/[id]/insights).
   clientInsightsCache: () => adminDb().collection("clientInsightsCache"),
-  // Planned agent runs (calendar): future/recurring managed jobs the cron drains.
-  scheduledRuns: () => adminDb().collection("scheduledRuns"),
+  // Planned agent runs shown on the unified calendar. Kept separate from the
+  // recurring generator scheduler because the two records have different schemas.
+  plannedScheduledRuns: () => adminDb().collection("plannedScheduledRuns"),
 };
 
 /* ------------------------------ users ------------------------------ */
@@ -364,45 +366,45 @@ export async function claimExternalJobCompletion(jobId: string, status: JobStatu
 
 /* -------------------------- scheduled runs ------------------------- */
 
-export async function listScheduledRuns(opts?: { clientId?: string }): Promise<ScheduledRun[]> {
+export async function listPlannedScheduledRuns(opts?: { clientId?: string }): Promise<PlannedScheduledRun[]> {
   let snap;
   if (opts?.clientId) {
-    snap = await col.scheduledRuns().where("clientId", "==", opts.clientId).get();
+    snap = await col.plannedScheduledRuns().where("clientId", "==", opts.clientId).get();
   } else {
-    snap = await col.scheduledRuns().get();
+    snap = await col.plannedScheduledRuns().get();
   }
   return snap.docs
-    .map((d) => withId<ScheduledRun>(d))
+    .map((d) => withId<PlannedScheduledRun>(d))
     .sort((a, b) => a.nextRunAt - b.nextRunAt);
 }
 
-export async function getScheduledRun(id: string): Promise<ScheduledRun | null> {
-  const doc = await col.scheduledRuns().doc(id).get();
-  return doc.exists ? withId<ScheduledRun>(doc) : null;
+export async function getPlannedScheduledRun(id: string): Promise<PlannedScheduledRun | null> {
+  const doc = await col.plannedScheduledRuns().doc(id).get();
+  return doc.exists ? withId<PlannedScheduledRun>(doc) : null;
 }
 
-export async function createScheduledRun(data: Omit<ScheduledRun, "id">): Promise<string> {
-  const ref = await col.scheduledRuns().add(data);
+export async function createPlannedScheduledRun(data: Omit<PlannedScheduledRun, "id">): Promise<string> {
+  const ref = await col.plannedScheduledRuns().add(data);
   return ref.id;
 }
 
-export async function updateScheduledRun(id: string, data: Partial<ScheduledRun>): Promise<void> {
-  await col.scheduledRuns().doc(id).set(data, { merge: true });
+export async function updatePlannedScheduledRun(id: string, data: Partial<PlannedScheduledRun>): Promise<void> {
+  await col.plannedScheduledRuns().doc(id).set(data, { merge: true });
 }
 
-export async function deleteScheduledRun(id: string): Promise<void> {
-  await col.scheduledRuns().doc(id).delete();
+export async function deletePlannedScheduledRun(id: string): Promise<void> {
+  await col.plannedScheduledRuns().doc(id).delete();
 }
 
 /**
  * Active scheduled runs whose nextRunAt is at or before `before` (default: now),
  * oldest-first. The cron drains these each tick; `limit` bounds a tick's work.
  */
-export async function listDueScheduledRuns(before?: number, limit = 25): Promise<ScheduledRun[]> {
+export async function listDuePlannedScheduledRuns(before?: number, limit = 25): Promise<PlannedScheduledRun[]> {
   const cutoff = before ?? Date.now();
-  const snap = await col.scheduledRuns().where("status", "==", "active").get();
+  const snap = await col.plannedScheduledRuns().where("status", "==", "active").get();
   return snap.docs
-    .map((d) => withId<ScheduledRun>(d))
+    .map((d) => withId<PlannedScheduledRun>(d))
     .filter((r) => r.nextRunAt <= cutoff)
     .sort((a, b) => a.nextRunAt - b.nextRunAt)
     .slice(0, limit);

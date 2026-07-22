@@ -7,7 +7,7 @@
  * datetime-local form interprets times for staff (see lib/scheduling.ts).
  */
 
-import type { RunCadence } from "@/lib/types";
+import type { PlannedRunCadence } from "@/lib/types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -19,7 +19,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * weekdays fall out naturally.
  */
 export function computeNextRun(opts: {
-  cadence: Exclude<RunCadence, "once">;
+  cadence: Exclude<PlannedRunCadence, "once">;
   hour: number;
   minute: number;
   weekday?: number;
@@ -46,7 +46,7 @@ export function computeNextRun(opts: {
   return from + DAY_MS;
 }
 
-const CADENCE_LABEL: Record<RunCadence, string> = {
+const CADENCE_LABEL: Record<PlannedRunCadence, string> = {
   once: "One-off",
   daily: "Daily",
   weekly: "Weekly",
@@ -57,7 +57,7 @@ const WEEKDAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** Human summary of a run's cadence, e.g. "Weekly · Mon 09:00" or "One-off". */
 export function describeCadence(run: {
-  cadence: RunCadence;
+  cadence: PlannedRunCadence;
   hour: number;
   minute: number;
   weekday?: number;

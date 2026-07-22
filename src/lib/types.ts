@@ -449,7 +449,7 @@ export interface Asset {
 }
 
 /** How often a scheduled agent run repeats. "once" fires a single future run. */
-export type RunCadence = "once" | "daily" | "weekly" | "monthly";
+export type PlannedRunCadence = "once" | "daily" | "weekly" | "monthly";
 
 /**
  * A planned agent run: a managed (catalog) product queued to fire at a future
@@ -458,7 +458,7 @@ export type RunCadence = "once" | "daily" | "weekly" | "monthly";
  * then advances (recurring) or completes (once) the schedule. Clients only view
  * their own upcoming runs — they never create or edit them.
  */
-export interface ScheduledRun {
+export interface PlannedScheduledRun {
   id: string;
   clientId: string;
   /** The repo-imported custom agent this run fires. */
@@ -469,7 +469,7 @@ export interface ScheduledRun {
   agentColor: string;
   /** Free-text request handed to the agent on every fire. */
   prompt: string;
-  cadence: RunCadence;
+  cadence: PlannedRunCadence;
   /** Local hour (0–23) the run fires. */
   hour: number;
   /** Local minute (0–59) the run fires. */

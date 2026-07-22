@@ -6,10 +6,10 @@ import { Icon } from "@/components/icon";
 import { Badge, Button } from "@/components/ui";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
-import { setScheduledRunStatusAction, deleteScheduledRunAction } from "@/lib/actions/scheduled-run-actions";
+import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
 import { cn } from "@/lib/utils";
 import type { AssetImage } from "@/lib/asset-images";
-import type { AssetType, JobStatus, RunCadence } from "@/lib/types";
+import type { AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
 
 /* ── Serializable shapes built by the calendar page ──────────────────── */
 
@@ -40,7 +40,7 @@ export interface CalendarRun {
   /** Every image across the run's assets, in order — feeds the run lightbox. */
   images?: AssetImage[];
   // scheduled
-  cadence?: RunCadence;
+  cadence?: PlannedRunCadence;
   cadenceLabel?: string;
   /** The free-text request this run fires each time. */
   prompt?: string;
@@ -155,13 +155,13 @@ function ScheduledRunCard({
   async function cancel() {
     if (busy) return;
     setBusy(true);
-    await deleteScheduledRunAction(run.id);
+    await deletePlannedRunAction(run.id);
     router.refresh();
   }
   async function pause() {
     if (busy) return;
     setBusy(true);
-    await setScheduledRunStatusAction(run.id, "paused");
+    await setPlannedRunStatusAction(run.id, "paused");
     router.refresh();
   }
 

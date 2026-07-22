@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
 import { Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { createScheduledRunAction } from "@/lib/actions/scheduled-run-actions";
+import { createPlannedRunAction } from "@/lib/actions/planned-run-actions";
 import { computeNextRun, describeCadence } from "@/lib/scheduled-runs";
 import type { CalendarClientOption, ScheduleAgentOption } from "@/components/run-calendar";
-import type { RunCadence } from "@/lib/types";
+import type { PlannedRunCadence } from "@/lib/types";
 
 const WEEKDAYS = [
   { value: 0, label: "Sunday" }, { value: 1, label: "Monday" }, { value: 2, label: "Tuesday" },
@@ -31,7 +31,7 @@ export function ScheduleRunModal({
   const [clientId, setClientId] = useState(defaultClientId ?? clients[0]?.id ?? "");
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
   const [prompt, setPrompt] = useState("");
-  const [cadence, setCadence] = useState<RunCadence>("weekly");
+  const [cadence, setCadence] = useState<PlannedRunCadence>("weekly");
   const [time, setTime] = useState("09:00");
   const [weekday, setWeekday] = useState(1);
   const [dayOfMonth, setDayOfMonth] = useState(1);
@@ -59,7 +59,7 @@ export function ScheduleRunModal({
     if (!clientId) { setError("Pick a client."); return; }
     if (!agentId) { setError("Pick an agent."); return; }
     setSubmitting(true);
-    const res = await createScheduledRunAction({
+    const res = await createPlannedRunAction({
       clientId,
       customAgentId: agentId,
       prompt,
@@ -140,7 +140,7 @@ export function ScheduleRunModal({
         {/* Cadence */}
         <div>
           <Label htmlFor="sr-cadence">Cadence</Label>
-          <Select id="sr-cadence" value={cadence} onChange={(e) => setCadence(e.target.value as RunCadence)}>
+          <Select id="sr-cadence" value={cadence} onChange={(e) => setCadence(e.target.value as PlannedRunCadence)}>
             <option value="once">One-off</option>
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>

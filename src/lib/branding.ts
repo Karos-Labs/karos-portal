@@ -72,26 +72,6 @@ export function effectiveNeutralLight(g: BrandingGuidelines): string | undefined
    Context-doc builders
    ──────────────────────────────────────────────────────────────────────── */
 
-/** Returns the effective primary accent — new field first, legacy fallback. */
-export function effectivePrimaryAccent(g: BrandingGuidelines): string | undefined {
-  return g.primaryAccent ?? g.primaryColor;
-}
-
-/** Returns the effective secondary accent — new field first, legacy fallback. */
-export function effectiveSecondaryAccent(g: BrandingGuidelines): string | undefined {
-  return g.secondaryAccent ?? g.secondaryColor;
-}
-
-/** Returns the effective neutral dark — new field first, legacy fallbacks. */
-export function effectiveNeutralDark(g: BrandingGuidelines): string | undefined {
-  return g.brandNeutralDark ?? g.uiBackground ?? g.uiText;
-}
-
-/** Returns the effective neutral light — new field first, legacy fallback. */
-export function effectiveNeutralLight(g: BrandingGuidelines): string | undefined {
-  return g.brandNeutralLight ?? g.uiText ?? g.uiBackground;
-}
-
 export function brandingToContextDocContent(g: BrandingGuidelines, clientName: string): string {
   const today = new Date().toISOString().slice(0, 10);
   const lines = [`# Branding Guidelines — ${clientName}`, `_Last updated: ${today}_`, ""];
