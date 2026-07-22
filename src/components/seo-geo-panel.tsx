@@ -1,18 +1,22 @@
-import Link from "next/link";
-import { Card, CardTitle, StatCard, Badge, EmptyState } from "@/components/ui";
+import { Badge, Card, CardTitle, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 import {
-  ENGINE_LABELS,
-  INTENT_LABELS,
-  type ActionKind,
-  type CellState,
-  type PerEngineVisibility,
-  type ProviderSource,
-  type QuestionRow,
-  type RecImpact,
-  type SeoGeoInsights,
-} from "@/lib/seo-geo";
+  buildContextLine,
+  buildEngineViews,
+  buildGapViews,
+  buildPresence,
+  buildPromptViews,
+  buildScoreViews,
+  genericFlagPrefill,
+  unwiredRequestPrefill,
+  type EngineView,
+  type ScoreView,
+} from "@/components/seo-geo/presenter";
+import { TONE_COLORS } from "@/components/seo-geo/tones";
+import { Disclosure } from "@/components/seo-geo/disclosure";
+import { FlagButton } from "@/components/seo-geo/flag-button";
+import { GapList } from "@/components/seo-geo/gap-list";
 
 /**
  * SEO & GEO insights panel (SCRUM-52 redesign). Server component: all domain
@@ -22,8 +26,8 @@ import {
  * mapped (never echoed) in seo-geo/presenter.ts, which is unit-tested for leaks.
  */
 
-function ProviderBadge({ source }: { source: ProviderSource | null }) {
-  if (!source) return <Badge tone="neutral">no connector</Badge>;
+/** CSS-only hover/focus explainer. Supplementary by design: everything vital is also visible text. */
+function InfoTip({ text }: { text: string }) {
   return (
     <span className="group relative inline-flex">
       <button
@@ -54,80 +58,9 @@ function Meter({ pct, color, className }: { pct: number; color: string; classNam
   );
 }
 
-/* ── Action-plan controls (dev-handoff §3b) ── */
+/* ── 1 · Headline scores ─────────────────────────────────────────── */
 
-const IMPACT_TONES: Record<RecImpact, "danger" | "warning" | "neutral"> = {
-  high: "danger",
-  medium: "warning",
-  low: "neutral",
-};
-
-const ACTION_KIND_META: Record<ActionKind, { label: string; icon: string }> = {
-  one_click: { label: "Apply via agent", icon: "Zap" },
-  review_approve: { label: "Review & approve", icon: "PenLine" },
-  connect: { label: "Connect", icon: "Plug" },
-  guided_manual: { label: "Guided steps", icon: "ListChecks" },
-};
-
-/** Every plan item has a control (dev-handoff §3b). guided_manual is advisory (no link). */
-function controlHref(clientId: string, actionKind: ActionKind): string | null {
-  if (actionKind === "guided_manual") return null;
-  return actionKind === "connect" ? `/clients/${clientId}/settings` : `/clients/${clientId}/agents`;
-}
-
-/* ── Answer grid (per-question × per-engine, matching the report's matrix) ── */
-
-const CELL_META: Record<CellState, { glyph: string; color: string; title: string }> = {
-  named_first: { glyph: "●", color: "var(--neon)", title: "named first among competitors" },
-  named: { glyph: "●", color: "var(--foreground)", title: "named in the answer" },
-  cited_not_named: { glyph: "◍", color: "var(--warning)", title: "cited as a source but not named (ghost citation)" },
-  absent: { glyph: "○", color: "var(--muted-2)", title: "absent from the answer" },
-  unavailable: { glyph: "·", color: "var(--muted-2)", title: "engine not measured this run" },
-};
-
-function AnswerGrid({ grid, engines }: { grid: QuestionRow[]; engines: string[] }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-xs">
-        <thead>
-          <tr className="text-muted-2">
-            <th className="py-1 pr-2 text-left font-medium">Intent</th>
-            <th className="py-1 pr-3 text-left font-medium">Question</th>
-            {engines.map((e) => (
-              <th key={e} className="px-1 py-1 text-center font-medium">
-                {ENGINE_LABELS[e as keyof typeof ENGINE_LABELS] ?? e}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {grid.map((row, i) => (
-            <tr key={i} className="border-t border-border">
-              <td className="py-1 pr-2">
-                <span className="font-mono text-[10px] text-muted-2">{INTENT_LABELS[row.intent]}</span>
-              </td>
-              <td className="max-w-[22ch] truncate py-1 pr-3 text-muted" title={row.prompt}>
-                {row.prompt}
-              </td>
-              {row.cells.map((cell) => {
-                const meta = CELL_META[cell.state];
-                return (
-                  <td key={cell.engine} className="px-1 py-1 text-center" title={`${cell.engine}: ${meta.title}`}>
-                    <span style={{ color: meta.color }}>{meta.glyph}</span>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-/** Horizontal comparative bars: client vs competitors mentions on one engine. */
-function EngineShareChart({ engine }: { engine: PerEngineVisibility }) {
-  const max = Math.max(1, ...engine.brandMentions.map((b) => b.mentions));
+function ScoreTile({ view }: { view: ScoreView }) {
   return (
     <Card className="min-w-0">
       <div className="flex items-center gap-1.5">
@@ -284,56 +217,26 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
     );
   }
 
-  const capturedDate = new Date(insights.capturedAt).toISOString().slice(0, 10);
-  const engines = insights.perEngine.filter((e) => e.source !== null || e.promptsTotal > 0);
-  // Client-facing action plan (dev-handoff §3b). Old docs pre-dating recommendations[] fall back to [].
-  const recommendations = insights.recommendations ?? [];
-  // Defensive defaults: insight docs captured before the PDF-contract fields existed
-  // won't carry these keys, so fall back rather than crash.
-  const answerGrid = insights.answerGrid ?? [];
-  const gridEngines = answerGrid[0]?.cells.map((c) => c.engine) ?? [];
-  const citationLeaderboard = insights.citationLeaderboard ?? [];
-  const cs = insights.citationSummary ?? {
-    totalMeasuredAnswers: 0,
-    answersCited: 0,
-    answersNamed: 0,
-    ghostCitations: 0,
-  };
-  // Trend: previous visibility index + delta (dev-handoff §3a).
-  const vh = insights.visibilityHistory ?? [];
-  const visPrev = vh.length >= 2 ? vh[vh.length - 2] : null;
-  const visDelta = visPrev !== null ? insights.geoVisibilityIndex - visPrev : null;
+  const scores = buildScoreViews(insights);
+  const engines = buildEngineViews(insights);
+  const presence = buildPresence(insights);
+  const gaps = buildGapViews(insights.gaps, insights.clientId);
+  const prompts = buildPromptViews(insights);
+  const generic = genericFlagPrefill(insights);
+
+  const measuredEngines = engines.filter((e) => e.status === "measured");
+  const unmeasuredEngines = engines.filter((e) => e.status !== "measured");
+  const unwiredNames = engines.filter((e) => e.status === "not-wired").map((e) => e.name);
+  const competitorCount = Math.max(0, insights.roster.length - 1);
+  const noEnginesMeasured = measuredEngines.length === 0;
 
   return (
     <div className="space-y-6">
-      {/* Headline scores (measured-only per the grade rule) */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard
-          label="SEO score"
-          value={<span style={{ color: scoreColor(insights.seoScore) }}>{insights.seoScore}</span>}
-          hint={`of 100 · coverage ${insights.seoDataCoveragePct}%`}
-        />
-        <StatCard
-          label="GEO readiness"
-          value={<span style={{ color: scoreColor(insights.geoReadiness) }}>{insights.geoReadiness}</span>}
-          hint={`of 100 · coverage ${insights.geoReadinessCoveragePct}%`}
-        />
-        <StatCard
-          label="GEO visibility"
-          value={
-            <span style={{ color: scoreColor(insights.geoVisibilityIndex) }}>
-              {insights.geoVisibilityIndex}
-              {visDelta !== null && (
-                <span className="ml-1.5 align-middle text-xs font-medium" style={{ color: visDelta >= 0 ? "var(--success)" : "var(--danger)" }}>
-                  {visDelta >= 0 ? "+" : ""}
-                  {visDelta}
-                </span>
-              )}
-            </span>
-          }
-          hint={visPrev !== null ? `was ${visPrev} · coverage ${insights.geoVisibilityCoveragePct}%` : `of 100 · coverage ${insights.geoVisibilityCoveragePct}%`}
-        />
-        <StatCard label="Captured" value={capturedDate} hint={`${insights.promptSet.length} buyer-intent prompts`} />
+      {/* 1 · Headline scores, coverage shown separately from the grade */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {scores.map((view) => (
+          <ScoreTile key={view.key} view={view} />
+        ))}
       </div>
 
       {/* 2 · Where we looked: the "N of 5 engines" disclosure, all engines visible */}
@@ -360,104 +263,107 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
         )}
       </Card>
 
-      {/* Answer grid — per-question × per-engine (the report's central matrix) */}
-      {answerGrid.length > 0 && (
-        <Card>
-          <CardTitle className="mb-1">Where you rank in AI answers</CardTitle>
-          <p className="mb-3 text-xs text-muted-2">
-            Each cell is one answer.{" "}
-            <span style={{ color: "var(--neon)" }}>●</span> named first ·{" "}
-            <span style={{ color: "var(--foreground)" }}>●</span> named ·{" "}
-            <span style={{ color: "var(--warning)" }}>◍</span> cited, not named ·{" "}
-            <span style={{ color: "var(--muted-2)" }}>○</span> absent ·{" "}
-            <span style={{ color: "var(--muted-2)" }}>·</span> not measured
-          </p>
-          <AnswerGrid grid={answerGrid} engines={gridEngines} />
-        </Card>
-      )}
-
-      {/* Citation leaderboard + ghost summary */}
-      {citationLeaderboard.length > 0 && (
-        <Card>
-          <CardTitle className="mb-1">Who the engines quote</CardTitle>
-          <p className="mb-3 text-xs text-muted-2">
-            Cited domains across all measured answers. You were cited in {cs.answersCited}/{cs.totalMeasuredAnswers}{" "}
-            answers, named in {cs.answersNamed} — {cs.ghostCitations} ghost citation
-            {cs.ghostCitations === 1 ? "" : "s"} to convert.
-          </p>
-          <ul className="space-y-1.5">
-            {citationLeaderboard.map((r) => {
-              const max = Math.max(1, ...citationLeaderboard.map((x) => x.citations));
-              return (
-                <li key={r.domain}>
-                  <div className="mb-0.5 flex items-center justify-between text-xs">
-                    <span className={r.isClient ? "font-semibold text-foreground" : "text-muted"}>
-                      {r.domain}
-                      {r.isClient && <span className="ml-1 text-[10px] text-muted-2">(you)</span>}
-                    </span>
-                    <span className="font-mono text-muted-2">{r.citations}</span>
-                  </div>
-                  <div className="h-1.5 overflow-hidden rounded-sm bg-surface-3">
-                    <div
-                      className="h-full rounded-sm"
-                      style={{ width: `${(r.citations / max) * 100}%`, background: r.isClient ? "var(--neon)" : "var(--info)" }}
-                    />
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </Card>
-      )}
-
-      {/* Action plan — client-facing recommendations[] (dev-handoff §3b). Renders ONLY
-          impact + vertical + title + a control per action_kind; every internal producer
-          field (fix_action, delivery, confidence, evidence, target, id) is excluded by
-          construction (§4). Each item's control links to the agent/credential that executes it. */}
+      {/* 3 · Presence split: the branded-vs-category story + roster share */}
       <Card>
-        <CardTitle className="mb-1">Action plan</CardTitle>
+        <CardTitle className="mb-1">Do buyers find you?</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
-          What to improve, ordered by impact. Each item is executed by the Karos agent that owns it.
+          Whether AI engines name you when buyers ask by name versus when they ask open category
+          questions.
         </p>
-        {recommendations.length === 0 ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {[presence.brand, presence.category].map((tile) => (
+            <div key={tile.heading} className="rounded-md border border-border bg-surface-2 p-3">
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-medium text-foreground">{tile.heading}</p>
+                <InfoTip text={tile.explainer} />
+              </div>
+              <p className="text-[11px] text-muted-2">{tile.caption}</p>
+              {tile.fractionLine ? (
+                <>
+                  <p className="mt-2 font-mono text-lg font-medium text-foreground">
+                    {tile.fractionLine}
+                  </p>
+                  <Meter pct={tile.pct ?? 0} color="var(--neon)" className="mt-1.5" />
+                </>
+              ) : (
+                <p className="mt-2 text-xs text-muted-2">{tile.emptyLine}</p>
+              )}
+            </div>
+          ))}
+        </div>
+        {presence.takeaway && <p className="mt-3 text-sm text-muted">{presence.takeaway}</p>}
+        {presence.rosterShare && (
+          <div className="mt-4 border-t border-border pt-3">
+            <div className="flex items-center gap-1.5">
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Your share of the conversation
+              </p>
+              <InfoTip text={presence.rosterShare.explainer} />
+            </div>
+            <div className="mt-1.5 flex items-center gap-3">
+              <span className="font-mono text-lg font-medium text-foreground">
+                {presence.rosterShare.value}
+              </span>
+              <Meter pct={presence.rosterShare.pct} color="var(--neon)" className="flex-1" />
+            </div>
+            <p className="mt-1 text-[11px] text-muted-2">{presence.rosterShare.caption}</p>
+          </div>
+        )}
+      </Card>
+
+      {/* 4 · Engine-by-engine proof: you vs competitors, nothing hidden */}
+      <Card>
+        <CardTitle className="mb-1">You vs competitors on each AI engine</CardTitle>
+        <p className="mb-4 text-xs text-muted-2">
+          How often each brand gets named when we ask the engines {insights.promptSet.length} real
+          buyer questions.
+          {competitorCount === 0 && " No competitors tracked yet · ask us to add some."}
+        </p>
+        {measuredEngines.length > 0 && (
+          <div className="grid gap-4 lg:grid-cols-3">
+            {measuredEngines.map((view) => (
+              <EngineCard key={view.engine} view={view} />
+            ))}
+          </div>
+        )}
+        {unmeasuredEngines.length > 0 && (
+          <div className={`grid gap-4 sm:grid-cols-2 ${measuredEngines.length > 0 ? "mt-4" : ""}`}>
+            {unmeasuredEngines.map((view) => (
+              <UnmeasuredEngineCard key={view.engine} view={view} />
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* 5 · The prioritized action plan, in the client's language */}
+      <Card>
+        <CardTitle className="mb-1">What we&apos;re fixing</CardTitle>
+        <p className="mb-4 text-xs text-muted-2">Ordered by expected impact on your scores.</p>
+        {gaps.length === 0 ? (
           <EmptyState
             icon={<Icon name="CheckCircle2" className="h-6 w-6" />}
-            title="No open recommendations"
-            description="Every measured check passed and no competitor out-ranks this brand in the capture."
+            title="Nothing to fix right now"
+            description="Every check we measured passed and no tracked competitor out-ranks you in this snapshot. We keep monitoring every run."
           />
         ) : (
-          <ul className="space-y-2">
-            {recommendations.map((r, i) => {
-              const control = ACTION_KIND_META[r.actionKind];
-              const href = controlHref(insights.clientId, r.actionKind);
-              return (
-                <li
-                  key={`${r.recId}-${i}`}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-surface-2 px-3 py-2"
-                  style={{ borderLeft: `3px solid ${IMPACT_TONES[r.impact] === "danger" ? "var(--danger)" : IMPACT_TONES[r.impact] === "warning" ? "var(--warning)" : "var(--muted-2)"}` }}
-                >
-                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                    <Badge tone={IMPACT_TONES[r.impact]}>{r.impact}</Badge>
-                    <Badge tone="neutral">{r.vertical}</Badge>
-                    <span className="text-sm font-medium text-foreground">{r.title}</span>
-                  </div>
-                  {href ? (
-                    <Link
-                      href={href}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-surface-3"
-                    >
-                      <Icon name={control.icon} className="h-3 w-3" />
-                      {control.label}
-                    </Link>
-                  ) : (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-md px-2.5 py-1 text-xs text-muted-2">
-                      <Icon name={control.icon} className="h-3 w-3" />
-                      {control.label}
-                    </span>
-                  )}
-                </li>
-              );
-            })}
+          <GapList gaps={gaps} />
+        )}
+      </Card>
+
+      {/* 6 · Methodology: the exact questions and roster, no black box */}
+      <Card>
+        <Disclosure summary={`The ${prompts.length} buyer questions we asked`}>
+          <ul className="space-y-1.5">
+            {prompts.map((p, i) => (
+              <li key={`q-${i}`} className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-muted">{p.text}</span>
+                {p.tagLabel && (
+                  <span className="shrink-0 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                    {p.tagLabel}
+                  </span>
+                )}
+              </li>
+            ))}
           </ul>
           <div className="mt-3 border-t border-border pt-3">
             <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">

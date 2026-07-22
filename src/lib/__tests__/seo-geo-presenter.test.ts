@@ -80,6 +80,7 @@ const insights = (patch: Partial<SeoGeoInsights> = {}): SeoGeoInsights => ({
   brandPresence: { named: 2, total: 2 },
   perEngine: [engineRow()],
   gaps: [],
+  recommendations: [],
   seoChecks: [],
   geoChecks: [],
   promptSet: ["best fintech tool for startups", "Is Acme legit?"],
