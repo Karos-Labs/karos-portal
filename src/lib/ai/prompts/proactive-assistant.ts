@@ -88,7 +88,7 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
     ? ctx.agents
         .map((a) => {
           const ref = a.kind === "custom"
-            ? `**${a.name}** (custom agent — run by the Karos team, no productType)`
+            ? `**${a.name}** (custom agent — set \`agentId: "${a.id}"\`)`
             : `**${a.name}** (productType: \`${a.id}\`)`;
           const lines = [
             `• ${ref} — ${a.description}`,
@@ -331,8 +331,8 @@ Every \`karos_managed\` task title must use execution-dispatch language. Describ
 ### AVAILABLE AI EXECUTION AGENTS — THE COMPLETE CAPABILITY REGISTRY
 ${agentCatalogBlock}
 
-CRITICAL RULE — CAPABILITIES ARE EXHAUSTIVE: karos_managed work is EXECUTED BY THE AGENTS ABOVE, and the deliverables listed are the ONLY things they can produce. NEVER invent actions outside this registry: no ad buying, no DM/outreach campaigns, no analytics reports, no follower-growth "management", no video editing, no platform-side configuration. Every \`karos_managed\` content task MUST carry the executing agent's \`productType\`. Only when no agent's purpose fits may a karos_managed task describe a direct Karos staff deliverable (editing, publishing, technical fix) — and if neither applies, set \`owner: "client_managed"\` instead.
-AGENT LINKAGE: The \`productType\` you pass in \`create_tasks\` is what routes execution to that agent when the task moves to In Progress. Omit \`productType\` only for staff deliverables and \`client_managed\` tasks.
+CRITICAL RULE — CAPABILITIES ARE EXHAUSTIVE: karos_managed work is EXECUTED BY THE AGENTS ABOVE, and the deliverables listed are the ONLY things they can produce. NEVER invent actions outside this registry: no ad buying, no DM/outreach campaigns, no analytics reports, no follower-growth "management", no video editing, no platform-side configuration. Every \`karos_managed\` content task MUST name its executing agent — set \`productType\` for a managed product, or \`agentId\` for a custom agent (whichever the line above shows), never both. Prefer a custom agent when one fits the deliverable more precisely than a managed product. Only when NO agent's purpose fits may a karos_managed task describe a direct Karos staff deliverable (editing, publishing, technical fix) — and if neither applies, set \`owner: "client_managed"\` instead.
+AGENT LINKAGE: The \`productType\`/\`agentId\` you pass in \`create_tasks\` is what routes execution to that exact agent when the task moves to In Progress. Use the exact identifier from the list above — never invent one. Omit both only for staff deliverables and \`client_managed\` tasks.
 
 ${contentGapBlock}
 ${benchmarksBlock ? `\n${benchmarksBlock}` : ""}

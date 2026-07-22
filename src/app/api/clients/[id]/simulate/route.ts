@@ -1,12 +1,48 @@
 import { getCurrentUser } from "@/lib/auth";
 import { getClient, getAsset } from "@/lib/data";
 import {
+  buildSimulationPersonas,
   runSimulation,
-  selectPersonasForIndustry,
   type SimulationArtifact,
 } from "@/lib/simulation-engine";
+import type { Asset, Client } from "@/lib/types";
 
 export const maxDuration = 60;
+
+function inferBusinessModel(client: Client): "B2B" | "B2C" | "MIXED" | null {
+  const hay = `${client.industry ?? ""} ${client.category ?? ""} ${client.description ?? ""}`.toLowerCase();
+  const b2bHint = /\bb2b\b|enterprise|procurement|compliance|saas|software|platform|agency|consulting|services/.test(hay);
+  const b2cHint = /\bb2c\b|consumer|retail|ecommerce|shopper|lifestyle|fashion|beauty|food|travel/.test(hay);
+  if (b2bHint && b2cHint) return "MIXED";
+  if (b2bHint) return "B2B";
+  if (b2cHint) return "B2C";
+  return null;
+}
+
+function inferPostFormat(asset: Asset): string {
+  const channels = (asset.channels ?? []).map((c) => c.toLowerCase());
+  const slides = Array.isArray(asset.meta?.slides) ? asset.meta.slides : [];
+  const isCarousel = slides.length > 1;
+  const body = `${asset.title} ${asset.content}`.toLowerCase();
+
+  if (asset.type === "article") return "Long-form article / technical blog";
+  if (asset.type === "email") return "Newsletter issue / marketing email";
+  if (asset.type === "instagram_post") {
+    return isCarousel ? "Instagram carousel post" : "Instagram image post";
+  }
+  if (asset.type === "social_post") {
+    if (channels.includes("linkedin")) return isCarousel ? "LinkedIn carousel post" : "LinkedIn social post";
+    if (channels.includes("instagram")) return isCarousel ? "Instagram carousel post" : "Instagram social post";
+    if (channels.includes("tiktok")) return "Short explainer video / TikTok script";
+    if (channels.includes("youtube")) return "Short explainer video / YouTube short";
+    if (/\bvideo|reel|tiktok|shorts|script\b/.test(body)) return "Short explainer video script";
+    return isCarousel ? "Social media carousel post" : "Social media post";
+  }
+  if (asset.type === "note" && /\bvideo|reel|script|walkthrough|demo\b/.test(body)) {
+    return "Short explainer video script";
+  }
+  return asset.type.replace(/_/g, " ");
+}
 
 /**
  * Pre-Flight Impact Simulation — run one asset's artifact past the synthetic
@@ -47,13 +83,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     title: asset.title,
     content: asset.content,
     type: asset.type,
+    format: inferPostFormat(asset),
+    channels: asset.channels,
   };
-  const personas = selectPersonasForIndustry(client.industry);
+  const businessModel = inferBusinessModel(client);
+  const personas = await buildSimulationPersonas(artifact, {
+    clientId,
+    clientName: client.name,
+    industry: client.industry ?? null,
+    category: client.category ?? null,
+    toneOfVoice: client.brandVoice ?? null,
+    targetMarket: client.description ?? null,
+    businessModel,
+  });
 
   const results = await runSimulation(artifact, personas, {
     clientId,
     clientName: client.name,
-    industry: client.industry,
+    industry: client.industry ?? null,
+    category: client.category ?? null,
+    toneOfVoice: client.brandVoice ?? null,
+    targetMarket: client.description ?? null,
+    businessModel,
   });
 
   return Response.json({ assetId: asset.id, results });

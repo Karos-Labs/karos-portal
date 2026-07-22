@@ -72,6 +72,7 @@ function UserRow({
   function impersonate() {
     startImpersonate(async () => {
       await startImpersonationAction(u.uid);
+      onRefresh();
     });
   }
 

@@ -64,7 +64,7 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
       <EmptyState
         icon={<Icon name="Users" className="h-6 w-6" />}
         title="Pre-flight audience simulation"
-        description="Test how synthetic personas — investors, buyers, and consumers tuned to this client's industry — would react to this content before you publish."
+        description="Test this content against 2–4 distinct stakeholder personas (for example: buyers, strategists, skeptics, or competitors) before you publish."
         action={
           <Button size="sm" onClick={() => void run()}>
             <Icon name="Sparkles" className="h-3.5 w-3.5" />
@@ -125,15 +125,17 @@ function PersonaCard({ result }: { result: PersonaSimulationResult }) {
       <div className="rounded-md border border-border bg-surface-2 p-3">
         <p className="text-sm font-medium text-foreground">{result.personaName}</p>
         <p className="mt-0.5 text-[11px] text-muted-2">{result.archetype}</p>
+        <p className="mt-1 text-[11px] text-muted">Perspective: {result.perspective}</p>
         <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
           <Icon name="AlertTriangle" className="h-3.5 w-3.5 text-warning" />
           Couldn&apos;t get a reading from this persona.
         </p>
+        {result.error && <p className="mt-1 text-[11px] text-muted-2">{result.error}</p>}
       </div>
     );
   }
 
-  const { score, sentiment, critique } = result.verdict;
+  const { score, sentiment, critique, actionableSuggestion } = result.verdict;
   const band = scoreBand(score);
   const sent = SENTIMENT_META[sentiment];
 
@@ -144,6 +146,7 @@ function PersonaCard({ result }: { result: PersonaSimulationResult }) {
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-foreground">{result.personaName}</p>
           <p className="truncate text-[11px] text-muted-2">{result.archetype}</p>
+          <p className="mt-0.5 line-clamp-2 text-[11px] text-muted">Perspective: {result.perspective}</p>
         </div>
         <div className="flex shrink-0 items-baseline gap-0.5 font-mono" style={{ color: band.color }}>
           <span className="text-xl font-semibold leading-none">{score}</span>
@@ -172,6 +175,23 @@ function PersonaCard({ result }: { result: PersonaSimulationResult }) {
 
       {/* Critique */}
       <p className="text-xs leading-relaxed text-muted">{critique}</p>
+      {result.painPoints.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-mono uppercase tracking-[0.08em] text-muted-2">Pain points</p>
+          <ul className="space-y-1 text-xs text-muted">
+            {result.painPoints.slice(0, 3).map((pain) => (
+              <li key={pain} className="flex items-start gap-1.5">
+                <span className="mt-0.5 shrink-0 text-muted-2">•</span>
+                <span>{pain}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="rounded-md border border-border bg-surface-3/60 p-2">
+        <p className="text-[10px] font-mono uppercase tracking-[0.08em] text-muted-2">Actionable next step</p>
+        <p className="mt-1 text-xs text-foreground/90">{actionableSuggestion}</p>
+      </div>
     </div>
   );
 }

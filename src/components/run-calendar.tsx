@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Badge, Button } from "@/components/ui";
 import { ImageLightbox } from "@/components/image-lightbox";
+import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
 import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
 import { cn } from "@/lib/utils";
 import type { AssetImage } from "@/lib/asset-images";
-import type { AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
+import type { Asset, AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
 
 /* ── Serializable shapes built by the calendar page ──────────────────── */
 
@@ -125,18 +126,29 @@ const POST_CHIP_CLASS: Record<CalendarPost["kind"], string> = {
   placeholder: "border border-dashed border-muted-2/50 bg-foreground/[0.04] text-muted",
 };
 
-function PostChip({ post }: { post: CalendarPost }) {
+function PostChip({
+  post,
+  onOpen,
+}: {
+  post: CalendarPost;
+  onOpen: (assetId: string) => void;
+}) {
   return (
-    <div
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen(post.assetId);
+      }}
       className={cn(
-        "flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate",
+        "flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate text-left transition-opacity hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-neon/50",
         POST_CHIP_CLASS[post.kind],
       )}
       title={`${post.kind === "published" ? "Published" : post.kind === "scheduled" ? "Scheduled post" : "Placeholder"} · ${post.title} · ${timeStr(post.at)}`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{post.title}</span>
-    </div>
+    </button>
   );
 }
 
@@ -272,17 +284,33 @@ function PastRunCard({
 function PostCard({
   post,
   onOpenLightbox,
+  onOpenDetails,
 }: {
   post: CalendarPost;
   onOpenLightbox: (images: AssetImage[], index: number) => void;
+  onOpenDetails: (assetId: string) => void;
 }) {
   const tone = post.kind === "published" ? "success" : post.kind === "scheduled" ? "info" : "neutral";
   const label = post.kind === "published" ? "Published" : post.kind === "scheduled" ? "Scheduled" : "Placeholder";
   return (
-    <div className="flex items-start gap-2.5 rounded-lg border border-border bg-surface p-3">
+    <div
+      onClick={() => onOpenDetails(post.assetId)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpenDetails(post.assetId);
+        }
+      }}
+      className="flex w-full items-start gap-2.5 rounded-lg border border-border bg-surface p-3 text-left transition-colors hover:bg-surface-2 focus:outline-none focus:ring-1 focus:ring-neon/50"
+    >
       {post.images[0] ? (
         <button
+          type="button"
           onClick={() => onOpenLightbox(post.images, 0)}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClickCapture={(event) => event.stopPropagation()}
           className="h-12 w-12 shrink-0 overflow-hidden rounded-md border border-border transition-opacity hover:opacity-80"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -311,6 +339,7 @@ function PostCard({
 export function RunCalendar({
   runs,
   posts,
+  assets,
   canSchedule = false,
   clients = [],
   agents = [],
@@ -318,6 +347,7 @@ export function RunCalendar({
 }: {
   runs: CalendarRun[];
   posts: CalendarPost[];
+  assets: Asset[];
   /** Staff on their own clients — shows the "Schedule a run" button + management controls. */
   canSchedule?: boolean;
   clients?: CalendarClientOption[];
@@ -329,7 +359,10 @@ export function RunCalendar({
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<{ images: AssetImage[]; index: number } | null>(null);
+  const [openAssetId, setOpenAssetId] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
+  const openAsset = openAssetId ? assetById.get(openAssetId) ?? null : null;
 
   const runsByDay = useMemo(() => {
     const m = new Map<string, CalendarRun[]>();
@@ -442,10 +475,21 @@ export function RunCalendar({
             const isSelected = key !== "" && key === selectedKey;
 
             return (
-              <button
+              <div
                 key={i}
-                disabled={!isValid || chipCount === 0}
-                onClick={() => setSelectedKey(key)}
+                onClick={() => {
+                  if (!isValid || chipCount === 0) return;
+                  setSelectedKey(key);
+                }}
+                role={isValid && chipCount > 0 ? "button" : undefined}
+                tabIndex={isValid && chipCount > 0 ? 0 : -1}
+                onKeyDown={(event) => {
+                  if (!isValid || chipCount === 0) return;
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSelectedKey(key);
+                  }
+                }}
                 className={cn(
                   "min-h-[84px] border-b border-r border-border p-1 text-left align-top transition-colors",
                   !isValid && "bg-surface-deep",
@@ -465,12 +509,17 @@ export function RunCalendar({
                     </span>
                     <div className="space-y-[3px]">
                       {dayRuns.slice(0, 3).map((r) => <RunChip key={r.kind + r.id} run={r} />)}
-                      {dayRuns.length < 3 && dayPosts.slice(0, 3 - dayRuns.length).map((p) => <PostChip key={p.assetId} post={p} />)}
-                      {chipCount > 3 && <p className="pl-1 text-[9px] text-muted-2">+{chipCount - 3} more</p>}
-                    </div>
-                  </>
-                )}
-              </button>
+                    {dayRuns.length < 3 &&
+                      dayPosts
+                        .slice(0, 3 - dayRuns.length)
+                        .map((p) => (
+                          <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} />
+                        ))}
+                    {chipCount > 3 && <p className="pl-1 text-[9px] text-muted-2">+{chipCount - 3} more</p>}
+                  </div>
+                </>
+              )}
+              </div>
             );
           })}
         </div>
@@ -513,7 +562,12 @@ export function RunCalendar({
               {selectedPosts.length > 0 && (
                 <Section title="Posts">
                   {selectedPosts.sort((a, b) => a.at - b.at).map((p) => (
-                    <PostCard key={p.assetId} post={p} onOpenLightbox={openLightbox} />
+                    <PostCard
+                      key={p.assetId}
+                      post={p}
+                      onOpenLightbox={openLightbox}
+                      onOpenDetails={setOpenAssetId}
+                    />
                   ))}
                 </Section>
               )}
@@ -530,6 +584,8 @@ export function RunCalendar({
           onClose={() => setLightbox(null)}
         />
       )}
+
+      <AssetDetailModal asset={openAsset} open={openAsset != null} onClose={() => setOpenAssetId(null)} />
 
       {scheduleOpen && (
         <ScheduleRunModal

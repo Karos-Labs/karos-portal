@@ -1130,6 +1130,8 @@ export interface ClientTask {
   /**
    * Freeform execution state. Well-known keys:
    * `productType` — the managed product (ManagedTaskType) that executes this task;
+   * `customAgentId` — a git-imported custom agent that executes this task instead of a
+   * managed product (mutually exclusive with productType);
    * `platform` — canonical integration platform key the task concerns;
    * `completionTrigger` — auto-complete hook: "integration_connected:<platform>" or
    * "product_run:<taskType>" (see task-sync.ts);

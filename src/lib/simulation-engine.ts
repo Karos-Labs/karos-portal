@@ -1,154 +1,75 @@
 /**
- * Pre-Flight Impact Simulation — the Synthetic Persona sandbox.
+ * Pre-Flight Impact Simulation — dynamic stakeholder panel.
  *
- * Given a generated artifact (post copy, article, or video script) this service
- * dispatches it, in parallel, to a panel of synthetic audience personas — each a
- * disciplined LLM prompt with a distinct analytical lens, emotional bias, and
- * voice — and collects a strictly-validated verdict from every one. Clients use
- * it to pressure-test reception BEFORE anything is published.
- *
- * Server-only: it calls the model and the usage logger. Client components import
- * ONLY the result/persona TYPES from here (`import type`), which are erased at
- * compile time and never reach the browser bundle.
+ * Persona selection is generated per request from client context + post format.
+ * No fixed static persona roster is used for production runs.
  */
 
 import "server-only";
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { after } from "next/server";
 import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
 
-/* ── Persona configuration (rigid structure) ─────────────────────────── */
+export const MAX_PERSONAS = 4;
 
-/**
- * A synthetic audience member. The shape is deliberately rigid so every persona
- * is defined the same way and the roster can be reasoned about (and tested)
- * declaratively.
- */
-export interface SyntheticPersona {
-  /** Stable machine id, e.g. "venture_capitalist". */
-  id: string;
-  /** Display name, e.g. "The Venture Capitalist". */
-  name: string;
-  /** One-line archetype descriptor shown in the UI. */
-  archetype: string;
-  /**
-   * Industry keywords this persona is most relevant to (matched as lowercased
-   * substrings against the client's industry). Empty = a universal persona that
-   * fits any industry and anchors the fallback roster.
-   */
-  industries: string[];
-  /** What they fixate on — their analytical lens and emotional biases. */
-  lens: string;
-  /** Tone of voice they critique in. */
-  voice: string;
-  /** The full, disciplined system instruction driving their evaluation. */
-  systemPrompt: string;
+/** The artifact under test — text copy, article, email, script, etc. */
+export interface SimulationArtifact {
+  title: string;
+  content: string;
+  type: string;
+  format: string;
+  channels?: string[];
 }
 
-/** Shared discipline appended to every persona so outputs stay comparable. */
+/** Client/profile metadata used to tailor persona generation. */
+export interface SimulationContext {
+  clientId: string;
+  clientName: string;
+  industry?: string | null;
+  category?: string | null;
+  toneOfVoice?: string | null;
+  targetMarket?: string | null;
+  businessModel?: "B2B" | "B2C" | "MIXED" | null;
+}
+
+/** Runtime persona used for one simulation run. */
+export interface SyntheticPersona {
+  id: string;
+  name: string;
+  archetype: string;
+  perspective: string;
+  painPoints: string[];
+  voice: string;
+  evaluationFocus: string;
+}
+
+const personaPlanSchema = z.object({
+  personas: z.array(
+    z.object({
+      id: z.string().min(1).max(80),
+      name: z.string().min(2).max(120),
+      archetype: z.string().min(2).max(220),
+      perspective: z.string().min(8).max(320),
+      painPoints: z.array(z.string().min(3).max(160)).min(2).max(4),
+      voice: z.string().min(3).max(120),
+      evaluationFocus: z.string().min(8).max(320),
+    }),
+  ).min(2).max(MAX_PERSONAS),
+});
+
+/** Shared discipline appended to every generated persona prompt. */
 const SHARED_DISCIPLINE = `
 You are role-playing a specific audience member reacting to a piece of marketing content BEFORE it is published. Stay 100% in character.
 Rules:
 - Judge ONLY from your persona's point of view — your priorities, biases, and skepticism.
 - Be specific and highly critical. Reference concrete words, claims, or structure in the content. Never give generic praise.
 - Your critique must contain at least one concrete, actionable piece of advice from your professional/consumer perspective.
-- Keep the critique under 90 words: sharp, not rambling.
 - The score (1-10) must reflect how likely YOU personally are to act on / engage with this content (1 = would ignore or be put off, 10 = would immediately act).
 - Sentiment must agree with the score: 1-4 → negative, 5-6 → neutral, 7-10 → positive.
 - Return ONLY the structured object. No preamble.`;
-
-export const PERSONA_REGISTRY: SyntheticPersona[] = [
-  {
-    id: "venture_capitalist",
-    name: "The Venture Capitalist",
-    archetype: "Early-stage investor scanning for signal",
-    industries: ["saas", "software", "tech", "fintech", "startup", "ai", "b2b", "venture"],
-    lens: "Market size, defensibility, traction, and whether the messaging signals a category winner. Allergic to hype without substance.",
-    voice: "Blunt, time-poor, pattern-matching, mildly cynical.",
-    systemPrompt: `You are a Series A venture capitalist at a top-tier fund. You see 50 pitches a week and skim everything. You reward crisp positioning, evidence of traction, and a defensible wedge; you punish buzzwords, vague TAM claims, and me-too framing. You care about whether this content would make you take a founder meeting.${SHARED_DISCIPLINE}`,
-  },
-  {
-    id: "enterprise_tech_buyer",
-    name: "The Enterprise Tech Buyer",
-    archetype: "Risk-averse director of IT / procurement",
-    industries: ["saas", "software", "tech", "security", "cloud", "enterprise", "b2b", "data"],
-    lens: "Security, compliance, integration risk, total cost of ownership, and vendor credibility. Fears being blamed for a bad purchase.",
-    voice: "Measured, skeptical, detail-oriented, procurement-minded.",
-    systemPrompt: `You are a Director of IT at a 5,000-person enterprise evaluating vendors. You distrust marketing superlatives and look for proof: security posture, integrations, SLAs, references, and clear ROI. Fluffy claims lower your trust. You care about whether this content reduces your perceived purchasing risk.${SHARED_DISCIPLINE}`,
-  },
-  {
-    id: "high_volume_consumer",
-    name: "The High-Volume Consumer",
-    archetype: "Fast-scrolling everyday shopper",
-    industries: ["retail", "ecommerce", "consumer", "b2c", "food", "beverage", "fashion", "lifestyle", "dtc", "wellness"],
-    lens: "Instant emotional hook, clarity of the offer, price/value, and whether it's worth a tap. Attention span measured in seconds.",
-    voice: "Casual, impatient, reactive, easily bored.",
-    systemPrompt: `You are a typical consumer scrolling a feed on your phone. You give any post about 2 seconds. You react to a strong hook, a clear benefit, and something that feels authentic — you scroll past anything that reads like an ad, is confusing, or is too wordy. You care about whether this content stops your thumb.${SHARED_DISCIPLINE}`,
-  },
-  {
-    id: "skeptical_cfo",
-    name: "The Skeptical CFO",
-    archetype: "ROI-obsessed financial gatekeeper",
-    industries: ["finance", "enterprise", "b2b", "saas", "consulting", "professional services"],
-    lens: "Hard numbers, payback period, and whether claims translate to measurable financial outcomes. Dismisses anything that can't be quantified.",
-    voice: "Dry, exacting, numbers-first, unimpressed by narrative.",
-    systemPrompt: `You are a CFO who signs off on budgets. You translate every claim into "what does this do to our P&L?" You want quantified outcomes, payback periods, and efficiency gains; you discount emotional or aspirational language. You care about whether this content gives you a defensible reason to spend.${SHARED_DISCIPLINE}`,
-  },
-  {
-    id: "trend_savvy_creator",
-    name: "The Trend-Savvy Creator",
-    archetype: "Culturally-fluent social native",
-    industries: ["consumer", "b2c", "lifestyle", "fashion", "media", "entertainment", "beauty", "social", "creator"],
-    lens: "Cultural relevance, originality, shareability, and authenticity. Cringes at try-hard or dated references.",
-    voice: "Playful, opinionated, culturally sharp, quick to call out inauthenticity.",
-    systemPrompt: `You are a social-media-native creator with a keen eye for what actually spreads. You reward originality, timing, and authentic voice; you ridicule corporate-speak, forced trends, and anything that feels like it was written by a committee. You care about whether this content is genuinely shareable.${SHARED_DISCIPLINE}`,
-  },
-  {
-    id: "pragmatic_smb_owner",
-    name: "The Pragmatic SMB Owner",
-    archetype: "Time-strapped small-business operator",
-    industries: ["services", "local", "b2b", "smb", "agency", "hospitality", "trades", "retail"],
-    lens: "Practicality, immediate usefulness, and whether it solves a real problem without extra work or cost. No patience for theory.",
-    voice: "Down-to-earth, practical, budget-conscious, straight-talking.",
-    systemPrompt: `You run a small business and wear every hat. You have no time or budget to waste. You respond to plain language, a concrete outcome, and low effort to get started; you tune out jargon, enterprise framing, and anything that sounds expensive or complicated. You care about whether this content is worth your scarce time.${SHARED_DISCIPLINE}`,
-  },
-];
-
-/** Fallback panel when a client's industry matches nothing specific — a broad, balanced trio. */
-const DEFAULT_PERSONA_IDS = ["venture_capitalist", "enterprise_tech_buyer", "high_volume_consumer"];
-
-/** How many personas to run per simulation — keeps the panel focused and cost bounded. */
-export const MAX_PERSONAS = 4;
-
-/**
- * Choose the persona panel for a client's industry. Matches personas whose
- * `industries` keywords appear in the industry string, always includes the
- * universal personas, and falls back to a balanced default trio when nothing
- * matches — so the panel is never empty. Deterministic (registry order), capped
- * at MAX_PERSONAS.
- */
-export function selectPersonasForIndustry(industry?: string | null): SyntheticPersona[] {
-  const needle = (industry ?? "").toLowerCase().trim();
-  // Whole-word / phrase match so short keywords ("ai", "b2b") don't match inside
-  // unrelated words ("retail", "email"). Keywords are trusted constants but escaped anyway.
-  const matchesKeyword = (kw: string) =>
-    new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(needle);
-  let matched = needle
-    ? PERSONA_REGISTRY.filter(
-        (p) => p.industries.length === 0 || p.industries.some(matchesKeyword),
-      )
-    : [];
-
-  if (matched.length === 0) {
-    matched = PERSONA_REGISTRY.filter((p) => DEFAULT_PERSONA_IDS.includes(p.id));
-  }
-  return matched.slice(0, MAX_PERSONAS);
-}
-
-/* ── Output schema (strict) ──────────────────────────────────────────── */
 
 export const personaResultSchema = z.object({
   score: z.number().int().min(1).max(10).describe("1 = would ignore/be put off, 10 = would act immediately"),
@@ -157,42 +78,95 @@ export const personaResultSchema = z.object({
     .string()
     .min(1)
     .max(600)
-    .describe("Sharp, specific, actionable critique from this persona's perspective"),
+    .describe("Specific feedback from this persona, including concrete pain points seen in the post."),
+  actionableSuggestion: z
+    .string()
+    .min(1)
+    .max(240)
+    .describe("One practical next change to improve the post for this persona."),
 });
 
 export type PersonaVerdict = z.infer<typeof personaResultSchema>;
+const personaResultFallbackSchema = z.object({
+  score: z.coerce.number().min(0).max(10),
+  sentiment: z.string().optional(),
+  critique: z.string().optional(),
+  feedback: z.string().optional(),
+  actionableSuggestion: z.string().min(1).max(320).optional(),
+  suggestion: z.string().optional(),
+});
 
-/** A single persona's result (or failure) in a simulation run. */
 export interface PersonaSimulationResult {
   personaId: string;
   personaName: string;
   archetype: string;
-  /** Present on success. */
+  perspective: string;
+  painPoints: string[];
   verdict?: PersonaVerdict;
-  /** Present when this persona's evaluation failed — the others still return. */
   error?: string;
 }
 
-/** The artifact under test — text copy or a video script. */
-export interface SimulationArtifact {
-  title: string;
-  content: string;
-  /** Asset type, e.g. "social_post" | "article" | "video_script". */
-  type: string;
+function normalizePersonaId(rawId: string, fallbackName: string, index: number): string {
+  const source = rawId.trim() || fallbackName.trim() || `persona-${index + 1}`;
+  const normalized = source
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60);
+  return normalized || `persona_${index + 1}`;
 }
 
-export interface SimulationContext {
-  clientId: string;
-  clientName: string;
-  industry?: string | null;
+function buildPersonaPlannerPrompt(artifact: SimulationArtifact, ctx: SimulationContext): string {
+  const channels = (artifact.channels ?? []).join(", ") || "n/a";
+  return `Generate a panel of 2 to 4 DISTINCT personas for marketing feedback.
+
+CLIENT CONTEXT
+- Brand: ${ctx.clientName}
+- Industry: ${ctx.industry ?? "unknown"}
+- Category: ${ctx.category ?? "unknown"}
+- Tone of voice: ${ctx.toneOfVoice ?? "unknown"}
+- Target market: ${ctx.targetMarket ?? "unknown"}
+- Business model: ${ctx.businessModel ?? "unknown"}
+
+POST CONTEXT
+- Type: ${artifact.type}
+- Format: ${artifact.format}
+- Channels: ${channels}
+- Title: ${artifact.title}
+
+Requirements:
+1) Personas must be meaningfully different and adapted to THIS client + THIS post format.
+2) Include role-appropriate perspectives (for example: technical decision maker, financial approver, practitioner, casual viewer, loyalist, skeptic, competitor) based on context.
+3) Each persona needs clear perspective, pain points, and evaluation focus.
+4) Keep to 2-4 personas only.
+
+Return only the JSON object.`;
 }
 
-/* ── Runtime ─────────────────────────────────────────────────────────── */
+function buildPersonaSystemPrompt(persona: SyntheticPersona): string {
+  return `You are ${persona.name} (${persona.archetype}).
+
+Your worldview:
+- Perspective: ${persona.perspective}
+- Pain points: ${persona.painPoints.map((p) => `• ${p}`).join("\n")}
+- Evaluation focus: ${persona.evaluationFocus}
+- Voice: ${persona.voice}
+
+${SHARED_DISCIPLINE}`;
+}
 
 function buildUserPrompt(artifact: SimulationArtifact, ctx: SimulationContext): string {
-  const isScript = /video|script|reel|tiktok/i.test(artifact.type);
-  return `BRAND: ${ctx.clientName}${ctx.industry ? ` — ${ctx.industry}` : ""}
-CONTENT TYPE: ${artifact.type.replace(/_/g, " ")}${isScript ? " (this is a video/short-form script — imagine it performed)" : ""}
+  const channels = (artifact.channels ?? []).join(", ") || "n/a";
+  return `BRAND: ${ctx.clientName}
+BUSINESS MODEL: ${ctx.businessModel ?? "unknown"}
+INDUSTRY: ${ctx.industry ?? "unknown"}
+CATEGORY: ${ctx.category ?? "unknown"}
+TARGET MARKET: ${ctx.targetMarket ?? "unknown"}
+TONE OF VOICE: ${ctx.toneOfVoice ?? "unknown"}
+
+POST TYPE: ${artifact.type}
+POST FORMAT: ${artifact.format}
+CHANNELS: ${channels}
 TITLE: ${artifact.title}
 
 CONTENT UNDER REVIEW:
@@ -200,26 +174,218 @@ CONTENT UNDER REVIEW:
 ${artifact.content}
 """
 
-React as your persona. Return your score, sentiment, and critique.`;
+React as your persona. Return score, sentiment, critique, and one actionable suggestion.`;
 }
 
-/**
- * Run one persona's evaluation of the artifact. Strictly validated by Zod via
- * generateObject (the model is forced to satisfy `personaResultSchema`). Usage is
- * logged fire-and-forget. Throws on model/parse failure — callers decide whether
- * to isolate the failure (see `runSimulation`).
- */
+function normalizeVerdict(raw: z.infer<typeof personaResultFallbackSchema>): PersonaVerdict {
+  const roundedScore = Math.max(1, Math.min(10, Math.round(raw.score)));
+  const normalizedSentiment = (raw.sentiment ?? "").trim().toLowerCase();
+  const sentiment: PersonaVerdict["sentiment"] =
+    normalizedSentiment === "positive" || normalizedSentiment === "negative" || normalizedSentiment === "neutral"
+      ? normalizedSentiment
+      : roundedScore >= 7
+        ? "positive"
+        : roundedScore >= 5
+          ? "neutral"
+          : "negative";
+  const critique = (raw.critique ?? raw.feedback ?? "").trim() || "Useful reaction, but please add more specific proof points for this audience.";
+  const suggestion =
+    raw.actionableSuggestion?.trim() ||
+    raw.suggestion?.trim() ||
+    `Refine the message to address this persona's top concern directly and concretely.`;
+  return {
+    score: roundedScore,
+    sentiment,
+    critique,
+    actionableSuggestion: suggestion,
+  };
+}
+
+function coerceFallbackPayload(input: unknown): z.infer<typeof personaResultFallbackSchema> | null {
+  if (!input || typeof input !== "object") return null;
+  const obj = input as Record<string, unknown>;
+  const score =
+    obj.score ??
+    obj.rating ??
+    obj.finalScore ??
+    obj["final_score"] ??
+    obj["score_out_of_10"];
+  const sentiment = obj.sentiment ?? obj.tone ?? obj.reaction;
+  const critique = obj.critique ?? obj.feedback ?? obj.analysis ?? obj.reasoning ?? obj.notes;
+  const actionableSuggestion =
+    obj.actionableSuggestion ??
+    obj.actionable_suggestion ??
+    obj.suggestion ??
+    obj["next_step"] ??
+    obj["nextAction"] ??
+    obj["recommendation"];
+  const parsed = personaResultFallbackSchema.safeParse({
+    score,
+    sentiment,
+    critique,
+    actionableSuggestion,
+    suggestion: actionableSuggestion,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+/** Pull the first JSON object out of a model response (tolerates prose/code-fences). */
+function extractJsonObject(text: string): string | null {
+  const unfenced = text.replace(/```(?:json)?/gi, "").replace(/```/g, "");
+  const start = unfenced.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start; i < unfenced.length; i++) {
+    const ch = unfenced[i];
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) return unfenced.slice(start, i + 1).trim();
+    }
+  }
+  return null;
+}
+
+/** JSON.parse that tolerates trailing commas (common LLM formatting miss). */
+function tolerantJsonParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return JSON.parse(raw.replace(/,(\s*[}\]])/g, "$1"));
+  }
+}
+
+function parseVerdictFromText(text: string): PersonaVerdict | null {
+  const cleaned = text.trim();
+  if (!cleaned) return null;
+
+  // 1) JSON object embedded in prose.
+  const json = extractJsonObject(cleaned);
+  if (json) {
+    try {
+      const payload = coerceFallbackPayload(tolerantJsonParse(json));
+      if (payload) return normalizeVerdict(payload);
+    } catch {
+      // continue to non-JSON heuristics
+    }
+  }
+
+  // 2) Heuristic plain-text parsing.
+  const scoreMatch =
+    cleaned.match(/(?:score|rating)\s*[:\-]?\s*(10|[0-9](?:\.[0-9])?)/i) ??
+    cleaned.match(/\b(10|[0-9](?:\.[0-9])?)\s*\/\s*10\b/i);
+  const score = scoreMatch ? Number(scoreMatch[1]) : 6;
+
+  const sentimentMatch = cleaned.match(/\b(positive|neutral|negative)\b/i);
+  const sentiment = sentimentMatch?.[1]?.toLowerCase() ?? (score >= 7 ? "positive" : score >= 5 ? "neutral" : "negative");
+
+  // Non-greedy + lookahead: stop the critique capture at the next labeled field
+  // (e.g. "Actionable suggestion:") instead of swallowing the rest of the response.
+  const nextLabel = /\n\s*(?:actionable suggestion|suggestion|next step|recommendation|improve)\s*[:\-]/i;
+  const critiqueMatch =
+    cleaned.match(new RegExp(`(?:critique|feedback|analysis|why)\\s*[:\\-]\\s*([\\s\\S]{20,}?)(?=${nextLabel.source}|\\n{2,}|$)`, "i")) ??
+    cleaned.match(new RegExp(`(?:overall|verdict)\\s*[:\\-]\\s*([\\s\\S]{20,}?)(?=${nextLabel.source}|\\n{2,}|$)`, "i"));
+  const suggestionMatch =
+    cleaned.match(/(?:actionable suggestion|suggestion|next step|recommendation|improve)\s*[:\-]\s*([\s\S]{8,})/i);
+
+  const critique = (critiqueMatch?.[1] ?? cleaned)
+    .split(/\n{2,}/)[0]
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 600);
+  const actionableSuggestion = (
+    suggestionMatch?.[1] ??
+    "Refine the message to address this persona's top concern directly and concretely."
+  )
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+
+  const parsed = personaResultSchema.safeParse({
+    score: Math.max(1, Math.min(10, Math.round(score))),
+    sentiment,
+    critique: critique || "Useful reaction, but needs more concrete audience-specific detail.",
+    actionableSuggestion,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+/** Dynamically generates 2–4 personas from client and post context. */
+export async function buildSimulationPersonas(
+  artifact: SimulationArtifact,
+  ctx: SimulationContext,
+): Promise<SyntheticPersona[]> {
+  const { object } = await generateObject({
+    model: anthropic(MODELS.HAIKU),
+    schema: personaPlanSchema,
+    prompt: buildPersonaPlannerPrompt(artifact, ctx),
+  });
+  return object.personas.map((p, i) => ({
+    id: normalizePersonaId(p.id, p.name, i),
+    name: p.name.trim(),
+    archetype: p.archetype.trim(),
+    perspective: p.perspective.trim(),
+    painPoints: p.painPoints.map((x) => x.trim()).filter(Boolean).slice(0, 4),
+    voice: p.voice.trim(),
+    evaluationFocus: p.evaluationFocus.trim(),
+  }));
+}
+
 export async function simulatePersona(
   persona: SyntheticPersona,
   artifact: SimulationArtifact,
   ctx: SimulationContext,
 ): Promise<PersonaSimulationResult> {
-  const { object, usage } = await generateObject({
-    model: anthropic(MODELS.HAIKU),
-    schema: personaResultSchema,
-    system: persona.systemPrompt,
-    prompt: buildUserPrompt(artifact, ctx),
-  });
+  const system = buildPersonaSystemPrompt(persona);
+  const prompt = buildUserPrompt(artifact, ctx);
+  let verdict: PersonaVerdict;
+  let usage: { inputTokens?: number; outputTokens?: number };
+  try {
+    const first = await generateObject({
+      model: anthropic(MODELS.HAIKU),
+      schema: personaResultSchema,
+      system,
+      prompt,
+    });
+    verdict = first.object;
+    usage = first.usage;
+  } catch (firstError) {
+    try {
+      const second = await generateObject({
+        model: anthropic(MODELS.HAIKU),
+        schema: personaResultFallbackSchema,
+        system,
+        prompt,
+      });
+      verdict = normalizeVerdict(second.object);
+      usage = second.usage;
+    } catch {
+      try {
+        const third = await generateText({
+          model: anthropic(MODELS.HAIKU),
+          system,
+          prompt: `${prompt}
+
+Return ONLY one JSON object with keys:
+- score (1..10 number)
+- sentiment ("positive" | "neutral" | "negative")
+- critique (string)
+- actionableSuggestion (string)
+
+No markdown, no code fences, no extra text.`,
+        });
+        const fromText = parseVerdictFromText(third.text);
+        if (!fromText) throw new Error("Text fallback could not produce a valid verdict");
+        verdict = fromText;
+        usage = third.usage ?? {};
+      } catch {
+        // All three tiers failed — surface the original (strict schema) error; it's
+        // the one most likely to reflect the real root cause (model/network failure),
+        // while the fallback tiers exist purely to rescue malformed-but-valid responses.
+        throw firstError instanceof Error ? firstError : new Error("Persona evaluation failed");
+      }
+    }
+  }
 
   after(() =>
     logger.logUsage({
@@ -237,17 +403,12 @@ export async function simulatePersona(
     personaId: persona.id,
     personaName: persona.name,
     archetype: persona.archetype,
-    verdict: object,
+    perspective: persona.perspective,
+    painPoints: persona.painPoints,
+    verdict,
   };
 }
 
-/**
- * Dispatch the artifact to every persona in the panel IN PARALLEL and collect
- * their verdicts. Resilient by design: one persona's failure (model error,
- * schema-validation miss) is isolated into that persona's `error` field via
- * `Promise.allSettled`, so the rest of the panel still returns. Never throws for
- * a per-persona failure — the run always resolves with one entry per persona.
- */
 export async function runSimulation(
   artifact: SimulationArtifact,
   personas: SyntheticPersona[],
@@ -263,6 +424,8 @@ export async function runSimulation(
       personaId: persona.id,
       personaName: persona.name,
       archetype: persona.archetype,
+      perspective: persona.perspective,
+      painPoints: persona.painPoints,
       error: res.reason instanceof Error ? res.reason.message : "Simulation failed",
     };
   });

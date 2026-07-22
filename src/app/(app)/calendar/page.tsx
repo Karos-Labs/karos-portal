@@ -189,6 +189,7 @@ export default async function CalendarPage({
       <RunCalendar
         runs={runs}
         posts={posts}
+        assets={assets}
         canSchedule={canSchedule}
         clients={clientOptions}
         agents={agentOptions}

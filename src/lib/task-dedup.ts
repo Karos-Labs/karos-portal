@@ -68,8 +68,23 @@ export function taskWeekKey(ts: number): string {
 
 export interface TaskCandidate {
   title: string;
+  /** Managed product executor (ManagedTaskType), when the task runs one. */
   productType?: string;
+  /** Custom-agent executor id, when the task runs one instead of a product. */
+  customAgentId?: string;
   platform?: string;
+}
+
+/** The executor a candidate/task binds to, for the same-scope dedup tier. */
+function executorKey(c: { productType?: string; customAgentId?: string }): string | null {
+  return c.customAgentId ?? c.productType ?? null;
+}
+function taskExecutorKey(t: ClientTask): string | null {
+  const custom = t.metadata?.customAgentId;
+  const product = t.metadata?.productType;
+  if (typeof custom === "string" && custom) return custom;
+  if (typeof product === "string" && product) return product;
+  return null;
 }
 
 /**
@@ -99,17 +114,19 @@ export function findDuplicateReason(
     return `near-identical to active task "${similar.title}"`;
   }
 
-  // 3. Same product + platform scope in the same week window.
-  if (candidate.productType) {
+  // 3. Same executor (managed product OR custom agent) + platform scope in the
+  //    same week window.
+  const candidateExecutor = executorKey(candidate);
+  if (candidateExecutor) {
     const week = taskWeekKey(now);
     const clash = active.find(
       (t) =>
-        t.metadata?.productType === candidate.productType &&
+        taskExecutorKey(t) === candidateExecutor &&
         (t.metadata?.platform ?? null) === (candidate.platform ?? null) &&
         taskWeekKey(t.createdAt) === week,
     );
     if (clash) {
-      return `an active ${candidate.productType} task for the same ${candidate.platform ?? "channel"} scope already exists this week ("${clash.title}")`;
+      return `an active task for the same agent and ${candidate.platform ?? "channel"} scope already exists this week ("${clash.title}")`;
     }
   }
 

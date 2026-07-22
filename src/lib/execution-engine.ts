@@ -12,6 +12,7 @@ import { MODELS } from "@/lib/constants";
 import {
   getClientTask,
   getClient,
+  getCustomAgent,
   updateClientTask,
   listClientTasks,
   listEmployeeSeats,
@@ -20,11 +21,12 @@ import {
 import { sendEmail } from "@/lib/email";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { MANAGED_PRODUCTS, type ManagedProduct } from "@/lib/agent-service/products";
-import { taskExecutionCost } from "@/lib/credits";
+import { CREDIT_COSTS, taskExecutionCost } from "@/lib/credits";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
+import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { buildArtifactGenerationPrompt, type EmployeeAdvocacyProfile } from "@/lib/ai/prompts/proactive-assistant";
-import type { AppUser, ClientTask, ManagedTaskType, TaskOwner } from "@/lib/types";
+import type { AppUser, ClientTask, CustomAgent, ManagedTaskType, TaskOwner } from "@/lib/types";
 import { logger } from "@/services/logger";
 import type { ModelId } from "@/lib/constants";
 
@@ -88,18 +90,35 @@ const PRODUCT_KEYWORDS: Array<{ taskType: ManagedTaskType; pattern: RegExp }> = 
 
 /**
  * The credit price of executing this task, resolved against what will ACTUALLY
- * run: a task that dispatches to a managed product charges that product's
- * rate (media-heavy > text-only); everything else — integration actions, tasks
- * no product fits, or the service being unconfigured — charges the flat
- * in-process baseline. Charging call sites (start, re-run, autopilot) must all
- * price through here so the charge always matches the dispatch decision in
- * runTaskExecution below.
+ * run (must mirror runTaskExecution's dispatch decision so the charge always
+ * matches the run):
+ *   - custom-agent task  → that agent's creditCost (or the customAgentRun default)
+ *   - managed product    → that product's rate (media-heavy > text-only)
+ *   - anything else       → the flat in-process baseline
+ * Async because the custom-agent price lives on the CustomAgent doc. Charging
+ * call sites (start, re-run, autopilot) all await this.
  */
-export function plannedTaskExecutionCost(task: ClientTask): number {
-  const dispatchesToProduct =
-    resolveTaskType(task) === "content_generation" && isAgentServiceConfigured();
-  const product = dispatchesToProduct ? resolveTaskProduct(task) : null;
-  return taskExecutionCost(product?.taskType ?? null);
+export async function plannedTaskExecutionCost(task: ClientTask): Promise<number> {
+  if (resolveTaskType(task) === "content_generation" && isAgentServiceConfigured()) {
+    const customAgentId = resolveTaskCustomAgentId(task);
+    if (customAgentId) {
+      const agent = await getCustomAgent(customAgentId);
+      return agent?.creditCost ?? CREDIT_COSTS.customAgentRun;
+    }
+    const product = resolveTaskProduct(task);
+    if (product) return taskExecutionCost(product.taskType);
+  }
+  return taskExecutionCost(null);
+}
+
+/**
+ * The custom agent (git-imported, allowlisted per client) bound to this task,
+ * or null. Only an explicit link counts — custom agents are never inferred
+ * from title keywords the way managed products are.
+ */
+export function resolveTaskCustomAgentId(task: ClientTask): string | null {
+  const id = task.metadata?.customAgentId;
+  return typeof id === "string" && id.length > 0 ? id : null;
 }
 
 /**
@@ -167,6 +186,22 @@ function buildTaskBrief(
   }
 }
 
+/**
+ * Free-text prompt for a custom-agent run (the agent's own system prompt lives
+ * in its stored `instructions`; this is only the per-run request). On a re-run
+ * the client's feedback is appended so the agent refines rather than repeats.
+ */
+function buildCustomAgentPrompt(task: ClientTask, adjustmentFeedback?: string): string {
+  const base =
+    task.description && task.description.trim()
+      ? `${task.title}\n\n${task.description.trim()}`
+      : task.title;
+  const revision = adjustmentFeedback
+    ? `\n\nREVISION REQUEST — a previous version was reviewed by the client; incorporate every point: "${adjustmentFeedback}"`
+    : "";
+  return `${base}${revision}`;
+}
+
 /* ── Core single-task runner ─────────────────────────────────────── */
 
 /**
@@ -194,6 +229,82 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
   const previousArtifact = adjustmentFeedback
     ? (task.metadata?.artifact as string | undefined)
     : undefined;
+
+  // ── Path 0: dispatch to a bound custom agent (git-imported lab product) ──
+  // Custom agents are the dynamic half of the roster — checked before the
+  // managed products so an explicit assignment always wins. Runs through the
+  // agent service's generic `custom` task type via submitCustomAgentJob; the
+  // webhook resolves the task by its externalJobId / karos_task_id echo, same
+  // as a managed run. Same executing/refund contract on failure.
+  if (taskType === "content_generation" && isAgentServiceConfigured()) {
+    const customAgentId = resolveTaskCustomAgentId(task);
+    if (customAgentId) {
+      // Re-verify the client still has this agent allowlisted — it may have
+      // been revoked between task creation and execution.
+      const agent: CustomAgent | null = (client.customAgentIds ?? []).includes(customAgentId)
+        ? await getCustomAgent(customAgentId)
+        : null;
+      if (!agent || !agent.enabled) {
+        await updateClientTask(taskId, {
+          status: "pending",
+          metadata: {
+            ...(task.metadata ?? {}),
+            executing: false,
+            externalJobId: null,
+            executionError:
+              "The assigned agent is no longer available for this client. Reassign the task or ask your Karos team.",
+          },
+          updatedAt: Date.now(),
+        });
+        await refundJobCharge(
+          taskId,
+          `Auto-refund · agent unavailable · ${task.title.slice(0, 80)}`,
+        ).catch((e) => console.error(`[engine] custom-agent refund failed for ${taskId}:`, e));
+        revalidatePath("/tasks");
+        revalidatePath(`/clients/${clientId}`);
+        return;
+      }
+      const result = await submitCustomAgentJob(TASK_ENGINE_ACTOR, {
+        agentId: agent.id,
+        clientId,
+        prompt: buildCustomAgentPrompt(task, adjustmentFeedback),
+        taskId,
+      }).catch((e) => ({ jobId: undefined, error: e instanceof Error ? e.message : "submit failed" }));
+
+      if (result.jobId && !result.error) {
+        await updateClientTask(taskId, {
+          metadata: {
+            ...(task.metadata ?? {}),
+            executing: true,
+            type: "content_generation",
+            customAgentId: agent.id,
+            agentName: agent.name,
+            externalJobId: result.jobId,
+            executionError: null,
+          },
+          updatedAt: Date.now(),
+        });
+      } else {
+        await updateClientTask(taskId, {
+          status: "pending",
+          metadata: {
+            ...(task.metadata ?? {}),
+            executing: false,
+            externalJobId: null,
+            executionError: `The ${agent.name} agent couldn't be reached — please try again. (${result.error ?? "submission failed"})`,
+          },
+          updatedAt: Date.now(),
+        });
+        await refundJobCharge(
+          taskId,
+          `Auto-refund · agent dispatch failed · ${task.title.slice(0, 80)}`,
+        ).catch((e) => console.error(`[engine] custom-agent dispatch refund failed for ${taskId}:`, e));
+      }
+      revalidatePath("/tasks");
+      revalidatePath(`/clients/${clientId}`);
+      return;
+    }
+  }
 
   // ── Path 1: dispatch to the mapped ecosystem agent (managed product) ──
   // The task stays in_progress + executing; the webhook (or the agent-service

@@ -9,11 +9,10 @@ import type { Asset } from "@/lib/types";
 export default async function AssetsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ clientId?: string; view?: string; status?: string }>;
+  searchParams: Promise<{ clientId?: string; status?: string }>;
 }) {
   const user = await requireUser();
-  const { clientId: viewClientId, view, status } = await searchParams;
-  const initialView = view === "library" ? "library" : "calendar";
+  const { clientId: viewClientId, status } = await searchParams;
   const initialStatus: Asset["status"] | undefined =
     status === "draft" || status === "approved" || status === "scheduled" || status === "delivered" || status === "published"
       ? status
@@ -37,7 +36,7 @@ export default async function AssetsPage({
     return (
       <>
         <PageHeader title="Library" description="Your content library and delivery calendar." />
-        <AssetsView assets={assets} viewerIsClient initialView={initialView} initialStatus={initialStatus} />
+        <AssetsView assets={assets} initialStatus={initialStatus} />
       </>
     );
   }
@@ -56,7 +55,7 @@ export default async function AssetsPage({
     return (
       <>
         <PageHeader title={`${viewClient.name} · Library`} description="Content library and delivery calendar." />
-        <AssetsView assets={clientAssets} initialView={initialView} initialStatus={initialStatus} />
+        <AssetsView assets={clientAssets} initialStatus={initialStatus} />
       </>
     );
   }
@@ -73,7 +72,6 @@ export default async function AssetsPage({
         <AssetsView
           assets={assets}
           canApprove
-          initialView={initialView}
           initialStatus={initialStatus}
           clientNames={Object.fromEntries(clients.map((client) => [client.id, client.name]))}
         />

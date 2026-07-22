@@ -229,7 +229,7 @@ export function SeoGeoPanel({
   const gaps = buildGapViews(insights.gaps, insights.clientId);
   const prompts = buildPromptViews(insights);
   const generic = genericFlagPrefill(insights);
-  const citationLeaderboard = insights.citationLeaderboard;
+  const citationLeaderboard = insights.citationLeaderboard ?? [];
 
   const measuredEngines = engines.filter((e) => e.status === "measured");
   const unmeasuredEngines = engines.filter((e) => e.status !== "measured");

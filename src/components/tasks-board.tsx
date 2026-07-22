@@ -1,92 +1,111 @@
 "use client";
 
-import { useState, useTransition, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Icon } from "@/components/icon";
-import { Badge } from "@/components/ui";
-import { cn, relativeTime } from "@/lib/utils";
 import {
-  updateTaskStatusAction,
-  deleteTaskAction,
-  updateAutopilotAction,
-  startTaskExecutionAction,
-} from "@/lib/actions";
+  DndContext,
+  PointerSensor,
+  closestCorners,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+  type DraggableAttributes,
+  type UniqueIdentifier,
+} from "@dnd-kit/core";
+import type { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Icon } from "@/components/icon";
+import { Badge, EmptyState } from "@/components/ui";
+import { cn, relativeTime } from "@/lib/utils";
+import { deleteTaskAction, updateAutopilotAction, updateTaskStatusAction } from "@/lib/actions";
 import { TaskTicketModal } from "@/components/task-ticket-modal";
-import type { ClientTask, TaskOwner, TaskStatus, TaskSource, Role } from "@/lib/types";
+import type { ClientTask, Role, TaskOwner, TaskSource, TaskStatus } from "@/lib/types";
 
-/* ── Constants ───────────────────────────────────────────────────── */
+type BoardStatus = Exclude<TaskStatus, "archived">;
+type OwnerTab = "karos" | "client";
+type StatusFilter = "all" | BoardStatus;
+type BoardTask = ClientTask & { _clientName?: string };
 
-/* Sources are categories, not judgments — they all render neutral. The label
-   and icon carry the meaning; color is reserved for the good/bad scale. */
-const SOURCE_META: Record<TaskSource, { label: string; icon: string; color: string }> = {
-  gmail:               { label: "Operational Intel", icon: "Globe",      color: "#9c9ca3" },
-  competitor_research: { label: "Competitor",        icon: "TrendingUp", color: "#9c9ca3" },
-  brand_audit:         { label: "Brand Audit",       icon: "Search",     color: "#9c9ca3" },
-  content_dispatch:    { label: "Content",           icon: "Zap",        color: "#9c9ca3" },
-  copilot:             { label: "AI Copilot",        icon: "Bot",        color: "#9c9ca3" },
-  manual:              { label: "Manual",            icon: "PenLine",    color: "#9c9ca3" },
-  custom:              { label: "Quick Add",         icon: "Plus",       color: "#9c9ca3" },
-};
-
-const PRIORITY_BADGE: Record<string, { tone: "danger" | "warning" | "neon" | "neutral" }> = {
-  high:   { tone: "danger"  },
-  medium: { tone: "warning" },
-  low:    { tone: "neutral" },
-};
-
-/** Karos-managed pipeline: AI executes, deliverables pause in Review before Done. */
-const KAROS_COLUMNS: { status: TaskStatus; label: string; icon: string }[] = [
-  { status: "pending",        label: "Pending",        icon: "Circle"      },
-  { status: "in_progress",    label: "In Progress",    icon: "Clock"       },
-  { status: "review_pending", label: "Review Pending", icon: "Eye"         },
-  { status: "completed",      label: "Done",           icon: "CheckCircle" },
+const BOARD_COLUMNS: { status: BoardStatus; label: string; icon: string }[] = [
+  { status: "pending", label: "Pending", icon: "Circle" },
+  { status: "in_progress", label: "In Progress", icon: "PlayCircle" },
+  { status: "review_pending", label: "Review Pending", icon: "Eye" },
+  { status: "completed", label: "Done", icon: "CheckCircle" },
 ];
 
-/** Client-managed board: no review stage — strictly To Do / In Progress / Done. */
-const CLIENT_COLUMNS: { status: TaskStatus; label: string; icon: string }[] = [
-  { status: "pending",     label: "To Do",       icon: "Circle"      },
-  { status: "in_progress", label: "In Progress", icon: "Clock"       },
-  { status: "completed",   label: "Done",        icon: "CheckCircle" },
-];
+const SOURCE_META: Record<TaskSource, { label: string; icon: string }> = {
+  gmail: { label: "Operational Intel", icon: "Globe" },
+  competitor_research: { label: "Competitor", icon: "TrendingUp" },
+  brand_audit: { label: "Brand Audit", icon: "Search" },
+  content_dispatch: { label: "Content", icon: "Zap" },
+  copilot: { label: "AI Copilot", icon: "Bot" },
+  manual: { label: "Manual", icon: "PenLine" },
+  custom: { label: "Quick Add", icon: "Plus" },
+};
 
-/** Infer the owner from task source when the owner field is absent (backward compat). */
+const PRIORITY_META: Record<string, { tone: "danger" | "warning" | "neutral"; label: string }> = {
+  high: { tone: "danger", label: "High" },
+  medium: { tone: "warning", label: "Medium" },
+  low: { tone: "neutral", label: "Low" },
+};
+
+const STATUS_META: Record<BoardStatus, { label: string; dot: string }> = {
+  pending: { label: "Pending", dot: "bg-muted-2" },
+  in_progress: { label: "Running Agent", dot: "bg-neon" },
+  review_pending: { label: "Review Pending", dot: "bg-warning" },
+  completed: { label: "Done", dot: "bg-success" },
+};
+
+const PRIORITY_RANK: Record<string, number> = { high: 80, medium: 50, low: 25 };
+
 function inferOwner(task: ClientTask): TaskOwner {
   if (task.owner) return task.owner;
   return task.source === "manual" ? "client_managed" : "karos_managed";
 }
 
-function nextStatusFor(current: TaskStatus, owner: TaskOwner): TaskStatus {
-  if (owner === "client_managed") {
-    // No review stage on the client board.
-    switch (current) {
-      case "pending":     return "in_progress";
-      case "in_progress": return "completed";
-      default:            return "pending";
-    }
-  }
-  switch (current) {
-    case "pending":        return "in_progress";
-    case "in_progress":    return "review_pending";
-    case "review_pending": return "completed";
-    default:               return "pending";
-  }
+function statusAfterDrop(status: BoardStatus): { status: BoardStatus; completedAt: number | null } {
+  return { status, completedAt: status === "completed" ? Date.now() : null };
 }
 
-/** Weight-first ordering inside a column (fallback: priority, then recency). */
-const PRIORITY_RANK: Record<string, number> = { high: 80, medium: 50, low: 25 };
-function taskWeight(t: ClientTask): number {
-  return typeof t.weight === "number" ? t.weight : PRIORITY_RANK[t.priority] ?? 0;
+function taskWeight(task: ClientTask): number {
+  return typeof task.weight === "number" ? task.weight : PRIORITY_RANK[task.priority] ?? 0;
 }
-function byWeight(a: ClientTask, b: ClientTask): number {
+
+function compareByWeight(a: ClientTask, b: ClientTask): number {
   return taskWeight(b) - taskWeight(a) || b.createdAt - a.createdAt;
 }
 
-/* ── Autopilot toggle ────────────────────────────────────────────── */
+function idToString(id: UniqueIdentifier | null | undefined): string | null {
+  if (typeof id === "string") return id;
+  if (typeof id === "number") return String(id);
+  return null;
+}
+
+function findStatusFromOver(overId: string | null, tasks: BoardTask[]): BoardStatus | null {
+  if (!overId) return null;
+  if (overId.startsWith("column:")) {
+    const status = overId.replace("column:", "") as BoardStatus;
+    return BOARD_COLUMNS.some((c) => c.status === status) ? status : null;
+  }
+  const overTask = tasks.find((t) => t.id === overId);
+  return overTask?.status === "archived" ? null : (overTask?.status as BoardStatus | undefined) ?? null;
+}
 
 function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boolean }) {
   const [isOn, setIsOn] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  // Store-previous-prop pattern (avoids the cascading-render setState-in-effect anti-pattern).
+  const [prevEnabled, setPrevEnabled] = useState(enabled);
+  if (prevEnabled !== enabled) {
+    setPrevEnabled(enabled);
+    setIsOn(enabled);
+  }
 
   function toggle() {
     const next = !isOn;
@@ -102,322 +121,302 @@ function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boo
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-4 py-3">
-      <div
-        className={cn(
-          "flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors",
-          isOn ? "bg-success/10 text-success" : "bg-surface-3 text-muted",
-        )}
-      >
-        <Icon name="Zap" className="h-4 w-4" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-foreground">Autopilot Mode</p>
-        <p className="text-xs text-muted truncate">
-          {isOn
-            ? "Karos AI is executing pending tasks automatically"
-            : "Tasks are queued. Toggle on to execute automatically"}
-        </p>
-        {error && <p className="mt-0.5 text-xs text-danger">{error}</p>}
-      </div>
+    <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
       <button
         onClick={toggle}
         disabled={isPending}
         aria-checked={isOn}
         role="switch"
-        className={cn(
-          "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25 disabled:opacity-50",
-          isOn ? "bg-success" : "bg-surface-3",
-        )}
+        className="flex items-center gap-2 text-xs text-muted disabled:opacity-50"
       >
         <span
           className={cn(
-            "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-primary shadow-md transition-transform duration-200",
-            isOn ? "translate-x-5" : "translate-x-0",
+            "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
+            isOn ? "bg-success" : "bg-surface-3",
           )}
-        />
+        >
+          <span
+            className={cn(
+              "inline-block h-4 w-4 rounded-full bg-primary shadow-sm transition-transform",
+              isOn ? "translate-x-4" : "translate-x-0.5",
+            )}
+          />
+        </span>
+        <span className="font-medium text-foreground">{isOn ? "Autopilot on" : "Autopilot off"}</span>
       </button>
+      {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
     </div>
   );
-}
-
-/* ── Task card ───────────────────────────────────────────────────── */
-
-interface TaskCardProps {
-  task: ClientTask & { _clientName?: string };
-  canDelete: boolean;
-  showClientName?: boolean;
-  draggable?: boolean;
-  isDragging?: boolean;
-  onStatusChange: (id: string, status: TaskStatus, clientId: string) => void;
-  onDelete: (id: string, clientId: string) => void;
-  onClick: () => void;
-  onDragStart?: (e: React.DragEvent) => void;
-  onDragEnd?: () => void;
 }
 
 function TaskCard({
   task,
-  canDelete,
   showClientName,
-  draggable: isDraggable = false,
-  isDragging = false,
-  onStatusChange,
+  dragging,
+  onOpen,
+  onMove,
+  dragHandle,
+  canDelete,
   onDelete,
-  onClick,
-  onDragStart,
-  onDragEnd,
-}: TaskCardProps) {
-  const src = SOURCE_META[task.source] ?? SOURCE_META.manual;
-  const prio = PRIORITY_BADGE[task.priority] ?? { tone: "neutral" as const };
+}: {
+  task: BoardTask;
+  showClientName?: boolean;
+  dragging: boolean;
+  onOpen: () => void;
+  onMove: (status: BoardStatus) => void;
+  dragHandle?: { attributes: DraggableAttributes; listeners: SyntheticListenerMap | undefined };
+  canDelete: boolean;
+  onDelete: () => void;
+}) {
+  const priority = PRIORITY_META[task.priority] ?? PRIORITY_META.low;
+  const source = SOURCE_META[task.source] ?? SOURCE_META.manual;
+  const status = STATUS_META[task.status as BoardStatus];
   const isExecuting = task.metadata?.executing === true;
   const hasError = Boolean(task.metadata?.executionError);
-  const nextStatus = nextStatusFor(task.status, inferOwner(task));
-  const isReviewPending = task.status === "review_pending";
-  const autoCompletedReason = task.metadata?.autoCompletedReason as string | undefined;
+  const owner = inferOwner(task);
 
   return (
-    <div
-      draggable={isDraggable && !isExecuting}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onClick={onClick}
+    <article
+      onClick={onOpen}
       className={cn(
-        "group relative rounded-md border bg-surface p-3.5 transition-all duration-150 cursor-pointer",
-        task.status === "completed"
-          ? "border-border opacity-60"
-          : isReviewPending
-            ? "border-warning/40 bg-warning/[0.03] hover:border-warning/60"
-            : "border-border hover:border-border-strong hover:shadow-[0_2px_12px_rgba(0,0,0,0.25)]",
-        isDraggable && !isDragging && "cursor-grab active:cursor-grabbing",
-        isDragging && "opacity-40 cursor-grabbing ring-2 ring-foreground/25",
-        isExecuting && "animate-pulse",
+        "group relative rounded-md border bg-surface px-3 py-2.5 transition-all duration-150",
+        "cursor-pointer hover:-translate-y-0.5 hover:border-border-strong hover:shadow-[0_8px_20px_rgba(0,0,0,0.22)]",
+        dragging && "opacity-50 ring-2 ring-foreground/25",
       )}
     >
-      {/* Executing overlay banner */}
-      {isExecuting && (
-        <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-neon/10 px-2 py-1">
-          <Icon name="Loader" className="h-3 w-3 animate-spin text-neon" />
-          <span className="text-[10px] font-medium text-neon">AI Working…</span>
-        </div>
-      )}
+      <button
+        className="absolute right-1 top-1 z-10 inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-2 opacity-0 transition-opacity hover:bg-surface-2 hover:text-muted group-hover:opacity-100"
+        {...(dragHandle?.attributes ?? {})}
+        {...(dragHandle?.listeners ?? {})}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        title="Drag task"
+        aria-label="Drag task"
+      >
+        <Icon name="GripVertical" className="h-3.5 w-3.5" />
+      </button>
 
-      {/* Error badge */}
-      {hasError && !isExecuting && (
-        <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-danger/10 px-2 py-1">
-          <Icon name="AlertTriangle" className="h-3 w-3 text-danger" />
-          <span className="text-[10px] font-medium text-danger">Execution failed. Click to retry</span>
+      <div className="mb-2 flex items-center justify-between gap-2 pr-6 text-xs">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dot)} />
+          <span className="whitespace-nowrap text-[11px] font-medium text-muted">{status.label}</span>
+          <Badge tone={priority.tone} className="shrink-0 px-1.5 py-0 text-[9px]">
+            {priority.label}
+          </Badge>
         </div>
-      )}
-
-      {/* Review pending badge */}
-      {isReviewPending && !isExecuting && (
-        <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-warning/10 px-2 py-1">
-          <Icon name="Eye" className="h-3 w-3 text-warning" />
-          <span className="text-[10px] font-medium text-warning">Ready for review</span>
+        <div className="flex shrink-0 items-center gap-1">
+          {(task.source === "copilot" || owner === "karos_managed") && (
+            <span
+              title="AI Copilot"
+              className="inline-flex h-4 w-4 items-center justify-center rounded-[4px] border border-neon/25 bg-neon/10 text-neon"
+            >
+              <Icon name="Bot" className="h-2.5 w-2.5" />
+            </span>
+          )}
+          {showClientName && task._clientName && (
+            <span
+              title={task._clientName}
+              className="max-w-[80px] truncate rounded-[4px] border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.06em] text-muted"
+            >
+              {task._clientName}
+            </span>
+          )}
         </div>
-      )}
-
-      {/* Auto-completed badge (state sync flipped this card without a drag) */}
-      {task.status === "completed" && autoCompletedReason && (
-        <div className="mb-2 flex items-center gap-1.5 rounded-[6px] bg-success/10 px-2 py-1">
-          <Icon name="Zap" className="h-3 w-3 text-success" />
-          <span className="text-[10px] font-medium text-success truncate">{autoCompletedReason}</span>
-        </div>
-      )}
-
-      {/* Source badge + priority */}
-      <div className="mb-2 flex items-center gap-2">
-        <span
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-          style={{ background: src.color + "1f", color: src.color }}
-        >
-          <Icon name={src.icon} className="h-2.5 w-2.5" />
-          {src.label}
-        </span>
-        <Badge tone={prio.tone} className="text-[9px] px-1.5 py-0">
-          {task.priority}
-        </Badge>
-        {showClientName && task._clientName && (
-          <span className="ml-auto text-[10px] text-muted-2 truncate max-w-[100px]">
-            {task._clientName}
-          </span>
-        )}
       </div>
 
-      {/* Title */}
-      <p
-        className={cn(
-          "text-sm font-medium text-foreground leading-snug",
-          task.status === "completed" && "line-through text-muted",
-        )}
-      >
-        {task.title}
-      </p>
-
-      {/* Description preview */}
-      {task.description && (
-        <p className="mt-1 text-xs text-muted line-clamp-2 leading-relaxed">
-          {task.description}
-        </p>
-      )}
-
-      {/* Footer */}
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <span className="text-[10px] text-muted-2">{relativeTime(task.createdAt)}</span>
+      {hasError && !isExecuting && (
         <div
-          className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="mb-2 rounded-md border border-danger/35 bg-danger/10 px-2 py-1.5"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Don't show status advance button for review_pending (use modal instead) */}
-          {!isReviewPending && !isExecuting && (
+          <p className="text-[11px] font-medium text-danger">Execution failed.</p>
+          <button
+            onClick={() => onMove("in_progress")}
+            className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-danger underline underline-offset-2"
+          >
+            <Icon name="RotateCcw" className="h-3 w-3" />
+            Click to retry
+          </button>
+        </div>
+      )}
+
+      {isExecuting && (
+        <div className="mb-2 flex items-center gap-1.5 rounded-md border border-neon/30 bg-neon/10 px-2 py-1">
+          <Icon name="Loader" className="h-3 w-3 animate-spin text-neon" />
+          <span className="text-[11px] font-medium text-neon">Agent running</span>
+        </div>
+      )}
+
+      <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{task.title}</h3>
+      {task.description && <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{task.description}</p>}
+
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-2">
+        {!(task.source === "copilot" || owner === "karos_managed") && (
+          <div className="inline-flex min-w-0 items-center gap-1 truncate">
+            <Icon name={source.icon} className="h-3 w-3 shrink-0" />
+            <span className="truncate">{source.label}</span>
+          </div>
+        )}
+        <span className="ml-auto shrink-0 whitespace-nowrap">{relativeTime(task.updatedAt || task.createdAt)}</span>
+      </div>
+
+      <div
+        className="mt-2 flex items-center justify-between gap-2 border-t border-white/5 pt-3 opacity-0 transition-opacity group-hover:opacity-100"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onOpen}
+            className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-foreground hover:border-border-strong"
+          >
+            <Icon name="ExternalLink" className="h-3 w-3 shrink-0" />
+            Open Details
+          </button>
+          {task.status !== "in_progress" && (
             <button
-              onClick={() => onStatusChange(task.id, nextStatus, task.clientId)}
-              className="flex h-6 px-1.5 items-center gap-1 rounded-[6px] text-[10px] text-muted hover:bg-surface-2 hover:text-foreground transition-colors"
-              title={`Move to ${nextStatus.replace(/_/g, " ")}`}
+              onClick={() => onMove("in_progress")}
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1.5 text-xs font-medium text-neon hover:border-neon/50"
             >
-              <Icon
-                name={
-                  nextStatus === "completed"
-                    ? "Check"
-                    : nextStatus === "in_progress"
-                      ? "Play"
-                      : nextStatus === "review_pending"
-                        ? "Eye"
-                        : "RotateCcw"
-                }
-                className="h-3 w-3"
-              />
-              {nextStatus.replace(/_/g, " ")}
-            </button>
-          )}
-          {canDelete && (
-            <button
-              onClick={() => onDelete(task.id, task.clientId)}
-              className="flex h-6 w-6 items-center justify-center rounded-[6px] text-muted hover:bg-danger/10 hover:text-danger transition-colors"
-              title="Delete task"
-            >
-              <Icon name="Trash2" className="h-3 w-3" />
+              <Icon name="Play" className="h-3 w-3 shrink-0" />
+              {owner === "karos_managed" ? "Run Agent" : "Start"}
             </button>
           )}
         </div>
+        {canDelete && (
+          <button
+            onClick={onDelete}
+            className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted hover:bg-danger/10 hover:text-danger"
+            title="Delete task"
+          >
+            <Icon name="Trash2" className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
+    </article>
+  );
+}
+
+function SortableTaskCard({
+  task,
+  showClientName,
+  onOpen,
+  onMove,
+  canDelete,
+  onDelete,
+}: {
+  task: BoardTask;
+  showClientName?: boolean;
+  onOpen: () => void;
+  onMove: (status: BoardStatus) => void;
+  canDelete: boolean;
+  onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: task.id,
+    data: { kind: "task-card", status: task.status },
+    disabled: task.metadata?.executing === true,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <TaskCard
+        task={task}
+        showClientName={showClientName}
+        dragging={isDragging}
+        onOpen={onOpen}
+        onMove={onMove}
+        canDelete={canDelete}
+        onDelete={onDelete}
+        dragHandle={{ attributes, listeners }}
+      />
     </div>
   );
 }
 
-/* ── Kanban column ───────────────────────────────────────────────── */
-
-function KanbanColumn({
+function BoardColumn({
   status,
   label,
   icon,
   tasks,
-  canDelete,
   showClientName,
-  enableDnD,
-  draggingId,
-  dropTarget,
-  onStatusChange,
-  onDelete,
-  onCardClick,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDrop,
+  draggingTaskId,
+  onOpenTask,
+  onMoveTask,
+  onDeleteTask,
+  canDelete,
 }: {
-  status: TaskStatus;
+  status: BoardStatus;
   label: string;
   icon: string;
-  tasks: (ClientTask & { _clientName?: string })[];
-  canDelete: boolean;
+  tasks: BoardTask[];
   showClientName?: boolean;
-  enableDnD: boolean;
-  draggingId: string | null;
-  dropTarget: TaskStatus | null;
-  onStatusChange: (id: string, s: TaskStatus, clientId: string) => void;
-  onDelete: (id: string, clientId: string) => void;
-  onCardClick: (id: string) => void;
-  onDragStart: (e: React.DragEvent, task: ClientTask) => void;
-  onDragEnd: () => void;
-  onDragOver: (e: React.DragEvent, status: TaskStatus) => void;
-  onDrop: (e: React.DragEvent, status: TaskStatus) => void;
+  draggingTaskId: string | null;
+  onOpenTask: (id: string) => void;
+  onMoveTask: (task: BoardTask, status: BoardStatus) => void;
+  onDeleteTask: (task: BoardTask) => void;
+  canDelete: boolean;
 }) {
-  const isTarget = dropTarget === status;
+  const droppableId = `column:${status}`;
+  const { setNodeRef, isOver } = useDroppable({ id: droppableId, data: { kind: "column", status } });
+  const columnStatus = STATUS_META[status];
+  const isTarget = Boolean(draggingTaskId) && isOver;
 
   return (
-    <div
-      className="flex flex-col gap-3"
-      onDragOver={enableDnD ? (e) => onDragOver(e, status) : undefined}
-      onDrop={enableDnD ? (e) => onDrop(e, status) : undefined}
-    >
-      {/* Column header */}
-      <div
-        className={cn(
-          "flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors",
-          isTarget && "bg-foreground/[0.04]",
-        )}
-      >
-        <Icon
-          name={icon}
-          className={cn(
-            "h-4 w-4",
-            status === "completed"      ? "text-success"
-            : status === "review_pending" ? "text-warning"
-            : status === "in_progress"    ? "text-warning"
-            : "text-muted",
-          )}
-        />
-        <span className="text-sm font-semibold text-foreground">{label}</span>
-        <span className="ml-auto rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-muted">
+    <section className="flex min-w-0 flex-col">
+      <div className="mb-2 flex items-center gap-2 px-1">
+        <Icon name={icon} className="h-4 w-4 text-muted" />
+        <h3 className="text-sm font-semibold text-foreground">{label}</h3>
+        <span className={cn("h-2 w-2 rounded-full", columnStatus.dot)} />
+        <span className="ml-auto rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] text-muted">
           {tasks.length}
         </span>
       </div>
-
-      {/* Drop zone + cards */}
       <div
+        ref={setNodeRef}
         className={cn(
-          "flex flex-col gap-2 min-h-[80px] rounded-md transition-all duration-150",
-          isTarget && "bg-foreground/[0.04] ring-2 ring-foreground/20 p-2",
+          "min-h-[280px] rounded-lg border border-border/70 bg-surface-2/65 p-2 transition-colors",
+          isTarget && "border-neon/45 bg-neon/10",
         )}
       >
-        {tasks.length === 0 ? (
-          <div
-            className={cn(
-              "rounded-md border border-dashed py-8 text-center transition-colors",
-              isTarget ? "border-foreground/30" : "border-border",
+        <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+          <div id={droppableId} className="flex min-h-[250px] flex-col gap-2">
+            {tasks.map((task) => (
+              <SortableTaskCard
+                key={task.id}
+                task={task}
+                showClientName={showClientName}
+                onOpen={() => onOpenTask(task.id)}
+                onMove={(next) => onMoveTask(task, next)}
+                canDelete={canDelete}
+                onDelete={() => onDeleteTask(task)}
+              />
+            ))}
+            {tasks.length === 0 && (
+              <div
+                className={cn(
+                  "flex min-h-[150px] items-center justify-center rounded-md border border-dashed text-center",
+                  isTarget ? "border-neon/50 bg-neon/10" : "border-border/90",
+                )}
+              >
+                <p className="px-4 text-xs text-muted-2">{isTarget ? "Drop task here" : `No ${label.toLowerCase()} tasks`}</p>
+              </div>
             )}
-          >
-            <p className="text-xs text-muted-2">
-              {isTarget ? "Drop here" : `No ${label.toLowerCase()} tasks`}
-            </p>
           </div>
-        ) : (
-          tasks.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              canDelete={canDelete}
-              showClientName={showClientName}
-              draggable={enableDnD}
-              isDragging={draggingId === task.id}
-              onStatusChange={onStatusChange}
-              onDelete={onDelete}
-              onClick={() => onCardClick(task.id)}
-              onDragStart={(e) => onDragStart(e, task)}
-              onDragEnd={onDragEnd}
-            />
-          ))
-        )}
+        </SortableContext>
       </div>
-    </div>
+    </section>
   );
 }
 
-/* ── Main board ──────────────────────────────────────────────────── */
-
 interface Props {
-  tasks: (ClientTask & { _clientName?: string })[];
+  tasks: BoardTask[];
   currentUserRole: Role;
   showClientName?: boolean;
   clientId?: string;
@@ -432,18 +431,18 @@ export function TasksBoard({
   autopilotEnabled = false,
 }: Props) {
   const router = useRouter();
-  const [localTasks, setLocalTasks] = useState(tasks);
-  const [activeTab, setActiveTab] = useState<"karos" | "client">("karos");
+  const [localTasks, setLocalTasks] = useState<BoardTask[]>(tasks);
+  const [activeTab, setActiveTab] = useState<OwnerTab>("karos");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [clientFilter, setClientFilter] = useState<string>("all");
   const [execError, setExecError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<TaskStatus | null>(null);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const dragSnapshotRef = useRef<BoardTask[] | null>(null);
   const [, startTransition] = useTransition();
-  // Staff-only advanced board toggle (keeps simplified view as default for clients)
-  const [showKanban, setShowKanban] = useState(false);
 
-  // Everyone can dismiss a task they're not interested in — the server action
-  // scopes clients to their own board.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const canDelete = true;
   void currentUserRole;
 
@@ -456,295 +455,306 @@ export function TasksBoard({
     setLocalTasks(tasks);
   }
 
-  const karosTasks = localTasks.filter((t) => inferOwner(t) === "karos_managed");
-  const clientTasks = localTasks.filter((t) => inferOwner(t) === "client_managed");
-  const visibleTasks = activeTab === "karos" ? karosTasks : clientTasks;
-  const selectedTask = selectedTaskId
-    ? localTasks.find((t) => t.id === selectedTaskId) ?? null
-    : null;
-
-  // Poll while any tasks are executing — triggers router.refresh() every 4s
   const hasExecuting = localTasks.some((t) => t.metadata?.executing === true);
-  const stableRefresh = useCallback(() => router.refresh(), [router]);
+  const refreshBoard = useCallback(() => router.refresh(), [router]);
   useEffect(() => {
     if (!hasExecuting) return;
-    const id = setInterval(stableRefresh, 4000);
+    const id = setInterval(refreshBoard, 4000);
     return () => clearInterval(id);
-  }, [hasExecuting, stableRefresh]);
+  }, [hasExecuting, refreshBoard]);
 
-  /* Status change handler — detects karos execution path.
-     Moving any karos_managed task into In Progress (drag, card button, or
-     modal footer) triggers its mapped ecosystem agent. */
-  function handleStatusChange(id: string, status: TaskStatus, cid: string) {
-    const task = localTasks.find((t) => t.id === id);
-    const isKarosExecution =
-      status === "in_progress" &&
-      task &&
-      inferOwner(task) === "karos_managed" &&
-      task.status === "pending";
+  const tabCounts = useMemo(
+    () => ({
+      karos: localTasks.filter((t) => inferOwner(t) === "karos_managed").length,
+      client: localTasks.filter((t) => inferOwner(t) === "client_managed").length,
+    }),
+    [localTasks],
+  );
 
-    if (isKarosExecution) {
-      // Optimistic: mark as in_progress + executing immediately
-      setLocalTasks((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? { ...t, status: "in_progress", metadata: { ...(t.metadata ?? {}), executing: true } }
-            : t,
-        ),
+  const clientOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(localTasks.map((t) => t._clientName).filter((name): name is string => Boolean(name))),
+      ).sort((a, b) => a.localeCompare(b)),
+    [localTasks],
+  );
+
+  const visibleTasks = useMemo(() => {
+    const ownerFiltered = localTasks.filter((task) =>
+      activeTab === "karos" ? inferOwner(task) === "karos_managed" : inferOwner(task) === "client_managed",
+    );
+    const query = search.trim().toLowerCase();
+
+    return ownerFiltered.filter((task) => {
+      if (statusFilter !== "all" && task.status !== statusFilter) return false;
+      if (clientFilter !== "all" && task._clientName !== clientFilter) return false;
+      if (!query) return true;
+      return (
+        task.title.toLowerCase().includes(query) ||
+        task.description?.toLowerCase().includes(query) ||
+        task._clientName?.toLowerCase().includes(query)
       );
-      setExecError(null);
-      startTransition(async () => {
-        const res = await startTaskExecutionAction(id, cid);
-        if (!res.ok) {
-          // Revert the optimistic in_progress flip and show why (e.g. credits).
-          setLocalTasks((prev) =>
-            prev.map((t) =>
-              t.id === id
-                ? { ...t, status: "pending", metadata: { ...(t.metadata ?? {}), executing: false } }
-                : t,
-            ),
-          );
-          setExecError(res.error ?? "Could not start the task");
-        }
-        // Refresh layout so notification bell reflects updated task counts.
-        router.refresh();
-      });
-    } else {
-      const previous = task;
-      setLocalTasks((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? { ...t, status, completedAt: status === "completed" ? Date.now() : null }
-            : t,
-        ),
-      );
-      setExecError(null);
-      startTransition(async () => {
-        const res = await updateTaskStatusAction(id, status, cid);
-        if (!res.ok && previous) {
-          // Revert the optimistic move and say why (claim lost, credits, …).
-          setLocalTasks((prev) => prev.map((t) => (t.id === id ? previous : t)));
-          setExecError(res.error ?? "Could not update the task");
-        }
-        // Refresh layout so notification bell reflects updated task counts.
-        router.refresh();
-      });
-    }
+    });
+  }, [activeTab, clientFilter, localTasks, search, statusFilter]);
+
+  const selectedTask = selectedTaskId ? localTasks.find((t) => t.id === selectedTaskId) ?? null : null;
+
+  function setTaskStatusLocal(taskId: string, status: BoardStatus) {
+    const patch = statusAfterDrop(status);
+    setLocalTasks((prev) =>
+      prev.map((task) =>
+        task.id === taskId ? { ...task, status: patch.status, completedAt: patch.completedAt, updatedAt: Date.now() } : task,
+      ),
+    );
   }
 
-  function handleDelete(id: string, cid: string) {
-    const previous = localTasks.find((t) => t.id === id);
-    setLocalTasks((prev) => prev.filter((t) => t.id !== id));
+  function commitStatusChange(task: BoardTask, nextStatus: BoardStatus, fallbackSnapshot?: BoardTask[]) {
+    const previous = task;
+    setTaskStatusLocal(task.id, nextStatus);
     setExecError(null);
+
     startTransition(async () => {
-      const res = await deleteTaskAction(id, cid);
-      if (!res.ok && previous) {
-        // Put the card back — e.g. the task is mid-execution and undeletable.
-        setLocalTasks((prev) => [...prev, previous]);
-        setExecError(res.error ?? "Could not delete the task");
+      const res = await updateTaskStatusAction(task.id, nextStatus, task.clientId);
+      if (!res.ok) {
+        if (fallbackSnapshot) setLocalTasks(fallbackSnapshot);
+        else setLocalTasks((prev) => prev.map((item) => (item.id === previous.id ? previous : item)));
+        setExecError(res.error ?? "Could not update task status");
       }
       router.refresh();
     });
   }
 
-  /* DnD handlers (client tab only) */
-  function handleDragStart(e: React.DragEvent, task: ClientTask) {
-    setDraggingId(task.id);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("taskId", task.id);
+  function handleDelete(task: BoardTask) {
+    const previous = localTasks;
+    setLocalTasks((prev) => prev.filter((t) => t.id !== task.id));
+    setExecError(null);
+    startTransition(async () => {
+      const res = await deleteTaskAction(task.id, task.clientId);
+      if (!res.ok) {
+        setLocalTasks(previous);
+        setExecError(res.error ?? "Could not delete task");
+      }
+      router.refresh();
+    });
   }
 
-  function handleDragEnd() {
-    setDraggingId(null);
-    setDropTarget(null);
+  function handleDragStart(event: DragStartEvent) {
+    const taskId = idToString(event.active.id);
+    if (!taskId) return;
+    dragSnapshotRef.current = localTasks;
+    setDraggingTaskId(taskId);
   }
 
-  function handleDragOver(e: React.DragEvent, status: TaskStatus) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDropTarget(status);
+  function handleDragOver(event: DragOverEvent) {
+    const activeId = idToString(event.active.id);
+    const overStatus = findStatusFromOver(idToString(event.over?.id), localTasks);
+    if (!activeId || !overStatus) return;
+
+    const activeTask = localTasks.find((task) => task.id === activeId);
+    if (!activeTask) return;
+    if (activeTask.status === overStatus) return;
+    setTaskStatusLocal(activeTask.id, overStatus);
   }
 
-  function handleDrop(e: React.DragEvent, targetStatus: TaskStatus) {
-    e.preventDefault();
-    const taskId = e.dataTransfer.getData("taskId");
-    const task = localTasks.find((t) => t.id === taskId);
-    if (task && task.status !== targetStatus) {
-      handleStatusChange(taskId, targetStatus, task.clientId);
+  function handleDragCancel() {
+    if (dragSnapshotRef.current) setLocalTasks(dragSnapshotRef.current);
+    setDraggingTaskId(null);
+    dragSnapshotRef.current = null;
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const activeId = idToString(event.active.id);
+    const targetStatus = findStatusFromOver(idToString(event.over?.id), localTasks);
+    const snapshot = dragSnapshotRef.current;
+    setDraggingTaskId(null);
+    dragSnapshotRef.current = null;
+
+    if (!activeId || !targetStatus || !snapshot) {
+      if (snapshot) setLocalTasks(snapshot);
+      return;
     }
-    setDraggingId(null);
-    setDropTarget(null);
+
+    const previousTask = snapshot.find((task) => task.id === activeId);
+    if (!previousTask) {
+      setLocalTasks(snapshot);
+      return;
+    }
+
+    if (previousTask.status === targetStatus) {
+      setLocalTasks(snapshot);
+      return;
+    }
+
+    commitStatusChange(previousTask, targetStatus, snapshot);
   }
+
+  // Client-owned work never sits in "Review Pending" (that state is for AI drafts
+  // awaiting review) — the "Depending on you" tab only needs 3 columns.
+  const visibleColumns = useMemo(
+    () => (activeTab === "client" ? BOARD_COLUMNS.filter((c) => c.status !== "review_pending") : BOARD_COLUMNS),
+    [activeTab],
+  );
+
+  const tasksByColumn = useMemo(() => {
+    const map: Record<BoardStatus, BoardTask[]> = {
+      pending: [],
+      in_progress: [],
+      review_pending: [],
+      completed: [],
+    };
+
+    for (const task of visibleTasks) {
+      if (task.status === "archived") continue;
+      map[task.status].push(task);
+    }
+
+    for (const key of Object.keys(map) as BoardStatus[]) {
+      map[key].sort(compareByWeight);
+    }
+    return map;
+  }, [visibleTasks]);
 
   if (localTasks.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-[var(--radius)] border border-dashed border-border py-20 text-center">
-        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
-          <Icon name="CheckSquare" className="h-6 w-6" />
-        </div>
-        <p className="text-sm font-medium text-foreground">No tasks yet</p>
-        <p className="mt-1 max-w-sm text-sm text-muted">
-          Tasks appear here when the AI Copilot analyzes your market footprint, researches competitors, or runs an audit.
-          Open the chatbot to get started.
-        </p>
-      </div>
+      <EmptyState
+        icon={<Icon name="CheckSquare" className="h-10 w-10" />}
+        title="No tasks yet"
+        description="Tasks appear here when AI Copilot or your team creates actionable work items."
+      />
     );
   }
 
   return (
     <>
-      {/* Tab switcher (renamed for Task Map UX) */}
-      <div className="mb-5 flex items-center gap-1 rounded-md border border-border bg-surface-2 p-1">
-        <button
-          onClick={() => setActiveTab("karos")}
-          className={cn(
-            "flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-150",
-            activeTab === "karos"
-              ? "bg-surface shadow-[0_1px_4px_rgba(0,0,0,0.3)] text-foreground"
-              : "text-muted hover:text-foreground",
-          )}
-        >
-          <Icon name="Sparkles" className="h-3.5 w-3.5" />
-          Automated
-          <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
-            {karosTasks.length}
-          </span>
-        </button>
-        <button
-          onClick={() => setActiveTab("client")}
-          className={cn(
-            "flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-150",
-            activeTab === "client"
-              ? "bg-surface shadow-[0_1px_4px_rgba(0,0,0,0.3)] text-foreground"
-              : "text-muted hover:text-foreground",
-          )}
-        >
-          <Icon name="User" className="h-3.5 w-3.5" />
-          Depending on you
-          <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-muted">
-            {clientTasks.length}
-          </span>
-        </button>
+      <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border bg-surface-2/70 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex items-center gap-1 rounded-md border border-border bg-surface p-1">
+            <button
+              onClick={() => setActiveTab("karos")}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                activeTab === "karos" ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground",
+              )}
+            >
+              <Icon name="Sparkles" className="h-3.5 w-3.5" />
+              Automated
+              <span className="rounded-full border border-border bg-surface-3 px-1.5 py-0 text-[10px] text-muted">
+                {tabCounts.karos}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab("client")}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                activeTab === "client" ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground",
+              )}
+            >
+              <Icon name="User" className="h-3.5 w-3.5" />
+              Depending on you
+              <span className="rounded-full border border-border bg-surface-3 px-1.5 py-0 text-[10px] text-muted">
+                {tabCounts.client}
+              </span>
+            </button>
+          </div>
+
+          <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+            <div className="relative w-full min-w-[220px] max-w-[320px]">
+              <Icon name="Search" className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-2" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by task or client"
+                className="h-9 w-full rounded-md border border-border bg-surface px-8 text-sm text-foreground placeholder:text-muted-2"
+              />
+            </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              className="h-9 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground"
+            >
+              <option value="all">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="in_progress">In Progress</option>
+              <option value="review_pending">Review Pending</option>
+              <option value="completed">Done</option>
+            </select>
+            {showClientName && (
+              <select
+                value={clientFilter}
+                onChange={(e) => setClientFilter(e.target.value)}
+                className="h-9 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground"
+              >
+                <option value="all">All clients</option>
+                {clientOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {activeTab === "karos" && clientId && (
+              <AutopilotToggle clientId={clientId} enabled={autopilotEnabled} />
+            )}
+          </div>
+        </div>
+
+        {execError && (
+          <div className="flex items-start justify-between gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
+            <p className="text-xs text-danger">{execError}</p>
+            <button onClick={() => setExecError(null)} className="text-danger/70 hover:text-danger" aria-label="Dismiss">
+              <Icon name="X" className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {activeTab === "karos" && hasExecuting && (
+          <div className="flex items-center gap-2 rounded-md border border-neon/25 bg-neon/10 px-3 py-2">
+            <Icon name="Loader" className="h-3.5 w-3.5 animate-spin text-neon" />
+            <p className="text-xs text-neon">AI agents are running. Board status updates live.</p>
+          </div>
+        )}
       </div>
 
-      {/* Autopilot toggle (Karos tab + clientId present) */}
-      {activeTab === "karos" && clientId && (
-        <div className="mb-5">
-          <AutopilotToggle clientId={clientId} enabled={autopilotEnabled} />
-        </div>
-      )}
-
-      {/* Execution error (e.g. credit denial) */}
-      {execError && (
-        <div className="mb-4 flex items-start justify-between gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
-          <p className="text-xs text-danger">{execError}</p>
-          <button
-            onClick={() => setExecError(null)}
-            className="shrink-0 text-xs text-danger/70 hover:text-danger"
-            aria-label="Dismiss"
-          >
-            <Icon name="X" className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* DnD hint */}
-      {activeTab === "client" ? (
-        <p className="mb-4 text-xs text-muted-2">
-          Drag cards between columns to update status, or click any card to open the detail view.
-        </p>
-      ) : (
-        <p className="mb-4 text-xs text-muted-2">
-          Drag a card to In Progress to dispatch its AI agent, or click any card to open the detail view.
-        </p>
-      )}
-
-      {/* Executing hint for karos tab */}
-      {activeTab === "karos" && hasExecuting && (
-        <div className="mb-4 flex items-center gap-2 rounded-md border border-neon/20 bg-neon/5 px-3 py-2">
-          <Icon name="Loader" className="h-3.5 w-3.5 animate-spin text-neon" />
-          <p className="text-xs text-neon">
-            Karos AI is generating deliverables. Cards will update automatically.
-          </p>
-        </div>
-      )}
-
-      {/* Toggle for staff to show advanced Kanban — clients keep simplified list */}
-      {currentUserRole !== "CLIENT_USER" && (
-        <div className="mb-4 flex items-center gap-3">
-          <label className="text-sm font-medium">Advanced board</label>
-          <button
-            onClick={() => setShowKanban((v) => !v)}
-            className={cn(
-              "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
-              showKanban ? "bg-success" : "bg-surface-3",
-            )}
-            aria-pressed={showKanban}
-          >
-            <span
-              className={cn(
-                "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-primary shadow-md transition-transform duration-200",
-                showKanban ? "translate-x-5" : "translate-x-0",
-              )}
-            />
-          </button>
-          <p className="text-xs text-muted-2">Toggle to view the full Kanban workflow (staff only)</p>
-        </div>
-      )}
-
-      {showKanban ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          {(activeTab === "karos" ? KAROS_COLUMNS : CLIENT_COLUMNS).map((col) => (
-            <KanbanColumn
-              key={col.status}
-              status={col.status}
-              label={col.label}
-              icon={col.icon}
-              tasks={localTasks.filter((t) => t.status === col.status && (activeTab === "karos" ? inferOwner(t) === "karos_managed" : inferOwner(t) === "client_managed"))}
-              canDelete={canDelete}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragCancel={handleDragCancel}
+        onDragEnd={handleDragEnd}
+      >
+        <div className={cn("grid grid-cols-1 gap-3", visibleColumns.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-4")}>
+          {visibleColumns.map((column) => (
+            <BoardColumn
+              key={column.status}
+              status={column.status}
+              label={column.label}
+              icon={column.icon}
+              tasks={tasksByColumn[column.status]}
               showClientName={showClientName}
-              enableDnD={activeTab === "client"}
-              draggingId={draggingId}
-              dropTarget={dropTarget}
-              onStatusChange={handleStatusChange}
-              onDelete={handleDelete}
-              onCardClick={(id) => setSelectedTaskId(id)}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
+              draggingTaskId={draggingTaskId}
+              onOpenTask={(id) => setSelectedTaskId(id)}
+              onMoveTask={(task, nextStatus) => commitStatusChange(task, nextStatus)}
+              onDeleteTask={handleDelete}
+              canDelete={canDelete}
             />
           ))}
         </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {visibleTasks
-            .filter((t) => t.status === "pending")
-            .sort(byWeight)
-            .map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                canDelete={canDelete}
-                showClientName={showClientName}
-                draggable={false}
-                isDragging={false}
-                onStatusChange={handleStatusChange}
-                onDelete={handleDelete}
-                onClick={() => setSelectedTaskId(task.id)}
-              />
-            ))}
-        </div>
-      )}
+      </DndContext>
 
-      {/* Ticket modal */}
       {selectedTask && (
         <TaskTicketModal
           task={selectedTask}
           onClose={() => setSelectedTaskId(null)}
-          onStatusChange={handleStatusChange}
+          onStatusChange={(id, status, cid) => {
+            if (status === "archived") return;
+            const current = localTasks.find((task) => task.id === id);
+            if (!current) return;
+            commitStatusChange(current, status as BoardStatus);
+            void cid;
+          }}
           onLocalUpdate={(updated) =>
-            setLocalTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
+            setLocalTasks((prev) => prev.map((task) => (task.id === updated.id ? { ...updated } : task)))
           }
         />
       )}

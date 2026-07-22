@@ -10,7 +10,6 @@ import {
   getClientReport,
   listClientCompetitors,
   listClientContextDocs,
-  listCustomAgents,
   listJobs,
   listAssets,
   updateClient,
@@ -440,6 +439,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   /* ── Proactive tool: create tasks ────────────────────────────────── */
 
   const KNOWN_PRODUCT_TYPES = new Set(MANAGED_PRODUCTS.map((p) => p.taskType));
+  // The client's allowlisted custom agents — assignable executors alongside
+  // the managed products. Validated so the model can't invent an agentId.
+  const customAgentsById = new Map(customAgents.map((a) => [a.id, a]));
 
   const createTasksTool = tool({
     description:
@@ -447,7 +449,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Call this AFTER writing your analysis response text, not before. " +
       "Use for competitor research, brand audits, content dispatch plans, or any other actionable output. " +
       "Set owner='karos_managed' for tasks Karos AI or staff will execute; 'client_managed' for tasks the client must do themselves. " +
-      "karos_managed content tasks MUST carry the productType of the executing agent from AVAILABLE AI EXECUTION AGENTS. " +
+      "Every karos_managed content task MUST name its executing agent: set productType for a managed product, OR agentId for a custom agent (from AVAILABLE AI EXECUTION AGENTS). Never set both. " +
       `The Karos AI execution queue holds at most ${MAX_ACTIVE_TASKS} active karos_managed tasks per client — karos_managed proposals beyond the free capacity are rejected; client_managed tasks are uncapped. ` +
       "Pass an empty tasks array when the board already covers all observable signals.",
     inputSchema: z.object({
@@ -467,7 +469,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               .enum(["social_post", "newsletter_issue", "blog_article", "landing_page"])
               .optional()
               .describe(
-                "The managed product (executing agent) for this task — REQUIRED for karos_managed content tasks; omit for staff deliverables and client_managed tasks",
+                "The MANAGED product (executing agent) for this task. Set for karos_managed content a managed product produces; omit when using agentId, for staff deliverables, and for client_managed tasks",
+              ),
+            agentId: z
+              .string()
+              .optional()
+              .describe(
+                "The id of a CUSTOM agent (from AVAILABLE AI EXECUTION AGENTS, marked 'custom agent') that will execute this task — use INSTEAD of productType when a custom agent fits. Must be an exact id from that list; never invented",
               ),
             platform: z
               .enum(["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"])
@@ -510,8 +518,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       let karosSlotsFree = Math.max(0, MAX_ACTIVE_TASKS - activeCount);
       let capSkipped = 0;
       for (const t of tasks) {
+        // Only an agentId the client actually has is a real executor link.
+        const validCustomAgentId =
+          t.agentId && customAgentsById.has(t.agentId) ? t.agentId : undefined;
         const reason = findDuplicateReason(
-          { title: t.title, productType: t.productType, platform: t.platform },
+          { title: t.title, productType: t.productType, customAgentId: validCustomAgentId, platform: t.platform },
           pool,
         );
         if (reason) {
@@ -534,7 +545,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           priority: t.priority as TaskPriority,
           source: t.source as TaskSource,
           owner: t.owner as TaskOwner,
-          metadata: { productType: t.productType, platform: t.platform },
+          metadata: { productType: t.productType, customAgentId: validCustomAgentId, platform: t.platform },
           createdBy: user.uid,
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -552,11 +563,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const now = Date.now();
       await Promise.all(
         freshTasks.map((t) => {
-          // Execution + sync linkage: productType routes the task to its
-          // agent; completionTrigger lets background work (an integration
-          // connect, an independent agent run) flip the task automatically.
+          // Execution + sync linkage: productType / customAgentId route the
+          // task to its executing agent; completionTrigger lets background
+          // work (an integration connect, an independent product run) flip the
+          // task automatically. A custom agent wins when both are supplied.
           const metadata: Record<string, unknown> = {};
-          if (t.owner === "karos_managed" && t.productType && KNOWN_PRODUCT_TYPES.has(t.productType)) {
+          const linkedCustomAgent =
+            t.owner === "karos_managed" && t.agentId ? customAgentsById.get(t.agentId) : undefined;
+          if (linkedCustomAgent) {
+            metadata.customAgentId = linkedCustomAgent.id;
+            metadata.agentName = linkedCustomAgent.name;
+          } else if (t.owner === "karos_managed" && t.productType && KNOWN_PRODUCT_TYPES.has(t.productType)) {
             metadata.productType = t.productType;
             metadata.completionTrigger = `product_run:${t.productType}`;
           }

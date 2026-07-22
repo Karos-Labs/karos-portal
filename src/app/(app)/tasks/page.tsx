@@ -64,10 +64,7 @@ export default async function TasksPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Task Board"
-        description={`${allTasks.length} tasks across all clients.`}
-      />
+      <PageHeader title="Task Board" />
       <TasksBoard tasks={annotatedTasks} currentUserRole={user.role} showClientName />
     </div>
   );

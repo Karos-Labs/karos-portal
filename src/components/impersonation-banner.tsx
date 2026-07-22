@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { stopImpersonationAction } from "@/lib/actions";
 import type { AppUser } from "@/lib/types";
@@ -12,11 +13,13 @@ export function ImpersonationBanner({
   realAdmin: AppUser;
   viewingAs: AppUser;
 }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   function exit() {
     startTransition(async () => {
       await stopImpersonationAction();
+      router.refresh();
     });
   }
 

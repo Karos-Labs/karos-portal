@@ -57,7 +57,7 @@ export async function updateAutopilotAction(
       try {
         await chargeClientCredits({
           clientId,
-          amount: plannedTaskExecutionCost(claimed),
+          amount: await plannedTaskExecutionCost(claimed),
           operation: "task_execution",
           reason: `Autopilot · ${claimed.title.slice(0, 80)}`,
           jobId: t.id,

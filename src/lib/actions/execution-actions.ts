@@ -48,7 +48,7 @@ async function chargeTaskExecution(
   try {
     await chargeClientCredits({
       clientId,
-      amount: plannedTaskExecutionCost(task),
+      amount: await plannedTaskExecutionCost(task),
       operation: "task_execution",
       reason: `${reasonPrefix} · ${task.title.slice(0, 80)}`,
       jobId: task.id,

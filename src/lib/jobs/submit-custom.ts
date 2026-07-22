@@ -44,6 +44,12 @@ export interface SubmitCustomAgentInput {
   clientId: string;
   prompt: string;
   contextItemIds?: string[];
+  /**
+   * Task-board task that dispatched this run. Echoed in the webhook metadata
+   * (karos_task_id) so the task sync resolves the task even if the webhook
+   * outruns the dispatcher's own externalJobId write.
+   */
+  taskId?: string;
 }
 
 export async function submitCustomAgentJob(
@@ -166,6 +172,7 @@ export async function submitCustomAgentJob(
       ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),
       metadata: {
         platform_job_id: jobId,
+        ...(input.taskId ? { karos_task_id: input.taskId } : {}),
         ...(jobToken ? { karos_job_token: jobToken, karos_mcp_url: `${origin}/api/mcp` } : {}),
       },
     });

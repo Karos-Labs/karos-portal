@@ -22,7 +22,6 @@ import {
   releaseTaskClaim,
 } from "@/lib/data";
 import { findDuplicateReason } from "@/lib/task-dedup";
-import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import {
   runTaskExecution,
   inferOwnerEngine,
@@ -101,7 +100,7 @@ export async function updateTaskStatusAction(
       try {
         await chargeClientCredits({
           clientId,
-          amount: plannedTaskExecutionCost(claimed),
+          amount: await plannedTaskExecutionCost(claimed),
           operation: "task_execution",
           reason: `Task execution · ${claimed.title.slice(0, 80)}`,
           jobId: id,
