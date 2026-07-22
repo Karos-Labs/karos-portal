@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listClients, listJobs, listActionItemsByAssignee, listUsers } from "@/lib/data";
+import { listClients, listJobs, listActionItemsByAssignee, listUsers, listCustomAgents } from "@/lib/data";
 import { Card, CardTitle, StatCard, Badge, EmptyState, Button, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { JobStatusBadge } from "@/components/job-status";

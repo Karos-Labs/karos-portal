@@ -18,6 +18,8 @@ import {
 } from "@/components/custom-agents";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
+import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
+import { assetImages } from "@/lib/asset-images";
 import type { CustomAgent, Job } from "@/lib/types";
 
 /** Strip an agent to the client-safe summary — never the instructions/skill paths. */

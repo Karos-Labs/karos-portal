@@ -38,6 +38,17 @@ const STATUS_MAP: Record<AgentServiceWebhookPayload["status"], JobStatus> = {
   cancelled: "failed",
 };
 
+const ASSET_TYPE_MAP = {
+  social_post: "social_post",
+  newsletter_issue: "email",
+  blog_article: "article",
+  landing_page: "note",
+  custom: "note",
+} as const satisfies Record<
+  "social_post" | "newsletter_issue" | "blog_article" | "landing_page" | "custom",
+  AssetType
+>;
+
 /**
  * Custom agents can produce anything, so we infer the library bucket from the
  * deliverables: images ⇒ a schedulable social post (so it auto-places on the

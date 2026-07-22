@@ -14,6 +14,7 @@ import {
   deleteClientTask,
   getClient,
   getTaskBoardCapacity,
+  listCustomAgents,
   listTaskComments,
   createTaskComment,
   chargeClientCredits,

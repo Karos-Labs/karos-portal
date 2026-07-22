@@ -477,6 +477,12 @@ export function AssetCard({
   const isCarousel = slides.length > 0;
   const photoCount = slides.filter((s) => s.imageUrl).length;
 
+  // Some rich slides have no image. Translate a slide position into the
+  // matching gallery index so the lightbox always opens the selected photo.
+  function galleryIndexForSlide(slideIndex: number): number {
+    return slides.slice(0, slideIndex).filter((s) => s.imageUrl).length;
+  }
+
   // The single-photo cover: an explicit imageUrl wins, else the lone recovered
   // photo (assetImages already applies that precedence).
   const coverImageUrl = galleryImages.length === 1 ? galleryImages[0].url : null;
@@ -490,16 +496,6 @@ export function AssetCard({
     ...((asset.meta?.artifacts as MetaFile[] | undefined) ?? []),
   ].filter((f): f is MetaFile & { url: string } => typeof f?.url === "string");
   const hasPreview = Boolean(asset.content) || isCarousel || coverImageUrl != null;
-
-  // Rich per-slide copy (headline/body/role/attribution) only exists on
-  // content-engine posts; used to flesh out the expanded view. Each maps back
-  // to its gallery index so its thumbnail opens the matching photo.
-  type SlideMeta = { role?: string; headline?: string; body?: string | null; imageUrl?: string | null; attribution?: string | null };
-  const richSlides = ((asset.meta?.slides as SlideMeta[] | undefined) ?? []).filter(
-    (s) => s && (s.headline || s.body || s.attribution),
-  );
-  const galleryIndexForUrl = (url?: string | null) =>
-    url ? galleryImages.findIndex((g) => g.url === url) : -1;
 
   // Template/format chip (e.g. "By The Numbers") — data-driven, legacy-safe.
   const template = templateForAsset(asset);
