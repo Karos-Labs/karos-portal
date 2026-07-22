@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import {
+  getAsset,
   getClient,
   getClientCredits,
   listContextItems,
@@ -116,6 +117,28 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     listContextItems({ clientId: id }),
     listCustomAgents(),
   ]);
+
+  // Thumbnail previews of what the managed agents have actually delivered, so
+  // the "Live" view can show the formats a running agent produces. Keyed by
+  // jobId → the first few image URLs across that run's deliverable assets.
+  const managedAssetIds = Array.from(
+    new Set(
+      jobs
+        .filter((j) => j.agentId === AGENT_SERVICE_AGENT_ID)
+        .flatMap((j) => j.assetIds),
+    ),
+  );
+  const managedAssets = await Promise.all(managedAssetIds.map((aid) => getAsset(aid)));
+  const assetById = new Map(managedAssets.filter(Boolean).map((a) => [a!.id, a!]));
+  const jobPreviews: Record<string, string[]> = {};
+  for (const job of jobs) {
+    if (job.agentId !== AGENT_SERVICE_AGENT_ID) continue;
+    const urls = job.assetIds
+      .map((aid) => assetById.get(aid))
+      .filter(Boolean)
+      .flatMap((a) => assetImages(a!).map((img) => img.url));
+    if (urls.length > 0) jobPreviews[job.id] = urls.slice(0, 6);
+  }
 
   return (
     <>

@@ -49,6 +49,10 @@ function inferAssetType(hasImages: boolean, primaryTextName?: string): AssetType
   return "note";
 }
 
+// Asset types a custom job may request via metadata.asset_type (whitelist — a
+// hint is only honored if it's one of these, otherwise we fall back to "note").
+const VALID_HINT_TYPES = new Set<AssetType>(["social_post", "instagram_post", "email", "article", "note"]);
+
 const TEXT_EXTENSIONS = [".md", ".html", ".txt"];
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
 
@@ -279,7 +283,16 @@ export async function POST(req: NextRequest) {
 
     const clientFacingCount = artifacts.filter((a) => a.clientFacing).length;
     if (clientFacingCount > 0) {
-      const assetType = ASSET_TYPE_MAP[payload.task_type] ?? "note";
+      // Custom agents (e.g. the LinkedIn generators) produce any asset shape, so
+      // "note" is the safe default — but the submitter can hint the real type +
+      // platform through metadata, which lands the draft as a schedulable post
+      // with the right recommended window instead of a slot-less library note.
+      const hintedType = payload.metadata?.asset_type as AssetType | undefined;
+      const assetType =
+        payload.task_type === "custom" && hintedType && VALID_HINT_TYPES.has(hintedType)
+          ? hintedType
+          : (ASSET_TYPE_MAP[payload.task_type] ?? "note");
+      const platform = payload.metadata?.platform || undefined;
       // job.title is `${job.agentName} — ${clientName}` (submit-managed.ts /
       // custom-agent-actions.ts). Strip only that exact appended " — <client>"
       // suffix — never a blind split on " — " (agent/client names may contain
@@ -306,12 +319,13 @@ export async function POST(req: NextRequest) {
           ...(slides ? { slides } : {}),
         },
         imageUrl: orderedImageUrls[0] ?? null,
+        ...(platform ? { channels: [platform] } : {}),
         status: "draft",
         ...(managedProduct
           ? { templateKey: payload.task_type, templateName: managedProduct.name }
           : {}),
         orderKey: orderKeyForCreatedAt(now, job.id),
-        ...recommendedScheduleFields(assetType),
+        ...recommendedScheduleFields(assetType, 0, platform),
         createdBy: "agent-service",
         createdAt: now,
         updatedAt: now,
