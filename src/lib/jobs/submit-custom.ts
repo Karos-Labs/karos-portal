@@ -96,7 +96,7 @@ export async function submitCustomAgentJob(
   // the submission rather than run silently without the client's stored data.
   if (isXAgent(agent.key)) {
     try {
-      contextFiles.push(...(await buildXAgentContextFiles(input.clientId)));
+      contextFiles.push(...(await buildXAgentContextFiles(input.clientId, agent.name)));
     } catch (e) {
       return {
         error: `Could not attach the client's X intake data: ${e instanceof Error ? e.message : "unknown error"}`,

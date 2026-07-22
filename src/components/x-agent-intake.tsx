@@ -17,6 +17,7 @@ import {
   addXNewsUpdateAction,
   addXSeatAction,
   addXTakeAction,
+  proposeXRosterAction,
   saveXCompanyIntakeAction,
   saveXSeatIntakeAction,
 } from "@/lib/actions/x-agent-actions";
@@ -78,6 +79,74 @@ function fieldError(error: string | null) {
   return error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null;
 }
 
+/**
+ * Roster field with propose-and-approve: we suggest accounts from what we
+ * already know about the business (and the person, for seats); the client
+ * edits and approves. Re-clicking refreshes the proposal.
+ */
+function RosterInput({
+  clientId,
+  seatName,
+  value,
+  onChange,
+  idPrefix,
+  helper,
+}: {
+  clientId: string;
+  seatName?: string;
+  value: string;
+  onChange: (v: string) => void;
+  idPrefix: string;
+  helper: string;
+}) {
+  const [proposing, startProposing] = useTransition();
+  const [why, setWhy] = useState<Array<{ handle: string; why: string }> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  function propose() {
+    setError(null);
+    startProposing(async () => {
+      const result = await proposeXRosterAction({ clientId, ...(seatName ? { seatName } : {}) });
+      if (result.error || !result.handles) {
+        setError(result.error ?? "Could not build a proposal.");
+        return;
+      }
+      onChange(result.handles.map((h) => h.handle).join(", "));
+      setWhy(result.handles);
+    });
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <Label htmlFor={`${idPrefix}-roster`}>
+          {seatName ? "Accounts you want to be near on X (optional)" : "Accounts or communities to engage (optional)"}
+        </Label>
+        <Button variant="ghost" size="sm" onClick={propose} disabled={proposing} type="button">
+          {proposing ? "Proposing…" : value.trim() ? "Refresh proposal" : "Propose accounts"}
+        </Button>
+      </div>
+      <Input
+        id={`${idPrefix}-roster`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="@handle, @handle — or let us propose a list"
+      />
+      <p className="mt-1 text-xs text-muted">{helper}</p>
+      {fieldError(error)}
+      {why && why.length > 0 ? (
+        <ul className="mt-2 space-y-1 rounded-md border border-border bg-surface-2 p-3">
+          {why.map((h) => (
+            <li key={h.handle} className="text-xs text-muted">
+              <span className="text-foreground">{h.handle}</span> — {h.why}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 /* ─────────────────────── company page form ─────────────────────── */
 
 function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeView | null }) {
@@ -89,12 +158,13 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
   const [comeAcross, setComeAcross] = useState(intake?.comeAcross ?? "");
   const [offLimits, setOffLimits] = useState(intake?.offLimits ?? "");
   const [roster, setRoster] = useState(intake?.roster.join(", ") ?? "");
+  const [announcements, setAnnouncements] = useState("");
 
   function save() {
     setError(null);
     setSaved(false);
     start(async () => {
-      const result = await saveXCompanyIntakeAction({ clientId, handle, comeAcross, offLimits, roster });
+      const result = await saveXCompanyIntakeAction({ clientId, handle, comeAcross, offLimits, roster, announcements });
       if (result.error) {
         setError(result.error);
         return;
@@ -144,18 +214,25 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
             placeholder="Topics, client names, specific numbers."
           />
         </div>
-        <div>
-          <Label htmlFor="xc-roster">Accounts or communities to engage (optional)</Label>
-          <Input
-            id="xc-roster"
-            value={roster}
-            onChange={(e) => setRoster(e.target.value)}
-            placeholder="@handle, @handle — 5 to 15 accounts you respect or want to reach"
-          />
-          <p className="mt-1 text-xs text-muted">
-            Optional; this turns on the engagement lane. We can propose a list and you approve it.
-          </p>
-        </div>
+        <RosterInput
+          clientId={clientId}
+          value={roster}
+          onChange={setRoster}
+          idPrefix="xc"
+          helper="Optional; this turns on the engagement lane. We propose from what we already know about your business — you approve or edit. Every handle is verified live before any engagement."
+        />
+        {!intake ? (
+          <div>
+            <Label htmlFor="xc-announce">Anything worth announcing right now? (optional)</Label>
+            <Textarea
+              id="xc-announce"
+              rows={3}
+              value={announcements}
+              onChange={(e) => setAnnouncements(e.target.value)}
+              placeholder="One per line. A launch, a milestone, a hire — a line each is enough; we turn them into posts."
+            />
+          </div>
+        ) : null}
         {fieldError(error)}
         <div className="flex items-center gap-3">
           <Button onClick={save} disabled={pending}>
@@ -242,16 +319,14 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
               can post until the handle exists.
             </p>
           </div>
-          <div>
-            <Label htmlFor={`xs-roster-${seat.id}`}>Accounts you want to be near on X (optional)</Label>
-            <Input
-              id={`xs-roster-${seat.id}`}
-              value={roster}
-              onChange={(e) => setRoster(e.target.value)}
-              placeholder="@handle, @handle — 5 to 15 accounts"
-            />
-            <p className="mt-1 text-xs text-muted">Optional; this turns on your engagement lane.</p>
-          </div>
+          <RosterInput
+            clientId={clientId}
+            seatName={seat.name}
+            value={roster}
+            onChange={setRoster}
+            idPrefix={`xs-${seat.id}`}
+            helper="Optional; this turns on your engagement lane. We propose people worth being near — you approve or edit."
+          />
         </div>
         <div>
           <Label htmlFor={`xs-offlimits-${seat.id}`}>Anything we must never post</Label>
@@ -326,11 +401,12 @@ function AddSeatForm({ clientId }: { clientId: string }) {
   const [handle, setHandle] = useState("");
   const [offLimits, setOffLimits] = useState("");
   const [roster, setRoster] = useState("");
+  const [firstTakes, setFirstTakes] = useState("");
 
   function add() {
     setError(null);
     start(async () => {
-      const result = await addXSeatAction({ clientId, name, handle, offLimits, roster });
+      const result = await addXSeatAction({ clientId, name, handle, offLimits, roster, firstTakes });
       if (result.error) {
         setError(result.error);
         return;
@@ -339,6 +415,7 @@ function AddSeatForm({ clientId }: { clientId: string }) {
       setHandle("");
       setOffLimits("");
       setRoster("");
+      setFirstTakes("");
       setOpen(false);
       router.refresh();
     });
@@ -385,9 +462,26 @@ function AddSeatForm({ clientId }: { clientId: string }) {
             placeholder='Write "nothing" if everything is fair game.'
           />
         </div>
+        <RosterInput
+          clientId={clientId}
+          seatName={name || undefined}
+          value={roster}
+          onChange={setRoster}
+          idPrefix="xa"
+          helper="Optional; this turns on your engagement lane. We propose people worth being near — you approve or edit."
+        />
         <div>
-          <Label htmlFor="xa-roster">Accounts you want to be near on X (optional)</Label>
-          <Input id="xa-roster" value={roster} onChange={(e) => setRoster(e.target.value)} placeholder="@handle, @handle" />
+          <Label htmlFor="xa-takes">Your first takes</Label>
+          <Textarea
+            id="xa-takes"
+            rows={4}
+            value={firstTakes}
+            onChange={(e) => setFirstTakes(e.target.value)}
+            placeholder={"3 to 5 rough one-liners of what you actually think — one per line.\nGTM, hiring, AI, the grind. We turn each into a post in your voice."}
+          />
+          <p className="mt-1 text-xs text-muted">
+            The single highest-leverage input for your seat. Rough is perfect; we do the wordsmithing.
+          </p>
         </div>
         {fieldError(error)}
         <div className="flex gap-3">

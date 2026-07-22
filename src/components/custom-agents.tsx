@@ -95,12 +95,12 @@ function launchConfigFor(agent: Pick<RunnableAgentSummary, "key" | "name">): Age
     return {
       label: "What should the X agent draft?",
       helper:
-        "Draft-only: everything lands in review, nothing posts. It reads the client's X page (company form, seats, drops) automatically — fill that in first for on-voice output.",
-      placeholder: "Run a full draft batch across the avenues for the company page and every seat.",
+        "Draft-only: everything lands in review, nothing posts. The default run makes the week's menu — about a post per day to pick favourites from. It reads the client's X page (company form, seats, drops) automatically.",
+      placeholder: "Draft this week's menu for the company page and every seat.",
       quickStarts: [
-        "Run a full draft batch across the avenues for the company page and every seat.",
-        "Draft this week's posts for the company page.",
-        "Draft this week's posts for [person]'s seat.",
+        "Draft this week's menu for the company page and every seat.",
+        "Draft this week's menu for the company page.",
+        "Draft this week's menu for [person]'s seat.",
       ],
     };
   }

@@ -61,7 +61,7 @@ export async function submitCustomAgentRun(args: {
   const contextFiles = [...(args.contextFiles ?? [])];
   if (isXAgent(agent.key)) {
     try {
-      contextFiles.push(...(await buildXAgentContextFiles(client.id)));
+      contextFiles.push(...(await buildXAgentContextFiles(client.id, agent.name)));
     } catch (e) {
       return {
         error: `Could not attach the client's X intake data: ${e instanceof Error ? e.message : "unknown error"}`,

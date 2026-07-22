@@ -35,33 +35,61 @@ X foundation exists yet under clients/<slug>/skills/x-agent/.
 Read first, in this order:
 1. client_context/brief.md and every file in client_context/files/. The files
    x-portal-intake.md, whats-new.json and takes--*.json are the portal's LIVE
-   client data (intake forms, drop boxes, per-account learning logs) and
-   OVERRIDE any older copies inside the repo (clients/<slug>/internal/x-agent/,
-   config.json x block) on any disagreement.
+   client data and OVERRIDE any older copies inside the repo (clients/<slug>/
+   internal/x-agent/, config.json x block) on any disagreement. Files named
+   prior-batch-*.md are this client's previous portal batches: treat every
+   subject, source, quoted post, and phrasing in them as ALREADY USED — never
+   reuse any of it, in addition to the repo ledger.
 2. The client's onboarding profile (clients/<slug>/profile/) and their emitted
    X sub-skills (clients/<slug>/skills/x-agent/) — prefer emitted sub-skills
    for production drafting.
 
-What to produce (default run = the full batch): on-voice DRAFTS across the
+What to produce (default run = the WEEK'S MENU): on-voice DRAFTS across the
 avenues for each account in the intake — the company page (build-in-public,
 knowledge/explainer, news-reaction, quote-comment, reply) and each seat (POV
-single, POV thread, news-reaction, quote-comment, reply). If the client request
-names one account or a subset of avenues, produce exactly that subset. Every
-reactive post cites a real, current source, linked in the first reply. Pull
-live X signal with the engine's xAI tools when XAI_API_KEY is present;
-otherwise use WebSearch and record the degradation in internal/RUN.md.
+single, POV thread, news-reaction, quote-comment, reply). This is one week of
+posting for the client to pick favourites from; make every draft strong enough
+to be someone's pick. If the client request names one account or a subset of
+avenues, produce exactly that subset. Pull live X signal with the engine's xAI
+tools when XAI_API_KEY is present; otherwise use WebSearch and record the
+degradation in internal/RUN.md.
 
-Hard rules: draft-only — nothing posts and no posting credential exists.
-Respect each account's off-limits from the intake. A seat whose handle is
-pending still drafts but cannot post or self-sample. Voice, pillars and cadence
-are built from the onboarding profile and each account's learning log — never
-ask the client for them. Anti-duplication: no idea or phrasing reused across
-accounts, within the batch, or against the shared ledger.
+Craft gates (each one is a hard auto-reject; fix before delivering):
+- A quote-comment or reply must ADD a position the original does not state.
+  Test each against: "would the original author react 'that is what I just
+  said'?" If yes, rewrite with a counter, a consequence, or an earned specific.
+- Reactive anchors must be fresh: nothing older than 7 days framed as breaking
+  or "just happened"; if an older item is genuinely the best anchor, date it
+  honestly in the post text.
+- Every reactive post cites a real, current source, linked in the first reply,
+  with the source's numbers attributed to the source.
+- Banned anywhere in a post: leverage, synergize, holistic, supercharge,
+  unlock; em dashes, exclamation marks, hashtags, emoji, thread-boi framing.
+- Never make human control/approval the headline of a post; a light aside at
+  most.
+- Never claim machines cannot create, or that agents do the numbers while
+  humans do the creativity. The agents draft too. When touching the division
+  of labor use: agents carry the grunt AND augment the craft; a person owns
+  the judgment.
+- One idea per post AND per batch: before delivering, write each draft's core
+  idea in one line; if two drafts share one, rewrite the weaker draft.
+- A seat's thread carries that person's earned, sourced specifics (their real
+  numbers where they have them). Replies read like a person talking — short,
+  conversational — not a polished mini-essay.
+- Respect each account's off-limits from the intake. A seat with a pending
+  handle still drafts but cannot post or self-sample. Voice, pillars and
+  cadence are built from the profile and each account's learning log — never
+  ask the client for them.
 
 Deliverables under clients/<slug>/outputs/x-agent/<run-folder>/ with the
-client/ vs internal/ split: client/DRAFTS.md (all drafts in per-account
-sections, sources linked, char counts) and internal/RUN.md (method, live
-signal, gate checks, ledger notes).
+client/ vs internal/ split: client/DRAFTS.md and internal/RUN.md (method,
+live signal, gate checks). DRAFTS.md must keep this exact structure — the
+portal renders it: "# Account N · <name>" headings, "## Avenue N · <lane>"
+blocks, the post text as a "> " blockquote (threads: one blockquote per post
+with **1/3**-style markers between), a `NNN chars` line after each post, and
+"- **" bullets for sources. In RUN.md, only claim a gate passed if you
+re-checked it after the final edit; quote the evidence or omit the claim.
+Draft-only: nothing posts, and no posting credential exists.
 ```
 
 ## Out of scope (parked)
