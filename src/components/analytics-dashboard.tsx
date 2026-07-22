@@ -11,9 +11,10 @@ interface Props {
   clients: Client[];
   currentClientId?: string;
   currentRange?: string;
+  currentAgentKey?: string;
 }
 
-export function AnalyticsFilters({ clients, currentClientId, currentRange }: Props) {
+export function AnalyticsFilters({ clients, currentClientId, currentRange, currentAgentKey }: Props) {
   const router = useRouter();
 
   function navigate(updates: { clientId?: string; range?: string }) {
@@ -22,6 +23,9 @@ export function AnalyticsFilters({ clients, currentClientId, currentRange }: Pro
     const range    = "range"    in updates ? updates.range    : currentRange;
     if (clientId) params.set("clientId", clientId);
     if (range)    params.set("range", range);
+    // Preserve the agent filter across range/client pill changes — only the
+    // chip's own clear link drops it.
+    if (currentAgentKey) params.set("agentKey", currentAgentKey);
     const qs = params.toString();
     router.push(`/admin/analytics${qs ? `?${qs}` : ""}`);
   }

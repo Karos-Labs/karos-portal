@@ -25,6 +25,13 @@ import { logger } from "@/services/logger";
 
 /** Per-answer output cap — capture answers are short; this bounds per-run cost. */
 const CAPTURE_MAX_TOKENS = 1024;
+/**
+ * Gemini gets a larger cap: it's a thinking model whose reasoning (even at the
+ * "low" floor, which can't be disabled) is drawn from the same output budget, so
+ * 1024 truncates the answer to MAX_TOKENS. This leaves room for thinking + a full
+ * grounded answer while staying bounded.
+ */
+const GEMINI_MAX_TOKENS = 2048;
 /** Hard wall-clock cap per engine call. */
 const CAPTURE_TIMEOUT_MS = 90_000;
 
@@ -154,11 +161,16 @@ async function askGemini(prompt: string, clientId: string): Promise<{ answerText
         // Search grounding makes this a MEASURED_grounded surface (a3 capture tiers).
         tools: [{ google_search: {} }],
         generationConfig: {
-          maxOutputTokens: CAPTURE_MAX_TOKENS,
-          // gemini-3.x flash is a thinking model; without this the reasoning budget
-          // consumes maxOutputTokens and the answer comes back short or empty
-          // (→ spurious "empty answer" / UNAVAILABLE). Disable thinking for the capture.
-          thinkingConfig: { thinkingBudget: 0 },
+          // gemini-flash-latest now resolves to a Gemini 3.x flash model, and its
+          // thinking budget can no longer be forced to 0 — `thinkingConfig.thinkingBudget:0`
+          // hard-400s ("invalid argument") on gemini-3.6-flash / -latest, which silently
+          // degraded EVERY Gemini cell to UNAVAILABLE (2026-07-22). Gemini 3 replaces the
+          // numeric budget with `thinkingLevel`; "low" is the floor (thinking can't be
+          // fully disabled) and is accepted across all live 3.x flash models. Left ON but
+          // minimal, thinking still costs output tokens, so we give Gemini its own larger
+          // cap (below) to keep the answer from truncating to MAX_TOKENS.
+          maxOutputTokens: GEMINI_MAX_TOKENS,
+          thinkingConfig: { thinkingLevel: "low" },
         },
       }),
       signal: AbortSignal.timeout(CAPTURE_TIMEOUT_MS),

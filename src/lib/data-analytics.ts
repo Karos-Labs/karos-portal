@@ -8,6 +8,7 @@ import {
   type ErrorLog,
   type AnalyticsSnapshot,
 } from "@/lib/models/usage-log";
+import { resolveAgentAttribution } from "@/lib/models/agent-attribution";
 export { RANGE_OPTIONS, isValidRange, rangeToSince } from "@/lib/analytics-constants";
 export type { RangeKey } from "@/lib/analytics-constants";
 
@@ -83,6 +84,27 @@ export async function listRecentUsageLogs(opts?: {
   return logs.slice(0, limit);
 }
 
+/**
+ * Usage logs since `since` (0 = no lower bound), capped at `limit` docs and
+ * filtered by clientId in memory — the same "avoid a composite index" shape
+ * as every other read in this module. Shared by the agent leaderboard and
+ * per-agent drilldown so both bound their scan the same way.
+ */
+async function fetchUsageLogsCapped(opts: {
+  since: number;
+  clientId?: string;
+  limit: number;
+}): Promise<UsageLog[]> {
+  const query = opts.since > 0
+    ? adminDb().collection("usageLogs").where("timestamp", ">=", opts.since).orderBy("timestamp", "desc")
+    : adminDb().collection("usageLogs").orderBy("timestamp", "desc");
+  const snap = await query.limit(opts.limit).get();
+
+  let logs = snap.docs.map((d) => withId<UsageLog>(d));
+  if (opts.clientId) logs = logs.filter((l) => l.clientId === opts.clientId);
+  return logs;
+}
+
 /* ── Derived analytics ───────────────────────────────────────────── */
 
 export interface ModelStat {
@@ -131,9 +153,12 @@ export function extractModelStats(snapshot: AnalyticsSnapshot): ModelStat[] {
 }
 
 export interface AgentStat {
-  agentId: string;
-  agentName: string;
+  /** Stable grouping key from resolveAgentAttribution() — use as the filter-on-click value. */
+  agentKey: string;
+  agentDisplayName: string;
   runs: number;
+  inputTokens: number;
+  outputTokens: number;
   costUsd: number;
 }
 
@@ -147,6 +172,28 @@ export interface RangeStats {
   agentStats: AgentStat[];
 }
 
+/** Group already-fetched usage logs into per-agent cost/token stats, cost-desc. */
+function aggregateAgentStats(logs: UsageLog[]): AgentStat[] {
+  const agentMap = new Map<string, AgentStat>();
+  for (const log of logs) {
+    const { agentKey, agentDisplayName } = resolveAgentAttribution(log);
+    const s = agentMap.get(agentKey) ?? {
+      agentKey,
+      agentDisplayName,
+      runs: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+    };
+    s.runs          += 1;
+    s.inputTokens   += log.inputTokens;
+    s.outputTokens  += log.outputTokens;
+    s.costUsd       += log.estimatedCostUsd;
+    agentMap.set(agentKey, s);
+  }
+  return [...agentMap.values()].sort((a, b) => b.costUsd - a.costUsd);
+}
+
 /**
  * Compute KPI + breakdowns from raw logs since `since`.
  * Fetches up to 2000 usage logs and 500 error logs, filters by clientId in
@@ -156,13 +203,8 @@ export async function getRangeStats(opts: {
   since: number;
   clientId?: string;
 }): Promise<RangeStats> {
-  const [usageSnap, errorSnap] = await Promise.all([
-    adminDb()
-      .collection("usageLogs")
-      .where("timestamp", ">=", opts.since)
-      .orderBy("timestamp", "desc")
-      .limit(2000)
-      .get(),
+  const [usageLogs, errorSnap] = await Promise.all([
+    fetchUsageLogsCapped({ since: opts.since, clientId: opts.clientId, limit: 2000 }),
     adminDb()
       .collection("errorLogs")
       .where("timestamp", ">=", opts.since)
@@ -171,17 +213,14 @@ export async function getRangeStats(opts: {
       .get(),
   ]);
 
-  let usageLogs = usageSnap.docs.map((d) => withId<UsageLog>(d));
   let errorLogs = errorSnap.docs.map((d) => withId<ErrorLog>(d));
   if (opts.clientId) {
-    usageLogs = usageLogs.filter((l) => l.clientId === opts.clientId);
     errorLogs = errorLogs.filter((l) => l.clientId === opts.clientId);
   }
 
   // Aggregate KPIs
   let totalCostUsd = 0, totalInputTokens = 0, totalOutputTokens = 0;
   const modelMap = new Map<string, { inputTokens: number; outputTokens: number; costUsd: number; runs: number }>();
-  const agentMap = new Map<string, AgentStat>();
 
   for (const log of usageLogs) {
     totalCostUsd     += log.estimatedCostUsd;
@@ -196,15 +235,6 @@ export async function getRangeStats(opts: {
     ms.costUsd      += log.estimatedCostUsd;
     ms.runs         += 1;
     modelMap.set(mk, ms);
-
-    // Per-agent
-    if (log.agentId) {
-      const ak = log.agentId;
-      const as_ = agentMap.get(ak) ?? { agentId: ak, agentName: log.agentName, runs: 0, costUsd: 0 };
-      as_.runs   += 1;
-      as_.costUsd += log.estimatedCostUsd;
-      agentMap.set(ak, as_);
-    }
   }
 
   // Build model stats
@@ -217,7 +247,7 @@ export async function getRangeStats(opts: {
     for (const s of modelStats) s.pctOfTotalCost = (s.costUsd / totalCostUsd) * 100;
   }
 
-  const agentStats = [...agentMap.values()].sort((a, b) => b.runs - a.runs);
+  const agentStats = aggregateAgentStats(usageLogs);
 
   return {
     totalCostUsd,
@@ -227,6 +257,91 @@ export async function getRangeStats(opts: {
     totalErrors: errorLogs.length,
     modelStats,
     agentStats,
+  };
+}
+
+/**
+ * Agent leaderboard for "all time" — the analyticsSnapshot doc gives O(1)
+ * global/model KPIs but has no per-agent breakdown, so this scans a bounded
+ * window of the most recent usage logs instead (same tradeoff as the
+ * pre-refactor leaderboard, just grouped by resolveAgentAttribution and with
+ * a wider window since dashboard reads are allowed to cost more than writes).
+ */
+export async function getAllTimeAgentStats(opts?: {
+  clientId?: string;
+  limit?: number;
+}): Promise<AgentStat[]> {
+  const logs = await fetchUsageLogsCapped({ since: 0, clientId: opts?.clientId, limit: opts?.limit ?? 3000 });
+  return aggregateAgentStats(logs);
+}
+
+export interface AgentDrilldown {
+  agentKey: string;
+  agentDisplayName: string;
+  totalCostUsd: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalRuns: number;
+  modelStats: ModelStat[];
+}
+
+/**
+ * Model/token breakdown for one agent (the Agent Leaderboard's filter-on-click
+ * drilldown), scoped to the same since/clientId window as the rest of the
+ * dashboard. Returns null when the agent has no logs in that window.
+ */
+export async function getAgentDrilldown(opts: {
+  agentKey: string;
+  since: number;
+  clientId?: string;
+  limit?: number;
+}): Promise<AgentDrilldown | null> {
+  const logs = await fetchUsageLogsCapped({
+    since: opts.since,
+    clientId: opts.clientId,
+    limit: opts.limit ?? (opts.since > 0 ? 2000 : 3000),
+  });
+  const scoped = logs.filter((l) => resolveAgentAttribution(l).agentKey === opts.agentKey);
+  if (scoped.length === 0) return null;
+
+  const { agentDisplayName } = resolveAgentAttribution(scoped[0]!);
+  const modelMap = new Map<string, { inputTokens: number; outputTokens: number; costUsd: number; runs: number }>();
+  let totalCostUsd = 0, totalInputTokens = 0, totalOutputTokens = 0;
+
+  for (const log of scoped) {
+    totalCostUsd      += log.estimatedCostUsd;
+    totalInputTokens  += log.inputTokens;
+    totalOutputTokens += log.outputTokens;
+
+    const m = modelMap.get(log.modelName) ?? { inputTokens: 0, outputTokens: 0, costUsd: 0, runs: 0 };
+    m.inputTokens  += log.inputTokens;
+    m.outputTokens += log.outputTokens;
+    m.costUsd      += log.estimatedCostUsd;
+    m.runs         += 1;
+    modelMap.set(log.modelName, m);
+  }
+
+  const modelStats: ModelStat[] = [...modelMap.entries()]
+    .map(([modelName, m]) => {
+      const pricing = MODEL_PRICING[modelName] ?? { inputPer1M: 3.0, outputPer1M: 15.0 };
+      return {
+        modelName,
+        inputPer1M: pricing.inputPer1M,
+        outputPer1M: pricing.outputPer1M,
+        ...m,
+        pctOfTotalCost: totalCostUsd > 0 ? (m.costUsd / totalCostUsd) * 100 : 0,
+      };
+    })
+    .sort((a, b) => b.costUsd - a.costUsd);
+
+  return {
+    agentKey: opts.agentKey,
+    agentDisplayName,
+    totalCostUsd,
+    totalInputTokens,
+    totalOutputTokens,
+    totalRuns: scoped.length,
+    modelStats,
   };
 }
 
