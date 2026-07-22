@@ -15,7 +15,7 @@ import {
 } from "@/lib/agent-service/verify";
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
-import type { AssetType, ExternalJobArtifact, JobStatus, ManagedTaskType } from "@/lib/types";
+import type { AssetType, ExternalJobArtifact, JobStatus } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -38,14 +38,16 @@ const STATUS_MAP: Record<AgentServiceWebhookPayload["status"], JobStatus> = {
   cancelled: "failed",
 };
 
-const ASSET_TYPE_MAP: Record<ManagedTaskType, AssetType> = {
-  social_post: "social_post",
-  newsletter_issue: "email",
-  blog_article: "article",
-  landing_page: "note",
-  // Custom agents can produce anything — "note" is the safe library bucket.
-  custom: "note",
-};
+/**
+ * Custom agents can produce anything, so we infer the library bucket from the
+ * deliverables: images ⇒ a schedulable social post (so it auto-places on the
+ * calendar), a long-form .md/.html ⇒ an article, everything else ⇒ a note.
+ */
+function inferAssetType(hasImages: boolean, primaryTextName?: string): AssetType {
+  if (hasImages) return "social_post";
+  if (primaryTextName && /\.(md|html?)$/i.test(primaryTextName)) return "article";
+  return "note";
+}
 
 const TEXT_EXTENSIONS = [".md", ".html", ".txt"];
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];

@@ -8,18 +8,19 @@ import {
   createContextItem,
   getAsset,
   getClient,
+  getCustomAgent,
   getJob,
   listAssets,
   listClientContextDocs,
   listClients,
   listContextItems,
+  listCustomAgents,
   listJobs,
 } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
 import { contextKind } from "@/lib/context";
-import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
-import { submitManagedJob } from "@/lib/jobs/submit-managed";
-import type { AssetType, Client, ManagedTaskType } from "@/lib/types";
+import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
+import type { AssetType, Client } from "@/lib/types";
 import { canStaffAccessClient, type McpActor } from "./auth";
 import { type McpTool, textResult, ToolError } from "./protocol";
 
@@ -293,54 +294,44 @@ export const MCP_TOOLS: McpTool[] = [
   },
 
   {
-    name: "list_products",
+    name: "list_agents",
     description:
-      "The managed products you can submit as jobs (social_post, newsletter_issue, blog_article, landing_page), " +
-      "with each product's brief fields and which are required.",
+      "The repo agents (imported from the karos-agents catalog) you can run as jobs, each with its id, key, " +
+      "name and description. Run one with run_agent.",
     actors: ["staff", "service"],
     schema: z.object({}),
     handler: async () =>
       textResult(
-        MANAGED_PRODUCTS.map((p) => ({
-          taskType: p.taskType,
-          name: p.name,
-          description: p.description,
-          estimate: p.estimate,
-          deliverables: p.deliverables,
-          briefFields: p.briefFields.map((f) => ({
-            key: f.key,
-            label: f.label,
-            type: f.type,
-            required: f.required ?? false,
-            helper: f.helper ?? null,
-            options: f.options?.map((o) => o.value) ?? null,
-          })),
-        })),
+        (await listCustomAgents())
+          .filter((a) => a.enabled)
+          .map((a) => ({ id: a.id, key: a.key, name: a.name, description: a.description })),
       ),
   },
 
   {
-    name: "submit_job",
+    name: "run_agent",
     description:
-      "Submit a managed job to the agent service for a client. taskType is one of the products from list_products; " +
-      "brief is that product's fields. Returns the new job id (poll with get_job). Staff only.",
+      "Run a repo agent for a client with a plain-language prompt. agentId is one of the ids from list_agents; " +
+      "the agent already knows the brand and its own playbook. Returns the new job id (poll with get_job). Staff only.",
     actors: ["staff"],
     schema: z.object({
       clientId: z.string().min(1),
-      taskType: z.enum(["social_post", "newsletter_issue", "blog_article", "landing_page"]),
-      brief: z.record(z.string(), z.unknown()),
+      agentId: z.string().min(1),
+      prompt: z.string().min(1),
       contextItemIds: z.array(z.string()).optional(),
     }),
     handler: async (args, actor) => {
       if (actor.kind !== "staff") throw new ToolError("Staff only.");
-      const { clientId, taskType, brief, contextItemIds } = args as {
+      const { clientId, agentId, prompt, contextItemIds } = args as {
         clientId: string;
-        taskType: ManagedTaskType;
-        brief: Record<string, unknown>;
+        agentId: string;
+        prompt: string;
         contextItemIds?: string[];
       };
       await requireClient(actor, clientId);
-      const result = await submitManagedJob(actor.user, { clientId, taskType, brief, contextItemIds });
+      // Ensure the agent exists before firing (clearer error than the core's generic one).
+      if (!(await getCustomAgent(agentId))) throw new ToolError("Agent not found.");
+      const result = await submitCustomAgentJob(actor.user, { clientId, agentId, prompt, contextItemIds });
       if (result.error) throw new ToolError(result.error);
       return textResult({ jobId: result.jobId, status: "queued" });
     },

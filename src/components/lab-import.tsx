@@ -6,8 +6,6 @@ import { Badge, Button, EmptyState, Spinner } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { Modal } from "@/components/modal";
 import { importLabRunAction, listLabOutputRunsAction } from "@/lib/actions";
-import { getManagedProduct } from "@/lib/agent-service/products";
-import type { ManagedTaskType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface RunRow {
@@ -16,22 +14,13 @@ interface RunRow {
   hasClientFolder: boolean;
 }
 
-/** Icon/color chip per lab agent folder, reusing the managed-product palette. */
+/** Icon/color chip per lab agent folder, keyed off the folder name. */
 function runVisual(agentFolder: string): { icon: string; color: string } {
   const f = agentFolder.toLowerCase();
-  const taskType: ManagedTaskType | null = f.includes("instagram") || f.includes("tiktok")
-    ? "social_post"
-    : f.includes("newsletter") || f.includes("email")
-      ? "newsletter_issue"
-      : f.includes("blog") || f.includes("seo")
-        ? "blog_article"
-        : f.includes("landing")
-          ? "landing_page"
-          : null;
-  if (taskType) {
-    const product = getManagedProduct(taskType);
-    return { icon: product.icon, color: product.color };
-  }
+  if (f.includes("instagram") || f.includes("tiktok")) return { icon: "Camera", color: "#E879F9" };
+  if (f.includes("newsletter") || f.includes("email")) return { icon: "Mail", color: "#60A5FA" };
+  if (f.includes("blog") || f.includes("seo")) return { icon: "PenLine", color: "#34D399" };
+  if (f.includes("landing")) return { icon: "Globe", color: "#FBBF24" };
   return { icon: "FolderDown", color: "#94A3B8" };
 }
 

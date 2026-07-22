@@ -6,7 +6,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * Stateless, HMAC-signed job tokens — the credential a running agent-service
  * job presents to the MCP server (`/api/mcp`) to pull its client's data or
  * upload artifacts mid-run. Minted in the submit path
- * (`src/lib/jobs/submit-managed.ts`) and handed to the runner via the job's
+ * (`src/lib/jobs/submit-custom.ts`) and handed to the runner via the job's
  * `metadata.karos_job_token`; verified here on every MCP request.
  *
  * Design: self-contained (no DB lookup), auto-expiring, and scoped to exactly

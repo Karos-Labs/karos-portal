@@ -79,8 +79,8 @@ export default async function ConnectPage() {
               ["get_client_context_docs", "Brand/strategy/audience docs"],
               ["list_assets / get_asset", "Generated content, with bodies"],
               ["list_jobs / get_job", "Agent runs & their status"],
-              ["list_products", "Managed products & their brief fields"],
-              ["submit_job", "Submit a managed job to the agent service"],
+              ["list_agents", "Repo agents you can run"],
+              ["run_agent", "Run a repo agent for a client with a prompt"],
               ["upload_context_file", "Attach a reference file/image"],
               ["upload_asset", "Save a generated asset (draft)"],
             ].map(([name, hint]) => (
