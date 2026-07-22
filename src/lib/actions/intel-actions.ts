@@ -15,6 +15,7 @@ import {
   chargeClientCredits,
   tryAcquireAiProcessingLock,
   releaseAiProcessingLock,
+  approveSeoGeoRecommendation,
 } from "@/lib/data";
 import { logger } from "@/services/logger";
 import { getCurrentUser } from "@/lib/auth";
@@ -101,6 +102,44 @@ export async function generateClientBriefAction(
   await updateClient(clientId, { brief });
   revalidatePath(`/clients/${clientId}`);
   return { ok: true, brief };
+}
+
+/**
+ * Record client/staff approval of one SEO/GEO recommendation (QA Fix 6). This is the real
+ * "approve" the action plan needs: it persists the approval on the clientSeoGeo doc and
+ * logs it to the client's activity timeline (which staff monitor), so the team can execute
+ * it. Callable by the client for their own account or by staff — works with no navigation,
+ * so a client viewer never hits an empty-agents dead end.
+ */
+export async function approveSeoGeoRecommendationAction(
+  clientId: string,
+  recId: string,
+  title: string,
+): Promise<{ ok: true; approved: string[] } | { ok?: never; error: string }> {
+  try {
+    const user = await getCurrentUser();
+    if (!user || user.disabled) return { error: "Unauthorized" };
+    if (user.role === "CLIENT_USER") {
+      if (user.clientId !== clientId) return { error: "Forbidden" };
+    } else if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") {
+      return { error: "Forbidden" };
+    }
+    const approved = await approveSeoGeoRecommendation(clientId, recId);
+    const actorRole = user.role === "CLIENT_USER" ? "client" : "staff";
+    await logActivity({
+      clientId,
+      timestamp: Date.now(),
+      type: "MANUAL_NOTE",
+      title: "SEO/GEO fix approved",
+      description: `Approved for the team to execute: ${title.slice(0, 160)}`,
+      actor: user.name,
+      actorRole,
+    });
+    revalidatePath(`/clients/${clientId}`);
+    return { ok: true, approved };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Could not record approval" };
+  }
 }
 
 export async function addActivityNoteAction(clientId: string, text: string): Promise<void> {

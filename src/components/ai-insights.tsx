@@ -15,6 +15,10 @@ export function AiInsights({ clientId }: { clientId: string }) {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Demo-data flag (QA Fix 8): the insights API sets X-Insights-Data-Source: mock when the
+  // engagement figures are deterministic mock metrics (no live social token). Badge it so a
+  // client never mistakes demo numbers for real performance.
+  const [isDemoData, setIsDemoData] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   // The fetch + stream itself. Every setState here happens after the first
@@ -32,6 +36,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
           const body = await res.json().catch(() => ({ error: "Request failed" }));
           throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
         }
+        setIsDemoData(res.headers.get("X-Insights-Data-Source") === "mock");
         const reader = res.body!.getReader();
         const decoder = new TextDecoder();
         let accumulated = "";
@@ -81,6 +86,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
           <Icon name="Sparkles" className="h-4 w-4 text-neon" />
           <CardTitle>AI Insights</CardTitle>
           <Badge tone="neon">Beta</Badge>
+          {isDemoData && <Badge tone="warning">Demo data</Badge>}
         </div>
         <button
           type="button"
@@ -113,7 +119,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
           <Skeleton className="h-3 w-10/12" />
         </div>
       ) : (
-        <div className="space-y-1.5 text-sm leading-relaxed text-muted">
+        <div className="space-y-1.5 text-[13px] leading-relaxed text-muted">
           {renderBriefing(text)}
           {loading && <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse-neon bg-neon align-middle" />}
         </div>
@@ -123,15 +129,17 @@ export function AiInsights({ clientId }: { clientId: string }) {
 }
 
 /* ── Minimal, dependency-free markdown rendering ─────────────────────── */
-/* The briefing uses only **bold** headers and "- " / "• " bullets — render
-   those safely as React nodes (no dangerouslySetInnerHTML). */
+/* The briefing is Haiku prose: mostly **bold** mini-headers and "- " / "• "
+   bullets, but it sometimes reaches for `#`/`##` headings or numbered lists
+   too. Render all of that safely as React nodes (no dangerouslySetInnerHTML,
+   no markdown dependency) rather than leaving raw syntax on the page. */
 
 function renderInline(line: string, keyPrefix: string): React.ReactNode[] {
   // Split on **bold** spans, keeping the delimited groups.
   return line.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {
       return (
-        <strong key={`${keyPrefix}-${i}`} className="font-medium text-foreground">
+        <strong key={`${keyPrefix}-${i}`} className="font-semibold text-foreground">
           {part.slice(2, -2)}
         </strong>
       );
@@ -142,15 +150,55 @@ function renderInline(line: string, keyPrefix: string): React.ReactNode[] {
 
 function renderBriefing(text: string): React.ReactNode {
   const lines = text.split("\n");
+
+  // Drop a leading H1 — it's the model restating a title ("# CLIENT - WEEKLY
+  // BRIEFING") that only duplicates the card's own "AI Insights" header.
+  const firstIdx = lines.findIndex((l) => l.trim() !== "");
+  if (firstIdx !== -1 && /^#\s+\S/.test(lines[firstIdx].trim())) {
+    lines.splice(firstIdx, 1);
+  }
+
   return lines.map((raw, i) => {
     const line = raw.trimEnd();
-    if (line.trim() === "") return <div key={i} className="h-1.5" />;
+    const trimmed = line.trim();
+    if (trimmed === "") return <div key={i} className="h-1.5" />;
+
+    // Handle every ATX header level (# … ######), with or without a trailing space, so a
+    // stray "#"/"##" never renders as literal syntax (QA Fix 8). The leading title H1 is
+    // dropped above; remaining headers get real visual weight as section structure.
+    const heading = /^(#{1,6})\s*(.+)/.exec(trimmed);
+    if (heading) {
+      const top = heading[1].length <= 2; // #/## are section headers; deeper are sub-headers
+      return (
+        <p
+          key={i}
+          className={
+            top
+              ? "mb-1 mt-3 text-sm font-bold text-foreground first:mt-0"
+              : "mb-1 mt-2 text-[13px] font-semibold text-foreground/80 first:mt-0"
+          }
+        >
+          {renderInline(heading[2], `h${i}`)}
+        </p>
+      );
+    }
+
+    const numbered = /^\s*(\d+)[.)]\s+(.*)/.exec(line);
+    if (numbered) {
+      return (
+        <div key={i} className="flex gap-2">
+          <span className="mt-[1px] shrink-0 tabular-nums text-neon/80">{numbered[1]}.</span>
+          <span className="flex-1">{renderInline(numbered[2], `n${i}`)}</span>
+        </div>
+      );
+    }
+
     const bullet = /^\s*[-•]\s+/.test(line);
     if (bullet) {
       const content = line.replace(/^\s*[-•]\s+/, "");
       return (
         <div key={i} className="flex gap-2">
-          <span className="mt-[3px] text-neon">•</span>
+          <span className="mt-[1px] shrink-0 text-neon">•</span>
           <span className="flex-1">{renderInline(content, `l${i}`)}</span>
         </div>
       );

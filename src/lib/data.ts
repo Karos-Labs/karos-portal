@@ -810,7 +810,28 @@ export async function upsertClientSeoGeo(data: SeoGeoInsights): Promise<void> {
       priorSeries = existing.visibilityHistory ?? [existing.geoVisibilityIndex];
     }
     const visibilityHistory = [...priorSeries, data.geoVisibilityIndex].slice(-12);
-    tx.set(ref, { ...data, visibilityHistory });
+    // Preserve approvals across re-captures — a regenerate must not silently un-approve.
+    const approvedRecIds = snap.exists ? (snap.data() as SeoGeoInsights).approvedRecIds ?? [] : [];
+    tx.set(ref, { ...data, visibilityHistory, approvedRecIds });
+  });
+}
+
+/**
+ * Record client/staff approval of one SEO/GEO recommendation (QA Fix 6). Appends the
+ * recId to the client's clientSeoGeo doc (idempotent) so the action plan can show it as
+ * approved and the team can act on it. Returns the full approved set.
+ */
+export async function approveSeoGeoRecommendation(clientId: string, recId: string): Promise<string[]> {
+  const ref = col.clientSeoGeo().doc(clientId);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error("No SEO/GEO capture to approve against");
+    const doc = snap.data() as SeoGeoInsights;
+    const approved = new Set(doc.approvedRecIds ?? []);
+    approved.add(recId);
+    const approvedRecIds = [...approved];
+    tx.set(ref, { approvedRecIds }, { merge: true });
+    return approvedRecIds;
   });
 }
 
