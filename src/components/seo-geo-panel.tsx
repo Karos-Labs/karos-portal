@@ -196,7 +196,13 @@ function UnmeasuredEngineCard({ view }: { view: EngineView }) {
 
 /* ── Panel ───────────────────────────────────────────────────────── */
 
-export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
+export function SeoGeoPanel({
+  insights,
+  trackedCompetitors,
+}: {
+  insights: SeoGeoInsights | null;
+  trackedCompetitors?: string[];
+}) {
   if (!insights) {
     return (
       <Card>
@@ -223,6 +229,7 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
   const gaps = buildGapViews(insights.gaps, insights.clientId);
   const prompts = buildPromptViews(insights);
   const generic = genericFlagPrefill(insights);
+  const citationLeaderboard = insights.citationLeaderboard;
 
   const measuredEngines = engines.filter((e) => e.status === "measured");
   const unmeasuredEngines = engines.filter((e) => e.status !== "measured");

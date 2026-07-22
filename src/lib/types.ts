@@ -184,12 +184,8 @@ export interface JobRunEvent {
   message: string;
 }
 
-/**
- * Task type the external agent service (agent-service/) runs. The hardcoded lab
- * product catalog was retired 2026-07 — every agent is now a repo-imported
- * CustomAgent run through the single "custom" task type.
- */
-export type ManagedTaskType = "custom";
+/** Task types the external agent service (agent-service/) can run. */
+export type ManagedTaskType = "social_post" | "newsletter_issue" | "blog_article" | "landing_page" | "custom";
 
 /**
  * A platform-defined agent: a stored system prompt bound to an entry skill in

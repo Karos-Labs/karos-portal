@@ -59,6 +59,22 @@ const engineRow = (patch: Partial<PerEngineVisibility> = {}): PerEngineVisibilit
     { name: "Acme", mentions: 3, isClient: true },
     { name: "Rival", mentions: 6, isClient: false },
   ],
+  category: {
+    promptsMeasured: 10,
+    mentionRate: 0.3,
+    citationRate: 0.1,
+    firstPositionRate: 0.1,
+    shareOfVoice: 20,
+    netSentiment: 0,
+    ghostCitationRate: 0,
+    topCompetitor: null,
+    brandMentions: [
+      { name: "Acme", mentions: 3, isClient: true },
+      { name: "Rival", mentions: 6, isClient: false },
+    ],
+  },
+  brandNamed: 0,
+  brandPromptsMeasured: 0,
   ...patch,
 });
 
