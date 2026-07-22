@@ -127,6 +127,24 @@ curl -H "Authorization: Bearer $(gcloud auth print-identity-token --audiences=$A
 Then run one job per task type from the platform UI (Clients → Agents → Managed
 products) and confirm artifacts arrive as review-ready assets.
 
+## X agent live reads (`XAI_API_KEY`)
+
+The X agent's reactive lanes (news reaction, quote, reply) read X live via
+`api.x.ai` (already on the research egress group). The worker passes
+`XAI_API_KEY` into job sandboxes when set. Create the secret BEFORE deploying a
+revision that references it (step 3 fails otherwise):
+
+```bash
+printf '%s' '<the xAI key>' | gcloud secrets create xai-api-key --data-file=-
+gcloud secrets add-iam-policy-binding xai-api-key \
+  --member serviceAccount:agent-service-sa@$PROJECT_ID.iam.gserviceaccount.com \
+  --role roles/secretmanager.secretAccessor
+```
+
+Undo: remove `XAI_API_KEY=xai-api-key:latest` from the worker's `--set-secrets`
+and redeploy (or `gcloud secrets delete xai-api-key`). Without the key the X
+agent still runs; its reactive lanes fall back to WebSearch.
+
 ## Rolling a new agents-repo version
 
 Re-run step 3 with a new `_AGENTS_REF`. The runner image rebakes the repo at
