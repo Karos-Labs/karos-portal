@@ -83,8 +83,12 @@ html.light {
   color-scheme: light;
 }
 
-* {
-  border-color: var(--border);
+/* Default border colour. Must stay in @layer base: unlayered rules beat every
+   layered one, which would silently override Tailwind's border-<color> utilities. */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
 }
 
 html,
