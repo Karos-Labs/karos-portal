@@ -1257,3 +1257,103 @@ export interface CreditLedgerEntry {
   actorName?: string;
   createdAt: number;
 }
+
+/* ───────────────────── X agent (e13) intake & seats ─────────────────────
+ *
+ * Per-agent client data collected ON TOP of onboarding (the buildout brief's
+ * layer 2 + 3): company-level agent intake, per-person seats, the two ongoing
+ * drop boxes, and per-account draft feedback. Grouped business → agent data →
+ * seats → per-seat agent data, stored as flat collections keyed by
+ * clientId/seatId per this codebase's convention. Additive — nothing existing
+ * routes through these.
+ */
+
+/** A person with a seat inside a client business (platform-agnostic). */
+export interface ClientSeat {
+  id: string;
+  clientId: string;
+  /** Display name, e.g. "Albert Kattan". */
+  name: string;
+  /** kebab-case from name ("albert-kattan") — stable key for per-seat agent files. */
+  slug: string;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * One agent's intake for one account: seatId null = the company page,
+ * otherwise the seat. One doc per (clientId, agent, seatId). Only ASK fields
+ * live here — voice/pillars/cadence are built by the agent, never collected.
+ */
+export interface AgentIntake {
+  id: string;
+  clientId: string;
+  /** Agent family, e.g. "x". Widen the union as more agents get intake. */
+  agent: "x";
+  /** null = company-page intake; otherwise the ClientSeat id. */
+  seatId: string | null;
+  /** Account @handle. Null = none yet (company) / pending (seat drafts, cannot post). */
+  handle: string | null;
+  /** Company form only: how the brand wants to come across (the one asked voice input). */
+  comeAcross?: string;
+  /** Anything we must never post. */
+  offLimits: string;
+  /** Engagement roster @handles; empty = engagement lane stays off. */
+  roster: string[];
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One company "What's new" row (feeds the X internal connector; whats-new.json shape). */
+export interface XNewsUpdate {
+  id: string;
+  clientId: string;
+  title: string;
+  /** YYYY-MM-DD — grounds the post; required by the engine. */
+  date: string;
+  detail?: string;
+  url?: string;
+  /** launch / milestone / customer win / hire / partnership / event / other. */
+  type?: string;
+  createdBy: string;
+  createdAt: number;
+}
+
+/** One per-seat "Your takes & topics" row (feeds the pov connector; takes.json shape). */
+export interface XTake {
+  id: string;
+  clientId: string;
+  seatId: string;
+  take: string;
+  /** YYYY-MM-DD */
+  date: string;
+  topic?: string;
+  url?: string;
+  createdBy: string;
+  createdAt: number;
+}
+
+/**
+ * Per-draft feedback, captured per account so one account's corrections never
+ * bleed into another's. Serialized into future runs as that account's
+ * Learning Log.
+ */
+export interface XDraftFeedback {
+  id: string;
+  clientId: string;
+  /** "company" or a ClientSeat id. */
+  account: string;
+  jobId?: string;
+  assetId?: string;
+  /** Which draft in the batch, e.g. "Avenue 3 · News-reaction". */
+  draftRef?: string;
+  action: "posted" | "posted_with_edits" | "not_posted";
+  /** posted_with_edits: the final text the client actually used. */
+  finalText?: string;
+  /** not_posted: why it was killed. */
+  reason?: string;
+  createdBy: string;
+  createdAt: number;
+}

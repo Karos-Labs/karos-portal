@@ -33,6 +33,7 @@ function sdkEnv(): Record<string, string> {
     "TERM",
     "NODE_USE_ENV_PROXY",
     "ANTHROPIC_API_KEY",
+    "XAI_API_KEY",
     "APIFY_TOKEN",
     "HTTP_PROXY",
     "HTTPS_PROXY",

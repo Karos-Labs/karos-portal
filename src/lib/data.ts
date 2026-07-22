@@ -39,6 +39,11 @@ import type {
   TaskComment,
   TaskStatus,
   Transcript,
+  ClientSeat,
+  AgentIntake,
+  XNewsUpdate,
+  XTake,
+  XDraftFeedback,
 } from "@/lib/types";
 import {
   CreditError,
@@ -100,6 +105,12 @@ const col = {
   // by a snapshot of the digest that produced it so the LLM only reruns when
   // there's actually something new to report (see /api/clients/[id]/insights).
   clientInsightsCache: () => adminDb().collection("clientInsightsCache"),
+  // X agent (e13) intake & seats — per-agent client data on top of onboarding.
+  clientSeats: () => adminDb().collection("clientSeats"),
+  agentIntake: () => adminDb().collection("agentIntake"),
+  xNewsUpdates: () => adminDb().collection("xNewsUpdates"),
+  xTakes: () => adminDb().collection("xTakes"),
+  xDraftFeedback: () => adminDb().collection("xDraftFeedback"),
   // Planned agent runs shown on the unified calendar. Kept separate from the
   // recurring generator scheduler because the two records have different schemas.
   plannedScheduledRuns: () => adminDb().collection("plannedScheduledRuns"),
@@ -1973,4 +1984,100 @@ export async function getTaskBoardCapacity(clientId: string): Promise<{
 }> {
   const existing = await listClientTasks({ clientId, limit: 500 });
   return { ...computeBoardCapacity(existing), tasks: existing };
+}
+
+/* ─────────────────── X agent (e13) intake & seats ─────────────────── */
+
+export async function createClientSeat(data: Omit<ClientSeat, "id">): Promise<string> {
+  const ref = await col.clientSeats().add(data);
+  return ref.id;
+}
+
+export async function getClientSeat(id: string): Promise<ClientSeat | null> {
+  const doc = await col.clientSeats().doc(id).get();
+  return doc.exists ? withId<ClientSeat>(doc) : null;
+}
+
+export async function listClientSeats(clientId: string): Promise<ClientSeat[]> {
+  const snap = await col.clientSeats().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<ClientSeat>(d)).sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** One intake doc per (clientId, agent, seatId); seatId null = the company page. */
+export async function getAgentIntake(
+  clientId: string,
+  agent: AgentIntake["agent"],
+  seatId: string | null,
+): Promise<AgentIntake | null> {
+  const snap = await col
+    .agentIntake()
+    .where("clientId", "==", clientId)
+    .where("agent", "==", agent)
+    .where("seatId", "==", seatId)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<AgentIntake>(snap.docs[0]);
+}
+
+export async function listAgentIntake(
+  clientId: string,
+  agent: AgentIntake["agent"],
+): Promise<AgentIntake[]> {
+  const snap = await col
+    .agentIntake()
+    .where("clientId", "==", clientId)
+    .where("agent", "==", agent)
+    .get();
+  return snap.docs.map((d) => withId<AgentIntake>(d));
+}
+
+/** Create-or-update the single intake doc for the account (form edits are expected). */
+export async function upsertAgentIntake(
+  data: Omit<AgentIntake, "id" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getAgentIntake(data.clientId, data.agent, data.seatId);
+  const now = Date.now();
+  if (existing) {
+    await col.agentIntake().doc(existing.id).set({ ...data, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col.agentIntake().add({ ...data, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+export async function addXNewsUpdate(data: Omit<XNewsUpdate, "id">): Promise<string> {
+  const ref = await col.xNewsUpdates().add(data);
+  return ref.id;
+}
+
+export async function listXNewsUpdates(clientId: string): Promise<XNewsUpdate[]> {
+  const snap = await col.xNewsUpdates().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<XNewsUpdate>(d)).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function addXTake(data: Omit<XTake, "id">): Promise<string> {
+  const ref = await col.xTakes().add(data);
+  return ref.id;
+}
+
+export async function listXTakes(clientId: string, seatId?: string): Promise<XTake[]> {
+  let q = col.xTakes().where("clientId", "==", clientId);
+  if (seatId) q = q.where("seatId", "==", seatId);
+  const snap = await q.get();
+  return snap.docs.map((d) => withId<XTake>(d)).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function addXDraftFeedback(data: Omit<XDraftFeedback, "id">): Promise<string> {
+  const ref = await col.xDraftFeedback().add(data);
+  return ref.id;
+}
+
+export async function listXDraftFeedback(
+  clientId: string,
+  account?: string,
+): Promise<XDraftFeedback[]> {
+  let q = col.xDraftFeedback().where("clientId", "==", clientId);
+  if (account) q = q.where("account", "==", account);
+  const snap = await q.get();
+  return snap.docs.map((d) => withId<XDraftFeedback>(d)).sort((a, b) => b.createdAt - a.createdAt);
 }

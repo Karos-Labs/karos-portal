@@ -8,6 +8,7 @@ import { CreditError } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
 import { cancelAgentServiceJob, isAgentServiceConfigured, submitAgentServiceJob } from "./client";
 import type { AgentServiceContextFile } from "./types";
+import { buildXAgentContextFiles, isXAgent } from "./x-agent-context";
 import type { Client, CustomAgent } from "@/lib/types";
 
 /* limits — mirror agent-service/src/schemas/task-types/custom.json */
@@ -51,6 +52,21 @@ export async function submitCustomAgentRun(args: {
   const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
   if (!appUrl) {
     return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
+  }
+
+  // X agent (e13): attach the portal-collected intake, ongoing boxes, and
+  // per-account learning logs as context files (see x-agent-context.ts) so
+  // scheduler-fired X runs read the same live client data as manual ones.
+  // Other agents skip it; failing the submission beats running without data.
+  const contextFiles = [...(args.contextFiles ?? [])];
+  if (isXAgent(agent.key)) {
+    try {
+      contextFiles.push(...(await buildXAgentContextFiles(client.id)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's X intake data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
   }
 
   const now = Date.now();
@@ -106,7 +122,7 @@ export async function submitCustomAgentRun(args: {
         prompt,
       },
       callback_url: `${appUrl.replace(/\/$/, "")}/api/agent-service/webhook`,
-      ...(args.contextFiles && args.contextFiles.length > 0 ? { context_files: args.contextFiles } : {}),
+      ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),
       metadata: { platform_job_id: jobId, ...(args.extraMetadata ?? {}) },
     });
     submittedServiceJobId = submitted.job_id;
