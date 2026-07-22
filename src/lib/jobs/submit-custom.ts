@@ -15,7 +15,7 @@ import {
   submitAgentServiceJob,
 } from "@/lib/agent-service/client";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
-import { buildXAgentContextFiles, isXAgent } from "@/lib/agent-service/x-agent-context";
+import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "@/lib/agent-service/x-agent-context";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
@@ -98,9 +98,15 @@ export async function submitCustomAgentJob(
   // X agent (e13): attach the portal-collected intake, ongoing boxes, and
   // per-account learning logs as context files (see x-agent-context.ts). Lives
   // in this shared core so manual, scheduled, and MCP-fired X runs all inject.
-  // Other agents skip it; an X run with nothing stored attaches nothing. Fail
-  // the submission rather than run silently without the client's stored data.
+  // Other agents skip it. The agent runs ON this data, so hard-gate: no intake,
+  // no run — with a message pointing to the setup page.
   if (isXAgent(agent.key)) {
+    if (!(await hasXAgentIntake(input.clientId))) {
+      return {
+        error:
+          "Set up the X agent data first. Open the client's “X agent data” page (under Agent-specific documents) and fill in the company page — the agent drafts from that. Nothing has run.",
+      };
+    }
     try {
       contextFiles.push(...(await buildXAgentContextFiles(input.clientId, agent.name)));
     } catch (e) {

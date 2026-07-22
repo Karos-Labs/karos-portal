@@ -93,18 +93,6 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         <PageHeader
           title="AI Agents"
           description="Run the custom AI agents your Karos team has enabled for you."
-          {...(agents.some((a) => a.key === "karos-x-agent")
-            ? {
-                action: (
-                  <a
-                    href={`/clients/${id}/x-agent`}
-                    className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-                  >
-                    X agent data →
-                  </a>
-                ),
-              }
-            : {})}
         />
         {agents.length > 0 && agentServiceConfigured ? (
           <ClientCustomAgents
@@ -162,12 +150,6 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         action={
           <div className="flex items-center gap-3">
             <ReplanCalendarButton clientId={id} />
-            <a
-              href={`/clients/${id}/x-agent`}
-              className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-            >
-              X agent data →
-            </a>
             <a
               href={`/clients/${id}/settings`}
               className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
