@@ -38,7 +38,10 @@ whole seed = delete the listed docs; nothing else references them.
 | D5 | Albert's 4 takes (verbatim lab takes.json) | `xTakes/GnRvPzKBzvzvJfPa5iHg`, `LJhwlUcYQQxYmPcQ7Ufw`, `oGfAkLFU7QZIcoa87saW`, `9B91v5GqzsDnkMS7q31H` | delete docs |
 | D6 | karos-x-agent instructions replaced with the production text (docs/x-agent-portal.md block) | `customAgents/Qv6qtlZOObDVlSUXDzbb` | restore the `instructions` field from `_backup/2026-07-22/customAgents-Qv6qtlZOObDVlSUXDzbb.json` (full pre-change doc) |
 
-## Deploy/config changes
+## Deploy/config changes (applied 2026-07-22)
 
-_None yet. The planned `XAI_API_KEY` addition is a Cloud Run env/secret set by Daniel;
-undo = remove the env var from the service (one gcloud command, listed when applied)._
+| # | What | Undo |
+|---|---|---|
+| C1 | Secret `xai-api-key` created in Secret Manager (by Daniel, console). agent-service-sa already had project-level accessor | `gcloud secrets delete xai-api-key --project karoscmo` |
+| C2 | Portal auto-deployed from main by the existing `^main$` Cloud Build trigger (merge commit 0f84f37) | `git revert -m 1 0f84f37` + push (trigger redeploys), or roll the karos-cmo service back to the previous revision |
+| C3 | agent-service api + worker + runner deployed at image tag `34b7953...` (build e60db965, 2026-07-22 10:31 UTC; previous tag `a287788...`) via `gcloud builds submit agent-service/cloudbuild.yaml` with `_REGION=europe-west1,_REPO=karos,_AGENTS_REF=main,COMMIT_SHA=34b7953...` | redeploy the previous images: rerun the same build with `COMMIT_SHA=a287788f222fe30e88e2446a1085b7d58518c002` checked out at that commit, or `gcloud run services update-traffic` to the prior revision + `gcloud run jobs update agent-runner --image=...agent-runner:a287788...` |
