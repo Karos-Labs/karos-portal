@@ -1,40 +1,32 @@
 "use client";
 
 /**
- * The X drafts reader: the latest batch rendered as readable cards — grouped
- * per account, one card per avenue, the post text large and scannable — with
- * pick / edit / skip actions wired straight into the per-account feedback
- * loop (each choice trains that account's learning log).
+ * The X drafts reader: a parsed draft batch rendered as readable cards —
+ * grouped per account, one card per avenue, the post text large and scannable
+ * — with pick / edit / skip actions wired into the per-account feedback loop.
+ * Chrome-less by design: it embeds wherever outputs live (the asset card in
+ * the Library and on the job page).
  */
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, CardTitle, Textarea } from "@/components/ui";
+import { Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
 import type { XParsedAccount, XParsedDraft } from "@/lib/x-drafts";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted";
 
-function accountKey(title: string, seats: Array<{ id: string; name: string }>): string {
-  const t = title.toLowerCase();
-  if (t.includes("company page")) return "company";
-  const seat = seats.find((s) => t.includes(s.name.toLowerCase()));
-  return seat?.id ?? "company";
-}
-
 function DraftCard({
   clientId,
   jobId,
   assetId,
-  account,
   accountTitle,
   draft,
 }: {
   clientId: string;
-  jobId: string;
+  jobId?: string;
   assetId: string;
-  account: string;
   accountTitle: string;
   draft: XParsedDraft;
 }) {
@@ -53,8 +45,8 @@ function DraftCard({
     start(async () => {
       const result = await addXDraftFeedbackAction({
         clientId,
-        account,
-        jobId,
+        accountTitle,
+        ...(jobId ? { jobId } : {}),
         assetId,
         draftRef,
         action,
@@ -76,7 +68,9 @@ function DraftCard({
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium">{draft.avenue}</p>
         <div className="flex items-center gap-2">
-          {draft.posts[0]?.chars ? <Badge>{draft.posts.length > 1 ? `${draft.posts.length}-post thread` : draft.posts[0].chars}</Badge> : null}
+          {draft.posts[0]?.chars ? (
+            <Badge>{draft.posts.length > 1 ? `${draft.posts.length}-post thread` : draft.posts[0].chars}</Badge>
+          ) : null}
           {sent ? (
             <Badge tone="success">
               {sent === "posted" ? "Picked" : sent === "posted_with_edits" ? "Picked with edits" : "Skipped"}
@@ -174,55 +168,45 @@ function DraftCard({
   );
 }
 
-export function XDraftsReview({
+/** A parsed batch, chrome-less — the host (asset card, job page) owns the frame. */
+export function XDraftsBatch({
   clientId,
   jobId,
   assetId,
-  ranAt,
   accounts,
-  seats,
 }: {
   clientId: string;
-  jobId: string;
+  jobId?: string;
   assetId: string;
-  ranAt: number;
   accounts: XParsedAccount[];
-  seats: Array<{ id: string; name: string }>;
 }) {
   return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between gap-3">
-        <CardTitle>This week&apos;s drafts</CardTitle>
-        <Badge>{new Date(ranAt).toISOString().slice(0, 10)}</Badge>
-      </div>
-      <p className="mt-1 text-sm text-muted">
+    <div className="space-y-6">
+      <p className="text-sm text-muted">
         About a week of posting to choose from. Pick your favourites, edit freely, and skip with a
         reason — every choice sharpens that account&apos;s voice for the next batch.
       </p>
-      <div className="mt-5 space-y-6">
-        {accounts.map((acc) => (
-          <div key={acc.title}>
-            <div className="mb-2 flex items-center gap-2">
-              <Icon name="AtSign" className="h-4 w-4 text-muted" />
-              <p className="text-sm font-semibold">{acc.title}</p>
-            </div>
-            {acc.note ? <p className="mb-2 text-xs text-muted">{acc.note}</p> : null}
-            <div className="space-y-3">
-              {acc.drafts.map((draft) => (
-                <DraftCard
-                  key={draft.avenue}
-                  clientId={clientId}
-                  jobId={jobId}
-                  assetId={assetId}
-                  account={accountKey(acc.title, seats)}
-                  accountTitle={acc.title}
-                  draft={draft}
-                />
-              ))}
-            </div>
+      {accounts.map((acc) => (
+        <div key={acc.title}>
+          <div className="mb-2 flex items-center gap-2">
+            <Icon name="AtSign" className="h-4 w-4 text-muted" />
+            <p className="text-sm font-semibold">{acc.title}</p>
           </div>
-        ))}
-      </div>
-    </Card>
+          {acc.note ? <p className="mb-2 text-xs text-muted">{acc.note}</p> : null}
+          <div className="space-y-3">
+            {acc.drafts.map((draft) => (
+              <DraftCard
+                key={draft.avenue}
+                clientId={clientId}
+                {...(jobId ? { jobId } : {})}
+                assetId={assetId}
+                accountTitle={acc.title}
+                draft={draft}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

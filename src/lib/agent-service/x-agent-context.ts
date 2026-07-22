@@ -61,6 +61,7 @@ function feedbackSection(account: string, label: string, rows: XDraftFeedback[])
     if (r.action === "posted") return `- ${when}: posted as drafted${ref}.`;
     if (r.action === "posted_with_edits")
       return `- ${when}: posted with edits${ref}. Final text used: ${r.finalText ?? "(not captured)"}`;
+    if (r.action === "note") return `- ${when}: client note${ref}: ${r.reason ?? "(empty)"}`;
     return `- ${when}: not posted${ref}. Reason: ${r.reason ?? "(not given)"}`;
   });
   return `## ${label}\n${lines.join("\n")}`;
@@ -173,6 +174,8 @@ export async function buildXAgentContextFiles(
     feedbackSection("company", "Learning log — company page", feedback),
     "",
     ...seatSections,
+    "",
+    feedbackSection("program", "Program feedback (applies to EVERY account)", feedback),
   ].join("\n");
   files.push({
     name: "x-portal-intake.md",
