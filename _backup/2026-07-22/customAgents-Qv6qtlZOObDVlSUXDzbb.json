@@ -1,0 +1,22 @@
+{
+  "id": "Qv6qtlZOObDVlSUXDzbb",
+  "key": "karos-x-agent",
+  "name": "X Agent",
+  "description": "Per-client X Agent (client-facing name; same engine architecture as the LinkedIn Agent). Run once per client: it reverse-engineers the client's X AUDIENCE (who is listening, which accounts already win their attention, where the conversations happen), builds a VOICE PROFILE per managed account (founder or brand handle: earned claims, sampled diction, what this account can credibly say), derives 2-3 ORGANIC X post formats from the menu (single posts, threads, reply/quote engagement), and then EMITS per-client generator sub-skills (one per format) that draft on a schedule with full context of eve",
+  "icon": "Zap",
+  "color": "#A3E635",
+  "entrySkillDir": "products/live/x-agent",
+  "skillRoots": [],
+  "includeClientSkills": true,
+  "instructions": "Run the \"karos-x-agent\" skill (products/live/x-agent/SKILL.md) end to end.\n\nWhat this agent does: Per-client X Agent (client-facing name; same engine architecture as the LinkedIn Agent). Run once per client: it reverse-engineers the client's X AUDIENCE (who is listening, which accounts already win their attention, where the conversations happen), builds a VOICE PROFILE per managed account (founder or brand handle: earned claims, sampled diction, what this account can credibly say), derives 2-3 ORGANIC X post formats from the menu (single posts, threads, reply/quote engagement), and then EMITS per-client generator sub-skills (one per format) that draft on a schedule with full context of everything posted before via a shared ledger. Mirrors the Instagram engine (karos-instagram-agent) and LinkedIn engine (karos-linkedin-agent) architecture: run-once master, parallel research, per-client sub-skills at status:draft, shared ledger continuity. Use when onboarding an X client, \"set up x/twitter for {client}\", \"build the x engine for {company}\", \"spawn x posts for {client}\". Triggers: /x-agent, /x-agent {client}.\n\nFollow the client's brand voice and profile docs. Prefer the client's emitted sub-skills when they exist. Deliver production-ready output — no placeholders, no unfinished drafts.",
+  "creditCost": null,
+  "enabled": true,
+  "source": {
+    "path": "products/live/x-agent",
+    "status": "ready",
+    "repoSha": "68ba5d4b795d5216a7dcbe51cd7b7262c8082153"
+  },
+  "createdBy": "7dhklKotGudLQgcyHHVrYKuKvEn2",
+  "createdAt": 1784290543686,
+  "updatedAt": 1784290543686
+}

@@ -24,11 +24,19 @@ Format: one line per change — what · where · undo.
 | 11 | X portal surfaces doc + canonical agent instructions text | `docs/x-agent-portal.md` (new file) | delete the file |
 | 12 | Merge of origin/main (2026-07-22, LinkedIn e10 hookup + scheduler + custom-run refactor). Key resolutions: APIFY_TOKEN and XAI_API_KEY passthroughs coexist (config/worker/runner/cloudbuild); our X context injection MOVED from `custom-agent-actions.ts` into BOTH shared submit cores — `src/lib/jobs/submit-custom.ts` (web/MCP/run-scheduled) and `src/lib/agent-service/run-custom-agent.ts` (/api/scheduler) — as key-gated blocks | merge commit on this branch | revert the merge commit (`git revert -m 1 <sha>`); the two injection blocks + their imports are the only lines in main's files that are ours — removing them restores main's exact flow |
 
-## Data changes (Phase 3 only — none applied yet)
+## Data changes (Phase 3, applied 2026-07-22 — Karos pilot seed)
 
-_None yet. Protocol: before modifying any Firestore doc, export it as JSON to
-`_backup/<date>/<collection>-<docId>.json` in this branch and add a row here with the
-restore command._
+All seeded docs are NEW (collections were empty — verified before writing). Undo for the
+whole seed = delete the listed docs; nothing else references them.
+
+| # | What | Doc(s) | Undo |
+|---|---|---|---|
+| D1 | Albert's seat | `clientSeats/wnk3rbc1EK8dI8XNabgF` | delete doc |
+| D2 | Company X intake (@getkaros) | `agentIntake/sAEBPiJL2zDW1kCWECfW` | delete doc |
+| D3 | Albert seat X intake (handle pending) | `agentIntake/IPhXqmH8uGyuufsBZr5P` | delete doc |
+| D4 | 3 what's-new rows (2026-07-16, verbatim lab whats-new.json) | `xNewsUpdates/cdDVFTJTX6nP7cI6q5mM`, `xp1mDIbb4EXyd7Xbpo4u`, `1EgQZ2hbxYQTNxrbOg3w` | delete docs |
+| D5 | Albert's 4 takes (verbatim lab takes.json) | `xTakes/GnRvPzKBzvzvJfPa5iHg`, `LJhwlUcYQQxYmPcQ7Ufw`, `oGfAkLFU7QZIcoa87saW`, `9B91v5GqzsDnkMS7q31H` | delete docs |
+| D6 | karos-x-agent instructions replaced with the production text (docs/x-agent-portal.md block) | `customAgents/Qv6qtlZOObDVlSUXDzbb` | restore the `instructions` field from `_backup/2026-07-22/customAgents-Qv6qtlZOObDVlSUXDzbb.json` (full pre-change doc) |
 
 ## Deploy/config changes
 
