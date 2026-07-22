@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Icon } from "@/components/icon";
+import { Icon, XLogo } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { renderFullDoc, stripDocPreamble } from "@/lib/doc-render";
 import { generateIntelReportAction } from "@/lib/actions";
@@ -567,7 +567,7 @@ export function ClientDocuments({
                 href={`/clients/${clientId}/x-agent`}
                 className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
               >
-                <Icon name="AtSign" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
+                <XLogo className="h-3.5 w-3.5 shrink-0 text-muted-2 group-hover:text-foreground" />
                 <span className="flex-1 truncate text-sm text-muted group-hover:text-foreground">
                   X agent data
                 </span>
