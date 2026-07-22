@@ -8,6 +8,8 @@ import {
   buildGazetteer,
   buildRecommendations,
   classifyIntent,
+  dedupeNearDuplicates,
+  selectByIntentQuota,
   computeCheckGaps,
   computeCheckScore,
   computeCitationLeaderboard,
@@ -273,6 +275,72 @@ describe("PDF/report contract: intent taxonomy, answer grid, citations", () => {
   });
 });
 
+describe("QA Fix 4: two-stage prompt pipeline (dedupe + quota)", () => {
+  it("drops near-duplicate prompts by shingle overlap", () => {
+    const deduped = dedupeNearDuplicates([
+      "best cafes to work from in tel aviv",
+      "best cafes to work from around tel aviv", // near-dup of the first
+      "quiet place to work near me right now",
+    ]);
+    expect(deduped).toHaveLength(2);
+    expect(deduped[0]).toContain("best cafes to work from");
+    expect(deduped).toContain("quiet place to work near me right now");
+  });
+
+  it("balances the final set by per-intent quota and caps brand prompts", () => {
+    // A pool over-weighted with brand prompts must not dominate the final set.
+    const pool = [
+      "What is Acme Fintech?",
+      "Is Acme Fintech good?",
+      "Is Acme Fintech worth it?",
+      "Acme Fintech reviews", // 4 brand prompts (quota is 3)
+      "Best fintech apps",
+      "Top fintech providers",
+      "Where to find a fintech tool",
+      "How do I choose a fintech provider?",
+      "Fintech alternative to the big banks",
+    ];
+    const selected = selectByIntentQuota(pool, gaz, 20);
+    const brandCount = selected.filter((p) => classifyIntent(p, gaz) === "brand").length;
+    expect(brandCount).toBeLessThanOrEqual(3); // brand quota respected
+    expect(selected.length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe("QA Fix 1/2: tracked roster dedup + category-only comparison", () => {
+  it("dedupes near-duplicate competitors into one entity (Kairos AI Agency == KAIROS.ai)", () => {
+    const g = buildGazetteer("Acme", "https://acme.com", [
+      { company: "Kairos AI Agency" },
+      { company: "KAIROS.ai", url: "https://kairos.ai" },
+      { company: "Distinct Co", url: "https://distinct.io" },
+    ]);
+    expect(Object.keys(g.competitors)).toHaveLength(2); // the two Kairos rows merged
+  });
+
+  it("computes the client-vs-competitor comparison on CATEGORY prompts only", () => {
+    const isCategory = (p: string) => {
+      const it = classifyIntent(p, gaz);
+      return it !== "brand" && it !== "navigational";
+    };
+    const probes = [
+      // brand prompt: client guaranteed a mention (must NOT inflate the comparison)
+      analyzeAnswer(answer({ prompt: "is Acme Fintech good?", answerText: "Acme Fintech is solid." }), gaz),
+      // category prompt: only a competitor is named
+      analyzeAnswer(answer({ prompt: "best fintech app?", answerText: "Rival One leads the space." }), gaz),
+    ];
+    const vis = computePerEngineVisibility("chatgpt", probes, gaz, isCategory);
+    // Full set (index inputs) still sees the brand mention.
+    expect(vis.mentionRate).toBeGreaterThan(0);
+    // Category comparison: client absent → 0% share of voice (NOT 100%), competitor leads.
+    expect(vis.category.shareOfVoice).toBe(0);
+    expect(vis.category.brandMentions.find((b) => b.isClient)?.mentions).toBe(0);
+    expect(vis.category.topCompetitor?.name).toBe("Rival One");
+    // Brand split is reported separately.
+    expect(vis.brandNamed).toBe(1);
+    expect(vis.brandPromptsMeasured).toBe(1);
+  });
+});
+
 describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
   it("maps internal gaps to a client-safe action plan with the right controls", () => {
     const seoChecks: SeoGeoCheck[] = [
@@ -283,24 +351,28 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
     const gaps = computeCheckGaps(SEO_CHECKS.concat(GEO_READINESS_CHECKS), seoChecks, "SEO");
     const recs = buildRecommendations(gaps);
 
-    const meta = recs.find((r) => r.title.includes("Meta descriptions"));
+    // SEO-06 maps to plain-English copy (QA Fix 7) and a machine-appliable control.
+    const meta = recs.find((r) => r.recId.startsWith("SEO-06"));
     expect(meta?.actionKind).toBe("one_click"); // meta_description is machine-appliable
-    expect(meta?.productIds).toEqual(["a3"]);
+    expect(meta?.title).toBe("Fix your meta descriptions"); // plain-English, no thresholds
+    expect(meta?.description.length).toBeGreaterThan(10);
+    expect(meta?.owner).toContain("we draft, you approve");
     expect(meta?.targetPlatform).toBe("site");
 
-    const index = recs.find((r) => r.title.includes("Indexed on Google"));
+    const index = recs.find((r) => r.recId.startsWith("GEO-41"));
     expect(index?.actionKind).toBe("connect"); // indexReach → existing-product → connect
 
-    const entity = recs.find((r) => r.title.includes("Wikipedia"));
+    const entity = recs.find((r) => r.recId.startsWith("GEO-25"));
     expect(entity?.actionKind).toBe("guided_manual"); // offsiteEntity → advisory
-    expect(entity?.productIds).toEqual([]); // advisory has no runnable product
+    expect(entity?.owner).toContain("Advisory");
 
-    // The client-safe shape carries NO internal producer fields (§4).
+    // The client-safe shape carries NO internal producer fields (§4) — and no phantom product id.
     for (const r of recs) {
       expect(r).not.toHaveProperty("fixAction");
       expect(r).not.toHaveProperty("delivery");
       expect(r).not.toHaveProperty("confidence");
       expect(r).not.toHaveProperty("evidence");
+      expect(r).not.toHaveProperty("productIds");
     }
   });
 

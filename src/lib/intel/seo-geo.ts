@@ -16,6 +16,9 @@ import {
   INTENT_LABELS,
   buildAnswerGrid,
   buildRecommendations,
+  classifyIntent,
+  dedupeNearDuplicates,
+  selectByIntentQuota,
   computeCitationLeaderboard,
   computeCitationSummary,
   computeCompetitorsNamed,
@@ -26,6 +29,7 @@ import {
   computeVisibilityIndex,
   tagPromptIntents,
   type EngineId,
+  type Gazetteer,
   type GeoProbe,
   type IntentPrompt,
   type SeoGeoCheck,
@@ -262,6 +266,38 @@ Every check id from both registries MUST appear exactly once in the JSON. The JS
 /* ── Agent 2: buyer-intent prompt set + multi-engine capture ──────── */
 
 /**
+ * Clean a generated prompt set before it's frozen (QA Fix 4 + Fix 9). The original a3
+ * spec runs draft → tag/dedupe/quota → client approval; the portal port compressed that
+ * into one call, which let a "site:" search operator and a stale year reach the grid.
+ * This post-filter enforces the guardrails deterministically:
+ *  - drop search operators ("site:", "inurl:", …) — they aren't buyer questions
+ *  - strip hardcoded years (and any preposition they leave dangling) — no stale-dating
+ *  - dedupe near-identical questions
+ *  - sentence-case (first letter up; brand names/acronyms mid-string preserved)
+ */
+function sanitizePromptSet(prompts: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of prompts) {
+    let p = raw.trim();
+    if (/\b(site|inurl|intitle|filetype|intext)\s*:/i.test(p)) continue; // search operators aren't questions
+    p = p
+      .replace(/\b(19|20)\d{2}\b/g, "") // stale years
+      .replace(/\s+(in|for|of|on|during|by)\s*([?.!,]|$)/i, "$2") // dangling preposition after a removed year
+      .replace(/\s{2,}/g, " ")
+      .replace(/\s+([?.!,])/g, "$1")
+      .trim();
+    if (p.length < 8) continue;
+    p = p.charAt(0).toUpperCase() + p.slice(1); // sentence case
+    const key = p.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
+}
+
+/**
  * Deterministic fallback prompt set when generation fails — never blocks the capture.
  * Spans the full a3 intent taxonomy (discovery / comparison / problem / brand / nav)
  * so the answer grid still has representative rows even on a degraded run.
@@ -298,13 +334,25 @@ function fallbackPromptSet(client: Client): string[] {
   return set.slice(0, PROMPT_SET_SIZE);
 }
 
-/** Generate the buyer-intent prompt set (a3 Phase 1: drafted per client, never hardcoded). */
-async function generatePromptSet(client: Client, competitors: string[]): Promise<string[]> {
+/** Candidate pool the drafter is asked for (larger than the final set — the quota pass trims it). */
+const PROMPT_POOL_SIZE = 32;
+
+/**
+ * Generate the frozen buyer-intent prompt set via the a3 Phase-1 pipeline:
+ *   Sonnet drafts a candidate POOL from the client's real vocabulary
+ *     → shingle-dedupe near-duplicates
+ *     → sanitize (strip search operators / hardcoded years, sentence-case)
+ *     → per-intent QUOTA selection to the final set
+ *     → freeze.
+ * (The interactive client keep/edit/delete approval SCREEN is a separate stateful
+ * workflow; the automated onboarding run drafts, tags, dedupes and quota-selects here.)
+ */
+async function generatePromptSet(client: Client, competitors: string[], gazetteer: Gazetteer): Promise<string[]> {
   try {
-    const promptStream = streamText({
-      model: anthropic(MODELS.HAIKU),
+    const draftStream = streamText({
+      model: anthropic(MODELS.SONNET), // Sonnet drafts (a3 Phase 1); tagging/dedupe/quota are deterministic
       system:
-        "You write realistic, high-intent questions that real buyers type into AI assistants (ChatGPT, Gemini, Claude). Questions must be category-level (what a buyer asks BEFORE knowing the brand), in the language the client's customers actually use, and must never embed the answer.",
+        "You write realistic, high-intent questions that real buyers type into AI assistants (ChatGPT, Gemini, Claude). Questions are in the language the client's customers actually use and never embed the answer. Draft a generous, varied pool — the platform trims and balances it.",
       messages: [
         {
           role: "user",
@@ -313,38 +361,45 @@ Industry: ${client.industry ?? "unknown"}
 Description: ${client.description ?? "—"}
 Known competitors: ${competitors.join(", ") || "—"}
 
-Write exactly ${PROMPT_SET_SIZE} buyer-intent questions spanning the FULL intent taxonomy (roughly balanced across the first three, plus a few of the last two):
-- discovery: "best X", "top X", "where to X" — what a buyer asks BEFORE knowing any brand
+Draft ${PROMPT_POOL_SIZE} candidate buyer-intent questions covering the FULL intent taxonomy:
+- discovery: "best X", "top X", "where to X" — asked BEFORE knowing any brand
 - comparison: "best app/tool for X", "X vs alternatives", "${client.name} alternative"
 - problem: "how do I …", "… near me", "I need … right now"
-- brand: 2-3 that name ${client.name} directly ("what is ${client.name}", "is ${client.name} good")
-- navigational: 1-2 like the brand's site/name
-Use the customers' language (match the client's market/locale).
+- brand: a few that name ${client.name} directly ("what is ${client.name}", "is ${client.name} good")
+- navigational: the brand or bare domain name (e.g. "${client.name} reviews")
+Weight the pool toward discovery/comparison/problem (that's where real market visibility is measured).
 
-Return ONLY a fenced \`\`\`json block containing an array of ${PROMPT_SET_SIZE} strings.`,
+STRICT RULES:
+- Each is a natural question a person types. NO search operators ("site:", "inurl:", etc.).
+- NO hardcoded years or dates. Sentence case. Avoid near-duplicates.
+
+Return ONLY a fenced \`\`\`json block containing an array of ${PROMPT_POOL_SIZE} strings.`,
         },
       ],
-      maxOutputTokens: 800,
+      maxOutputTokens: 1400,
     });
-    const text = await promptStream.text;
-    logger.trackStream(promptStream, {
-      clientId: client.id, agentId: null, agentName: "GEO Prompt Set",
-      modelName: MODELS.HAIKU, operation: "geo_promptset",
+    const text = await draftStream.text;
+    logger.trackStream(draftStream, {
+      clientId: client.id, agentId: null, agentName: "GEO Prompt Set (draft)",
+      modelName: MODELS.SONNET, operation: "geo_promptset",
     });
-    // The prompt set is a bare JSON array (no seoChecks/geoChecks keys), so use the
-    // generic array extractor rather than extractJsonBlock (which targets the audit).
+    // Bare JSON array (no seoChecks/geoChecks keys) → generic array extractor.
     const json = extractJsonArray(text);
     if (json) {
       const arr = tolerantJsonParse(json) as unknown;
       if (Array.isArray(arr)) {
-        const prompts = arr.filter((p): p is string => typeof p === "string" && p.trim().length > 8);
-        if (prompts.length >= 3) return prompts.slice(0, PROMPT_SET_SIZE);
+        const raw = arr.filter((p): p is string => typeof p === "string" && p.trim().length > 8);
+        // dedupe near-duplicates → sanitize (operators/years/case) → quota-balance the final set.
+        const cleaned = sanitizePromptSet(dedupeNearDuplicates(raw));
+        const selected = selectByIntentQuota(cleaned, gazetteer, PROMPT_SET_SIZE);
+        if (selected.length >= 3) return selected;
       }
     }
     throw new Error("prompt set could not be parsed or was too small");
   } catch (err) {
     console.warn("[seo-geo] Prompt-set generation failed — using deterministic fallback:", err);
-    return fallbackPromptSet(client);
+    const fallback = sanitizePromptSet(dedupeNearDuplicates(fallbackPromptSet(client)));
+    return selectByIntentQuota(fallback, gazetteer, PROMPT_SET_SIZE);
   }
 }
 
@@ -359,8 +414,8 @@ async function runVisibilityCapture(
   competitors: Array<{ company: string; url?: string }>,
 ): Promise<CaptureResult> {
   const roster = competitors.slice(0, MAX_ROSTER_COMPETITORS);
-  const promptSet = await generatePromptSet(client, roster.map((c) => c.company));
   const gazetteer = buildGazetteer(client.name, client.website, roster);
+  const promptSet = await generatePromptSet(client, roster.map((c) => c.company), gazetteer);
 
   const live = new Set(configuredEngines());
   const engines = ENGINE_ROSTER.filter((e) => live.has(e));
@@ -549,8 +604,14 @@ export async function runSeoGeoResearch(
     client.website,
     competitors.slice(0, MAX_ROSTER_COMPETITORS),
   );
+  // Brand + navigational prompts name the client and guarantee mentions; the
+  // client-vs-competitor comparison must be like-for-like on CATEGORY prompts (QA Fix 2).
+  const isCategoryPrompt = (prompt: string) => {
+    const intent = classifyIntent(prompt, gazetteer);
+    return intent !== "brand" && intent !== "navigational";
+  };
   const perEngine = ENGINE_ROSTER.map((engine) => {
-    const computed = computePerEngineVisibility(engine, capture.probes, gazetteer);
+    const computed = computePerEngineVisibility(engine, capture.probes, gazetteer, isCategoryPrompt);
     // Engines with no wired connector surface as explicit UNAVAILABLE columns.
     return computed.promptsTotal > 0 ? computed : { ...computed, source: ENGINE_PROVIDERS[engine] };
   });

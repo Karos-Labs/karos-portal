@@ -121,17 +121,44 @@ function uniqueAliases(aliases: string[]): string[] {
   return out;
 }
 
+/**
+ * Collapse a brand to a comparison key so near-duplicate roster rows merge instead of
+ * competing against each other (QA Fix 2: "Kairos AI Agency" and "KAIROS.ai" are one
+ * entity). The registrable domain root is the strongest identity; otherwise the name
+ * stripped of generic agency suffixes + punctuation.
+ */
+function normalizeBrandKey(name: string, url?: string): string {
+  const domainRoot = rootDomain(url)?.split(".")[0];
+  if (domainRoot && domainRoot.length >= 3) return domainRoot;
+  return name
+    .toLowerCase()
+    .replace(/\b(ai|agency|consulting|labs?|studio|inc|llc|ltd|co|group|the|and|&)\b/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
 export function buildGazetteer(
   clientName: string,
   clientWebsite: string | undefined,
   competitors: Array<{ company: string; url?: string }>,
 ): Gazetteer {
+  // Dedupe competitors that resolve to the same entity, merging their aliases under the
+  // first-seen canonical name — otherwise a client's split roster names double-count.
+  const canonicalByKey = new Map<string, string>();
+  const merged: Record<string, string[]> = {};
+  for (const c of competitors) {
+    const key = normalizeBrandKey(c.company, c.url);
+    const canonical = canonicalByKey.get(key);
+    if (canonical) {
+      merged[canonical] = uniqueAliases([...merged[canonical], c.company, ...aliasesFromWebsite(c.url)]);
+      continue;
+    }
+    canonicalByKey.set(key, c.company);
+    merged[c.company] = uniqueAliases([c.company, ...aliasesFromWebsite(c.url)]);
+  }
   return {
     client: uniqueAliases([clientName, ...aliasesFromWebsite(clientWebsite)]),
     clientDomain: rootDomain(clientWebsite),
-    competitors: Object.fromEntries(
-      competitors.map((c) => [c.company, uniqueAliases([c.company, ...aliasesFromWebsite(c.url)])]),
-    ),
+    competitors: merged,
   };
 }
 
@@ -240,19 +267,34 @@ export interface PerEngineVisibility {
   topCompetitor: { name: string; mentionRate: number; shareOfVoice: number } | null;
   /** Per-brand mention counts — the raw series behind comparative graphs. */
   brandMentions: Array<{ name: string; mentions: number; isClient: boolean }>;
+  /**
+   * Client-vs-competitor comparison computed on CATEGORY prompts only (excludes brand +
+   * navigational prompts that name the client and guarantee it mentions). This is what
+   * the "client vs competitors" bars + share-of-voice must render — otherwise brand
+   * prompts inflate the client to a meaningless 100% (QA Fix 2). Equals the full set
+   * when no intent filter is supplied.
+   */
+  category: SubMetrics;
+  /** Brand/nav prompts where the client was named, e.g. "6 of 6" (the split label). */
+  brandNamed: number;
+  brandPromptsMeasured: number;
 }
 
-export function computePerEngineVisibility(
-  engine: EngineId,
-  probes: GeoProbe[],
-  gazetteer: Gazetteer,
-): PerEngineVisibility {
-  const engineProbes = probes.filter((p) => p.engine === engine);
-  const measured = engineProbes.filter((p) => p.captureTier !== "UNAVAILABLE");
-  const n = measured.length;
-  const source = engineProbes[0]?.source ?? ENGINE_PROVIDERS[engine];
-  const tier: CaptureTier = n === 0 ? "UNAVAILABLE" : measured[0].captureTier;
+/** The share-of-voice / mention sub-metrics, computable over any probe subset. */
+export interface SubMetrics {
+  promptsMeasured: number;
+  mentionRate: number;
+  citationRate: number;
+  firstPositionRate: number;
+  shareOfVoice: number;
+  netSentiment: number;
+  ghostCitationRate: number;
+  topCompetitor: { name: string; mentionRate: number; shareOfVoice: number } | null;
+  brandMentions: Array<{ name: string; mentions: number; isClient: boolean }>;
+}
 
+function computeSubMetrics(measured: GeoProbe[], gazetteer: Gazetteer): SubMetrics {
+  const n = measured.length;
   const clientName = gazetteer.client[0];
   const roster = [clientName, ...Object.keys(gazetteer.competitors)];
   const counts = new Map<string, number>(roster.map((b) => [b, 0]));
@@ -270,11 +312,7 @@ export function computePerEngineVisibility(
   const top = competitorRows[0] && competitorRows[0].mentions > 0 ? competitorRows[0] : null;
 
   return {
-    engine,
-    source,
-    captureTier: tier,
     promptsMeasured: n,
-    promptsTotal: engineProbes.length,
     mentionRate: n ? mentioned / n : 0,
     citationRate: n ? citedCount / n : 0,
     firstPositionRate: n ? measured.filter((p) => p.brandFirst).length / n : 0,
@@ -285,6 +323,49 @@ export function computePerEngineVisibility(
       ? { name: top.name, mentionRate: n ? top.mentions / n : 0, shareOfVoice: totalMentions ? (top.mentions / totalMentions) * 100 : 0 }
       : null,
     brandMentions: roster.map((name) => ({ name, mentions: counts.get(name) ?? 0, isClient: name === clientName })),
+  };
+}
+
+/**
+ * @param isCategory optional predicate marking a prompt as a category (non-brand,
+ *   non-navigational) question. When supplied, the `category` sub-metrics use only those
+ *   prompts, so the client-vs-competitor comparison is like-for-like (QA Fix 2).
+ */
+export function computePerEngineVisibility(
+  engine: EngineId,
+  probes: GeoProbe[],
+  gazetteer: Gazetteer,
+  isCategory?: (prompt: string) => boolean,
+): PerEngineVisibility {
+  const engineProbes = probes.filter((p) => p.engine === engine);
+  const measured = engineProbes.filter((p) => p.captureTier !== "UNAVAILABLE");
+  const source = engineProbes[0]?.source ?? ENGINE_PROVIDERS[engine];
+  const tier: CaptureTier = measured.length === 0 ? "UNAVAILABLE" : measured[0].captureTier;
+
+  // Index inputs use the full measured set (headline consistency with the a3 reference).
+  const all = computeSubMetrics(measured, gazetteer);
+  // Comparison/display uses category prompts only.
+  const categoryProbes = isCategory ? measured.filter((p) => isCategory(p.prompt)) : measured;
+  const brandProbes = isCategory ? measured.filter((p) => !isCategory(p.prompt)) : [];
+  const category = computeSubMetrics(categoryProbes, gazetteer);
+
+  return {
+    engine,
+    source,
+    captureTier: tier,
+    promptsMeasured: all.promptsMeasured,
+    promptsTotal: engineProbes.length,
+    mentionRate: all.mentionRate,
+    citationRate: all.citationRate,
+    firstPositionRate: all.firstPositionRate,
+    shareOfVoice: all.shareOfVoice,
+    netSentiment: all.netSentiment,
+    ghostCitationRate: all.ghostCitationRate,
+    topCompetitor: all.topCompetitor,
+    brandMentions: all.brandMentions,
+    category,
+    brandNamed: brandProbes.filter((p) => p.brandMentioned).length,
+    brandPromptsMeasured: brandProbes.length,
   };
 }
 
@@ -702,7 +783,10 @@ export function computeCheckGaps(
 export function computeVisibilityGaps(perEngine: PerEngineVisibility[]): VisibilityGap[] {
   const gaps: VisibilityGap[] = [];
   for (const e of perEngine) {
-    if (e.captureTier === "UNAVAILABLE" || e.promptsMeasured === 0) continue;
+    if (e.captureTier === "UNAVAILABLE") continue;
+    // Gaps reflect CATEGORY visibility (real market reality), not brand-prompt inflation.
+    const c = e.category;
+    if (c.promptsMeasured === 0) continue;
     const label = ENGINE_LABELS[e.engine];
     const src = e.source ?? undefined;
 
@@ -710,44 +794,44 @@ export function computeVisibilityGaps(perEngine: PerEngineVisibility[]): Visibil
     // machine-appliable on-page action.
     const base = { delivery: "advisory" as Delivery, fixAction: "manual" as FixAction, target: "off-site", confidence: "CONFIRMED" as const, source: src, productRef: null, artifactRef: null };
 
-    if (e.topCompetitor && e.topCompetitor.shareOfVoice > e.shareOfVoice) {
-      const delta = e.topCompetitor.shareOfVoice - e.shareOfVoice;
+    if (c.topCompetitor && c.topCompetitor.shareOfVoice > c.shareOfVoice) {
+      const delta = c.topCompetitor.shareOfVoice - c.shareOfVoice;
       gaps.push({
         ...base,
         id: `GEO-27:${e.engine}`,
         lever: "GEO",
-        title: `Share-of-voice gap on ${label}: ${e.topCompetitor.name} leads by ${Math.round(delta)} pts`,
+        title: `Share-of-voice gap on ${label}: ${c.topCompetitor.name} leads by ${Math.round(delta)} pts`,
         severity: delta >= 40 ? "critical" : delta >= 20 ? "high" : delta >= 10 ? "medium" : "low",
-        measured: `${Math.round(e.shareOfVoice)}% share of voice (vs ${e.topCompetitor.name} at ${Math.round(e.topCompetitor.shareOfVoice)}%)`,
-        benchmark: `≥ ${Math.round(e.topCompetitor.shareOfVoice)}% (match category leader)`,
+        measured: `${Math.round(c.shareOfVoice)}% share of voice (vs ${c.topCompetitor.name} at ${Math.round(c.topCompetitor.shareOfVoice)}%)`,
+        benchmark: `≥ ${Math.round(c.topCompetitor.shareOfVoice)}% (match category leader)`,
         scoreLift: Math.round(delta) / 10,
-        evidence: `Measured across ${e.promptsMeasured} buyer-intent prompts answered by ${label}`,
+        evidence: `Measured across ${c.promptsMeasured} category questions answered by ${label}`,
       });
     }
-    if (e.mentionRate < TARGET_MENTION) {
+    if (c.mentionRate < TARGET_MENTION) {
       gaps.push({
         ...base,
         id: `GEO-35:${e.engine}`,
         lever: "GEO",
         title: `Low named-mention rate on ${label}`,
-        severity: e.mentionRate === 0 ? "critical" : e.mentionRate < 0.15 ? "high" : "medium",
-        measured: `Named in ${Math.round(e.mentionRate * 100)}% of answers`,
+        severity: c.mentionRate === 0 ? "critical" : c.mentionRate < 0.15 ? "high" : "medium",
+        measured: `Named in ${Math.round(c.mentionRate * 100)}% of category answers`,
         benchmark: `≥ ${TARGET_MENTION * 100}% of category answers`,
-        scoreLift: Math.round((TARGET_MENTION - e.mentionRate) * 15 * 10) / 10,
-        evidence: `${e.promptsMeasured} prompts probed on ${label}`,
+        scoreLift: Math.round((TARGET_MENTION - c.mentionRate) * 15 * 10) / 10,
+        evidence: `${c.promptsMeasured} category questions probed on ${label}`,
       });
     }
-    if (e.citationRate < TARGET_CITE) {
+    if (c.citationRate < TARGET_CITE) {
       gaps.push({
         ...base,
         id: `GEO-11:${e.engine}`,
         lever: "GEO",
         title: `Site never cited as a source by ${label}`,
-        severity: e.citationRate === 0 ? "high" : "medium",
-        measured: `Cited in ${Math.round(e.citationRate * 100)}% of answers`,
+        severity: c.citationRate === 0 ? "high" : "medium",
+        measured: `Cited in ${Math.round(c.citationRate * 100)}% of category answers`,
         benchmark: `≥ ${TARGET_CITE * 100}% citation share`,
-        scoreLift: Math.round((TARGET_CITE - e.citationRate) * 35 * 10) / 10,
-        evidence: `${e.promptsMeasured} prompts probed on ${label}`,
+        scoreLift: Math.round((TARGET_CITE - c.citationRate) * 35 * 10) / 10,
+        evidence: `${c.promptsMeasured} category questions probed on ${label}`,
       });
     }
   }
@@ -769,11 +853,14 @@ export type RecImpact = "high" | "medium" | "low";
 export interface Recommendation {
   /** Opaque id (client never sees it rendered; used server-side to resolve the fix). */
   recId: string;
+  /** Plain-English, verb-first action title (QA Fix 7 — no thresholds/HTML attrs). */
   title: string;
+  /** One-line "what it entails" shown on hover/expand (QA Fix 7). */
+  description: string;
+  /** Owner + interaction model line, e.g. "Karos SEO & GEO · we draft, you approve". */
+  owner: string;
   vertical: Lever;
   impact: RecImpact;
-  /** Karos agent(s) that execute this fix — render as chips deep-linking to the agent. */
-  productIds: string[];
   /** Which control the row renders. */
   actionKind: ActionKind;
   /** Where the fix lands ("site" | "off-site" | "search-console"). */
@@ -804,26 +891,63 @@ function impactFor(severity: GapSeverity): RecImpact {
 }
 
 /**
- * Derive the client-safe action plan from the internal gaps. Deduped by title,
- * ordered by score lift (highest impact first). The internal gap fields never cross
- * into the returned objects — only the §3b render contract does.
+ * Plain-English client copy per a3 rec id (QA Fix 7 — the Sitti one-pager voice: a verb-first
+ * action title + what it entails). Keyed by the id prefix (before any ":"). Anything not
+ * mapped falls back to the internal gap title (still readable, just less polished).
+ */
+const REC_COPY: Record<string, { title: string; description: string }> = {
+  "BOTH-07": { title: "Point your guides hub at itself", description: "The guides page currently tells search engines its canonical version is the homepage, so Google credits the homepage instead. Point the canonical tag at the guides hub." },
+  "SEO-02": { title: "Tighten your page titles", description: "Keep titles under 60 characters, unique per page, with the main keyword near the front so they aren't cut off in results." },
+  "SEO-06": { title: "Fix your meta descriptions", description: "Rewrite each description to 120–158 characters — long enough to use the space, short enough not to be truncated — and make each one unique." },
+  "GEO-17": { title: "Give every page one clear headline", description: "Each page needs exactly one main heading (H1); search and AI engines use it to understand what the page is about." },
+  "GEO-20": { title: "Fix your freshness signals", description: "Make each page's sitemap date match its real on-page updated date, so engines trust when the content actually changed." },
+  "GEO-02": { title: "Add a short answer at the top of each guide", description: "Open each guide with a self-contained 40–60 word answer to the question it targets — AI assistants lift these directly." },
+  "GEO-03": { title: "Add evidence to your content", description: "Add statistics, cited sources, and quotes to each section — evidence is what makes an engine quote your page over another." },
+  "GEO-09": { title: "Add authorship and original data", description: "Add a named author, inline citations, and at least one original statistic per page so engines trust and attribute your content." },
+  "BOTH-16": { title: "Make your sections scannable", description: "Keep sections to roughly 120–180 words with a clear one-line definition, so engines can extract clean answers." },
+  "GEO-22": { title: "Use question-style headings", description: "Phrase key headings as the questions buyers actually ask, each followed by a short direct answer — that's how AI matches pages to prompts." },
+  "GEO-25": { title: "Establish a clear entity record", description: "Create a Wikidata item (and a Wikipedia article once notable) so every engine knows which brand you are and stops confusing you with similarly-named ones." },
+  "GEO-04": { title: "Earn authoritative mentions", description: "Get named on independent, reputable sites — engines repeat what trusted third parties say about you." },
+  "GEO-14": { title: "Build a third-party review presence", description: "Get reviews across several independent platforms so 'is X any good' resolves to more than your own listing." },
+  "BOTH-01": { title: "Make every page indexable", description: "Ensure pages return 200 and carry no noindex/nosnippet directive so search and AI engines can use them." },
+  "GEO-27": { title: "Close the share-of-voice gap on category questions", description: "A tracked competitor is named far more often than you on the questions buyers actually ask. Earn mentions in the sources those answers draw from." },
+  "GEO-35": { title: "Get named on category questions", description: "You're rarely named when buyers ask category questions (not your brand by name). Owned comparison content plus third-party mentions fix this." },
+  "GEO-11": { title: "Earn citations from the engines", description: "The engines don't yet cite your site as a source on category answers. Quotable, evidence-backed pages turn into citations." },
+};
+
+function ownerFor(actionKind: ActionKind): string {
+  switch (actionKind) {
+    case "connect":
+      return "You connect · we handle the rest";
+    case "guided_manual":
+      return "Advisory · we draft the kit, a person ships it";
+    default:
+      return "Karos SEO & GEO · we draft, you approve";
+  }
+}
+
+/**
+ * Derive the client-safe action plan from the internal gaps. Deduped, ordered by score
+ * lift (highest impact first). The internal gap fields never cross into the returned
+ * objects — only the §3b render contract does; titles/descriptions are plain-English.
  */
 export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recommendation[] {
   const seen = new Set<string>();
   const out: Recommendation[] = [];
   for (const gap of [...gaps].sort((a, b) => b.scoreLift - a.scoreLift)) {
-    const key = gap.title.toLowerCase().trim();
+    const copy = REC_COPY[gap.id.split(":")[0]];
+    const title = copy?.title ?? gap.title;
+    const key = title.toLowerCase().trim();
     if (seen.has(key)) continue;
     seen.add(key);
     const actionKind = actionKindFor(gap);
     out.push({
       recId: gap.id,
-      title: gap.title,
+      title,
+      description: copy?.description ?? gap.benchmark ?? "",
+      owner: ownerFor(actionKind),
       vertical: gap.lever,
       impact: impactFor(gap.severity),
-      // a3 (the SEO/GEO agent) owns the on-page + capture fixes; advisory items have no
-      // runnable product. Kept minimal and honest — no fabricated product catalog.
-      productIds: gap.delivery === "advisory" ? [] : ["a3"],
       actionKind,
       targetPlatform: actionKind === "connect" ? "search-console" : gap.target === "off-site" ? "off-site" : "site",
       live: gap.delivery !== "advisory",
@@ -874,6 +998,74 @@ export function classifyIntent(prompt: string, gazetteer: Gazetteer): PromptInte
 
 export function tagPromptIntents(prompts: string[], gazetteer: Gazetteer): IntentPrompt[] {
   return prompts.map((prompt) => ({ prompt, intent: classifyIntent(prompt, gazetteer) }));
+}
+
+/** Per-intent target counts for a 20-prompt set (a3 Phase-1 quota — keeps the set
+ *  balanced and caps brand/nav so the comparison stays category-heavy). */
+export const INTENT_QUOTA: Record<PromptIntent, number> = {
+  discovery: 6,
+  comparison: 5,
+  problem: 5,
+  brand: 3,
+  navigational: 1,
+};
+
+/** Word-set of a prompt (ignoring stop-word noise would over-merge; keep it simple). */
+function tokenSet(s: string): Set<string> {
+  return new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean));
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+/**
+ * Drop near-duplicate prompts (a3 Phase-1 dedupe). Uses word-set Jaccard — robust for the
+ * short questions here where ordered n-grams under-fire — keeping the first of any pair
+ * whose overlap ≥ `threshold` (so "best cafes to work from in X" and "best cafes to work
+ * from around X" don't both survive).
+ */
+export function dedupeNearDuplicates(prompts: string[], threshold = 0.7): string[] {
+  const kept: Array<{ p: string; ts: Set<string> }> = [];
+  for (const p of prompts) {
+    const ts = tokenSet(p);
+    if (kept.some((k) => jaccard(k.ts, ts) >= threshold)) continue;
+    kept.push({ p, ts });
+  }
+  return kept.map((k) => k.p);
+}
+
+/**
+ * Select a balanced final prompt set from a larger pool by per-intent quota (a3 Phase-1),
+ * then backfill any shortfall from the leftovers. Preserves input order within each intent.
+ */
+export function selectByIntentQuota(prompts: string[], gazetteer: Gazetteer, total: number): string[] {
+  const byIntent = new Map<PromptIntent, string[]>();
+  for (const p of prompts) {
+    const intent = classifyIntent(p, gazetteer);
+    (byIntent.get(intent) ?? byIntent.set(intent, []).get(intent)!).push(p);
+  }
+  const out: string[] = [];
+  for (const [intent, quota] of Object.entries(INTENT_QUOTA) as Array<[PromptIntent, number]>) {
+    out.push(...(byIntent.get(intent) ?? []).slice(0, quota));
+  }
+  if (out.length < total) {
+    // Backfill from CATEGORY leftovers only — never exceed the brand/nav caps (that cap is
+    // the whole point: it keeps the comparison category-heavy).
+    const used = new Set(out);
+    for (const p of prompts) {
+      if (out.length >= total) break;
+      if (used.has(p)) continue;
+      const intent = classifyIntent(p, gazetteer);
+      if (intent === "brand" || intent === "navigational") continue;
+      out.push(p);
+      used.add(p);
+    }
+  }
+  return out.slice(0, total);
 }
 
 /** One (question × engine) cell state, matching the PDF grid's dot legend. */
@@ -1040,6 +1232,9 @@ export interface SeoGeoInsights {
   gaps: VisibilityGap[];
   /** Client-facing action plan derived from `gaps` (dev-handoff §3b). Safe to render to clients. */
   recommendations: Recommendation[];
+  /** recIds the client/staff has approved for the team to execute (QA Fix 6). Mutated by
+   *  approveSeoGeoRecommendation, not the capture run. */
+  approvedRecIds?: string[];
   /** Audited site checks (evidence trail for the scores). */
   seoChecks: SeoGeoCheck[];
   geoChecks: SeoGeoCheck[];

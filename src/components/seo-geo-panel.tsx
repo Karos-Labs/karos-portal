@@ -230,6 +230,19 @@ export function SeoGeoPanel({ insights }: { insights: SeoGeoInsights | null }) {
   const competitorCount = Math.max(0, insights.roster.length - 1);
   const noEnginesMeasured = measuredEngines.length === 0;
 
+  // Stale-roster warning (QA Fix 1): snapshot roster vs the current tracked list.
+  const snapshotCompetitors = insights.roster.slice(1); // roster[0] is the client
+  const rosterStale =
+    !!trackedCompetitors &&
+    trackedCompetitors.length > 0 &&
+    (snapshotCompetitors.length !== trackedCompetitors.length ||
+      trackedCompetitors.some((c) => !snapshotCompetitors.includes(c)));
+
+  // Citation leaderboard split (QA Fix 5): "who's quoted instead of you" vs your own baseline.
+  const clientCitation = citationLeaderboard.find((r) => r.isClient) ?? null;
+  const quotedInstead = citationLeaderboard.filter((r) => !r.isClient);
+  const leaderboardMax = Math.max(1, ...quotedInstead.map((x) => x.citations));
+
   return (
     <div className="space-y-6">
       {/* 1 · Headline scores, coverage shown separately from the grade */}
