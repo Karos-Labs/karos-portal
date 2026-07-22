@@ -55,7 +55,13 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
           { value: "tiktok", label: "TikTok" },
         ],
       },
-      { key: "topic", label: "Topic", type: "text", placeholder: "e.g. spring collection launch", helper: "Leave empty to let the agent pick from the client's content plan." },
+      {
+        key: "topic",
+        label: "Topic",
+        type: "text",
+        placeholder: "e.g. spring collection launch",
+        helper: "Leave empty to let the agent pick from the client's content plan.",
+      },
     ],
   },
   {

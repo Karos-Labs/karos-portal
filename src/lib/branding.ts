@@ -388,7 +388,6 @@ const BrandColorSchema = z.object({
     ),
   role: z
     .string()
-    .optional()
     .describe(
       "Optional semantic role — only include when unambiguous, e.g. 'Logo fill', " +
         "'Primary CTA background', 'Nav bar'. Omit if unclear.",

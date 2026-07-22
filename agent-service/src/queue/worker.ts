@@ -46,6 +46,7 @@ export function buildRunnerEnv(config: ServiceConfig): Record<string, string> {
   // Live X reads (api.x.ai is already on the research egress group); absent =
   // the X agent's reactive lanes degrade to WebSearch, everything else unaffected.
   if (config.xaiApiKey) env.XAI_API_KEY = config.xaiApiKey;
+  if (config.apifyToken) env.APIFY_TOKEN = config.apifyToken;
   // On Cloud Run the api enforces IAM, so the runner must present an ID token
   // (audience = the api URL it calls back to) alongside its per-job token.
   if (config.executor === "cloudrun") env.RUNNER_IAM_AUDIENCE = config.internalBaseUrl;

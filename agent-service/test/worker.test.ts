@@ -107,4 +107,10 @@ describe("buildRunnerEnv", () => {
     const env = buildRunnerEnv({ internalBaseUrl: "http://api:8080" } as ServiceConfig);
     expect(env.HTTPS_PROXY).toBeUndefined();
   });
+
+  it("injects APIFY_TOKEN only when configured", () => {
+    expect(buildRunnerEnv({ internalBaseUrl: "http://api:8080" } as ServiceConfig).APIFY_TOKEN).toBeUndefined();
+    const env = buildRunnerEnv({ internalBaseUrl: "http://api:8080", apifyToken: "apify_api_xxx" } as ServiceConfig);
+    expect(env.APIFY_TOKEN).toBe("apify_api_xxx");
+  });
 });

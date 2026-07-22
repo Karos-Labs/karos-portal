@@ -46,7 +46,7 @@ export default async function AssetsPage({
   const clients = await listClients(employeeFilter);
 
   // Staff arriving via the sidebar's "View as client" nav get the same
-  // library/calendar toggle a client sees, scoped to that one client.
+  // library a client sees, scoped to that one client.
   const viewClient = viewClientId ? clients.find((c) => c.id === viewClientId) : undefined;
   if (viewClient) {
     // Staff "view as client" keeps FULL visibility (invariant A10.6) so they can

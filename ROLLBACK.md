@@ -22,6 +22,7 @@ Format: one line per change — what · where · undo.
 | 9 | `XAI_API_KEY` passthrough (service → worker → runner sandbox) | `agent-service/src/config.ts`, `agent-service/src/queue/worker.ts`, `agent-service/runner/src/main.ts` | remove the three 1-2 line additions; absent key was already a no-op |
 | 10 | Deploy wiring for xai-api-key secret + docs | `agent-service/cloudbuild.yaml` (`--set-secrets` entry), `agent-service/DEPLOY.md` (new section) | remove `XAI_API_KEY=xai-api-key:latest` from `--set-secrets` and delete the DEPLOY.md section. NOTE: do not deploy from this branch before the `xai-api-key` secret exists |
 | 11 | X portal surfaces doc + canonical agent instructions text | `docs/x-agent-portal.md` (new file) | delete the file |
+| 12 | Merge of origin/main (2026-07-22, LinkedIn e10 hookup + scheduler + custom-run refactor). Key resolutions: APIFY_TOKEN and XAI_API_KEY passthroughs coexist (config/worker/runner/cloudbuild); our X context injection MOVED from `custom-agent-actions.ts` into BOTH shared submit cores — `src/lib/jobs/submit-custom.ts` (web/MCP/run-scheduled) and `src/lib/agent-service/run-custom-agent.ts` (/api/scheduler) — as key-gated blocks | merge commit on this branch | revert the merge commit (`git revert -m 1 <sha>`); the two injection blocks + their imports are the only lines in main's files that are ours — removing them restores main's exact flow |
 
 ## Data changes (Phase 3 only — none applied yet)
 

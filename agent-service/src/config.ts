@@ -19,6 +19,8 @@ export interface ServiceConfig {
   anthropicApiKey?: string;
   /** xAI key for live X search/reads (the X agent's research leg); optional. */
   xaiApiKey?: string;
+  /** optional Apify token injected into runners (seat voice-collection legs); degrades when unset */
+  apifyToken?: string;
   defaultTimeoutMs: number;
   maxAttempts: number;
   jobTtlSeconds: number;
@@ -74,6 +76,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   if (env.DOCKER_NETWORK) config.dockerNetwork = env.DOCKER_NETWORK;
   if (env.ANTHROPIC_API_KEY) config.anthropicApiKey = env.ANTHROPIC_API_KEY;
   if (env.XAI_API_KEY) config.xaiApiKey = env.XAI_API_KEY;
+  if (env.APIFY_TOKEN) config.apifyToken = env.APIFY_TOKEN;
   if (env.JOB_HTTP_PROXY) config.jobHttpProxy = env.JOB_HTTP_PROXY;
   if (executor === "cloudrun") {
     config.cloudRun = {

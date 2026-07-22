@@ -7,7 +7,9 @@ import {
   listJobs,
   listClientIntegrations,
   listClientTasks,
+  listClientCompetitors,
 } from "@/lib/data";
+import { computeTrackedCompetitors } from "@/lib/competitor-priority";
 import { PageHeader } from "@/components/ui";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { ClientAnalytics } from "@/components/client-analytics";
@@ -33,7 +35,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
 
   const isClientViewer = user.role === "CLIENT_USER";
 
-  const [assets, jobs, integrations, seoGeo, tasks] = await Promise.all([
+  const [assets, jobs, integrations, seoGeo, tasks, competitors] = await Promise.all([
     listAssets({ clientId: id }),
     listJobs({ clientId: id }),
     listClientIntegrations(id),
@@ -41,7 +43,12 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     isClientViewer
       ? listClientTasks({ clientId: id, status: ["pending", "review_pending"], limit: 50 })
       : Promise.resolve([] as ClientTask[]),
+    listClientCompetitors(id),
   ]);
+
+  // The currently-tracked competitor names (same selector as the sidebar) let the panel
+  // warn when its frozen snapshot's roster has drifted from the live list (QA Fix 1).
+  const trackedCompetitorNames = computeTrackedCompetitors(competitors).map((c) => c.company);
 
   const firstName = user.name?.trim().split(/\s+/)[0];
 
@@ -93,7 +100,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           {isClientViewer && (
             <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Search &amp; AI visibility</p>
           )}
-          <SeoGeoPanel insights={seoGeo} />
+          <SeoGeoPanel insights={seoGeo} trackedCompetitors={trackedCompetitorNames} />
         </section>
         <section className="space-y-3">
           {isClientViewer && (

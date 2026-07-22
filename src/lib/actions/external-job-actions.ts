@@ -25,7 +25,7 @@ export async function submitManagedJobAction(
   return result;
 }
 
-/** Requests cancellation of a running managed job. */
+/** Requests cancellation of a running agent-service job (managed or custom). */
 export async function cancelManagedJobAction(jobId: string): Promise<{ error?: string }> {
   await requireStaff();
   const job = await getJob(jobId);

@@ -15,7 +15,7 @@ import {
 } from "@/lib/agent-service/verify";
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
-import type { AssetType, ExternalJobArtifact, JobStatus, ManagedTaskType } from "@/lib/types";
+import type { AssetType, ExternalJobArtifact, JobStatus } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -38,14 +38,31 @@ const STATUS_MAP: Record<AgentServiceWebhookPayload["status"], JobStatus> = {
   cancelled: "failed",
 };
 
-const ASSET_TYPE_MAP: Record<ManagedTaskType, AssetType> = {
+const ASSET_TYPE_MAP = {
   social_post: "social_post",
   newsletter_issue: "email",
   blog_article: "article",
   landing_page: "note",
-  // Custom agents can produce anything — "note" is the safe library bucket.
   custom: "note",
-};
+} as const satisfies Record<
+  "social_post" | "newsletter_issue" | "blog_article" | "landing_page" | "custom",
+  AssetType
+>;
+
+/**
+ * Custom agents can produce anything, so we infer the library bucket from the
+ * deliverables: images ⇒ a schedulable social post (so it auto-places on the
+ * calendar), a long-form .md/.html ⇒ an article, everything else ⇒ a note.
+ */
+function inferAssetType(hasImages: boolean, primaryTextName?: string): AssetType {
+  if (hasImages) return "social_post";
+  if (primaryTextName && /\.(md|html?)$/i.test(primaryTextName)) return "article";
+  return "note";
+}
+
+// Asset types a custom job may request via metadata.asset_type (whitelist — a
+// hint is only honored if it's one of these, otherwise we fall back to "note").
+const VALID_HINT_TYPES = new Set<AssetType>(["social_post", "instagram_post", "email", "article", "note"]);
 
 const TEXT_EXTENSIONS = [".md", ".html", ".txt"];
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
@@ -277,7 +294,16 @@ export async function POST(req: NextRequest) {
 
     const clientFacingCount = artifacts.filter((a) => a.clientFacing).length;
     if (clientFacingCount > 0) {
-      const assetType = ASSET_TYPE_MAP[payload.task_type] ?? "note";
+      // Custom agents (e.g. the LinkedIn generators) produce any asset shape, so
+      // "note" is the safe default — but the submitter can hint the real type +
+      // platform through metadata, which lands the draft as a schedulable post
+      // with the right recommended window instead of a slot-less library note.
+      const hintedType = payload.metadata?.asset_type as AssetType | undefined;
+      const assetType =
+        payload.task_type === "custom" && hintedType && VALID_HINT_TYPES.has(hintedType)
+          ? hintedType
+          : (ASSET_TYPE_MAP[payload.task_type] ?? "note");
+      const platform = payload.metadata?.platform || undefined;
       // job.title is `${job.agentName} — ${clientName}` (submit-managed.ts /
       // custom-agent-actions.ts). Strip only that exact appended " — <client>"
       // suffix — never a blind split on " — " (agent/client names may contain
@@ -304,12 +330,13 @@ export async function POST(req: NextRequest) {
           ...(slides ? { slides } : {}),
         },
         imageUrl: orderedImageUrls[0] ?? null,
+        ...(platform ? { channels: [platform] } : {}),
         status: "draft",
         ...(managedProduct
           ? { templateKey: payload.task_type, templateName: managedProduct.name }
           : {}),
         orderKey: orderKeyForCreatedAt(now, job.id),
-        ...recommendedScheduleFields(assetType),
+        ...recommendedScheduleFields(assetType, 0, platform),
         createdBy: "agent-service",
         createdAt: now,
         updatedAt: now,

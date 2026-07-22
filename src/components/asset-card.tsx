@@ -477,6 +477,12 @@ export function AssetCard({
   const isCarousel = slides.length > 0;
   const photoCount = slides.filter((s) => s.imageUrl).length;
 
+  // Some rich slides have no image. Translate a slide position into the
+  // matching gallery index so the lightbox always opens the selected photo.
+  function galleryIndexForSlide(slideIndex: number): number {
+    return slides.slice(0, slideIndex).filter((s) => s.imageUrl).length;
+  }
+
   // The single-photo cover: an explicit imageUrl wins, else the lone recovered
   // photo (assetImages already applies that precedence).
   const coverImageUrl = galleryImages.length === 1 ? galleryImages[0].url : null;
@@ -490,12 +496,6 @@ export function AssetCard({
     ...((asset.meta?.artifacts as MetaFile[] | undefined) ?? []),
   ].filter((f): f is MetaFile & { url: string } => typeof f?.url === "string");
   const hasPreview = Boolean(asset.content) || isCarousel || coverImageUrl != null;
-
-  // Map a slide's position (some slides have no photo) to its index within
-  // galleryImages, so a thumbnail opens the right picture.
-  function galleryIndexForSlide(slideIndex: number): number {
-    return slides.slice(0, slideIndex).filter((s) => s.imageUrl).length;
-  }
 
   // Template/format chip (e.g. "By The Numbers") — data-driven, legacy-safe.
   const template = templateForAsset(asset);
@@ -653,33 +653,26 @@ export function AssetCard({
           {isCarousel ? (
             <div className="mt-2">
               <div className="flex gap-2 overflow-x-auto pb-1">
-                {slides.map((s, i) => (
+                {galleryImages.map((img, i) => (
                   <div key={i} className="w-28 shrink-0">
-                    {s.imageUrl ? (
-                      <button
-                        type="button"
-                        onClick={() => setLightboxIndex(galleryIndexForSlide(i))}
-                        className="group relative block h-36 w-28 overflow-hidden rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
-                        title="View full size"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={s.imageUrl} alt={s.headline ?? `Slide ${i + 1}`} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
-                        <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition-opacity group-hover:bg-black/30 group-hover:opacity-100">
-                          <Icon name="Maximize2" className="h-5 w-5" />
-                        </span>
-                      </button>
-                    ) : (
-                      <div className="flex h-36 w-28 items-center justify-center rounded-lg border border-dashed border-border text-center text-[10px] text-muted-2">
-                        no photo
-                      </div>
-                    )}
-                    <p className="mt-1 line-clamp-2 text-[10px] text-muted-2">{s.headline ? `${i + 1}. ${s.headline}` : `Slide ${i + 1}`}</p>
+                    <button
+                      type="button"
+                      onClick={() => setLightboxIndex(i)}
+                      className="group relative block h-36 w-28 overflow-hidden rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-neon/50"
+                      title="View full size"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.url} alt={img.caption ?? `Slide ${i + 1}`} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition-opacity group-hover:bg-black/30 group-hover:opacity-100">
+                        <Icon name="Maximize2" className="h-5 w-5" />
+                      </span>
+                    </button>
+                    <p className="mt-1 line-clamp-2 text-[10px] text-muted-2">{img.caption ?? `Slide ${i + 1}`}</p>
                   </div>
                 ))}
               </div>
               <p className="mt-1 text-[10px] text-muted-2">
-                {slides.length} slides · {photoCount} with photos
-                {photoCount > 0 && " · tap a photo to view & download"}
+                {galleryImages.length} photos · tap a photo to view &amp; download
               </p>
             </div>
           ) : coverImageUrl ? (

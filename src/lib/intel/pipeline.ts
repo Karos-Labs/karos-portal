@@ -8,6 +8,7 @@ import { RESEARCH_ENGINE_RULES, METRICS_RULES } from "./brain";
 import { TEMPLATES } from "./templates";
 import { condenseDocs } from "./condense";
 import { runSeoGeoResearch, type SeoGeoResearch } from "./seo-geo";
+import { computeTrackedCompetitors } from "@/lib/competitor-priority";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble } from "@/lib/text-utils";
 import { logger } from "@/services/logger";
@@ -732,6 +733,12 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
 
   const rules = coreRules("", runSpecificContext);
 
+  // The SEO/GEO visibility capture must compare against the SAME competitors the
+  // dashboard sidebar shows (manual/tracked first, threat-ranked, capped) — not an
+  // alphabetical slice of the full collection (QA Fix 1). computeTrackedCompetitors is
+  // the shared selector; using it keeps the panel's roster and the sidebar in sync.
+  const trackedCompetitors = computeTrackedCompetitors(existingCompetitors);
+
   // Build meeting signals from stored transcripts for this client
   const meetingSignals = buildMeetingSignals(existingTranscripts);
 
@@ -754,7 +761,7 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
       runResearchAgent("strategy", () => researchStrategy(client, rules, meetingSignals)),
       runResearchAgent("sentiment", () => researchSentiment(client, rules, meetingSignals)),
     ]),
-    runSeoGeoResearch(client, rules, existingCompetitors)
+    runSeoGeoResearch(client, rules, trackedCompetitors)
       .then((r): PromiseSettledResult<SeoGeoResearch> => ({ status: "fulfilled", value: r }))
       .catch((reason): PromiseSettledResult<SeoGeoResearch> => ({ status: "rejected", reason })),
   ]);

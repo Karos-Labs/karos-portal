@@ -57,6 +57,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   const digest = buildDigest(records, assets);
 
+  // Data-honesty signal (QA Fix 8): engagement analytics fall back to deterministic
+  // MOCK metrics for platforms with no live token. If EVERY record feeding the digest
+  // is mock-sourced, the engagement briefing is narrating demo numbers — tell the client
+  // via a response header so <AiInsights/> can badge (or suppress) it.
+  const engagementIsMock = records.length > 0 && records.every((r) => r.source === "mock");
+  const dataSourceHeaders = engagementIsMock ? { "X-Insights-Data-Source": "mock" } : undefined;
+
   // No measured engagement yet — the sync cron hasn't captured any published-content
   // metrics for this client (no connected socials yet, nothing published yet, or the
   // cron simply hasn't run). Rather than a flat "no data" line, summarize the real
@@ -115,7 +122,7 @@ Write the update now.`;
 
   const digestKey = JSON.stringify(digest);
   if (cached && cached.digestKey === digestKey) {
-    return cachedResponse(cached.text);
+    return cachedResponse(cached.text, dataSourceHeaders);
   }
 
   const system =
@@ -152,13 +159,15 @@ Write the briefing now.`;
     },
   });
 
-  return result.toTextStreamResponse();
+  return result.toTextStreamResponse({ headers: dataSourceHeaders });
 }
 
 /** A cache hit is already fully generated — return it in one shot (still plain
  * text, so <AiInsights/>'s stream reader consumes it identically either way). */
-function cachedResponse(text: string): Response {
-  return new Response(text, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+function cachedResponse(text: string, extraHeaders?: Record<string, string>): Response {
+  return new Response(text, {
+    headers: { "Content-Type": "text/plain; charset=utf-8", ...extraHeaders },
+  });
 }
 
 /* ── Activity digest (fallback before anything's measured) ───────────── */

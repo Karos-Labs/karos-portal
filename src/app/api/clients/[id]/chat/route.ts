@@ -10,6 +10,7 @@ import {
   getClientReport,
   listClientCompetitors,
   listClientContextDocs,
+  listCustomAgents,
   listJobs,
   listAssets,
   updateClient,
