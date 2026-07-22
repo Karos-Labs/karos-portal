@@ -29,6 +29,7 @@ import {
   type CustomAgentImportCandidate,
 } from "@/lib/agent-service/custom-agent-import";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
+import { buildXAgentContextFiles, isXAgent } from "@/lib/agent-service/x-agent-context";
 import { chargeClientCredits } from "@/lib/data";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
@@ -345,6 +346,20 @@ export async function runCustomAgentAction(input: {
       content_type: item.mimeType,
       ...(item.note ? { description: item.note } : {}),
     });
+  }
+
+  // X agent (e13): attach the portal-collected intake, ongoing boxes, and
+  // per-account learning logs as context files. Every other agent skips this;
+  // an X run with nothing stored attaches nothing. Fail the submission rather
+  // than run silently without the client's stored data.
+  if (isXAgent(agent.key)) {
+    try {
+      contextFiles.push(...(await buildXAgentContextFiles(input.clientId)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's X intake data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
   }
 
   const now = Date.now();
