@@ -93,13 +93,14 @@ function launchConfigFor(agent: Pick<RunnableAgentSummary, "key" | "name">): Age
 
   if (identity === "x" || /(^|[\s_-])x([\s_-]|$)|twitter/.test(identity)) {
     return {
-      label: "What should the X agent set up or improve?",
-      helper: "This agent builds the X content system. Tell it which account, audience, or growth goal to focus on.",
-      placeholder: "Set up an X content plan for our founder account, focused on reaching [audience].",
+      label: "What should the X agent draft?",
+      helper:
+        "Draft-only: everything lands in review, nothing posts. It reads the client's X page (company form, seats, drops) automatically — fill that in first for on-voice output.",
+      placeholder: "Run a full draft batch across the avenues for the company page and every seat.",
       quickStarts: [
-        "Set up an X content plan for our founder account.",
-        "Refresh our X strategy around a new audience or offer.",
-        "Build an X content system for our brand account.",
+        "Run a full draft batch across the avenues for the company page and every seat.",
+        "Draft this week's posts for the company page.",
+        "Draft this week's posts for [person]'s seat.",
       ],
     };
   }
