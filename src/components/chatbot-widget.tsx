@@ -509,8 +509,10 @@ export function ChatbotWidget({
           )}
         >
 
-          {/* Header — single title; hairline divider, no fill (surface ladder) */}
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+          {/* Header — single title; hairline divider, no fill (surface ladder).
+              h matches the AppHeader (py-2 + h-9 buttons = 52px) so the two
+              border-b hairlines meet the rail border as one continuous line. */}
+          <div className="flex h-[52px] shrink-0 items-center justify-between gap-3 border-b border-border px-4">
             <div className="min-w-0">
               <p className="font-serif text-base leading-none">AI Copilot</p>
               <p className="mt-1 truncate font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-muted-2">

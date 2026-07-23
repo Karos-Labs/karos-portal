@@ -201,7 +201,9 @@ function TaskCard({
       <div className="mb-2 flex items-center justify-between gap-2 pr-6 text-xs">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dot)} />
-          <span className="whitespace-nowrap text-[11px] font-medium text-muted">{status.label}</span>
+          {/* truncate, not nowrap-overflow: on narrow columns an overflowing label
+              renders under the translucent priority badge and garbles it */}
+          <span className="min-w-0 truncate text-[11px] font-medium text-muted">{status.label}</span>
           <Badge tone={priority.tone} className="shrink-0 px-1.5 py-0 text-[9px]">
             {priority.label}
           </Badge>

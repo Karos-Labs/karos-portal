@@ -88,7 +88,9 @@ function dayKey(at: number): string {
 }
 
 function timeStr(at: number): string {
-  return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  // Pinned locale: SSR (Node) and the browser must format identically or the
+  // chip title attributes trigger hydration mismatches.
+  return new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 /* ── Chips ───────────────────────────────────────────────────────────── */
@@ -395,7 +397,7 @@ export function RunCalendar({
   const selectedLabel = selectedKey
     ? (() => {
         const [y, m, d] = selectedKey.split("-").map(Number);
-        return new Date(y, m, d).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+        return new Date(y, m, d).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
       })()
     : "";
 
