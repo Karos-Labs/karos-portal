@@ -15,7 +15,8 @@ export default async function ClientAssetsPage({ params }: { params: Promise<{ i
   const { id } = await params;
 
   if (user.role === "CLIENT_USER") {
-    redirect(user.clientId === id ? "/assets" : user.clientId ? `/clients/${user.clientId}` : "/assets");
+    // Client Library lives in the Workspace's Archive tab now.
+    redirect(user.clientId === id ? "/tasks" : user.clientId ? `/clients/${user.clientId}` : "/tasks");
   } else if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") {
     redirect("/dashboard");
   }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Badge, Button, EmptyState, StatCard } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import { JobStatusBadge } from "@/components/job-status";
 import {
   ClientCustomAgents,
@@ -73,7 +74,9 @@ export function ClientHome({
     .slice(0, 4);
 
   const recentAssets = [...assets].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
-  const libraryHref = viewerIsClient ? "/assets" : `/clients/${clientId}/assets`;
+  // Clients: the Workspace archive (Library merged there 2026-07). Staff: the review library.
+  const libraryHref = viewerIsClient ? "/tasks" : `/clients/${clientId}/assets`;
+  const libraryLabel = viewerIsClient ? "Archive" : "Library";
 
   const published = assets.filter((a) => a.status === "published").length;
   const scheduled = assets.filter((a) => a.status === "scheduled").length;
@@ -121,10 +124,10 @@ export function ClientHome({
         <EmptyState
           icon={<Icon name="Bot" className="h-7 w-7" />}
           title="Your team is on it"
-          description="Karos runs managed AI agents for your account. Deliverables appear in your Library once they're approved."
+          description="Karos runs managed AI agents for your account. Deliverables land in your Workspace archive once they're approved."
           action={
             <Link href={libraryHref}>
-              <Button>Open Library</Button>
+              <Button>Open {viewerIsClient ? "Workspace" : "Library"}</Button>
             </Link>
           }
         />
@@ -145,15 +148,8 @@ export function ClientHome({
                 "flex items-center gap-3 px-4 py-2.5" + (i > 0 ? " border-t border-border" : "");
               const body = (
                 <>
-                  <div
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                    style={
-                      agent
-                        ? { background: agent.color + "1f", color: agent.color }
-                        : { background: "var(--surface-3)" }
-                    }
-                  >
-                    <Icon name={agent?.icon ?? "Bot"} className="h-3.5 w-3.5" />
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+                    <AgentMark identity={job.agentName} icon={agent?.icon ?? "Bot"} className="h-3.5 w-3.5" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{title}</p>
@@ -191,7 +187,7 @@ export function ClientHome({
               Latest deliverables
             </p>
             <Link href={libraryHref} className="text-xs text-neon hover:underline">
-              Library →
+              {libraryLabel} →
             </Link>
           </div>
           {recentAssets.length === 0 ? (

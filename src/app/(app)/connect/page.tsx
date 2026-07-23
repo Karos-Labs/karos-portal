@@ -20,7 +20,7 @@ export default async function ConnectPage() {
         description="Drive Karos from your own terminal. Karos exposes an MCP server your Claude Code can use to read client data, browse jobs & assets, submit managed jobs, and upload files."
       />
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-6">
           <Card className="space-y-4">
             <CardTitle>1. Create a personal access token</CardTitle>

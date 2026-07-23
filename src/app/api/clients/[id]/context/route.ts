@@ -1,13 +1,45 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth";
-import { getClient, createContextItem } from "@/lib/data";
+import { createContextItem, getClient, listContextItems } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
 import { contextKind } from "@/lib/context";
 
 export const maxDuration = 60;
 
 const MAX_BYTES = 4 * 1024 * 1024; // 4 MB (Vercel request-body limit)
+
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id: clientId } = await params;
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const client = await getClient(clientId);
+  if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+
+  const items = await listContextItems({ clientId });
+  return NextResponse.json({
+    items: items.map((item) => ({
+      id: item.id,
+      clientId: item.clientId,
+      kind: item.kind,
+      name: item.name,
+      mimeType: item.mimeType,
+      sizeBytes: item.sizeBytes,
+      url: item.url,
+      ...(item.note ? { note: item.note } : {}),
+      ...(item.purpose ? { purpose: item.purpose } : {}),
+      createdAt: item.createdAt,
+      // Preserve the ContextItem client shape without exposing internal object
+      // paths or uploader identities through this picker endpoint.
+      storagePath: "",
+      createdBy: "",
+    })),
+  });
+}
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();

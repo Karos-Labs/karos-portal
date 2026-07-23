@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { listClients, listJobs, listActionItemsByAssignee, listUsers, listCustomAgents } from "@/lib/data";
 import { Card, CardTitle, StatCard, Badge, EmptyState, Button, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import { JobStatusBadge } from "@/components/job-status";
 import { MyActionItems } from "@/components/my-action-items";
 import { relativeTime } from "@/lib/utils";
@@ -130,11 +131,8 @@ export default async function DashboardPage() {
                 return (
                   <li key={agent.id}>
                     <Link href="/agents" className="flex items-center gap-3 rounded-md p-2 transition-colors hover:bg-surface-2">
-                      <div
-                        className="flex h-9 w-9 items-center justify-center rounded-md"
-                        style={{ color: agent.color, background: agent.color + "1f" }}
-                      >
-                        <Icon name={agent.icon} className="h-4 w-4" />
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+                        <AgentMark identity={agent.name} icon={agent.icon} className="h-4 w-4" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">{agent.name}</p>

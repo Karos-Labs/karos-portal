@@ -95,7 +95,7 @@ export function NotificationBell({
           )}
           aria-label={`Notifications${total > 0 ? ` (${total} unread)` : ""}`}
         >
-          <Icon name="Bell" className="h-5 w-5" />
+          <Icon name="Bell" className="h-4 w-4" />
           {total > 0 && (
             <span
               className={cn(

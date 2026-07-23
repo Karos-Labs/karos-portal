@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { AgentIdentity, AgentPlatformBadges } from "@/components/agent-identity";
+import { AgentIdentity, AgentMark, AgentPlatformBadges } from "@/components/agent-identity";
+import { AgentInputFiles } from "@/components/agent-input-files";
 import { Modal } from "@/components/modal";
 import { JobStatusBadge } from "@/components/job-status";
 import {
@@ -18,6 +19,11 @@ import {
   updateCustomAgentAction,
 } from "@/lib/actions";
 import { CREDIT_COSTS } from "@/lib/credits";
+import {
+  buildCustomAgentPrompt,
+  initialAgentBrief,
+  launchProfileFor,
+} from "@/lib/custom-agent-launch";
 import type { ContextItem, CustomAgent, JobStatus } from "@/lib/types";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -31,91 +37,6 @@ import { cn, relativeTime } from "@/lib/utils";
 export type RunnableAgentSummary = Pick<CustomAgent, "id" | "key" | "name" | "description" | "icon" | "color"> & {
   creditCost?: number | null;
 };
-
-type AgentLaunchConfig = {
-  label: string;
-  helper: string;
-  placeholder: string;
-  quickStarts: string[];
-  attachmentLabel?: string;
-  attachmentHint?: string;
-};
-
-/**
- * The agent service accepts one natural-language brief, but that does not mean
- * every agent should make the user invent its own workflow. Known agents get
- * prompts that describe their actual job; custom/imported agents retain a
- * useful outcome-focused fallback based on their own name.
- */
-function launchConfigFor(agent: Pick<RunnableAgentSummary, "key" | "name">): AgentLaunchConfig {
-  const identity = `${agent.key} ${agent.name}`.toLowerCase();
-
-  if (identity.includes("branded-short") || identity.includes("branded shorts")) {
-    return {
-      label: "What should this short communicate?",
-      helper: "Tell the editor the intended message, audience, and any moment that must make the cut.",
-      placeholder: "Turn the attached interview into a 30-second short about the new product launch.",
-      quickStarts: [
-        "Turn the attached talking-head video into a concise product-launch short.",
-        "Create a founder-led short that explains our strongest customer outcome.",
-        "Cut a social teaser from the attached video and keep the speaker's key point intact.",
-      ],
-      attachmentLabel: "Source video",
-      attachmentHint: "Attach the talking-head or source video the editor should use.",
-    };
-  }
-
-  if (identity.includes("instagram")) {
-    return {
-      label: "What should we create for Instagram?",
-      helper: "Pick the goal and topic. The agent applies the brand voice and prepares the post for review.",
-      placeholder: "Create a carousel that explains how our new offer solves [customer problem].",
-      quickStarts: [
-        "Create a carousel that introduces our new offer.",
-        "Create a founder story post that builds trust with our target audience.",
-        "Create a post around a customer pain point we solve.",
-      ],
-    };
-  }
-
-  if (identity.includes("linkedin")) {
-    return {
-      label: "What should we publish on LinkedIn?",
-      helper: "Choose the angle and audience. The agent will turn it into a credible, on-brand LinkedIn draft.",
-      placeholder: "Write a thought-leadership post about what we learned while solving [problem].",
-      quickStarts: [
-        "Write a thought-leadership post based on a lesson from our work.",
-        "Turn a recent company milestone into a LinkedIn update.",
-        "Draft a founder post that explains our point of view on [topic].",
-      ],
-    };
-  }
-
-  if (identity === "x" || /(^|[\s_-])x([\s_-]|$)|twitter/.test(identity)) {
-    return {
-      label: "What should the X agent draft?",
-      helper:
-        "Fill in the X agent data first (Agent-specific documents → X agent data): the company page and any seats. The agent drafts from that and won't run without it. Draft-only - everything lands in review, nothing posts. The default run drafts about a week of posts, a post a day to pick from.",
-      placeholder: "Draft a week of posts for the company page and every seat.",
-      quickStarts: [
-        "Draft a week of posts for the company page and every seat.",
-        "Draft a week of posts for the company page.",
-        "Draft a week of posts for [person]'s seat.",
-      ],
-    };
-  }
-
-  return {
-    label: `What should ${agent.name} create?`,
-    helper: "Describe the outcome, audience, and any key details. The agent already knows its playbook and your brand.",
-    placeholder: "Describe the outcome you want, who it is for, and any must-have details.",
-    quickStarts: [
-      `Create a first draft for our current priority.`,
-      `Develop an idea for our target audience around [topic].`,
-      `Improve an existing asset using the attached context.`,
-    ],
-  };
-}
 
 /** One run-history row, pre-filtered and stripped server-side. */
 export interface CustomAgentRunRow {
@@ -132,12 +53,11 @@ function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
   return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
 }
 
-function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon" | "color">; className?: string }) {
+function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon">; className?: string }) {
   return (
     <AgentIdentity
       identity={`${agent.key} ${agent.name}`}
       icon={agent.icon}
-      color={agent.color}
       className={className}
     />
   );
@@ -213,7 +133,7 @@ export function CustomAgentsHub({
               key={agent.id}
               className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
             >
-              <span className="absolute inset-x-0 top-0 h-0.5 opacity-45 transition-opacity group-hover:opacity-80" style={{ background: agent.color }} aria-hidden="true" />
+              <span className="absolute inset-x-0 top-0 h-0.5 bg-foreground/40 opacity-45 transition-opacity group-hover:opacity-80" aria-hidden="true" />
               <div className="flex items-start gap-3">
                 <AgentChip agent={agent} />
                 <div className="min-w-0 flex-1">
@@ -329,7 +249,7 @@ export function ClientCustomAgents({
           <h2 className="text-xl text-foreground">{viewerIsClient ? "Your AI agents" : "Custom agents"}</h2>
           <p className="mt-0.5 text-sm text-muted">
             {viewerIsClient
-              ? "Fire an agent with a plain-language request. Deliverables land in your Library after review."
+              ? "Fire an agent with a plain-language request. Deliverables land in your Workspace archive after review."
               : "Prompt-driven agents from the custom library, run against this client."}
           </p>
         </div>
@@ -350,7 +270,7 @@ export function ClientCustomAgents({
                 key={agent.id}
                 className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
               >
-                <span className="absolute inset-x-0 top-0 h-0.5 opacity-45 transition-opacity group-hover:opacity-80" style={{ background: agent.color }} aria-hidden="true" />
+                <span className="absolute inset-x-0 top-0 h-0.5 bg-foreground/40 opacity-45 transition-opacity group-hover:opacity-80" aria-hidden="true" />
                 <div className="flex items-start gap-3">
                   <AgentChip agent={agent} />
                   <div className="min-w-0 flex-1">
@@ -396,11 +316,10 @@ export function ClientCustomAgents({
                     <AgentIdentity
                       identity={`${agent.key} ${agent.name}`}
                       icon={agent.icon}
-                      color={agent.color}
                       size="sm"
                     />
                   ) : (
-                    <AgentIdentity identity={run.agentName} icon="Bot" color="#88888f" size="sm" />
+                    <AgentIdentity identity={run.agentName} icon="Bot" size="sm" />
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{run.agentName}</p>
@@ -470,11 +389,19 @@ function RunCustomAgentModal({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [selectedClientId, setSelectedClientId] = useState(clientId ?? clients?.[0]?.id ?? "");
-  const [prompt, setPrompt] = useState("");
+  const profile = launchProfileFor(agent);
+  const [fields, setFields] = useState<Record<string, string>>(() => initialAgentBrief(profile));
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
-  const launcher = launchConfigFor(agent);
+  const primaryField =
+    profile.fields.find((field) => field.key === "request") ??
+    profile.fields.find((field) => field.required) ??
+    profile.fields[0];
+
+  function setField(key: string, value: string) {
+    setFields((current) => ({ ...current, [key]: value }));
+  }
 
   function submit() {
     setError(null);
@@ -482,15 +409,34 @@ function RunCustomAgentModal({
       setError("Pick a client. Agents always run against a client's context.");
       return;
     }
-    if (!prompt.trim()) {
-      setError("Describe what you want the agent to produce.");
+    const missing = profile.fields.find((field) => field.required && !fields[field.key]?.trim());
+    if (missing) {
+      setError(`${missing.label} is required.`);
+      return;
+    }
+    const attachmentAlternative = profile.attachments.satisfyWithFieldKey;
+    if (
+      profile.attachments.required &&
+      selectedFiles.length === 0 &&
+      !(attachmentAlternative && fields[attachmentAlternative]?.trim())
+    ) {
+      setError(`Add ${profile.attachments.label.toLowerCase()} or provide the source link above.`);
+      return;
+    }
+    const prompt = buildCustomAgentPrompt(profile, fields);
+    if (!prompt) {
+      setError("Complete the brief before starting the run.");
+      return;
+    }
+    if (prompt.length > 4000) {
+      setError(`This brief is ${prompt.length.toLocaleString()} characters. Shorten it to 4,000 characters.`);
       return;
     }
     startTransition(async () => {
       const result = await runCustomAgentAction({
         agentId: agent.id,
         clientId: selectedClientId,
-        prompt: prompt.trim(),
+        prompt,
         contextItemIds: selectedFiles,
       });
       if (result.error) {
@@ -513,8 +459,8 @@ function RunCustomAgentModal({
           <Icon name="CheckCircle2" className="mx-auto h-8 w-8 text-success" />
           <p className="text-sm text-foreground">Run started</p>
           <p className="text-xs text-muted">
-            The agent is working. This usually takes 10–35 minutes. Deliverables appear in your
-            Library once your Karos team approves them.
+            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Deliverables appear in your
+            Workspace archive once your Karos team approves them.
           </p>
           <Button variant="subtle" onClick={onClose}>
             Done
@@ -525,15 +471,37 @@ function RunCustomAgentModal({
   }
 
   return (
-    <Modal open onClose={onClose} title={agent.name} description={agent.description}>
-      <div className="mt-4 space-y-4">
+    <Modal open onClose={onClose} title={agent.name} description={agent.description} className="max-w-2xl">
+      <div className="space-y-5">
+        <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="max-w-lg">
+              <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">{profile.eyebrow}</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">{profile.intro}</p>
+            </div>
+            <Badge tone="neutral">
+              <Icon name="Clock" className="h-3 w-3" /> {profile.estimate}
+            </Badge>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+            {profile.deliverables.map((deliverable) => (
+              <span key={deliverable} className="inline-flex items-center gap-1.5 text-[11px] text-foreground">
+                <Icon name="Check" className="h-3 w-3 text-success" /> {deliverable}
+              </span>
+            ))}
+          </div>
+        </div>
+
         {!clientId && clients && (
           <div>
             <Label htmlFor="ca-client">Client</Label>
             <Select
               id="ca-client"
               value={selectedClientId}
-              onChange={(e) => setSelectedClientId(e.target.value)}
+              onChange={(event) => {
+                setSelectedClientId(event.target.value);
+                setSelectedFiles([]);
+              }}
             >
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -545,16 +513,16 @@ function RunCustomAgentModal({
         )}
 
         <div>
-          <Label htmlFor="ca-prompt">{launcher.label}</Label>
+          <Label>Common starting points</Label>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {launcher.quickStarts.map((quickStart) => (
+            {profile.quickStarts.map((quickStart) => (
               <button
                 key={quickStart}
                 type="button"
-                onClick={() => setPrompt(quickStart)}
+                onClick={() => setField(primaryField.key, quickStart)}
                 className={cn(
                   "rounded-full border px-2.5 py-1 text-left text-[11px] transition-colors",
-                  prompt === quickStart
+                  fields[primaryField.key] === quickStart
                     ? "border-neon/60 bg-neon/10 text-neon"
                     : "border-border bg-surface-2 text-muted hover:border-border-strong hover:text-foreground",
                 )}
@@ -563,54 +531,72 @@ function RunCustomAgentModal({
               </button>
             ))}
           </div>
-          <Textarea
-            id="ca-prompt"
-            rows={3}
-            maxLength={4000}
-            placeholder={launcher.placeholder}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-          <p className="mt-1 text-xs text-muted-2">
-            {launcher.helper}
-          </p>
         </div>
 
-        {contextItems.length > 0 && (
-          <div>
-            <Label>{launcher.attachmentLabel ?? "Attach reference files"}</Label>
-            {launcher.attachmentHint && <p className="mb-1.5 text-xs text-muted-2">{launcher.attachmentHint}</p>}
-            <div className="max-h-36 space-y-1 overflow-y-auto rounded-md border border-border p-2">
-              {contextItems.map((item) => (
-                <label
-                  key={item.id}
-                  className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-surface-2"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedFiles.includes(item.id)}
-                    onChange={() =>
-                      setSelectedFiles((ids) =>
-                        ids.includes(item.id) ? ids.filter((x) => x !== item.id) : [...ids, item.id],
-                      )
-                    }
-                    className="accent-neon"
+        <div className="grid gap-4 sm:grid-cols-2">
+          {profile.fields.map((field) => {
+            const id = `ca-${agent.id}-${field.key}`;
+            const fullWidth = field.type === "textarea";
+            return (
+              <div key={field.key} className={fullWidth ? "sm:col-span-2" : undefined}>
+                <Label htmlFor={id}>
+                  {field.label}
+                  {field.required ? <span className="ml-1 text-danger">*</span> : null}
+                </Label>
+                {field.type === "select" ? (
+                  <Select
+                    id={id}
+                    value={fields[field.key] ?? ""}
+                    onChange={(event) => setField(field.key, event.target.value)}
+                  >
+                    {field.options?.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </Select>
+                ) : field.type === "textarea" ? (
+                  <Textarea
+                    id={id}
+                    rows={3}
+                    maxLength={1600}
+                    placeholder={field.placeholder}
+                    value={fields[field.key] ?? ""}
+                    onChange={(event) => setField(field.key, event.target.value)}
                   />
-                  <Icon name={item.kind === "image" ? "Image" : "FileText"} className="h-3.5 w-3.5 text-muted-2" />
-                  <span className="truncate">{item.name}</span>
-                  {item.note && <span className="truncate text-muted-2">· {item.note}</span>}
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
+                ) : (
+                  <Input
+                    id={id}
+                    type={field.type === "number" ? "number" : "text"}
+                    min={field.min}
+                    max={field.max}
+                    maxLength={field.type === "number" ? undefined : 500}
+                    placeholder={field.placeholder}
+                    value={fields[field.key] ?? ""}
+                    onChange={(event) => setField(field.key, event.target.value)}
+                  />
+                )}
+                {field.helper ? <p className="mt-1 text-xs text-muted-2">{field.helper}</p> : null}
+              </div>
+            );
+          })}
+        </div>
 
-        {error && <p className="text-xs text-danger">{error}</p>}
+        <AgentInputFiles
+          key={`${selectedClientId}-${agent.id}`}
+          clientId={selectedClientId}
+          agentName={agent.name}
+          items={contextItems}
+          selectedIds={selectedFiles}
+          onChange={setSelectedFiles}
+          profile={profile.attachments}
+          canUpload={!viewerIsClient}
+        />
+
+        {error && <p className="text-xs text-danger" role="alert">{error}</p>}
 
         <div className="flex items-center justify-between gap-3 pt-1">
           <p className="text-xs text-muted-2">
             <Icon name="Clock" className="mr-1 inline h-3 w-3" />
-            ~10–35 min. You can leave this page; the run continues.
+            {profile.estimate}. You can leave this page; the run continues.
             {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
           </p>
           <Button variant="accent" onClick={submit} loading={pending}>
@@ -1046,11 +1032,8 @@ export function ClientAgentAccessCard({
               onChange={() => toggle(agent.id)}
               className="accent-neon"
             />
-            <span
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded"
-              style={{ background: agent.color + "1f", color: agent.color }}
-            >
-              <Icon name={agent.icon} className="h-3.5 w-3.5" />
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+              <AgentMark identity={`${agent.key} ${agent.name}`} icon={agent.icon} className="h-3.5 w-3.5" />
             </span>
             <span className="min-w-0 flex-1 truncate text-foreground">{agent.name}</span>
             <span className="shrink-0 text-muted-2">{agentRunCost(agent)} cr/run</span>

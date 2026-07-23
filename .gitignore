@@ -43,6 +43,9 @@ env.*.local
 # vercel
 .vercel
 
+# local Codex connector configuration (may contain credentials)
+.codex/
+
 # one-off migration backups (contain client content — never commit)
 scripts/backups/
 

@@ -58,37 +58,48 @@ export function CopilotDock({ clientId, clientName, userName, hasGoogleIntegrati
 
       <aside
         className={cn(
-          "relative hidden shrink-0 border-l border-border bg-background transition-[width] duration-300 ease-in-out lg:block",
+          // min-w-0 beats the flex automatic minimum — without it the fixed-width
+          // chat inside keeps the rail at 380px and w-12 never takes effect.
+          "relative hidden min-w-0 shrink-0 border-l border-border bg-background transition-[width] duration-300 ease-in-out lg:block",
           collapsed ? "w-12" : "w-[380px]",
         )}
       >
-      {/* Edge handle — constant size & position, on the border */}
-      <button
-        onClick={() => setCollapsed((c) => !c)}
-        className="absolute left-0 top-4 z-20 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-surface text-muted-2 shadow-md transition-colors hover:text-foreground"
-        aria-label={collapsed ? "Expand AI Copilot" : "Collapse AI Copilot"}
-        title={collapsed ? "Expand AI Copilot" : "Collapse AI Copilot"}
-      >
-        <Icon name={collapsed ? "ChevronLeft" : "ChevronRight"} className="h-4 w-4" />
-      </button>
-
-      <div className="sticky top-0 h-screen overflow-hidden">
-        {/* Fixed-width chat — clipped by the parent as the rail narrows (no reflow) */}
-        <div className="h-full w-[380px]">
-          <ChatbotWidget docked defaultOpen {...widgetProps} />
-        </div>
-
-        {/* Collapsed strip overlay */}
-        <div
-          className={cn(
-            "absolute inset-0 flex flex-col items-center gap-3 bg-background pt-16 transition-opacity duration-200",
-            collapsed ? "opacity-100" : "pointer-events-none opacity-0",
-          )}
+      {/* z-40: sticky always forms its own stacking context, so the handle's
+          z-index can't beat the z-30 page header from inside — the frame
+          itself must sit above it or the header covers the handle's left half. */}
+      <div className="sticky top-0 z-40 h-screen">
+        {/* Edge handle — inside the sticky frame so it pins to the viewport
+            near the top (never scrolls away), and above the sticky page
+            header so the full circle always shows. */}
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          className="absolute left-0 top-4 z-40 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-surface text-muted-2 shadow-md transition-colors hover:text-foreground"
+          aria-label={collapsed ? "Expand AI Copilot" : "Collapse AI Copilot"}
+          title={collapsed ? "Expand AI Copilot" : "Collapse AI Copilot"}
         >
-          <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-2 [writing-mode:vertical-rl]">
-            AI Copilot
-          </span>
+          <Icon name={collapsed ? "ChevronLeft" : "ChevronRight"} className="h-4 w-4" />
+        </button>
+
+        {/* Clip lives on this inner frame — not the sticky one — so the
+            handle can hang past the border without being cut off. */}
+        <div className="relative h-full overflow-hidden">
+          {/* Fixed-width chat — clipped by the parent as the rail narrows (no reflow) */}
+          <div className="h-full w-[380px]">
+            <ChatbotWidget docked defaultOpen {...widgetProps} />
+          </div>
+
+          {/* Collapsed strip overlay */}
+          <div
+            className={cn(
+              "absolute inset-0 flex flex-col items-center gap-3 bg-background pt-16 transition-opacity duration-200",
+              collapsed ? "opacity-100" : "pointer-events-none opacity-0",
+            )}
+          >
+            <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-2 [writing-mode:vertical-rl]">
+              AI Copilot
+            </span>
+          </div>
         </div>
       </div>
       </aside>

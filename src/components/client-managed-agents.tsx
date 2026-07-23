@@ -118,9 +118,9 @@ function LiveProductCard({
       onClick={onOpen}
       className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
     >
-      <span className="absolute inset-x-0 top-0 h-0.5 opacity-45 transition-opacity group-hover:opacity-80" style={{ background: product.color }} aria-hidden="true" />
+      <span className="absolute inset-x-0 top-0 h-0.5 bg-foreground/40 opacity-45 transition-opacity group-hover:opacity-80" aria-hidden="true" />
       <div className="flex items-start gap-3">
-        <AgentIdentity identity={`${product.name} ${product.tagline}`} icon={product.icon} color={product.color} />
+        <AgentIdentity identity={`${product.name} ${product.tagline}`} icon={product.icon} />
         <div className="min-w-0 flex-1">
           <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">Managed agent</p>
           <div className="flex flex-wrap items-center gap-2">
@@ -157,7 +157,7 @@ function DormantProductCard({ product }: { product: ClientProductStatus }) {
   return (
     <div className="flex min-h-48 flex-col rounded-[var(--radius)] border border-dashed border-border p-5 opacity-70">
       <div className="flex items-start gap-3">
-        <AgentIdentity identity={`${product.name} ${product.tagline}`} icon={product.icon} color={product.color} />
+        <AgentIdentity identity={`${product.name} ${product.tagline}`} icon={product.icon} />
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium text-muted">{product.name}</p>
           <p className="mt-0.5 line-clamp-2 text-xs text-muted-2">{product.tagline}</p>
