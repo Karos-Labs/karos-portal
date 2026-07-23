@@ -100,7 +100,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               {isImpersonating && realAdmin && (
                 <ImpersonationBanner realAdmin={realAdmin} viewingAs={user} />
               )}
-              <main className="flex-1 px-4 pb-28 pt-6 md:px-8 md:pt-8 md:pb-16 lg:pb-8">
+              <main className="flex-1 overflow-x-clip px-4 pb-28 pt-6 md:px-8 md:pt-8 md:pb-16 lg:pb-8">
                 <div className="mx-auto w-full max-w-5xl animate-fade-up">
                   <AiProcessingBanner client={client} />
                   {children}
@@ -152,7 +152,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             userName={user.name}
             userEmail={user.email}
           />
-          <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
+          <main className="flex-1 overflow-x-clip px-4 py-6 md:px-8 md:py-8">
             <div className="mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
           </main>
         </div>
