@@ -179,7 +179,7 @@ export function AssetDetailModal({
           <Meta
             icon="Share2"
             label="Channels"
-            value={channels.length ? channels.map((c) => PLATFORM_LABELS[c] ?? c).join(", ") : "—"}
+            value={channels.length ? channels.map((c) => PLATFORM_LABELS[c] ?? c).join(", ") : "-"}
           />
         </div>
 

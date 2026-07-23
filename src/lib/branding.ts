@@ -74,13 +74,13 @@ export function effectiveNeutralLight(g: BrandingGuidelines): string | undefined
 
 export function brandingToContextDocContent(g: BrandingGuidelines, clientName: string): string {
   const today = new Date().toISOString().slice(0, 10);
-  const lines = [`# Branding Guidelines — ${clientName}`, `_Last updated: ${today}_`, ""];
+  const lines = [`# Branding Guidelines - ${clientName}`, `_Last updated: ${today}_`, ""];
   if (g.visualStyle) lines.push("## Visual Style", g.visualStyle, "");
 
   if (g.dominantColors?.length) {
     lines.push("## Color Palette");
     g.dominantColors.forEach((c) => {
-      const label = c.role ? `Color ${c.dominanceRank} — ${c.role}` : `Color ${c.dominanceRank}`;
+      const label = c.role ? `Color ${c.dominanceRank} - ${c.role}` : `Color ${c.dominanceRank}`;
       lines.push(`- **${label}:** ${c.hex}`);
     });
     lines.push("");

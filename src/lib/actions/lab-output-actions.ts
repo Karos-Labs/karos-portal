@@ -102,7 +102,7 @@ async function requireLabClient(clientId: string) {
   const slug = normalizeLabSlug(client.agentsRepoSlug);
   if (!slug) {
     return {
-      error: "This client has no lab repo slug yet — set it via the client's Edit dialog (Lab repo slug).",
+      error: "This client has no lab repo slug yet - set it via the client's Edit dialog (Lab repo slug).",
     } as const;
   }
   return { user, client, slug } as const;

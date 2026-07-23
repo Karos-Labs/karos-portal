@@ -160,7 +160,7 @@ export async function GET(req: NextRequest) {
               clientId: client.id,
               agentId: null,
               operation: "analytics_sync",
-              errorMessage: `${platform} token expired/revoked — marked for reauthentication`,
+              errorMessage: `${platform} token expired/revoked - marked for reauthentication`,
               severity: "WARN",
             });
             expired++;
@@ -215,7 +215,7 @@ export async function GET(req: NextRequest) {
                 clientId: client.id,
                 agentId: null,
                 operation: "analytics_sync",
-                errorMessage: `LinkedIn seat "${seat.employeeName}" token expired — seat paused`,
+                errorMessage: `LinkedIn seat "${seat.employeeName}" token expired - seat paused`,
                 severity: "WARN",
               });
               expired++;

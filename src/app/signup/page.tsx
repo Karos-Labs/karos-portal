@@ -201,7 +201,7 @@ export default function SignupPage() {
           <h1 className="text-2xl">Karos Labs</h1>
           <p className="mt-1.5 text-sm text-muted">
             {verificationSent
-              ? "Almost there — verify your email."
+              ? "Almost there - verify your email."
               : step === "key"
                 ? "Enter your invitation key to get started."
                 : "Create your account."}

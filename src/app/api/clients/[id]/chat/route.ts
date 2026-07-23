@@ -274,7 +274,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           console.error(
             `[copilot] Support email failed for client ${clientId}: ${result.error}`,
           );
-          return "I couldn't send the support email just now — please try again shortly, or email hello@karoslabs.com directly.";
+          return "I couldn't send the support email just now - please try again shortly, or email hello@karoslabs.com directly.";
         }
       } else {
         console.log("[copilot] Support email (ADMIN_EMAIL not set):", { subject, message, clientId });
@@ -299,7 +299,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (!googleIntegration) {
         return (
           "No Google Workspace integration found for this account. " +
-          "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab) — " +
+          "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab) - " +
           "you will be prompted to grant Gmail read access. " +
           "In the meantime, I can still build a task map from your meetings and context documents."
         );
@@ -318,7 +318,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           await markIntegrationExpired(clientId, "google").catch(() => {});
           if (err.reason === "insufficient_scope") {
             return (
-              "Gmail access was denied — the gmail.readonly permission wasn't granted during sign-in, " +
+              "Gmail access was denied - the gmail.readonly permission wasn't granted during sign-in, " +
               "or the Gmail API isn't enabled for this integration. " +
               "Please sign out and sign back in with Google, and make sure to approve the Gmail permission on the consent screen. " +
               "I can still work from your meetings and context documents in the meantime."
@@ -327,7 +327,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           return (
             "Your Google access token has expired. " +
             "Please sign out and sign back in with Google to restore Gmail access. " +
-            "I can still build a task map from your existing context — just let me know."
+            "I can still build a task map from your existing context - just let me know."
           );
         }
         return "Failed to connect to Gmail. Check your network and try again.";
@@ -376,7 +376,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
 
       if (extracted.tasks.length === 0) {
-        return `Analyzed ${emails.length} operational signals — no actionable items detected. Your queue looks clear for now.`;
+        return `Analyzed ${emails.length} operational signals - no actionable items detected. Your queue looks clear for now.`;
       }
 
       // Three-tier dedup (task-dedup.ts) — Gmail candidates are title-only, so
@@ -388,7 +388,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const dupSkipped = extracted.tasks.length - deduped.length;
 
       if (deduped.length === 0) {
-        return `Analyzed ${emails.length} operational signals — all extracted items already exist in your task board (${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped).`;
+        return `Analyzed ${emails.length} operational signals - all extracted items already exist in your task board (${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped).`;
       }
 
       // The cap bounds the Karos AI execution queue only — client_managed
@@ -426,7 +426,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       const notes = [
         dupSkipped > 0 ? `${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped` : "",
-        capSkipped > 0 ? `${capSkipped} deferred — Karos-managed queue capacity reached` : "",
+        capSkipped > 0 ? `${capSkipped} deferred - Karos-managed queue capacity reached` : "",
       ].filter(Boolean);
       const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
       return (
@@ -499,7 +499,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     execute: async ({ tasks }) => {
       if (tasks.length === 0) {
-        return "No new tasks created — the task board already covers all observable signals.";
+        return "No new tasks created - the task board already covers all observable signals.";
       }
 
       // Three-tier dedup (task-dedup.ts): exact normalized title vs ALL
@@ -526,7 +526,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           pool,
         );
         if (reason) {
-          dupReasons.push(`"${t.title}" — ${reason}`);
+          dupReasons.push(`"${t.title}" - ${reason}`);
           continue;
         }
         if (t.owner === "karos_managed") {
@@ -555,9 +555,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       if (freshTasks.length === 0) {
         if (capSkipped > 0 && dupSkipped === 0) {
-          return `Karos-managed queue is at capacity (${MAX_ACTIVE_TASKS} active tasks) — no tasks created. Ask the user to complete or approve existing tasks first.`;
+          return `Karos-managed queue is at capacity (${MAX_ACTIVE_TASKS} active tasks) - no tasks created. Ask the user to complete or approve existing tasks first.`;
         }
-        return `No tasks created — ${capSkipped > 0 ? `${capSkipped} blocked by the Karos queue capacity and ` : ""}the rest duplicate existing work:\n${dupReasons.join("\n")}`;
+        return `No tasks created - ${capSkipped > 0 ? `${capSkipped} blocked by the Karos queue capacity and ` : ""}the rest duplicate existing work:\n${dupReasons.join("\n")}`;
       }
 
       const now = Date.now();
@@ -604,7 +604,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const count = freshTasks.length;
       const notes = [
         dupSkipped > 0 ? `${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped` : "",
-        capSkipped > 0 ? `${capSkipped} karos_managed dropped — AI queue capacity (${MAX_ACTIVE_TASKS} active) reached` : "",
+        capSkipped > 0 ? `${capSkipped} karos_managed dropped - AI queue capacity (${MAX_ACTIVE_TASKS} active) reached` : "",
       ].filter(Boolean);
       const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
       return `Created ${count} task${count !== 1 ? "s" : ""} in your task board${skipNote}.`;

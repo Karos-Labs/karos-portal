@@ -38,7 +38,7 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     name: "Social posts",
     tagline: "Instagram & TikTok content from the client's content system",
     description:
-      "Runs the Instagram/TikTok content agent: researches what's working, then produces ready-to-review posts — visual, caption, and hashtags — using the client's emitted generators when they exist.",
+      "Runs the Instagram/TikTok content agent: researches what's working, then produces ready-to-review posts - visual, caption, and hashtags - using the client's emitted generators when they exist.",
     icon: "Camera",
     color: "#E879F9",
     deliverables: ["Post visual per item", "caption.txt + about.txt per item", "Research trail (internal)"],
@@ -90,7 +90,7 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     name: "Blog article",
     tagline: "SEO-aware article with keyword research built in",
     description:
-      "Runs the blog agent: scans the search landscape for the topic, then writes a sourced article in the client's voice — markdown plus rendered HTML.",
+      "Runs the blog agent: scans the search landscape for the topic, then writes a sourced article in the client's voice - markdown plus rendered HTML.",
     icon: "PenLine",
     color: "#34D399",
     deliverables: ["Article (.md + .html)", "Meta/caption files", "Keyword & SERP research (internal)"],
@@ -122,7 +122,7 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     estimate: "~15–30 min",
     briefFields: [
       { key: "page_goal", label: "Page goal", type: "text", required: true, placeholder: "e.g. collect demo bookings" },
-      { key: "offer", label: "Offer", type: "text", placeholder: "what the page promises — optional" },
+      { key: "offer", label: "Offer", type: "text", placeholder: "what the page promises - optional" },
     ],
   },
 ];

@@ -182,7 +182,7 @@ export async function appendMeetingSignalToContextDoc(
     "",
     "---",
     "",
-    `## Meeting Signal — ${date}`,
+    `## Meeting Signal - ${date}`,
     `**Title:** ${transcript.title}`,
   ];
   if (transcript.participants.length) lines.push(`**Participants:** ${transcript.participants.join(", ")}`);

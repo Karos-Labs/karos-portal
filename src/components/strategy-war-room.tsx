@@ -169,7 +169,7 @@ export function StrategyWarRoom({
           </h2>
         </div>
         <p className="text-xs text-muted-2">
-          Three specialist agents are debating your Task Map live — proposing, critiquing, and
+          Three specialist agents are debating your Task Map live - proposing, critiquing, and
           stress-testing against your analytics until they reach consensus.
         </p>
 
@@ -195,7 +195,7 @@ export function StrategyWarRoom({
         {status === "done" && (
           <div className="flex items-center gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
             <Icon name="CheckCircle" className="h-4 w-4 shrink-0" />
-            Consensus reached — {created ?? 0} task{created === 1 ? "" : "s"} locked into your map.
+            Consensus reached - {created ?? 0} task{created === 1 ? "" : "s"} locked into your map.
           </div>
         )}
         {status === "error" && (
@@ -239,7 +239,7 @@ function ConsoleLine({ line }: { line: Line }) {
     case "consensus":
       return (
         <p className="pt-1 font-semibold text-neon">
-          ✅ Consensus locked — {line.count} optimal task{line.count === 1 ? "" : "s"}.
+          ✅ Consensus locked - {line.count} optimal task{line.count === 1 ? "" : "s"}.
         </p>
       );
     case "persisted":

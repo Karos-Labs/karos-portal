@@ -247,7 +247,7 @@ export async function reconcileStuckTaskExecution(
         executing: false,
         executionError:
           "Execution was interrupted (server restart or timeout)." +
-          (staged ? " Credits were refunded — run it again." : " Run it again."),
+          (staged ? " Credits were refunded - run it again." : " Run it again."),
       },
       updatedAt: now,
     });

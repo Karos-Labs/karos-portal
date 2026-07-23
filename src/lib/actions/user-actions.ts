@@ -145,7 +145,7 @@ export async function toggleGroupAdminAction(uid: string, isGroupAdmin: boolean)
   if (user.role === "KAROS_ADMIN") {
     await upsertUser({ ...target, isGroupAdmin });
   } else if (user.role === "CLIENT_USER" && user.isGroupAdmin) {
-    if (target.clientId !== user.clientId) throw new Error("Forbidden — different group");
+    if (target.clientId !== user.clientId) throw new Error("Forbidden - different group");
     if (target.uid === user.uid) throw new Error("Cannot change your own group admin status");
     await upsertUser({ ...target, isGroupAdmin });
   } else {

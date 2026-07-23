@@ -316,14 +316,14 @@ export async function GET(
     return errorPage(provider, oauthErrorDesc ?? oauthError, origin);
   }
   if (!code || !state) {
-    return errorPage(provider, "Invalid callback — missing code or state.", origin);
+    return errorPage(provider, "Invalid callback - missing code or state.", origin);
   }
 
   // Verify state against the cookie value (CSRF check)
   const cookieStore = await cookies();
   const savedState = cookieStore.get("karos_oauth_state")?.value;
   if (!savedState || savedState !== state) {
-    return errorPage(provider, "State mismatch — please try connecting again.", origin);
+    return errorPage(provider, "State mismatch - please try connecting again.", origin);
   }
   cookieStore.delete("karos_oauth_state");
 
@@ -341,7 +341,7 @@ export async function GET(
     codeVerifier = cookieStore.get("karos_oauth_pkce")?.value ?? null;
     cookieStore.delete("karos_oauth_pkce");
     if (!codeVerifier) {
-      return errorPage(provider, "PKCE verifier missing — please try again.", origin);
+      return errorPage(provider, "PKCE verifier missing - please try again.", origin);
     }
   }
 
@@ -400,7 +400,7 @@ export async function GET(
 
     return successPage(provider, accountName, origin);
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Connection failed — please try again.";
+    const message = e instanceof Error ? e.message : "Connection failed - please try again.";
     return errorPage(provider, message, origin);
   }
 }

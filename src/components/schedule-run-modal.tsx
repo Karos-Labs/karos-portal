@@ -133,7 +133,7 @@ export function ScheduleRunModal({
             onChange={(e) => setPrompt(e.target.value)}
           />
           <p className="mt-1 text-[11px] text-muted-2">
-            A plain-language request run every time — the agent already knows the brand and its playbook.
+            A plain-language request run every time - the agent already knows the brand and its playbook.
           </p>
         </div>
 

@@ -82,7 +82,7 @@ describe("normalizeHex", () => {
 describe("brandingToContextDocContent", () => {
   it("includes the client name in the heading", () => {
     const result = brandingToContextDocContent(fullGuidelines, "Acme Corp");
-    expect(result).toContain("# Branding Guidelines — Acme Corp");
+    expect(result).toContain("# Branding Guidelines - Acme Corp");
   });
 
   it("includes a Color Palette section when colors are present", () => {
@@ -127,7 +127,7 @@ describe("brandingToContextDocContent", () => {
 
   it("produces a minimal doc when only updatedAt is provided", () => {
     const result = brandingToContextDocContent({ updatedAt: 0 }, "Empty Client");
-    expect(result).toContain("# Branding Guidelines — Empty Client");
+    expect(result).toContain("# Branding Guidelines - Empty Client");
     expect(result).not.toContain("##");
   });
 });

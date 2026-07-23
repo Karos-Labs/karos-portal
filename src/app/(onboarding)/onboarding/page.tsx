@@ -11,7 +11,7 @@ export const metadata = { title: "Welcome · Karos CMO" };
 
 const NOTICE_COPY: Record<string, string> = {
   denied: "LinkedIn connection was cancelled. You can try again anytime.",
-  not_configured: "LinkedIn connection isn't configured yet — you can finish setup and connect it later.",
+  not_configured: "LinkedIn connection isn't configured yet - you can finish setup and connect it later.",
   invalid_state: "That LinkedIn link expired. Please try connecting again.",
   error: "Something went wrong connecting LinkedIn. You can try again or finish setup without it.",
 };

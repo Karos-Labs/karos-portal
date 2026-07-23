@@ -621,7 +621,7 @@ export async function runSeoGeoResearch(
   // enginesTotal is the ENGINE roster (a3's five), not the competitor roster.
   const visibility = computeVisibilityIndex(perEngine, ENGINE_ROSTER.length);
   const presence = computePresence(capture.probes, gazetteer);
-  const rosterSharePct = computeRosterSharePct(capture.probes, gazetteer);
+  const rosterSharePct = computeRosterSharePct(capture.probes, gazetteer, isCategoryPrompt);
 
   // PDF/report contract: intent-tagged prompts, the per-question × per-engine grid,
   // the citation-domain leaderboard, ghost-citation summary, and competitors named.

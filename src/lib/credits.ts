@@ -108,7 +108,7 @@ export function evaluateSeatAddition(args: {
     allowed: false,
     requiresCharge: true,
     cost,
-    reason: `You've reached your plan's ${args.seatLimit}-seat limit. Adding another employee seat costs ${cost} credits (≈ $29/mo) — top up credits or upgrade your plan to continue.`,
+    reason: `You've reached your plan's ${args.seatLimit}-seat limit. Adding another employee seat costs ${cost} credits (≈ $29/mo) - top up credits or upgrade your plan to continue.`,
   };
 }
 
@@ -239,7 +239,7 @@ export function assessCharge(
       ok: false,
       code: "insufficient_balance",
       message:
-        `Not enough credits — this action costs ${amount} credit${amount === 1 ? "" : "s"} and ` +
+        `Not enough credits - this action costs ${amount} credit${amount === 1 ? "" : "s"} and ` +
         `${rolled.balance} ${rolled.balance === 1 ? "is" : "are"} left. Ask your Karos team for a top-up.`,
     };
   }
@@ -249,7 +249,7 @@ export function assessCharge(
       code: "weekly_limit",
       message:
         `Weekly credit limit reached (${rolled.weekSpent} of ${rolled.weeklyLimit} used). ` +
-        `It resets on Monday — or ask your Karos team to raise the limit.`,
+        `It resets on Monday - or ask your Karos team to raise the limit.`,
     };
   }
   if (rolled.monthlyLimit != null && rolled.monthSpent + amount > rolled.monthlyLimit) {
@@ -258,7 +258,7 @@ export function assessCharge(
       code: "monthly_limit",
       message:
         `Monthly credit limit reached (${rolled.monthSpent} of ${rolled.monthlyLimit} used). ` +
-        `It resets on the 1st — or ask your Karos team to raise the limit.`,
+        `It resets on the 1st - or ask your Karos team to raise the limit.`,
     };
   }
   return {

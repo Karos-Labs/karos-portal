@@ -104,7 +104,7 @@ export async function submitCustomAgentJob(
     if (!(await hasXAgentIntake(input.clientId))) {
       return {
         error:
-          "Set up the X agent data first. Open the client's “X agent data” page (under Agent-specific documents) and fill in the company page — the agent drafts from that. Nothing has run.",
+          "Set up the X agent data first. Open the client's “X agent data” page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.",
       };
     }
     try {
@@ -121,7 +121,7 @@ export async function submitCustomAgentJob(
     clientId: input.clientId,
     agentId: "agent-service",
     agentName: agent.name,
-    title: `${agent.name} — ${client.name}`,
+    title: `${agent.name} - ${client.name}`,
     status: "queued",
     input: { agent: agent.name, prompt },
     assetIds: [],

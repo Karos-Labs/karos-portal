@@ -224,7 +224,7 @@ export async function completeOnboarding(
     const userSnap = await tx.get(userRef);
     if (!userSnap.exists) throw new Error("User not found");
     const user = userSnap.data() as AppUser;
-    if (user.clientId !== clientId) throw new Error("Forbidden — not this user's workspace");
+    if (user.clientId !== clientId) throw new Error("Forbidden - not this user's workspace");
 
     tx.set(userRef, { hasCompletedOnboarding: true }, { merge: true });
     tx.set(clientRef, clientPatch, { merge: true });
@@ -514,7 +514,7 @@ export async function applyChainAssignments(
             : { publishMode: doc.publishMode !== "manual" && doc.publishMode !== "placeholder" ? "manual" as const : doc.publishMode }),
           ...(preferredPlatform ? { scheduledPlatform: preferredPlatform } : {}),
           recommendedAt: assignment.scheduledAt,
-          recommendedReason: "One post per day — assigned by the content chain",
+          recommendedReason: "One post per day - assigned by the content chain",
           updatedAt: Date.now(),
         },
         { merge: true },

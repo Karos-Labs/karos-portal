@@ -128,7 +128,7 @@ export async function addXSeatAction(input: {
   if (!slug) return { error: "Name must contain letters or numbers." };
   const existing = await listClientSeats(input.clientId);
   if (existing.some((s) => s.slug === slug)) {
-    return { error: `A seat for "${name}" already exists — edit it instead.` };
+    return { error: `A seat for "${name}" already exists - edit it instead.` };
   }
   const now = Date.now();
   const seatId = await createClientSeat({
@@ -187,7 +187,7 @@ export async function proposeXRosterAction(input: {
     .filter(Boolean)
     .join("\n\n");
   if (!audience?.content && !strategy?.content && !client.brief) {
-    return { error: "Not enough client context yet — finish onboarding first, or type accounts manually." };
+    return { error: "Not enough client context yet - finish onboarding first, or type accounts manually." };
   }
 
   const forWhom = input.seatName
@@ -203,7 +203,7 @@ export async function proposeXRosterAction(input: {
       prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
     });
     const match = text.match(/\[[\s\S]*\]/);
-    if (!match) return { error: "Could not build a proposal — try again or type accounts manually." };
+    if (!match) return { error: "Could not build a proposal - try again or type accounts manually." };
     const parsed = JSON.parse(match[0]) as Array<{ handle?: string; why?: string }>;
     const handles = parsed
       .map((p) => ({
@@ -212,10 +212,10 @@ export async function proposeXRosterAction(input: {
       }))
       .filter((p) => /^@[A-Za-z0-9_]{1,15}$/.test(p.handle))
       .slice(0, 15);
-    if (handles.length < 5) return { error: "Proposal came back too thin — try again or type accounts manually." };
+    if (handles.length < 5) return { error: "Proposal came back too thin - try again or type accounts manually." };
     return { handles };
   } catch {
-    return { error: "Could not build a proposal right now — try again or type accounts manually." };
+    return { error: "Could not build a proposal right now - try again or type accounts manually." };
   }
 }
 
@@ -284,7 +284,7 @@ export async function addXTakeAction(input: {
   const user = await requireClientAccess(input.clientId);
   const seat = await getClientSeat(input.seatId);
   if (!seat || seat.clientId !== input.clientId) return { error: "Seat not found." };
-  if (!input.take.trim()) return { error: "Write the take — one honest sentence is enough." };
+  if (!input.take.trim()) return { error: "Write the take - one honest sentence is enough." };
   if (!DATE_RE.test(input.date)) return { error: "Pick a date for this take." };
   if (input.take.length > MAX_TEXT) return { error: "Please keep the take under 2,000 characters." };
   await addXTake({
@@ -335,10 +335,10 @@ export async function addXDraftFeedbackAction(input: {
     return { error: "Paste the final text you actually posted." };
   }
   if (input.action === "not_posted" && !input.reason?.trim()) {
-    return { error: "Tell us why this one did not run — that is what teaches the agent." };
+    return { error: "Tell us why this one did not run - that is what teaches the agent." };
   }
   if (input.action === "note" && !input.reason?.trim()) {
-    return { error: "Write the feedback — as much detail as you like." };
+    return { error: "Write the feedback - as much detail as you like." };
   }
   if ((input.finalText?.length ?? 0) > MAX_TEXT || (input.reason?.length ?? 0) > MAX_TEXT) {
     return { error: "Please keep each answer under 2,000 characters." };

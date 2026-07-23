@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
         timestamp: now,
         type: "INTEL_GENERATION",
         title: "Intel Report generated (scheduled)",
-        description: "Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical) — recurring schedule",
+        description: "Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical) - recurring schedule",
         actor: "System AI",
         actorRole: "system",
       });

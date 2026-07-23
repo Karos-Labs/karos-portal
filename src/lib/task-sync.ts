@@ -97,7 +97,7 @@ export async function autoCompleteTasksOnIntegrationConnect(
   platform: string,
 ): Promise<number> {
   const key = platform.toLowerCase();
-  const reason = `Auto-completed — ${platform} integration connected`;
+  const reason = `Auto-completed - ${platform} integration connected`;
   const tasks = await listClientTasks({ clientId, status: ACTIVE, limit: 200 });
   const aliases = PLATFORM_ALIASES[key] ?? [key];
 

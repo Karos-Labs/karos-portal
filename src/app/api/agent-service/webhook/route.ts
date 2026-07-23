@@ -253,7 +253,7 @@ export async function POST(req: NextRequest) {
             events.push({
               at: Date.now(),
               level: "error",
-              message: `Could not re-host ${artifact.name} (HTTP ${res.status}) — keeping service URL`,
+              message: `Could not re-host ${artifact.name} (HTTP ${res.status}) - keeping service URL`,
             });
           }
           if (res.ok) {
@@ -350,7 +350,7 @@ export async function POST(req: NextRequest) {
         events.push({
           at: Date.now(),
           level: "error",
-          message: "Calendar reflow failed — run the staff reflow action",
+          message: "Calendar reflow failed - run the staff reflow action",
         }),
       );
     }
@@ -359,7 +359,7 @@ export async function POST(req: NextRequest) {
     events.push({
       at: now,
       level: "success",
-      message: `Agent run complete — ${clientFacingCount} client-facing deliverable(s), attempt ${payload.attempt}`,
+      message: `Agent run complete - ${clientFacingCount} client-facing deliverable(s), attempt ${payload.attempt}`,
     });
   } else {
     events.push({
@@ -430,7 +430,7 @@ export async function POST(req: NextRequest) {
         await autoCompleteTasksByTrigger(
           job.clientId,
           `product_run:${payload.task_type}`,
-          `Auto-completed — ${job.agentName} run delivered`,
+          `Auto-completed - ${job.agentName} run delivered`,
           { platform: typeof job.input?.platform === "string" ? job.input.platform : undefined },
         );
       }

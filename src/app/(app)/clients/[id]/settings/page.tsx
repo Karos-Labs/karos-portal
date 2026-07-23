@@ -84,7 +84,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
           render here for staff, who use the plain Sidebar shell with no such wrapper. */}
       {user.role !== "CLIENT_USER" && (
         <div className="mb-6">
-          <AiProcessingBanner client={client} />
+          <AiProcessingBanner client={client} isAdmin={user.role === "KAROS_ADMIN"} />
         </div>
       )}
 

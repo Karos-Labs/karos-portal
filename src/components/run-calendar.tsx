@@ -112,7 +112,7 @@ function RunChip({ run }: { run: CalendarRun }) {
             ? undefined
             : { background: run.productColor + "22", color: run.productColor }
       }
-      title={`${scheduled ? "Scheduled" : "Ran"} · ${run.productName} · ${timeStr(run.at)}${run.clientName ? ` — ${run.clientName}` : ""}`}
+      title={`${scheduled ? "Scheduled" : "Ran"} · ${run.productName} · ${timeStr(run.at)}${run.clientName ? ` - ${run.clientName}` : ""}`}
     >
       <Icon name={run.productIcon} className="h-2.5 w-2.5 shrink-0" />
       <span className="truncate">{run.productName}</span>

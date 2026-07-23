@@ -227,7 +227,7 @@ function ReviewPanel({
               Auto-publish at the scheduled time
             </span>
             <span className="block text-[11px] text-muted">
-              Requires the target channel to be connected with auto-publish enabled — otherwise it
+              Requires the target channel to be connected with auto-publish enabled - otherwise it
               lands on the calendar for a manual Publish Now.
             </span>
           </span>

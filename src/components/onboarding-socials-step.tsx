@@ -37,7 +37,7 @@ export function OnboardingSocialsStep({
       <div>
         <h2 className="text-base font-semibold">Social media channels</h2>
         <p className="text-xs text-muted-2">
-          Connect the channels your agents should publish to. Connect one, some, or all six now —
+          Connect the channels your agents should publish to. Connect one, some, or all six now -
           you can always add the rest later from Settings.
         </p>
       </div>

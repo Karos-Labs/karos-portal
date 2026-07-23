@@ -328,7 +328,7 @@ export async function publishAssetToPlatform(
     case "youtube":
       // Video upload (resumable, multi-GB) is a different beast — YouTube items
       // stay on the calendar as manual/placeholder entries for now.
-      throw new Error("YouTube publishing is not automated yet — post manually and mark as published");
+      throw new Error("YouTube publishing is not automated yet - post manually and mark as published");
     default:
       throw new Error(`Publisher not implemented for platform: ${platform}`);
   }

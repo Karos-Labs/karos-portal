@@ -198,19 +198,17 @@ function TaskCard({
         <Icon name="GripVertical" className="h-3.5 w-3.5" />
       </button>
 
-      <div className="mb-2 flex items-center justify-between gap-2 pr-6 text-xs">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dot)} />
-          <span className="whitespace-nowrap text-[11px] font-medium text-muted">{status.label}</span>
-          <Badge tone={priority.tone} className="shrink-0 px-1.5 py-0 text-[9px]">
-            {priority.label}
-          </Badge>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
+      <div className="mb-2 flex flex-wrap items-center gap-1.5 pr-6 text-xs">
+        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dot)} />
+        <span className="whitespace-nowrap text-[11px] font-medium text-muted">{status.label}</span>
+        <Badge tone={priority.tone} className="shrink-0 px-1.5 py-0 text-[9px]">
+          {priority.label}
+        </Badge>
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {(task.source === "copilot" || owner === "karos_managed") && (
             <span
               title="AI Copilot"
-              className="inline-flex h-4 w-4 items-center justify-center rounded-[4px] border border-neon/25 bg-neon/10 text-neon"
+              className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-neon/25 bg-neon/10 text-neon"
             >
               <Icon name="Bot" className="h-2.5 w-2.5" />
             </span>
@@ -218,7 +216,7 @@ function TaskCard({
           {showClientName && task._clientName && (
             <span
               title={task._clientName}
-              className="max-w-[80px] truncate rounded-[4px] border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.06em] text-muted"
+              className="max-w-[80px] shrink-0 truncate rounded-[4px] border border-border bg-surface-2 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.06em] text-muted"
             >
               {task._clientName}
             </span>

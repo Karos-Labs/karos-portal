@@ -159,12 +159,15 @@ function EngineCard({ view }: { view: EngineView }) {
           ))}
         </ul>
       )}
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+      <div className="mt-2 flex flex-col gap-1 text-xs leading-tight">
         {view.stats.map((s) => (
-          <span key={s.label} className="inline-flex items-center gap-1 text-muted-2">
-            {s.label}: <span className="font-mono text-foreground">{s.value}</span>
-            <InfoTip text={s.explainer} />
-          </span>
+          <div key={s.label} className="flex items-center justify-between gap-2 text-muted-2">
+            <span className="flex min-w-0 items-center gap-1">
+              <span className="truncate">{s.label}:</span>
+              <InfoTip text={s.explainer} />
+            </span>
+            <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-foreground">{s.value}</span>
+          </div>
         ))}
       </div>
       {view.ghost && (
@@ -335,8 +338,9 @@ export function SeoGeoPanel({
       <Card>
         <CardTitle className="mb-1">You vs competitors on each AI engine</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
-          How often each brand gets named when we ask the engines {insights.promptSet.length} real
-          buyer questions.
+          How often each brand gets named when we ask the engines {insights.categoryPresence.total} real
+          buyer questions — excluding the {insights.brandPresence.total} questions that name you directly, so
+          the comparison is like-for-like.
           {competitorCount === 0 && " No competitors tracked yet · ask us to add some."}
         </p>
         {measuredEngines.length > 0 && (

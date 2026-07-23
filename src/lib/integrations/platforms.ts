@@ -177,7 +177,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         label: "Organization URN",
         type: "text",
         placeholder: "urn:li:organization:12345",
-        hint: "Found in your Company Page URL — the number after /company/",
+        hint: "Found in your Company Page URL - the number after /company/",
       },
     ],
     category: "publishing",
@@ -188,7 +188,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
     icon: "Building2",
     color: "#0A66C2",
     description:
-      "Read company-page follower demographics and post analytics — a separate LinkedIn app from personal posting (Community Management API).",
+      "Read company-page follower demographics and post analytics - a separate LinkedIn app from personal posting (Community Management API).",
     fields: [
       {
         key: "accessToken",
@@ -209,7 +209,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         type: "text",
         required: true,
         placeholder: "urn:li:organization:12345",
-        hint: "Found in your Company Page URL — the number after /company/. Required before org-level reads work.",
+        hint: "Found in your Company Page URL - the number after /company/. Required before org-level reads work.",
       },
     ],
     category: "analytics",
@@ -249,7 +249,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         key: "refreshToken",
         label: "Refresh Token",
         type: "password",
-        hint: "Required for long-lived access — obtained during the OAuth consent flow",
+        hint: "Required for long-lived access - obtained during the OAuth consent flow",
       },
       {
         key: "channelId",
@@ -279,7 +279,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         key: "refreshToken",
         label: "Refresh Token",
         type: "password",
-        hint: "Required for long-lived access — captured automatically during the OAuth consent flow",
+        hint: "Required for long-lived access - captured automatically during the OAuth consent flow",
       },
     ],
     category: "publishing",
@@ -289,7 +289,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
     name: "Reddit",
     icon: "MessageSquare",
     color: "#FF4500",
-    description: "Read account history, karma, and thread activity (draft-first — never auto-posts).",
+    description: "Read account history, karma, and thread activity (draft-first - never auto-posts).",
     fields: [
       {
         key: "accessToken",
@@ -325,7 +325,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         key: "refreshToken",
         label: "Refresh Token",
         type: "password",
-        hint: "Required for long-lived access — captured automatically during the OAuth consent flow",
+        hint: "Required for long-lived access - captured automatically during the OAuth consent flow",
       },
       {
         key: "siteUrl",
@@ -355,7 +355,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         key: "refreshToken",
         label: "Refresh Token",
         type: "password",
-        hint: "Required for long-lived access — captured automatically during the OAuth consent flow",
+        hint: "Required for long-lived access - captured automatically during the OAuth consent flow",
       },
       {
         key: "propertyId",
@@ -385,7 +385,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         key: "refreshToken",
         label: "Refresh Token",
         type: "password",
-        hint: "Required for long-lived access — captured automatically during the OAuth consent flow",
+        hint: "Required for long-lived access - captured automatically during the OAuth consent flow",
       },
       {
         key: "locationId",

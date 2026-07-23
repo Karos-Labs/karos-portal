@@ -184,7 +184,7 @@ export function XDraftsBatch({
     <div className="space-y-6">
       <p className="text-sm text-muted">
         About a week of posting to choose from. Pick your favourites, edit freely, and skip with a
-        reason — every choice sharpens that account&apos;s voice for the next batch.
+        reason - every choice sharpens that account&apos;s voice for the next batch.
       </p>
       {accounts.map((acc) => (
         <div key={acc.title}>

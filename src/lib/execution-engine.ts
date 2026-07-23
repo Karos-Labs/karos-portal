@@ -291,7 +291,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
             ...(task.metadata ?? {}),
             executing: false,
             externalJobId: null,
-            executionError: `The ${agent.name} agent couldn't be reached — please try again. (${result.error ?? "submission failed"})`,
+            executionError: `The ${agent.name} agent couldn't be reached - please try again. (${result.error ?? "submission failed"})`,
           },
           updatedAt: Date.now(),
         });
@@ -342,7 +342,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
             ...(task.metadata ?? {}),
             executing: false,
             externalJobId: null,
-            executionError: `The ${product.name} agent couldn't be reached — please try again. (${result.error ?? "submission failed"})`,
+            executionError: `The ${product.name} agent couldn't be reached - please try again. (${result.error ?? "submission failed"})`,
           },
           updatedAt: Date.now(),
         });

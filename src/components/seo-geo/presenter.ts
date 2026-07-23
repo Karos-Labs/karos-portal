@@ -21,6 +21,7 @@ import {
   findMention,
   type EngineId,
   type SeoGeoInsights,
+  type SubMetrics,
   type VisibilityGap,
 } from "@/lib/seo-geo";
 
@@ -265,11 +266,31 @@ export function buildEngineViews(insights: SeoGeoInsights): EngineView[] {
       };
     }
 
-    const n = row.promptsMeasured;
-    const max = Math.max(1, ...row.brandMentions.map((b) => b.mentions));
-    const allZero = row.brandMentions.every((b) => b.mentions === 0);
-    const citedCount = Math.round(row.citationRate * n);
-    const firstCount = Math.round(row.firstPositionRate * n);
+    // Client-vs-competitor comparison uses CATEGORY prompts only — the 6 branded
+    // questions name the client by construction and guarantee it mentions, which
+    // would otherwise inflate every stat here to a near-meaningless number even
+    // when every tracked competitor sits at 0 (QA Fix 2). Older persisted snapshots
+    // were captured before `category` existed on this record, so fall back to the
+    // full (all-prompts) metrics rather than crashing on the missing field.
+    const cat: SubMetrics = row.category ?? {
+      promptsMeasured: row.promptsMeasured,
+      mentionRate: row.mentionRate,
+      citationRate: row.citationRate,
+      firstPositionRate: row.firstPositionRate,
+      shareOfVoice: row.shareOfVoice,
+      netSentiment: row.netSentiment,
+      ghostCitationRate: row.ghostCitationRate,
+      topCompetitor: row.topCompetitor,
+      brandMentions: row.brandMentions,
+    };
+    const n = cat.promptsMeasured;
+    const max = Math.max(1, ...cat.brandMentions.map((b) => b.mentions));
+    const allZero = cat.brandMentions.every((b) => b.mentions === 0);
+    const citedCount = Math.round(cat.citationRate * n);
+    const firstCount = Math.round(cat.firstPositionRate * n);
+    // Highest mention count first so low-relevance (0-mention) competitors sink
+    // to the bottom instead of cluttering the top of the comparison.
+    const sortedBrands = [...cat.brandMentions].sort((a, b) => b.mentions - a.mentions);
 
     return {
       engine,
@@ -277,11 +298,11 @@ export function buildEngineViews(insights: SeoGeoInsights): EngineView[] {
       status,
       statusLabel: "measured",
       statusTone: "success" as Tone,
-      explainer: `Measured ${providerPhrase(row.source)} by asking the same ${n} buyer questions we ask every engine.`,
+      explainer: `Measured ${providerPhrase(row.source)} by asking the same ${n} unbranded category buyer questions we ask every engine.`,
       causeLine: null,
       flagPrefill: null,
       allZero,
-      brands: row.brandMentions.map((b) => ({
+      brands: sortedBrands.map((b) => ({
         name: b.name,
         isClient: b.isClient,
         pctOfMax: Math.round((b.mentions / max) * 100),
@@ -290,9 +311,9 @@ export function buildEngineViews(insights: SeoGeoInsights): EngineView[] {
       stats: [
         {
           label: "share of conversation",
-          value: `${Math.round(row.shareOfVoice)}%`,
+          value: `${Math.round(cat.shareOfVoice)}%`,
           explainer:
-            "Of every time this engine named you or a tracked competitor, this is your slice. 50% would mean you get named as often as everyone else combined.",
+            "Of every time this engine named you or a tracked competitor in a category question, this is your slice. 50% would mean you get named as often as everyone else combined.",
         },
         {
           label: "cited as a source",

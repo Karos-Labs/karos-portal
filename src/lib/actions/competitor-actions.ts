@@ -136,7 +136,7 @@ export async function importReportAction(
     timestamp: now,
     type: "INTEL_GENERATION",
     title: "Intel Report imported",
-    description: `Markdown report parsed — score ${report.overallScore}/100 (${report.overallGrade}), ${parsed.competitorRows.length} competitors`,
+    description: `Markdown report parsed - score ${report.overallScore}/100 (${report.overallGrade}), ${parsed.competitorRows.length} competitors`,
     actor: user.name,
     actorRole: "staff",
   });
@@ -192,7 +192,7 @@ export async function addCompetitorAction(
         "",
         "---",
         "",
-        `## Manually Added Competitor — ${today}`,
+        `## Manually Added Competitor - ${today}`,
         `- **Company:** ${input.company}`,
         ...(input.url ? [`- **Website:** ${input.url}`] : []),
         `- **Market Tier:** ${input.marketTier}`,
@@ -373,7 +373,7 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
     inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
   });
 
-  if (object.competitors.length === 0) throw new Error("No competitors discovered — try adding names manually.");
+  if (object.competitors.length === 0) throw new Error("No competitors discovered - try adding names manually.");
 
   const now = Date.now();
   await replaceReportCompetitors(

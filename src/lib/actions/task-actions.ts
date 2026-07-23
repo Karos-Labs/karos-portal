@@ -187,7 +187,7 @@ export async function deleteTaskAction(
   if (task.metadata?.executing === true) {
     return {
       ok: false,
-      error: "This task is currently executing — wait for the run to finish before dismissing it.",
+      error: "This task is currently executing - wait for the run to finish before dismissing it.",
     };
   }
 

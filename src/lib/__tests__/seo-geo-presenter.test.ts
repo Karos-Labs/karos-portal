@@ -316,7 +316,9 @@ describe("engine views (SCRUM-52 fixes 2 + 4)", () => {
 
   it("labels ratios as fractions and derives counts from rates (fix 3)", () => {
     const [chatgpt] = buildEngineViews(insights());
-    expect(chatgpt.brands[0].line).toBe("named in 3 of 10 answers");
+    // Highest mention count sorts first (QA Fix 2 amendment) — Rival (6) before Acme (3).
+    expect(chatgpt.brands.map((b) => b.name)).toEqual(["Rival", "Acme"]);
+    expect(chatgpt.brands[0].line).toBe("named in 6 of 10 answers");
     expect(chatgpt.stats.map((s) => s.value)).toEqual(["20%", "1 of 10 answers", "1 of 10 answers"]);
   });
 

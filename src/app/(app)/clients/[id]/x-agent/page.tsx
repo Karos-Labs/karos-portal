@@ -92,7 +92,7 @@ export default async function XAgentPage({ params }: { params: Promise<{ id: str
     <>
       <PageHeader
         title="X agent"
-        description="What we collect to run X for you: the company page, a seat per person, and your ongoing drops. Drafts only — nothing posts without a human."
+        description="What we collect to run X for you: the company page, a seat per person, and your ongoing drops. Drafts only - nothing posts without a human."
         action={
           <a
             href={`/clients/${id}/agents`}

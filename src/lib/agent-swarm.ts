@@ -470,7 +470,7 @@ export async function persistSwarmTasks(
 
   const notes = [
     duplicatesSkipped > 0 ? `${duplicatesSkipped} duplicate${duplicatesSkipped !== 1 ? "s" : ""} skipped` : "",
-    capSkipped > 0 ? `${capSkipped} deferred — queue at capacity` : "",
+    capSkipped > 0 ? `${capSkipped} deferred - queue at capacity` : "",
   ].filter(Boolean);
   return {
     created: fresh.length,

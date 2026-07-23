@@ -2,16 +2,16 @@ import { describe, it, expect } from "vitest";
 import { formatDate, formatDateTime, relativeTime, initials, domainFromEmail } from "../utils";
 
 describe("formatDate", () => {
-  it("returns em-dash for null", () => {
-    expect(formatDate(null)).toBe("—");
+  it("returns a dash for null", () => {
+    expect(formatDate(null)).toBe("-");
   });
 
-  it("returns em-dash for undefined", () => {
-    expect(formatDate(undefined)).toBe("—");
+  it("returns a dash for undefined", () => {
+    expect(formatDate(undefined)).toBe("-");
   });
 
-  it("returns em-dash for an invalid date string", () => {
-    expect(formatDate("not-a-date")).toBe("—");
+  it("returns a dash for an invalid date string", () => {
+    expect(formatDate("not-a-date")).toBe("-");
   });
 
   it("formats a valid epoch millis timestamp", () => {
@@ -34,16 +34,16 @@ describe("formatDate", () => {
 });
 
 describe("formatDateTime", () => {
-  it("returns em-dash for null", () => {
-    expect(formatDateTime(null)).toBe("—");
+  it("returns a dash for null", () => {
+    expect(formatDateTime(null)).toBe("-");
   });
 
-  it("returns em-dash for undefined", () => {
-    expect(formatDateTime(undefined)).toBe("—");
+  it("returns a dash for undefined", () => {
+    expect(formatDateTime(undefined)).toBe("-");
   });
 
-  it("returns em-dash for NaN date", () => {
-    expect(formatDateTime("garbage")).toBe("—");
+  it("returns a dash for NaN date", () => {
+    expect(formatDateTime("garbage")).toBe("-");
   });
 
   it("includes month and time components for a valid timestamp", () => {
@@ -54,16 +54,16 @@ describe("formatDateTime", () => {
 });
 
 describe("relativeTime", () => {
-  it("returns em-dash for null", () => {
-    expect(relativeTime(null)).toBe("—");
+  it("returns a dash for null", () => {
+    expect(relativeTime(null)).toBe("-");
   });
 
-  it("returns em-dash for undefined", () => {
-    expect(relativeTime(undefined)).toBe("—");
+  it("returns a dash for undefined", () => {
+    expect(relativeTime(undefined)).toBe("-");
   });
 
-  it("returns em-dash for invalid date", () => {
-    expect(relativeTime("not-a-date")).toBe("—");
+  it("returns a dash for invalid date", () => {
+    expect(relativeTime("not-a-date")).toBe("-");
   });
 
   it("returns 'just now' for timestamps less than 30 seconds old", () => {

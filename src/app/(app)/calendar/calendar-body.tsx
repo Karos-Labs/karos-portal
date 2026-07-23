@@ -75,7 +75,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       singleFilter = { clientId: viewClient.id };
       single = true;
       defaultClientId = viewClient.id;
-      title = `${viewClient.name} — Calendar`;
+      title = `${viewClient.name} - Calendar`;
     } else if (user.role === "KAROS_EMPLOYEE") {
       // Employees only see their assigned clients (admins see all → idSet stays null).
       idSet = new Set(clients.map((c) => c.id));

@@ -130,7 +130,7 @@ function RosterInput({
         id={`${idPrefix}-roster`}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="@handle, @handle — or let us propose a list"
+        placeholder="@handle, @handle - or let us propose a list"
       />
       <p className="mt-1 text-xs text-muted">{helper}</p>
       {fieldError(error)}
@@ -138,7 +138,7 @@ function RosterInput({
         <ul className="mt-2 space-y-1 rounded-md border border-border bg-surface-2 p-3">
           {why.map((h) => (
             <li key={h.handle} className="text-xs text-muted">
-              <span className="text-foreground">{h.handle}</span> — {h.why}
+              <span className="text-foreground">{h.handle}</span> - {h.why}
             </li>
           ))}
         </ul>
@@ -219,7 +219,7 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
           value={roster}
           onChange={setRoster}
           idPrefix="xc"
-          helper="Optional; this turns on the engagement lane. We propose from what we already know about your business — you approve or edit. Every handle is verified live before any engagement."
+          helper="Optional; this turns on the engagement lane. We propose from what we already know about your business - you approve or edit. Every handle is verified live before any engagement."
         />
         {!intake ? (
           <div>
@@ -229,7 +229,7 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
               rows={3}
               value={announcements}
               onChange={(e) => setAnnouncements(e.target.value)}
-              placeholder="One per line. A launch, a milestone, a hire — a line each is enough; we turn them into posts."
+              placeholder="One per line. A launch, a milestone, a hire - a line each is enough; we turn them into posts."
             />
           </div>
         ) : null}
@@ -325,7 +325,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
             value={roster}
             onChange={setRoster}
             idPrefix={`xs-${seat.id}`}
-            helper="Optional; this turns on your engagement lane. We propose people worth being near — you approve or edit."
+            helper="Optional; this turns on your engagement lane. We propose people worth being near - you approve or edit."
           />
         </div>
         <div>
@@ -368,7 +368,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
               <Input
                 value={takeUrl}
                 onChange={(e) => setTakeUrl(e.target.value)}
-                placeholder="Source link — only if your take contains a number"
+                placeholder="Source link - only if your take contains a number"
               />
             </div>
             {fieldError(takeError)}
@@ -381,7 +381,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
               {seat.takes.slice(0, 5).map((t) => (
                 <li key={t.id} className="text-xs text-muted">
                   <span className="text-foreground">{t.date}</span>
-                  {t.topic ? ` · ${t.topic}` : ""} — {t.take}
+                  {t.topic ? ` · ${t.topic}` : ""} - {t.take}
                 </li>
               ))}
             </ul>
@@ -468,7 +468,7 @@ function AddSeatForm({ clientId }: { clientId: string }) {
           value={roster}
           onChange={setRoster}
           idPrefix="xa"
-          helper="Optional; this turns on your engagement lane. We propose people worth being near — you approve or edit."
+          helper="Optional; this turns on your engagement lane. We propose people worth being near - you approve or edit."
         />
         <div>
           <Label htmlFor="xa-takes">Your first takes</Label>
@@ -477,7 +477,7 @@ function AddSeatForm({ clientId }: { clientId: string }) {
             rows={4}
             value={firstTakes}
             onChange={(e) => setFirstTakes(e.target.value)}
-            placeholder={"3 to 5 rough one-liners of what you actually think — one per line.\nGTM, hiring, AI, the grind. We turn each into a post in your voice."}
+            placeholder={"3 to 5 rough one-liners of what you actually think - one per line.\nGTM, hiring, AI, the grind. We turn each into a post in your voice."}
           />
           <p className="mt-1 text-xs text-muted">
             The single highest-leverage input for your seat. Rough is perfect; we do the wordsmithing.
@@ -571,7 +571,7 @@ function NewsBox({ clientId, rows }: { clientId: string; rows: XNewsRowView[] })
           {rows.slice(0, 6).map((r) => (
             <li key={r.id} className="text-xs text-muted">
               <span className="text-foreground">{r.date}</span>
-              {r.type ? ` · ${r.type}` : ""} — {r.title}
+              {r.type ? ` · ${r.type}` : ""} - {r.title}
             </li>
           ))}
         </ul>
@@ -622,7 +622,7 @@ function FeedbackBox({
     <Card className="p-5">
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
-        Tell us what is working and what is not — in your own words, as much detail as you like.
+        Tell us what is working and what is not - in your own words, as much detail as you like.
         It goes straight into the agent&apos;s next run. Picking, editing, or skipping individual
         drafts happens on the drafts themselves, in your Library.
       </p>
@@ -666,7 +666,7 @@ function FeedbackBox({
           <Button onClick={submit} disabled={pending || !note.trim()}>
             {pending ? "Sending…" : "Send feedback"}
           </Button>
-          {sent ? <span className="text-xs text-muted">Sent — it feeds the next run.</span> : null}
+          {sent ? <span className="text-xs text-muted">Sent - it feeds the next run.</span> : null}
         </div>
       </div>
       {recent.length > 0 ? (

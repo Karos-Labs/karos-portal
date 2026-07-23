@@ -86,7 +86,7 @@ export async function GET(req: NextRequest) {
       // waits AND flags without anyone having to intervene in the common case.
       const blocker = blockingPredecessor(asset, assetsByClient.get(asset.clientId) ?? []);
       if (blocker) {
-        const message = `Waiting for "${blocker.title}" — it comes earlier in this series and is still ${blocker.status}. This post goes out once that one is published (or removed).`;
+        const message = `Waiting for "${blocker.title}" - it comes earlier in this series and is still ${blocker.status}. This post goes out once that one is published (or removed).`;
         await updateAsset(asset.id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
         return { assetId: asset.id, platform: asset.scheduledPlatform ?? "none", status: "held", error: message };
       }
@@ -120,7 +120,7 @@ export async function GET(req: NextRequest) {
           platform,
           status: "skipped",
           error: exists
-            ? `Auto-publish is disabled or the token expired for ${platform} — use Publish Now or re-connect`
+            ? `Auto-publish is disabled or the token expired for ${platform} - use Publish Now or re-connect`
             : `Integration for ${platform} not found`,
         };
       }
@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
           assetId: asset.id,
           platform,
           status: "skipped",
-          error: "Skipped — already claimed by a concurrent publish",
+          error: "Skipped - already claimed by a concurrent publish",
         };
       }
 

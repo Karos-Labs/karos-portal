@@ -112,7 +112,7 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
       {!loading && results && results.length > 0 && (
         <p className="flex items-start gap-1.5 text-[11px] text-muted-2">
           <Icon name="Info" className="mt-0.5 h-3 w-3 shrink-0" />
-          Simulated reactions from AI personas — directional signal to refine before publishing, not a guarantee of real-world results.
+          Simulated reactions from AI personas - directional signal to refine before publishing, not a guarantee of real-world results.
         </p>
       )}
     </div>

@@ -183,7 +183,7 @@ export async function generateIntelReportAction(
     await runIntelReportPipeline(clientId, runSpecificContext);
     await updateClient(clientId, { lastIntelReportAt: Date.now() });
     const ctxNote = runSpecificContext?.trim()
-      ? ` — with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
+      ? ` - with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
       : "";
     await logActivity({
       clientId,

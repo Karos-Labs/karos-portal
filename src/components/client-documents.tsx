@@ -749,7 +749,7 @@ export function ClientDocuments({
               disabled={isAiProcessing}
               title={
                 isAiProcessing
-                  ? "Karos Agents are already building this workspace — please wait for it to finish"
+                  ? "Karos Agents are already building this workspace - please wait for it to finish"
                   : "Re-run the Intel Report pipeline to regenerate all documents"
               }
               className="flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-medium text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-2"

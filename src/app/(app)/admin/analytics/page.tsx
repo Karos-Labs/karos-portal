@@ -267,7 +267,7 @@ function renderPage(p: {
         {/* Model breakdown */}
         <Card>
           <CardTitle className="mb-4">
-            {agentKey ? `Model breakdown — ${agentDisplayName ?? "selected agent"}` : "Model breakdown"}
+            {agentKey ? `Model breakdown - ${agentDisplayName ?? "selected agent"}` : "Model breakdown"}
           </CardTitle>
           {modelStats.length === 0 ? (
             <EmptyState

@@ -105,7 +105,7 @@ export async function submitManagedJob(
     clientId: input.clientId,
     agentId: "agent-service",
     agentName: label,
-    title: `${label} — ${client.name}`,
+    title: `${label} - ${client.name}`,
     status: "queued",
     input: inputSummary,
     assetIds: [],

@@ -143,7 +143,7 @@ export async function approveAssetAction(
       const settings = await getClientSettings(asset.clientId);
       if (!settings?.autoScheduleEnabled) {
         throw new Error(
-          `Client has not enabled auto-scheduling — approve as manual/placeholder or enable in Client Settings`,
+          `Client has not enabled auto-scheduling - approve as manual/placeholder or enable in Client Settings`,
         );
       }
       const integrations = await listClientIntegrations(asset.clientId);
@@ -152,7 +152,7 @@ export async function approveAssetAction(
       );
       if (!active) {
         throw new Error(
-          `Connect an active ${opts.platform} integration to auto-publish — or approve as manual/placeholder`,
+          `Connect an active ${opts.platform} integration to auto-publish - or approve as manual/placeholder`,
         );
       }
     }
@@ -225,7 +225,7 @@ export async function markAssetPostedAction(
   const asset = await requireAssetAccess(id);
   if (asset.status === "published") return { ok: false, error: "Already marked as posted" };
   if (asset.publishMode === "placeholder") {
-    return { ok: false, error: "This is a placeholder — put it on the calendar before marking it posted" };
+    return { ok: false, error: "This is a placeholder - put it on the calendar before marking it posted" };
   }
   // Only a post that has actually been approved onto the calendar can have been
   // posted. Without this a CLIENT_USER could force one of their own DRAFTS
@@ -246,7 +246,7 @@ export async function markAssetPostedAction(
   // claim right now, and flipping status to published here wouldn't stop it —
   // we'd attest "already posted by hand" AND post again for real.
   if (asset.publishClaimedAt != null && Date.now() - asset.publishClaimedAt < PUBLISH_CLAIM_TTL_MS) {
-    return { ok: false, error: "This post is being published right now — give it a moment." };
+    return { ok: false, error: "This post is being published right now - give it a moment." };
   }
 
   const { changed } = await reconcileAssetPublished(id, Date.now(), null, { force: true });
@@ -289,18 +289,18 @@ export async function publishAssetNowAction(
     inferPlatform(asset.type, valid.map((i) => i.platform));
 
   if (!target) {
-    return { ok: false, error: "No compatible platform connected — connect one in the Integrations tab" };
+    return { ok: false, error: "No compatible platform connected - connect one in the Integrations tab" };
   }
   const integration = valid.find((i) => i.platform === target);
   if (!integration) {
-    return { ok: false, error: `No active ${target} integration — connect or re-connect it first` };
+    return { ok: false, error: `No active ${target} integration - connect or re-connect it first` };
   }
 
   // Atomically claim so a concurrent auto-cron tick (or a double-clicked button)
   // can't push this same asset in parallel and post it twice.
   const claimed = await claimAssetForPublish(id);
   if (!claimed) {
-    return { ok: false, error: "This asset is already being published — give it a moment." };
+    return { ok: false, error: "This asset is already being published - give it a moment." };
   }
 
   let publishResult: { postId: string | null };

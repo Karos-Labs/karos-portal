@@ -322,7 +322,7 @@ function ProactiveWelcome({
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold text-foreground">{action.label}</p>
                 <p className="text-[11px] text-muted truncate">
-                  {locked ? "Locked — a workspace build is already running" : action.sublabel}
+                  {locked ? "Locked - a workspace build is already running" : action.sublabel}
                 </p>
               </div>
               <Icon

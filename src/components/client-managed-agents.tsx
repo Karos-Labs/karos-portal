@@ -189,7 +189,7 @@ function TemplatesModal({
 
         {product.templates.length === 0 ? (
           <p className="rounded-md border border-border bg-surface-2 px-3 py-3 text-sm text-muted">
-            Your first posts are being produced — the formats will appear here as they land on your calendar.
+            Your first posts are being produced - the formats will appear here as they land on your calendar.
           </p>
         ) : (
           <div className="space-y-2">

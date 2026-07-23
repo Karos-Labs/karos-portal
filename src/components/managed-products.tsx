@@ -293,7 +293,7 @@ function LiveProductModal({
       open
       onClose={onClose}
       title={product.name}
-      description={`This agent is running for the client — ${jobs.length} run${jobs.length !== 1 ? "s" : ""} so far.`}
+      description={`This agent is running for the client - ${jobs.length} run${jobs.length !== 1 ? "s" : ""} so far.`}
     >
       <div className="mt-4 space-y-5">
         <span className="inline-flex items-center gap-1.5 rounded-full border border-neon/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-neon">
@@ -303,7 +303,7 @@ function LiveProductModal({
         <div className="grid grid-cols-3 gap-2">
           <Stat label="Runs" value={String(jobs.length)} />
           <Stat label="Deliverables" value={String(deliverableCount)} />
-          <Stat label="Last run" value={lastRun ? relativeTime(lastRun.createdAt) : "—"} />
+          <Stat label="Last run" value={lastRun ? relativeTime(lastRun.createdAt) : "-"} />
         </div>
 
         <div>
