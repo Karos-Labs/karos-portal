@@ -64,7 +64,10 @@ export function CopilotDock({ clientId, clientName, userName, hasGoogleIntegrati
           collapsed ? "w-12" : "w-[380px]",
         )}
       >
-      <div className="sticky top-0 h-screen">
+      {/* z-40: sticky always forms its own stacking context, so the handle's
+          z-index can't beat the z-30 page header from inside — the frame
+          itself must sit above it or the header covers the handle's left half. */}
+      <div className="sticky top-0 z-40 h-screen">
         {/* Edge handle — inside the sticky frame so it pins to the viewport
             near the top (never scrolls away), and above the sticky page
             header so the full circle always shows. */}
