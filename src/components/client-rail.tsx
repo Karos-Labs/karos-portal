@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { ClientDocuments } from "@/components/client-documents";
+import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { AccountMenu } from "@/components/account-menu";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { NotificationBell } from "@/components/notification-bell";
@@ -138,6 +139,7 @@ export function ClientRail({
                 isAdmin={isAdmin}
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
+                intelSchedule={clientIntelSchedule(client)}
               />
             </div>
 
@@ -261,6 +263,7 @@ export function ClientRail({
                 isAdmin={isAdmin}
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
+                intelSchedule={clientIntelSchedule(client)}
               />
             </div>
 

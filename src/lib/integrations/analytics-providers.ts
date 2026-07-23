@@ -231,6 +231,219 @@ async function fetchLiveRaw(
   }
 }
 
+/* ── Extended reads (audience/comments/mentions/growth) ─────────────────
+ * These are separate from fetchPlatformMetrics above: not "one post's
+ * numbers" but account-level reads the PDF's agent connectors ask for.
+ * Grouped here by which scope they ride on:
+ *  - Instagram audience + comments: already-granted scopes, real endpoints.
+ *  - YouTube channel analytics: new ungated scope added in oauth.ts.
+ *  - Twitter mentions/follower growth: existing scopes, just new endpoints.
+ *  - LinkedIn org / Meta comments+mentions: gated behind the platform's
+ *    extendedScopes approval flag — throw a clear error until then instead
+ *    of pretending to work.
+ * ------------------------------------------------------------------ */
+
+/** Thrown when a read needs a platform product/partner approval that hasn't
+ *  landed yet (see extendedScopes/envApprovalFlag in oauth.ts). Distinct from
+ *  TokenExpiredError: the fix is a pending platform approval, not reconnecting. */
+export class ExtendedAccessNotGrantedError extends Error {
+  constructor(platform: string, envFlag: string) {
+    super(
+      `${platform}: this read needs the platform's extended/partner API access, ` +
+        `which isn't approved yet. Set ${envFlag}=1 once it is.`,
+    );
+    this.name = "ExtendedAccessNotGrantedError";
+  }
+}
+
+function assertExtendedAccessApproved(platform: string, envFlag: string): void {
+  if (process.env[envFlag] !== "1") throw new ExtendedAccessNotGrantedError(platform, envFlag);
+}
+
+export interface InstagramAudience {
+  totalFollowers: number;
+  /** Breakdown key format follows the Graph API response, e.g. "F.25-34" (gender.age range) or a city/country name. */
+  byDimension: Record<string, number>;
+}
+
+/** Follower demographics for an IG business account — already covered by the
+ *  existing `instagram_manage_insights` scope, no extra approval needed. */
+export async function fetchInstagramAudience(token: string, igUserId: string): Promise<InstagramAudience> {
+  const res = await fetch(
+    `https://graph.facebook.com/v20.0/${encodeURIComponent(igUserId)}/insights` +
+      `?metric=follower_demographics&period=lifetime&metric_type=total_value` +
+      `&breakdown=age,gender&access_token=${encodeURIComponent(token)}`,
+  );
+  assertNotExpired("instagram", res);
+  if (!res.ok) throw new Error(`Instagram audience fetch failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: Array<{ total_value?: { breakdowns?: Array<{ results?: Array<{ dimension_values?: string[]; value?: number }> }> } }>;
+  };
+  const results = body.data?.[0]?.total_value?.breakdowns?.[0]?.results ?? [];
+  const byDimension: Record<string, number> = {};
+  let total = 0;
+  for (const r of results) {
+    const key = (r.dimension_values ?? []).join(".");
+    byDimension[key] = r.value ?? 0;
+    total += r.value ?? 0;
+  }
+  return { totalFollowers: total, byDimension };
+}
+
+export interface PlatformComment {
+  id: string;
+  text: string;
+  authorName: string;
+  createdAt: string;
+}
+
+/** Comments on one IG media object — for drafting replies. Existing scope. */
+export async function fetchInstagramComments(token: string, mediaId: string): Promise<PlatformComment[]> {
+  const res = await fetch(
+    `https://graph.facebook.com/v20.0/${encodeURIComponent(mediaId)}/comments` +
+      `?fields=id,text,username,timestamp&access_token=${encodeURIComponent(token)}`,
+  );
+  assertNotExpired("instagram", res);
+  if (!res.ok) throw new Error(`Instagram comments fetch failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: Array<{ id?: string; text?: string; username?: string; timestamp?: string }>;
+  };
+  return (body.data ?? []).map((c) => ({
+    id: c.id ?? "",
+    text: c.text ?? "",
+    authorName: c.username ?? "",
+    createdAt: c.timestamp ?? "",
+  }));
+}
+
+export interface YouTubeChannelAnalytics {
+  views: number;
+  estimatedMinutesWatched: number;
+  averageViewDurationSeconds: number;
+  subscribersGained: number;
+}
+
+/** Channel-level watch time / retention via the YouTube Analytics API —
+ *  needs the `yt-analytics.readonly` scope added in oauth.ts (ungated). */
+export async function fetchYouTubeChannelAnalytics(
+  token: string,
+  params: { startDate: string; endDate: string },
+): Promise<YouTubeChannelAnalytics> {
+  const url = new URL("https://youtubeanalytics.googleapis.com/v2/reports");
+  url.searchParams.set("ids", "channel==MINE");
+  url.searchParams.set("startDate", params.startDate);
+  url.searchParams.set("endDate", params.endDate);
+  url.searchParams.set("metrics", "views,estimatedMinutesWatched,averageViewDuration,subscribersGained");
+  const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
+  assertNotExpired("youtube", res);
+  if (!res.ok) throw new Error(`YouTube Analytics fetch failed: ${res.status}`);
+  const body = (await res.json()) as { rows?: number[][] };
+  const [views = 0, estimatedMinutesWatched = 0, averageViewDurationSeconds = 0, subscribersGained = 0] =
+    body.rows?.[0] ?? [];
+  return { views, estimatedMinutesWatched, averageViewDurationSeconds, subscribersGained };
+}
+
+export interface TwitterFollowerGrowth {
+  followersCount: number;
+  followingCount: number;
+  tweetCount: number;
+}
+
+/** Own follower count — no extra scope needed, just `user.fields=public_metrics`. */
+export async function fetchTwitterFollowerGrowth(token: string): Promise<TwitterFollowerGrowth> {
+  const res = await fetch("https://api.twitter.com/2/users/me?user.fields=public_metrics", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assertNotExpired("twitter", res);
+  if (!res.ok) throw new Error(`Twitter follower fetch failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: { public_metrics?: { followers_count?: number; following_count?: number; tweet_count?: number } };
+  };
+  const m = body.data?.public_metrics ?? {};
+  return {
+    followersCount: m.followers_count ?? 0,
+    followingCount: m.following_count ?? 0,
+    tweetCount: m.tweet_count ?? 0,
+  };
+}
+
+/** Mentions of the connected account — `tweet.read`+`users.read`, already granted. */
+export async function fetchTwitterMentions(token: string, userId: string, maxResults = 20): Promise<PlatformComment[]> {
+  const res = await fetch(
+    `https://api.twitter.com/2/users/${encodeURIComponent(userId)}/mentions` +
+      `?max_results=${maxResults}&tweet.fields=created_at,author_id&expansions=author_id`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  assertNotExpired("twitter", res);
+  if (!res.ok) throw new Error(`Twitter mentions fetch failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: Array<{ id?: string; text?: string; created_at?: string; author_id?: string }>;
+    includes?: { users?: Array<{ id?: string; username?: string }> };
+  };
+  const usersById = new Map((body.includes?.users ?? []).map((u) => [u.id, u.username]));
+  return (body.data ?? []).map((t) => ({
+    id: t.id ?? "",
+    text: t.text ?? "",
+    authorName: usersById.get(t.author_id ?? "") ?? "",
+    createdAt: t.created_at ?? "",
+  }));
+}
+
+export interface LinkedInOrgFollowers {
+  organizationUrn: string;
+  followerCount: number;
+}
+
+/**
+ * Company-page follower count — requires the LinkedIn Community Management
+ * API (r_organization_social). Unlike Meta/TikTok's extendedScopes, this isn't
+ * gated by an approval flag on the SAME app: LinkedIn requires this to be a
+ * wholly separate developer app (see OAUTH_CONFIGS.linkedin_community in
+ * oauth.ts), so `token` here MUST be the linkedin_community integration's
+ * access token, never the primary `linkedin` integration's. Written against
+ * LinkedIn's documented `organizationalEntityFollowerStatistics` shape but
+ * UNVERIFIED (no live community-app token to test against yet).
+ */
+export async function fetchLinkedInOrgFollowers(token: string, organizationUrn: string): Promise<LinkedInOrgFollowers> {
+  const res = await fetch(
+    `https://api.linkedin.com/v2/organizationalEntityFollowerStatistics?q=organizationalEntity&organizationalEntity=${encodeURIComponent(organizationUrn)}`,
+    { headers: { Authorization: `Bearer ${token}`, "X-Restli-Protocol-Version": "2.0.0" } },
+  );
+  assertNotExpired("linkedin_community", res);
+  if (!res.ok) throw new Error(`LinkedIn org followers fetch failed: ${res.status}`);
+  const body = (await res.json()) as {
+    elements?: Array<{ followerCounts?: { organicFollowerCount?: number; paidFollowerCount?: number } }>;
+  };
+  const counts = body.elements?.[0]?.followerCounts;
+  return {
+    organizationUrn,
+    followerCount: (counts?.organicFollowerCount ?? 0) + (counts?.paidFollowerCount ?? 0),
+  };
+}
+
+/**
+ * Comments/mentions on a Facebook Page or IG account — requires Meta Advanced
+ * Access (pages_read_user_content), gated by META_ADVANCED_ACCESS_APPROVED.
+ */
+export async function fetchMetaMentions(token: string, pageOrIgId: string): Promise<PlatformComment[]> {
+  assertExtendedAccessApproved("facebook", "META_ADVANCED_ACCESS_APPROVED");
+  const res = await fetch(
+    `https://graph.facebook.com/v20.0/${encodeURIComponent(pageOrIgId)}/tagged` +
+      `?fields=id,message,from,created_time&access_token=${encodeURIComponent(token)}`,
+  );
+  assertNotExpired("facebook", res);
+  if (!res.ok) throw new Error(`Meta mentions fetch failed: ${res.status}`);
+  const body = (await res.json()) as {
+    data?: Array<{ id?: string; message?: string; from?: { name?: string }; created_time?: string }>;
+  };
+  return (body.data ?? []).map((m) => ({
+    id: m.id ?? "",
+    text: m.message ?? "",
+    authorName: m.from?.name ?? "",
+    createdAt: m.created_time ?? "",
+  }));
+}
+
 /* ── Dispatcher ──────────────────────────────────────────────────────── */
 
 /**

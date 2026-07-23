@@ -8,6 +8,7 @@ import {
   buildCallbackUrl,
   getAppOrigin,
 } from "@/lib/integrations/oauth";
+import { GOOGLE_UNIFIED_SUB_PLATFORM_IDS } from "@/lib/integrations/platforms";
 
 /* ── HTML page helpers ───────────────────────────────────────────────── */
 
@@ -69,7 +70,12 @@ async function exchangeCode(
     return { accessToken: data.access_token, refreshToken: data.refresh_token };
   }
 
-  if (provider === "linkedin") {
+  if (provider === "linkedin" || provider === "linkedin_community") {
+    // Same token endpoint/grant for both — the ONLY difference between the
+    // primary app and the Community Management app is which client_id/secret
+    // pair `config` resolves to (see OAUTH_CONFIGS in oauth.ts). They are two
+    // separate LinkedIn Developer apps because LinkedIn rejects an app that
+    // mixes the Community Management API product with Sign In/Share.
     const res = await fetch(config.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -109,7 +115,15 @@ async function exchangeCode(
     return { accessToken: long.access_token };
   }
 
-  if (provider === "youtube") {
+  if (
+    provider === "youtube" ||
+    provider === "google_search_console" ||
+    provider === "google_analytics" ||
+    provider === "google_business_profile" ||
+    provider === "google_unified"
+  ) {
+    // All five share one Google Cloud OAuth client (GOOGLE_CLIENT_ID/SECRET) —
+    // only the requested scope differs per provider (see oauth.ts).
     const res = await fetch(config.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -120,6 +134,24 @@ async function exchangeCode(
         client_id: appClientId,
         client_secret: appClientSecret,
       }),
+    });
+    if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
+    const data = (await res.json()) as { access_token: string; refresh_token?: string };
+    return { accessToken: data.access_token, refreshToken: data.refresh_token };
+  }
+
+  if (provider === "reddit") {
+    // Reddit requires HTTP Basic auth with the app credentials (like Twitter).
+    const basicAuth = Buffer.from(`${appClientId}:${appClientSecret}`).toString("base64");
+    const res = await fetch(config.tokenUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+        // Reddit requires a descriptive, non-generic User-Agent on every call.
+        "User-Agent": "karoscmo:agent-connectors:v1 (by /u/karoslabs)",
+      },
+      body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: redirectUri }),
     });
     if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
     const data = (await res.json()) as { access_token: string; refresh_token?: string };
@@ -175,6 +207,14 @@ async function fetchAccountName(provider: string, accessToken: string): Promise<
         return `${d.localizedFirstName ?? ""} ${d.localizedLastName ?? ""}`.trim();
       }
     }
+    if (provider === "linkedin_community") {
+      // No /v2/me here — an org-scoped token (r_organization_social/admin) has
+      // no profile/openid scope, so this call would just 403. There's also no
+      // single "the organization" for this token until the admin tells us
+      // which one via the Organization URN field, so leave the label blank
+      // rather than guessing.
+      return "";
+    }
     if (provider === "facebook" || provider === "instagram") {
       const res = await fetch(
         `https://graph.facebook.com/me?fields=name&access_token=${accessToken}`,
@@ -212,6 +252,44 @@ async function fetchAccountName(provider: string, accessToken: string): Promise<
         const d = (await res.json()) as { data?: { user?: { display_name?: string } } };
         const name = d.data?.user?.display_name;
         return name ? `@${name}` : "";
+      }
+    }
+    if (provider === "reddit") {
+      const res = await fetch("https://oauth.reddit.com/api/v1/me", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "User-Agent": "karoscmo:agent-connectors:v1 (by /u/karoslabs)",
+        },
+      });
+      if (res.ok) {
+        const d = (await res.json()) as { name?: string };
+        return d.name ? `u/${d.name}` : "";
+      }
+    }
+    if (provider === "google_search_console") {
+      const res = await fetch("https://www.googleapis.com/webmasters/v3/sites", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const d = (await res.json()) as { siteEntry?: Array<{ siteUrl?: string }> };
+        return d.siteEntry?.[0]?.siteUrl ?? "";
+      }
+    }
+    if (provider === "google_analytics" || provider === "google_business_profile") {
+      // Both need a client-picked property/location id (there's no single "the
+      // property" for a Google account) — captured in a follow-up settings step
+      // rather than guessed here from the token alone.
+      return "";
+    }
+    if (provider === "google_unified") {
+      // openid/userinfo.email were added to this flow's scopes specifically so
+      // we have something human-readable to show across all four sub-services.
+      const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const d = (await res.json()) as { email?: string };
+        return d.email ?? "";
       }
     }
   } catch {
@@ -281,25 +359,44 @@ export async function GET(
     const credentials: Record<string, string> = { accessToken };
     if (refreshToken) credentials.refreshToken = refreshToken;
 
-    await upsertClientIntegration({
-      clientId: parsed.clientId,
-      platform: provider,
-      credentials,
-      accountName: accountName || undefined,
-      method: "oauth",
-      // Set status explicitly: consumers that filter `status === "active"`
-      // (analytics, copilot context, proactive assistant) drop status-less
-      // integrations, so a freshly-connected OAuth channel must be marked active
-      // — mirroring saveGoogleOAuthTokenAction.
-      status: "active",
-      connectedBy: parsed.uid,
-      connectedAt: Date.now(),
-      updatedAt: Date.now(),
-    });
+    // "google_unified" isn't a real platform doc — it's one consent screen
+    // covering four. Write the SAME token pair into each of the four real
+    // ClientIntegration docs so every existing per-service reader (youtube
+    // publisher/analytics, google-search-console.ts, google-analytics.ts,
+    // google-business-profile.ts) keeps working unchanged, unaware a unified
+    // flow was involved. A Google access token is scope-checked per API call,
+    // not per issuing flow, so one token pair is valid across all four.
+    const platformsToWrite =
+      provider === "google_unified" ? GOOGLE_UNIFIED_SUB_PLATFORM_IDS : [provider];
 
-    // Task Map sync: the client just did this work — flip any matching
-    // "Connect <platform>" onboarding task to Done automatically.
-    await autoCompleteTasksOnIntegrationConnect(parsed.clientId, provider).catch(() => {});
+    for (const platform of platformsToWrite) {
+      // Each sub-service has its own notion of "account" (e.g. the YouTube channel
+      // title vs. the Search Console site URL) — re-derive it per platform instead
+      // of stamping the unified flow's Google-account email onto all four, which
+      // would blow away a more specific name (e.g. a YouTube channel title) that a
+      // prior standalone connect had already captured.
+      const platformAccountName =
+        provider === "google_unified" ? await fetchAccountName(platform, accessToken) : accountName;
+      await upsertClientIntegration({
+        clientId: parsed.clientId,
+        platform,
+        credentials,
+        accountName: platformAccountName || accountName || undefined,
+        method: "oauth",
+        // Set status explicitly: consumers that filter `status === "active"`
+        // (analytics, copilot context, proactive assistant) drop status-less
+        // integrations, so a freshly-connected OAuth channel must be marked active
+        // — mirroring saveGoogleOAuthTokenAction.
+        status: "active",
+        connectedBy: parsed.uid,
+        connectedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      // Task Map sync: the client just did this work — flip any matching
+      // "Connect <platform>" onboarding task to Done automatically.
+      await autoCompleteTasksOnIntegrationConnect(parsed.clientId, platform).catch(() => {});
+    }
 
     return successPage(provider, accountName, origin);
   } catch (e) {
