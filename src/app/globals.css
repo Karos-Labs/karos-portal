@@ -78,9 +78,12 @@
 
 html {
   color-scheme: dark;
-  /* Always reserve the scrollbar gutter (classic-scrollbar setups): otherwise
-     pages that scroll are ~15px narrower than pages that don't, and the whole
-     layout shifts when switching tabs. No-op with overlay scrollbars. */
+  /* The vertical scrollbar must exist on EVERY page or pages that scroll are
+     ~10-15px narrower than pages that don't, and the whole layout shifts when
+     switching tabs (classic-scrollbar setups; overlay scrollbars unaffected).
+     scrollbar-gutter alone is not reliably honored on the root element in
+     Chrome, so force the scrollbar area with overflow-y: scroll. */
+  overflow-y: scroll;
   scrollbar-gutter: stable;
 }
 html.light {
