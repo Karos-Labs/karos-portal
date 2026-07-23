@@ -87,7 +87,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     channels: asset.channels,
   };
   const businessModel = inferBusinessModel(client);
-  const personas = await buildSimulationPersonas(artifact, {
+  const simCtx = {
     clientId,
     clientName: client.name,
     industry: client.industry ?? null,
@@ -95,17 +95,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     toneOfVoice: client.brandVoice ?? null,
     targetMarket: client.description ?? null,
     businessModel,
-  });
+  };
 
-  const results = await runSimulation(artifact, personas, {
-    clientId,
-    clientName: client.name,
-    industry: client.industry ?? null,
-    category: client.category ?? null,
-    toneOfVoice: client.brandVoice ?? null,
-    targetMarket: client.description ?? null,
-    businessModel,
-  });
+  // Unlike simulatePersona (which has a 3-tier fallback), persona planning is a
+  // single model call with no rescue tier — a transient failure here must degrade
+  // to a clean error response, not an unhandled throw / generic 500.
+  let personas;
+  try {
+    personas = await buildSimulationPersonas(artifact, simCtx);
+  } catch {
+    return Response.json(
+      { error: "Couldn't generate the audience panel for this asset. Please try again." },
+      { status: 502 },
+    );
+  }
+
+  const results = await runSimulation(artifact, personas, simCtx);
 
   return Response.json({ assetId: asset.id, results });
 }

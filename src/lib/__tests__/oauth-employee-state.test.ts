@@ -34,6 +34,17 @@ describe("OAuth state signing — employee seat flow", () => {
     expect(verifyOAuthState("not-a-valid-state")).toBeNull();
   });
 
+  it("rejects a non-hex signature without throwing (timingSafeEqual guard)", () => {
+    const state = signOAuthState({ clientId: "c1", uid: "u1", provider: "linkedin" });
+    const [data] = state.split(".");
+    // 64 chars but not valid hex — Buffer.from(..., "hex") would silently
+    // truncate this, so the length-only check used to let it reach
+    // timingSafeEqual with mismatched buffer lengths and throw.
+    const notHex = "g".repeat(64);
+    expect(() => verifyOAuthState(`${data}.${notHex}`)).not.toThrow();
+    expect(verifyOAuthState(`${data}.${notHex}`)).toBeNull();
+  });
+
   it("builds the dedicated employee callback path", () => {
     expect(buildEmployeeCallbackUrl()).toMatch(/\/api\/integrations\/linkedin\/employee\/callback$/);
   });

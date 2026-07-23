@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHmac, randomBytes, createHash } from "crypto";
+import { createHmac, randomBytes, createHash, timingSafeEqual } from "crypto";
 
 /**
  * HMAC key for the OAuth `state` token. Falls back to a dev-only constant, but
@@ -66,8 +66,11 @@ export function verifyOAuthState(state: string): {
   if (dot === -1) return null;
   const data = state.slice(0, dot);
   const sig = state.slice(dot + 1);
-  // HMAC-SHA256 is always 64 hex chars — reject anything else without timing leak
-  if (sig.length !== 64 || sig !== sign(data)) return null;
+  // HMAC-SHA256 digest('hex') is always 64 lowercase hex chars — reject anything
+  // else up front (timingSafeEqual throws on a length mismatch, and Buffer.from
+  // silently truncates invalid hex, so both must be ruled out before comparing).
+  if (!/^[0-9a-f]{64}$/.test(sig)) return null;
+  if (!timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(sign(data), "hex"))) return null;
   try {
     const parsed = JSON.parse(Buffer.from(data, "base64url").toString()) as {
       clientId: string;

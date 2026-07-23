@@ -1,5 +1,15 @@
 import "server-only";
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
+
+/** Constant-time string equality — avoids leaking secret length/prefix via response timing. */
+function secretsMatch(provided: string, secret: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(secret);
+  // timingSafeEqual throws on a length mismatch, so unequal-length secrets never match
+  // (and never differ in HOW they fail — both return false, no early throw to time).
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 /**
  * Shared bearer/secret gate for cron and inbound-webhook endpoints.
@@ -24,7 +34,7 @@ export function checkWebhookSecret(opts: {
     }
     return null; // dev: no secret configured ⇒ allow local invocation
   }
-  if (opts.provided !== secret) {
+  if (!opts.provided || !secretsMatch(opts.provided, secret)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return null;

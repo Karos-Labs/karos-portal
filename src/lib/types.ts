@@ -858,7 +858,7 @@ export interface ClientIntegration {
   platform: string;
   /** Display name / handle of the connected account (e.g. "@karoslabs") */
   accountName?: string;
-  /** Credential key→value pairs matching the platform's field keys */
+  /** Credential key→value pairs matching the platform's field keys. Encrypted at rest — decrypted transparently by listClientIntegrations. */
   credentials: Record<string, string>;
   /** "manual" = keys pasted by a staff member; "oauth" = OAuth flow */
   method: "manual" | "oauth";

@@ -1184,11 +1184,12 @@ export async function updateContextDocSummary(
 
 /* -------------------- client integrations --------------------------- */
 
-/** List all social/channel integrations for a client. */
+/** List all social/channel integrations for a client. Credentials are decrypted for the caller. */
 export async function listClientIntegrations(clientId: string): Promise<ClientIntegration[]> {
   const snap = await col.clientIntegrations().where("clientId", "==", clientId).get();
   return snap.docs
     .map((d) => withId<ClientIntegration>(d))
+    .map((i) => (i.credentials ? { ...i, credentials: decryptCredentials(i.credentials) } : i))
     .sort((a, b) => a.platform.localeCompare(b.platform));
 }
 
@@ -1201,6 +1202,9 @@ export async function listClientIntegrations(clientId: string): Promise<ClientIn
  * previous `autoPublish` is carried over unless the caller sets it
  * explicitly. `status`/`expiredAt` are deliberately NOT carried — a fresh
  * connect clears the expired state.
+ *
+ * Credentials are encrypted at rest (AES-256-GCM, same scheme as employee-seat
+ * tokens) — callers always pass/receive plaintext, encryption is transparent here.
  */
 export async function upsertClientIntegration(
   data: Omit<ClientIntegration, "id">,
@@ -1217,6 +1221,7 @@ export async function upsertClientIntegration(
       ? { autoPublish: previousAutoPublish }
       : {}),
     ...data,
+    ...(data.credentials ? { credentials: encryptCredentials(data.credentials) } : {}),
   });
 }
 

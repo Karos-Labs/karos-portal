@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Button, Badge, Skeleton, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 // Type-only import — erased at compile time, so the server-only engine never
@@ -35,8 +35,13 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
   const [results, setResults] = useState<PersonaSimulationResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A ref (not state) so a double-click within the same render pass — before
+  // `loading` re-renders the button away — still can't fire a second request.
+  const runningRef = useRef(false);
 
   const run = useCallback(async () => {
+    if (runningRef.current) return;
+    runningRef.current = true;
     setLoading(true);
     setError(null);
     try {
@@ -54,6 +59,7 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
     } catch (e) {
       setError(e instanceof Error ? e.message : "Simulation failed. Try again.");
     } finally {
+      runningRef.current = false;
       setLoading(false);
     }
   }, [clientId, assetId]);

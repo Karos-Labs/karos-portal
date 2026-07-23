@@ -44,22 +44,43 @@ export async function GET(req: Request) {
   const encoder = new TextEncoder();
   const frame = (event: SwarmEvent) => encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
 
+  // Aborted when the client disconnects (tab closed, component unmounted, fetch
+  // aborted) via the stream's `cancel()` below — stops in-flight model calls and
+  // skips persistence instead of burning LLM spend + Firestore writes for nobody.
+  const ac = new AbortController();
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let failure: string | undefined;
+      const safeEnqueue = (event: SwarmEvent) => {
+        try {
+          controller.enqueue(frame(event));
+        } catch {
+          // Enqueueing on an already-canceled controller throws — treat it as
+          // a disconnect signal so runSwarm stops on its next abort check.
+          ac.abort();
+        }
+      };
       try {
         const context = await buildSwarmContext(clientId, trend);
-        for await (const event of runSwarm({ clientId, createdBy: user.uid, context })) {
+        for await (const event of runSwarm({ clientId, createdBy: user.uid, context, signal: ac.signal })) {
           if (event.type === "error") failure = event.message;
-          controller.enqueue(frame(event));
+          safeEnqueue(event);
         }
       } catch (e) {
         failure = e instanceof Error ? e.message : "Swarm failed to start";
-        controller.enqueue(frame({ type: "error", message: failure }));
+        safeEnqueue({ type: "error", message: failure });
       } finally {
         await releaseAiProcessingLock(clientId, failure);
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // Already closed/errored via cancel() — nothing to do.
+        }
       }
+    },
+    cancel() {
+      ac.abort();
     },
   });
 

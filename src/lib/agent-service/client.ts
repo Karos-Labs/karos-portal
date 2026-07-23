@@ -70,7 +70,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Agent service ${path} failed (${res.status}): ${body.slice(0, 500)}`);
+    // Full detail (may include upstream stack traces / internal hostnames) stays
+    // server-side only — callers surface `e.message` straight to CLIENT_USER in
+    // the run-job UI, so it must never carry the raw response body.
+    console.error(`[agent-service] ${path} failed (${res.status}): ${body.slice(0, 500)}`);
+    throw new Error(`Agent service request failed (${res.status}). Please try again or contact support.`);
   }
   return (await res.json()) as T;
 }

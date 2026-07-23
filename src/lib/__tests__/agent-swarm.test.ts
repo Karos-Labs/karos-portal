@@ -191,6 +191,50 @@ describe("runSwarm — multi-round state machine", () => {
   });
 });
 
+// A client disconnecting (tab closed, fetch aborted) must stop the debate
+// instead of burning LLM spend + Firestore writes for nobody — a QA review
+// found the route had no way to propagate that signal into the generator.
+describe("runSwarm — abort signal (client disconnect)", () => {
+  it("does nothing when already aborted before the first turn", async () => {
+    const ac = new AbortController();
+    ac.abort();
+
+    const events = await collect(runSwarm({ ...input, signal: ac.signal }));
+
+    expect(events).toEqual([]);
+    expect(generateObjectMock).not.toHaveBeenCalled();
+    expect(createClientTaskMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards the signal into each model call", async () => {
+    const ac = new AbortController();
+    await collect(runSwarm({ ...input, signal: ac.signal }));
+
+    expect(generateObjectMock).toHaveBeenCalledWith(
+      expect.objectContaining({ abortSignal: ac.signal }),
+    );
+  });
+
+  it("stops after the in-flight turn and never persists once aborted mid-debate", async () => {
+    const ac = new AbortController();
+    // Abort as a side effect of the very first model call — simulates the
+    // client disconnecting while the first agent turn is in flight.
+    generateObjectMock.mockImplementationOnce(async () => {
+      ac.abort();
+      return turn(SAMPLE_TASKS);
+    });
+
+    const events = await collect(runSwarm({ ...input, signal: ac.signal }));
+
+    // Only the first turn ran; the abort check at the top of the next
+    // iteration stops the loop before a second call.
+    expect(generateObjectMock).toHaveBeenCalledTimes(1);
+    expect(events.some((e) => e.type === "consensus")).toBe(false);
+    expect(events.some((e) => e.type === "persisted")).toBe(false);
+    expect(createClientTaskMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("runSwarm — campaign shift on a high-weight trend", () => {
   const withTrend = (weight: number): SwarmInput => ({
     ...input,

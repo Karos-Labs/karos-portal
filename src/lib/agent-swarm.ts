@@ -152,6 +152,8 @@ export interface SwarmInput {
   context: SwarmContext;
   /** Override the number of debate rounds (default DEFAULT_ROUNDS). */
   rounds?: number;
+  /** Aborts in-flight model calls and stops the debate early (client disconnected). */
+  signal?: AbortSignal;
 }
 
 /* ── Events (tight discriminated union) ──────────────────────────────── */
@@ -246,6 +248,7 @@ async function runTurn(
     schema: swarmTurnSchema,
     system: persona.systemPrompt,
     prompt: buildTurnPrompt(persona, tasks, input.context, round, totalRounds),
+    abortSignal: input.signal,
   });
 
   after(() =>
@@ -276,8 +279,10 @@ export async function* runSwarm(input: SwarmInput): AsyncGenerator<SwarmEvent, v
   let tasks: SwarmTaskDraft[] = [];
 
   for (let round = 1; round <= totalRounds; round++) {
+    if (input.signal?.aborted) return;
     yield { type: "round_start", round, totalRounds };
     for (const agentId of TURN_ORDER) {
+      if (input.signal?.aborted) return;
       const persona = PERSONA_BY_ID[agentId];
       try {
         const turn = await runTurn(persona, tasks, input, round, totalRounds);
@@ -305,6 +310,7 @@ export async function* runSwarm(input: SwarmInput): AsyncGenerator<SwarmEvent, v
       }
     }
   }
+  if (input.signal?.aborted) return;
 
   const consensus = finalizeConsensus(tasks);
   yield { type: "consensus", taskCount: consensus.length };

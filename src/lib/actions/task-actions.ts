@@ -86,6 +86,19 @@ export async function updateTaskStatusAction(
     status === "in_progress" && inferOwnerEngine(task) === "karos_managed";
 
   if (triggersExecution) {
+    // Re-opening a completed task is a NET NEW active slot (pending/review_pending
+    // are already counted in the cap) — enforce the same queue cap that task
+    // creation does, or a client could re-run Done cards past MAX_ACTIVE_TASKS
+    // indefinitely, each one a real charge + agent dispatch.
+    if (task.status === "completed") {
+      const capacity = await getTaskBoardCapacity(clientId);
+      if (capacity.activeCount >= MAX_ACTIVE_TASKS) {
+        return {
+          ok: false,
+          error: `The Karos AI queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
+        };
+      }
+    }
     // Atomic claim (verifies not already executing, flips to in_progress) —
     // two tabs can't double-dispatch, and the charge matches what runs.
     const claimed = await claimTaskForExecution(id, clientId, [

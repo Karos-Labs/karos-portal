@@ -103,16 +103,20 @@ Write the update now.`;
       prompt: pipelinePrompt,
       onFinish: ({ text, usage }) => {
         after(async () => {
-          await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
-          await logger.logUsage({
-            clientId,
-            agentId: null,
-            agentName: "ai_insights",
-            modelName: MODELS.HAIKU,
-            operation: "ai_insights_pipeline_summary",
-            inputTokens: usage.inputTokens ?? 0,
-            outputTokens: usage.outputTokens ?? 0,
-          });
+          try {
+            await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
+            await logger.logUsage({
+              clientId,
+              agentId: null,
+              agentName: "ai_insights",
+              modelName: MODELS.HAIKU,
+              operation: "ai_insights_pipeline_summary",
+              inputTokens: usage.inputTokens ?? 0,
+              outputTokens: usage.outputTokens ?? 0,
+            });
+          } catch (e) {
+            console.error("[ai-insights] Post-response cache/usage-log write failed:", e);
+          }
         });
       },
     });
@@ -145,16 +149,20 @@ Write the briefing now.`;
     prompt,
     onFinish: ({ text, usage }) => {
       after(async () => {
-        await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
-        await logger.logUsage({
-          clientId,
-          agentId: null,
-          agentName: "ai_insights",
-          modelName: MODELS.HAIKU,
-          operation: "ai_insights_summary",
-          inputTokens: usage.inputTokens ?? 0,
-          outputTokens: usage.outputTokens ?? 0,
-        });
+        try {
+          await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
+          await logger.logUsage({
+            clientId,
+            agentId: null,
+            agentName: "ai_insights",
+            modelName: MODELS.HAIKU,
+            operation: "ai_insights_summary",
+            inputTokens: usage.inputTokens ?? 0,
+            outputTokens: usage.outputTokens ?? 0,
+          });
+        } catch (e) {
+          console.error("[ai-insights] Post-response cache/usage-log write failed:", e);
+        }
       });
     },
   });
