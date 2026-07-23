@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AgentIdentity, AgentMark } from "@/components/agent-identity";
+import { AgentInputFiles } from "@/components/agent-input-files";
 import { Modal } from "@/components/modal";
 import { JobStatusBadge } from "@/components/job-status";
 import { submitManagedJobAction } from "@/lib/actions";
@@ -56,7 +57,7 @@ export function ManagedProducts({
   const managedJobs = useMemo(
     () =>
       jobs
-        .filter((j) => j.agentId === AGENT_SERVICE_AGENT_ID)
+        .filter((j) => j.agentId === AGENT_SERVICE_AGENT_ID && j.external?.taskType !== "custom")
         .sort((a, b) => b.createdAt - a.createdAt),
     [jobs],
   );
@@ -406,7 +407,8 @@ function RunProductModal({
   const [fields, setFields] = useState<Record<string, string>>(() => {
     const seed: Record<string, string> = {};
     for (const f of product.briefFields) {
-      if (f.type === "select" && f.options?.[0]) seed[f.key] = f.options[0].value;
+      if (f.defaultValue !== undefined) seed[f.key] = f.defaultValue;
+      else if (f.type === "select" && f.options?.[0]) seed[f.key] = f.options[0].value;
     }
     return seed;
   });
@@ -423,7 +425,7 @@ function RunProductModal({
       const raw = fields[field.key]?.trim();
       if (!raw) continue;
       if (field.type === "number") brief[field.key] = Number(raw);
-      else if (field.key === "must_include") brief[field.key] = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+      else if (field.valueKind === "stringList") brief[field.key] = raw.split("\n").map((l) => l.trim()).filter(Boolean);
       else brief[field.key] = raw;
     }
     if (notes.trim()) brief.notes = notes.trim();
@@ -435,6 +437,15 @@ function RunProductModal({
     const missing = product.briefFields.find((f) => f.required && !fields[f.key]?.trim());
     if (missing) {
       setError(`${missing.label} is required.`);
+      return;
+    }
+    const referenceUrls = fields.reference_urls
+      ?.split("\n")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const invalidReference = referenceUrls?.find((value) => !value.startsWith("https://"));
+    if (invalidReference) {
+      setError(`Reference URLs must start with https:// (${invalidReference}).`);
       return;
     }
     startTransition(async () => {
@@ -453,11 +464,14 @@ function RunProductModal({
   }
 
   return (
-    <Modal open onClose={onClose} title={product.name} description={product.description}>
-      <div className="mt-4 space-y-4">
-        <div className="rounded-md border border-border bg-surface-2 px-3 py-2.5">
-          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">You get</p>
-          <ul className="mt-1 space-y-0.5">
+    <Modal open onClose={onClose} title={product.name} description={product.description} className="max-w-2xl">
+      <div className="space-y-5">
+        <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Deliverables</p>
+            <Badge tone="neutral"><Icon name="Clock" className="h-3 w-3" /> {product.estimate}</Badge>
+          </div>
+          <ul className="mt-2 grid gap-1 sm:grid-cols-2">
             {product.deliverables.map((d) => (
               <li key={d} className="flex items-center gap-1.5 text-xs text-foreground">
                 <Icon name="Check" className="h-3 w-3 shrink-0 text-success" /> {d}
@@ -466,42 +480,51 @@ function RunProductModal({
           </ul>
         </div>
 
-        {product.briefFields.map((field) => (
-          <div key={field.key}>
-            <Label htmlFor={`mp-${field.key}`}>
-              {field.label}
-              {field.required && <span className="ml-1 text-danger">*</span>}
-            </Label>
-            {field.type === "select" ? (
-              <Select id={`mp-${field.key}`} value={fields[field.key] ?? field.options?.[0]?.value} onChange={set(field.key)}>
-                {field.options?.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </Select>
-            ) : field.type === "textarea" ? (
-              <Textarea
-                id={`mp-${field.key}`}
-                rows={3}
-                placeholder={field.placeholder}
-                value={fields[field.key] ?? ""}
-                onChange={set(field.key)}
-              />
-            ) : (
-              <Input
-                id={`mp-${field.key}`}
-                type={field.type === "number" ? "number" : "text"}
-                min={field.min}
-                max={field.max}
-                placeholder={field.placeholder}
-                value={fields[field.key] ?? ""}
-                onChange={set(field.key)}
-              />
-            )}
-            {field.helper && <p className="mt-1 text-xs text-muted-2">{field.helper}</p>}
-          </div>
-        ))}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {product.briefFields.map((field) => {
+            const fullWidth = field.type === "textarea";
+            return (
+              <div key={field.key} className={fullWidth ? "sm:col-span-2" : undefined}>
+                <Label htmlFor={`mp-${product.taskType}-${field.key}`}>
+                  {field.label}
+                  {field.required && <span className="ml-1 text-danger">*</span>}
+                </Label>
+                {field.type === "select" ? (
+                  <Select
+                    id={`mp-${product.taskType}-${field.key}`}
+                    value={fields[field.key] ?? ""}
+                    onChange={set(field.key)}
+                  >
+                    {field.options?.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </Select>
+                ) : field.type === "textarea" ? (
+                  <Textarea
+                    id={`mp-${product.taskType}-${field.key}`}
+                    rows={3}
+                    maxLength={4000}
+                    placeholder={field.placeholder}
+                    value={fields[field.key] ?? ""}
+                    onChange={set(field.key)}
+                  />
+                ) : (
+                  <Input
+                    id={`mp-${product.taskType}-${field.key}`}
+                    type={field.type === "number" ? "number" : "text"}
+                    min={field.min}
+                    max={field.max}
+                    maxLength={field.type === "number" ? undefined : 1000}
+                    placeholder={field.placeholder}
+                    value={fields[field.key] ?? ""}
+                    onChange={set(field.key)}
+                  />
+                )}
+                {field.helper && <p className="mt-1 text-xs text-muted-2">{field.helper}</p>}
+              </div>
+            );
+          })}
+        </div>
 
         <div>
           <Label htmlFor="mp-notes">Notes for the agent</Label>
@@ -514,36 +537,17 @@ function RunProductModal({
           />
         </div>
 
-        {contextItems.length > 0 && (
-          <div>
-            <Label>Attach input files</Label>
-            <div className="max-h-36 space-y-1 overflow-y-auto rounded-md border border-border p-2">
-              {contextItems.map((item) => (
-                <label
-                  key={item.id}
-                  className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-surface-2"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedFiles.includes(item.id)}
-                    onChange={() =>
-                      setSelectedFiles((ids) =>
-                        ids.includes(item.id) ? ids.filter((x) => x !== item.id) : [...ids, item.id],
-                      )
-                    }
-                    className="accent-neon"
-                  />
-                  <Icon name={item.kind === "image" ? "Image" : "FileText"} className="h-3.5 w-3.5 text-muted-2" />
-                  <span className="truncate">{item.name}</span>
-                  {item.note && <span className="truncate text-muted-2">· {item.note}</span>}
-                </label>
-              ))}
-            </div>
-            <p className="mt-1 text-xs text-muted-2">The agent reads these as inputs (photos, briefs, docs).</p>
-          </div>
-        )}
+        <AgentInputFiles
+          clientId={clientId}
+          agentName={product.name}
+          items={contextItems}
+          selectedIds={selectedFiles}
+          onChange={setSelectedFiles}
+          profile={product.inputFiles}
+          canUpload
+        />
 
-        {error && <p className="text-xs text-danger">{error}</p>}
+        {error && <p className="text-xs text-danger" role="alert">{error}</p>}
 
         <div className="flex items-center justify-between gap-3 pt-1">
           <p className="text-xs text-muted-2">

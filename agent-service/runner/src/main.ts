@@ -8,6 +8,7 @@ import { buildSkillsShim } from "./skills-shim.js";
 import { contextFileList, downloadContextFiles } from "./context-files.js";
 import { collectArtifacts, guessContentType, snapshotOutputs } from "./artifacts.js";
 import { extractUsage, isResultMessage, TranscriptStreamer } from "./transcript.js";
+import { KAROS_MCP_ALLOWED_TOOLS, karosMcpServers } from "./mcp.js";
 
 const SELF_TIMEOUT_BUFFER_MS = 45_000;
 
@@ -91,6 +92,7 @@ async function main(): Promise<void> {
       contextFileList: contextFileList(downloaded),
       clientScaffolded: workspace.clientScaffolded,
     });
+    const mcpServers = karosMcpServers(spec);
 
     const q = query({
       prompt,
@@ -98,8 +100,11 @@ async function main(): Promise<void> {
         cwd: workspace.repoDir,
         settingSources: ["project"],
         skills: "all",
-        allowedTools: taskConfig.allowedTools,
+        allowedTools: mcpServers
+          ? [...taskConfig.allowedTools, ...KAROS_MCP_ALLOWED_TOOLS]
+          : taskConfig.allowedTools,
         disallowedTools: taskConfig.disallowedTools,
+        ...(mcpServers ? { mcpServers, strictMcpConfig: true } : {}),
         permissionMode: "dontAsk",
         model: taskConfig.model,
         maxTurns: taskConfig.maxTurns,

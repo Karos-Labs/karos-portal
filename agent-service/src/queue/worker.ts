@@ -37,10 +37,24 @@ export function buildJobSpec(config: ServiceConfig, record: JobRecord): JobSpec 
   };
   if (record.request.client_slug) spec.clientSlug = record.request.client_slug;
   if (record.request.agent_version) spec.agentVersion = record.request.agent_version;
+  const mcpUrl = record.request.metadata?.karos_mcp_url;
+  const mcpToken = record.request.metadata?.karos_job_token;
+  if (mcpUrl && mcpToken) {
+    try {
+      // The MCP endpoint must belong to the same platform that receives the
+      // completion webhook. This prevents metadata from becoming an arbitrary
+      // proxy-bypass/credential-forwarding destination.
+      if (new URL(mcpUrl).origin === new URL(record.request.callback_url).origin) {
+        spec.karosMcp = { url: mcpUrl, token: mcpToken };
+      }
+    } catch {
+      // Request metadata is opaque by contract. Ignore malformed MCP hints.
+    }
+  }
   return spec;
 }
 
-export function buildRunnerEnv(config: ServiceConfig): Record<string, string> {
+export function buildRunnerEnv(config: ServiceConfig, spec?: JobSpec): Record<string, string> {
   const env: Record<string, string> = {};
   if (config.anthropicApiKey) env.ANTHROPIC_API_KEY = config.anthropicApiKey;
   // Live X reads (api.x.ai is already on the research egress group); absent =
@@ -60,9 +74,10 @@ export function buildRunnerEnv(config: ServiceConfig): Record<string, string> {
     // them through it would break every runner→api callback with a 403.
     env.NO_PROXY = [
       new URL(config.internalBaseUrl).hostname,
+      ...(spec?.karosMcp ? [new URL(spec.karosMcp.url).hostname] : []),
       "metadata.google.internal",
       "169.254.169.254",
-    ].join(",");
+    ].filter((host, index, all) => all.indexOf(host) === index).join(",");
     env.no_proxy = env.NO_PROXY;
   }
   return env;
@@ -143,7 +158,7 @@ export function startWorker(deps: WorkerDeps): Worker<QueuePayload> {
 
     record = await store.applyEvent(jobId, { type: "start" });
     const spec = buildJobSpec(config, record);
-    const env = buildRunnerEnv(config);
+    const env = buildRunnerEnv(config, spec);
 
     let timedOut = false;
     let handle: ExecutionHandle;

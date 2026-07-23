@@ -126,4 +126,9 @@ export interface JobSpec {
   timeoutMs: number;
   callbackBaseUrl: string;
   runnerToken: string;
+  /** Job-scoped Karos MCP connection. Present only when the platform supplied both values. */
+  karosMcp?: {
+    url: string;
+    token: string;
+  };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRunnerEnv, buildWebhookPayload, resolveExitEvent } from "../src/queue/worker.js";
+import { buildJobSpec, buildRunnerEnv, buildWebhookPayload, resolveExitEvent } from "../src/queue/worker.js";
 import type { ServiceConfig } from "../src/config.js";
 import type { JobRecord } from "../src/types.js";
 
@@ -101,6 +101,43 @@ describe("buildRunnerEnv", () => {
     // api host bypasses the proxy (callbacks go direct), and the GCE metadata
     // server must too (it's the IAM ID-token source, denied by the allow-list).
     expect(env.NO_PROXY?.split(",")).toEqual(["api", "metadata.google.internal", "169.254.169.254"]);
+  });
+
+  it("bypasses the proxy for the job-scoped platform MCP host", () => {
+    const config = {
+      jobHttpProxy: "http://proxy:8888",
+      internalBaseUrl: "http://api:8080",
+    } as ServiceConfig;
+    const spec = buildJobSpec(config, record({
+      request: {
+        ...record().request,
+        callback_url: "https://app.example.com/api/webhook",
+        metadata: {
+          karos_mcp_url: "https://app.example.com/api/mcp",
+          karos_job_token: "karos_job_secret",
+        },
+      },
+    }));
+    expect(spec.karosMcp).toEqual({
+      url: "https://app.example.com/api/mcp",
+      token: "karos_job_secret",
+    });
+    expect(buildRunnerEnv(config, spec).NO_PROXY?.split(",")).toContain("app.example.com");
+  });
+
+  it("rejects an MCP endpoint on a different origin from the platform webhook", () => {
+    const config = { internalBaseUrl: "http://api:8080" } as ServiceConfig;
+    const spec = buildJobSpec(config, record({
+      request: {
+        ...record().request,
+        callback_url: "https://app.example.com/api/webhook",
+        metadata: {
+          karos_mcp_url: "https://attacker.example/api/mcp",
+          karos_job_token: "karos_job_secret",
+        },
+      },
+    }));
+    expect(spec.karosMcp).toBeUndefined();
   });
 
   it("omits proxy vars when no proxy is configured", () => {

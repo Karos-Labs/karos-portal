@@ -6,6 +6,7 @@
  * file only describes the products to humans and drives the submit form.
  */
 import type { ManagedTaskType } from "@/lib/types";
+import type { AgentAttachmentProfile } from "@/lib/custom-agent-launch";
 
 export interface BriefField {
   key: string;
@@ -17,6 +18,9 @@ export interface BriefField {
   options?: Array<{ value: string; label: string }>;
   min?: number;
   max?: number;
+  defaultValue?: string;
+  /** Serialize a multiline value as an array for agent-service JSON schemas. */
+  valueKind?: "string" | "stringList";
 }
 
 export interface ManagedProduct {
@@ -30,6 +34,7 @@ export interface ManagedProduct {
   deliverables: string[];
   estimate: string;
   briefFields: BriefField[];
+  inputFiles: AgentAttachmentProfile;
 }
 
 export const MANAGED_PRODUCTS: ManagedProduct[] = [
@@ -44,11 +49,12 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     deliverables: ["Post visual per item", "caption.txt + about.txt per item", "Research trail (internal)"],
     estimate: "~10–25 min",
     briefFields: [
-      { key: "count", label: "Number of posts", type: "number", min: 1, max: 10, placeholder: "3" },
+      { key: "count", label: "Number of posts", type: "number", min: 1, max: 10, placeholder: "3", defaultValue: "3" },
       {
         key: "platform",
         label: "Platform",
         type: "select",
+        defaultValue: "both",
         options: [
           { value: "both", label: "Instagram + TikTok" },
           { value: "instagram", label: "Instagram" },
@@ -56,13 +62,19 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
         ],
       },
       {
-        key: "topic",
-        label: "Topic",
+        key: "post_type",
+        label: "Existing format",
         type: "text",
-        placeholder: "e.g. spring collection launch",
-        helper: "Leave empty to let the agent pick from the client's content plan.",
+        placeholder: "e.g. expert-tips",
+        helper: "Use the exact emitted format name, or leave empty and let the agent choose the best lane.",
       },
+      { key: "topic", label: "Topic", type: "text", placeholder: "e.g. spring collection launch", helper: "Leave empty to let the agent pick from the client's content plan." },
     ],
+    inputFiles: {
+      label: "Creative inputs",
+      hint: "Attach approved product photos, campaign briefs, or source material the posts should use.",
+      accept: ".pdf,.txt,.md,.csv,image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,.mp4,.mov",
+    },
   },
   {
     taskType: "newsletter_issue",
@@ -82,8 +94,14 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
         type: "textarea",
         placeholder: "One item per line: announcements, links, dates…",
         helper: "Anything the issue must cover.",
+        valueKind: "stringList",
       },
     ],
+    inputFiles: {
+      label: "Newsletter sources",
+      hint: "Attach a past issue for voice, source documents for facts, and any approved hero images.",
+      accept: ".pdf,.doc,.docx,.txt,.md,image/png,image/jpeg,image/webp",
+    },
   },
   {
     taskType: "blog_article",
@@ -102,13 +120,19 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
         key: "length",
         label: "Length",
         type: "select",
+        defaultValue: "standard",
         options: [
           { value: "standard", label: "Standard" },
           { value: "short", label: "Short" },
           { value: "long", label: "Long" },
         ],
       },
-    ],
+      ],
+    inputFiles: {
+      label: "Article sources",
+      hint: "Attach research, interview notes, approved claims, or internal material the article should cite or link to.",
+      accept: ".pdf,.doc,.docx,.txt,.md,.csv,image/png,image/jpeg,image/webp",
+    },
   },
   {
     taskType: "landing_page",
@@ -120,10 +144,30 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     color: "#FBBF24",
     deliverables: ["Page source + static build", "Build/run README", "Design rationale (internal)"],
     estimate: "~15–30 min",
-    briefFields: [
-      { key: "page_goal", label: "Page goal", type: "text", required: true, placeholder: "e.g. collect demo bookings" },
-      { key: "offer", label: "Offer", type: "text", placeholder: "what the page promises — optional" },
+      briefFields: [
+        { key: "page_goal", label: "Page goal", type: "text", required: true, placeholder: "e.g. collect demo bookings" },
+      { key: "offer", label: "Offer", type: "textarea", placeholder: "What the page promises, including important terms" },
+      {
+        key: "sections",
+        label: "Required sections",
+        type: "textarea",
+        placeholder: "One per line: Hero, proof, how it works, FAQ…",
+        valueKind: "stringList",
+      },
+      {
+        key: "reference_urls",
+        label: "Reference URLs",
+        type: "textarea",
+        placeholder: "One https:// URL per line",
+        helper: "Existing site, offer detail, or design inspiration. Only HTTPS links are accepted.",
+        valueKind: "stringList",
+      },
     ],
+    inputFiles: {
+      label: "Brand and page assets",
+      hint: "Attach logos, product images, brand guidelines, testimonials, or an approved wireframe.",
+      accept: ".pdf,.doc,.docx,.txt,.md,image/png,image/jpeg,image/webp,image/svg+xml,.svg",
+    },
   },
 ];
 
