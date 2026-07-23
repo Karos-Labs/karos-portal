@@ -17,9 +17,11 @@ import {
   type RunnableAgentSummary,
 } from "@/components/custom-agents";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
+import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
 import { assetImages } from "@/lib/asset-images";
+import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import type { CustomAgent, Job } from "@/lib/types";
 
 /** Strip an agent to the client-safe summary — never the instructions/skill paths. */
@@ -149,6 +151,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         description="Run custom AI agents for this client and track their deliverables."
         action={
           <div className="flex items-center gap-3">
+            {isLabOutputsConfigured() && <LabImportButton clientId={id} />}
             <ReplanCalendarButton clientId={id} />
             <a
               href={`/clients/${id}/settings`}
