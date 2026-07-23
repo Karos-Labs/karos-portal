@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listAssets, listClients } from "@/lib/data";
 import { EmptyState, PageHeader } from "@/components/ui";
@@ -18,28 +19,9 @@ export default async function AssetsPage({
       ? status
       : undefined;
 
-  if (user.role === "CLIENT_USER") {
-    if (!user.clientId) {
-      return (
-        <>
-          <PageHeader title="Your assets" description="Everything your Karos team has created for you." />
-          <EmptyState icon={<Icon name="FolderOpen" className="h-7 w-7" />} title="Nothing here yet" description="Your deliverables will show up here as your team creates them." />
-        </>
-      );
-    }
-    const allClientAssets = await listAssets({ clientId: user.clientId });
-    // THE serialization boundary for requirement H: future-dated posts are
-    // whitelist-redacted (no content / imageUrl / meta / real title) before they
-    // cross to the client browser. Never pass allClientAssets to a client
-    // component in this branch — only the redacted set.
-    const assets = getClientLibraryAssets(allClientAssets, { forClient: true });
-    return (
-      <>
-        <PageHeader title="Library" description="Your content library and delivery calendar." />
-        <AssetsView assets={assets} initialStatus={initialStatus} />
-      </>
-    );
-  }
+  // The client Library merged into the Workspace's Archive tab (2026-07) —
+  // client users land there; this route stays the staff review surface.
+  if (user.role === "CLIENT_USER") redirect("/tasks");
 
   const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
   const clients = await listClients(employeeFilter);

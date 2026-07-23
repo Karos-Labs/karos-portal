@@ -3,6 +3,7 @@
 import { useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { addActivityNoteAction } from "@/lib/actions";
@@ -18,6 +19,8 @@ interface TimelineEvent {
   description?: string;
   actor: string;
   actorRole: "system" | "staff" | "client";
+  /** Agent name for agent-run events — resolves the real platform logo. */
+  agentIdentity?: string;
 }
 
 /* ── Event derivation ────────────────────────────────────────────────── */
@@ -46,6 +49,7 @@ function eventsFromJobs(jobs: Job[]): TimelineEvent[] {
         : j.title || undefined,
     actor: "Staff",
     actorRole: "staff" as const,
+    agentIdentity: j.agentName,
   }));
 }
 
@@ -92,67 +96,67 @@ const EVENT_CONFIG: Record<
 > = {
   SCRAPE: {
     icon: "Globe",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Website Scraped",
   },
   INTEL_GENERATION: {
     icon: "BarChart2",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Intel Report",
   },
   CAMPAIGN_CREATED: {
     icon: "Bot",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Campaign",
   },
   CAMPAIGN_DELIVERED: {
     icon: "Mail",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Delivered",
   },
   COMPETITOR_ADDED: {
     icon: "UserPlus",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Competitor Added",
   },
   COMPETITOR_REMOVED: {
     icon: "UserMinus",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Competitor Removed",
   },
   COMPETITOR_ANALYZED: {
     icon: "Sparkles",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "AI Analysis",
   },
   CONTEXT_DOC_UPDATED: {
     icon: "FileText",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Docs Updated",
   },
   MANUAL_NOTE: {
     icon: "MessageSquare",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Note",
   },
   CLIENT_CREATED: {
     icon: "UserCheck",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Client Created",
   },
   BRANDING_UPDATED: {
     icon: "Palette",
-    dotClass: "bg-foreground/[0.04]",
+    dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Branding",
   },
@@ -211,7 +215,11 @@ function EventRow({ event, isLast }: { event: TimelineEvent; isLast: boolean }) 
           cfg.dotClass,
         )}
       >
-        <Icon name={cfg.icon} className={cn("h-4 w-4", cfg.iconClass)} />
+        {event.agentIdentity ? (
+          <AgentMark identity={event.agentIdentity} icon={cfg.icon} className={cn("h-4 w-4", cfg.iconClass)} />
+        ) : (
+          <Icon name={cfg.icon} className={cn("h-4 w-4", cfg.iconClass)} />
+        )}
       </div>
 
       {/* Content */}

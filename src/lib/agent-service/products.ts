@@ -116,7 +116,7 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     tagline: "A complete page, built on the client's brand kit",
     description:
       "Runs the landing-page builder with the taste and brand vendor skills: full page source plus a static build, styled from the client's brand guidelines when present.",
-    icon: "Globe",
+    icon: "LayoutTemplate",
     color: "#FBBF24",
     deliverables: ["Page source + static build", "Build/run README", "Design rationale (internal)"],
     estimate: "~15–30 min",

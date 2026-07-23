@@ -17,7 +17,8 @@ import {
   markAssetPostedAction,
 } from "@/lib/actions";
 import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS, PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
-import { templateForAsset } from "@/lib/post-chain";
+import { AgentMark, SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
+import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import { relativeTime, cn } from "@/lib/utils";
@@ -625,9 +626,18 @@ export function AssetCard({
       <div className="flex items-start gap-3">
         <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
-              <Icon name={TYPE_ICON[asset.type] ?? "FileText"} className="h-4 w-4" />
+              {/* The producing agent's real mark (resolved from label + title); type icon as fallback. */}
+              <AgentMark
+                identity={`${agentLabelForAsset(asset) ?? ""} ${asset.title}`}
+                icon={TYPE_ICON[asset.type] ?? "FileText"}
+                className="h-4 w-4"
+              />
             </div>
-            {platformConfig ? (
+            {platformConfig && platformForIntegrationId(platformConfig.id) ? (
+              <div className="flex h-7 w-7 items-center justify-center rounded-md text-white" style={{ background: platformConfig.color }}>
+                <SocialPlatformMark platform={platformForIntegrationId(platformConfig.id)!} className="h-3.5 w-3.5" />
+              </div>
+            ) : platformConfig ? (
               <div className="flex h-7 w-7 items-center justify-center rounded-md text-white" style={{ background: platformConfig.color }}>
                 <Icon name={platformConfig.icon} className="h-4 w-4" />
               </div>

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useTransition, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Headphones, X, CheckCircle } from "lucide-react";
+import { Icon } from "@/components/icon";
 import { Button, Input, Textarea, Label } from "@/components/ui";
 import { sendSupportEmailAction } from "@/lib/actions";
 
@@ -71,7 +71,7 @@ export function ContactUsButton({
           onClick={() => setOpen(true)}
           className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
         >
-          <Headphones className="h-4 w-4 text-muted-2" />
+          <Icon name="Headphones" className="h-4 w-4 text-muted-2" />
           Support
         </button>
       ) : (
@@ -81,7 +81,7 @@ export function ContactUsButton({
           aria-label="Contact support"
           title="Contact us"
         >
-          <Headphones className="h-[18px] w-[18px]" />
+          <Icon name="Headphones" className="h-4 w-4" />
         </button>
       )}
 
@@ -106,7 +106,7 @@ export function ContactUsButton({
             <div className="flex items-center justify-between border-b border-border px-6 py-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
-                  <Headphones className="h-4 w-4" />
+                  <Icon name="Headphones" className="h-4 w-4" />
                 </div>
                 <div>
                   <p id="support-dialog-title" className="text-sm font-semibold text-foreground">
@@ -120,7 +120,7 @@ export function ContactUsButton({
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
                 aria-label="Close dialog"
               >
-                <X className="h-4 w-4" />
+                <Icon name="X" className="h-4 w-4" />
               </button>
             </div>
 
@@ -129,7 +129,7 @@ export function ContactUsButton({
               {success ? (
                 <div className="flex flex-col items-center gap-3 py-8 text-center">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
-                    <CheckCircle className="h-6 w-6" />
+                    <Icon name="CircleCheck" className="h-6 w-6" />
                   </div>
                   <p className="text-sm font-semibold text-foreground">Message sent!</p>
                   <p className="text-sm text-muted max-w-[280px]">

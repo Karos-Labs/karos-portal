@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, EmptyState, Spinner } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import { Modal } from "@/components/modal";
 import { importLabRunAction, listLabOutputRunsAction } from "@/lib/actions";
 import { cn } from "@/lib/utils";
@@ -14,14 +15,14 @@ interface RunRow {
   hasClientFolder: boolean;
 }
 
-/** Icon/color chip per lab agent folder, keyed off the folder name. */
-function runVisual(agentFolder: string): { icon: string; color: string } {
+/** Fallback lucide icon per lab agent folder — AgentMark resolves the real platform logos first. */
+function runVisual(agentFolder: string): { icon: string } {
   const f = agentFolder.toLowerCase();
-  if (f.includes("instagram") || f.includes("tiktok")) return { icon: "Camera", color: "#E879F9" };
-  if (f.includes("newsletter") || f.includes("email")) return { icon: "Mail", color: "#60A5FA" };
-  if (f.includes("blog") || f.includes("seo")) return { icon: "PenLine", color: "#34D399" };
-  if (f.includes("landing")) return { icon: "Globe", color: "#FBBF24" };
-  return { icon: "FolderDown", color: "#94A3B8" };
+  if (f.includes("instagram") || f.includes("tiktok")) return { icon: "Camera" };
+  if (f.includes("newsletter") || f.includes("email")) return { icon: "Mail" };
+  if (f.includes("blog") || f.includes("seo")) return { icon: "PenLine" };
+  if (f.includes("landing")) return { icon: "LayoutTemplate" };
+  return { icon: "FolderDown" };
 }
 
 /**
@@ -117,11 +118,8 @@ export function LabImportButton({ clientId }: { clientId: string }) {
                       !run.hasClientFolder && "opacity-60",
                     )}
                   >
-                    <div
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md"
-                      style={{ background: visual.color + "1f", color: visual.color }}
-                    >
-                      <Icon name={visual.icon} className="h-4 w-4" />
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+                      <AgentMark identity={run.agentFolder} icon={visual.icon} className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm">{run.runName}</p>

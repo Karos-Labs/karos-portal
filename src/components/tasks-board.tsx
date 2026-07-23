@@ -201,7 +201,9 @@ function TaskCard({
       <div className="mb-2 flex items-center justify-between gap-2 pr-6 text-xs">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dot)} />
-          <span className="whitespace-nowrap text-[11px] font-medium text-muted">{status.label}</span>
+          {/* truncate, not nowrap-overflow: on narrow columns an overflowing label
+              renders under the translucent priority badge and garbles it */}
+          <span className="min-w-0 truncate text-[11px] font-medium text-muted">{status.label}</span>
           <Badge tone={priority.tone} className="shrink-0 px-1.5 py-0 text-[9px]">
             {priority.label}
           </Badge>
@@ -262,11 +264,13 @@ function TaskCard({
         <span className="ml-auto shrink-0 whitespace-nowrap">{relativeTime(task.updatedAt || task.createdAt)}</span>
       </div>
 
+      {/* flex-wrap: on narrow columns the buttons stack instead of spilling
+          past the card border when the hover bar appears */}
       <div
-        className="mt-2 flex items-center justify-between gap-2 border-t border-white/5 pt-3 opacity-0 transition-opacity group-hover:opacity-100"
+        className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 opacity-0 transition-opacity group-hover:opacity-100"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <button
             onClick={onOpen}
             className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-foreground hover:border-border-strong"

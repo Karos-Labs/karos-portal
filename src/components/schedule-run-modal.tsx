@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
 import { Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import { createPlannedRunAction } from "@/lib/actions/planned-run-actions";
 import { computeNextRun, describeCadence } from "@/lib/scheduled-runs";
 import type { CalendarClientOption, ScheduleAgentOption } from "@/components/run-calendar";
@@ -111,11 +112,8 @@ export function ScheduleRunModal({
           </Select>
           {agent?.description && (
             <div className="mt-2 flex items-start gap-2 rounded-md border border-border bg-surface-2 p-2.5">
-              <div
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                style={{ background: agent.color + "22", color: agent.color }}
-              >
-                <Icon name={agent.icon} className="h-3.5 w-3.5" />
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+                <AgentMark identity={agent.name} icon={agent.icon} className="h-3.5 w-3.5" />
               </div>
               <p className="text-xs text-muted-2">{agent.description}</p>
             </div>

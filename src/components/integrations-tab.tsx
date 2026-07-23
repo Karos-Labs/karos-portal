@@ -18,6 +18,7 @@ import {
   GOOGLE_READ_ONLY_SUB_PLATFORM_IDS,
   type PlatformConfig,
 } from "@/lib/integrations/platforms";
+import { SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { LinkedInSeatsWorkspace, type SeatView } from "@/components/linkedin-seats-workspace";
 import type { Role } from "@/lib/types";
@@ -37,56 +38,15 @@ interface Props {
   seatCost?: number;
 }
 
-/* ── Official SVG logos ──────────────────────────────────────────────── */
+/* ── Platform marks — one shared source (agent-identity) for the whole app ── */
 
-function LinkedInLogo() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
-      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
-    </svg>
-  );
+function PlatformMark({ id, className }: { id: string; className?: string }) {
+  const platform = platformForIntegrationId(id);
+  return platform ? <SocialPlatformMark platform={platform} className={className} /> : null;
 }
 
-function XLogo() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-    </svg>
-  );
-}
-
-function FacebookLogo() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
-      <path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 011.141.195v3.325a8.623 8.623 0 00-.653-.036 26.805 26.805 0 00-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 00-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647z" />
-    </svg>
-  );
-}
-
-function InstagramLogo() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
-      <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" />
-    </svg>
-  );
-}
-
-function YouTubeLogo() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
-      <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
-    </svg>
-  );
-}
-
-function TikTokLogo() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
-      <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" />
-    </svg>
-  );
-}
-
+/** Google's multicolor G — inherently multi-color, so it stays local rather than
+    joining the monochrome shared marks. Used by the Google Services Suite card. */
 function GoogleLogo() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
@@ -98,17 +58,23 @@ function GoogleLogo() {
   );
 }
 
-const PLATFORM_LOGOS: Record<string, React.ReactNode> = {
-  linkedin: <LinkedInLogo />,
-  linkedin_community: <LinkedInLogo />,
-  twitter: <XLogo />,
-  facebook: <FacebookLogo />,
-  instagram: <InstagramLogo />,
-  youtube: <YouTubeLogo />,
-  tiktok: <TikTokLogo />,
-};
-
 /* ── Branded connect button ──────────────────────────────────────────── */
+
+/**
+ * Official OAuth-button treatment: the platform's own brand color carries the
+ * button (Instagram keeps its gradient; X and TikTok are brand-black with a
+ * hairline ring so they read on the dark ground), white logo + label.
+ */
+const CONNECT_STYLE: Record<string, { background: string; ring?: boolean }> = {
+  instagram: { background: "linear-gradient(45deg, #F58529 0%, #DD2A7B 55%, #8134AF 100%)" },
+  facebook: { background: "#1877F2" },
+  linkedin: { background: "#0A66C2" },
+  linkedin_community: { background: "#0A66C2" },
+  twitter: { background: "#000000", ring: true },
+  youtube: { background: "#FF0000" },
+  tiktok: { background: "#000000", ring: true },
+  reddit: { background: "#FF4500" },
+};
 
 interface BrandButtonProps {
   platform: PlatformConfig;
@@ -117,18 +83,19 @@ interface BrandButtonProps {
 }
 
 function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) {
-  /* Platform marks render monochrome in OUR palette (brand §11) — the chip
-     carries the border and hover, never the platform's own colors. */
+  const style = CONNECT_STYLE[platform.id];
   return (
     <button
       onClick={onClick}
       disabled={loading}
       className={cn(
-        "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md border border-border bg-foreground/[0.04] px-4 py-2.5 text-sm font-medium text-foreground/80 transition-colors duration-200",
-        "hover:border-neon/50 hover:text-neon",
+        "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-200",
+        "hover:-translate-y-px hover:brightness-110 hover:shadow-md",
+        style?.ring && "ring-1 ring-inset ring-white/25",
         "disabled:pointer-events-none disabled:opacity-60",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/40",
       )}
+      style={{ background: style?.background ?? "var(--surface-3)" }}
     >
       {loading ? (
         <svg
@@ -145,7 +112,7 @@ function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) 
           />
         </svg>
       ) : (
-        PLATFORM_LOGOS[platform.id]
+        <PlatformMark id={platform.id} className="h-4 w-4" />
       )}
       {loading ? "Connecting…" : `Connect with ${platform.name}`}
     </button>
@@ -283,9 +250,9 @@ function PlatformCard({
     >
       {/* Header */}
       <div className="flex items-start gap-3 p-4">
-        {/* Platform icon — monochrome chip in our palette (brand §11) */}
+        {/* Platform mark — the real brand logo, monochrome chip in our palette */}
         <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
-          <Icon name={platform.icon} className="h-5 w-5" />
+          <PlatformMark id={platform.id} className="h-5 w-5" />
         </div>
 
         {/* Text */}
@@ -658,14 +625,15 @@ function GoogleUnifiedCard({
 
       {/* Action area */}
       <div className="px-4 pb-4 space-y-3">
+        {/* Official Google button treatment: white ground, multicolor G, dark label */}
         <button
           onClick={onOAuthConnect}
           disabled={isConnecting}
           className={cn(
-            "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md border border-border bg-foreground/[0.04] px-4 py-2.5 text-sm font-medium text-foreground/80 transition-colors duration-200",
-            "hover:border-neon/50 hover:text-neon",
+            "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md bg-white px-4 py-2.5 text-sm font-semibold text-[#1f1f1f] shadow-sm transition-all duration-200",
+            "hover:-translate-y-px hover:shadow-md hover:brightness-[0.97]",
             "disabled:pointer-events-none disabled:opacity-60",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/40",
           )}
         >
           {isConnecting ? (

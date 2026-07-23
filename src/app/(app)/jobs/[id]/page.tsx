@@ -52,7 +52,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
 
       {job.external && <ManagedJobProgress status={job.status} />}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-6">
           {realAssets.length > 0 && (
             <div>

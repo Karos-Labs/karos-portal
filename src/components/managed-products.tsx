@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AgentIdentity, AgentMark } from "@/components/agent-identity";
 import { Modal } from "@/components/modal";
 import { JobStatusBadge } from "@/components/job-status";
 import { submitManagedJobAction } from "@/lib/actions";
@@ -104,12 +105,7 @@ export function ManagedProducts({
               )}
             >
               <div className="flex items-start gap-3">
-                <div
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md"
-                  style={{ background: product.color + "1f", color: product.color }}
-                >
-                  <Icon name={product.icon} className="h-5 w-5" />
-                </div>
+                <AgentIdentity identity={`${product.name} ${product.tagline}`} icon={product.icon} />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-medium">{product.name}</p>
@@ -193,15 +189,12 @@ export function ManagedProducts({
                     i > 0 && "border-t border-border",
                   )}
                 >
-                  <div
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                    style={
-                      product
-                        ? { background: product.color + "1f", color: product.color }
-                        : { background: "var(--surface-3)" }
-                    }
-                  >
-                    <Icon name={product?.icon ?? "Bot"} className="h-3.5 w-3.5" />
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+                    <AgentMark
+                      identity={product ? `${product.name} ${product.tagline}` : job.agentName}
+                      icon={product?.icon ?? "Bot"}
+                      className="h-3.5 w-3.5"
+                    />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{product?.name ?? job.agentName}</p>
