@@ -36,14 +36,15 @@ const NAV: NavItem[] = [
   { href: "/admin/analytics", label: "Analytics", icon: "TrendingUp", roles: ["KAROS_ADMIN"] },
 ];
 
-// The 4 client-facing tabs shown to staff when in Client View mode
+// The client-facing tabs shown to staff when in Client View mode. The Library
+// merged into the Workspace's Archive tab (2026-07); staff review drafts via
+// the global Assets page.
 function clientViewNav(clientId: string): NavItem[] {
   return [
     { href: `/clients/${clientId}`, label: "Dashboard", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"], exact: true },
     { href: `/clients/${clientId}/agents`, label: "AI Agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
-    { href: `/clients/${clientId}/assets`, label: "Library", icon: "Library", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
     { href: `/clients/${clientId}/calendar`, label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
-    { href: `/clients/${clientId}/tasks`, label: "Progress", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
+    { href: `/clients/${clientId}/tasks`, label: "Workspace", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   ];
 }
 

@@ -6,11 +6,13 @@ import {
   getClientSettings,
   listClientActivityLogs,
   listJobs,
+  listAssets,
   getClientReport,
 } from "@/lib/data";
 import { TasksBoard } from "@/components/tasks-board";
 import { ProgressView } from "@/components/progress-view";
 import { PageHeader } from "@/components/ui";
+import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import type { AppUser, ClientTask } from "@/lib/types";
 
 /**
@@ -34,18 +36,25 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
   // Archiving is handled at query level (listClientTasks hides tasks Done ≥7d)
   // plus a physical sweep in the /api/credits/reconcile cron — no page-load work.
   if (scopedClientId) {
-    const [tasks, settings, activityLogs, jobs, report] = await Promise.all([
+    const [tasks, settings, activityLogs, jobs, report, rawAssets] = await Promise.all([
       listClientTasks({ clientId: scopedClientId }),
       getClientSettings(scopedClientId),
       listClientActivityLogs(scopedClientId),
       listJobs({ clientId: scopedClientId }),
       getClientReport(scopedClientId),
+      listAssets({ clientId: scopedClientId }),
     ]);
+    // Archive tab data. Client viewers get the redacted library set (locked
+    // future posts are whitelist-stripped before crossing the RSC boundary —
+    // same rule as the old Library page); staff keep full visibility.
+    const assets = getClientLibraryAssets(rawAssets, {
+      forClient: user.role === "CLIENT_USER",
+    });
     return (
       <div>
         <PageHeader
-          title="Progress"
-          description="Your tasks and account activity: what's next and what's done."
+          title="Workspace"
+          description="What's next on the board, what already happened, and everything your agents have delivered."
         />
         <ProgressView
           tasks={tasks}
@@ -55,6 +64,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
           activityLogs={activityLogs}
           jobs={jobs}
           report={report}
+          assets={assets}
         />
       </div>
     );

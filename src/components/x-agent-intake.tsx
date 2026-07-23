@@ -624,7 +624,7 @@ function FeedbackBox({
       <p className="mt-1 text-sm text-muted">
         Tell us what is working and what is not — in your own words, as much detail as you like.
         It goes straight into the agent&apos;s next run. Picking, editing, or skipping individual
-        drafts happens on the drafts themselves, in your Library.
+        drafts happens on the drafts themselves, in your Workspace archive.
       </p>
       {runs.length > 0 ? (
         <ul className="mt-3 space-y-1">

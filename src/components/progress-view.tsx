@@ -5,14 +5,16 @@ import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { TasksBoard } from "@/components/tasks-board";
 import { ActivityTimeline } from "@/components/activity-timeline";
+import { ArchiveView } from "@/components/archive-view";
 import { QuickAddTaskBar } from "@/components/quick-add-task-bar";
-import type { ActivityLog, ClientReport, ClientTask, Job, Role } from "@/lib/types";
+import type { ActivityLog, Asset, ClientReport, ClientTask, Job, Role } from "@/lib/types";
 
-type View = "board" | "activity";
+type View = "board" | "activity" | "archive";
 
 /**
- * Client-facing Progress view — merges the task board (what's next) with the
- * activity timeline (what's done) behind a single segmented toggle.
+ * Client-facing Workspace view — the task board (what's next), the activity
+ * timeline (what happened), and the per-agent archive (everything delivered)
+ * behind a single segmented toggle.
  */
 export function ProgressView({
   tasks,
@@ -22,6 +24,7 @@ export function ProgressView({
   activityLogs,
   jobs,
   report,
+  assets,
 }: {
   tasks: ClientTask[];
   currentUserRole: Role;
@@ -30,8 +33,11 @@ export function ProgressView({
   activityLogs: ActivityLog[];
   jobs: Job[];
   report: ClientReport | null;
+  /** Pre-redacted per viewer role (see TasksBody) — feeds the Archive tab. */
+  assets: Asset[];
 }) {
   const [view, setView] = useState<View>("board");
+  const agentNameByJobId = Object.fromEntries(jobs.map((j) => [j.id, j.agentName]));
 
   return (
     <>
@@ -41,6 +47,7 @@ export function ProgressView({
           [
             { id: "board", label: "Board", icon: "ListChecks" },
             { id: "activity", label: "Activity", icon: "History" },
+            { id: "archive", label: "Archive", icon: "Archive" },
           ] as { id: View; label: string; icon: string }[]
         ).map((tab) => (
           <button
@@ -71,7 +78,7 @@ export function ProgressView({
             autopilotEnabled={autopilotEnabled}
           />
         </>
-      ) : (
+      ) : view === "activity" ? (
         <ActivityTimeline
           activityLogs={activityLogs}
           jobs={jobs}
@@ -79,6 +86,8 @@ export function ProgressView({
           clientId={clientId}
           currentUserRole={currentUserRole}
         />
+      ) : (
+        <ArchiveView assets={assets} agentNameByJobId={agentNameByJobId} />
       )}
     </>
   );

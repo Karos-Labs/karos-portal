@@ -108,10 +108,10 @@ export function ClientHomeOverview({
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Recent activity</CardTitle>
           <Link
-            href="/assets"
+            href="/tasks"
             className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
           >
-            View all assets
+            Open archive
           </Link>
         </div>
 
@@ -130,7 +130,7 @@ export function ClientHomeOverview({
             {recentAssets.map((a) => (
               <li key={a.id}>
                 <Link
-                  href="/assets"
+                  href="/tasks"
                   className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2 transition-colors hover:border-border-strong"
                 >
                   <div className="min-w-0 flex-1">

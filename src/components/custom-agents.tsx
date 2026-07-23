@@ -328,7 +328,7 @@ export function ClientCustomAgents({
           <h2 className="text-xl text-foreground">{viewerIsClient ? "Your AI agents" : "Custom agents"}</h2>
           <p className="mt-0.5 text-sm text-muted">
             {viewerIsClient
-              ? "Fire an agent with a plain-language request. Deliverables land in your Library after review."
+              ? "Fire an agent with a plain-language request. Deliverables land in your Workspace archive after review."
               : "Prompt-driven agents from the custom library, run against this client."}
           </p>
         </div>
@@ -512,7 +512,7 @@ function RunCustomAgentModal({
           <p className="text-sm text-foreground">Run started</p>
           <p className="text-xs text-muted">
             The agent is working. This usually takes 10–35 minutes. Deliverables appear in your
-            Library once your Karos team approves them.
+            Workspace archive once your Karos team approves them.
           </p>
           <Button variant="subtle" onClick={onClose}>
             Done

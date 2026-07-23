@@ -74,7 +74,9 @@ export function ClientHome({
     .slice(0, 4);
 
   const recentAssets = [...assets].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
-  const libraryHref = viewerIsClient ? "/assets" : `/clients/${clientId}/assets`;
+  // Clients: the Workspace archive (Library merged there 2026-07). Staff: the review library.
+  const libraryHref = viewerIsClient ? "/tasks" : `/clients/${clientId}/assets`;
+  const libraryLabel = viewerIsClient ? "Archive" : "Library";
 
   const published = assets.filter((a) => a.status === "published").length;
   const scheduled = assets.filter((a) => a.status === "scheduled").length;
@@ -122,10 +124,10 @@ export function ClientHome({
         <EmptyState
           icon={<Icon name="Bot" className="h-7 w-7" />}
           title="Your team is on it"
-          description="Karos runs managed AI agents for your account. Deliverables appear in your Library once they're approved."
+          description="Karos runs managed AI agents for your account. Deliverables land in your Workspace archive once they're approved."
           action={
             <Link href={libraryHref}>
-              <Button>Open Library</Button>
+              <Button>Open {viewerIsClient ? "Workspace" : "Library"}</Button>
             </Link>
           }
         />
@@ -185,7 +187,7 @@ export function ClientHome({
               Latest deliverables
             </p>
             <Link href={libraryHref} className="text-xs text-neon hover:underline">
-              Library →
+              {libraryLabel} →
             </Link>
           </div>
           {recentAssets.length === 0 ? (

@@ -62,12 +62,13 @@ export function ClientRail({
   const home = `/clients/${client.id}`;
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
+  // The Library merged into the Workspace's Archive tab (2026-07) — one page
+  // for board + activity + everything the agents delivered.
   const primaryNav: NavItem[] = [
     { href: home, label: "Dashboard", icon: "LayoutDashboard", exact: true },
     { href: `${home}/agents`, label: "AI Agents", icon: "Bot" },
-    { href: "/assets", label: "Library", icon: "Library" },
     { href: "/calendar", label: "Calendar", icon: "CalendarClock" },
-    { href: "/tasks", label: "Progress", icon: "ListChecks" },
+    { href: "/tasks", label: "Workspace", icon: "ListChecks" },
   ];
   const settingsItem: NavItem = { href: `${home}/settings`, label: "Settings", icon: "Settings" };
 
