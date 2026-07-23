@@ -18,7 +18,7 @@ const PAST_JOB_STATUSES = new Set(["review", "approved", "delivered", "failed"])
 
 function postKind(a: Asset): CalendarPost["kind"] | null {
   if (a.status === "published" && (a.scheduledAt != null || a.publishedAt != null)) return "published";
-  if (a.status === "scheduled" && a.scheduledAt != null) {
+  if ((a.status === "scheduled" || a.status === "approved") && a.scheduledAt != null) {
     return a.publishMode === "placeholder" ? "placeholder" : "scheduled";
   }
   return null;

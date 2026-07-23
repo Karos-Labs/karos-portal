@@ -145,6 +145,30 @@ export interface Client {
    * run just silently vanishing.
    */
   aiProcessingError?: string;
+  /**
+   * Epoch millis the Intel Report + SEO/GEO pipeline last completed successfully,
+   * from ANY of its three triggers (new client, admin Regenerate, or the
+   * recurring schedule below). Informational — shown in the admin Schedule modal.
+   */
+  lastIntelReportAt?: number;
+  /**
+   * Admin-configured recurring regeneration of the Intel Report + SEO/GEO
+   * pipeline (client-documents.tsx Schedule modal). This is the ONLY automatic
+   * re-trigger besides client creation — see /api/intel-report-schedule, the
+   * sole cron that reads these fields. Absent/false ⇒ no recurrence; the
+   * pipeline then only runs on client creation or a manual admin Regenerate.
+   */
+  intelScheduleEnabled?: boolean;
+  /** Recur every N months (admin-chosen, not limited to fixed presets). Default 1. */
+  intelScheduleIntervalMonths?: number;
+  /** Day of month to fire on (1-28, clamped for short months). Default 1. */
+  intelScheduleDayOfMonth?: number;
+  /**
+   * Next scheduled fire time (epoch millis), advanced by the cron on a fixed
+   * grid (see computeNextIntelScheduleRun) — independent of unrelated manual
+   * regenerations, so the configured cadence never drifts. Null while disabled.
+   */
+  intelScheduleNextRunAt?: number | null;
   createdAt: number;
   createdBy: string;
 }

@@ -14,6 +14,7 @@ import {
 } from "@/lib/actions/onboarding-actions";
 import type { AppUser, Client } from "@/lib/types";
 import type { IntegrationView } from "@/lib/integrations/sanitize";
+import type { SeatView } from "@/components/linkedin-seats-workspace";
 
 const STEPS = [
   { id: 1, label: "Personal Profile", icon: "User" },
@@ -58,12 +59,18 @@ export function OnboardingWizard({
   notice,
   integrations,
   oauthEnabledPlatforms,
+  linkedinSeats,
+  seatLimit,
+  seatCost,
 }: {
   user: AppUser;
   client: Client;
   notice?: string | null;
   integrations: IntegrationView[];
   oauthEnabledPlatforms: string[];
+  linkedinSeats?: SeatView[];
+  seatLimit?: number;
+  seatCost?: number;
 }) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [isPending, startTransition] = useTransition();
@@ -269,6 +276,9 @@ export function OnboardingWizard({
               integrations={integrations}
               oauthEnabledPlatforms={oauthEnabledPlatforms}
               currentUserRole={user.role}
+              linkedinSeats={linkedinSeats}
+              seatLimit={seatLimit}
+              seatCost={seatCost}
             />
 
             {error && <p className="text-xs text-danger">{error}</p>}

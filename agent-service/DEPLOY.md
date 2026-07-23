@@ -99,7 +99,7 @@ the Managed products UI appears once it's present.
 ## 6. Schedule the crons (Cloud Scheduler)
 
 ```bash
-for path in publish cleanup-logs scheduler "agent-service/reconcile" "credits/reconcile"; do
+for path in publish cleanup-logs scheduler "agent-service/reconcile" "credits/reconcile" intel-report-schedule; do
   gcloud scheduler jobs create http ${path//\//-} \
     --schedule="*/10 * * * *" --uri="<platform-url>/api/$path" \
     --http-method=GET --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)"
@@ -108,6 +108,11 @@ done
 
 (`publish` every 5 min, `cleanup-logs` daily, `scheduler` every ~15 min, both
 `reconcile`s every ~10 min — adjust schedules to taste.)
+
+`intel-report-schedule` drives the admin-configurable recurring Intel Report +
+SEO/GEO regeneration (Schedule button on each client's dashboard). Ticking
+every 10 min is fine — it only actually runs the pipeline for a client once
+its own admin-set `intelScheduleNextRunAt` (monthly-or-slower) has passed.
 
 `credits/reconcile` is the credit-loss safety net: client users are charged
 upfront and the work runs deferred, so an instance recycle mid-run leaves the

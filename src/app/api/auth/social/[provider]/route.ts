@@ -7,6 +7,7 @@ import {
   buildCallbackUrl,
   generateCodeVerifier,
   generateCodeChallenge,
+  getRequestedScopes,
 } from "@/lib/integrations/oauth";
 
 export async function GET(
@@ -49,7 +50,7 @@ export async function GET(
   const authParams = new URLSearchParams({
     response_type: "code",
     redirect_uri: redirectUri,
-    scope: config.scopes.join(config.scopeSeparator ?? " "),
+    scope: getRequestedScopes(provider).join(config.scopeSeparator ?? " "),
     state,
   });
   // Most providers use "client_id"; TikTok uses "client_key" (config-driven).

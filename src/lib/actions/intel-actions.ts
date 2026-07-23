@@ -20,9 +20,14 @@ import {
 import { logger } from "@/services/logger";
 import { getCurrentUser } from "@/lib/auth";
 import type { AppUser, ContextDocTier } from "@/lib/types";
-import { requireStaff, logActivity } from "./_shared";
+import { requireStaff, requireAdmin, logActivity } from "./_shared";
 import { MODELS } from "@/lib/constants";
 import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
+import {
+  computeFirstIntelScheduleRun,
+  clampIntervalMonths,
+  clampScheduleDayOfMonth,
+} from "@/lib/intel-schedule";
 
 /** Charge a client user for a doc correction (staff + impersonated sessions are free). Throws CreditError on denial. */
 async function chargeDocCorrection(user: AppUser, clientId: string, amount: number, reason: string) {
@@ -176,6 +181,7 @@ export async function generateIntelReportAction(
   try {
     const { runIntelReportPipeline } = await import("@/lib/intel");
     await runIntelReportPipeline(clientId, runSpecificContext);
+    await updateClient(clientId, { lastIntelReportAt: Date.now() });
     const ctxNote = runSpecificContext?.trim()
       ? ` — with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
       : "";
@@ -197,6 +203,40 @@ export async function generateIntelReportAction(
     await releaseAiProcessingLock(clientId, failure);
   }
   revalidatePath(`/clients/${clientId}`);
+}
+
+/**
+ * Set or clear the recurring Intel Report + SEO/GEO regeneration schedule for a
+ * client (Schedule modal, admin-only). This — alongside client creation and the
+ * manual Regenerate action above — is one of the ONLY three ways the pipeline
+ * ever runs; /api/intel-report-schedule is the sole cron that reads these
+ * fields, and it never fires for a client with intelScheduleEnabled false.
+ *
+ * Enabling (or editing the day/interval) always re-anchors nextRunAt to the
+ * next upcoming occurrence of dayOfMonth, so a change takes effect starting
+ * from the next real calendar hit rather than an arbitrary future date.
+ */
+export async function updateIntelScheduleAction(
+  clientId: string,
+  input: { enabled: boolean; intervalMonths: number; dayOfMonth: number },
+): Promise<{ ok: true; nextRunAt: number | null } | { ok?: never; error: string }> {
+  try {
+    await requireAdmin();
+    const intervalMonths = clampIntervalMonths(input.intervalMonths);
+    const dayOfMonth = clampScheduleDayOfMonth(input.dayOfMonth);
+    const nextRunAt = input.enabled ? computeFirstIntelScheduleRun(dayOfMonth) : null;
+
+    await updateClient(clientId, {
+      intelScheduleEnabled: input.enabled,
+      intelScheduleIntervalMonths: intervalMonths,
+      intelScheduleDayOfMonth: dayOfMonth,
+      intelScheduleNextRunAt: nextRunAt,
+    });
+    revalidatePath(`/clients/${clientId}`);
+    return { ok: true, nextRunAt };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Could not update the schedule" };
+  }
 }
 
 /**

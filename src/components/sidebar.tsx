@@ -10,6 +10,7 @@ import Image from "next/image";
 import { cn, initials } from "@/lib/utils";
 import { useActiveClient } from "@/lib/active-client-context";
 import { ClientDocuments } from "@/components/client-documents";
+import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import type { AppUser, Client, Role } from "@/lib/types";
@@ -404,6 +405,7 @@ export function Sidebar({
           isAdmin={activeClient.isAdmin}
           clientId={activeClient.client.id}
           isAiProcessing={isAiProcessingLockActive(activeClient.client)}
+          intelSchedule={clientIntelSchedule(activeClient.client)}
         />
       </div>
 

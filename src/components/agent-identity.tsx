@@ -47,9 +47,11 @@ export function socialPlatformsFor(identity: string): SocialPlatform[] {
   return platforms;
 }
 
-/** Platform-registry id → mark id (the registry still says "twitter"). */
+/** Platform-registry id → mark id ("twitter" and the LinkedIn company-page
+    variant map onto their base marks). */
 export function platformForIntegrationId(id: string): SocialPlatform | null {
   if (id === "twitter") return "x";
+  if (id === "linkedin_community") return "linkedin";
   return id === "instagram" || id === "x" || id === "tiktok" || id === "linkedin" || id === "reddit" || id === "facebook" || id === "youtube"
     ? id
     : null;

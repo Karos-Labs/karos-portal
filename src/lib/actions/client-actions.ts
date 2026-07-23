@@ -86,6 +86,7 @@ export async function createClientAction(input: {
       await updateClient(id, {
         onboardingStatus: anyFailed ? "failed" : "done",
         onboardingError: anyFailed ? failureReasons : "",
+        ...(intelResult.status === "fulfilled" ? { lastIntelReportAt: Date.now() } : {}),
       });
     } catch (e) {
       failure = e instanceof Error ? e.message : String(e);

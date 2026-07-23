@@ -10,6 +10,7 @@ import {
   clearUserPhone,
   tryAcquireAiProcessingLock,
   releaseAiProcessingLock,
+  updateClient,
 } from "@/lib/data";
 import { adminAuth } from "@/lib/firebase/admin";
 import { addEmployeeSeatAction } from "./seat-actions";
@@ -104,6 +105,7 @@ export async function completeOnboardingAction(input: {
       const { runIntelReportPipeline } = await import("@/lib/intel");
       const { buildSwarmContext, runSwarmToCompletion } = await import("@/lib/agent-swarm");
       await runIntelReportPipeline(clientId);
+      await updateClient(clientId, { lastIntelReportAt: Date.now() });
       const context = await buildSwarmContext(clientId);
       await runSwarmToCompletion({ clientId, createdBy, context });
     } catch (e) {
