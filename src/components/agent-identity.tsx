@@ -1,7 +1,7 @@
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 
-export type SocialPlatform = "instagram" | "x" | "tiktok" | "linkedin" | "reddit";
+export type SocialPlatform = "instagram" | "x" | "tiktok" | "linkedin" | "reddit" | "facebook" | "youtube";
 
 /**
  * Real platform logos (simple-icons paths, 24x24, currentColor) — the same
@@ -18,6 +18,10 @@ const PLATFORM_PATHS: Record<SocialPlatform, string> = {
     "M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-6.994 4.87-3.865 0-6.994-2.176-6.994-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095z",
   linkedin:
     "M20.45 20.45h-3.56v-5.57c0-1.33-.03-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.35V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zm1.78 13.02H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.73v20.54C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.73C24 .77 23.2 0 22.22 0z",
+  facebook:
+    "M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647z",
+  youtube:
+    "M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814z M9.545 15.568V8.432L15.818 12l-6.273 3.568z",
 };
 
 const PLATFORM_LABEL: Record<SocialPlatform, string> = {
@@ -26,6 +30,8 @@ const PLATFORM_LABEL: Record<SocialPlatform, string> = {
   tiktok: "TikTok",
   linkedin: "LinkedIn",
   reddit: "Reddit",
+  facebook: "Facebook",
+  youtube: "YouTube",
 };
 
 export function socialPlatformsFor(identity: string): SocialPlatform[] {
@@ -36,7 +42,17 @@ export function socialPlatformsFor(identity: string): SocialPlatform[] {
   if (/(^|[\s_-])x([\s_-]|$)|twitter/.test(value)) platforms.push("x");
   if (/reddit/.test(value)) platforms.push("reddit");
   if (/linkedin|linked[\s_-]?in/.test(value)) platforms.push("linkedin");
+  if (/facebook|(^|[\s_-])fb([\s_-]|$)/.test(value)) platforms.push("facebook");
+  if (/youtube|(^|[\s_-])yt([\s_-]|$)/.test(value)) platforms.push("youtube");
   return platforms;
+}
+
+/** Platform-registry id → mark id (the registry still says "twitter"). */
+export function platformForIntegrationId(id: string): SocialPlatform | null {
+  if (id === "twitter") return "x";
+  return id === "instagram" || id === "x" || id === "tiktok" || id === "linkedin" || id === "reddit" || id === "facebook" || id === "youtube"
+    ? id
+    : null;
 }
 
 /**
