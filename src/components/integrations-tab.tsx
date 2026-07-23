@@ -255,10 +255,11 @@ function PlatformCard({
           <PlatformMark id={platform.id} className="h-5 w-5" />
         </div>
 
-        {/* Text */}
-        <div className="min-w-0 flex-1 space-y-0.5">
+        {/* Text — name and status stack on every card (a wrapping row let the
+            badge sit beside short names like TikTok, breaking the grid rhythm) */}
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="font-semibold leading-none">{platform.name}</p>
           <div className="flex flex-wrap items-center gap-2">
-            <p className="font-semibold leading-none">{platform.name}</p>
             {isConnected ? (
               integration && integrationNeedsReconnect(integration) ? (
                 <Badge tone="warning">
@@ -568,9 +569,10 @@ function GoogleUnifiedCard({
         <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04]">
           <GoogleLogo />
         </div>
-        <div className="min-w-0 flex-1 space-y-0.5">
+        {/* Name and status stack, matching every platform card */}
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="font-semibold leading-none">Google Services Suite</p>
           <div className="flex flex-wrap items-center gap-2">
-            <p className="font-semibold leading-none">Google Services Suite</p>
             {allConnected ? (
               anyNeedsReconnect ? (
                 <Badge tone="warning">
