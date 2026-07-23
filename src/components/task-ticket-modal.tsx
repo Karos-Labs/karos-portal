@@ -11,7 +11,7 @@ import {
   requestAdjustmentsAction,
   publishIntegrationAction,
 } from "@/lib/actions";
-import type { ClientTask, TaskComment, TaskStatus } from "@/lib/types";
+import type { ClientTask, TaskComment, TaskOwner, TaskStatus } from "@/lib/types";
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -65,6 +65,10 @@ const ROLE_LABEL: Record<string, string> = {
   KAROS_EMPLOYEE: "Karos",
   CLIENT_USER:    "Client",
 };
+
+function inferOwner(task: ClientTask): TaskOwner {
+  return task.owner ?? (task.source === "manual" ? "client_managed" : "karos_managed");
+}
 
 /* ── Artifact section (Review Pending — Flow A & B) ──────────────── */
 
@@ -517,6 +521,9 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   const failedUpload = task.metadata?.failedUpload as boolean | undefined;
   const failedUploadError = task.metadata?.failedUploadError as string | undefined;
   const nextStatus = STATUS_NEXT[task.status];
+  // The AI plan is a guide for the client to execute the task themselves —
+  // not useful for karos_managed tasks our own agents already run.
+  const isClientManaged = inferOwner(task) === "client_managed";
 
   // Close on Escape
   useEffect(() => {
@@ -674,8 +681,8 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
             </div>
           )}
 
-          {/* AI Execution Guide (non-review_pending tasks) */}
-          {!isReviewPending && (
+          {/* AI Execution Guide (non-review_pending, client-managed tasks only) */}
+          {!isReviewPending && isClientManaged && (
             <AiPlanSection taskId={task.id} clientId={task.clientId} initialPlan={initialPlan} />
           )}
 
