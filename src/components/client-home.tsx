@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Badge, Button, EmptyState, StatCard } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import { JobStatusBadge } from "@/components/job-status";
 import {
   ClientCustomAgents,
@@ -145,15 +146,8 @@ export function ClientHome({
                 "flex items-center gap-3 px-4 py-2.5" + (i > 0 ? " border-t border-border" : "");
               const body = (
                 <>
-                  <div
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                    style={
-                      agent
-                        ? { background: agent.color + "1f", color: agent.color }
-                        : { background: "var(--surface-3)" }
-                    }
-                  >
-                    <Icon name={agent?.icon ?? "Bot"} className="h-3.5 w-3.5" />
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+                    <AgentMark identity={job.agentName} icon={agent?.icon ?? "Bot"} className="h-3.5 w-3.5" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{title}</p>

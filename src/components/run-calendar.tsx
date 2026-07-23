@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import { Badge, Button } from "@/components/ui";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
@@ -100,21 +101,14 @@ function RunChip({ run }: { run: CalendarRun }) {
       className={cn(
         "flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate",
         scheduled
-          ? "border border-dashed bg-foreground/[0.03]"
+          ? "border border-dashed border-foreground/30 bg-foreground/[0.03] text-foreground/70"
           : failed
             ? "bg-danger/15 text-danger"
-            : "text-foreground",
+            : "bg-foreground/[0.07] text-foreground/85",
       )}
-      style={
-        scheduled
-          ? { borderColor: run.productColor + "88", color: run.productColor }
-          : failed
-            ? undefined
-            : { background: run.productColor + "22", color: run.productColor }
-      }
       title={`${scheduled ? "Scheduled" : "Ran"} · ${run.productName} · ${timeStr(run.at)}${run.clientName ? ` — ${run.clientName}` : ""}`}
     >
-      <Icon name={run.productIcon} className="h-2.5 w-2.5 shrink-0" />
+      <AgentMark identity={run.productName} icon={run.productIcon} className="h-2.5 w-2.5 shrink-0" />
       <span className="truncate">{run.productName}</span>
     </div>
   );
@@ -180,11 +174,8 @@ function ScheduledRunCard({
   return (
     <div className="rounded-lg border border-border bg-surface p-3">
       <div className="flex items-start gap-2.5">
-        <div
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md"
-          style={{ background: run.productColor + "22", color: run.productColor }}
-        >
-          <Icon name={run.productIcon} className="h-4 w-4" />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+          <AgentMark identity={run.productName} icon={run.productIcon} className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -227,11 +218,8 @@ function PastRunCard({
   return (
     <div className="rounded-lg border border-border bg-surface p-3">
       <div className="flex items-start gap-2.5">
-        <div
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md"
-          style={{ background: run.productColor + "22", color: run.productColor }}
-        >
-          <Icon name={run.productIcon} className="h-4 w-4" />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+          <AgentMark identity={run.productName} icon={run.productIcon} className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -526,8 +514,8 @@ export function RunCalendar({
 
         {/* Legend */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
-          <LegendDot className="border border-dashed border-neon/60 bg-neon/5" label="Scheduled run" />
-          <LegendDot className="bg-neon opacity-80" label="Completed run" />
+          <LegendDot className="border border-dashed border-foreground/40 bg-foreground/[0.03]" label="Scheduled run" />
+          <LegendDot className="bg-foreground/25" label="Completed run" />
           <LegendDot className="border border-dashed border-info/60 bg-info/10" label="Scheduled post" />
           <LegendDot className="bg-success opacity-80" label="Published" />
         </div>

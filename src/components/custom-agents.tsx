@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { AgentIdentity, AgentPlatformBadges } from "@/components/agent-identity";
+import { AgentIdentity, AgentMark, AgentPlatformBadges } from "@/components/agent-identity";
 import { Modal } from "@/components/modal";
 import { JobStatusBadge } from "@/components/job-status";
 import {
@@ -132,12 +132,11 @@ function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
   return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
 }
 
-function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon" | "color">; className?: string }) {
+function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon">; className?: string }) {
   return (
     <AgentIdentity
       identity={`${agent.key} ${agent.name}`}
       icon={agent.icon}
-      color={agent.color}
       className={className}
     />
   );
@@ -213,7 +212,7 @@ export function CustomAgentsHub({
               key={agent.id}
               className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
             >
-              <span className="absolute inset-x-0 top-0 h-0.5 opacity-45 transition-opacity group-hover:opacity-80" style={{ background: agent.color }} aria-hidden="true" />
+              <span className="absolute inset-x-0 top-0 h-0.5 bg-foreground/40 opacity-45 transition-opacity group-hover:opacity-80" aria-hidden="true" />
               <div className="flex items-start gap-3">
                 <AgentChip agent={agent} />
                 <div className="min-w-0 flex-1">
@@ -350,7 +349,7 @@ export function ClientCustomAgents({
                 key={agent.id}
                 className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
               >
-                <span className="absolute inset-x-0 top-0 h-0.5 opacity-45 transition-opacity group-hover:opacity-80" style={{ background: agent.color }} aria-hidden="true" />
+                <span className="absolute inset-x-0 top-0 h-0.5 bg-foreground/40 opacity-45 transition-opacity group-hover:opacity-80" aria-hidden="true" />
                 <div className="flex items-start gap-3">
                   <AgentChip agent={agent} />
                   <div className="min-w-0 flex-1">
@@ -396,11 +395,10 @@ export function ClientCustomAgents({
                     <AgentIdentity
                       identity={`${agent.key} ${agent.name}`}
                       icon={agent.icon}
-                      color={agent.color}
                       size="sm"
                     />
                   ) : (
-                    <AgentIdentity identity={run.agentName} icon="Bot" color="#88888f" size="sm" />
+                    <AgentIdentity identity={run.agentName} icon="Bot" size="sm" />
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{run.agentName}</p>
@@ -1046,11 +1044,8 @@ export function ClientAgentAccessCard({
               onChange={() => toggle(agent.id)}
               className="accent-neon"
             />
-            <span
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded"
-              style={{ background: agent.color + "1f", color: agent.color }}
-            >
-              <Icon name={agent.icon} className="h-3.5 w-3.5" />
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+              <AgentMark identity={`${agent.key} ${agent.name}`} icon={agent.icon} className="h-3.5 w-3.5" />
             </span>
             <span className="min-w-0 flex-1 truncate text-foreground">{agent.name}</span>
             <span className="shrink-0 text-muted-2">{agentRunCost(agent)} cr/run</span>
