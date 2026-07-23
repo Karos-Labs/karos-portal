@@ -66,11 +66,11 @@ export function CopilotDock({ clientId, clientName, userName, hasGoogleIntegrati
       >
       <div className="sticky top-0 h-screen">
         {/* Edge handle — inside the sticky frame so it pins to the viewport
-            (never scrolls away), vertically centred on the rail's edge, and
-            above the sticky page header so the full circle always shows. */}
+            near the top (never scrolls away), and above the sticky page
+            header so the full circle always shows. */}
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className="absolute left-0 top-1/2 z-40 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-surface text-muted-2 shadow-md transition-colors hover:text-foreground"
+          className="absolute left-0 top-4 z-40 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-surface text-muted-2 shadow-md transition-colors hover:text-foreground"
           aria-label={collapsed ? "Expand AI Copilot" : "Collapse AI Copilot"}
           title={collapsed ? "Expand AI Copilot" : "Collapse AI Copilot"}
         >

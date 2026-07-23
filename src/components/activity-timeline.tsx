@@ -3,6 +3,7 @@
 import { useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { addActivityNoteAction } from "@/lib/actions";
@@ -18,6 +19,8 @@ interface TimelineEvent {
   description?: string;
   actor: string;
   actorRole: "system" | "staff" | "client";
+  /** Agent name for agent-run events — resolves the real platform logo. */
+  agentIdentity?: string;
 }
 
 /* ── Event derivation ────────────────────────────────────────────────── */
@@ -46,6 +49,7 @@ function eventsFromJobs(jobs: Job[]): TimelineEvent[] {
         : j.title || undefined,
     actor: "Staff",
     actorRole: "staff" as const,
+    agentIdentity: j.agentName,
   }));
 }
 
@@ -211,7 +215,11 @@ function EventRow({ event, isLast }: { event: TimelineEvent; isLast: boolean }) 
           cfg.dotClass,
         )}
       >
-        <Icon name={cfg.icon} className={cn("h-4 w-4", cfg.iconClass)} />
+        {event.agentIdentity ? (
+          <AgentMark identity={event.agentIdentity} icon={cfg.icon} className={cn("h-4 w-4", cfg.iconClass)} />
+        ) : (
+          <Icon name={cfg.icon} className={cn("h-4 w-4", cfg.iconClass)} />
+        )}
       </div>
 
       {/* Content */}
