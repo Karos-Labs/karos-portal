@@ -259,7 +259,11 @@ export function SeoGeoPanel({
   const measuredEngines = engines.filter((e) => e.status === "measured");
   const unmeasuredEngines = engines.filter((e) => e.status !== "measured");
   const unwiredNames = engines.filter((e) => e.status === "not-wired").map((e) => e.name);
-  const competitorCount = trackedCompetitors?.length ?? Math.max(0, insights.roster.length - 1);
+  // An EMPTY tracked list with a legacy snapshot still renders snapshot rows, so
+  // fall back to the snapshot roster count rather than announcing "no competitors".
+  const competitorCount = trackedCompetitors?.length
+    ? trackedCompetitors.length
+    : Math.max(0, insights.roster.length - 1);
   const noEnginesMeasured = measuredEngines.length === 0;
 
   // Live-vs-snapshot roster drift (QA Fix 1): the comparison follows the CURRENT

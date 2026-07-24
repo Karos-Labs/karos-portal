@@ -97,12 +97,31 @@ export interface Gazetteer {
  * bare label is only added when it's distinctive enough (≥4 chars) to avoid false hits on
  * common words.
  */
+const GENERIC_DOMAIN_LABELS = new Set([
+  "www", "com", "net", "org", "co", "app", "web", "site", "shop", "store", "blog", "news", "en", "he", "il",
+]);
+
+/**
+ * Best-effort brand label from a registrable domain: the LAST meaningful label
+ * before the public-suffix tail — "tech.walla.co.il" → "walla" (not "tech"),
+ * "en.mapstr.com" → "mapstr", "calcalistech.com" → "calcalistech". Without this,
+ * section-subdomain sites key/alias on their subdomain ("tech"), which both
+ * mis-identifies the brand and word-matches unrelated answer text.
+ */
+function brandLabelFromDomain(domain: string | null): string | null {
+  if (!domain) return null;
+  const labels = domain.split(".").filter(Boolean);
+  if (labels.length === 0) return null;
+  const candidates = labels.slice(0, -1).filter((l) => l.length >= 3 && !GENERIC_DOMAIN_LABELS.has(l));
+  return candidates.length ? candidates[candidates.length - 1] : labels[0];
+}
+
 function aliasesFromWebsite(url: string | undefined | null): string[] {
   const domain = rootDomain(url);
   if (!domain) return [];
   const aliases = [domain];
-  const label = domain.split(".")[0];
-  if (label.length >= 4) aliases.push(label);
+  const label = brandLabelFromDomain(domain);
+  if (label && label.length >= 4) aliases.push(label);
   return aliases;
 }
 
@@ -128,12 +147,26 @@ function uniqueAliases(aliases: string[]): string[] {
  * stripped of generic agency suffixes + punctuation.
  */
 export function normalizeBrandKey(name: string, url?: string): string {
-  const domainRoot = rootDomain(url)?.split(".")[0];
+  const domainRoot = brandLabelFromDomain(rootDomain(url));
   if (domainRoot && domainRoot.length >= 3) return domainRoot;
   return name
     .toLowerCase()
     .replace(/\b(ai|agency|consulting|labs?|studio|inc|llc|ltd|co|group|the|and|&)\b/g, "")
     .replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Every identity key for a brand: the name-derived key plus the url-derived key
+ * when they differ. Cross-surface matching (snapshot roster names ↔ competitor
+ * rows with urls ↔ discovered brands) must test ALL keys on both sides — a
+ * name-only vs url-only comparison misses brands whose display name isn't their
+ * domain label ("CTech by Calcalist" vs calcalistech.com).
+ */
+export function brandKeys(name: string, url?: string): string[] {
+  const nameKey = normalizeBrandKey(name);
+  if (!url) return [nameKey];
+  const urlKey = normalizeBrandKey(name, url);
+  return urlKey === nameKey ? [nameKey] : [nameKey, urlKey];
 }
 
 export function buildGazetteer(

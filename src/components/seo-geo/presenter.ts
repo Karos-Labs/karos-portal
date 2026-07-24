@@ -16,6 +16,7 @@ import {
   ENGINE_PROVIDERS,
   GEO_READINESS_CHECKS,
   SEO_CHECKS,
+  brandKeys,
   computeCheckScore,
   engineVisibilityScore,
   findMention,
@@ -39,7 +40,17 @@ export interface TrackedCompetitorRef {
   url?: string;
 }
 
-const refKey = (t: TrackedCompetitorRef) => normalizeBrandKey(t.name, t.url);
+/** All identity keys for a tracked ref (name-derived + url-derived). */
+const refKeys = (t: TrackedCompetitorRef) => brandKeys(t.name, t.url);
+
+/** First map hit across any of the brand's identity keys. */
+function lookupByKeys<T>(map: Map<string, T>, keys: string[]): T | undefined {
+  for (const k of keys) {
+    const hit = map.get(k);
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
 
 /* ── Score tiles ──────────────────────────────────────────────────── */
 
@@ -285,12 +296,16 @@ function buildBrandRows(
   let drafts: Draft[];
 
   if (tracked && tracked.length > 0) {
+    // Snapshot rosters store display NAMES only, so the snapshot side is keyed by
+    // the name-derived key; each tracked ref probes with ALL its identity keys
+    // (name + url) — one-sided keying is the "CTech by Calcalist" bug.
     const snapshot = new Map(
       cat.brandMentions.filter((b) => !b.isClient).map((b) => [normalizeBrandKey(b.name), b.mentions] as const),
     );
-    const discovered = new Map(
-      (insights.discoveredBrands ?? []).map((d) => [normalizeBrandKey(d.name, d.url), d] as const),
-    );
+    const discovered = new Map<string, NonNullable<SeoGeoInsights["discoveredBrands"]>[number]>();
+    for (const d of insights.discoveredBrands ?? []) {
+      for (const k of brandKeys(d.name, d.url)) if (!discovered.has(k)) discovered.set(k, d);
+    }
     drafts = [
       {
         name: clientName,
@@ -299,10 +314,10 @@ function buildBrandRows(
         mentions: cat.brandMentions.find((b) => b.isClient)?.mentions ?? 0,
       },
       ...tracked.map((t): Draft => {
-        const key = refKey(t);
-        const snap = snapshot.get(key);
+        const keys = refKeys(t);
+        const snap = lookupByKeys(snapshot, keys);
         if (snap !== undefined) return { name: t.name, isClient: false, url: t.url ?? null, mentions: snap };
-        const disc = discovered.get(key);
+        const disc = lookupByKeys(discovered, keys);
         if (disc) {
           return {
             name: t.name,
@@ -545,10 +560,12 @@ export interface RosterDrift {
 export function buildRosterDrift(insights: SeoGeoInsights, tracked?: TrackedCompetitorRef[]): RosterDrift {
   if (!tracked || tracked.length === 0) return { added: [], removed: [], isStale: false };
   const snapshotKeys = new Set(insights.roster.slice(1).map((n) => normalizeBrandKey(n)));
-  const discoveredKeys = new Set((insights.discoveredBrands ?? []).map((d) => normalizeBrandKey(d.name, d.url)));
-  const trackedKeys = new Set(tracked.map(refKey));
+  const discoveredKeys = new Set(
+    (insights.discoveredBrands ?? []).flatMap((d) => brandKeys(d.name, d.url)),
+  );
+  const trackedKeys = new Set(tracked.flatMap(refKeys));
   const added = tracked
-    .filter((t) => !snapshotKeys.has(refKey(t)) && !discoveredKeys.has(refKey(t)))
+    .filter((t) => !refKeys(t).some((k) => snapshotKeys.has(k) || discoveredKeys.has(k)))
     .map((t) => t.name);
   const removed = insights.roster.slice(1).filter((n) => !trackedKeys.has(normalizeBrandKey(n)));
   return { added, removed, isStale: added.length > 0 || removed.length > 0 };
@@ -571,10 +588,10 @@ export function buildDiscoveredViews(
   insights: SeoGeoInsights,
   tracked?: TrackedCompetitorRef[],
 ): DiscoveredView[] {
-  const trackedKeys = new Set((tracked ?? []).map(refKey));
+  const trackedKeys = new Set((tracked ?? []).flatMap(refKeys));
   const total = insights.citationSummary?.totalMeasuredAnswers ?? 0;
   return (insights.discoveredBrands ?? [])
-    .filter((d) => !trackedKeys.has(normalizeBrandKey(d.name, d.url)))
+    .filter((d) => !brandKeys(d.name, d.url).some((k) => trackedKeys.has(k)))
     .map((d) => ({
       name: d.name,
       url: d.url ?? null,
@@ -610,14 +627,16 @@ export function buildRosterChips(
     ];
   }
   const snapshotKeys = new Set(insights.roster.slice(1).map((n) => normalizeBrandKey(n)));
-  const discoveredKeys = new Set((insights.discoveredBrands ?? []).map((d) => normalizeBrandKey(d.name, d.url)));
+  const discoveredKeys = new Set(
+    (insights.discoveredBrands ?? []).flatMap((d) => brandKeys(d.name, d.url)),
+  );
   return [
     clientChip,
     ...tracked.map((t) => ({
       name: t.name,
       isClient: false,
       url: t.url ?? null,
-      pending: !snapshotKeys.has(refKey(t)) && !discoveredKeys.has(refKey(t)),
+      pending: !refKeys(t).some((k) => snapshotKeys.has(k) || discoveredKeys.has(k)),
     })),
   ];
 }

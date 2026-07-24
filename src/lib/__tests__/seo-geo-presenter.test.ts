@@ -527,3 +527,46 @@ describe("tracked-list alignment (competitor side-by-side)", () => {
     expect(chips[2]).toMatchObject({ name: "Ghost Co", pending: true });
   });
 });
+
+describe("name-vs-domain identity (CTech regression)", () => {
+  const ctechInsights = () =>
+    insights({
+      roster: ["Acme", "CTech by Calcalist"],
+      perEngine: [
+        engineRow({
+          brandMentions: [
+            { name: "Acme", mentions: 3, isClient: true },
+            { name: "CTech by Calcalist", mentions: 4, isClient: false },
+          ],
+          category: {
+            promptsMeasured: 10,
+            mentionRate: 0.3,
+            citationRate: 0.1,
+            firstPositionRate: 0.1,
+            shareOfVoice: 20,
+            netSentiment: 0,
+            ghostCitationRate: 0,
+            topCompetitor: null,
+            brandMentions: [
+              { name: "Acme", mentions: 3, isClient: true },
+              { name: "CTech by Calcalist", mentions: 4, isClient: false },
+            ],
+          },
+        }),
+      ],
+    });
+
+  it("matches a tracked ref whose display name differs from its domain label", () => {
+    const tracked = [{ name: "CTech by Calcalist", url: "https://www.calcalistech.com" }];
+    const [chatgpt] = buildEngineViews(ctechInsights(), tracked, null);
+    const row = chatgpt.brands.find((b) => b.name === "CTech by Calcalist")!;
+    expect(row.measured).toBe(true);
+    expect(row.line).toBe("named in 4 of 10 answers");
+
+    const drift = buildRosterDrift(ctechInsights(), tracked);
+    expect(drift).toEqual({ added: [], removed: [], isStale: false });
+
+    const chips = buildRosterChips(ctechInsights(), tracked, null);
+    expect(chips[1]).toMatchObject({ name: "CTech by Calcalist", pending: false });
+  });
+});

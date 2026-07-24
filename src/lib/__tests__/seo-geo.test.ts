@@ -4,10 +4,13 @@ import {
   SEO_CHECKS,
   TARGET_MENTION,
   analyzeAnswer,
+  brandKeys,
   buildAnswerGrid,
   buildGazetteer,
   buildRecommendations,
   classifyIntent,
+  countBrandInAnswers,
+  normalizeBrandKey,
   dedupeNearDuplicates,
   selectByIntentQuota,
   computeCheckGaps,
@@ -383,5 +386,47 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
     ];
     const recs = buildRecommendations(computeCheckGaps(SEO_CHECKS, dup, "SEO"), 5);
     expect(recs.filter((r) => r.title === "Title tags ≤ 60 chars, unique, keyword-placed").length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("brand identity keys (cross-surface matching)", () => {
+  it("derives the brand label from subdomain-sectioned hosts, not the section", () => {
+    expect(normalizeBrandKey("Walla Tech", "https://tech.walla.co.il")).toBe("walla");
+    expect(normalizeBrandKey("Mapstr", "https://en.mapstr.com")).toBe("mapstr");
+    expect(normalizeBrandKey("CTech by Calcalist", "https://www.calcalistech.com")).toBe("calcalistech");
+  });
+
+  it("returns both name and url keys when they differ, one when they agree", () => {
+    expect(brandKeys("CTech by Calcalist", "https://www.calcalistech.com")).toEqual([
+      "ctechbycalcalist",
+      "calcalistech",
+    ]);
+    expect(brandKeys("Whop", "https://whop.com")).toEqual(["whop"]);
+    expect(brandKeys("Yelp")).toEqual(["yelp"]);
+  });
+
+  it("never aliases a brand to its generic subdomain label", () => {
+    const g = buildGazetteer("Client", undefined, [
+      { company: "Walla Tech", url: "https://tech.walla.co.il" },
+    ]);
+    expect(g.competitors["Walla Tech"]).toContain("walla");
+    expect(g.competitors["Walla Tech"]).not.toContain("tech");
+  });
+});
+
+describe("countBrandInAnswers", () => {
+  it("counts word-boundary mentions per engine, skipping unavailable answers", () => {
+    const answers = [
+      { engine: "chatgpt" as const, answerText: "Try NewRival for this.", captureTier: "MEASURED" as const },
+      { engine: "chatgpt" as const, answerText: "NewRivalish is unrelated.", captureTier: "MEASURED" as const },
+      { engine: "gemini" as const, answerText: "newrival.com is popular.", captureTier: "MEASURED" as const },
+      { engine: "claude" as const, answerText: "NewRival again", captureTier: "UNAVAILABLE" as const },
+    ];
+    const counts = countBrandInAnswers(answers, ["NewRival", "newrival.com"]);
+    expect(counts.mentions).toBe(2);
+    expect(counts.perEngine).toEqual([
+      { engine: "chatgpt", mentions: 1 },
+      { engine: "gemini", mentions: 1 },
+    ]);
   });
 });

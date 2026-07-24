@@ -5,7 +5,7 @@ import {
   listClientCompetitors,
   updateClientCompetitor,
 } from "@/lib/data";
-import { normalizeBrandKey, type SeoGeoInsights } from "@/lib/seo-geo";
+import { brandKeys, normalizeBrandKey, type SeoGeoInsights } from "@/lib/seo-geo";
 
 /** Max auto-created competitor rows per capture (pool candidates — the tracker still shows 5). */
 const MAX_DISCOVERED_CREATES = 5;
@@ -31,7 +31,13 @@ export async function syncCompetitorsFromVisibility(
   insights: SeoGeoInsights,
 ): Promise<{ updated: number; created: number }> {
   const existing = await listClientCompetitors(clientId);
-  const byKey = new Map(existing.map((c) => [normalizeBrandKey(c.company, c.url), c] as const));
+  // Every pool row is reachable under ALL its identity keys (name-derived and
+  // url-derived) — one-sided keying misses rows whose display name isn't their
+  // domain label and would create duplicates.
+  const byKey = new Map<string, (typeof existing)[number]>();
+  for (const c of existing) {
+    for (const k of brandKeys(c.company, c.url)) if (!byKey.has(k)) byKey.set(k, c);
+  }
 
   const mentionsByKey = new Map(
     insights.competitorsNamed.map((c) => [normalizeBrandKey(c.name), c.mentions] as const),
@@ -42,7 +48,7 @@ export async function syncCompetitorsFromVisibility(
   // absent from competitorsNamed means measured-but-never-named, i.e. zero.
   for (const rosterName of insights.roster.slice(1)) {
     const key = normalizeBrandKey(rosterName);
-    const row = byKey.get(key) ?? existing.find((c) => normalizeBrandKey(c.company) === key);
+    const row = byKey.get(key);
     if (!row) continue;
     const mentions = mentionsByKey.get(key) ?? 0;
     if (row.llmMentions === mentions && row.llmMentionsAt === insights.capturedAt) continue;
@@ -57,15 +63,15 @@ export async function syncCompetitorsFromVisibility(
   let created = 0;
   for (const brand of insights.discoveredBrands ?? []) {
     if (created >= MAX_DISCOVERED_CREATES) break;
-    const key = normalizeBrandKey(brand.name, brand.url);
-    if (byKey.has(key) || existing.some((c) => normalizeBrandKey(c.company) === key)) {
+    const keys = brandKeys(brand.name, brand.url);
+    const existingRow = keys.map((k) => byKey.get(k)).find(Boolean);
+    if (existingRow) {
       // Already in the pool under another spelling — refresh its measurement instead.
-      const row = byKey.get(key) ?? existing.find((c) => normalizeBrandKey(c.company) === key)!;
-      if (row.llmMentions !== brand.mentions || row.llmMentionsAt !== insights.capturedAt) {
-        await updateClientCompetitor(row.id, {
+      if (existingRow.llmMentions !== brand.mentions || existingRow.llmMentionsAt !== insights.capturedAt) {
+        await updateClientCompetitor(existingRow.id, {
           llmMentions: brand.mentions,
           llmMentionsAt: insights.capturedAt,
-          ...(row.url || !brand.url ? {} : { url: brand.url }),
+          ...(existingRow.url || !brand.url ? {} : { url: brand.url }),
           updatedAt: Date.now(),
         });
         updated++;

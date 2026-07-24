@@ -89,3 +89,26 @@ changed on branch `claude/competitor-tracking-audit-1cee56`.
   icon until the next intel run replaces report rows, or staff edit them).
 - Discovered-brand counts label honestly: totals span all prompts; per-engine counts
   are category-prompts-only, matching the comparison denominators.
+
+## Post-review hardening (same day)
+
+An adversarial alignment review of the first commit surfaced four defects, all fixed:
+
+- **Name↔URL key asymmetry (blocking):** snapshot rosters key by display name while
+  tracked refs keyed by URL domain, so competitors whose name ≠ domain label
+  ("CTech by Calcalist" / calcalistech.com) rendered as pending and double-appeared
+  in the drift banner. All cross-surface matching now probes every identity key via
+  `brandKeys(name, url)` (presenter, drift, chips, competitor-sync, data layer).
+- **Subdomain label keys:** `tech.walla.co.il` no longer keys/aliases as "tech" —
+  `brandLabelFromDomain` picks the last meaningful label before the public suffix
+  ("walla"), which also prevents false mention matches on the word "tech".
+- **LLM signal durability:** `replaceReportCompetitors` now carries
+  `llmMentions`/`llmMentionsAt` (and missing URLs) onto matching new rows and retains
+  measured AI-visible rivals the new report dropped, so a standalone competitor
+  re-analysis can no longer silently reset LLM-aware selection.
+- **Subtitle count fallback** when the tracked list is empty but a legacy snapshot
+  still renders roster rows.
+
+Known limitation: "5 competitors per client" is guaranteed only when the pool has ≥5
+rows (intel seeding produces 8–15; sparse hand-created clients can run
+`backfillCompetitorsAction` from the dashboard, and Geektime was seeded with 9).

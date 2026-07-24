@@ -58,7 +58,7 @@ import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { computeBoardCapacity } from "@/lib/task-dedup";
 import { encryptCredentials, decryptCredentials } from "@/lib/crypto/token-cipher";
 import { randomUUID } from "node:crypto";
-import type { SeoGeoInsights } from "@/lib/seo-geo";
+import { brandKeys, type SeoGeoInsights } from "@/lib/seo-geo";
 
 /* ----------------------------- helpers ----------------------------- */
 
@@ -1053,6 +1053,13 @@ export async function deleteClientCompetitor(id: string): Promise<void> {
  * Atomically replace all report-imported competitors for a client.
  * Uses a single Firestore write batch so a partial failure cannot leave a mix
  * of old and new rows — either all rows are replaced or none are changed.
+ *
+ * The measured AI-visibility signal survives the replace: incoming rows inherit
+ * `llmMentions`/`llmMentionsAt` (and a missing `url`) from the old row for the
+ * same brand, and old rows the engines actually named (llmMentions > 0) that the
+ * new report dropped are retained rather than deleted — a standalone re-analysis
+ * must never silently reset LLM-aware competitor selection. Brand identity is
+ * matched across ALL name/url keys (brandKeys) so renamed spellings still merge.
  */
 export async function replaceReportCompetitors(
   clientId: string,
@@ -1064,11 +1071,34 @@ export async function replaceReportCompetitors(
     .where("source", "==", "report")
     .get();
 
+  const oldRows = existing.docs.map((d) => d.data() as Omit<ClientCompetitor, "id">);
+  const oldByKey = new Map<string, Omit<ClientCompetitor, "id">>();
+  for (const r of oldRows) {
+    for (const k of brandKeys(r.company, r.url)) if (!oldByKey.has(k)) oldByKey.set(k, r);
+  }
+
+  const carriedOld = new Set<Omit<ClientCompetitor, "id">>();
+  const merged = rows.map((row) => {
+    const old = brandKeys(row.company, row.url)
+      .map((k) => oldByKey.get(k))
+      .find(Boolean);
+    if (!old) return row;
+    carriedOld.add(old);
+    return {
+      ...row,
+      ...(!row.url && old.url ? { url: old.url } : {}),
+      ...(old.llmMentions !== undefined
+        ? { llmMentions: old.llmMentions, ...(old.llmMentionsAt !== undefined ? { llmMentionsAt: old.llmMentionsAt } : {}) }
+        : {}),
+    };
+  });
+  const survivors = oldRows.filter((r) => !carriedOld.has(r) && (r.llmMentions ?? 0) > 0);
+
   const batch = adminDb().batch();
   for (const doc of existing.docs) {
     batch.delete(doc.ref);
   }
-  for (const row of rows) {
+  for (const row of [...merged, ...survivors]) {
     batch.set(col.clientCompetitors().doc(), row);
   }
   await batch.commit();
