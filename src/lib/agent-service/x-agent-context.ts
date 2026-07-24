@@ -60,6 +60,13 @@ function intakeSection(label: string, intake: AgentIntake | null, seat?: ClientS
       ? `- Engagement roster (activates the engagement lane): ${intake.roster.join(", ")}`
       : "- Engagement roster: none given — engagement lane stays off.",
   );
+  lines.push(
+    intake.premium === true
+      ? "- X Premium: YES (client-confirmed) — long-form posts past 280 characters are allowed where the account's style supports them."
+      : intake.premium === false
+        ? "- X Premium: NO (client-confirmed) — hard 280-character limit on every post."
+        : "- X Premium: auto-detect — check the account's checkmark and its own posting style live before drafting anything past 280 characters.",
+  );
   return lines.join("\n");
 }
 

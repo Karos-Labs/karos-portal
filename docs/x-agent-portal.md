@@ -66,6 +66,17 @@ Craft gates (each one is a hard auto-reject; fix before delivering):
 - Quote-comments: keep the post text at 250 characters or fewer — the quoted
   link costs 23 characters of X's 280 budget, and the portal's pick flow
   attaches it to the same post.
+- Post length: 280 characters is the default hard cap. LONG-FORM (past 280,
+  X Premium only) is allowed ONLY when the intake marks the account
+  "X Premium: YES", or intake says auto-detect AND your live read of the
+  account confirms Premium (checkmark) — and only where long-form fits the
+  account's own posting style or the client asked for it. At most one
+  long-form post per account per batch, in the knowledge/explainer or POV
+  lane, capped at 2,000 characters, structured like a tight blog post (hook
+  first, no filler). Everything else stays under 280. When intake says
+  "X Premium: NO", the 280 cap is absolute. This clause supersedes any
+  blanket 280 gate in the skill text for the posts it covers; mark such
+  drafts' char line past 280 honestly (the portal labels them long-form).
 - Banned anywhere in a post: leverage, synergize, holistic, supercharge,
   unlock; em dashes, exclamation marks, hashtags, emoji, thread-boi framing.
 - Never make human control/approval the headline of a post; a light aside at

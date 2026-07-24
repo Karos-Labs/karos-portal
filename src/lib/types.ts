@@ -1327,6 +1327,11 @@ export interface AgentIntake {
   offLimits: string;
   /** Engagement roster @handles; empty = engagement lane stays off. */
   roster: string[];
+  /**
+   * X Premium (long-form posts past 280 chars). Undefined = auto-detect: the
+   * agent reads the account's checkmark and its own posting style at run time.
+   */
+  premium?: boolean;
   createdBy: string;
   createdAt: number;
   updatedAt: number;

@@ -28,6 +28,7 @@ function toIntakeView(intake: AgentIntake | null): XIntakeView | null {
     ...(intake.comeAcross ? { comeAcross: intake.comeAcross } : {}),
     offLimits: intake.offLimits,
     roster: intake.roster,
+    ...(intake.premium !== undefined ? { premium: intake.premium } : {}),
   };
 }
 
