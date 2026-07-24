@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
+import { BrandFavicon } from "@/components/brand-favicon";
 import { updateClientProfileAction } from "@/lib/actions";
 import type { Client, SocialLinks } from "@/lib/types";
 
@@ -215,18 +216,15 @@ export function ClientProfilePanel({ client }: { client: Client }) {
     <div className="px-1">
       {/* Company header */}
       <div className="mb-2.5 flex items-center gap-2.5">
-        {client.logoUrl || client.brandingGuidelines?.logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={(client.logoUrl || client.brandingGuidelines?.logoUrl)!}
-            alt={client.name}
-            className="h-8 w-8 shrink-0 rounded-md border border-border bg-surface-2 object-contain"
-          />
-        ) : (
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-xs font-semibold text-foreground/80">
-            {client.name.slice(0, 2).toUpperCase()}
-          </div>
-        )}
+        <BrandFavicon
+          src={client.logoUrl || client.brandingGuidelines?.logoUrl}
+          website={client.website}
+          name={client.name}
+          accentColor={client.accentColor ?? "#2dff9e"}
+          faviconSize={64}
+          className="h-8 w-8 rounded-md text-xs"
+          imgClassName="border border-border bg-surface-2 object-contain"
+        />
         <span className="flex-1 truncate text-sm font-semibold text-foreground">{client.name}</span>
         {!editing && (
           <div className="flex items-center gap-1">

@@ -127,7 +127,7 @@ function uniqueAliases(aliases: string[]): string[] {
  * entity). The registrable domain root is the strongest identity; otherwise the name
  * stripped of generic agency suffixes + punctuation.
  */
-function normalizeBrandKey(name: string, url?: string): string {
+export function normalizeBrandKey(name: string, url?: string): string {
   const domainRoot = rootDomain(url)?.split(".")[0];
   if (domainRoot && domainRoot.length >= 3) return domainRoot;
   return name
@@ -505,8 +505,12 @@ export interface PresenceBreakdown {
  * category prompts (those that don't), then count in how many the brand actually
  * appeared across measured engines. Mirrors the a3 "4 of 4 brand / 0 of 16 category".
  */
-export function computePresence(probes: GeoProbe[], gazetteer: Gazetteer): PresenceBreakdown {
-  const isBrandPrompt = (prompt: string) => gazetteer.client.some((a) => findMention(prompt, a) >= 0);
+export function computePresence(
+  probes: GeoProbe[],
+  gazetteer: Gazetteer,
+  isBrandPrompt: (prompt: string) => boolean = (prompt) =>
+    gazetteer.client.some((a) => findMention(prompt, a) >= 0),
+): PresenceBreakdown {
   const byPrompt = new Map<string, { brand: boolean; named: boolean }>();
   for (const p of probes) {
     if (p.captureTier === "UNAVAILABLE") continue;
@@ -1201,6 +1205,50 @@ export function computeCompetitorsNamed(
     .sort((a, b) => b.mentions - a.mentions);
 }
 
+/* ── Discovered brands (open extraction from the answers) ─────────── */
+
+/**
+ * A brand the engines named in their answers that is NOT on the tracked roster.
+ * Candidates are proposed by one extraction pass over the raw answer texts, then
+ * every count below is deterministically re-verified with the same word-boundary
+ * matcher used for roster brands — the model proposes, findMention counts.
+ * This is the discovery signal that feeds LLM-aware competitor selection.
+ */
+export interface DiscoveredBrand {
+  name: string;
+  /** Primary website when resolvable (from answer citations or extraction). */
+  url?: string;
+  /** Measured answers (across engines, all prompt intents) naming the brand. */
+  mentions: number;
+  /** Per-engine mention counts over CATEGORY prompts only — like-for-like with
+   *  the client-vs-competitor comparison denominators. Engines with ≥1 mention. */
+  perEngine: Array<{ engine: EngineId; mentions: number }>;
+}
+
+/**
+ * Deterministically count a candidate brand across raw answers. Pure so the UI
+ * and tests can re-derive counts; returns per-engine breakdown plus the total
+ * number of answers that name the brand.
+ */
+export function countBrandInAnswers(
+  answers: Array<{ engine: EngineId; answerText: string; captureTier: CaptureTier }>,
+  aliases: string[],
+): { mentions: number; perEngine: Array<{ engine: EngineId; mentions: number }> } {
+  const perEngine = new Map<EngineId, number>();
+  let mentions = 0;
+  for (const a of answers) {
+    if (a.captureTier === "UNAVAILABLE" || !a.answerText.trim()) continue;
+    if (aliases.some((alias) => findMention(a.answerText, alias) >= 0)) {
+      mentions += 1;
+      perEngine.set(a.engine, (perEngine.get(a.engine) ?? 0) + 1);
+    }
+  }
+  return {
+    mentions,
+    perEngine: [...perEngine.entries()].map(([engine, m]) => ({ engine, mentions: m })),
+  };
+}
+
 /* ── Stored insights record ───────────────────────────────────────── */
 
 /**
@@ -1261,6 +1309,9 @@ export interface SeoGeoInsights {
   citationSummary: CitationSummary;
   /** Competitors named across measured answers, with counts. */
   competitorsNamed: Array<{ name: string; mentions: number }>;
+  /** Non-roster brands the engines named this run (open extraction, verified counts).
+   *  Absent on snapshots captured before brand discovery shipped. */
+  discoveredBrands?: DiscoveredBrand[];
   /** Roster used for share-of-voice (client first). */
   roster: string[];
   updatedAt: number;

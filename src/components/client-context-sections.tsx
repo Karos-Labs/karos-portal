@@ -1,10 +1,9 @@
-/* eslint-disable @next/next/no-img-element */
-
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { BrandFavicon } from "@/components/brand-favicon";
 import { BrandingModal } from "@/components/branding-modal";
 import { addCompetitorByNameAction, removeCompetitorAction } from "@/lib/actions";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
@@ -13,37 +12,8 @@ import type { BrandColor, BrandingGuidelines, ClientCompetitor } from "@/lib/typ
 /* ── Competitor favicon with fallback ────────────────────────────────── */
 
 export function CompetitorFavicon({ url }: { url?: string }) {
-  const [failed, setFailed] = useState(false);
-
-  if (!url || failed) {
-    return (
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-        <Icon name="Building2" className="h-3.5 w-3.5 text-muted-2" />
-      </span>
-    );
-  }
-
-  let domain: string;
-  try {
-    const normalized = url.startsWith("http") ? url : `https://${url}`;
-    domain = new URL(normalized).hostname;
-  } catch {
-    return (
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-        <Icon name="Building2" className="h-3.5 w-3.5 text-muted-2" />
-      </span>
-    );
-  }
-
   return (
-    <img
-      src={`https://www.google.com/s2/favicons?domain=${domain}&sz=16`}
-      alt=""
-      width={16}
-      height={16}
-      className="h-4 w-4 shrink-0 rounded-[3px]"
-      onError={() => setFailed(true)}
-    />
+    <BrandFavicon website={url} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
   );
 }
 

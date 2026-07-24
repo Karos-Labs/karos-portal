@@ -19,6 +19,7 @@ import {
   computeCheckScore,
   engineVisibilityScore,
   findMention,
+  normalizeBrandKey,
   type EngineId,
   type SeoGeoInsights,
   type SubMetrics,
@@ -26,6 +27,19 @@ import {
 } from "@/lib/seo-geo";
 
 export type Tone = "success" | "warning" | "danger" | "info" | "neutral";
+
+/**
+ * A currently-tracked competitor (the sidebar's tracked-5), passed by the page
+ * so every panel surface renders THE SAME competitors as the Competitor Track —
+ * side by side with the sidebar, never the frozen snapshot's roster alone.
+ * `url` drives the brand favicon.
+ */
+export interface TrackedCompetitorRef {
+  name: string;
+  url?: string;
+}
+
+const refKey = (t: TrackedCompetitorRef) => normalizeBrandKey(t.name, t.url);
 
 /* ── Score tiles ──────────────────────────────────────────────────── */
 
@@ -172,6 +186,10 @@ export type EngineStatus = "measured" | "no-data" | "not-wired";
 export interface EngineBrandRow {
   name: string;
   isClient: boolean;
+  /** Website for the brand favicon (client website / competitor url), if known. */
+  url: string | null;
+  /** False = tracked now but not present in this snapshot — counts arrive on the next capture. */
+  measured: boolean;
   /** Bar width relative to the engine's most-mentioned brand, 0–100. */
   pctOfMax: number;
   line: string;
@@ -239,7 +257,104 @@ const UNMEASURED_COPY = {
   },
 } as const;
 
-export function buildEngineViews(insights: SeoGeoInsights): EngineView[] {
+/**
+ * Per-brand comparison rows for one measured engine. When the CURRENT tracked
+ * list is supplied, rows are built from it (same competitors as the sidebar,
+ * side by side): counts come from the snapshot roster when the competitor was
+ * on it, from the discovery pass when the engines named it unprompted, and a
+ * "not measured yet" placeholder otherwise. Snapshot brands that are no longer
+ * tracked are dropped here and surfaced via buildRosterDrift. Without a tracked
+ * list (legacy callers/tests), the frozen snapshot rows render as before.
+ */
+function buildBrandRows(
+  cat: SubMetrics,
+  engine: EngineId,
+  insights: SeoGeoInsights,
+  tracked?: TrackedCompetitorRef[],
+  clientWebsite?: string | null,
+): EngineBrandRow[] {
+  const n = cat.promptsMeasured;
+  const clientName = insights.roster[0] ?? cat.brandMentions.find((b) => b.isClient)?.name ?? "";
+
+  interface Draft {
+    name: string;
+    isClient: boolean;
+    url: string | null;
+    mentions: number | null;
+  }
+  let drafts: Draft[];
+
+  if (tracked && tracked.length > 0) {
+    const snapshot = new Map(
+      cat.brandMentions.filter((b) => !b.isClient).map((b) => [normalizeBrandKey(b.name), b.mentions] as const),
+    );
+    const discovered = new Map(
+      (insights.discoveredBrands ?? []).map((d) => [normalizeBrandKey(d.name, d.url), d] as const),
+    );
+    drafts = [
+      {
+        name: clientName,
+        isClient: true,
+        url: clientWebsite?.trim() || null,
+        mentions: cat.brandMentions.find((b) => b.isClient)?.mentions ?? 0,
+      },
+      ...tracked.map((t): Draft => {
+        const key = refKey(t);
+        const snap = snapshot.get(key);
+        if (snap !== undefined) return { name: t.name, isClient: false, url: t.url ?? null, mentions: snap };
+        const disc = discovered.get(key);
+        if (disc) {
+          return {
+            name: t.name,
+            isClient: false,
+            url: t.url ?? disc.url ?? null,
+            mentions: disc.perEngine.find((pe) => pe.engine === engine)?.mentions ?? 0,
+          };
+        }
+        return { name: t.name, isClient: false, url: t.url ?? null, mentions: null };
+      }),
+    ];
+  } else {
+    drafts = cat.brandMentions.map((b) => ({
+      name: b.name,
+      isClient: b.isClient,
+      url: b.isClient ? clientWebsite?.trim() || null : null,
+      mentions: b.mentions,
+    }));
+  }
+
+  // Measured rows first, highest mention count on top; pending rows sink to the
+  // bottom in tracked order (they have no counts to sort by).
+  const measured = drafts.filter((d) => d.mentions !== null);
+  const pending = drafts.filter((d) => d.mentions === null);
+  measured.sort((a, b) => (b.mentions ?? 0) - (a.mentions ?? 0));
+  const max = Math.max(1, ...measured.map((d) => d.mentions ?? 0));
+
+  return [
+    ...measured.map((d) => ({
+      name: d.name,
+      isClient: d.isClient,
+      url: d.url,
+      measured: true,
+      pctOfMax: Math.round(((d.mentions ?? 0) / max) * 100),
+      line: `named in ${fraction(d.mentions ?? 0, n, "answers")}`,
+    })),
+    ...pending.map((d) => ({
+      name: d.name,
+      isClient: d.isClient,
+      url: d.url,
+      measured: false,
+      pctOfMax: 0,
+      line: "measured on the next snapshot",
+    })),
+  ];
+}
+
+export function buildEngineViews(
+  insights: SeoGeoInsights,
+  tracked?: TrackedCompetitorRef[],
+  clientWebsite?: string | null,
+): EngineView[] {
   const byEngine = new Map(insights.perEngine.map((e) => [e.engine, e]));
   return ENGINE_ORDER.map((engine) => {
     const row = byEngine.get(engine) ?? null;
@@ -284,13 +399,11 @@ export function buildEngineViews(insights: SeoGeoInsights): EngineView[] {
       brandMentions: row.brandMentions,
     };
     const n = cat.promptsMeasured;
-    const max = Math.max(1, ...cat.brandMentions.map((b) => b.mentions));
-    const allZero = cat.brandMentions.every((b) => b.mentions === 0);
     const citedCount = Math.round(cat.citationRate * n);
     const firstCount = Math.round(cat.firstPositionRate * n);
-    // Highest mention count first so low-relevance (0-mention) competitors sink
-    // to the bottom instead of cluttering the top of the comparison.
-    const sortedBrands = [...cat.brandMentions].sort((a, b) => b.mentions - a.mentions);
+    const brands = buildBrandRows(cat, engine, insights, tracked, clientWebsite);
+    // pctOfMax > 0 iff mentions > 0, so this is exactly "no measured brand was named".
+    const allZero = brands.filter((b) => b.measured).every((b) => b.pctOfMax === 0);
 
     return {
       engine,
@@ -302,12 +415,7 @@ export function buildEngineViews(insights: SeoGeoInsights): EngineView[] {
       causeLine: null,
       flagPrefill: null,
       allZero,
-      brands: sortedBrands.map((b) => ({
-        name: b.name,
-        isClient: b.isClient,
-        pctOfMax: Math.round((b.mentions / max) * 100),
-        line: `named in ${fraction(b.mentions, n, "answers")}`,
-      })),
+      brands,
       stats: [
         {
           label: "share of conversation",
@@ -417,6 +525,101 @@ export function buildPresence(insights: SeoGeoInsights): PresenceView {
           }
         : null,
   };
+}
+
+/* ── Roster drift + discovered brands ─────────────────────────────── */
+
+export interface RosterDrift {
+  /** Tracked now but absent from this snapshot (no counts anywhere) — pending the next capture. */
+  added: string[];
+  /** Measured in this snapshot but no longer tracked — their bars are dropped from the comparison. */
+  removed: string[];
+  isStale: boolean;
+}
+
+/**
+ * Compare the CURRENT tracked list against the snapshot's frozen roster.
+ * A tracked competitor covered by the discovery pass is not "added" — it has
+ * real measured counts even though it wasn't on the capture roster.
+ */
+export function buildRosterDrift(insights: SeoGeoInsights, tracked?: TrackedCompetitorRef[]): RosterDrift {
+  if (!tracked || tracked.length === 0) return { added: [], removed: [], isStale: false };
+  const snapshotKeys = new Set(insights.roster.slice(1).map((n) => normalizeBrandKey(n)));
+  const discoveredKeys = new Set((insights.discoveredBrands ?? []).map((d) => normalizeBrandKey(d.name, d.url)));
+  const trackedKeys = new Set(tracked.map(refKey));
+  const added = tracked
+    .filter((t) => !snapshotKeys.has(refKey(t)) && !discoveredKeys.has(refKey(t)))
+    .map((t) => t.name);
+  const removed = insights.roster.slice(1).filter((n) => !trackedKeys.has(normalizeBrandKey(n)));
+  return { added, removed, isStale: added.length > 0 || removed.length > 0 };
+}
+
+export interface DiscoveredView {
+  name: string;
+  url: string | null;
+  mentions: number;
+  line: string;
+}
+
+/**
+ * Non-roster brands the engines named this run, minus any that are now tracked
+ * (those already render inside the comparison). This is the "who ranks well on
+ * the LLMs that we are NOT tracking yet" surface — the discovery signal that
+ * also feeds auto-selection via competitor-sync.
+ */
+export function buildDiscoveredViews(
+  insights: SeoGeoInsights,
+  tracked?: TrackedCompetitorRef[],
+): DiscoveredView[] {
+  const trackedKeys = new Set((tracked ?? []).map(refKey));
+  const total = insights.citationSummary?.totalMeasuredAnswers ?? 0;
+  return (insights.discoveredBrands ?? [])
+    .filter((d) => !trackedKeys.has(normalizeBrandKey(d.name, d.url)))
+    .map((d) => ({
+      name: d.name,
+      url: d.url ?? null,
+      mentions: d.mentions,
+      line: total > 0 ? `named in ${fraction(d.mentions, total, "answers")}` : `named ${d.mentions} times`,
+    }));
+}
+
+export interface RosterChip {
+  name: string;
+  isClient: boolean;
+  url: string | null;
+  /** Tracked now but not yet measured — appears in the next snapshot. */
+  pending: boolean;
+}
+
+/** Methodology "who we compare you against" chips — the CURRENT tracked list when given. */
+export function buildRosterChips(
+  insights: SeoGeoInsights,
+  tracked?: TrackedCompetitorRef[],
+  clientWebsite?: string | null,
+): RosterChip[] {
+  const clientChip: RosterChip = {
+    name: insights.roster[0] ?? "",
+    isClient: true,
+    url: clientWebsite?.trim() || null,
+    pending: false,
+  };
+  if (!tracked || tracked.length === 0) {
+    return [
+      clientChip,
+      ...insights.roster.slice(1).map((name) => ({ name, isClient: false, url: null, pending: false })),
+    ];
+  }
+  const snapshotKeys = new Set(insights.roster.slice(1).map((n) => normalizeBrandKey(n)));
+  const discoveredKeys = new Set((insights.discoveredBrands ?? []).map((d) => normalizeBrandKey(d.name, d.url)));
+  return [
+    clientChip,
+    ...tracked.map((t) => ({
+      name: t.name,
+      isClient: false,
+      url: t.url ?? null,
+      pending: !snapshotKeys.has(refKey(t)) && !discoveredKeys.has(refKey(t)),
+    })),
+  ];
 }
 
 /* ── Gaps ─────────────────────────────────────────────────────────── */

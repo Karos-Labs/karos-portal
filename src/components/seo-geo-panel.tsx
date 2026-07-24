@@ -1,17 +1,22 @@
 import { Badge, Card, CardTitle, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { BrandFavicon } from "@/components/brand-favicon";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 import {
   buildContextLine,
+  buildDiscoveredViews,
   buildEngineViews,
   buildGapViews,
   buildPresence,
   buildPromptViews,
+  buildRosterChips,
+  buildRosterDrift,
   buildScoreViews,
   genericFlagPrefill,
   unwiredRequestPrefill,
   type EngineView,
   type ScoreView,
+  type TrackedCompetitorRef,
 } from "@/components/seo-geo/presenter";
 import { TONE_COLORS } from "@/components/seo-geo/tones";
 import { Disclosure } from "@/components/seo-geo/disclosure";
@@ -137,24 +142,35 @@ function EngineCard({ view }: { view: EngineView }) {
       ) : (
         <ul className="space-y-2">
           {view.brands.map((b) => (
-            <li key={b.name}>
+            <li key={b.name} className={b.measured ? undefined : "opacity-55"}>
               <div className="mb-0.5 flex items-center justify-between gap-2 text-xs">
-                <span className={b.isClient ? "font-semibold text-foreground" : "text-muted"}>
-                  {b.name}
-                  {b.isClient && <span className="ml-1 text-[10px] text-muted-2">(you)</span>}
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <BrandFavicon website={b.url} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+                  <span
+                    className={
+                      (b.isClient ? "font-semibold text-foreground" : "text-muted") + " truncate"
+                    }
+                  >
+                    {b.name}
+                    {b.isClient && <span className="ml-1 text-[10px] text-muted-2">(you)</span>}
+                  </span>
                 </span>
                 <span className="whitespace-nowrap font-mono text-[11px] text-muted-2">{b.line}</span>
               </div>
-              <div className="h-2 overflow-hidden rounded-sm bg-surface-3">
-                <div
-                  className="h-full rounded-sm"
-                  style={{
-                    width: `${b.pctOfMax}%`,
-                    background: b.isClient ? "var(--neon)" : "var(--info)",
-                    opacity: b.isClient ? 1 : 0.55,
-                  }}
-                />
-              </div>
+              {b.measured ? (
+                <div className="h-2 overflow-hidden rounded-sm bg-surface-3">
+                  <div
+                    className="h-full rounded-sm"
+                    style={{
+                      width: `${b.pctOfMax}%`,
+                      background: b.isClient ? "var(--neon)" : "var(--info)",
+                      opacity: b.isClient ? 1 : 0.55,
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="h-2 rounded-sm border border-dashed border-border" />
+              )}
             </li>
           ))}
         </ul>
@@ -202,9 +218,15 @@ function UnmeasuredEngineCard({ view }: { view: EngineView }) {
 export function SeoGeoPanel({
   insights,
   trackedCompetitors,
+  clientWebsite,
 }: {
   insights: SeoGeoInsights | null;
-  trackedCompetitors?: string[];
+  /** The CURRENT tracked-5 (same selector as the sidebar) — keeps every panel
+   *  surface side-by-side with the Competitor Track instead of the frozen
+   *  snapshot roster. */
+  trackedCompetitors?: TrackedCompetitorRef[];
+  /** Client website — drives the client's own favicon in the comparison rows. */
+  clientWebsite?: string | null;
 }) {
   if (!insights) {
     return (
@@ -227,7 +249,7 @@ export function SeoGeoPanel({
   }
 
   const scores = buildScoreViews(insights);
-  const engines = buildEngineViews(insights);
+  const engines = buildEngineViews(insights, trackedCompetitors, clientWebsite);
   const presence = buildPresence(insights);
   const gaps = buildGapViews(insights.gaps, insights.clientId);
   const prompts = buildPromptViews(insights);
@@ -237,16 +259,14 @@ export function SeoGeoPanel({
   const measuredEngines = engines.filter((e) => e.status === "measured");
   const unmeasuredEngines = engines.filter((e) => e.status !== "measured");
   const unwiredNames = engines.filter((e) => e.status === "not-wired").map((e) => e.name);
-  const competitorCount = Math.max(0, insights.roster.length - 1);
+  const competitorCount = trackedCompetitors?.length ?? Math.max(0, insights.roster.length - 1);
   const noEnginesMeasured = measuredEngines.length === 0;
 
-  // Stale-roster warning (QA Fix 1): snapshot roster vs the current tracked list.
-  const snapshotCompetitors = insights.roster.slice(1); // roster[0] is the client
-  const rosterStale =
-    !!trackedCompetitors &&
-    trackedCompetitors.length > 0 &&
-    (snapshotCompetitors.length !== trackedCompetitors.length ||
-      trackedCompetitors.some((c) => !snapshotCompetitors.includes(c)));
+  // Live-vs-snapshot roster drift (QA Fix 1): the comparison follows the CURRENT
+  // tracked list; this banner explains what changed since the capture.
+  const drift = buildRosterDrift(insights, trackedCompetitors);
+  const discovered = buildDiscoveredViews(insights, trackedCompetitors);
+  const rosterChips = buildRosterChips(insights, trackedCompetitors, clientWebsite);
 
   // Citation leaderboard split (QA Fix 5): "who's quoted instead of you" vs your own baseline.
   const clientCitation = citationLeaderboard.find((r) => r.isClient) ?? null;
@@ -334,15 +354,25 @@ export function SeoGeoPanel({
         )}
       </Card>
 
-      {/* 4 · Engine-by-engine proof: you vs competitors, nothing hidden */}
+      {/* 4 · Engine-by-engine proof: you vs the SAME competitors the sidebar tracks */}
       <Card>
         <CardTitle className="mb-1">You vs competitors on each AI engine</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
           How often each brand gets named when we ask the engines {insights.categoryPresence.total} real
-          buyer questions — excluding the {insights.brandPresence.total} questions that name you directly, so
-          the comparison is like-for-like.
+          buyer question{insights.categoryPresence.total === 1 ? "" : "s"} — excluding the{" "}
+          {insights.brandPresence.total} question{insights.brandPresence.total === 1 ? "" : "s"} that name
+          you directly, so the comparison is like-for-like.
           {competitorCount === 0 && " No competitors tracked yet · ask us to add some."}
         </p>
+        {drift.isStale && (
+          <p className="mb-4 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            Your tracked competitor list changed since this snapshot.
+            {drift.added.length > 0 &&
+              ` ${drift.added.join(", ")} ${drift.added.length === 1 ? "is" : "are"} measured on the next snapshot.`}
+            {drift.removed.length > 0 &&
+              ` ${drift.removed.join(", ")} ${drift.removed.length === 1 ? "is" : "are"} no longer tracked and hidden from the comparison.`}
+          </p>
+        )}
         {measuredEngines.length > 0 && (
           <div className="grid gap-4 lg:grid-cols-3">
             {measuredEngines.map((view) => (
@@ -358,6 +388,31 @@ export function SeoGeoPanel({
           </div>
         )}
       </Card>
+
+      {/* 4b · Brands the engines volunteered that we don't track yet */}
+      {discovered.length > 0 && (
+        <Card>
+          <CardTitle className="mb-1">Also named by the engines</CardTitle>
+          <p className="mb-4 text-xs text-muted-2">
+            Brands the AI engines brought up on their own that aren&apos;t on your tracked list —
+            the strongest candidates for your competitor track. We fold the top ones into your
+            competitor pool automatically.
+          </p>
+          <ul className="space-y-2">
+            {discovered.map((d) => (
+              <li key={d.name} className="flex items-center justify-between gap-2 text-xs">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <BrandFavicon website={d.url} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+                  <span className="truncate text-muted">{d.name}</span>
+                </span>
+                <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-muted-2">
+                  {d.line}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {/* 5 · The prioritized action plan, in the client's language */}
       <Card>
@@ -394,21 +449,49 @@ export function SeoGeoPanel({
               Who we compare you against
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {insights.roster.map((name, i) => (
+              {rosterChips.map((chip, i) => (
                 <span
-                  key={`${name}-${i}`}
+                  key={`${chip.name}-${i}`}
                   className={
-                    i === 0
-                      ? "inline-flex items-center rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-neon"
-                      : "inline-flex items-center rounded-[4px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted"
+                    chip.isClient
+                      ? "inline-flex items-center gap-1 rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-neon"
+                      : "inline-flex items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted"
                   }
                 >
-                  {name}
-                  {i === 0 && <span className="ml-1">(you)</span>}
+                  <BrandFavicon website={chip.url} faviconSize={32} className="h-3 w-3 rounded-[2px]" />
+                  {chip.name}
+                  {chip.isClient && <span>(you)</span>}
+                  {chip.pending && <span className="text-muted-2">· next snapshot</span>}
                 </span>
               ))}
             </div>
           </div>
+          {quotedInstead.length > 0 && (
+            <div className="mt-3 border-t border-border pt-3">
+              <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                Who the engines quote as sources
+              </p>
+              <ul className="space-y-1.5">
+                {quotedInstead.slice(0, 8).map((r) => (
+                  <li key={r.domain} className="flex items-center gap-2 text-xs">
+                    <BrandFavicon website={r.domain} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+                    <span className="min-w-0 flex-1 truncate text-muted">{r.domain}</span>
+                    <span className="w-20 shrink-0">
+                      <Meter pct={(r.citations / leaderboardMax) * 100} color="var(--info)" />
+                    </span>
+                    <span className="w-6 shrink-0 text-right font-mono text-[11px] text-muted-2">
+                      {r.citations}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-[11px] text-muted-2">
+                {clientCitation
+                  ? `Your site was cited ${clientCitation.citations} time${clientCitation.citations === 1 ? "" : "s"} across these answers.`
+                  : "Your site was never cited as a source this run — earning citations from these domains' territory is what moves the visibility score."}
+              </p>
+            </div>
+          )}
           <p className="mt-3 text-[11px] text-muted-2">
             We ask every engine the same questions on every snapshot so results stay comparable run
             to run.

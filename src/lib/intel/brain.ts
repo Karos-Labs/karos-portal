@@ -352,7 +352,7 @@ Generate ONLY the markdown below. Heading names must match EXACTLY — they driv
 
 | Company | Market Tier | Price Range | Overlap | Deep Dive |
 |---------|-------------|-------------|---------|-----------|
-[8-15 rows. Market Tier: Leader | Challenger | Niche. Overlap: High | Medium | Low-Med | Low. Deep Dive: Yes for top 3. Omit Price Range cell if unpublished — leave blank, never write "N/A".]
+[8-15 rows. Company cell MUST be "Name (domain.com)" — the live website domain you verified for that competitor, e.g. "Acme (acme.com)"; omit the parenthetical ONLY if the company genuinely has no website. Market Tier: Leader | Challenger | Niche. Overlap: High | Medium | Low-Med | Low. Deep Dive: Yes for top 3. Omit Price Range cell if unpublished — leave blank, never write "N/A".]
 
 ---
 

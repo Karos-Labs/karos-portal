@@ -805,6 +805,20 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
     } catch (err) {
       console.error("[onboard] Failed to persist SEO/GEO insights (non-fatal):", err);
     }
+    // Feed the measured AI-visibility signal back into the competitor pool:
+    // roster rows get llmMentions refreshed, engine-named non-roster brands are
+    // added as auto-seed candidates. The tracked-5 selector weighs llmMentions
+    // first, so the sidebar (and the next capture's roster) converge on the
+    // rivals that actually win the AI conversation. Non-fatal by design.
+    try {
+      const { syncCompetitorsFromVisibility } = await import("./competitor-sync");
+      const sync = await syncCompetitorsFromVisibility(clientId, seoGeoResult.value.insights);
+      if (sync.updated || sync.created) {
+        console.info(`[onboard] Competitor visibility sync: ${sync.updated} updated, ${sync.created} discovered`);
+      }
+    } catch (err) {
+      console.error("[onboard] Competitor visibility sync failed (non-fatal):", err);
+    }
   } else {
     console.error("[onboard] SEO/GEO research failed:", seoGeoResult.reason);
     seo = `> RESEARCH UNAVAILABLE: The SEO audit failed for this run (live data fetch error). Do NOT fabricate SEO findings. Use "—" for any SEO metric this research would have supplied.`;

@@ -50,3 +50,39 @@ describe("computeTrackedCompetitors", () => {
     expect(result.map((c) => c.id)).toEqual(["m2", "m1"]);
   });
 });
+
+describe("LLM-visibility weighting", () => {
+  it("ranks a measured AI-visible rival above any analyst-scored one", () => {
+    const analystFavorite = competitor({
+      id: "analyst",
+      threatLevel: "HIGH",
+      marketTier: "Leader",
+      overlap: "High",
+    });
+    const aiVisible = competitor({ id: "ai", threatLevel: "LOW", llmMentions: 2 });
+
+    const result = computeTrackedCompetitors([analystFavorite, aiVisible], 1);
+    expect(result.map((c) => c.id)).toEqual(["ai"]);
+  });
+
+  it("breaks llmMentions ties with the analyst signals", () => {
+    const a = competitor({ id: "a", llmMentions: 3, threatLevel: "LOW" });
+    const b = competitor({ id: "b", llmMentions: 3, threatLevel: "HIGH" });
+    const result = computeTrackedCompetitors([a, b], 2);
+    expect(result.map((c) => c.id)).toEqual(["b", "a"]);
+  });
+
+  it("treats measured-zero and never-measured the same as no boost", () => {
+    const zero = competitor({ id: "zero", llmMentions: 0, threatLevel: "MEDIUM" });
+    const unmeasured = competitor({ id: "un", threatLevel: "HIGH" });
+    const result = computeTrackedCompetitors([zero, unmeasured], 2);
+    expect(result.map((c) => c.id)).toEqual(["un", "zero"]);
+  });
+
+  it("still lets manual competitors occupy the first slots regardless of llmMentions", () => {
+    const manual = competitor({ id: "m", source: "manual", createdAt: 5 });
+    const aiVisible = competitor({ id: "ai", llmMentions: 9 });
+    const result = computeTrackedCompetitors([aiVisible, manual], 1);
+    expect(result.map((c) => c.id)).toEqual(["m"]);
+  });
+});

@@ -13,11 +13,14 @@ import {
   buildGazetteer,
   computeCheckGaps,
   computeCheckScore,
+  countBrandInAnswers,
   INTENT_LABELS,
   buildAnswerGrid,
   buildRecommendations,
   classifyIntent,
   dedupeNearDuplicates,
+  normalizeBrandKey,
+  rootDomain,
   selectByIntentQuota,
   computeCitationLeaderboard,
   computeCitationSummary,
@@ -28,6 +31,8 @@ import {
   computeVisibilityGaps,
   computeVisibilityIndex,
   tagPromptIntents,
+  type DiscoveredBrand,
+  type EngineAnswer,
   type EngineId,
   type Gazetteer,
   type GeoProbe,
@@ -407,6 +412,8 @@ interface CaptureResult {
   probes: GeoProbe[];
   promptSet: string[];
   roster: string[];
+  /** Raw engine answers — retained for the brand-discovery pass, never persisted. */
+  answers: EngineAnswer[];
 }
 
 async function runVisibilityCapture(
@@ -439,7 +446,122 @@ async function runVisibilityCapture(
     throw new Error("GEO visibility capture failed: every engine call errored — no measured answers this run");
   }
 
-  return { probes, promptSet, roster: [client.name, ...roster.map((c) => c.company)] };
+  return { probes, promptSet, roster: [client.name, ...roster.map((c) => c.company)], answers };
+}
+
+/* ── Brand discovery (open extraction from the raw answers) ────────── */
+
+/** Max candidate brands the extraction may propose (before verification). */
+const DISCOVERY_CANDIDATE_CAP = 24;
+/** A discovered brand must be named in at least this many answers to be kept. */
+const DISCOVERY_MIN_MENTIONS = 2;
+/** Max discovered brands persisted per run. */
+const DISCOVERY_KEEP = 10;
+/** Per-answer char budget fed to the extraction call (brands cluster early in answers). */
+const DISCOVERY_ANSWER_CHARS = 1200;
+
+/**
+ * Find brands the engines named that are NOT on the tracked roster. The gazetteer
+ * only counts roster brands, so without this pass an engine-dominant rival the
+ * intel report missed is invisible — exactly the brand we most need to track.
+ *
+ * One model call proposes candidate entities from the raw answer texts; every
+ * count is then re-derived deterministically with the same word-boundary matcher
+ * used for roster brands (the model proposes, findMention counts). URLs come from
+ * the extraction or from a cited domain whose label matches the brand.
+ * Best-effort: any failure returns [] and never blocks the capture.
+ */
+async function discoverAnswerBrands(
+  client: Client,
+  answers: EngineAnswer[],
+  gazetteer: Gazetteer,
+  isCategoryPrompt: (prompt: string) => boolean,
+): Promise<DiscoveredBrand[]> {
+  const usable = answers.filter((a) => a.captureTier !== "UNAVAILABLE" && a.answerText.trim());
+  if (usable.length === 0) return [];
+  // Per-engine counts are category-only so the panel can compare them 1:1 with
+  // the roster rows (same denominators); the total keeps every prompt intent.
+  const usableCategory = usable.filter((a) => isCategoryPrompt(a.prompt));
+
+  const rosterKeys = new Set<string>([
+    normalizeBrandKey(gazetteer.client[0], gazetteer.clientDomain ?? undefined),
+    ...gazetteer.client.map((a) => normalizeBrandKey(a)),
+    ...Object.entries(gazetteer.competitors).flatMap(([name, aliases]) => [
+      normalizeBrandKey(name),
+      ...aliases.map((a) => normalizeBrandKey(a)),
+    ]),
+  ]);
+
+  const corpus = usable
+    .map((a) => `[${a.engine}] Q: ${a.prompt}\n${a.answerText.slice(0, DISCOVERY_ANSWER_CHARS)}`)
+    .join("\n---\n");
+
+  try {
+    const { generateObject } = await import("ai");
+    const { z } = await import("zod");
+    const schema = z.object({
+      brands: z.array(
+        z.object({
+          name: z.string().describe("The brand/company/product name exactly as it appears in the answers."),
+          url: z.string().optional().describe("Primary website domain, e.g. 'example.com'. Omit only if genuinely unknown."),
+        }),
+      ),
+    });
+
+    const excluded = [gazetteer.client[0], ...Object.keys(gazetteer.competitors)].join(", ");
+    const { object, usage } = await generateObject({
+      model: anthropic(MODELS.SONNET),
+      schema,
+      system:
+        "You extract competitor brand names from AI-assistant answers for a market-visibility tracker. " +
+        "Return ONLY real companies/brands/products that the answers recommend or name as options in the category — " +
+        "no generic terms, no place names, no publications quoted as sources, no feature names. " +
+        `Return at most ${DISCOVERY_CANDIDATE_CAP} distinct brands.`,
+      prompt: `Client (never include): ${gazetteer.client.join(" / ")}\nAlready tracked (never include): ${excluded || "—"}\n\nANSWERS:\n${corpus}\n\nExtract every OTHER brand the answers name as an option in this category.`,
+      maxOutputTokens: 1200,
+    });
+
+    logger.logUsage({
+      clientId: client.id, agentId: null, agentName: "GEO Brand Discovery",
+      modelName: MODELS.SONNET, operation: "geo_brand_discovery",
+      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+    });
+
+    const seen = new Set<string>();
+    const verified: DiscoveredBrand[] = [];
+    for (const cand of object.brands.slice(0, DISCOVERY_CANDIDATE_CAP)) {
+      const name = cand.name.trim();
+      if (name.length < 2) continue;
+      const key = normalizeBrandKey(name, cand.url);
+      if (!key || rosterKeys.has(key) || seen.has(key)) continue;
+      seen.add(key);
+
+      // Deterministic recount with the same alias expansion roster brands get.
+      const domain = rootDomain(cand.url);
+      const aliases = [name, ...(domain ? [domain] : [])];
+      const label = domain?.split(".")[0];
+      if (label && label.length >= 4) aliases.push(label);
+      const counts = countBrandInAnswers(usable, aliases);
+      if (counts.mentions < DISCOVERY_MIN_MENTIONS) continue;
+      const categoryCounts = countBrandInAnswers(usableCategory, aliases);
+
+      // URL fallback: a cited domain whose label matches the brand key.
+      let url = domain ?? undefined;
+      if (!url) {
+        const cited = usable
+          .flatMap((a) => a.citations)
+          .find((d) => normalizeBrandKey(d.split(".")[0]) === key);
+        if (cited) url = cited;
+      }
+
+      verified.push({ name, ...(url ? { url } : {}), mentions: counts.mentions, perEngine: categoryCounts.perEngine });
+    }
+
+    return verified.sort((a, b) => b.mentions - a.mentions).slice(0, DISCOVERY_KEEP);
+  } catch (err) {
+    console.warn("[seo-geo] Brand discovery failed (non-fatal):", err);
+    return [];
+  }
 }
 
 /* ── Brief builders (markdown fed to downstream doc generation) ───── */
@@ -514,6 +636,13 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
       "",
       "Competitors named in the answers: " +
         insights.competitorsNamed.map((c) => `${c.name} (${c.mentions})`).join(", "),
+    );
+  }
+  if (insights.discoveredBrands?.length) {
+    lines.push(
+      "",
+      "Brands named by the engines that are NOT on the tracked roster (measured mention counts — candidates for competitor tracking): " +
+        insights.discoveredBrands.map((b) => `${b.name} (${b.mentions})`).join(", "),
     );
   }
 
@@ -593,7 +722,7 @@ export async function runSeoGeoResearch(
   const capture: CaptureResult =
     captureResult.status === "fulfilled"
       ? captureResult.value
-      : { probes: [], promptSet: [], roster: [client.name] };
+      : { probes: [], promptSet: [], roster: [client.name], answers: [] };
 
   if (auditResult.status === "rejected") console.error("[seo-geo] Site audit failed after retry:", auditResult.reason);
   if (captureResult.status === "rejected") console.error("[seo-geo] Visibility capture failed:", captureResult.reason);
@@ -620,8 +749,17 @@ export async function runSeoGeoResearch(
   const geoReadiness = computeCheckScore(GEO_READINESS_CHECKS, audit.geoChecks);
   // enginesTotal is the ENGINE roster (a3's five), not the competitor roster.
   const visibility = computeVisibilityIndex(perEngine, ENGINE_ROSTER.length);
-  const presence = computePresence(capture.probes, gazetteer);
+  // Presence split uses the SAME intent classifier as the per-engine category
+  // metrics, so the panel's "N category / M brand questions" subtitle can never
+  // disagree with its own engine cards (previously presence used a raw alias
+  // match while the cards used classifyIntent — off-by-one subtitles).
+  const presence = computePresence(capture.probes, gazetteer, (prompt) => !isCategoryPrompt(prompt));
   const rosterSharePct = computeRosterSharePct(capture.probes, gazetteer, isCategoryPrompt);
+
+  // Open brand discovery: which brands did the engines name that we do NOT track?
+  // Feeds LLM-aware competitor selection (competitor-sync) + the panel's
+  // "also named by the engines" list. Best-effort, never blocks the run.
+  const discoveredBrands = await discoverAnswerBrands(client, capture.answers, gazetteer, isCategoryPrompt);
 
   // PDF/report contract: intent-tagged prompts, the per-question × per-engine grid,
   // the citation-domain leaderboard, ghost-citation summary, and competitors named.
@@ -665,6 +803,7 @@ export async function runSeoGeoResearch(
     citationLeaderboard,
     citationSummary,
     competitorsNamed,
+    discoveredBrands,
     roster: capture.roster,
     updatedAt: now,
   };

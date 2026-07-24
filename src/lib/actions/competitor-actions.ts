@@ -34,7 +34,11 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
     competitors: z.array(
       z.object({
         company: z.string().describe("Exact competitor name as provided."),
-        url: z.string().optional().describe("Primary website URL. Omit if unknown."),
+        url: z.string().optional().describe(
+          "Primary website domain, e.g. 'example.com'. REQUIRED for any real company you recognize — " +
+          "the UI derives the competitor's favicon and AI-answer matching aliases from it. " +
+          "Omit ONLY if the company genuinely has no website or you cannot identify it.",
+        ),
         positioning: z.string().optional().describe(
           "STRICT: 3–5 words max. Noun phrase only — NO verbs, NO sentences, NO punctuation. " +
           "Good: 'Enterprise marketing automation' | 'AI-driven B2B outreach' | 'SMB payroll platform'. " +
@@ -329,7 +333,11 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
     competitors: z.array(
       z.object({
         company: z.string().describe("Exact competitor company name."),
-        url: z.string().optional().describe("Primary website URL. Omit if unknown."),
+        url: z.string().optional().describe(
+          "Primary website domain, e.g. 'example.com'. REQUIRED for any real company you recognize — " +
+          "the UI derives the competitor's favicon and AI-answer matching aliases from it. " +
+          "Omit ONLY if the company genuinely has no website or you cannot identify it.",
+        ),
         positioning: z.string().optional().describe(
           "STRICT: 3–5 words max. Noun phrase only — NO verbs, NO sentences, NO punctuation.",
         ),

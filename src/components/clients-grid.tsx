@@ -7,34 +7,23 @@ import { Card, Badge, Button, Input, Textarea, Label } from "@/components/ui";
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { updateClientAction, deleteClientAction } from "@/lib/actions";
-import { cn, initials } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { BrandFavicon } from "@/components/brand-favicon";
 import type { Asset, Client, Job } from "@/lib/types";
 
 /* ── Client avatar: logo or initials fallback ────────────────────────── */
 
 function ClientAvatar({ client }: { client: Client }) {
-  if (client.logoUrl) {
-    return (
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-surface-2">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={client.logoUrl}
-          alt={client.name}
-          className="h-full w-full object-contain p-1"
-        />
-      </div>
-    );
-  }
   return (
-    <div
-      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-sm font-semibold"
-      style={{
-        background: (client.accentColor ?? "#FF6B2C") + "1f",
-        color: client.accentColor ?? "#FF6B2C",
-      }}
-    >
-      {initials(client.name)}
-    </div>
+    <BrandFavicon
+      src={client.logoUrl || client.brandingGuidelines?.logoUrl}
+      website={client.website}
+      name={client.name}
+      accentColor={client.accentColor ?? "#FF6B2C"}
+      faviconSize={128}
+      className="h-11 w-11 rounded-md text-sm"
+      imgClassName="border border-border bg-surface-2 object-contain p-1"
+    />
   );
 }
 

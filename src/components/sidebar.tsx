@@ -12,6 +12,7 @@ import { useActiveClient } from "@/lib/active-client-context";
 import { ClientDocuments } from "@/components/client-documents";
 import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
+import { BrandFavicon } from "@/components/brand-favicon";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import type { AppUser, Client, Role } from "@/lib/types";
 
@@ -151,23 +152,15 @@ function ClientContextPicker({ clients }: { clients: Client[] }) {
                         isActive ? "bg-neon-soft" : "hover:bg-surface-2",
                       )}
                     >
-                      {logoUrl ? (
-                        <Image
-                          src={logoUrl!}
-                          alt=""
-                          width={24}
-                          height={24}
-                          className="h-6 w-6 shrink-0 rounded-[5px] border border-border bg-surface-2 object-contain"
-                          unoptimized
-                        />
-                      ) : (
-                        <div
-                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-semibold"
-                          style={{ background: accentColor + "1f", color: accentColor }}
-                        >
-                          {initials(client.name)}
-                        </div>
-                      )}
+                      <BrandFavicon
+                        src={logoUrl}
+                        website={client.website}
+                        name={client.name}
+                        accentColor={accentColor}
+                        faviconSize={64}
+                        className="h-6 w-6 rounded-[5px] text-[10px]"
+                        imgClassName="border border-border bg-surface-2 object-contain"
+                      />
                       <span
                         className={cn(
                           "text-sm font-medium",
@@ -365,26 +358,15 @@ export function Sidebar({
       {/* Client header */}
       <div className="border-t border-border pt-4">
         <div className="mb-1 flex items-center gap-2 px-1">
-          {activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl ? (
-            <Image
-              src={(activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl)!}
-              alt=""
-              width={24}
-              height={24}
-              className="h-6 w-6 shrink-0 rounded-[5px] border border-border bg-surface-2 object-contain"
-              unoptimized
-            />
-          ) : (
-            <div
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-semibold"
-              style={{
-                background: (activeClient.client.accentColor ?? "#2dff9e") + "1f",
-                color: activeClient.client.accentColor ?? "#2dff9e",
-              }}
-            >
-              {initials(activeClient.client.name)}
-            </div>
-          )}
+          <BrandFavicon
+            src={activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl}
+            website={activeClient.client.website}
+            name={activeClient.client.name}
+            accentColor={activeClient.client.accentColor ?? "#2dff9e"}
+            faviconSize={64}
+            className="h-6 w-6 rounded-[5px] text-[10px]"
+            imgClassName="border border-border bg-surface-2 object-contain"
+          />
           <span className="flex-1 truncate text-sm font-semibold text-foreground">
             {activeClient.client.name}
           </span>

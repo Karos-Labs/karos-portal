@@ -46,9 +46,13 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     listClientCompetitors(id),
   ]);
 
-  // The currently-tracked competitor names (same selector as the sidebar) let the panel
-  // warn when its frozen snapshot's roster has drifted from the live list (QA Fix 1).
-  const trackedCompetitorNames = computeTrackedCompetitors(competitors).map((c) => c.company);
+  // The currently-tracked competitors (same selector as the sidebar) drive the panel's
+  // comparison rows, so the SEO/GEO view and the Competitor Track always show the SAME
+  // five competitors side by side; urls feed the brand favicons (QA Fix 1).
+  const trackedCompetitorRefs = computeTrackedCompetitors(competitors).map((c) => ({
+    name: c.company,
+    ...(c.url ? { url: c.url } : {}),
+  }));
 
   const firstName = user.name?.trim().split(/\s+/)[0];
 
@@ -100,7 +104,11 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           {isClientViewer && (
             <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Search &amp; AI visibility</p>
           )}
-          <SeoGeoPanel insights={seoGeo} trackedCompetitors={trackedCompetitorNames} />
+          <SeoGeoPanel
+            insights={seoGeo}
+            trackedCompetitors={trackedCompetitorRefs}
+            clientWebsite={client.website}
+          />
         </section>
         <section className="space-y-3">
           {isClientViewer && (

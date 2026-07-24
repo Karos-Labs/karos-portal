@@ -722,6 +722,16 @@ export interface ClientCompetitor {
   threatLevel?: "HIGH" | "MEDIUM" | "LOW";
   /** "report" = imported from MD; "manual" = added by an employee */
   source: "report" | "manual";
+  /**
+   * Answers (across all engines) in which the AI answer-engines named this brand
+   * during the most recent SEO/GEO visibility capture. Written by
+   * syncCompetitorsFromVisibility after each capture; absent = never measured.
+   * Dominates the auto-seed priority score so the tracked-5 surfaces the rivals
+   * that actually win the AI conversation, not just the analyst's guess.
+   */
+  llmMentions?: number;
+  /** Epoch millis of the capture that produced llmMentions. */
+  llmMentionsAt?: number;
   createdAt: number;
   updatedAt: number;
 }

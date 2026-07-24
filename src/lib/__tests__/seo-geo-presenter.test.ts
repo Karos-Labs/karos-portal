@@ -3,6 +3,9 @@ import {
   agentLabelFor,
   bucketLabel,
   buildContextLine,
+  buildDiscoveredViews,
+  buildRosterChips,
+  buildRosterDrift,
   buildEngineViews,
   buildGapViews,
   buildPresence,
@@ -436,5 +439,91 @@ describe("flag prefills (fix 4)", () => {
   it("degrades gracefully when capturedAt is invalid instead of throwing", () => {
     expect(formatCaptured(Number.NaN)).toBe("an earlier run");
     expect(genericFlagPrefill(insights({ capturedAt: Number.NaN })).subject).toContain("an earlier run");
+  });
+});
+
+describe("tracked-list alignment (competitor side-by-side)", () => {
+  const trackedInsights = () =>
+    insights({
+      roster: ["Acme", "Rival"],
+      discoveredBrands: [
+        {
+          name: "NewRival",
+          url: "newrival.com",
+          mentions: 4,
+          perEngine: [{ engine: "chatgpt", mentions: 3 }],
+        },
+      ],
+      citationSummary: { totalMeasuredAnswers: 12, answersCited: 1, answersNamed: 2, ghostCitations: 0 },
+    });
+
+  it("renders rows for the CURRENT tracked list, not the frozen snapshot", () => {
+    const tracked = [
+      { name: "Rival", url: "rival.com" },
+      { name: "NewRival", url: "newrival.com" },
+      { name: "Unmeasured Co" },
+    ];
+    const [chatgpt] = buildEngineViews(trackedInsights(), tracked, "https://acme.com");
+    const names = chatgpt.brands.map((b) => b.name);
+    expect(names).toContain("Rival");
+    expect(names).toContain("NewRival");
+    expect(names).toContain("Unmeasured Co");
+
+    const rival = chatgpt.brands.find((b) => b.name === "Rival")!;
+    expect(rival.measured).toBe(true);
+    expect(rival.line).toBe("named in 6 of 10 answers");
+
+    // Discovered brand: counts come from the discovery pass for this engine.
+    const newRival = chatgpt.brands.find((b) => b.name === "NewRival")!;
+    expect(newRival.measured).toBe(true);
+    expect(newRival.line).toBe("named in 3 of 10 answers");
+
+    // Tracked but never measured: explicit placeholder, no invented counts.
+    const pending = chatgpt.brands.find((b) => b.name === "Unmeasured Co")!;
+    expect(pending.measured).toBe(false);
+    expect(pending.line).toBe("measured on the next snapshot");
+
+    // Client row keeps its favicon website + (you) flag position.
+    const client = chatgpt.brands.find((b) => b.isClient)!;
+    expect(client.url).toBe("https://acme.com");
+  });
+
+  it("drops snapshot brands that are no longer tracked and reports them as drift", () => {
+    const tracked = [{ name: "NewRival", url: "newrival.com" }];
+    const [chatgpt] = buildEngineViews(trackedInsights(), tracked, null);
+    expect(chatgpt.brands.map((b) => b.name)).not.toContain("Rival");
+
+    const drift = buildRosterDrift(trackedInsights(), tracked);
+    expect(drift.isStale).toBe(true);
+    expect(drift.removed).toEqual(["Rival"]);
+    // NewRival has discovery data, so it is NOT "added/pending".
+    expect(drift.added).toEqual([]);
+  });
+
+  it("keeps the legacy snapshot rows when no tracked list is supplied", () => {
+    const [chatgpt] = buildEngineViews(trackedInsights());
+    expect(chatgpt.brands.map((b) => b.name)).toEqual(["Rival", "Acme"]);
+    expect(chatgpt.brands.every((b) => b.measured)).toBe(true);
+  });
+
+  it("lists discovered brands minus the ones already tracked", () => {
+    const none = buildDiscoveredViews(trackedInsights(), [{ name: "NewRival", url: "newrival.com" }]);
+    expect(none).toEqual([]);
+
+    const views = buildDiscoveredViews(trackedInsights(), [{ name: "Rival" }]);
+    expect(views).toHaveLength(1);
+    expect(views[0].name).toBe("NewRival");
+    expect(views[0].line).toBe("named in 4 of 12 answers");
+  });
+
+  it("builds roster chips from the tracked list with pending flags", () => {
+    const chips = buildRosterChips(
+      trackedInsights(),
+      [{ name: "Rival", url: "rival.com" }, { name: "Ghost Co" }],
+      "acme.com",
+    );
+    expect(chips[0]).toMatchObject({ name: "Acme", isClient: true, url: "acme.com", pending: false });
+    expect(chips[1]).toMatchObject({ name: "Rival", pending: false });
+    expect(chips[2]).toMatchObject({ name: "Ghost Co", pending: true });
   });
 });

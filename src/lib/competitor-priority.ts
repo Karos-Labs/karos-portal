@@ -17,12 +17,22 @@ const OVERLAP_WEIGHT: Record<ClientCompetitor["overlap"], number> = {
   Low: 0,
 };
 
-/** Higher score = larger / more relevant industry rival, used to rank the auto-seeded pool. */
+/**
+ * Higher score = larger / more relevant industry rival, used to rank the auto-seeded pool.
+ *
+ * Measured AI-answer presence (llmMentions, written back after each SEO/GEO
+ * capture) dominates: a rival the engines actually name outranks any
+ * analyst-assessed threat/tier/overlap combination, because the tracked-5 feeds
+ * the next capture's share-of-voice roster — we want to measure against the
+ * brands that win the AI conversation. Analyst signals break ties and rank the
+ * never-measured pool.
+ */
 function autoSeedScore(c: ClientCompetitor): number {
   const threat = THREAT_WEIGHT[c.threatLevel ?? ""] ?? 0;
   const tier = TIER_WEIGHT[c.marketTier] ?? 0;
   const overlap = OVERLAP_WEIGHT[c.overlap] ?? 0;
-  return threat * 100 + tier * 10 + overlap;
+  const llm = Math.min(c.llmMentions ?? 0, 999);
+  return llm * 1000 + threat * 100 + tier * 10 + overlap;
 }
 
 /**
