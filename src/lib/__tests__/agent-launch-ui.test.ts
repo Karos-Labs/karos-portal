@@ -21,8 +21,13 @@ describe("custom agent launch profiles", () => {
     );
     expect(shorts.attachments.required).toBe(true);
     expect(shorts.attachments.satisfyWithFieldKey).toBe("source_url");
-    expect(x.fields.map((field) => field.key)).toEqual(
-      expect.arrayContaining(["account", "request", "themes", "cadence"]),
+    // The X agent is intake-driven (its data page holds handles, off-limits,
+    // rosters, takes) — the launch brief only scopes the run. It must never
+    // ask for things the agent BUILDS (audience, themes, cadence) or already
+    // stores (account handles).
+    expect(x.fields.map((field) => field.key)).toEqual(["run_scope", "request"]);
+    expect(x.fields.map((field) => field.key)).not.toEqual(
+      expect.arrayContaining(["account", "audience", "themes", "cadence"]),
     );
     expect(new Set([instagram.eyebrow, linkedin.eyebrow, shorts.eyebrow, x.eyebrow]).size).toBe(4);
   });

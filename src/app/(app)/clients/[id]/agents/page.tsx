@@ -19,6 +19,7 @@ import {
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
+import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
 import { assetImages } from "@/lib/asset-images";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
@@ -72,6 +73,8 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   const agentServiceConfigured = isAgentServiceConfigured();
+  // X agent gate: its run modal routes to the data page until intake exists.
+  const xSetup = { ready: await hasXAgentIntake(id), href: `/clients/${id}/x-agent` };
 
   // Client users: their granted custom agents (if any).
   if (!isStaff) {
@@ -103,6 +106,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             runs={runs}
             contextItems={contextItems}
             viewerIsClient
+            xSetup={xSetup}
             {...(spendable !== undefined ? { availableCredits: spendable } : {})}
           />
         ) : (
@@ -169,6 +173,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           runs={toRunRows(jobs, true)}
           contextItems={contextItems}
           viewerIsClient={false}
+          xSetup={xSetup}
         />
       ) : (
         <EmptyState

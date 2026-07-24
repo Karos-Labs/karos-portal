@@ -22,7 +22,9 @@ import { CREDIT_COSTS } from "@/lib/credits";
 import {
   buildCustomAgentPrompt,
   initialAgentBrief,
+  isXAgentIdentity,
   launchProfileFor,
+  X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
 import type { ContextItem, CustomAgent, JobStatus } from "@/lib/types";
 import { cn, relativeTime } from "@/lib/utils";
@@ -227,6 +229,7 @@ export function ClientCustomAgents({
   contextItems,
   viewerIsClient,
   availableCredits,
+  xSetup,
 }: {
   clientId: string;
   agents: RunnableAgentSummary[];
@@ -235,6 +238,8 @@ export function ClientCustomAgents({
   viewerIsClient: boolean;
   /** Spendable credits right now (balance clipped by caps) — client viewers only. */
   availableCredits?: number;
+  /** X agent intake state: gates the X run behind the "X agent data" page. */
+  xSetup?: { ready: boolean; href: string };
 }) {
   const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
 
@@ -279,8 +284,11 @@ export function ClientCustomAgents({
                     <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agent.description}</p>
                   </div>
                 </div>
-                <div className="mt-3">
+                <div className="mt-3 flex items-center gap-2">
                   <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
+                  {xSetup && !xSetup.ready && isXAgentIdentity(agent.key) && (
+                    <Badge tone="warning">Setup needed</Badge>
+                  )}
                 </div>
                 <div className="mt-auto flex items-center justify-between gap-2 pt-4">
                   <p className="text-xs text-muted-2">
@@ -360,6 +368,7 @@ export function ClientCustomAgents({
           clientId={clientId}
           contextItems={contextItems}
           viewerIsClient={viewerIsClient}
+          {...(xSetup ? { xSetup } : {})}
           onClose={() => setRunAgent(null)}
         />
       )}
@@ -375,6 +384,7 @@ function RunCustomAgentModal({
   clients,
   contextItems,
   viewerIsClient,
+  xSetup,
   onClose,
 }: {
   agent: RunnableAgentSummary;
@@ -384,6 +394,8 @@ function RunCustomAgentModal({
   clients?: Array<{ id: string; name: string }>;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
+  /** X agent intake state — when not ready, the modal routes to setup instead of running. */
+  xSetup?: { ready: boolean; href: string };
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -465,6 +477,33 @@ function RunCustomAgentModal({
           <Button variant="subtle" onClick={onClose}>
             Done
           </Button>
+        </div>
+      </Modal>
+    );
+  }
+
+  if (isXAgentIdentity(agent.key) && xSetup && !xSetup.ready) {
+    return (
+      <Modal open onClose={onClose} title={agent.name}>
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-foreground">Set up the X agent data first.</p>
+          <p className="text-xs leading-relaxed text-muted">
+            This agent drafts from the X agent data page: the company page, a seat per
+            person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
+            will not run without it.
+          </p>
+          <div className="flex items-center gap-2 pt-1">
+            <a
+              href={xSetup.href}
+              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
+            >
+              Set up X agent data
+              <Icon name="ArrowRight" className="h-3.5 w-3.5" />
+            </a>
+            <Button variant="ghost" onClick={onClose}>
+              Not now
+            </Button>
+          </div>
         </div>
       </Modal>
     );
@@ -591,7 +630,16 @@ function RunCustomAgentModal({
           canUpload={!viewerIsClient}
         />
 
-        {error && <p className="text-xs text-danger" role="alert">{error}</p>}
+        {error && (
+          <p className="text-xs text-danger" role="alert">
+            {error}
+            {error.startsWith(X_SETUP_REQUIRED_PREFIX) && selectedClientId && (
+              <a href={`/clients/${selectedClientId}/x-agent`} className="ml-1.5 underline">
+                Open X agent data →
+              </a>
+            )}
+          </p>
+        )}
 
         <div className="flex items-center justify-between gap-3 pt-1">
           <p className="text-xs text-muted-2">

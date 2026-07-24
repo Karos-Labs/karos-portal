@@ -287,44 +287,42 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     },
   },
   {
-    matches: (identity) => /(^|[\s_-])x([\s_-]|$)|twitter/.test(identity),
+    // Exact key on purpose: only e13 is intake-driven (setup gate + injected
+    // X agent data). Other imported X/Twitter-ish agents get the generic brief.
+    matches: (identity) => identity.startsWith("karos-x-agent "),
     profile: {
-      eyebrow: "X content system",
-      intro: "Define the account, its growth job, and the territory it can credibly own on X.",
+      eyebrow: "X drafts",
+      intro:
+        "Drafts a week of posts from the X agent data page (the company page, seats, and ongoing drops). Voice, audience, and cadence are built from that data - this form only scopes the run. Draft-only; nothing posts without a human.",
       fields: [
         {
-          key: "run_mode",
-          label: "What should the agent do?",
+          key: "run_scope",
+          label: "Draft for",
           type: "select",
-          defaultValue: "setup",
+          defaultValue: "the company page and every seat",
           options: [
-            { value: "setup", label: "Set up the content system" },
-            { value: "draft", label: "Draft posts or a thread" },
-            { value: "refresh", label: "Refresh the strategy" },
+            { value: "the company page and every seat", label: "Company page and every seat" },
+            { value: "the company page only", label: "Company page only" },
           ],
         },
-        { key: "account", label: "Account", type: "text", required: true, placeholder: "@handle, founder or brand account" },
         {
           key: "request",
-          label: "Growth goal or content request",
+          label: "Anything to lean into this run?",
           type: "textarea",
-          required: true,
-          placeholder: "Build authority with operators who care about practical AI adoption.",
+          helper: "Optional. The agent works from the stored X agent data either way.",
+          placeholder: "A launch to feature, a topic to hit, a seat to focus on.",
         },
-        { key: "audience", label: "Audience", type: "text", placeholder: "Who should follow, reply, or click?" },
-        { key: "themes", label: "Credible themes", type: "textarea", placeholder: "Topics, opinions, proof, and stories this account has permission to own." },
-        { key: "cadence", label: "Cadence or volume", type: "text", placeholder: "e.g. 4 posts/week + one thread" },
       ],
       quickStarts: [
-        "Set up a founder X system focused on a specific operator audience.",
-        "Draft a concise thread from a hard-won company lesson.",
-        "Refresh our X strategy around the new offer and the people it serves.",
+        "Lean into this week's announcement.",
+        "Focus this batch on [person]'s seat.",
+        "React to what happened in the industry this week.",
       ],
-      deliverables: ["X strategy or publish-ready posts", "Content pillars and continuity guidance"],
-      estimate: "~15–30 min",
+      deliverables: ["A week of post drafts across the avenues", "A linked source on every news, quote, and reply post"],
+      estimate: "~15–25 min",
       attachments: {
-        label: "Voice and proof",
-        hint: "Past posts, interview transcripts, research, and proof points help the agent sound like this account.",
+        label: "Extra material for this run (optional)",
+        hint: "One-off references for this batch. Handles, off-limits, rosters, takes, and news live on the X agent data page, not here.",
         accept: DOCUMENTS_AND_IMAGES,
       },
     },
@@ -677,6 +675,22 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     },
   },
 ];
+
+/**
+ * The X agent (e13) runs on stored intake (the client's "X agent data" page),
+ * so its launch flow gets a setup gate the other agents don't need. Client-safe
+ * twin of the server-side isXAgent in agent-service/x-agent-context.ts.
+ */
+export function isXAgentIdentity(key: string): boolean {
+  return key === "karos-x-agent";
+}
+
+/**
+ * The submit cores refuse un-set-up X runs with a message starting with this
+ * prefix; the run modal detects it to render the setup link. One constant so
+ * copy edits cannot silently break the link.
+ */
+export const X_SETUP_REQUIRED_PREFIX = "Set up the X agent data";
 
 export function launchProfileFor(agent: AgentIdentity): AgentLaunchProfile {
   const identity = `${agent.key} ${agent.name}`.toLowerCase();

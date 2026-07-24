@@ -63,6 +63,9 @@ Craft gates (each one is a hard auto-reject; fix before delivering):
   honestly in the post text.
 - Every reactive post cites a real, current source, linked in the first reply,
   with the source's numbers attributed to the source.
+- Quote-comments: keep the post text at 250 characters or fewer — the quoted
+  link costs 23 characters of X's 280 budget, and the portal's pick flow
+  attaches it to the same post.
 - Banned anywhere in a post: leverage, synergize, holistic, supercharge,
   unlock; em dashes, exclamation marks, hashtags, emoji, thread-boi framing.
 - Never make human control/approval the headline of a post; a light aside at
@@ -84,7 +87,9 @@ Craft gates (each one is a hard auto-reject; fix before delivering):
 Deliverables under clients/<slug>/outputs/x-agent/<run-folder>/ with the
 client/ vs internal/ split: client/DRAFTS.md and internal/RUN.md (method,
 live signal, gate checks). DRAFTS.md must keep this exact structure — the
-portal renders it: "# Account N · <name>" headings, "## Avenue N · <lane>"
+portal renders it: "# Account N · <name>" headings (the company section's
+name must contain "Company page"; seat sections carry the person's name),
+"## Avenue N · <lane>"
 blocks, the post text as a "> " blockquote (threads: one blockquote per post
 with **1/3**-style markers between), a `NNN chars` line after each post, and
 "- **" bullets for sources. In RUN.md, only claim a gate passed if you
