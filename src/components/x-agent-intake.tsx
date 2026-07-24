@@ -29,6 +29,8 @@ export interface XIntakeView {
   comeAcross?: string;
   offLimits: string;
   roster: string[];
+  /** true/false = client-confirmed; undefined = auto-detect. */
+  premium?: boolean;
 }
 
 export interface XSeatView {
@@ -77,6 +79,34 @@ function today(): string {
 
 function fieldError(error: string | null) {
   return error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null;
+}
+
+const premiumValue = (p?: boolean) => (p === true ? "yes" : p === false ? "no" : "auto");
+
+/** X Premium tri-state: auto-detect by default, pin it when the client knows. */
+function PremiumField({
+  idPrefix,
+  value,
+  onChange,
+}: {
+  idPrefix: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="max-w-xs">
+      <Label htmlFor={`${idPrefix}-premium`}>X Premium</Label>
+      <Select id={`${idPrefix}-premium`} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="auto">Auto-detect</option>
+        <option value="yes">Yes, has Premium</option>
+        <option value="no">No, standard account</option>
+      </Select>
+      <p className="mt-1 text-xs text-muted">
+        Premium accounts can post past 280 characters, so long-form posts become an option where
+        the account&apos;s style fits. Auto-detect reads the account live.
+      </p>
+    </div>
+  );
 }
 
 /**
@@ -158,13 +188,14 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
   const [comeAcross, setComeAcross] = useState(intake?.comeAcross ?? "");
   const [offLimits, setOffLimits] = useState(intake?.offLimits ?? "");
   const [roster, setRoster] = useState(intake?.roster.join(", ") ?? "");
+  const [premium, setPremium] = useState(premiumValue(intake?.premium));
   const [announcements, setAnnouncements] = useState("");
 
   function save() {
     setError(null);
     setSaved(false);
     start(async () => {
-      const result = await saveXCompanyIntakeAction({ clientId, handle, comeAcross, offLimits, roster, announcements });
+      const result = await saveXCompanyIntakeAction({ clientId, handle, comeAcross, offLimits, roster, premium, announcements });
       if (result.error) {
         setError(result.error);
         return;
@@ -214,6 +245,7 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
             placeholder="Topics, client names, specific numbers."
           />
         </div>
+        <PremiumField idPrefix="xc" value={premium} onChange={setPremium} />
         <RosterInput
           clientId={clientId}
           value={roster}
@@ -254,6 +286,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
   const [handle, setHandle] = useState(seat.intake?.handle ?? "");
   const [offLimits, setOffLimits] = useState(seat.intake?.offLimits ?? "");
   const [roster, setRoster] = useState(seat.intake?.roster.join(", ") ?? "");
+  const [premium, setPremium] = useState(premiumValue(seat.intake?.premium));
   const [take, setTake] = useState("");
   const [topic, setTopic] = useState("");
   const [takeUrl, setTakeUrl] = useState("");
@@ -263,7 +296,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
   function saveSeat() {
     setError(null);
     start(async () => {
-      const result = await saveXSeatIntakeAction({ clientId, seatId: seat.id, handle, offLimits, roster });
+      const result = await saveXSeatIntakeAction({ clientId, seatId: seat.id, handle, offLimits, roster, premium });
       if (result.error) {
         setError(result.error);
         return;
@@ -338,6 +371,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
             placeholder='Topics, names, numbers. Write "nothing" if everything is fair game.'
           />
         </div>
+        <PremiumField idPrefix={`xs-${seat.id}`} value={premium} onChange={setPremium} />
         <p className="text-xs text-muted">
           No voice questions here on purpose: if we already run your LinkedIn we reuse that voice, and
           otherwise we build it from your profile and sharpen it from your real posts and edits.
@@ -401,12 +435,13 @@ function AddSeatForm({ clientId }: { clientId: string }) {
   const [handle, setHandle] = useState("");
   const [offLimits, setOffLimits] = useState("");
   const [roster, setRoster] = useState("");
+  const [premium, setPremium] = useState("auto");
   const [firstTakes, setFirstTakes] = useState("");
 
   function add() {
     setError(null);
     start(async () => {
-      const result = await addXSeatAction({ clientId, name, handle, offLimits, roster, firstTakes });
+      const result = await addXSeatAction({ clientId, name, handle, offLimits, roster, premium, firstTakes });
       if (result.error) {
         setError(result.error);
         return;
@@ -470,6 +505,7 @@ function AddSeatForm({ clientId }: { clientId: string }) {
           idPrefix="xa"
           helper="Optional; this turns on your engagement lane. We propose people worth being near - you approve or edit."
         />
+        <PremiumField idPrefix="xa" value={premium} onChange={setPremium} />
         <div>
           <Label htmlFor="xa-takes">Your first takes</Label>
           <Textarea

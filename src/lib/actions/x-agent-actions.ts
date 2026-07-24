@@ -62,6 +62,14 @@ function parseHandle(raw: string): string | null {
   return `@${trimmed}`;
 }
 
+
+/** "auto" omits the field (agent auto-detects); "yes"/"no" pin it. */
+function parsePremium(raw: string | undefined): { premium?: boolean } {
+  if (raw === "yes") return { premium: true };
+  if (raw === "no") return { premium: false };
+  return {};
+}
+
 /* ─────────────────────────── the forms ─────────────────────────── */
 
 /** Multiline box → clean rows, one per non-empty line, capped. */
@@ -79,6 +87,8 @@ export async function saveXCompanyIntakeAction(input: {
   comeAcross: string;
   offLimits: string;
   roster: string;
+  /** "auto" | "yes" | "no" — X Premium (long-form) for this account. */
+  premium?: string;
   /** First-time setup only: "anything worth announcing right now", one per line. */
   announcements?: string;
 }): Promise<{ error?: string }> {
@@ -97,6 +107,7 @@ export async function saveXCompanyIntakeAction(input: {
     comeAcross: input.comeAcross.trim(),
     offLimits: input.offLimits.trim(),
     roster: parseRoster(input.roster),
+    ...parsePremium(input.premium),
     createdBy: user.uid,
   });
   const now = Date.now();
@@ -115,6 +126,8 @@ export async function addXSeatAction(input: {
   handle: string;
   offLimits: string;
   roster: string;
+  /** "auto" | "yes" | "no" — X Premium (long-form) for this account. */
+  premium?: string;
   /** Setup: "your first 3-5 takes", one rough one-liner per line. */
   firstTakes?: string;
 }): Promise<{ seatId?: string; error?: string }> {
@@ -146,6 +159,7 @@ export async function addXSeatAction(input: {
     handle: parseHandle(input.handle),
     offLimits: input.offLimits.trim(),
     roster: parseRoster(input.roster),
+    ...parsePremium(input.premium),
     createdBy: user.uid,
   });
   const date = new Date(now).toISOString().slice(0, 10);
@@ -225,6 +239,8 @@ export async function saveXSeatIntakeAction(input: {
   handle: string;
   offLimits: string;
   roster: string;
+  /** "auto" | "yes" | "no" — X Premium (long-form) for this account. */
+  premium?: string;
 }): Promise<{ error?: string }> {
   const user = await requireClientAccess(input.clientId);
   const seat = await getClientSeat(input.seatId);
@@ -237,6 +253,7 @@ export async function saveXSeatIntakeAction(input: {
     handle: parseHandle(input.handle),
     offLimits: input.offLimits.trim(),
     roster: parseRoster(input.roster),
+    ...parsePremium(input.premium),
     createdBy: user.uid,
   });
   revalidatePath(`/clients/${input.clientId}/x-agent`);

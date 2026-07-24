@@ -32,10 +32,14 @@ function xIntentUrl(draft: XParsedDraft, text: string): string {
   return `https://x.com/intent/post?${params.toString()}`;
 }
 
-/** "256 chars" → "256 / 280" (X's post limit), fallback to the raw note. */
+/**
+ * "256 chars" → "256 / 280" (X's standard limit). Past 280 the draft is a
+ * long-form post (X Premium accounts only), labeled as such instead.
+ */
 function charLabel(chars?: string): string | null {
   const n = chars?.match(/\d+/)?.[0];
-  return n ? `${n} / 280` : (chars ?? null);
+  if (!n) return chars ?? null;
+  return Number(n) > 280 ? `${Number(n).toLocaleString()} chars · long-form` : `${n} / 280`;
 }
 
 function DraftCard({
@@ -76,7 +80,10 @@ function DraftCard({
       const text = textUsed ?? fullText;
       const composeText =
         textUsed !== undefined ? (isThread ? textUsed.split(/\n{2,}/)[0] : textUsed) : draft.posts[0].text;
-      const url = xIntentUrl(draft, composeText);
+      // Long-form posts make intent URLs unreliable; open a blank compose and
+      // let the copied text carry the post.
+      const url =
+        composeText.length > 2000 ? "https://x.com/compose/post" : xIntentUrl(draft, composeText);
       setPostUrl(url);
       setHandedOff(true);
       window.open(url, "_blank", "noopener");
@@ -119,7 +126,7 @@ function DraftCard({
               <Badge>{draft.posts.length}-post thread</Badge>
             </span>
           ) : charLabel(draft.posts[0]?.chars) ? (
-            <span title="Character count. X's limit per post is 280.">
+            <span title="Character count. Standard X posts cap at 280; long-form needs X Premium.">
               <Badge>{charLabel(draft.posts[0]?.chars)}</Badge>
             </span>
           ) : null}
