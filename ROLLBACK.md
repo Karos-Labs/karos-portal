@@ -41,6 +41,7 @@ whole seed = delete the listed docs; nothing else references them.
 | D8 | Albert's seat handle set to @alberree (was null/pending) | `agentIntake/IPhXqmH8uGyuufsBZr5P` | restore from `_backup/2026-07-22/agentIntake-IPhXqmH8uGyuufsBZr5P-pre-handle.json` |
 | D9 | karos-x-agent instructions v3 ("a week of posts", no "menu") | `customAgents/Qv6qtlZOObDVlSUXDzbb` | restore `instructions` from `_backup/2026-07-22/customAgents-Qv6qtlZOObDVlSUXDzbb-v3-pre.json` |
 | D10 | karos-x-agent instructions v4 (quote-comment 250-char budget, section-title pinning) + client-facing description replacing the lab setup text | `customAgents/Qv6qtlZOObDVlSUXDzbb` | restore `instructions` and `description` from `_backup/2026-07-24/customAgents-Qv6qtlZOObDVlSUXDzbb-v4-pre.json` |
+| D11 | karos-x-agent instructions v5 (X Premium long-form clause) | `customAgents/Qv6qtlZOObDVlSUXDzbb` | restore `instructions` from `_backup/2026-07-24/customAgents-Qv6qtlZOObDVlSUXDzbb-v5-pre.json` |
 
 ## Deploy/config changes (applied 2026-07-22)
 
