@@ -21,7 +21,11 @@ Non-negotiables, restated:
    KEEP/MODIFY/ADD/REMOVE gap report, then STOP and wait for Daniel's
    explicit approval.
 2. Verify origin/main is fetched fresh and matches the deployed build before
-   and during work — others push to main daily.
+   and during work — others push to main daily. Same for the lab repo: fetch
+   karos-agents and confirm the local clone matches its origin (0 ahead / 0
+   behind) before reading contracts from it — the runner bakes the lab repo
+   FROM GITHUB, so on any divergence GitHub is the source of truth for what
+   the agent actually runs on.
 3. The finished integration must match the X agent standard end to end:
    agent-specific documents page (setup-gated), run-time data injection in
    BOTH submit cores, prior-batch run memory, the parsed drafts reader with
