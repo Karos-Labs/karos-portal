@@ -4,18 +4,39 @@
  * The X drafts reader: a parsed draft batch rendered as readable cards —
  * grouped per account, one card per avenue, the post text large and scannable
  * — with pick / edit / skip actions wired into the per-account feedback loop.
+ *
+ * Picking is also the posting hand-off: the pick copies the final text to the
+ * clipboard and opens X's compose window pre-filled (replies pre-addressed to
+ * the target post, quote-comments carrying the quoted URL). Draft-only stays
+ * true — the human presses Post on X.
+ *
  * Chrome-less by design: it embeds wherever outputs live (the asset card in
- * the Library and on the job page).
+ * the archive and on the job page).
  */
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Textarea } from "@/components/ui";
-import { Icon } from "@/components/icon";
+import { Icon, XLogo } from "@/components/icon";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
 import type { XParsedAccount, XParsedDraft } from "@/lib/x-drafts";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted";
+
+/** X compose deep link: text pre-filled, replies addressed, quotes attached. */
+function xIntentUrl(draft: XParsedDraft, text: string): string {
+  const params = new URLSearchParams();
+  params.set("text", draft.quoteUrl ? `${text}\n\n${draft.quoteUrl}` : text);
+  const replyId = draft.replyToUrl?.match(/status\/(\d+)/)?.[1];
+  if (replyId) params.set("in_reply_to", replyId);
+  return `https://x.com/intent/post?${params.toString()}`;
+}
+
+/** "256 chars" → "256 / 280" (X's post limit), fallback to the raw note. */
+function charLabel(chars?: string): string | null {
+  const n = chars?.match(/\d+/)?.[0];
+  return n ? `${n} / 280` : (chars ?? null);
+}
 
 function DraftCard({
   clientId,
@@ -34,14 +55,35 @@ function DraftCard({
   const [pending, start] = useTransition();
   const [mode, setMode] = useState<"idle" | "editing" | "skipping">("idle");
   const [sent, setSent] = useState<SentState | null>(null);
+  const [postUrl, setPostUrl] = useState<string | null>(null);
+  const [handedOff, setHandedOff] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [finalText, setFinalText] = useState("");
   const [reason, setReason] = useState("");
 
   const draftRef = `${accountTitle} · ${draft.avenue}`;
+  const isThread = draft.posts.length > 1;
+  const fullText = draft.posts.map((p) => p.text).join("\n\n");
 
-  function send(action: SentState) {
+  function send(action: SentState, textUsed?: string) {
     setError(null);
+    // Picking IS the posting hand-off. Open compose synchronously (inside the
+    // click gesture, so popup blockers allow it) and copy the full text —
+    // for threads, compose gets post 1 and the clipboard carries every post.
+    // A retry after a failed feedback write must NOT open a second compose.
+    if (action !== "not_posted" && !handedOff) {
+      const text = textUsed ?? fullText;
+      const composeText =
+        textUsed !== undefined ? (isThread ? textUsed.split(/\n{2,}/)[0] : textUsed) : draft.posts[0].text;
+      const url = xIntentUrl(draft, composeText);
+      setPostUrl(url);
+      setHandedOff(true);
+      window.open(url, "_blank", "noopener");
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(() => setCopied(true)).catch(() => {});
+      }
+    }
     start(async () => {
       const result = await addXDraftFeedbackAction({
         clientId,
@@ -50,11 +92,15 @@ function DraftCard({
         assetId,
         draftRef,
         action,
-        ...(action === "posted_with_edits" ? { finalText } : {}),
+        ...(action === "posted_with_edits" ? { finalText: textUsed ?? finalText } : {}),
         ...(action === "not_posted" ? { reason } : {}),
       });
       if (result.error) {
-        setError(result.error);
+        setError(
+          handedOff && action !== "not_posted"
+            ? `${result.error} Your post is already open on X - click again to retry recording the pick (X will not reopen).`
+            : result.error,
+        );
         return;
       }
       setSent(action);
@@ -68,8 +114,14 @@ function DraftCard({
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium">{draft.avenue}</p>
         <div className="flex items-center gap-2">
-          {draft.posts[0]?.chars ? (
-            <Badge>{draft.posts.length > 1 ? `${draft.posts.length}-post thread` : draft.posts[0].chars}</Badge>
+          {isThread ? (
+            <span title="A connected thread, written to post in order.">
+              <Badge>{draft.posts.length}-post thread</Badge>
+            </span>
+          ) : charLabel(draft.posts[0]?.chars) ? (
+            <span title="Character count. X's limit per post is 280.">
+              <Badge>{charLabel(draft.posts[0]?.chars)}</Badge>
+            </span>
           ) : null}
           {sent ? (
             <Badge tone="success">
@@ -87,8 +139,13 @@ function DraftCard({
               <p className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-muted">{post.marker}</p>
             ) : null}
             <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{post.text}</p>
-            {post.marker && post.chars ? (
-              <p className="mt-2 text-right font-mono text-[10px] text-muted-2">{post.chars}</p>
+            {post.marker && charLabel(post.chars) ? (
+              <p
+                className="mt-2 text-right font-mono text-[10px] text-muted-2"
+                title="Character count. X's limit per post is 280."
+              >
+                {charLabel(post.chars)}
+              </p>
             ) : null}
           </div>
         ))}
@@ -115,8 +172,12 @@ function DraftCard({
                 placeholder="Your final version."
               />
               <div className="flex gap-2">
-                <Button size="sm" onClick={() => send("posted_with_edits")} disabled={pending || !finalText.trim()}>
-                  {pending ? "Sending…" : "Save my version"}
+                <Button
+                  size="sm"
+                  onClick={() => send("posted_with_edits", finalText)}
+                  disabled={pending || !finalText.trim()}
+                >
+                  {pending ? "Opening…" : "Save & post on X"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setMode("idle")}>
                   Cancel
@@ -132,7 +193,12 @@ function DraftCard({
                 placeholder="Why not this one? That is what teaches the agent."
               />
               <div className="flex gap-2">
-                <Button size="sm" variant="danger" onClick={() => send("not_posted")} disabled={pending || !reason.trim()}>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => send("not_posted")}
+                  disabled={pending || !reason.trim()}
+                >
                   {pending ? "Sending…" : "Skip it"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setMode("idle")}>
@@ -141,27 +207,52 @@ function DraftCard({
               </div>
             </>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="accent" onClick={() => send("posted")} disabled={pending}>
-                <Icon name="Check" className="mr-1 h-3.5 w-3.5" />
-                {pending ? "Sending…" : "Pick this one"}
-              </Button>
-              <Button
-                size="sm"
-                variant="subtle"
-                onClick={() => {
-                  setFinalText(draft.posts.map((p) => p.text).join("\n\n"));
-                  setMode("editing");
-                }}
-              >
-                Pick with edits
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setMode("skipping")}>
-                Skip
-              </Button>
-            </div>
+            <>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="accent" onClick={() => send("posted")} disabled={pending}>
+                  <Icon name="Check" className="mr-1 h-3.5 w-3.5" />
+                  {pending ? "Opening…" : "Pick & post on X"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="subtle"
+                  onClick={() => {
+                    setFinalText(fullText);
+                    setMode("editing");
+                  }}
+                >
+                  Pick with edits
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setMode("skipping")}>
+                  Skip
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-2">
+                Picking copies the text and opens X with the post ready
+                {draft.replyToUrl ? ", already addressed to the post it answers" : ""}
+                {draft.quoteUrl ? ", with the quoted post attached" : ""}
+                {isThread
+                  ? `. Threads: X opens with post 1 of ${draft.posts.length}; we copy the full thread for pasting the rest`
+                  : ""}
+                . You press Post.
+              </p>
+            </>
           )}
           {error ? <p className="text-xs text-red-400">{error}</p> : null}
+        </div>
+      ) : sent !== "not_posted" ? (
+        <div className="mt-3 flex items-center gap-3">
+          <p className="text-[11px] text-muted-2">{copied ? "Text copied. Finish on X." : "Finish on X."}</p>
+          {postUrl ? (
+            <a
+              href={postUrl}
+              target="_blank"
+              rel="noopener"
+              className="text-[11px] text-muted underline hover:text-foreground"
+            >
+              Reopen on X →
+            </a>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -181,32 +272,39 @@ export function XDraftsBatch({
   accounts: XParsedAccount[];
 }) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <p className="text-sm text-muted">
-        About a week of posting to choose from. Pick your favourites, edit freely, and skip with a
-        reason - every choice sharpens that account&apos;s voice for the next batch.
+        About a week of posting to choose from. Pick your favourites (each pick opens X with the
+        post ready), edit freely, and skip with a reason. Every choice sharpens that
+        account&apos;s voice for the next batch.
       </p>
-      {accounts.map((acc) => (
-        <div key={acc.title}>
-          <div className="mb-2 flex items-center gap-2">
-            <Icon name="AtSign" className="h-4 w-4 text-muted" />
-            <p className="text-sm font-semibold">{acc.title}</p>
-          </div>
-          {acc.note ? <p className="mb-2 text-xs text-muted">{acc.note}</p> : null}
-          <div className="space-y-3">
-            {acc.drafts.map((draft) => (
-              <DraftCard
-                key={draft.avenue}
-                clientId={clientId}
-                {...(jobId ? { jobId } : {})}
-                assetId={assetId}
-                accountTitle={acc.title}
-                draft={draft}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
+      {accounts.map((acc) => {
+        const isCompany = acc.title.toLowerCase().includes("company page");
+        return (
+          <section key={acc.title} className="overflow-hidden rounded-xl border border-border-strong">
+            <header className="flex items-center gap-3 border-b border-border bg-surface-3 px-4 py-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background">
+                <XLogo className="h-4 w-4 text-foreground" />
+              </span>
+              <p className="min-w-0 flex-1 truncate text-[15px] font-semibold text-foreground">{acc.title}</p>
+              <Badge tone={isCompany ? "info" : "neon"}>{isCompany ? "Company page" : "Personal seat"}</Badge>
+            </header>
+            {acc.note ? <p className="px-4 pt-3 text-xs text-muted">{acc.note}</p> : null}
+            <div className="space-y-3 p-4">
+              {acc.drafts.map((draft) => (
+                <DraftCard
+                  key={draft.avenue}
+                  clientId={clientId}
+                  {...(jobId ? { jobId } : {})}
+                  assetId={assetId}
+                  accountTitle={acc.title}
+                  draft={draft}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }

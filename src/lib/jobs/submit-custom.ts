@@ -16,6 +16,7 @@ import {
 } from "@/lib/agent-service/client";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "@/lib/agent-service/x-agent-context";
+import { X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
@@ -103,8 +104,7 @@ export async function submitCustomAgentJob(
   if (isXAgent(agent.key)) {
     if (!(await hasXAgentIntake(input.clientId))) {
       return {
-        error:
-          "Set up the X agent data first. Open the client's “X agent data” page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.",
+        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the client's "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
       };
     }
     try {

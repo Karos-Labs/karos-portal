@@ -23,6 +23,10 @@ export interface XParsedDraft {
   posts: XParsedPost[];
   /** Source / grounding bullets, markdown bold stripped. */
   meta: string[];
+  /** For replies: the x.com status URL this draft answers (from the meta). */
+  replyToUrl?: string;
+  /** For quote-comments: the x.com status URL being quoted (from the meta). */
+  quoteUrl?: string;
 }
 
 export interface XParsedAccount {
@@ -119,9 +123,14 @@ export function parseXDrafts(markdown: string): XParsedBatch | null {
       continue;
     }
 
-    // Meta bullets (sources, groundings).
+    // Meta bullets (sources, groundings). Reply/quote targets also become
+    // deep-link fields so the reader can open X compose pre-addressed.
     if (/^-\s+/.test(line) && draft && draft.posts.length > 0) {
-      draft.meta.push(stripBold(line.replace(/^-\s+/, "")).trim());
+      const meta = stripBold(line.replace(/^-\s+/, "")).trim();
+      draft.meta.push(meta);
+      const statusUrl = meta.match(/https:\/\/x\.com\/[A-Za-z0-9_]+\/status\/\d+/)?.[0];
+      if (statusUrl && /in reply to/i.test(meta)) draft.replyToUrl = statusUrl;
+      else if (statusUrl && /quote source/i.test(meta)) draft.quoteUrl = statusUrl;
       continue;
     }
   }

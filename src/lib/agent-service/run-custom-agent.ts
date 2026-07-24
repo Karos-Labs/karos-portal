@@ -9,6 +9,7 @@ import { logActivity } from "@/lib/actions/_shared";
 import { cancelAgentServiceJob, isAgentServiceConfigured, submitAgentServiceJob } from "./client";
 import type { AgentServiceContextFile } from "./types";
 import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "./x-agent-context";
+import { X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
 import type { Client, CustomAgent } from "@/lib/types";
 
 /* limits — mirror agent-service/src/schemas/task-types/custom.json */
@@ -62,8 +63,7 @@ export async function submitCustomAgentRun(args: {
   if (isXAgent(agent.key)) {
     if (!(await hasXAgentIntake(client.id))) {
       return {
-        error:
-          "Set up the X agent data first. Open the client's “X agent data” page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.",
+        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the client's "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
       };
     }
     try {
