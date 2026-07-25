@@ -68,7 +68,7 @@ export async function submitCustomAgentRun(args: {
   if (isXAgent(agent.key)) {
     if (!(await hasXAgentIntake(client.id))) {
       return {
-        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the client's "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
+        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
       };
     }
     try {
@@ -85,9 +85,9 @@ export async function submitCustomAgentRun(args: {
   // linkedin-agent-context.ts) — so scheduler-fired LinkedIn runs read the
   // same live client data as manual ones. Hard-gated the same way.
   if (isLinkedInAgent(agent.key)) {
-    if (!(await hasLinkedInAgentIntake(client.id))) {
+    if (!(await hasLinkedInAgentIntake(client.id, agent.key))) {
       return {
-        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open the client's "LinkedIn agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
+        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open the "LinkedIn agent data" page (under Agent-specific documents) and save the company page form - the agent drafts from that. Nothing has run.`,
       };
     }
     try {

@@ -21,7 +21,17 @@ export interface CompanyNewsRowView {
   type?: string;
 }
 
-const NEWS_TYPES = ["launch", "milestone", "customer win", "hire", "partnership", "event", "other"];
+/** The Section A pick-list from the lab template — the skill routes by these terms. */
+const NEWS_TYPES = [
+  "win/milestone",
+  "launch",
+  "customer story",
+  "culture",
+  "event",
+  "hire",
+  "partnership",
+  "other",
+];
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -36,11 +46,16 @@ export function CompanyNewsBox({ clientId, rows }: { clientId: string; rows: Com
   const [type, setType] = useState("");
   const [url, setUrl] = useState("");
   const [detail, setDetail] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [consent, setConsent] = useState("");
+
+  const hasNumber = /\d/.test(`${title} ${detail}`);
+  const featuresPerson = type === "customer story" || type === "hire";
 
   function add() {
     setError(null);
     start(async () => {
-      const result = await addXNewsUpdateAction({ clientId, title, date, type, url, detail });
+      const result = await addXNewsUpdateAction({ clientId, title, date, type, url, detail, sourceUrl, consent });
       if (result.error) {
         setError(result.error);
         return;
@@ -49,6 +64,8 @@ export function CompanyNewsBox({ clientId, rows }: { clientId: string; rows: Com
       setDetail("");
       setUrl("");
       setType("");
+      setSourceUrl("");
+      setConsent("");
       setDate(today());
       router.refresh();
     });
@@ -60,7 +77,7 @@ export function CompanyNewsBox({ clientId, rows }: { clientId: string; rows: Com
       <p className="mt-1 text-sm text-muted">
         One or two lines on what is new. We turn it into the post, you do not write it. You type it
         once and every agent that posts news picks it up. Empty weeks are fine; the agents keep
-        running on their always-on lanes.
+        posting their regular content either way.
       </p>
       <div className="mt-4 space-y-3">
         <Textarea
@@ -73,7 +90,7 @@ export function CompanyNewsBox({ clientId, rows }: { clientId: string; rows: Com
           rows={2}
           value={detail}
           onChange={(e) => setDetail(e.target.value)}
-          placeholder="Detail (optional): what shipped and why it matters. If it contains a number, add the source link below or we post it without the number."
+          placeholder="Detail (optional): what shipped and why it matters."
         />
         <div className="grid gap-3 sm:grid-cols-3">
           <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -87,6 +104,32 @@ export function CompanyNewsBox({ clientId, rows }: { clientId: string; rows: Com
           </Select>
           <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Public link (optional)" />
         </div>
+        {hasNumber ? (
+          <div>
+            <Input
+              value={sourceUrl}
+              onChange={(e) => setSourceUrl(e.target.value)}
+              placeholder="Source for the number"
+            />
+            <p className="mt-1 text-xs text-muted">
+              If your update contains a number, add where it comes from. No source means we post it
+              without the number.
+            </p>
+          </div>
+        ) : null}
+        {featuresPerson ? (
+          <div>
+            <Input
+              value={consent}
+              onChange={(e) => setConsent(e.target.value)}
+              placeholder="Who is featured + their ok"
+            />
+            <p className="mt-1 text-xs text-muted">
+              If this features a person (a hire, a customer quote), confirm they are ok with it. We
+              hold the draft until then.
+            </p>
+          </div>
+        ) : null}
         {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
         <Button onClick={add} disabled={pending} variant="subtle">
           {pending ? "Adding…" : "Drop the update"}

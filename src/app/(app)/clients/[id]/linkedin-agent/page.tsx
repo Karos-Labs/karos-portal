@@ -104,6 +104,7 @@ export default async function LinkedInAgentPage({ params }: { params: Promise<{ 
       />
       <LinkedInAgentIntake
         clientId={id}
+        {...(client.socialLinks?.linkedin ? { pageUrlSuggestion: client.socialLinks.linkedin } : {})}
         company={toIntakeView(companyIntake)}
         seats={seatViews}
         news={news.map((n) => ({

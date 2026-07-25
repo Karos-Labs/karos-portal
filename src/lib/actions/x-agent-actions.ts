@@ -270,6 +270,10 @@ export async function addXNewsUpdateAction(input: {
   detail?: string;
   url?: string;
   type?: string;
+  /** Where any number in the update comes from (no source = posted without the number). */
+  sourceUrl?: string;
+  /** Who is featured + consent confirmed (customer stories/spotlights hold until set). */
+  consent?: string;
 }): Promise<{ error?: string }> {
   const user = await requireClientAccess(input.clientId);
   if (!input.title.trim()) return { error: "Tell us what happened, in a line or two." };
@@ -284,6 +288,8 @@ export async function addXNewsUpdateAction(input: {
     ...(input.detail?.trim() ? { detail: input.detail.trim() } : {}),
     ...(input.url?.trim() ? { url: input.url.trim() } : {}),
     ...(input.type?.trim() ? { type: input.type.trim() } : {}),
+    ...(input.sourceUrl?.trim() ? { sourceUrl: input.sourceUrl.trim() } : {}),
+    ...(input.consent?.trim() ? { consent: input.consent.trim().slice(0, MAX_TEXT) } : {}),
     createdBy: user.uid,
     createdAt: Date.now(),
   });
@@ -343,7 +349,11 @@ export async function addXDraftFeedbackAction(input: {
     const title = input.accountTitle.toLowerCase();
     if (title.includes("company page")) account = "company";
     else {
-      const seats = await listClientSeats(input.clientId);
+      // Longest name first so "Daniel Herbert" wins over a seat named "Dan"
+      // when both are substrings of the section title.
+      const seats = (await listClientSeats(input.clientId)).sort(
+        (a, b) => b.name.length - a.name.length,
+      );
       account = seats.find((s) => title.includes(s.name.toLowerCase()))?.id ?? "company";
     }
   }

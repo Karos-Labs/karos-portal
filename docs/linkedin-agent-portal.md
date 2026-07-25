@@ -14,7 +14,8 @@ a person always posts).
 | Agent registration | `customAgents` doc, key `karos-linkedin-company-karoslabs` → `clients/karoslabs/skills/linkedin-agent/company-page` (per-client instance; future clients get their own `karos-linkedin-company-<slug>` doc) |
 | Run launcher | `/clients/<id>/agents` (custom agents hub; exact-key e10 profile in `src/lib/custom-agent-launch.ts`, placed before the generic founder-LinkedIn brief) |
 | Stored data | Firestore: `clientSeats` (shared), `agentIntake` (agent="linkedin"; seat docs carry role/focus/fallback/CV), `xNewsUpdates` (the SHARED news drop — SCRUM-51), `liDraftFeedback` |
-| Run-time injection | `src/lib/agent-service/linkedin-agent-context.ts` serializes the stored data to context files on every e10 run (both submit cores); they override any older repo copies. Prior batches ride along for anti-duplication — the runner workspace is ephemeral, so a run's own ledger/catalog writes are discarded |
+| Run-time injection | `src/lib/agent-service/linkedin-agent-context.ts` serializes the stored data to context files on every e10 run (both submit cores); they override any older repo copies. Prior batches (across ALL of the client's e10 agents — one shared memory, like the lab's shared ledger) ride along for anti-duplication — the runner workspace is ephemeral, so a run's own ledger/catalog writes are discarded |
+| Run gate | A deliberate portal policy, stricter than the lab contract: company-page runs refuse to start until the company form on the data page is SAVED (the form's answers are optional — the lab's Path A can run on onboarding alone, which is why saving an empty form satisfies the gate). The Path B master gates on any LinkedIn intake instead |
 | Seat voice collection | Apify (`harvestapi~linkedin-profile-posts`) via `APIFY_TOKEN`, already wired end to end (cloudbuild → worker `buildRunnerEnv` → runner `sdkEnv`); degrades to CV/fallback when unset. A LinkedIn profile URL cannot be fetched directly (HTTP 999) |
 | Review | Webhook → job status `review` + one library asset (type `note`, unpublishable). `client/DRAFTS.md` becomes the asset content; the reader (`src/components/li-drafts-review.tsx`) renders per-account cards with Pick & post on LinkedIn / Pick with edits / Skip |
 | Pick-to-post | `linkedin.com/feed/?shareActive=true&text=<urlencoded>` — verified live 2026-07-24 (full prefill incl. newlines/emoji/links to the 3,000-char cap; the auth wall carries the link through login via `session_redirect`). Undocumented, so the pick copies the text to the clipboard FIRST; media (slides/PDFs) cannot ride a URL and are listed for download + manual attach |
@@ -83,10 +84,13 @@ Craft gates (each one is a hard auto-reject; fix before delivering):
   praise. One idea per post.
 - No outbound links in the post body — a link belongs in the first comment;
   give it as a "First comment:" bullet in the drafts file.
-- Hook in the first ~200 characters (the fold); total 800-1,200 characters
-  unless the lane genuinely needs more; never past 3,000.
+- Hook lands in the first 1-2 lines (110-140 characters, before "see more"),
+  core claim in ~6-8 words; total 800-1,200 characters unless the lane
+  genuinely needs more; never past 3,000.
 - Respect the company off-limits from linkedin-portal-intake.md, and the
-  learning log: never repeat a correction the client already made.
+  learning log: never repeat a correction the client already made. A
+  "change requested" entry is a standing instruction — apply it whenever the
+  subject or style it names comes up.
 
 Deliverables under clients/<slug>/outputs/linkedin-agent/<run-folder>/ with
 the client/ vs internal/ split. client/DRAFTS.md is the deliverable of record
@@ -102,6 +106,8 @@ structure — the portal renders it:
   - **Topic:** <the catalog row or Section A drop this came from>
   - **Media:** <file1>.pdf · <file2>.png   (exact client/ file names for this post)
   - **First comment:** <the link + one line, when a source link exists>
+  - **Post window:** <the recommended posting window — the schedule's slot
+    (Tue/Wed/Thu morning, client timezone) or a Section A preferred date>
   - **Source:** <where each factual claim traces>
 
 Ship the media files in the same client/ folder under the names the Media
@@ -113,6 +119,14 @@ Draft-only: nothing posts, and no posting credential exists — a person posts
 from the portal.
 ```
 
+Two portal-imposed requirements in the block above are NEW for e10 — do not
+"correct" them back toward the lab layout: (1) the client/ vs internal/ split
+and internal/RUN.md come from the X standard (e10's lab reference runs are
+internal/-only, with run metadata in file headers), but the webhook only
+creates a reviewable asset when client-facing artifacts exist; (2) DRAFTS.md
+as the deliverable of record is what the webhook prefers as asset content,
+what the reader parses, and what the next run's anti-duplication re-injects.
+
 ## Out of scope (parked)
 
 - Auto-posting / LinkedIn OAuth (`w_member_social`, Community Management API) —
@@ -122,9 +136,11 @@ from the portal.
   and analytics surfaces serve other content types and are untouched by this
   hookup.
 - Path B per-seat generators as portal agents: the seat DATA is collected and
-  injected now (roster context, amplifier fan-out, CVs ready), but per-seat
-  drafting products are emitted lab-side and become their own customAgents
-  docs when sold.
+  injected now (profiles, focus, off-limits, CVs), but per-seat drafting
+  products are emitted lab-side and become their own customAgents docs when
+  sold. The Section A "Who will amplify" and "Preferred date" columns stay
+  empty until a portal input exists for them — the amplifier fan-out
+  activates then, not now.
 - The standing point-of-view drop (company-updates template §A sub-table) —
   the injected file carries the empty table so the engine contract holds; the
   portal input box is a fast-follow if wanted.

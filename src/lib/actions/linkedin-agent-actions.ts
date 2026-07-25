@@ -18,6 +18,7 @@
 import { revalidatePath } from "next/cache";
 import {
   addLiDraftFeedback,
+  clearAgentIntakeFields,
   createClientSeat,
   getAgentIntake,
   getClient,
@@ -30,6 +31,8 @@ import { uploadBytes } from "@/lib/storage";
 import { requireClientAccess } from "./_shared";
 
 const MAX_TEXT = 2_000;
+/** LinkedIn's post cap — finalText of a picked-with-edits post may run to it. */
+const MAX_POST_TEXT = 3_000;
 const MAX_NAME = 120;
 const MAX_CV_BYTES = 10 * 1024 * 1024;
 const CV_EXTENSIONS = [".pdf", ".docx", ".txt"] as const;
@@ -45,11 +48,12 @@ function kebab(name: string): string {
 
 /**
  * Normalizes a LinkedIn profile/page URL; empty/none stays null (company
- * "none yet", seat "pending"). Accepts linkedin.com/in|company|school paths
- * with or without protocol; anything else is rejected so drafts never route
- * to a mistyped identity.
+ * "none yet", seat "pending"). Accepts linkedin.com paths with or without
+ * protocol, case-insensitively, and truncates to the identity root (the
+ * first two path segments) so drafts never route to a mistyped identity.
+ * `kind` pins person URLs to seats and page URLs to the company form.
  */
-function parseLinkedInUrl(raw: string): string | null | { error: string } {
+function parseLinkedInUrl(raw: string, kind: "person" | "page"): string | null | { error: string } {
   const trimmed = raw.trim();
   if (!trimmed || /^(none|none yet|pending)$/i.test(trimmed)) return null;
   const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
@@ -63,15 +67,28 @@ function parseLinkedInUrl(raw: string): string | null | { error: string } {
   if (host !== "linkedin.com" && !host.endsWith(".linkedin.com")) {
     return { error: "Use a linkedin.com profile or page URL." };
   }
-  const path = url.pathname.replace(/\/+$/, "");
-  if (!/^\/(in|company|school|showcase)\/[^/]+/.test(path)) {
+  const match = url.pathname.match(/^\/(in|company|school|showcase)\/([^/]+)/i);
+  if (!match) {
     return { error: "Use the full URL, like linkedin.com/in/your-name or linkedin.com/company/your-company." };
   }
-  return `https://www.linkedin.com${path}`;
+  const section = match[1].toLowerCase();
+  if (kind === "person" && section !== "in") {
+    return { error: "A seat needs the person's own profile URL (linkedin.com/in/...)." };
+  }
+  if (kind === "page" && section === "in") {
+    return { error: "This is the company page's URL (linkedin.com/company/...), not a personal profile." };
+  }
+  return `https://www.linkedin.com/${section}/${match[2]}`;
 }
 
 /* ─────────────────────────── the forms ─────────────────────────── */
 
+/**
+ * Both text answers are OPTIONAL by contract (ASK vs BUILD: the page's voice
+ * comes from the onboarding brand-voice doc; this only adds a LinkedIn
+ * register note, and house rules apply without an off-limits answer). Saving
+ * the form — even empty — is what satisfies the run gate.
+ */
 export async function saveLinkedInCompanyIntakeAction(input: {
   clientId: string;
   /** The company page URL (linkedin.com/company/...). Empty = none yet. */
@@ -81,16 +98,10 @@ export async function saveLinkedInCompanyIntakeAction(input: {
 }): Promise<{ error?: string }> {
   const user = await requireClientAccess(input.clientId);
   if (!(await getClient(input.clientId))) return { error: "Client not found." };
-  if (!input.comeAcross.trim()) {
-    return { error: "Tell us how the company should come across on LinkedIn." };
-  }
-  if (!input.offLimits.trim()) {
-    return { error: "Tell us what we must never post (or write \"nothing\")." };
-  }
   if (input.comeAcross.length > MAX_TEXT || input.offLimits.length > MAX_TEXT) {
     return { error: "Please keep each answer under 2,000 characters." };
   }
-  const pageUrl = parseLinkedInUrl(input.pageUrl);
+  const pageUrl = parseLinkedInUrl(input.pageUrl, "page");
   if (pageUrl !== null && typeof pageUrl === "object") return pageUrl;
   await upsertAgentIntake({
     clientId: input.clientId,
@@ -125,7 +136,7 @@ export async function addLinkedInSeatAction(input: {
   if (name.length > MAX_NAME) return { error: `Name is too long (max ${MAX_NAME} characters).` };
   if (!input.role.trim()) return { error: "Role is required - in their own words is fine." };
   if (!input.offLimits.trim()) return { error: "Tell us what we must never post (or write \"nothing\")." };
-  const profileUrl = parseLinkedInUrl(input.profileUrl);
+  const profileUrl = parseLinkedInUrl(input.profileUrl, "person");
   if (profileUrl !== null && typeof profileUrl === "object") return profileUrl;
   const fallback = parseFallback(input.fallbackKind, input.fallbackText);
   if ("error" in fallback) return fallback;
@@ -166,6 +177,27 @@ export async function addLinkedInSeatAction(input: {
   return { seatId };
 }
 
+/**
+ * A form that blanks its focus or switches the voice fallback off must
+ * actually DELETE the stored values — the upsert merges, so omitted keys
+ * would otherwise survive forever and keep steering the voice.
+ */
+async function clearDroppedSeatFields(
+  clientId: string,
+  seatId: string,
+  focus: string | undefined,
+  fallback: { fields: Partial<{ fallbackKind: "writing" | "about"; fallbackText: string }> },
+): Promise<void> {
+  const intake = await getAgentIntake(clientId, "linkedin", seatId);
+  if (!intake) return;
+  const drop: Array<"focus" | "fallbackKind" | "fallbackText"> = [];
+  if (!focus?.trim() && intake.focus) drop.push("focus");
+  if (!fallback.fields.fallbackKind && (intake.fallbackKind || intake.fallbackText)) {
+    drop.push("fallbackKind", "fallbackText");
+  }
+  await clearAgentIntakeFields(intake.id, drop);
+}
+
 export async function saveLinkedInSeatIntakeAction(input: {
   clientId: string;
   seatId: string;
@@ -181,10 +213,11 @@ export async function saveLinkedInSeatIntakeAction(input: {
   if (!seat || seat.clientId !== input.clientId) return { error: "Seat not found." };
   if (!input.role.trim()) return { error: "Role is required - in their own words is fine." };
   if (!input.offLimits.trim()) return { error: "Tell us what we must never post (or write \"nothing\")." };
-  const profileUrl = parseLinkedInUrl(input.profileUrl);
+  const profileUrl = parseLinkedInUrl(input.profileUrl, "person");
   if (profileUrl !== null && typeof profileUrl === "object") return profileUrl;
   const fallback = parseFallback(input.fallbackKind, input.fallbackText);
   if ("error" in fallback) return fallback;
+  await clearDroppedSeatFields(input.clientId, input.seatId, input.focus, fallback);
   await upsertAgentIntake({
     clientId: input.clientId,
     agent: "linkedin",
@@ -266,7 +299,7 @@ export async function addLiDraftFeedbackAction(input: {
   jobId?: string;
   assetId?: string;
   draftRef?: string;
-  action: "posted" | "posted_with_edits" | "not_posted" | "note";
+  action: "posted" | "posted_with_edits" | "not_posted" | "note" | "edit_request";
   finalText?: string;
   reason?: string;
 }): Promise<{ error?: string }> {
@@ -276,7 +309,11 @@ export async function addLiDraftFeedbackAction(input: {
     const title = input.accountTitle.toLowerCase();
     if (title.includes("company page")) account = "company";
     else {
-      const seats = await listClientSeats(input.clientId);
+      // Longest name first so "Daniel Herbert" wins over a seat named "Dan"
+      // when both are substrings of the section title.
+      const seats = (await listClientSeats(input.clientId)).sort(
+        (a, b) => b.name.length - a.name.length,
+      );
       account = seats.find((s) => title.includes(s.name.toLowerCase()))?.id ?? "company";
     }
   }
@@ -294,8 +331,14 @@ export async function addLiDraftFeedbackAction(input: {
   if (input.action === "note" && !input.reason?.trim()) {
     return { error: "Write the feedback - as much detail as you like." };
   }
-  if ((input.finalText?.length ?? 0) > MAX_TEXT || (input.reason?.length ?? 0) > MAX_TEXT) {
-    return { error: "Please keep each answer under 2,000 characters." };
+  if (input.action === "edit_request" && !input.reason?.trim()) {
+    return { error: "Tell us what to change about this draft." };
+  }
+  if ((input.finalText?.trim().length ?? 0) > MAX_POST_TEXT) {
+    return { error: "Please keep the final text under 3,000 characters (LinkedIn's post cap)." };
+  }
+  if ((input.reason?.length ?? 0) > MAX_TEXT) {
+    return { error: "Please keep the answer under 2,000 characters." };
   }
   await addLiDraftFeedback({
     clientId: input.clientId,

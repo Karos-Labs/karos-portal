@@ -25,6 +25,8 @@ export interface LiParsedDraft {
   meta: string[];
   /** File names from the "Media:" bullet — the artifacts to attach when posting. */
   mediaNames: string[];
+  /** The recommended posting window from the "Post window:" bullet. */
+  postWindow?: string;
 }
 
 export interface LiParsedAccount {
@@ -71,9 +73,12 @@ export function parseLiDrafts(markdown: string): LiParsedBatch | null {
       continue;
     }
 
-    // Any other h2 (a non-account section) ends the current draft.
+    // Any other h2 (a non-account section) ends the current draft AND the
+    // account scope — otherwise a trailing "## Notes" section's blockquotes
+    // would surface as phantom pickable drafts.
     if (/^## /.test(line)) {
       flushDraft();
+      account = null;
       continue;
     }
 
@@ -109,7 +114,7 @@ export function parseLiDrafts(markdown: string): LiParsedBatch | null {
       continue;
     }
 
-    // Meta bullets (topic, media, sources).
+    // Meta bullets (topic, media, post window, sources).
     if (/^-\s+/.test(line) && draft && draft.text.length > 0) {
       const meta = stripBold(line.replace(/^-\s+/, "")).trim();
       const media = meta.match(/^Media:\s*(.+)$/i);
@@ -119,6 +124,8 @@ export function parseLiDrafts(markdown: string): LiParsedBatch | null {
           .map((n) => n.trim())
           .filter(Boolean);
       }
+      const window = meta.match(/^Post window:\s*(.+)$/i);
+      if (window && !draft.postWindow) draft.postWindow = window[1].trim();
       draft.meta.push(meta);
       continue;
     }

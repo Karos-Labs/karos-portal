@@ -237,19 +237,19 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "LinkedIn drafts",
       intro:
-        "Drafts the next company-page post from the LinkedIn agent data page (the company page, seats, and ongoing drops). Voice, lanes, and cadence are built from that data - this form only scopes the run. Draft-only; a person always posts.",
+        "Drafts the next company-page post from the LinkedIn agent data page (the company page, seats, and ongoing drops). Voice, topics, and cadence are built from that data - this form only scopes the run. Draft-only; a person always posts.",
       fields: [
         {
           key: "request",
           label: "Anything to lean into this run?",
           type: "textarea",
           helper: "Optional. The agent works from the stored LinkedIn agent data either way.",
-          placeholder: "A launch to feature, a topic to hit, a lane to pick.",
+          placeholder: "A launch to feature, a topic to hit.",
         },
       ],
       quickStarts: [
         "Lean into this week's update.",
-        "Pick an educational lane this time.",
+        "Pick an educational angle this time.",
         "Turn the latest milestone into the post.",
       ],
       deliverables: [

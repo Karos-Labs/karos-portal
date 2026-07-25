@@ -69,6 +69,22 @@ describe("parseLiDrafts", () => {
     expect(parseLiDrafts("# LinkedIn drafts — empty\n\nNothing here.")).toBeNull();
   });
 
+  it("ends the account scope at a non-account h2 — no phantom drafts from trailing sections", () => {
+    const withNotes = `${BATCH}\n## Notes\n\n### Open confirm\n\n> Not a post - a question for the client.\n`;
+    const batch = parseLiDrafts(withNotes);
+    expect(batch!.accounts).toHaveLength(1);
+    expect(batch!.accounts[0].drafts).toHaveLength(2);
+  });
+
+  it("parses the optional post-window bullet", () => {
+    const withWindow = BATCH.replace(
+      "- **Source:** market-strategy.md section 3",
+      "- **Post window:** Tue-Thu morning, client timezone\n- **Source:** market-strategy.md section 3",
+    );
+    const batch = parseLiDrafts(withWindow);
+    expect(batch!.accounts[0].drafts[0].postWindow).toBe("Tue-Thu morning, client timezone");
+  });
+
   it("never claims an X batch, and the X parser never claims a LinkedIn batch", () => {
     const xBatch = [
       "# Account 1 · Company page @getkaros",

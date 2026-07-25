@@ -1367,7 +1367,10 @@ export interface AgentIntake {
   updatedAt: number;
 }
 
-/** One company "What's new" row (feeds the X internal connector; whats-new.json shape). */
+/**
+ * One row of the SHARED company news drop (SCRUM-51): consumed by the X agent
+ * as whats-new.json and by the LinkedIn agent as company-updates.md Section A.
+ */
 export interface XNewsUpdate {
   id: string;
   clientId: string;
@@ -1376,8 +1379,12 @@ export interface XNewsUpdate {
   date: string;
   detail?: string;
   url?: string;
-  /** launch / milestone / customer win / hire / partnership / event / other. */
+  /** win/milestone / launch / customer story / culture / event / hire / partnership / other. */
   type?: string;
+  /** Where any number in the update comes from (no source = posted without the number). */
+  sourceUrl?: string;
+  /** Who is featured + consent confirmed (spotlights/customer stories/quotes hold until set). */
+  consent?: string;
   createdBy: string;
   createdAt: number;
 }
@@ -1421,8 +1428,9 @@ export interface XDraftFeedback {
 }
 
 /**
- * LinkedIn (e10) per-draft feedback — same contract as XDraftFeedback, its
- * own collection so per-platform Learning Logs never mix.
+ * LinkedIn (e10) per-draft feedback — same contract as XDraftFeedback plus
+ * the lab contract's "edit_request" action, its own collection so
+ * per-platform Learning Logs never mix.
  */
 export interface LiDraftFeedback {
   id: string;
@@ -1433,11 +1441,14 @@ export interface LiDraftFeedback {
   assetId?: string;
   /** Which draft in the batch, e.g. "Account 1 · Karos Labs — Company page". */
   draftRef?: string;
-  /** "note" = free-form client feedback, not tied to one draft. */
-  action: "posted" | "posted_with_edits" | "not_posted" | "note";
+  /**
+   * "note" = free-form client feedback, not tied to one draft.
+   * "edit_request" = asks for a change to this draft (no posting hand-off).
+   */
+  action: "posted" | "posted_with_edits" | "not_posted" | "note" | "edit_request";
   /** posted_with_edits: the final text the client actually used. */
   finalText?: string;
-  /** not_posted: why it was killed. */
+  /** not_posted: why it was killed. edit_request: what to change. */
   reason?: string;
   createdBy: string;
   createdAt: number;

@@ -2064,6 +2064,21 @@ export async function patchAgentIntake(
   await col.agentIntake().doc(id).set({ ...patch, updatedAt: Date.now() }, { merge: true });
 }
 
+/**
+ * Remove fields from an intake doc. Needed because upserts merge: a form that
+ * clears its focus or voice-fallback must actually delete the old values, or
+ * stale text keeps steering the agent's voice on every future run.
+ */
+export async function clearAgentIntakeFields(
+  id: string,
+  fields: Array<keyof Omit<AgentIntake, "id" | "clientId" | "agent" | "seatId" | "createdAt">>,
+): Promise<void> {
+  if (fields.length === 0) return;
+  const { FieldValue } = await import("firebase-admin/firestore");
+  const deletions = Object.fromEntries(fields.map((f) => [f, FieldValue.delete()]));
+  await col.agentIntake().doc(id).update({ ...deletions, updatedAt: Date.now() });
+}
+
 export async function addXNewsUpdate(data: Omit<XNewsUpdate, "id">): Promise<string> {
   const ref = await col.xNewsUpdates().add(data);
   return ref.id;

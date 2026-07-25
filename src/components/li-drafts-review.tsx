@@ -26,7 +26,7 @@ import { Icon, LinkedInLogo } from "@/components/icon";
 import { addLiDraftFeedbackAction } from "@/lib/actions/linkedin-agent-actions";
 import type { LiParsedAccount, LiParsedDraft } from "@/lib/li-drafts";
 
-type SentState = "posted" | "posted_with_edits" | "not_posted";
+type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
 
 /** A client-facing run artifact the reader can offer for manual attach. */
 export interface LiMediaFile {
@@ -53,11 +53,16 @@ function charLabel(chars?: string): string | null {
   return `${Number(n).toLocaleString()} / 3,000`;
 }
 
-/** The artifacts a draft names in its Media bullet, resolved against the run's files. */
+/**
+ * The artifacts a draft names in its Media bullet, resolved against the run's
+ * files. Exact or path-basename matches only — the pinned instructions
+ * require exact file names, and substring matching would attach
+ * "slide-11.png" to a bullet naming "1.png".
+ */
 function mediaFor(draft: LiParsedDraft, media: LiMediaFile[], soloDraft: boolean): LiMediaFile[] {
   if (draft.mediaNames.length > 0) {
     return media.filter((m) =>
-      draft.mediaNames.some((n) => m.name === n || m.name.endsWith(`/${n}`) || m.name.includes(n)),
+      draft.mediaNames.some((n) => m.name === n || m.name.split("/").pop() === n),
     );
   }
   // A single-post batch (Path A: one post per run) owns every media artifact.
@@ -81,7 +86,7 @@ function DraftCard({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [mode, setMode] = useState<"idle" | "editing" | "skipping">("idle");
+  const [mode, setMode] = useState<"idle" | "editing" | "skipping" | "requesting">("idle");
   const [sent, setSent] = useState<SentState | null>(null);
   const [postUrl, setPostUrl] = useState<string | null>(null);
   const [handedOff, setHandedOff] = useState(false);
@@ -92,18 +97,27 @@ function DraftCard({
 
   const draftRef = `${accountTitle} · ${draft.lane}`;
 
-  function send(action: SentState, textUsed?: string) {
+  async function send(action: SentState, textUsed?: string) {
     setError(null);
-    // Picking IS the posting hand-off. Copy first, then open compose
-    // synchronously (inside the click gesture, so popup blockers allow it).
-    // A retry after a failed feedback write must NOT open a second compose.
-    if (action !== "not_posted" && !handedOff) {
+    // Picking IS the posting hand-off (skips and change requests never open
+    // the composer). The clipboard write is AWAITED before window.open —
+    // Chrome rejects clipboard writes once the new tab steals focus, and the
+    // copy is the safety net for the undocumented deep link. The await stays
+    // inside the click gesture's transient activation, so popup blockers
+    // still allow the open. A retry after a failed feedback write must NOT
+    // open a second compose.
+    if (action !== "not_posted" && action !== "edit_request" && !handedOff) {
       const text = textUsed ?? draft.text;
       const url = liComposeUrl(text);
       setPostUrl(url);
       setHandedOff(true);
       if (navigator.clipboard) {
-        navigator.clipboard.writeText(text).then(() => setCopied(true)).catch(() => {});
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+        } catch {
+          // The deep link still carries the text; the copy label stays honest.
+        }
       }
       window.open(url, "_blank", "noopener");
     }
@@ -116,12 +130,12 @@ function DraftCard({
         draftRef,
         action,
         ...(action === "posted_with_edits" ? { finalText: textUsed ?? finalText } : {}),
-        ...(action === "not_posted" ? { reason } : {}),
+        ...(action === "not_posted" || action === "edit_request" ? { reason } : {}),
       });
       if (result.error) {
         setError(
-          handedOff && action !== "not_posted"
-            ? `${result.error} Your post is already open on LinkedIn - click again to retry recording the pick (LinkedIn will not reopen).`
+          handedOff && action !== "not_posted" && action !== "edit_request"
+            ? `${result.error} Your post is already open on LinkedIn - click again to save your choice here (we will not open LinkedIn a second time).`
             : result.error,
         );
         return;
@@ -144,7 +158,13 @@ function DraftCard({
           ) : null}
           {sent ? (
             <Badge tone="success">
-              {sent === "posted" ? "Picked" : sent === "posted_with_edits" ? "Picked with edits" : "Skipped"}
+              {sent === "posted"
+                ? "Picked"
+                : sent === "posted_with_edits"
+                  ? "Picked with edits"
+                  : sent === "edit_request"
+                    ? "Change requested"
+                    : "Skipped"}
             </Badge>
           ) : null}
         </div>
@@ -199,13 +219,40 @@ function DraftCard({
                 onChange={(e) => setFinalText(e.target.value)}
                 placeholder="Your final version."
               />
+              {finalText.trim().length > LINKEDIN_POST_CAP ? (
+                <p className="text-xs text-red-400">
+                  {finalText.trim().length.toLocaleString()} characters - LinkedIn posts cap at
+                  3,000. Trim it before posting.
+                </p>
+              ) : null}
               <div className="flex gap-2">
                 <Button
                   size="sm"
                   onClick={() => send("posted_with_edits", finalText)}
-                  disabled={pending || !finalText.trim()}
+                  disabled={pending || !finalText.trim() || finalText.trim().length > LINKEDIN_POST_CAP}
                 >
                   {pending ? "Opening…" : "Save & post on LinkedIn"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setMode("idle")}>
+                  Cancel
+                </Button>
+              </div>
+            </>
+          ) : mode === "requesting" ? (
+            <>
+              <Textarea
+                rows={2}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="What should change? Tone, angle, a fact to fix - in your own words."
+              />
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => send("edit_request")}
+                  disabled={pending || !reason.trim()}
+                >
+                  {pending ? "Sending…" : "Request the change"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setMode("idle")}>
                   Cancel
@@ -251,6 +298,9 @@ function DraftCard({
                 >
                   Pick with edits
                 </Button>
+                <Button size="sm" variant="ghost" onClick={() => setMode("requesting")}>
+                  Request a change
+                </Button>
                 <Button size="sm" variant="ghost" onClick={() => setMode("skipping")}>
                   Skip
                 </Button>
@@ -259,12 +309,13 @@ function DraftCard({
                 Picking copies the text and opens LinkedIn with the post ready
                 {media.length > 0 ? "; download the files above and attach them in the composer" : ""}
                 . You press Post.
+                {draft.postWindow ? ` Best window: ${draft.postWindow}.` : ""}
               </p>
             </>
           )}
           {error ? <p className="text-xs text-red-400">{error}</p> : null}
         </div>
-      ) : sent !== "not_posted" ? (
+      ) : sent === "posted" || sent === "posted_with_edits" ? (
         <div className="mt-3 flex items-center gap-3">
           <p className="text-[11px] text-muted-2">
             {copied ? "Text copied. Finish on LinkedIn." : "Finish on LinkedIn."}
@@ -280,6 +331,10 @@ function DraftCard({
             </a>
           ) : null}
         </div>
+      ) : sent === "edit_request" ? (
+        <p className="mt-3 text-[11px] text-muted-2">
+          Change requested - it feeds the agent&apos;s next pass on this draft.
+        </p>
       ) : null}
     </div>
   );

@@ -20,6 +20,7 @@ import {
   getAsset,
   listAgentIntake,
   listClientSeats,
+  listCustomAgents,
   listJobs,
   listLiDraftFeedback,
   listXNewsUpdates,
@@ -38,13 +39,18 @@ export function isLinkedInAgent(agentKey: string): boolean {
 }
 
 /**
- * Whether the client's LinkedIn COMPANY intake exists yet. The company-page
- * agent runs ON this data (voice steer, off-limits, the page URL); without it
- * a run would draft from onboarding alone and miss the point, so the submit
- * cores hard-gate on this. Seats alone don't satisfy the gate — they are
- * platform-agnostic and may belong to another agent.
+ * Whether the client's LinkedIn intake is set up enough to run `agentKey`.
+ * Company-page instances gate on the company form being SAVED (a deliberate
+ * portal policy — the lab contract would allow zero-input Path A runs, but
+ * this portal wants the data page visited first). The Path B master gates on
+ * ANY LinkedIn intake (company or a seat) since it has no company form to
+ * fill. Bare shared seats never satisfy the gate — they may belong to
+ * another agent.
  */
-export async function hasLinkedInAgentIntake(clientId: string): Promise<boolean> {
+export async function hasLinkedInAgentIntake(clientId: string, agentKey?: string): Promise<boolean> {
+  if (agentKey === "karos-linkedin-agent") {
+    return (await listAgentIntake(clientId, "linkedin")).length > 0;
+  }
   return (await getAgentIntake(clientId, "linkedin", null)) !== null;
 }
 
@@ -59,6 +65,11 @@ function companySection(intake: AgentIntake): string {
   return lines.join("\n");
 }
 
+/** The lowercased extension of the seat's CV file name ("" when absent). */
+function cvExt(cvName: string | undefined): string {
+  return cvName?.includes(".") ? `.${cvName.split(".").pop()!.toLowerCase()}` : "";
+}
+
 function seatSection(seat: ClientSeat, intake: AgentIntake | null): string {
   const lines: string[] = [`## Seat — ${seat.name}`, `- Person: ${seat.name} (slug: ${seat.slug})`];
   if (!intake) {
@@ -71,9 +82,14 @@ function seatSection(seat: ClientSeat, intake: AgentIntake | null): string {
   lines.push(`- Never post (off-limits): ${intake.offLimits || "(none given — house rules still apply)"}`);
   lines.push(
     intake.cvName
-      ? `- CV: "${intake.cvName}" — attached to this run as cv--${seat.slug} (substance, not voice).`
+      ? `- CV: "${intake.cvName}" — attached to this run as cv--${seat.slug}${cvExt(intake.cvName)} (substance, not voice).`
       : "- CV: none uploaded yet. Substance must come from real posts or the voice sample; never invent experience.",
   );
+  if (!intake.handle && !intake.cvName && !intake.fallbackKind) {
+    lines.push(
+      "- BELOW INPUT MINIMUM: no profile, no CV, no voice sample. Draft only what the role and company profile genuinely support; keep the voice provisional and flag it in the draft's notes.",
+    );
+  }
   if (intake.fallbackKind && intake.fallbackText) {
     lines.push(
       intake.fallbackKind === "writing"
@@ -98,9 +114,16 @@ function feedbackSection(account: string, label: string, rows: LiDraftFeedback[]
     if (r.action === "posted_with_edits")
       return `- ${when}: posted with edits${ref}. Final text used: ${r.finalText ?? "(not captured)"}`;
     if (r.action === "note") return `- ${when}: client note${ref}: ${r.reason ?? "(empty)"}`;
+    if (r.action === "edit_request")
+      return `- ${when}: change requested${ref}: ${r.reason ?? "(empty)"} — apply it when this subject or style comes up again.`;
     return `- ${when}: not posted${ref}. Reason: ${r.reason ?? "(not given)"}`;
   });
   return `## ${label}\n${lines.join("\n")}`;
+}
+
+/** Markdown-table cell sanitizer — a stray pipe or newline shifts every later column. */
+function cell(value: string): string {
+  return value.replace(/\|/g, "/").replace(/\n/g, " ");
 }
 
 /** One shared-news row as a company-updates.md Section A table row. */
@@ -109,16 +132,16 @@ function newsTableRow(n: XNewsUpdate): string {
   const hasNumber = /\d/.test(`${n.title} ${n.detail ?? ""}`);
   const cells = [
     n.date,
-    what.replace(/\|/g, "/").replace(/\n/g, " "),
+    what,
     n.type ?? "",
     n.url ?? "",
-    hasNumber ? (n.url ?? "MISSING — do not post the number without a source") : "",
-    "",
+    hasNumber ? (n.sourceUrl ?? "MISSING — do not post the number without a source") : (n.sourceUrl ?? ""),
+    n.consent ?? "",
     "",
     "",
     "new",
   ];
-  return `| ${cells.join(" | ")} |`;
+  return `| ${cells.map(cell).join(" | ")} |`;
 }
 
 /** The client's live news rows in the engine's company-updates.md Section A shape. */
@@ -150,6 +173,9 @@ function companyUpdatesMd(news: XNewsUpdate[]): string {
     "when a Section A row and an auto-pulled item describe the same event, the",
     "client's framing wins and the auto-pull enriches it)",
     "",
+    "| Date | Item | Source (url / channel) | Type (company-page-spec §2) | Permission needed? | Posted? |",
+    "|---|---|---|---|---|---|",
+    "",
   ].join("\n");
 }
 
@@ -173,18 +199,26 @@ const PRIOR_BATCH_MAX_CHARS = 20_000;
  * if each run RECEIVES the previous batches. The webhook stores each batch's
  * drafts markdown as the job asset's content; that is the durable copy we
  * re-inject.
+ *
+ * Scoped to ALL of the client's e10 agents, not just the launching one: the
+ * lab contract shares ONE ledger across every LinkedIn generator, so a
+ * master run must see the company instance's batches and vice versa.
  */
 async function priorBatchFiles(
   clientId: string,
   agentName: string,
   runKey: string,
 ): Promise<AgentServiceContextFile[]> {
+  const linkedInAgentNames = new Set(
+    (await listCustomAgents()).filter((a) => isLinkedInAgent(a.key)).map((a) => a.name),
+  );
+  linkedInAgentNames.add(agentName);
   const jobs = (await listJobs({ clientId }))
     .filter(
       (j) =>
         j.agentId === "agent-service" &&
         j.external?.taskType === "custom" &&
-        j.agentName === agentName &&
+        linkedInAgentNames.has(j.agentName) &&
         ["review", "approved", "delivered"].includes(j.status) &&
         j.assetIds.length > 0,
     )
@@ -284,7 +318,7 @@ export async function buildLinkedInAgentContextFiles(
   for (const seat of seats) {
     const intake = intakeBySeat.get(seat.id);
     if (!intake?.cvUrl || !intake.cvName) continue;
-    const ext = intake.cvName.includes(".") ? `.${intake.cvName.split(".").pop()}` : "";
+    const ext = cvExt(intake.cvName);
     files.push({
       name: `cv--${seat.slug}${ext}`,
       url: intake.cvUrl,

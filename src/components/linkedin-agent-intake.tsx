@@ -64,12 +64,21 @@ function fieldError(error: string | null) {
 
 /* ─────────────────────── company page form ─────────────────────── */
 
-function CompanyForm({ clientId, intake }: { clientId: string; intake: LiIntakeView | null }) {
+function CompanyForm({
+  clientId,
+  intake,
+  pageUrlSuggestion,
+}: {
+  clientId: string;
+  intake: LiIntakeView | null;
+  /** The LinkedIn URL already on the client profile — confirm, don't re-ask. */
+  pageUrlSuggestion?: string;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [pageUrl, setPageUrl] = useState(intake?.handle ?? "");
+  const [pageUrl, setPageUrl] = useState(intake?.handle ?? pageUrlSuggestion ?? "");
   const [comeAcross, setComeAcross] = useState(intake?.comeAcross ?? "");
   const [offLimits, setOffLimits] = useState(intake?.offLimits ?? "");
 
@@ -112,23 +121,23 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: LiIntakeV
           </p>
         </div>
         <div>
-          <Label htmlFor="lc-voice">How should the company come across on LinkedIn?</Label>
+          <Label htmlFor="lc-voice">Anything about how the page should sound? (optional)</Label>
           <Textarea
             id="lc-voice"
             rows={2}
             value={comeAcross}
             onChange={(e) => setComeAcross(e.target.value)}
-            placeholder="One or two lines. This is the only voice question we ask."
+            placeholder="One or two lines. The page runs on your brand voice either way; this adds a LinkedIn note on top."
           />
         </div>
         <div>
-          <Label htmlFor="lc-offlimits">Anything we must never post</Label>
+          <Label htmlFor="lc-offlimits">Anything we must never post (optional)</Label>
           <Textarea
             id="lc-offlimits"
             rows={2}
             value={offLimits}
             onChange={(e) => setOffLimits(e.target.value)}
-            placeholder="Topics, client names, specific numbers."
+            placeholder="Topics, client names, specific numbers. Leave it empty and our house rules still apply."
           />
         </div>
         {fieldError(error)}
@@ -239,9 +248,9 @@ function CvUpload({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
         ) : null}
       </div>
       <p className="mt-1 text-xs text-muted">
-        Private - never client-visible, never posted. The CV is for substance (their real
-        experience), not voice. Not strictly required: real posts or the voice sample below also
-        work, but it is the strongest single source.
+        Private - only our team and the agent read it, and it is never posted. The CV is for
+        substance (their real experience), not voice. Not strictly required: real posts or the
+        voice sample below also work, but it is the strongest single source.
       </p>
       {fieldError(error)}
     </div>
@@ -282,6 +291,12 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
     });
   }
 
+  // The input-contract minimum: ONE genuine source of substance and voice —
+  // their profile (real posts), a CV, or the voice sample. Warn, never block:
+  // the CV can only be attached after the seat exists.
+  const belowMinimum =
+    seat.intake && !seat.intake.handle && !seat.intake.cvName && !seat.intake.fallbackKind;
+
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between">
@@ -292,6 +307,12 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
           <Badge tone="warning">Profile pending, drafts only</Badge>
         )}
       </div>
+      {belowMinimum ? (
+        <p className="mt-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
+          This seat has no voice source yet. Add their profile URL, a CV, or the voice sample
+          below - drafts need at least one genuine source of who they are.
+        </p>
+      ) : null}
       <div className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
@@ -324,8 +345,11 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
             rows={2}
             value={focus}
             onChange={(e) => setFocus(e.target.value)}
-            placeholder="The 2 to 4 topics they want to be known for. Seeds their content pillars."
+            placeholder="The 2 to 4 topics they want to be known for. It steers what we write about."
           />
+          <p className="mt-1 text-xs text-muted">
+            Optional. Leave it empty and we work the focus out from the CV and their posts.
+          </p>
         </div>
         <div>
           <Label htmlFor={`ls-offlimits-${seat.id}`}>Anything we must never post</Label>
@@ -347,7 +371,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
         />
         <p className="text-xs text-muted">
           No voice questions here on purpose: we build the voice from their real posts, CV and
-          edits, and if we already run their X seat we reuse what we know.
+          edits - and if they already have a seat for another agent, we reuse what we already know.
         </p>
         {fieldError(error)}
         <Button onClick={saveSeat} disabled={pending} variant="subtle">
@@ -443,8 +467,11 @@ function AddSeatForm({ clientId }: { clientId: string }) {
             rows={2}
             value={focus}
             onChange={(e) => setFocus(e.target.value)}
-            placeholder="The 2 to 4 topics they want to be known for."
+            placeholder="The 2 to 4 topics they want to be known for. It steers what we write about."
           />
+          <p className="mt-1 text-xs text-muted">
+            Optional. Leave it empty and we work the focus out from the CV and their posts.
+          </p>
         </div>
         <div>
           <Label htmlFor="la-offlimits">Anything we must never post</Label>
@@ -591,6 +618,7 @@ export function LinkedInAgentIntake({
   news,
   feedback,
   runs,
+  pageUrlSuggestion,
 }: {
   clientId: string;
   company: LiIntakeView | null;
@@ -598,10 +626,15 @@ export function LinkedInAgentIntake({
   news: CompanyNewsRowView[];
   feedback: LiFeedbackRowView[];
   runs: LiRunRowView[];
+  pageUrlSuggestion?: string;
 }) {
   return (
     <div className="space-y-6">
-      <CompanyForm clientId={clientId} intake={company} />
+      <CompanyForm
+        clientId={clientId}
+        intake={company}
+        {...(pageUrlSuggestion ? { pageUrlSuggestion } : {})}
+      />
       <div className="space-y-4">
         {seats.map((seat) => (
           <SeatCard key={seat.id} clientId={clientId} seat={seat} />

@@ -109,7 +109,7 @@ export async function submitCustomAgentJob(
   if (isXAgent(agent.key)) {
     if (!(await hasXAgentIntake(input.clientId))) {
       return {
-        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the client's "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
+        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
       };
     }
     try {
@@ -125,9 +125,9 @@ export async function submitCustomAgentJob(
   // drop as company-updates.md, CVs, learning logs, and prior batches (see
   // linkedin-agent-context.ts). Hard-gated the same way.
   if (isLinkedInAgent(agent.key)) {
-    if (!(await hasLinkedInAgentIntake(input.clientId))) {
+    if (!(await hasLinkedInAgentIntake(input.clientId, agent.key))) {
       return {
-        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open the client's "LinkedIn agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
+        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open the "LinkedIn agent data" page (under Agent-specific documents) and save the company page form - the agent drafts from that. Nothing has run.`,
       };
     }
     try {
