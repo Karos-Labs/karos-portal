@@ -228,6 +228,43 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     },
   },
   {
+    // Exact key on purpose (the e13 rule): the e10 LinkedIn agents are
+    // intake-driven (setup gate + injected LinkedIn agent data), so they must
+    // match BEFORE the generic /linkedin/ brief below. Covers the per-client
+    // company-page instances (karos-linkedin-company-<slug>) and the master.
+    matches: (identity) =>
+      identity.startsWith("karos-linkedin-company-") || identity.startsWith("karos-linkedin-agent "),
+    profile: {
+      eyebrow: "LinkedIn drafts",
+      intro:
+        "Drafts the next company-page post from the LinkedIn agent data page (the company page, seats, and ongoing drops). Voice, lanes, and cadence are built from that data - this form only scopes the run. Draft-only; a person always posts.",
+      fields: [
+        {
+          key: "request",
+          label: "Anything to lean into this run?",
+          type: "textarea",
+          helper: "Optional. The agent works from the stored LinkedIn agent data either way.",
+          placeholder: "A launch to feature, a topic to hit, a lane to pick.",
+        },
+      ],
+      quickStarts: [
+        "Lean into this week's update.",
+        "Pick an educational lane this time.",
+        "Turn the latest milestone into the post.",
+      ],
+      deliverables: [
+        "One company-page post draft with its native asset (carousel, document, or image)",
+        "A linked source on every factual claim",
+      ],
+      estimate: "~10–20 min",
+      attachments: {
+        label: "Extra material for this run (optional)",
+        hint: "One-off references for this post. The page URL, off-limits, seats, and news live on the LinkedIn agent data page, not here.",
+        accept: DOCUMENTS_AND_IMAGES,
+      },
+    },
+  },
+  {
     matches: (identity) => /linkedin/.test(identity),
     profile: {
       eyebrow: "Founder-led LinkedIn brief",
@@ -691,6 +728,18 @@ export function isXAgentIdentity(key: string): boolean {
  * copy edits cannot silently break the link.
  */
 export const X_SETUP_REQUIRED_PREFIX = "Set up the X agent data";
+
+/**
+ * The LinkedIn agents (e10) run on stored intake the same way. Client-safe
+ * twin of the server-side isLinkedInAgent in
+ * agent-service/linkedin-agent-context.ts.
+ */
+export function isLinkedInAgentIdentity(key: string): boolean {
+  return key === "karos-linkedin-agent" || key.startsWith("karos-linkedin-company-");
+}
+
+/** The e10 twin of X_SETUP_REQUIRED_PREFIX. */
+export const LINKEDIN_SETUP_REQUIRED_PREFIX = "Set up the LinkedIn agent data";
 
 export function launchProfileFor(agent: AgentIdentity): AgentLaunchProfile {
   const identity = `${agent.key} ${agent.name}`.toLowerCase();

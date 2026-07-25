@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Icon, XLogo } from "@/components/icon";
+import { Icon, LinkedInLogo, XLogo } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { renderFullDoc, stripDocPreamble } from "@/lib/doc-render";
 import { generateIntelReportAction, updateIntelScheduleAction } from "@/lib/actions";
@@ -798,6 +798,18 @@ export function ClientDocuments({
                 <XLogo className="h-3.5 w-3.5 shrink-0 text-muted-2 group-hover:text-foreground" />
                 <span className="flex-1 truncate text-sm text-muted group-hover:text-foreground">
                   X agent data
+                </span>
+                <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+              </a>
+            </li>
+            <li>
+              <a
+                href={`/clients/${clientId}/linkedin-agent`}
+                className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
+              >
+                <LinkedInLogo className="h-3.5 w-3.5 shrink-0 text-muted-2 group-hover:text-foreground" />
+                <span className="flex-1 truncate text-sm text-muted group-hover:text-foreground">
+                  LinkedIn agent data
                 </span>
                 <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
               </a>

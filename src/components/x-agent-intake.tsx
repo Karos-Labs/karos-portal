@@ -12,9 +12,9 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { CompanyNewsBox, type CompanyNewsRowView } from "@/components/company-news-box";
 import {
   addXDraftFeedbackAction,
-  addXNewsUpdateAction,
   addXSeatAction,
   addXTakeAction,
   proposeXRosterAction,
@@ -41,12 +41,8 @@ export interface XSeatView {
   takes: Array<{ id: string; take: string; date: string; topic?: string }>;
 }
 
-export interface XNewsRowView {
-  id: string;
-  title: string;
-  date: string;
-  type?: string;
-}
+/** The shared company news row (SCRUM-51) — see company-news-box.tsx. */
+export type XNewsRowView = CompanyNewsRowView;
 
 export interface XFeedbackRowView {
   id: string;
@@ -70,8 +66,6 @@ const TAKE_PROMPTS = [
   "What decision did you make this week, and why?",
   "What number from your work would surprise people?",
 ];
-
-const NEWS_TYPES = ["launch", "milestone", "customer win", "hire", "partnership", "event", "other"];
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -533,89 +527,6 @@ function AddSeatForm({ clientId }: { clientId: string }) {
   );
 }
 
-/* ─────────────────────── what's new box ────────────────────────── */
-
-function NewsBox({ clientId, rows }: { clientId: string; rows: XNewsRowView[] }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [date, setDate] = useState(today());
-  const [type, setType] = useState("");
-  const [url, setUrl] = useState("");
-  const [detail, setDetail] = useState("");
-
-  function add() {
-    setError(null);
-    start(async () => {
-      const result = await addXNewsUpdateAction({ clientId, title, date, type, url, detail });
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-      setTitle("");
-      setDetail("");
-      setUrl("");
-      setType("");
-      setDate(today());
-      router.refresh();
-    });
-  }
-
-  return (
-    <Card className="p-5">
-      <CardTitle>What happened this week</CardTitle>
-      <p className="mt-1 text-sm text-muted">
-        One or two lines on what is new. We turn it into the post, you do not write it. Empty weeks
-        are fine; the agent keeps running on its always-on lanes.
-      </p>
-      <div className="mt-4 space-y-3">
-        <Textarea
-          rows={2}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="What happened?"
-        />
-        <Textarea
-          rows={2}
-          value={detail}
-          onChange={(e) => setDetail(e.target.value)}
-          placeholder="Detail (optional): what shipped and why it matters. If it contains a number, add the source link below or we post it without the number."
-        />
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          <Select
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            >
-            <option value="">Type (optional)</option>
-            {NEWS_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </Select>
-          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Public link (optional)" />
-        </div>
-        {fieldError(error)}
-        <Button onClick={add} disabled={pending} variant="subtle">
-          {pending ? "Adding…" : "Drop the update"}
-        </Button>
-      </div>
-      {rows.length > 0 ? (
-        <ul className="mt-4 space-y-2 border-t border-border pt-4">
-          {rows.slice(0, 6).map((r) => (
-            <li key={r.id} className="text-xs text-muted">
-              <span className="text-foreground">{r.date}</span>
-              {r.type ? ` · ${r.type}` : ""} - {r.title}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </Card>
-  );
-}
-
 /* ──────────────── feedback box (free-form, per account) ─────────────── */
 
 function FeedbackBox({
@@ -747,7 +658,7 @@ export function XAgentIntake({
         ))}
         <AddSeatForm clientId={clientId} />
       </div>
-      <NewsBox clientId={clientId} rows={news} />
+      <CompanyNewsBox clientId={clientId} rows={news} />
       <FeedbackBox clientId={clientId} seats={seats} runs={runs} recent={feedback} />
     </div>
   );

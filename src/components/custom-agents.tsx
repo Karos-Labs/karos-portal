@@ -22,8 +22,10 @@ import { CREDIT_COSTS } from "@/lib/credits";
 import {
   buildCustomAgentPrompt,
   initialAgentBrief,
+  isLinkedInAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
+  LINKEDIN_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
 import type { ContextItem, CustomAgent, JobStatus } from "@/lib/types";
@@ -230,6 +232,7 @@ export function ClientCustomAgents({
   viewerIsClient,
   availableCredits,
   xSetup,
+  linkedinSetup,
 }: {
   clientId: string;
   agents: RunnableAgentSummary[];
@@ -240,6 +243,8 @@ export function ClientCustomAgents({
   availableCredits?: number;
   /** X agent intake state: gates the X run behind the "X agent data" page. */
   xSetup?: { ready: boolean; href: string };
+  /** LinkedIn agent intake state: gates e10 runs behind the "LinkedIn agent data" page. */
+  linkedinSetup?: { ready: boolean; href: string };
 }) {
   const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
 
@@ -287,6 +292,9 @@ export function ClientCustomAgents({
                 <div className="mt-3 flex items-center gap-2">
                   <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
                   {xSetup && !xSetup.ready && isXAgentIdentity(agent.key) && (
+                    <Badge tone="warning">Setup needed</Badge>
+                  )}
+                  {linkedinSetup && !linkedinSetup.ready && isLinkedInAgentIdentity(agent.key) && (
                     <Badge tone="warning">Setup needed</Badge>
                   )}
                 </div>
@@ -369,6 +377,7 @@ export function ClientCustomAgents({
           contextItems={contextItems}
           viewerIsClient={viewerIsClient}
           {...(xSetup ? { xSetup } : {})}
+          {...(linkedinSetup ? { linkedinSetup } : {})}
           onClose={() => setRunAgent(null)}
         />
       )}
@@ -385,6 +394,7 @@ function RunCustomAgentModal({
   contextItems,
   viewerIsClient,
   xSetup,
+  linkedinSetup,
   onClose,
 }: {
   agent: RunnableAgentSummary;
@@ -396,6 +406,8 @@ function RunCustomAgentModal({
   viewerIsClient: boolean;
   /** X agent intake state — when not ready, the modal routes to setup instead of running. */
   xSetup?: { ready: boolean; href: string };
+  /** LinkedIn agent intake state — same gate for the e10 agents. */
+  linkedinSetup?: { ready: boolean; href: string };
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -498,6 +510,33 @@ function RunCustomAgentModal({
               className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
             >
               Set up X agent data
+              <Icon name="ArrowRight" className="h-3.5 w-3.5" />
+            </a>
+            <Button variant="ghost" onClick={onClose}>
+              Not now
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  if (isLinkedInAgentIdentity(agent.key) && linkedinSetup && !linkedinSetup.ready) {
+    return (
+      <Modal open onClose={onClose} title={agent.name}>
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-foreground">Set up the LinkedIn agent data first.</p>
+          <p className="text-xs leading-relaxed text-muted">
+            This agent drafts from the LinkedIn agent data page: the company page, a seat per
+            person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
+            will not run without it.
+          </p>
+          <div className="flex items-center gap-2 pt-1">
+            <a
+              href={linkedinSetup.href}
+              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
+            >
+              Set up LinkedIn agent data
               <Icon name="ArrowRight" className="h-3.5 w-3.5" />
             </a>
             <Button variant="ghost" onClick={onClose}>
@@ -636,6 +675,11 @@ function RunCustomAgentModal({
             {error.startsWith(X_SETUP_REQUIRED_PREFIX) && selectedClientId && (
               <a href={`/clients/${selectedClientId}/x-agent`} className="ml-1.5 underline">
                 Open X agent data →
+              </a>
+            )}
+            {error.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) && selectedClientId && (
+              <a href={`/clients/${selectedClientId}/linkedin-agent`} className="ml-1.5 underline">
+                Open LinkedIn agent data →
               </a>
             )}
           </p>

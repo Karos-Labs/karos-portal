@@ -16,7 +16,12 @@ import {
 } from "@/lib/agent-service/client";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "@/lib/agent-service/x-agent-context";
-import { X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
+import {
+  buildLinkedInAgentContextFiles,
+  hasLinkedInAgentIntake,
+  isLinkedInAgent,
+} from "@/lib/agent-service/linkedin-agent-context";
+import { LINKEDIN_SETUP_REQUIRED_PREFIX, X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
@@ -112,6 +117,24 @@ export async function submitCustomAgentJob(
     } catch (e) {
       return {
         error: `Could not attach the client's X intake data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
+  // LinkedIn agents (e10): the same contract — portal intake, the shared news
+  // drop as company-updates.md, CVs, learning logs, and prior batches (see
+  // linkedin-agent-context.ts). Hard-gated the same way.
+  if (isLinkedInAgent(agent.key)) {
+    if (!(await hasLinkedInAgentIntake(input.clientId))) {
+      return {
+        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open the client's "LinkedIn agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildLinkedInAgentContextFiles(input.clientId, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,
       };
     }
   }

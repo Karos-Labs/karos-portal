@@ -50,3 +50,31 @@ whole seed = delete the listed docs; nothing else references them.
 | C1 | Secret `xai-api-key` created in Secret Manager (by Daniel, console). agent-service-sa already had project-level accessor | `gcloud secrets delete xai-api-key --project karoscmo` |
 | C2 | Portal auto-deployed from main by the existing `^main$` Cloud Build trigger (merge commit 0f84f37) | `git revert -m 1 0f84f37` + push (trigger redeploys), or roll the karos-cmo service back to the previous revision |
 | C3 | agent-service api + worker + runner deployed at image tag `34b7953...` (build e60db965, 2026-07-22 10:31 UTC; previous tag `a287788...`) via `gcloud builds submit agent-service/cloudbuild.yaml` with `_REGION=europe-west1,_REPO=karos,_AGENTS_REF=main,COMMIT_SHA=34b7953...` | redeploy the previous images: rerun the same build with `COMMIT_SHA=a287788f222fe30e88e2446a1085b7d58518c002` checked out at that commit, or `gcloud run services update-traffic` to the prior revision + `gcloud run jobs update agent-runner --image=...agent-runner:a287788...` |
+
+# LinkedIn agent (e10) hookup — rollback log
+
+Branch `claude/linkedin-agent-integration-104140` (base `1c8f87c`, = origin/main at
+branch time). Same rules as above: every change lists its exact undo; abandoning
+the attempt = close the PR and delete the branch; data changes are applied only in
+Phase 3, each with a `_backup/<date>/` snapshot noted here first.
+
+## Code changes (all on this branch; undo for any single item = revert the commit that introduced it; undo for everything = delete the branch)
+
+| # | What | Where | Undo |
+|---|---|---|---|
+| L1 | This section of the rollback log | `ROLLBACK.md` (appended section) | delete the section |
+| L2 | AgentIntake union widened to "x" \| "linkedin" + LinkedIn seat fields (role, focus, fallbackKind/fallbackText, cvPath/cvUrl/cvName/cvUploadedAt) + LiDraftFeedback type | `src/lib/types.ts` (edits inside the intake section) | restore the union to `"x"`, remove the optional LinkedIn fields and the LiDraftFeedback interface — no existing doc carries these fields |
+| L3 | `liDraftFeedback` collection handle + CRUD + `patchAgentIntake` helper | `src/lib/data.ts` | remove the col entry, the LiDraftFeedback import, the two appended functions, and `patchAgentIntake`. The new collection holds only data written by these surfaces |
+| L4 | LinkedIn intake server actions (company form, seats incl. CV upload, per-draft feedback) | `src/lib/actions/linkedin-agent-actions.ts` (new file) | delete the file. Uploaded CVs live under `clients/<clientId>/linkedin-agent/cv/` in Storage — delete that prefix to purge |
+| L5 | Shared company news box (SCRUM-51) extracted from the X intake; `addXNewsUpdateAction` + `saveXCompanyIntakeAction` revalidate both agent pages | `src/components/company-news-box.tsx` (new file), `src/components/x-agent-intake.tsx`, `src/lib/actions/x-agent-actions.ts` | delete the new file, restore the inline NewsBox in `x-agent-intake.tsx` and the single revalidatePath calls (git history at `1c8f87c`) |
+| L6 | LinkedIn intake page + components + sidebar row + LinkedInLogo glyph | `src/app/(app)/clients/[id]/linkedin-agent/page.tsx`, `src/components/linkedin-agent-intake.tsx` (new files), `src/components/client-documents.tsx` (one `<li>`), `src/components/icon.tsx` (LinkedInLogo) | delete the two new files, remove the sidebar `<li>` and the LinkedInLogo export |
+| L7 | Exact-key e10 launch profile (before the generic /linkedin/ brief) + `isLinkedInAgentIdentity` + `LINKEDIN_SETUP_REQUIRED_PREFIX` | `src/lib/custom-agent-launch.ts` | remove the inserted profile entry, the function, and the constant — the generic /linkedin/ profile then matches again |
+| L8 | `linkedinSetup` gate threading (badge, pre-flight modal, post-error link) | `src/components/custom-agents.tsx`, `src/app/(app)/clients/[id]/agents/page.tsx` | remove the linkedinSetup props/blocks — the xSetup flow is untouched |
+| L9 | Run-time context injection for LinkedIn runs (intake + shared news as company-updates.md §A + CVs + learning logs + prior batches) | `src/lib/agent-service/linkedin-agent-context.ts` (new file) + key-gated `isLinkedInAgent` blocks in BOTH submit cores (`src/lib/jobs/submit-custom.ts`, `src/lib/agent-service/run-custom-agent.ts`) | delete the file, remove the two imports + `if (isLinkedInAgent(...))` blocks — restores the exact previous submit flow for every agent |
+| L10 | LinkedIn drafts parser + reader (pick-to-post via the verified `feed/?shareActive=true&text=` deep link, clipboard-first) + asset-card sniff (LinkedIn before X) | `src/lib/li-drafts.ts`, `src/components/li-drafts-review.tsx` (new files), `src/components/asset-card.tsx` | delete the two new files, restore the single xBatch sniff in `asset-card.tsx` |
+| L11 | LinkedIn portal surfaces doc + canonical agent instructions text | `docs/linkedin-agent-portal.md` (new file) | delete the file |
+
+## Data changes (Phase 3 — not yet applied)
+
+None yet. Every Phase 3 write (pilot seed docs, `customAgents/JOhXFFV2rHZ9IyQNFLvA`
+instructions v1) gets a `_backup/<date>/` snapshot and a row here BEFORE the write.

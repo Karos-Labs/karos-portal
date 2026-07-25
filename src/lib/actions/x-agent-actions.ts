@@ -117,6 +117,7 @@ export async function saveXCompanyIntakeAction(input: {
     await addXNewsUpdate({ clientId: input.clientId, title, date, createdBy: user.uid, createdAt: now });
   }
   revalidatePath(`/clients/${input.clientId}/x-agent`);
+  revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
   return {};
 }
 
@@ -286,7 +287,10 @@ export async function addXNewsUpdateAction(input: {
     createdBy: user.uid,
     createdAt: Date.now(),
   });
+  // The news drop is shared with the LinkedIn agent (SCRUM-51): one input
+  // feeds both agents, so both data pages must refresh.
   revalidatePath(`/clients/${input.clientId}/x-agent`);
+  revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
   return {};
 }
 
