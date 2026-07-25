@@ -75,7 +75,22 @@ Phase 3, each with a `_backup/<date>/` snapshot noted here first.
 | L11 | LinkedIn portal surfaces doc + canonical agent instructions text | `docs/linkedin-agent-portal.md` (new file) | delete the file |
 | L12 | Adversarial-audit fixes (39 findings, 20+2 applied): company form answers optional (gate = form saved, a recorded deviation from the lab's zero-input Path A); shared news box gains source-for-number + consent fields and the template's type list; edit_request feedback action + Request a change in the reader; finalText cap 3,000; clipboard awaited before compose; exact-name media matching; parser account-scope fix + post-window bullet; prior batches scoped across ALL e10 agents; master gate accepts any LinkedIn intake; webhook prefers DRAFTS.md deterministically; asset-card media extension fallback + durable-URL filter; focus/fallback clears (FieldValue.delete); longest-name feedback matching (X too); CV content-type case fix; Section A cell sanitizing + Section B table; copy fixes (X-mention removed from seat form, CV privacy, jargon) | second commit on this branch (see its message for the file list) | revert that commit |
 
-## Data changes (Phase 3 — not yet applied)
+## Data changes (Phase 3, applied 2026-07-25 — Karos pilot seed)
 
-None yet. Every Phase 3 write (pilot seed docs, `customAgents/JOhXFFV2rHZ9IyQNFLvA`
-instructions v1) gets a `_backup/<date>/` snapshot and a row here BEFORE the write.
+All seeded docs are NEW (agentIntake had zero `agent="linkedin"` docs and the two
+seat slugs were free — verified by the seed script's preconditions before writing).
+Sources: the lab repo origin/main filled seat intakes + voice-rules.md + the brand
+sameAs set. Undo for the whole seed = delete the listed docs.
+
+| # | What | Doc(s) | Undo |
+|---|---|---|---|
+| LD1 | Company LinkedIn intake (linkedin.com/company/karoslabs, voice + off-limits from voice-rules.md) | `agentIntake/UFLwLZR75QFXVAZA8Hb4` | delete doc |
+| LD2 | Albert seat LinkedIn intake (on his existing shared seat `clientSeats/wnk3rbc1EK8dI8XNabgF`) | `agentIntake/M9kQu2PyO9mN279BlsCN` | delete doc |
+| LD3 | Daniel's shared seat | `clientSeats/1YPoOPD7xQqy7uoIxgEw` | delete doc |
+| LD4 | Daniel seat LinkedIn intake (fallback = his genuine self-description) | `agentIntake/dTvnoTuqunvN0k2T7TXm` | delete doc |
+| LD5 | Lola's shared seat | `clientSeats/DW2aAfOMm8Som6v9CmmF` | delete doc |
+| LD6 | Lola seat LinkedIn intake (0 posts; biotech-as-learner off-limits) | `agentIntake/8Hy9nbqMRcWmJiQUWcrB` | delete doc |
+| LD7 | LinkedIn agent instructions v1 (the canonical block in docs/linkedin-agent-portal.md; replaced the 07-15 seed text that had no portal overlay) | `customAgents/JOhXFFV2rHZ9IyQNFLvA` | restore `instructions` from `_backup/2026-07-25/customAgents-JOhXFFV2rHZ9IyQNFLvA-v1-pre.json` (full pre-change doc) |
+
+CVs were NOT seeded (gitignored in the lab repo — never on GitHub); Daniel/Lola
+upload them on the data page.
