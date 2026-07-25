@@ -9,7 +9,8 @@ import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 describe("custom agent launch profiles", () => {
   it("gives known agents purpose-built fields and attachment guidance", () => {
     const instagram = launchProfileFor({ key: "karos-instagram-agent", name: "Instagram Agent" });
-    const linkedin = launchProfileFor({ key: "karos-linkedin-agent", name: "LinkedIn Agent" });
+    // A linkedin-ish import that is NOT an e10 agent still gets the founder brief.
+    const linkedin = launchProfileFor({ key: "acme-linkedin-ghostwriter", name: "LinkedIn Ghostwriter" });
     const shorts = launchProfileFor({ key: "branded-shorts", name: "Branded Shorts" });
     const x = launchProfileFor({ key: "karos-x-agent", name: "X Agent" });
 
@@ -32,6 +33,25 @@ describe("custom agent launch profiles", () => {
     expect(new Set([instagram.eyebrow, linkedin.eyebrow, shorts.eyebrow, x.eyebrow]).size).toBe(4);
   });
 
+  it("routes the e10 LinkedIn agents to the intake-driven brief, before the founder regex", () => {
+    // The per-client company-page instance and the lab master are both
+    // intake-driven (setup gate + injected LinkedIn agent data): the brief
+    // only scopes the run, exactly like the X agent — never asking for what
+    // the data page already stores (executive material, voice, proof).
+    const instance = launchProfileFor({
+      key: "karos-linkedin-company-karoslabs",
+      name: "LinkedIn Company Page — Karos Labs",
+    });
+    const master = launchProfileFor({ key: "karos-linkedin-agent", name: "LinkedIn Agent" });
+    for (const profile of [instance, master]) {
+      expect(profile.eyebrow).toBe("LinkedIn drafts");
+      expect(profile.fields.map((field) => field.key)).toEqual(["request"]);
+      expect(profile.fields.map((field) => field.key)).not.toEqual(
+        expect.arrayContaining(["executive", "proof", "voice_constraints"]),
+      );
+    }
+  });
+
   it("keeps unknown imported agents runnable with a complete fallback brief", () => {
     const profile = launchProfileFor({ key: "future-agent", name: "Future Agent" });
     expect(profile.fields.find((field) => field.key === "request")?.required).toBe(true);
@@ -50,7 +70,7 @@ describe("custom agent launch profiles", () => {
   });
 
   it("serializes guided answers into the service prompt without losing labels", () => {
-    const profile = launchProfileFor({ key: "karos-linkedin-agent", name: "LinkedIn Agent" });
+    const profile = launchProfileFor({ key: "acme-linkedin-ghostwriter", name: "LinkedIn Ghostwriter" });
     const values = {
       ...initialAgentBrief(profile),
       executive: "Maya Chen, CEO",

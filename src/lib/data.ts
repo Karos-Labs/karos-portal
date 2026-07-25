@@ -44,6 +44,7 @@ import type {
   XNewsUpdate,
   XTake,
   XDraftFeedback,
+  LiDraftFeedback,
 } from "@/lib/types";
 import {
   CreditError,
@@ -105,12 +106,17 @@ const col = {
   // by a snapshot of the digest that produced it so the LLM only reruns when
   // there's actually something new to report (see /api/clients/[id]/insights).
   clientInsightsCache: () => adminDb().collection("clientInsightsCache"),
-  // X agent (e13) intake & seats — per-agent client data on top of onboarding.
+  // Agent intake & seats (X e13 · LinkedIn e10) — per-agent client data on top
+  // of onboarding. clientSeats + agentIntake are shared across agents.
+  // xNewsUpdates is the SHARED company news drop (SCRUM-51): one client input
+  // fanned out to both the X and LinkedIn agents — the collection keeps its
+  // historical name to avoid a data migration.
   clientSeats: () => adminDb().collection("clientSeats"),
   agentIntake: () => adminDb().collection("agentIntake"),
   xNewsUpdates: () => adminDb().collection("xNewsUpdates"),
   xTakes: () => adminDb().collection("xTakes"),
   xDraftFeedback: () => adminDb().collection("xDraftFeedback"),
+  liDraftFeedback: () => adminDb().collection("liDraftFeedback"),
   // Planned agent runs shown on the unified calendar. Kept separate from the
   // recurring generator scheduler because the two records have different schemas.
   plannedScheduledRuns: () => adminDb().collection("plannedScheduledRuns"),
@@ -2050,6 +2056,29 @@ export async function upsertAgentIntake(
   return ref.id;
 }
 
+/** Targeted field update on an existing intake doc (e.g. attaching a CV upload). */
+export async function patchAgentIntake(
+  id: string,
+  patch: Partial<Omit<AgentIntake, "id" | "clientId" | "agent" | "seatId" | "createdAt">>,
+): Promise<void> {
+  await col.agentIntake().doc(id).set({ ...patch, updatedAt: Date.now() }, { merge: true });
+}
+
+/**
+ * Remove fields from an intake doc. Needed because upserts merge: a form that
+ * clears its focus or voice-fallback must actually delete the old values, or
+ * stale text keeps steering the agent's voice on every future run.
+ */
+export async function clearAgentIntakeFields(
+  id: string,
+  fields: Array<keyof Omit<AgentIntake, "id" | "clientId" | "agent" | "seatId" | "createdAt">>,
+): Promise<void> {
+  if (fields.length === 0) return;
+  const { FieldValue } = await import("firebase-admin/firestore");
+  const deletions = Object.fromEntries(fields.map((f) => [f, FieldValue.delete()]));
+  await col.agentIntake().doc(id).update({ ...deletions, updatedAt: Date.now() });
+}
+
 export async function addXNewsUpdate(data: Omit<XNewsUpdate, "id">): Promise<string> {
   const ref = await col.xNewsUpdates().add(data);
   return ref.id;
@@ -2085,4 +2114,19 @@ export async function listXDraftFeedback(
   if (account) q = q.where("account", "==", account);
   const snap = await q.get();
   return snap.docs.map((d) => withId<XDraftFeedback>(d)).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function addLiDraftFeedback(data: Omit<LiDraftFeedback, "id">): Promise<string> {
+  const ref = await col.liDraftFeedback().add(data);
+  return ref.id;
+}
+
+export async function listLiDraftFeedback(
+  clientId: string,
+  account?: string,
+): Promise<LiDraftFeedback[]> {
+  let q = col.liDraftFeedback().where("clientId", "==", clientId);
+  if (account) q = q.where("account", "==", account);
+  const snap = await q.get();
+  return snap.docs.map((d) => withId<LiDraftFeedback>(d)).sort((a, b) => b.createdAt - a.createdAt);
 }

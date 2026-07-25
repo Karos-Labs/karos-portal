@@ -268,7 +268,19 @@ export async function POST(req: NextRequest) {
             const ext = extension(artifact.name);
             if (TEXT_EXTENSIONS.includes(ext)) {
               const content = bytes.toString("utf8");
-              if (!primaryText || content.length > primaryText.content.length) {
+              // DRAFTS.md is the pinned deliverable-of-record for the drafting
+              // agents (X, LinkedIn) — prefer it deterministically over the
+              // size race, so a long sibling text file (a video brief, an
+              // about.txt) can never displace the batch the reader parses and
+              // the next run's anti-duplication re-injects.
+              const isDrafts = (a: AgentServiceArtifact) =>
+                a.name.split("/").pop()?.toLowerCase() === "drafts.md";
+              if (
+                !primaryText ||
+                (isDrafts(artifact) && !isDrafts(primaryText.artifact)) ||
+                (isDrafts(artifact) === isDrafts(primaryText.artifact) &&
+                  content.length > primaryText.content.length)
+              ) {
                 primaryText = { artifact, content };
               }
             } else if (IMAGE_EXTENSIONS.includes(ext)) {

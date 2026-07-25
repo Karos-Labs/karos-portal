@@ -9,7 +9,12 @@ import { logActivity } from "@/lib/actions/_shared";
 import { cancelAgentServiceJob, isAgentServiceConfigured, submitAgentServiceJob } from "./client";
 import type { AgentServiceContextFile } from "./types";
 import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "./x-agent-context";
-import { X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
+import {
+  buildLinkedInAgentContextFiles,
+  hasLinkedInAgentIntake,
+  isLinkedInAgent,
+} from "./linkedin-agent-context";
+import { LINKEDIN_SETUP_REQUIRED_PREFIX, X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
 import type { Client, CustomAgent } from "@/lib/types";
 
 /* limits — mirror agent-service/src/schemas/task-types/custom.json */
@@ -63,7 +68,7 @@ export async function submitCustomAgentRun(args: {
   if (isXAgent(agent.key)) {
     if (!(await hasXAgentIntake(client.id))) {
       return {
-        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the client's "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
+        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
       };
     }
     try {
@@ -71,6 +76,25 @@ export async function submitCustomAgentRun(args: {
     } catch (e) {
       return {
         error: `Could not attach the client's X intake data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
+  // LinkedIn agents (e10): the same contract — portal intake, the shared news
+  // drop as company-updates.md, CVs, learning logs, and prior batches (see
+  // linkedin-agent-context.ts) — so scheduler-fired LinkedIn runs read the
+  // same live client data as manual ones. Hard-gated the same way.
+  if (isLinkedInAgent(agent.key)) {
+    if (!(await hasLinkedInAgentIntake(client.id, agent.key))) {
+      return {
+        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open the "LinkedIn agent data" page (under Agent-specific documents) and save the company page form - the agent drafts from that. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildLinkedInAgentContextFiles(client.id, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,
       };
     }
   }
