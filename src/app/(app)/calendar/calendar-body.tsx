@@ -1,5 +1,6 @@
 import { listAssets, listClients, listCustomAgents, listJobs, listPlannedScheduledRuns } from "@/lib/data";
 import { assetImages } from "@/lib/asset-images";
+import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import { describeCadence } from "@/lib/scheduled-runs";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -97,8 +98,14 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
 
   const scheduledRuns = inScope(runsRaw);
   const jobs = inScope(jobsRaw);
-  // Clients never see internal drafts (matches /assets); staff review them.
-  const assets = inScope(assetsRaw).filter((a) => !isClient || a.status !== "draft");
+  // Clients never see internal drafts (matches /assets). Future scheduled
+  // deliverables also pass through the shared redaction boundary so the
+  // calendar cannot expose their content, images, or download controls before
+  // the scheduled day. Staff continue to receive the full assets for review.
+  const scopedAssets = inScope(assetsRaw).filter((a) => !isClient || a.status !== "draft");
+  const assets = isClient
+    ? getClientLibraryAssets(scopedAssets, { forClient: true })
+    : scopedAssets;
 
   // Agent lookups: by id for scheduled runs, by name for past jobs (jobs store
   // the agent's name, not its id).

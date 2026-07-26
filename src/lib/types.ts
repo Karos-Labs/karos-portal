@@ -332,6 +332,8 @@ export interface Job {
   id: string;
   clientId: string;
   agentId: string;
+  /** Exact custom-agent identity for repo-agent runs. Older jobs may only have agentName. */
+  customAgentId?: string;
   agentName: string;
   title: string;
   status: JobStatus;
@@ -496,8 +498,14 @@ export interface PlannedScheduledRun {
   minute: number;
   /** weekly cadence: 0=Sun … 6=Sat. */
   weekday?: number;
+  /** Multi-fire weekly cadence. When present, supersedes weekday. */
+  weekdays?: number[];
   /** monthly cadence: 1–31 (clamped to the month's length). */
   dayOfMonth?: number;
+  /** Distinct deliverables requested from each scheduled run. Defaults to 1. */
+  outputsPerRun?: number;
+  /** Whether each scheduled fire spends the client's credits. */
+  billClientCredits?: boolean;
   /** Next fire time (epoch millis) — the scheduling cursor the cron drains. */
   nextRunAt: number;
   status: "active" | "paused" | "completed";
@@ -1294,14 +1302,15 @@ export interface CreditLedgerEntry {
   createdAt: number;
 }
 
-/* ───────────────────── X agent (e13) intake & seats ─────────────────────
+/* ─────────────── Agent intake & seats (X e13 · LinkedIn e10) ───────────────
  *
  * Per-agent client data collected ON TOP of onboarding (the buildout brief's
  * layer 2 + 3): company-level agent intake, per-person seats, the two ongoing
  * drop boxes, and per-account draft feedback. Grouped business → agent data →
  * seats → per-seat agent data, stored as flat collections keyed by
  * clientId/seatId per this codebase's convention. Additive — nothing existing
- * routes through these.
+ * routes through these. Seats and the news drop are shared across agents
+ * (PORTAL-INPUT-CONTRACT §3: the client types an update once).
  */
 
 /** A person with a seat inside a client business (platform-agnostic). */
@@ -1325,11 +1334,14 @@ export interface ClientSeat {
 export interface AgentIntake {
   id: string;
   clientId: string;
-  /** Agent family, e.g. "x". Widen the union as more agents get intake. */
-  agent: "x";
+  /** Agent family. Widen the union as more agents get intake. */
+  agent: "x" | "linkedin";
   /** null = company-page intake; otherwise the ClientSeat id. */
   seatId: string | null;
-  /** Account @handle. Null = none yet (company) / pending (seat drafts, cannot post). */
+  /**
+   * Account identity on the platform: X = @handle, LinkedIn = profile/page
+   * URL. Null = none yet (company) / pending (seat drafts, cannot post).
+   */
   handle: string | null;
   /** Company form only: how the brand wants to come across (the one asked voice input). */
   comeAcross?: string;
@@ -1342,12 +1354,41 @@ export interface AgentIntake {
    * agent reads the account's checkmark and its own posting style at run time.
    */
   premium?: boolean;
+  /** LinkedIn seats only — the person's company role, in their own words. */
+  role?: string;
+  /**
+   * LinkedIn seats only — the lab seat form's "what should your profile focus
+   * on": 2-4 topics the person wants to be known for (do-not-post lives in
+   * offLimits).
+   */
+  focus?: string;
+  /**
+   * LinkedIn seats only — the inactive-on-LinkedIn fallback: which voice
+   * source the person chose when they have little post history.
+   * "writing" = a long piece of their own genuine writing (in fallbackText);
+   * "about" = who-they-are notes / transcribed voice note (in fallbackText).
+   */
+  fallbackKind?: "writing" | "about";
+  fallbackText?: string;
+  /**
+   * LinkedIn seats only — private CV upload (substance, not voice). Storage
+   * path + durable download URL + original filename; never client-visible
+   * outside this intake. The URL lets run-time injection attach the CV as a
+   * context file.
+   */
+  cvPath?: string;
+  cvUrl?: string;
+  cvName?: string;
+  cvUploadedAt?: number;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
 }
 
-/** One company "What's new" row (feeds the X internal connector; whats-new.json shape). */
+/**
+ * One row of the SHARED company news drop (SCRUM-51): consumed by the X agent
+ * as whats-new.json and by the LinkedIn agent as company-updates.md Section A.
+ */
 export interface XNewsUpdate {
   id: string;
   clientId: string;
@@ -1356,8 +1397,12 @@ export interface XNewsUpdate {
   date: string;
   detail?: string;
   url?: string;
-  /** launch / milestone / customer win / hire / partnership / event / other. */
+  /** win/milestone / launch / customer story / culture / event / hire / partnership / other. */
   type?: string;
+  /** Where any number in the update comes from (no source = posted without the number). */
+  sourceUrl?: string;
+  /** Who is featured + consent confirmed (spotlights/customer stories/quotes hold until set). */
+  consent?: string;
   createdBy: string;
   createdAt: number;
 }
@@ -1395,6 +1440,33 @@ export interface XDraftFeedback {
   /** posted_with_edits: the final text the client actually used. */
   finalText?: string;
   /** not_posted: why it was killed. */
+  reason?: string;
+  createdBy: string;
+  createdAt: number;
+}
+
+/**
+ * LinkedIn (e10) per-draft feedback — same contract as XDraftFeedback plus
+ * the lab contract's "edit_request" action, its own collection so
+ * per-platform Learning Logs never mix.
+ */
+export interface LiDraftFeedback {
+  id: string;
+  clientId: string;
+  /** "company", "program" (applies to every account), or a ClientSeat id. */
+  account: string;
+  jobId?: string;
+  assetId?: string;
+  /** Which draft in the batch, e.g. "Account 1 · Karos Labs — Company page". */
+  draftRef?: string;
+  /**
+   * "note" = free-form client feedback, not tied to one draft.
+   * "edit_request" = asks for a change to this draft (no posting hand-off).
+   */
+  action: "posted" | "posted_with_edits" | "not_posted" | "note" | "edit_request";
+  /** posted_with_edits: the final text the client actually used. */
+  finalText?: string;
+  /** not_posted: why it was killed. edit_request: what to change. */
   reason?: string;
   createdBy: string;
   createdAt: number;

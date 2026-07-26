@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeNextRun, describeCadence } from "@/lib/scheduled-runs";
+import { computeNextRun, describeCadence, weeklyCadenceDays } from "@/lib/scheduled-runs";
 
 /** Local-time constructor keeps assertions timezone-independent. */
 function local(y: number, m: number, d: number, h = 0, min = 0): number {
@@ -32,6 +32,16 @@ describe("computeNextRun", () => {
       .toBe(local(2026, 6, 13, 7));
   });
 
+  it("weekly: advances across multiple publishing days", () => {
+    expect(computeNextRun({
+      cadence: "weekly",
+      weekdays: [1, 3, 5],
+      hour: 9,
+      minute: 0,
+      from: MON_8AM,
+    })).toBe(local(2026, 6, 6, 9));
+  });
+
   it("monthly: fires on the requested day of month", () => {
     expect(computeNextRun({ cadence: "monthly", dayOfMonth: 15, hour: 9, minute: 0, from: MON_8AM }))
       .toBe(local(2026, 6, 15, 9));
@@ -59,5 +69,23 @@ describe("describeCadence", () => {
   it("summarizes a daily cadence", () => {
     expect(describeCadence({ cadence: "daily", hour: 14, minute: 30, nextRunAt: MON_8AM }))
       .toBe("Daily · 14:30");
+  });
+
+  it("summarizes an always-on multi-day weekly cadence", () => {
+    expect(describeCadence({
+      cadence: "weekly",
+      weekdays: [1, 3, 5],
+      hour: 9,
+      minute: 0,
+      nextRunAt: MON_8AM,
+    })).toBe("3× weekly · Mon, Wed, Fri 09:00");
+  });
+});
+
+describe("weeklyCadenceDays", () => {
+  it("spreads the requested post count over balanced days", () => {
+    expect(weeklyCadenceDays(1)).toEqual([2]);
+    expect(weeklyCadenceDays(3)).toEqual([1, 3, 5]);
+    expect(weeklyCadenceDays(7)).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 });

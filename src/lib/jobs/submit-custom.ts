@@ -7,6 +7,7 @@ import {
   getClient,
   getContextItem,
   getCustomAgent,
+  listJobs,
   updateJob,
 } from "@/lib/data";
 import {
@@ -16,7 +17,12 @@ import {
 } from "@/lib/agent-service/client";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "@/lib/agent-service/x-agent-context";
-import { X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
+import {
+  buildLinkedInAgentContextFiles,
+  hasLinkedInAgentIntake,
+  isLinkedInAgent,
+} from "@/lib/agent-service/linkedin-agent-context";
+import { LINKEDIN_SETUP_REQUIRED_PREFIX, X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
@@ -51,6 +57,8 @@ export interface SubmitCustomAgentInput {
    * outruns the dispatcher's own externalJobId write.
    */
   taskId?: string;
+  /** Server-controlled multiplier for scheduled runs requesting multiple outputs. */
+  chargeMultiplier?: number;
 }
 
 export async function submitCustomAgentJob(
@@ -66,8 +74,21 @@ export async function submitCustomAgentJob(
   const client = await getClient(input.clientId);
   if (!client) return { error: "Client not found." };
   if (user.role === "CLIENT_USER" && !(client.customAgentIds ?? []).includes(agent.id)) {
-    // Same message as missing — don't leak which agents exist beyond the allowlist.
-    return { error: "Agent not found." };
+    // A successfully delivered staff run activates the agent for this client.
+    // customAgentId is authoritative for new jobs; name matching keeps historic
+    // completed runs useful without a migration.
+    const successful = new Set(["review", "approved", "delivered"]);
+    const priorRuns = await listJobs({ clientId: input.clientId });
+    const activated = priorRuns.some(
+      (job) =>
+        job.external?.taskType === "custom" &&
+        successful.has(job.status) &&
+        (job.customAgentId === agent.id || (!job.customAgentId && job.agentName === agent.name)),
+    );
+    if (!activated) {
+      // Same message as missing — don't leak which agents exist beyond the allowlist.
+      return { error: "Agent not found." };
+    }
   }
 
   const prompt = input.prompt.trim();
@@ -104,7 +125,7 @@ export async function submitCustomAgentJob(
   if (isXAgent(agent.key)) {
     if (!(await hasXAgentIntake(input.clientId))) {
       return {
-        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the client's "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
+        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
       };
     }
     try {
@@ -116,10 +137,29 @@ export async function submitCustomAgentJob(
     }
   }
 
+  // LinkedIn agents (e10): the same contract — portal intake, the shared news
+  // drop as company-updates.md, CVs, learning logs, and prior batches (see
+  // linkedin-agent-context.ts). Hard-gated the same way.
+  if (isLinkedInAgent(agent.key)) {
+    if (!(await hasLinkedInAgentIntake(input.clientId, agent.key))) {
+      return {
+        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open the "LinkedIn agent data" page (under Agent-specific documents) and save the company page form - the agent drafts from that. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildLinkedInAgentContextFiles(input.clientId, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
   const now = Date.now();
   const jobId = await createJob({
     clientId: input.clientId,
     agentId: "agent-service",
+    customAgentId: agent.id,
     agentName: agent.name,
     title: `${agent.name} - ${client.name}`,
     status: "queued",
@@ -134,14 +174,15 @@ export async function submitCustomAgentJob(
   // Charge upfront (billable client actors only — staff and cron never charge)
   // with jobId pairing so the webhook's failure refund and the reconcile sweeps
   // can hand the credits back.
-  const runCost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+  const multiplier = Math.max(1, Math.min(10, Math.round(input.chargeMultiplier ?? 1)));
+  const runCost = (agent.creditCost ?? CREDIT_COSTS.customAgentRun) * multiplier;
   if (isBillableClientActor(user)) {
     try {
       await chargeClientCredits({
         clientId: input.clientId,
         amount: runCost,
         operation: "custom_agent_run",
-        reason: `Agent run · ${agent.name}`.slice(0, 120),
+        reason: `Agent run · ${agent.name}${multiplier > 1 ? ` · ${multiplier} outputs` : ""}`.slice(0, 120),
         agentId: agent.id,
         jobId,
         actorUid: user.uid,

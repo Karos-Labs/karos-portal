@@ -21,6 +21,8 @@ import { AgentMark, SocialPlatformMark, platformForIntegrationId } from "@/compo
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
+import { parseLiDrafts } from "@/lib/li-drafts";
+import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { relativeTime, cn } from "@/lib/utils";
 import type { Asset, PublishMode } from "@/lib/types";
 
@@ -427,13 +429,45 @@ export function AssetCard({
   const [content, setContent] = useState(asset.content);
   const [busy, setBusy] = useState(false);
 
-  // X agent draft batches carry a pinned markdown structure — render them as
-  // the drafts reader (pick / edit / skip per draft) instead of raw text.
-  const xBatch = useMemo(
-    () => (asset.content?.includes("# Account ") ? parseXDrafts(asset.content) : null),
+  // Agent draft batches carry pinned markdown structures — render them as the
+  // drafts reader (pick / edit / skip per draft) instead of raw text. LinkedIn
+  // is sniffed FIRST: its "## Account" headings contain the X sniff's
+  // "# Account " substring, so order matters.
+  const liBatch = useMemo(
+    () => (asset.content?.includes("# LinkedIn drafts") ? parseLiDrafts(asset.content) : null),
     [asset.content],
   );
+  const xBatch = useMemo(
+    () => (!liBatch && asset.content?.includes("# Account ") ? parseXDrafts(asset.content) : null),
+    [asset.content, liBatch],
+  );
   const xDraftCount = xBatch ? xBatch.accounts.reduce((n, a) => n + a.drafts.length, 0) : 0;
+  const liDraftCount = liBatch ? liBatch.accounts.reduce((n, a) => n + a.drafts.length, 0) : 0;
+  // The run's attachable media (slides, PDFs, video) for the LinkedIn reader —
+  // the webhook stores the client-facing artifact list in meta.artifacts. The
+  // service may omit content_type, so fall back to extension sniffing; and a
+  // failed re-host leaves an auth-gated service URL a browser can't open, so
+  // only durable re-hosted links are offered.
+  const liMedia = useMemo<LiMediaFile[]>(() => {
+    if (!liBatch) return [];
+    const MEDIA_EXTENSIONS = /\.(png|jpe?g|gif|webp|pdf|mp4|mov|webm)$/i;
+    const artifacts =
+      (asset.meta?.artifacts as Array<{ name?: string; url?: string; contentType?: string }> | undefined) ?? [];
+    return artifacts
+      .filter((a): a is { name: string; url: string; contentType?: string } => {
+        if (!a.name || !a.url) return false;
+        if (!a.url.includes("firebasestorage.googleapis.com")) return false;
+        if (a.contentType) {
+          return (
+            a.contentType.startsWith("image/") ||
+            a.contentType === "application/pdf" ||
+            a.contentType.startsWith("video/")
+          );
+        }
+        return MEDIA_EXTENSIONS.test(a.name);
+      })
+      .map((a) => ({ name: a.name, url: a.url }));
+  }, [asset.meta, liBatch]);
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
@@ -657,7 +691,26 @@ export function AssetCard({
               {asset.status}
             </Badge>
           </div>
-          {xBatch ? (
+          {liBatch ? (
+            open ? (
+              <div className="mt-3">
+                <LiDraftsBatch
+                  clientId={asset.clientId}
+                  {...(asset.jobId ? { jobId: asset.jobId } : {})}
+                  assetId={asset.id}
+                  accounts={liBatch.accounts}
+                  media={liMedia}
+                />
+              </div>
+            ) : (
+              <p className="mt-1 text-sm text-muted">
+                {liDraftCount === 1
+                  ? "1 LinkedIn draft, ready to review."
+                  : `${liDraftCount} LinkedIn drafts across ${liBatch.accounts.length} accounts.`}{" "}
+                Expand to read and pick.
+              </p>
+            )
+          ) : xBatch ? (
             open ? (
               <div className="mt-3">
                 <XDraftsBatch
