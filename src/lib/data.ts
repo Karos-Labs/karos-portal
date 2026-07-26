@@ -59,7 +59,8 @@ import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { computeBoardCapacity } from "@/lib/task-dedup";
 import { encryptCredentials, decryptCredentials } from "@/lib/crypto/token-cipher";
 import { randomUUID } from "node:crypto";
-import { brandKeys, type SeoGeoInsights } from "@/lib/seo-geo";
+import type { SeoGeoInsights } from "@/lib/seo-geo";
+import { competitorBrandKeys, looksLikeUrlInput } from "@/lib/competitor-input";
 
 /* ----------------------------- helpers ----------------------------- */
 
@@ -1123,48 +1124,102 @@ export async function deleteClientCompetitor(id: string): Promise<void> {
  * Uses a single Firestore write batch so a partial failure cannot leave a mix
  * of old and new rows — either all rows are replaced or none are changed.
  *
- * The measured AI-visibility signal survives the replace: incoming rows inherit
- * `llmMentions`/`llmMentionsAt` (and a missing `url`) from the old row for the
- * same brand, and old rows the engines actually named (llmMentions > 0) that the
- * new report dropped are retained rather than deleted — a standalone re-analysis
- * must never silently reset LLM-aware competitor selection. Brand identity is
- * matched across ALL name/url keys (brandKeys) so renamed spellings still merge.
+ * Two merge rules keep the pool duplicate-free and measurement-stable:
+ *
+ * 1. **Manual rows absorb their analysis twin.** An incoming row whose brand
+ *    keys match an existing MANUAL row enriches that row in place (canonical
+ *    company name when the manual one is a pasted URL/domain, url fill, fresh
+ *    analysis fields) and is NOT created as a report row — previously every
+ *    analysis/report run minted a "Speedrun by a16z" twin next to the user's
+ *    raw "https://speedrun.a16z.com" manual row.
+ * 2. **The measured AI-visibility signal survives.** Incoming rows inherit
+ *    `llmMentions`/`llmMentionsAt` (and a missing `url`) from the old report
+ *    row for the same brand, and old report rows the engines actually named
+ *    (llmMentions > 0) that the new report dropped are retained — a standalone
+ *    re-analysis must never silently reset LLM-aware competitor selection.
+ *
+ * Brand identity is matched across ALL name/url keys (brandKeys) so renamed
+ * spellings and domain-vs-name variants still merge.
  */
 export async function replaceReportCompetitors(
   clientId: string,
   rows: Array<Omit<ClientCompetitor, "id">>,
 ): Promise<void> {
-  const existing = await col
+  const existingAll = await col
     .clientCompetitors()
     .where("clientId", "==", clientId)
-    .where("source", "==", "report")
     .get();
+  const reportDocs = existingAll.docs.filter(
+    (d) => (d.data() as ClientCompetitor).source === "report",
+  );
+  const manualDocs = existingAll.docs.filter(
+    (d) => (d.data() as ClientCompetitor).source === "manual",
+  );
 
-  const oldRows = existing.docs.map((d) => d.data() as Omit<ClientCompetitor, "id">);
+  const oldRows = reportDocs.map((d) => d.data() as Omit<ClientCompetitor, "id">);
   const oldByKey = new Map<string, Omit<ClientCompetitor, "id">>();
   for (const r of oldRows) {
-    for (const k of brandKeys(r.company, r.url)) if (!oldByKey.has(k)) oldByKey.set(k, r);
+    for (const k of competitorBrandKeys(r.company, r.url)) if (!oldByKey.has(k)) oldByKey.set(k, r);
   }
+  const manualByKey = new Map<string, (typeof manualDocs)[number]>();
+  for (const d of manualDocs) {
+    const m = d.data() as ClientCompetitor;
+    for (const k of competitorBrandKeys(m.company, m.url)) if (!manualByKey.has(k)) manualByKey.set(k, d);
+  }
+  const manualKeyOf = (name: string, url?: string) =>
+    competitorBrandKeys(name, url).map((k) => manualByKey.get(k)).find(Boolean);
+
+  const batch = adminDb().batch();
 
   const carriedOld = new Set<Omit<ClientCompetitor, "id">>();
-  const merged = rows.map((row) => {
-    const old = brandKeys(row.company, row.url)
+  const merged: Array<Omit<ClientCompetitor, "id">> = [];
+  for (const row of rows) {
+    const manualDoc = manualKeyOf(row.company, row.url);
+    if (manualDoc) {
+      // Enrich the manual row in place; never mint a report twin beside it.
+      const m = manualDoc.data() as ClientCompetitor;
+      batch.set(
+        manualDoc.ref,
+        {
+          company: looksLikeUrlInput(m.company) && row.company ? row.company : m.company,
+          ...(m.url || !row.url ? {} : { url: row.url }),
+          ...(row.positioning ? { positioning: row.positioning } : {}),
+          ...(row.keyStrengths?.length ? { keyStrengths: row.keyStrengths } : {}),
+          ...(row.keyWeaknesses?.length ? { keyWeaknesses: row.keyWeaknesses } : {}),
+          ...(row.threatLevel ? { threatLevel: row.threatLevel } : {}),
+          marketTier: row.marketTier,
+          overlap: row.overlap,
+          updatedAt: Date.now(),
+        },
+        { merge: true },
+      );
+      continue;
+    }
+    const old = competitorBrandKeys(row.company, row.url)
       .map((k) => oldByKey.get(k))
       .find(Boolean);
-    if (!old) return row;
+    if (!old) {
+      merged.push(row);
+      continue;
+    }
     carriedOld.add(old);
-    return {
+    merged.push({
       ...row,
       ...(!row.url && old.url ? { url: old.url } : {}),
       ...(old.llmMentions !== undefined
         ? { llmMentions: old.llmMentions, ...(old.llmMentionsAt !== undefined ? { llmMentionsAt: old.llmMentionsAt } : {}) }
         : {}),
-    };
-  });
-  const survivors = oldRows.filter((r) => !carriedOld.has(r) && (r.llmMentions ?? 0) > 0);
+    });
+  }
+  // Measured survivors also skip re-creation when a manual row now covers them.
+  const survivors = oldRows.filter(
+    (r) =>
+      !carriedOld.has(r) &&
+      (r.llmMentions ?? 0) > 0 &&
+      !manualKeyOf(r.company, r.url),
+  );
 
-  const batch = adminDb().batch();
-  for (const doc of existing.docs) {
+  for (const doc of reportDocs) {
     batch.delete(doc.ref);
   }
   for (const row of [...merged, ...survivors]) {

@@ -11,6 +11,7 @@
  * client components that consume these views stay free of domain imports and
  * vitest can test the mappings without a DOM.
  */
+import { competitorBrandKeys } from "@/lib/competitor-input";
 import {
   ENGINE_LABELS,
   ENGINE_PROVIDERS,
@@ -40,8 +41,9 @@ export interface TrackedCompetitorRef {
   url?: string;
 }
 
-/** All identity keys for a tracked ref (name-derived + url-derived). */
-const refKeys = (t: TrackedCompetitorRef) => brandKeys(t.name, t.url);
+/** All identity keys for a tracked ref (name-derived + url-derived; tolerates
+ *  legacy rows whose display name is a raw pasted URL). */
+const refKeys = (t: TrackedCompetitorRef) => competitorBrandKeys(t.name, t.url);
 
 /** First map hit across any of the brand's identity keys. */
 function lookupByKeys<T>(map: Map<string, T>, keys: string[]): T | undefined {

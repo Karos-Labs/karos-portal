@@ -112,3 +112,18 @@ An adversarial alignment review of the first commit surfaced four defects, all f
 Known limitation: "5 competitors per client" is guaranteed only when the pool has ≥5
 rows (intel seeding produces 8–15; sparse hand-created clients can run
 `backfillCompetitorsAction` from the dashboard, and Geektime was seeded with 9).
+
+## Quick-add duplicate fix (2026-07-26, post-merge)
+
+Adding a competitor by pasted URL created the classic duplicate: a raw
+"https://speedrun.a16z.com" manual row (no favicon) beside the AI-resolved
+"Speedrun by a16z" report row — manual rows are never replaced, so both stayed.
+Fixed at three levels: quick-add now parses URL input into `{company: host, url}`
+(favicon + identity keys from the first render) and promotes an existing pool row
+instead of creating a twin (`upsertManualCompetitor`); `replaceReportCompetitors`
+merges any analysis/report row that brand-key-matches a MANUAL row into that row
+in place (canonical name replaces URL-ish names, url + analysis fields fill) and
+never mints a report twin; and `competitorBrandKeys` makes all row matching
+tolerate legacy raw-URL rows. `scripts/dedupe-competitors.ts` (dry-run default)
+collapsed the existing duplicate — Pitch by Deel's Speedrun pair merged into one
+manual "Speedrun by a16z" row.

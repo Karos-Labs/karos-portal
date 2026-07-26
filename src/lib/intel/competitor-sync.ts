@@ -6,6 +6,7 @@ import {
   updateClientCompetitor,
 } from "@/lib/data";
 import { brandKeys, normalizeBrandKey, type SeoGeoInsights } from "@/lib/seo-geo";
+import { competitorBrandKeys } from "@/lib/competitor-input";
 
 /** Max auto-created competitor rows per capture (pool candidates — the tracker still shows 5). */
 const MAX_DISCOVERED_CREATES = 5;
@@ -36,7 +37,7 @@ export async function syncCompetitorsFromVisibility(
   // domain label and would create duplicates.
   const byKey = new Map<string, (typeof existing)[number]>();
   for (const c of existing) {
-    for (const k of brandKeys(c.company, c.url)) if (!byKey.has(k)) byKey.set(k, c);
+    for (const k of competitorBrandKeys(c.company, c.url)) if (!byKey.has(k)) byKey.set(k, c);
   }
 
   const mentionsByKey = new Map(

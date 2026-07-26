@@ -8,15 +8,70 @@ import {
   deleteClientCompetitor,
   listClientCompetitors,
   replaceReportCompetitors,
+  updateClientCompetitor,
   getClientContextDocByTier,
   upsertClientContextDoc,
   upsertClientReport,
 } from "@/lib/data";
 import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
+import { competitorBrandKeys, parseCompetitorInput } from "@/lib/competitor-input";
 import type { ClientCompetitor } from "@/lib/types";
 import { requireStaff, requireClientAccess, logActivity } from "./_shared";
 import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
+
+/**
+ * Create-or-promote a manual competitor from quick-add input — not exported.
+ *
+ * The input may be a name, a bare domain, or a full pasted URL; URLs are parsed
+ * so the row carries a real `url` (favicon + identity keys) instead of storing
+ * the raw string as its display name. If the brand is ALREADY in the pool under
+ * any identity key, no new row is created: a matching report row is promoted to
+ * manual (the user explicitly wants it tracked — promotion locks a tracked-5
+ * slot and counts as "added now" for the newest-first manual ordering), and a
+ * matching manual row is left untouched. This is what prevents the classic
+ * duplicate of "https://speedrun.a16z.com" (manual, raw) + "Speedrun by a16z"
+ * (report, resolved).
+ */
+async function upsertManualCompetitor(
+  clientId: string,
+  rawInput: string,
+): Promise<{ company: string; created: boolean }> {
+  const parsed = parseCompetitorInput(rawInput);
+  const existing = await listClientCompetitors(clientId);
+  const keys = competitorBrandKeys(parsed.company, parsed.url);
+  const hit = existing.find((c) =>
+    competitorBrandKeys(c.company, c.url).some((k) => keys.includes(k)),
+  );
+  const now = Date.now();
+
+  if (hit) {
+    if (hit.source === "report") {
+      await updateClientCompetitor(hit.id, {
+        source: "manual",
+        ...(hit.url || !parsed.url ? {} : { url: parsed.url }),
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    return { company: hit.company, created: false };
+  }
+
+  await createClientCompetitor({
+    clientId,
+    company: parsed.company,
+    ...(parsed.url ? { url: parsed.url } : {}),
+    marketTier: "Challenger",
+    overlap: "Medium",
+    deepDive: false,
+    keyStrengths: [],
+    keyWeaknesses: [],
+    source: "manual",
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { company: parsed.company, created: true };
+}
 
 /** Core AI competitor analysis helper — not exported. */
 async function _analyzeCompetitors(clientId: string): Promise<void> {
@@ -271,7 +326,7 @@ export async function removeCompetitorAction(clientId: string, id: string): Prom
   revalidatePath(`/clients/${clientId}`);
 }
 
-/** Add a competitor by name and trigger AI analysis for the full tracked list. */
+/** Add a competitor by name/URL and trigger AI analysis for the full tracked list. */
 export async function addCompetitorAndAnalyzeAction(
   clientId: string,
   name: string,
@@ -279,24 +334,13 @@ export async function addCompetitorAndAnalyzeAction(
   const user = await requireStaff();
   if (!name.trim()) throw new Error("Competitor name required");
 
-  await createClientCompetitor({
-    clientId,
-    company: name.trim(),
-    marketTier: "Challenger",
-    overlap: "Medium",
-    deepDive: false,
-    keyStrengths: [],
-    keyWeaknesses: [],
-    source: "manual",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  });
+  const { company } = await upsertManualCompetitor(clientId, name);
 
   await logActivity({
     clientId,
     timestamp: Date.now(),
     type: "COMPETITOR_ADDED",
-    title: `Competitor added: ${name.trim()}`,
+    title: `Competitor added: ${company}`,
     actor: user.name,
     actorRole: "staff",
   });
@@ -410,8 +454,9 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
 }
 
 /**
- * Add a competitor by plain name — accessible to both staff and the client themselves.
- * Staff trigger AI re-analysis after saving; CLIENT_USER saves the record only.
+ * Add a competitor by name or pasted URL — accessible to both staff and the
+ * client themselves. Staff trigger AI re-analysis after saving; CLIENT_USER
+ * saves the record only.
  */
 export async function addCompetitorByNameAction(clientId: string, name: string): Promise<void> {
   const user = await requireClientAccess(clientId);
@@ -419,24 +464,13 @@ export async function addCompetitorByNameAction(clientId: string, name: string):
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
-  await createClientCompetitor({
-    clientId,
-    company: name.trim(),
-    marketTier: "Challenger",
-    overlap: "Medium",
-    deepDive: false,
-    keyStrengths: [],
-    keyWeaknesses: [],
-    source: "manual",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  });
+  const { company } = await upsertManualCompetitor(clientId, name);
 
   await logActivity({
     clientId,
     timestamp: Date.now(),
     type: "COMPETITOR_ADDED",
-    title: `Competitor added: ${name.trim()}`,
+    title: `Competitor added: ${company}`,
     actor: user.name,
     actorRole: isStaff ? "staff" : "client",
   });
