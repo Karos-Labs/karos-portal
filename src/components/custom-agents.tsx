@@ -92,20 +92,18 @@ function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "ke
 /**
  * The X and LinkedIn agents draft from stored intake, so their data forms live
  * inside the run dialog: inline on a first run, behind the "<platform> agent
- * data" button once the data exists. `data` is the payload for that inline
- * form; callers that ship the gate without it send the user to `href` instead.
+ * data" button once the data exists. `ready` is the server run gate; `data` is
+ * the payload rendered inline.
  */
 export interface XAgentSetup {
   ready: boolean;
-  href: string;
-  data?: ComponentProps<typeof XAgentIntake>;
+  data: ComponentProps<typeof XAgentIntake>;
 }
 
 /** The e10 twin of XAgentSetup. */
 export interface LinkedInAgentSetup {
   ready: boolean;
-  href: string;
-  data?: ComponentProps<typeof LinkedInAgentIntake>;
+  data: ComponentProps<typeof LinkedInAgentIntake>;
 }
 
 type IntakeKind = "x" | "linkedin";
@@ -142,41 +140,37 @@ function IntakeGlyph({ kind, className }: { kind: IntakeKind; className?: string
  * on its own whether the setup a person came here to do is finished.
  */
 function companyOnFile(intake: AgentIntakeContext | null): boolean {
-  return Boolean(intake?.setup.data?.company);
+  return Boolean(intake?.setup.data.company);
 }
 
 /**
- * Does this agent hold everything it drafts from? A client who set up LinkedIn
- * first has seats, so `ready` reads true for X while the X company page is
- * still missing — the payload is the only thing that can tell them apart.
- * Callers that ship no payload have nothing but the server predicate.
+ * Does this agent hold everything it drafts from? Both checks read the company
+ * page today, from the server predicate and from the payload respectively;
+ * requiring both keeps the affordance honest if a caller's flag ever drifts
+ * from the rows it ships.
  */
 function intakeComplete(intake: AgentIntakeContext): boolean {
-  return intake.setup.ready && (!intake.setup.data || companyOnFile(intake));
+  return intake.setup.ready && companyOnFile(intake);
 }
 
 function IntakeForm({ intake }: { intake: AgentIntakeContext }) {
-  if (intake.kind === "x") {
-    return intake.setup.data ? <XAgentIntake {...intake.setup.data} /> : null;
-  }
-  return intake.setup.data ? <LinkedInAgentIntake {...intake.setup.data} /> : null;
+  if (intake.kind === "x") return <XAgentIntake {...intake.setup.data} />;
+  return <LinkedInAgentIntake {...intake.setup.data} />;
 }
 
 /**
  * The way into an agent's data: warning-toned while the data is still missing,
- * quiet once it is on file. `onOpen` switches the run dialog to its data pane;
- * without a payload to render there the affordance links to the full page.
+ * quiet once it is on file. Opens the run dialog's data pane rather than
+ * navigating — the data belongs with the agent.
  */
 function AgentDataButton({
   kind,
   ready,
-  href,
   onOpen,
 }: {
   kind: IntakeKind;
   ready: boolean;
-  href: string;
-  onOpen?: () => void;
+  onOpen: () => void;
 }) {
   const className = cn(
     "inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
@@ -189,20 +183,11 @@ function AgentDataButton({
   // the glyph, and it stays inside the accessible name so voice control can
   // still say what it reads.
   const name = ready ? label : `${label}: setup needed`;
-  const body = (
-    <>
+  return (
+    <button type="button" onClick={onOpen} className={className} aria-label={name}>
       <IntakeGlyph kind={kind} className="h-3 w-3" />
       {ready ? label : "Setup needed"}
-    </>
-  );
-  return onOpen ? (
-    <button type="button" onClick={onOpen} className={className} aria-label={name}>
-      {body}
     </button>
-  ) : (
-    <a href={href} className={className} aria-label={name}>
-      {body}
-    </a>
   );
 }
 
@@ -474,8 +459,7 @@ export function ClientCustomAgents({
                     <AgentDataButton
                       kind={intake.kind}
                       ready={intakeComplete(intake)}
-                      href={intake.setup.href}
-                      {...(intake.setup.data ? { onOpen: () => openRun(agent, true) } : {})}
+                      onOpen={() => openRun(agent, true)}
                     />
                   )}
                 </div>
@@ -797,12 +781,11 @@ function RunCustomAgentModal({
   const [started, setStarted] = useState(false);
   const intake = intakeFor(agent.key, xSetup, linkedinSetup);
   const intakeReady = intake?.setup.ready ?? true;
-  const hasIntakeForm = Boolean(intake?.setup.data);
   // The data opens on the company page being missing, not on the server gate:
   // `ready` is satisfied by a shared seat, so an X run would otherwise skip
   // straight to the brief for a client who set LinkedIn up first. This only
   // chooses the pane — `ready` alone still decides what a run does.
-  const openOnData = hasIntakeForm && (!companyOnFile(intake) || initialPane === "data");
+  const openOnData = Boolean(intake) && (!companyOnFile(intake) || initialPane === "data");
   const [pane, setPane] = useState<RunPane>(openOnData ? "data" : "run");
   // Did the data open because the run wanted it, rather than because someone
   // asked for it from the card? Held in state so it survives the props refresh
@@ -829,8 +812,8 @@ function RunCustomAgentModal({
   // Both panes share the dialog's single scroll box, so opening the data from
   // low down in the brief would otherwise land in the middle of the form.
   useEffect(() => {
-    if (hasIntakeForm && pane === "data") dataPaneRef.current?.scrollIntoView({ block: "start" });
-  }, [hasIntakeForm, pane]);
+    if (pane === "data") dataPaneRef.current?.scrollIntoView({ block: "start" });
+  }, [pane]);
 
   function setField(key: string, value: string) {
     setFields((current) => ({ ...current, [key]: value }));
@@ -908,36 +891,7 @@ function RunCustomAgentModal({
     );
   }
 
-  // Gate without a payload to render inline: send the person to the full page.
-  if (intake && !intakeReady && !hasIntakeForm) {
-    const label = `${INTAKE_LABEL[intake.kind]} agent data`;
-    return (
-      <Modal open onClose={onClose} title={agent.name}>
-        <div className="mt-4 space-y-3">
-          <p className="text-sm text-foreground">Set up the {label} first.</p>
-          <p className="text-xs leading-relaxed text-muted">
-            This agent drafts from the {label}: the company page, a seat per person, and the
-            ongoing drops. It takes a few minutes to fill in once, and the agent will not run
-            without it.
-          </p>
-          <div className="flex items-center gap-2 pt-1">
-            <a
-              href={intake.setup.href}
-              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
-            >
-              Set up {label}
-              <Icon name="ArrowRight" className="h-3.5 w-3.5" />
-            </a>
-            <Button variant="ghost" onClick={onClose}>
-              Not now
-            </Button>
-          </div>
-        </div>
-      </Modal>
-    );
-  }
-
-  const showData = hasIntakeForm && pane === "data";
+  const showData = Boolean(intake) && pane === "data";
   // Lead the eye on once the setup that held up a run is done; anyone who came
   // to read or edit data they already have gets the quiet version.
   const continueToRun = openedForSetup && companyOnFile(intake);
@@ -957,7 +911,7 @@ function RunCustomAgentModal({
       className={showData ? "max-w-3xl" : "max-w-2xl"}
       closeOnBackdrop={!showData}
     >
-      {intake && hasIntakeForm && (
+      {intake && (
         // Both panes stay mounted. Every field in the intake cards is local
         // state, so unmounting the form to show the brief would discard typed
         // text; `hidden` keeps the idle pane out of the tab order and the
@@ -993,8 +947,7 @@ function RunCustomAgentModal({
             <AgentDataButton
               kind={intake.kind}
               ready={intakeComplete(intake)}
-              href={intake.setup.href}
-              {...(hasIntakeForm ? { onOpen: () => setPane("data") } : {})}
+              onOpen={() => setPane("data")}
             />
           </div>
         )}
@@ -1121,7 +1074,7 @@ function RunCustomAgentModal({
           <p className="text-xs text-danger" role="alert">
             {error}
             {setupErrorKind &&
-              (intake && hasIntakeForm ? (
+              (intake ? (
                 <button
                   type="button"
                   onClick={() => setPane("data")}
