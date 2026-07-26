@@ -18,7 +18,11 @@ import {
   setClientCustomAgentsAction,
   updateCustomAgentAction,
 } from "@/lib/actions";
-import { CREDIT_COSTS } from "@/lib/credits";
+import {
+  configureClientAgentScheduleAction,
+  setPlannedRunStatusAction,
+} from "@/lib/actions/planned-run-actions";
+import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
 import {
   buildCustomAgentPrompt,
   initialAgentBrief,
@@ -29,7 +33,7 @@ import {
   X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
 import type { ContextItem, CustomAgent, JobStatus } from "@/lib/types";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn, formatDate, relativeTime } from "@/lib/utils";
 
 /* ═══════════════════════ shared bits ═══════════════════════ */
 
@@ -48,9 +52,23 @@ export interface CustomAgentRunRow {
   agentName: string;
   status: JobStatus;
   createdAt: number;
+  assetCount: number;
   prompt?: string;
   /** Link target (staff viewers get /jobs/<id>); absent for client viewers. */
   href?: string;
+}
+
+/** Client-safe recurring schedule fields shown on an activated agent card. */
+export interface ClientAgentScheduleRow {
+  id: string;
+  agentId: string;
+  status: "active" | "paused";
+  postsPerWeek: number;
+  outputsPerRun: number;
+  nextRunAt: number;
+  prompt: string;
+  hour: number;
+  minute: number;
 }
 
 function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
@@ -228,6 +246,7 @@ export function ClientCustomAgents({
   clientId,
   agents,
   runs,
+  schedules = [],
   contextItems,
   viewerIsClient,
   availableCredits,
@@ -237,6 +256,7 @@ export function ClientCustomAgents({
   clientId: string;
   agents: RunnableAgentSummary[];
   runs: CustomAgentRunRow[];
+  schedules?: ClientAgentScheduleRow[];
   contextItems: ContextItem[];
   viewerIsClient: boolean;
   /** Spendable credits right now (balance clipped by caps) — client viewers only. */
@@ -247,8 +267,13 @@ export function ClientCustomAgents({
   linkedinSetup?: { ready: boolean; href: string };
 }) {
   const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
+  const [scheduleAgent, setScheduleAgent] = useState<RunnableAgentSummary | null>(null);
 
   const agentByName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
+  const scheduleByAgent = useMemo(
+    () => new Map(schedules.map((schedule) => [schedule.agentId, schedule])),
+    [schedules],
+  );
 
   if (agents.length === 0 && runs.length === 0) return null;
 
@@ -259,7 +284,7 @@ export function ClientCustomAgents({
           <h2 className="text-xl text-foreground">{viewerIsClient ? "Your AI agents" : "Custom agents"}</h2>
           <p className="mt-0.5 text-sm text-muted">
             {viewerIsClient
-              ? "Fire an agent with a plain-language request. Deliverables land in your Workspace archive after review."
+              ? "Your always-on AI team. Run an agent now or choose its weekly production pace."
               : "Prompt-driven agents from the custom library, run against this client."}
           </p>
         </div>
@@ -275,6 +300,14 @@ export function ClientCustomAgents({
           {agents.map((agent) => {
             const cost = agentRunCost(agent);
             const short = viewerIsClient && availableCredits !== undefined && availableCredits < cost;
+            const schedule = scheduleByAgent.get(agent.id);
+            const reviewRuns = runs.filter(
+              (run) => run.agentName === agent.name && run.status === "review" && run.assetCount > 0,
+            );
+            const readyAssetCount = reviewRuns.reduce((total, run) => total + run.assetCount, 0);
+            const reviewHref = viewerIsClient
+              ? "/tasks"
+              : reviewRuns[0]?.href ?? `/clients/${clientId}/assets`;
             return (
               <div
                 key={agent.id}
@@ -285,9 +318,27 @@ export function ClientCustomAgents({
                   <AgentChip agent={agent} />
                   <div className="min-w-0 flex-1">
                     <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">AI agent</p>
-                    <p className="truncate text-base font-medium">{agent.name}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-base font-medium">{agent.name}</p>
+                      {schedule?.status === "active" && (
+                        <Badge tone="success">
+                          <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse-neon" aria-hidden="true" />
+                          Live
+                        </Badge>
+                      )}
+                    </div>
                     <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agent.description}</p>
                   </div>
+                  {readyAssetCount > 0 && (
+                    <Link
+                      href={reviewHref}
+                      className="flex shrink-0 items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] font-medium text-warning transition-colors hover:border-warning/50 hover:bg-warning/15"
+                      aria-label={`${readyAssetCount} new ${readyAssetCount === 1 ? "asset" : "assets"} ready to review from ${agent.name}`}
+                    >
+                      <Icon name="Bell" className="h-3.5 w-3.5" />
+                      {readyAssetCount} ready
+                    </Link>
+                  )}
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
@@ -298,19 +349,41 @@ export function ClientCustomAgents({
                     <Badge tone="warning">Setup needed</Badge>
                   )}
                 </div>
-                <div className="mt-auto flex items-center justify-between gap-2 pt-4">
-                  <p className="text-xs text-muted-2">
-                    {viewerIsClient ? `${cost} credits per run` : `${cost} credits when client-run`}
-                  </p>
-                  <Button
-                    size="sm"
-                    variant="subtle"
-                    disabled={short}
-                    title={short ? "Not enough credits. Ask your Karos team for a top-up." : undefined}
-                    onClick={() => setRunAgent(agent)}
-                  >
-                    <Icon name="Play" className="h-3.5 w-3.5" /> Run
-                  </Button>
+                <div className="mt-3 rounded-md border border-border bg-surface-2/70 px-3 py-2">
+                  {schedule ? (
+                    <>
+                      <p className="text-xs text-foreground">
+                        {schedule.postsPerWeek} post{schedule.postsPerWeek === 1 ? "" : "s"}/week
+                        {" · "}
+                        {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-muted-2">
+                        {schedule.status === "active"
+                          ? `Working toward ${formatDate(schedule.nextRunAt)}`
+                          : "Schedule paused"}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-2">Ready to build your weekly content queue.</p>
+                  )}
+                </div>
+                <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
+                  <p className="text-xs text-muted-2">{cost} credits per output</p>
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={short}
+                      title={short ? "Not enough credits. Ask your Karos team for a top-up." : undefined}
+                      onClick={() => setRunAgent(agent)}
+                    >
+                      <Icon name="Play" className="h-3.5 w-3.5" /> Run now
+                    </Button>
+                    <Button size="sm" variant="subtle" onClick={() => setScheduleAgent(agent)}>
+                      <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" />
+                      {schedule ? "Manage" : "Set schedule"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             );
@@ -381,7 +454,174 @@ export function ClientCustomAgents({
           onClose={() => setRunAgent(null)}
         />
       )}
+      {scheduleAgent && (
+        <AgentScheduleModal
+          agent={scheduleAgent}
+          clientId={clientId}
+          schedule={scheduleByAgent.get(scheduleAgent.id)}
+          availableCredits={availableCredits}
+          onClose={() => setScheduleAgent(null)}
+        />
+      )}
     </section>
+  );
+}
+
+function AgentScheduleModal({
+  agent,
+  clientId,
+  schedule,
+  availableCredits,
+  onClose,
+}: {
+  agent: RunnableAgentSummary;
+  clientId: string;
+  schedule?: ClientAgentScheduleRow;
+  availableCredits?: number;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [postsPerWeek, setPostsPerWeek] = useState(schedule?.postsPerWeek ?? 3);
+  const [outputsPerRun, setOutputsPerRun] = useState(schedule?.outputsPerRun ?? 1);
+  const [prompt, setPrompt] = useState(schedule?.prompt ?? "Create the next on-brand post for our audience.");
+  const [time, setTime] = useState(
+    `${String(schedule?.hour ?? 9).padStart(2, "0")}:${String(schedule?.minute ?? 0).padStart(2, "0")}`,
+  );
+  const [error, setError] = useState<string | null>(null);
+  const costPerOutput = agentRunCost(agent);
+  const weeklyCost = scheduledAgentWeeklyCost(costPerOutput, postsPerWeek, outputsPerRun);
+  const insufficient = availableCredits !== undefined && availableCredits < costPerOutput * outputsPerRun;
+
+  function save() {
+    setError(null);
+    const [hour, minute] = time.split(":").map(Number);
+    startTransition(async () => {
+      const result = await configureClientAgentScheduleAction({
+        clientId,
+        customAgentId: agent.id,
+        postsPerWeek,
+        outputsPerRun,
+        prompt,
+        hour,
+        minute,
+      });
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      router.refresh();
+      onClose();
+    });
+  }
+
+  function togglePause() {
+    if (!schedule) return;
+    startTransition(async () => {
+      const result = await setPlannedRunStatusAction(
+        schedule.id,
+        schedule.status === "active" ? "paused" : "active",
+      );
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      router.refresh();
+      onClose();
+    });
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Keep ${agent.name} running`}
+      description="Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor={`schedule-posts-${agent.id}`}>Posts per week</Label>
+            <Select
+              id={`schedule-posts-${agent.id}`}
+              value={postsPerWeek}
+              onChange={(event) => setPostsPerWeek(Number(event.target.value))}
+            >
+              {[1, 2, 3, 4, 5, 6, 7].map((count) => (
+                <option key={count} value={count}>{count}</option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor={`schedule-outputs-${agent.id}`}>Outputs per run</Label>
+            <Select
+              id={`schedule-outputs-${agent.id}`}
+              value={outputsPerRun}
+              onChange={(event) => setOutputsPerRun(Number(event.target.value))}
+            >
+              {[1, 2, 3, 4, 5].map((count) => (
+                <option key={count} value={count}>{count}</option>
+              ))}
+            </Select>
+          </div>
+        </div>
+
+        <div>
+          <Label htmlFor={`schedule-time-${agent.id}`}>Production time</Label>
+          <Input
+            id={`schedule-time-${agent.id}`}
+            type="time"
+            value={time}
+            onChange={(event) => setTime(event.target.value)}
+          />
+        </div>
+
+        <div>
+          <Label htmlFor={`schedule-prompt-${agent.id}`}>Ongoing direction</Label>
+          <Textarea
+            id={`schedule-prompt-${agent.id}`}
+            rows={3}
+            maxLength={4000}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+          />
+        </div>
+
+        <div className="rounded-md border border-neon/20 bg-neon-soft/40 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-foreground">Estimated weekly cost</span>
+            <span className="font-mono text-sm text-neon">{weeklyCost} credits</span>
+          </div>
+          <p className="mt-1 text-[11px] text-muted-2">
+            {postsPerWeek} runs × {outputsPerRun} outputs × {costPerOutput} credits.
+            Credits are charged when each scheduled run starts.
+          </p>
+          {availableCredits !== undefined && (
+            <p className={cn("mt-1 text-[11px]", insufficient ? "text-danger" : "text-muted-2")}>
+              {availableCredits} credits currently available.
+            </p>
+          )}
+        </div>
+
+        {error && <p className="text-xs text-danger" role="alert">{error}</p>}
+
+        <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
+          <div>
+            {schedule && (
+              <Button variant="ghost" onClick={togglePause} loading={pending}>
+                {schedule.status === "active" ? "Pause agent" : "Resume agent"}
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
+            <Button variant="accent" onClick={save} loading={pending} disabled={insufficient}>
+              {schedule ? "Update schedule" : "Start always-on agent"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

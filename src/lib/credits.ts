@@ -62,6 +62,17 @@ export const CREDIT_COSTS = {
   employeeSeat: 100,
 } as const;
 
+/** Client-facing weekly estimate for a recurring custom-agent schedule. */
+export function scheduledAgentWeeklyCost(
+  costPerOutput: number,
+  postsPerWeek: number,
+  outputsPerRun: number,
+): number {
+  const posts = Math.max(1, Math.round(postsPerWeek));
+  const outputs = Math.max(1, Math.round(outputsPerRun));
+  return Math.max(0, Math.round(costPerOutput)) * posts * outputs;
+}
+
 /* ── LinkedIn employee-advocacy seats ────────────────────────────── */
 
 /** Seats included free in the base plan when a client has no explicit limit set. */

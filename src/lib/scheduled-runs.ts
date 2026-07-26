@@ -23,10 +23,15 @@ export function computeNextRun(opts: {
   hour: number;
   minute: number;
   weekday?: number;
+  weekdays?: number[];
   dayOfMonth?: number;
   from?: number;
 }): number {
   const from = opts.from ?? Date.now();
+  const weeklyDays =
+    opts.weekdays && opts.weekdays.length > 0
+      ? new Set(opts.weekdays)
+      : new Set([opts.weekday ?? 1]);
 
   for (let i = 0; i < 400; i++) {
     const d = new Date(from);
@@ -35,7 +40,7 @@ export function computeNextRun(opts: {
     if (d.getTime() <= from) continue;
 
     if (opts.cadence === "daily") return d.getTime();
-    if (opts.cadence === "weekly" && d.getDay() === opts.weekday) return d.getTime();
+    if (opts.cadence === "weekly" && weeklyDays.has(d.getDay())) return d.getTime();
     if (opts.cadence === "monthly") {
       const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
       const target = Math.min(opts.dayOfMonth ?? 1, lastDay);
@@ -61,6 +66,7 @@ export function describeCadence(run: {
   hour: number;
   minute: number;
   weekday?: number;
+  weekdays?: number[];
   dayOfMonth?: number;
   nextRunAt: number;
 }): string {
@@ -71,6 +77,13 @@ export function describeCadence(run: {
     case "daily":
       return `Daily · ${time}`;
     case "weekly":
+      if (run.weekdays && run.weekdays.length > 1) {
+        const days = [...run.weekdays]
+          .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7))
+          .map((day) => WEEKDAY_LABEL[day])
+          .join(", ");
+        return `${run.weekdays.length}× weekly · ${days} ${time}`;
+      }
       return `Weekly · ${WEEKDAY_LABEL[run.weekday ?? 1]} ${time}`;
     case "monthly": {
       const dom = run.dayOfMonth ?? 1;
@@ -78,6 +91,21 @@ export function describeCadence(run: {
       return `Monthly · ${dom}${suffix} ${time}`;
     }
   }
+}
+
+/** Balanced publishing days for a requested 1–7 posts per week. */
+export function weeklyCadenceDays(postsPerWeek: number): number[] {
+  const count = Math.max(1, Math.min(7, Math.round(postsPerWeek)));
+  const presets: Record<number, number[]> = {
+    1: [2],
+    2: [2, 4],
+    3: [1, 3, 5],
+    4: [1, 2, 4, 5],
+    5: [1, 2, 3, 4, 5],
+    6: [1, 2, 3, 4, 5, 6],
+    7: [0, 1, 2, 3, 4, 5, 6],
+  };
+  return presets[count]!;
 }
 
 export { CADENCE_LABEL };

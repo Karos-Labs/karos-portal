@@ -7,6 +7,7 @@ import {
   listContextItems,
   listCustomAgents,
   listJobs,
+  listPlannedScheduledRuns,
 } from "@/lib/data";
 import { availableCredits, isBillableClientActor } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
@@ -25,6 +26,7 @@ import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
 import { assetImages } from "@/lib/asset-images";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import type { CustomAgent, Job } from "@/lib/types";
+import type { ClientAgentScheduleRow } from "@/components/custom-agents";
 
 /** Strip an agent to the client-safe summary — never the instructions/skill paths. */
 function toSummary(agent: CustomAgent): RunnableAgentSummary {
@@ -50,8 +52,27 @@ function toRunRows(jobs: Job[], withLinks: boolean): CustomAgentRunRow[] {
       agentName: j.agentName,
       status: j.status,
       createdAt: j.createdAt,
+      assetCount: j.assetIds.length,
       ...(j.input.prompt ? { prompt: j.input.prompt } : {}),
       ...(withLinks ? { href: `/jobs/${j.id}` } : {}),
+    }));
+}
+
+function toScheduleRows(
+  runs: Awaited<ReturnType<typeof listPlannedScheduledRuns>>,
+): ClientAgentScheduleRow[] {
+  return runs
+    .filter((run) => run.cadence === "weekly" && run.status !== "completed")
+    .map((run) => ({
+      id: run.id,
+      agentId: run.customAgentId,
+      status: run.status === "paused" ? "paused" : "active",
+      postsPerWeek: run.weekdays?.length ?? 1,
+      outputsPerRun: run.outputsPerRun ?? 1,
+      nextRunAt: run.nextRunAt,
+      prompt: run.prompt,
+      hour: run.hour,
+      minute: run.minute,
     }));
 }
 
@@ -82,16 +103,28 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     href: `/clients/${id}/linkedin-agent`,
   };
 
-  // Client users: their granted custom agents (if any).
+  // Client users: explicitly granted agents plus any agent that has already
+  // delivered a successful run for this workspace.
   if (!isStaff) {
     const allowedIds = new Set(client.customAgentIds ?? []);
-    const [allAgents, jobs, contextItems, credits] = await Promise.all([
-      allowedIds.size > 0 ? listCustomAgents() : Promise.resolve([]),
+    const [allAgents, jobs, contextItems, credits, scheduledRuns] = await Promise.all([
+      listCustomAgents(),
       listJobs({ clientId: id }),
       listContextItems({ clientId: id }),
       getClientCredits(id),
+      listPlannedScheduledRuns({ clientId: id }),
     ]);
-    const agents = allAgents.filter((a) => a.enabled && allowedIds.has(a.id)).map(toSummary);
+    const successful = new Set(["review", "approved", "delivered"]);
+    const agentIdByName = new Map(allAgents.map((agent) => [agent.name, agent.id]));
+    const completedAgentIds = new Set(
+      jobs
+        .filter((job) => job.external?.taskType === "custom" && successful.has(job.status))
+        .map((job) => job.customAgentId ?? agentIdByName.get(job.agentName))
+        .filter((agentId): agentId is string => Boolean(agentId)),
+    );
+    const agents = allAgents
+      .filter((agent) => agent.enabled && (allowedIds.has(agent.id) || completedAgentIds.has(agent.id)))
+      .map(toSummary);
     // Client viewers see only runs of agents they're allowed — not the
     // history of staff-fired agents outside their allowlist.
     const allowedNames = new Set(agents.map((a) => a.name));
@@ -103,13 +136,14 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       <>
         <PageHeader
           title="AI Agents"
-          description="Run the custom AI agents your Karos team has enabled for you."
+          description="Your active AI team—run agents now or set their weekly production pace."
         />
         {agents.length > 0 && agentServiceConfigured ? (
           <ClientCustomAgents
             clientId={id}
             agents={agents}
             runs={runs}
+            schedules={toScheduleRows(scheduledRuns)}
             contextItems={contextItems}
             viewerIsClient
             xSetup={xSetup}
@@ -119,18 +153,19 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         ) : (
           <EmptyState
             icon={<Icon name="Bot" className="h-7 w-7" />}
-            title="No custom agents yet"
-            description="Your Karos team can enable custom agents for this workspace."
+            title="No active agents yet"
+            description="After your Karos team completes the first agent run, that agent will appear here."
           />
         )}
       </>
     );
   }
 
-  const [jobs, contextItems, customAgents] = await Promise.all([
+  const [jobs, contextItems, customAgents, scheduledRuns] = await Promise.all([
     listJobs({ clientId: id }),
     listContextItems({ clientId: id }),
     listCustomAgents(),
+    listPlannedScheduledRuns({ clientId: id }),
   ]);
 
   // Thumbnail previews of what the managed agents have actually delivered, so
@@ -178,6 +213,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           clientId={id}
           agents={customAgents.filter((a) => a.enabled).map(toSummary)}
           runs={toRunRows(jobs, true)}
+          schedules={toScheduleRows(scheduledRuns)}
           contextItems={contextItems}
           viewerIsClient={false}
           xSetup={xSetup}
