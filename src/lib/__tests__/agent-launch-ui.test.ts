@@ -22,7 +22,7 @@ describe("custom agent launch profiles", () => {
     );
     expect(shorts.attachments.required).toBe(true);
     expect(shorts.attachments.satisfyWithFieldKey).toBe("source_url");
-    // The X agent is intake-driven (its data page holds handles, off-limits,
+    // The X agent is intake-driven (its agent data holds handles, off-limits,
     // rosters, takes) — the launch brief only scopes the run. It must never
     // ask for things the agent BUILDS (audience, themes, cadence) or already
     // stores (account handles).
@@ -37,7 +37,7 @@ describe("custom agent launch profiles", () => {
     // The per-client company-page instance and the lab master are both
     // intake-driven (setup gate + injected LinkedIn agent data): the brief
     // only scopes the run, exactly like the X agent — never asking for what
-    // the data page already stores (executive material, voice, proof).
+    // the agent data already stores (executive material, voice, proof).
     const instance = launchProfileFor({
       key: "karos-linkedin-company-karoslabs",
       name: "LinkedIn Company Page — Karos Labs",

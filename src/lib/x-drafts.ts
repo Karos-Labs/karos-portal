@@ -5,6 +5,10 @@
  * carry **1/3**-style markers), a `NNN chars` line per post, and "- **" meta
  * bullets. Pure and client-safe; returns null when the shape isn't there so
  * callers can fall back to plain rendering.
+ *
+ * The compose deep link lives here too: a client component cannot be imported
+ * by a test (its server-action import pulls in the Admin SDK), and the reply
+ * addressing is the part worth pinning down.
  */
 
 export interface XParsedPost {
@@ -23,9 +27,9 @@ export interface XParsedDraft {
   posts: XParsedPost[];
   /** Source / grounding bullets, markdown bold stripped. */
   meta: string[];
-  /** For replies: the x.com status URL this draft answers (from the meta). */
+  /** For replies: the status URL this draft answers (from the meta). */
   replyToUrl?: string;
-  /** For quote-comments: the x.com status URL being quoted (from the meta). */
+  /** For quote-comments: the status URL being quoted (from the meta). */
   quoteUrl?: string;
 }
 
@@ -42,6 +46,35 @@ export interface XParsedBatch {
 }
 
 const stripBold = (s: string) => s.replace(/\*\*/g, "");
+
+/** A single post's URL on either host — twitter.com links still resolve. */
+const STATUS_URL = /https?:\/\/(?:www\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]{1,15}\/status\/\d+/;
+
+/**
+ * A meta bullet only names a reply or quote target when it is labelled as one,
+ * or says so in words. Addressing a reply at the wrong post is worse than a
+ * plain unaddressed compose, so a bare URL is never treated as a target and a
+ * source bullet that merely mentions a reply is not one either.
+ */
+const REPLY_LABEL = /^(?:in\s+)?repl(?:y|ying)(?:\s+(?:to|target|post))?$/i;
+const QUOTE_LABEL = /^quot(?:e|ed|ing)(?:\s+(?:source|target|post))?$/i;
+const REPLY_PHRASE = /\b(?:in reply to|replying to|reply target)\b/i;
+const QUOTE_PHRASE = /\b(?:quote source|quote target|quoted post)\b/i;
+
+/**
+ * Which target, if either, a meta bullet names. BOTH labels are tested before
+ * either phrase: the phrases match anywhere in the bullet, so
+ * "Quote source: <url> (replying to their pricing thread)" would otherwise be
+ * addressed as a reply to the very post it means to quote. A bullet with no
+ * label and no phrase names nothing.
+ */
+function metaTarget(label: string, meta: string): "reply" | "quote" | null {
+  if (REPLY_LABEL.test(label)) return "reply";
+  if (QUOTE_LABEL.test(label)) return "quote";
+  if (REPLY_PHRASE.test(meta)) return "reply";
+  if (QUOTE_PHRASE.test(meta)) return "quote";
+  return null;
+}
 
 export function parseXDrafts(markdown: string): XParsedBatch | null {
   const lines = markdown.split("\n");
@@ -128,9 +161,13 @@ export function parseXDrafts(markdown: string): XParsedBatch | null {
     if (/^-\s+/.test(line) && draft && draft.posts.length > 0) {
       const meta = stripBold(line.replace(/^-\s+/, "")).trim();
       draft.meta.push(meta);
-      const statusUrl = meta.match(/https:\/\/x\.com\/[A-Za-z0-9_]+\/status\/\d+/)?.[0];
-      if (statusUrl && /in reply to/i.test(meta)) draft.replyToUrl = statusUrl;
-      else if (statusUrl && /quote source/i.test(meta)) draft.quoteUrl = statusUrl;
+      const statusUrl = meta.match(STATUS_URL)?.[0];
+      if (statusUrl) {
+        const label = meta.match(/^([^:]{1,40}):/)?.[1].trim() ?? "";
+        const target = metaTarget(label, meta);
+        if (target === "reply" && !draft.replyToUrl) draft.replyToUrl = statusUrl;
+        if (target === "quote" && !draft.quoteUrl) draft.quoteUrl = statusUrl;
+      }
       continue;
     }
   }
@@ -138,4 +175,22 @@ export function parseXDrafts(markdown: string): XParsedBatch | null {
 
   if (accounts.length === 0 || accounts.every((a) => a.drafts.length === 0)) return null;
   return { accounts };
+}
+
+/**
+ * X compose deep link: text pre-filled, replies addressed, quotes attached.
+ * The intent has used both `in_reply_to` and `in_reply_to_status_id` for the
+ * target post and nobody has live-verified which one x.com/intent/post reads
+ * today, so both carry the same id — whichever it honours, the reply lands on
+ * the right post.
+ */
+export function xIntentUrl(draft: XParsedDraft, text: string): string {
+  const params = new URLSearchParams();
+  params.set("text", draft.quoteUrl ? `${text}\n\n${draft.quoteUrl}` : text);
+  const replyId = draft.replyToUrl?.match(/status\/(\d+)/)?.[1];
+  if (replyId) {
+    params.set("in_reply_to", replyId);
+    params.set("in_reply_to_status_id", replyId);
+  }
+  return `https://x.com/intent/post?${params.toString()}`;
 }

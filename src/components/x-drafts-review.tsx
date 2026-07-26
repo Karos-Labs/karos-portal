@@ -19,18 +19,10 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Textarea } from "@/components/ui";
 import { Icon, XLogo } from "@/components/icon";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
-import type { XParsedAccount, XParsedDraft } from "@/lib/x-drafts";
+import { splitMetaLinks } from "@/lib/draft-meta";
+import { xIntentUrl, type XParsedAccount, type XParsedDraft } from "@/lib/x-drafts";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted";
-
-/** X compose deep link: text pre-filled, replies addressed, quotes attached. */
-function xIntentUrl(draft: XParsedDraft, text: string): string {
-  const params = new URLSearchParams();
-  params.set("text", draft.quoteUrl ? `${text}\n\n${draft.quoteUrl}` : text);
-  const replyId = draft.replyToUrl?.match(/status\/(\d+)/)?.[1];
-  if (replyId) params.set("in_reply_to", replyId);
-  return `https://x.com/intent/post?${params.toString()}`;
-}
 
 /**
  * "256 chars" → "256 / 280" (X's standard limit). Past 280 the draft is a
@@ -40,6 +32,22 @@ function charLabel(chars?: string): string | null {
   const n = chars?.match(/\d+/)?.[0];
   if (!n) return chars ?? null;
   return Number(n) > 280 ? `${Number(n).toLocaleString()} chars · long-form` : `${n} / 280`;
+}
+
+/** A look at the post a reply or quote-comment aims at — records nothing. */
+function TargetLink({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener"
+      title="Opens the post on X in a new tab. Reading it records no choice here."
+      className="text-[11px] text-muted underline hover:text-foreground"
+    >
+      <Icon name="ExternalLink" className="mr-1 inline h-3 w-3" />
+      {label}
+    </a>
+  );
 }
 
 function DraftCard({
@@ -70,12 +78,14 @@ function DraftCard({
   const isThread = draft.posts.length > 1;
   const fullText = draft.posts.map((p) => p.text).join("\n\n");
 
-  function send(action: SentState, textUsed?: string) {
+  async function send(action: SentState, textUsed?: string) {
     setError(null);
-    // Picking IS the posting hand-off. Open compose synchronously (inside the
-    // click gesture, so popup blockers allow it) and copy the full text —
-    // for threads, compose gets post 1 and the clipboard carries every post.
-    // A retry after a failed feedback write must NOT open a second compose.
+    // Picking IS the posting hand-off. The clipboard write is AWAITED before
+    // window.open — Chrome rejects clipboard writes once the new tab steals
+    // focus, and for threads the clipboard is what carries posts 2..N. The
+    // await stays inside the click gesture's transient activation, so popup
+    // blockers still allow the open. A retry after a failed feedback write
+    // must NOT open a second compose.
     if (action !== "not_posted" && !handedOff) {
       const text = textUsed ?? fullText;
       const composeText =
@@ -86,10 +96,15 @@ function DraftCard({
         composeText.length > 2000 ? "https://x.com/compose/post" : xIntentUrl(draft, composeText);
       setPostUrl(url);
       setHandedOff(true);
-      window.open(url, "_blank", "noopener");
       if (navigator.clipboard) {
-        navigator.clipboard.writeText(text).then(() => setCopied(true)).catch(() => {});
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+        } catch {
+          // Compose still carries the post text; the copy label stays honest.
+        }
       }
+      window.open(url, "_blank", "noopener");
     }
     start(async () => {
       const result = await addXDraftFeedbackAction({
@@ -161,11 +176,37 @@ function DraftCard({
       {draft.meta.length > 0 ? (
         <ul className="mt-2 space-y-0.5">
           {draft.meta.map((m, i) => (
-            <li key={i} className="text-xs text-muted">
-              {m}
+            <li key={i} className="break-words text-xs text-muted">
+              {splitMetaLinks(m).map((seg, j) =>
+                seg.href ? (
+                  <a
+                    key={j}
+                    href={seg.href}
+                    target="_blank"
+                    rel="noopener"
+                    className="underline hover:text-foreground"
+                  >
+                    {seg.text}
+                  </a>
+                ) : (
+                  <span key={j}>{seg.text}</span>
+                ),
+              )}
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {sent === null && (draft.replyToUrl || draft.quoteUrl) ? (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="text-[11px] text-muted-2">Before you pick:</span>
+          {draft.replyToUrl ? (
+            <TargetLink href={draft.replyToUrl} label="Read the post this answers" />
+          ) : null}
+          {draft.quoteUrl ? (
+            <TargetLink href={draft.quoteUrl} label="Read the post being quoted" />
+          ) : null}
+        </div>
       ) : null}
 
       {sent === null ? (

@@ -30,14 +30,15 @@ export function isXAgent(agentKey: string): boolean {
 }
 
 /**
- * Whether the client has any X intake stored yet — the company page or at
- * least one seat. The X agent runs ON this data (voice, off-limits, roster,
- * takes); with none of it a run would draft from onboarding alone and miss the
- * point, so the submit cores hard-gate on this.
+ * Whether the client's X intake is set up enough to run. Gates on the
+ * company-page form being SAVED: we run X for a business, so the company page
+ * is the floor and seats are additive on top of it. Bare shared seats never
+ * satisfy the gate — one person keeps one seat across agents, so a seat may
+ * have been created for LinkedIn and say nothing about X. Matches the
+ * LinkedIn company-page policy in linkedin-agent-context.ts.
  */
 export async function hasXAgentIntake(clientId: string): Promise<boolean> {
-  const [intakes, seats] = await Promise.all([listAgentIntake(clientId, "x"), listClientSeats(clientId)]);
-  return intakes.length > 0 || seats.length > 0;
+  return (await getAgentIntake(clientId, "x", null)) !== null;
 }
 
 /** Most recent feedback rows serialized per account (the Learning Log source). */

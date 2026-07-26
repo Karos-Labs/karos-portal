@@ -15,13 +15,15 @@ import { Icon } from "@/components/icon";
 import {
   ClientCustomAgents,
   type CustomAgentRunRow,
+  type LinkedInAgentSetup,
   type RunnableAgentSummary,
+  type XAgentSetup,
 } from "@/components/custom-agents";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
-import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
-import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
+import { buildLinkedInAgentIntakeView, buildXAgentIntakeView } from "@/lib/agent-intake-views";
+import { isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
 import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
 import { assetImages } from "@/lib/asset-images";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
@@ -77,6 +79,56 @@ function toScheduleRows(
 }
 
 /**
+ * Setup props for the intake-driven agents (X e13, LinkedIn e10): their data
+ * forms live in the run dialog, so the payload ships with the ready flag.
+ * Building one costs a full read of seats, intake, drops and run history, so it
+ * only happens when that agent is actually on this page's list, and it reuses
+ * the caller's `jobs` scan rather than repeating it per agent.
+ */
+async function intakeSetups(
+  clientId: string,
+  agents: RunnableAgentSummary[],
+  opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string },
+): Promise<{ xSetup?: XAgentSetup; linkedinSetup?: LinkedInAgentSetup }> {
+  const hasX = agents.some((agent) => isXAgentIdentity(agent.key));
+  const hasLinkedIn = agents.some((agent) => isLinkedInAgentIdentity(agent.key));
+  const [xData, linkedinData] = await Promise.all([
+    hasX ? buildXAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) : null,
+    hasLinkedIn
+      ? buildLinkedInAgentIntakeView(clientId, {
+          isStaff: opts.isStaff,
+          jobs: opts.jobs,
+          ...(opts.linkedinPageUrl ? { pageUrlSuggestion: opts.linkedinPageUrl } : {}),
+        })
+      : null,
+  ]);
+  // `ready` must agree with the run gates the submit cores apply, so it is read
+  // off the same row those gates read instead of asking them again: both
+  // hasXAgentIntake() and hasLinkedInAgentIntake() with no agent key are "the
+  // company page form is saved".
+  return {
+    ...(xData
+      ? {
+          xSetup: {
+            ready: xData.company !== null,
+            href: `/clients/${clientId}/x-agent`,
+            data: xData,
+          },
+        }
+      : {}),
+    ...(linkedinData
+      ? {
+          linkedinSetup: {
+            ready: linkedinData.company !== null,
+            href: `/clients/${clientId}/linkedin-agent`,
+            data: linkedinData,
+          },
+        }
+      : {}),
+  };
+}
+
+/**
  * A client's AI Agents page. Clients can run only the custom agents that an
  * admin granted them; staff can run every enabled custom agent.
  */
@@ -95,13 +147,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   const agentServiceConfigured = isAgentServiceConfigured();
-  // Intake-driven agents gate: their run modals route to the data page until
-  // intake exists (X e13, LinkedIn e10).
-  const xSetup = { ready: await hasXAgentIntake(id), href: `/clients/${id}/x-agent` };
-  const linkedinSetup = {
-    ready: await hasLinkedInAgentIntake(id),
-    href: `/clients/${id}/linkedin-agent`,
-  };
+  const linkedinPageUrl = client.socialLinks?.linkedin;
 
   // Client users: explicitly granted agents plus any agent that has already
   // delivered a successful run for this workspace.
@@ -132,6 +178,11 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // Impersonating admins see the client view but never spend real credits —
     // show the gate only to billable client actors.
     const spendable = isBillableClientActor(user) ? availableCredits(credits) : undefined;
+    const setups = await intakeSetups(id, agents, {
+      isStaff,
+      jobs,
+      ...(linkedinPageUrl ? { linkedinPageUrl } : {}),
+    });
     return (
       <>
         <PageHeader
@@ -146,8 +197,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             schedules={toScheduleRows(scheduledRuns)}
             contextItems={contextItems}
             viewerIsClient
-            xSetup={xSetup}
-            linkedinSetup={linkedinSetup}
+            {...setups}
             {...(spendable !== undefined ? { availableCredits: spendable } : {})}
           />
         ) : (
@@ -167,6 +217,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     listCustomAgents(),
     listPlannedScheduledRuns({ clientId: id }),
   ]);
+  const enabledAgents = customAgents.filter((a) => a.enabled).map(toSummary);
 
   // Thumbnail previews of what the managed agents have actually delivered, so
   // the "Live" view can show the formats a running agent produces. Keyed by
@@ -178,7 +229,14 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         .flatMap((j) => j.assetIds),
     ),
   );
-  const managedAssets = await Promise.all(managedAssetIds.map((aid) => getAsset(aid)));
+  const [setups, managedAssets] = await Promise.all([
+    intakeSetups(id, enabledAgents, {
+      isStaff,
+      jobs,
+      ...(linkedinPageUrl ? { linkedinPageUrl } : {}),
+    }),
+    Promise.all(managedAssetIds.map((aid) => getAsset(aid))),
+  ]);
   const assetById = new Map(managedAssets.filter(Boolean).map((a) => [a!.id, a!]));
   const jobPreviews: Record<string, string[]> = {};
   for (const job of jobs) {
@@ -211,13 +269,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       {agentServiceConfigured ? (
         <ClientCustomAgents
           clientId={id}
-          agents={customAgents.filter((a) => a.enabled).map(toSummary)}
+          agents={enabledAgents}
           runs={toRunRows(jobs, true)}
           schedules={toScheduleRows(scheduledRuns)}
           contextItems={contextItems}
           viewerIsClient={false}
-          xSetup={xSetup}
-          linkedinSetup={linkedinSetup}
+          {...setups}
         />
       ) : (
         <EmptyState

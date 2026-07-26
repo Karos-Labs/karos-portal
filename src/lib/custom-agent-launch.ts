@@ -237,7 +237,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "LinkedIn drafts",
       intro:
-        "Drafts the next company-page post from the LinkedIn agent data page (the company page, seats, and ongoing drops). Voice, topics, and cadence are built from that data - this form only scopes the run. Draft-only; a person always posts.",
+        "Drafts the next company-page post from your LinkedIn agent data: the company page, seats, and ongoing drops. Voice, topics, and cadence are built from that data - this form only scopes the run. Draft-only; a person always posts.",
       fields: [
         {
           key: "request",
@@ -259,7 +259,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       estimate: "~10–20 min",
       attachments: {
         label: "Extra material for this run (optional)",
-        hint: "One-off references for this post. The page URL, off-limits, seats, and news live on the LinkedIn agent data page, not here.",
+        hint: "One-off references for this post. The page URL, off-limits, seats, and news live in your LinkedIn agent data, not here.",
         accept: DOCUMENTS_AND_IMAGES,
       },
     },
@@ -330,7 +330,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "X drafts",
       intro:
-        "Drafts a week of posts from the X agent data page (the company page, seats, and ongoing drops). Voice, audience, and cadence are built from that data - this form only scopes the run. Draft-only; nothing posts without a human.",
+        "Drafts a week of posts from your X agent data: the company page, seats, and ongoing drops. Voice, audience, and cadence are built from that data - this form only scopes the run. Draft-only; nothing posts without a human.",
       fields: [
         {
           key: "run_scope",
@@ -359,7 +359,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       estimate: "~15–25 min",
       attachments: {
         label: "Extra material for this run (optional)",
-        hint: "One-off references for this batch. Handles, off-limits, rosters, takes, and news live on the X agent data page, not here.",
+        hint: "One-off references for this batch. Handles, off-limits, rosters, takes, and news live in your X agent data, not here.",
         accept: DOCUMENTS_AND_IMAGES,
       },
     },
@@ -724,8 +724,8 @@ export function isXAgentIdentity(key: string): boolean {
 
 /**
  * The submit cores refuse un-set-up X runs with a message starting with this
- * prefix; the run modal detects it to render the setup link. One constant so
- * copy edits cannot silently break the link.
+ * prefix; the run dialog detects it to offer a way into the agent data. One
+ * constant so copy edits cannot silently break that affordance.
  */
 export const X_SETUP_REQUIRED_PREFIX = "Set up the X agent data";
 

@@ -25,6 +25,7 @@ import { Badge, Button, Textarea } from "@/components/ui";
 import { Icon, LinkedInLogo } from "@/components/icon";
 import { addLiDraftFeedbackAction } from "@/lib/actions/linkedin-agent-actions";
 import type { LiParsedAccount, LiParsedDraft } from "@/lib/li-drafts";
+import { splitMetaLinks } from "@/lib/draft-meta";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
 
@@ -202,8 +203,22 @@ function DraftCard({
       {draft.meta.length > 0 ? (
         <ul className="mt-2 space-y-0.5">
           {draft.meta.map((m, i) => (
-            <li key={i} className="text-xs text-muted">
-              {m}
+            <li key={i} className="break-words text-xs text-muted">
+              {splitMetaLinks(m).map((seg, j) =>
+                seg.href ? (
+                  <a
+                    key={j}
+                    href={seg.href}
+                    target="_blank"
+                    rel="noopener"
+                    className="underline hover:text-foreground"
+                  >
+                    {seg.text}
+                  </a>
+                ) : (
+                  <span key={j}>{seg.text}</span>
+                ),
+              )}
             </li>
           ))}
         </ul>
