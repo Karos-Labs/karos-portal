@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { type ComponentProps, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Label, Select, Textarea } from "@/components/ui";
-import { Icon } from "@/components/icon";
+import { Icon, LinkedInLogo, XLogo } from "@/components/icon";
 import { AgentIdentity, AgentMark, AgentPlatformBadges } from "@/components/agent-identity";
 import { AgentInputFiles } from "@/components/agent-input-files";
+import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
+import { XAgentIntake } from "@/components/x-agent-intake";
 import { Modal } from "@/components/modal";
 import { JobStatusBadge } from "@/components/job-status";
 import {
@@ -82,6 +84,125 @@ function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "ke
       icon={agent.icon}
       className={className}
     />
+  );
+}
+
+/* ═══════════ intake-driven agents (X e13, LinkedIn e10) ═══════════ */
+
+/**
+ * The X and LinkedIn agents draft from stored intake, so their data forms live
+ * inside the run dialog: inline on a first run, behind the "<platform> agent
+ * data" button once the data exists. `data` is the payload for that inline
+ * form; callers that ship the gate without it send the user to `href` instead.
+ */
+export interface XAgentSetup {
+  ready: boolean;
+  href: string;
+  data?: ComponentProps<typeof XAgentIntake>;
+}
+
+/** The e10 twin of XAgentSetup. */
+export interface LinkedInAgentSetup {
+  ready: boolean;
+  href: string;
+  data?: ComponentProps<typeof LinkedInAgentIntake>;
+}
+
+type IntakeKind = "x" | "linkedin";
+
+type AgentIntakeContext =
+  | { kind: "x"; setup: XAgentSetup }
+  | { kind: "linkedin"; setup: LinkedInAgentSetup };
+
+const INTAKE_LABEL: Record<IntakeKind, string> = { x: "X", linkedin: "LinkedIn" };
+
+/** Route segment of the full agent data page, for callers with no inline payload. */
+const INTAKE_ROUTE: Record<IntakeKind, string> = { x: "x-agent", linkedin: "linkedin-agent" };
+
+/** Which intake surface governs this agent, given what the page shipped. */
+function intakeFor(
+  agentKey: string,
+  xSetup?: XAgentSetup,
+  linkedinSetup?: LinkedInAgentSetup,
+): AgentIntakeContext | null {
+  if (xSetup && isXAgentIdentity(agentKey)) return { kind: "x", setup: xSetup };
+  if (linkedinSetup && isLinkedInAgentIdentity(agentKey)) {
+    return { kind: "linkedin", setup: linkedinSetup };
+  }
+  return null;
+}
+
+function IntakeGlyph({ kind, className }: { kind: IntakeKind; className?: string }) {
+  return kind === "x" ? <XLogo className={className} /> : <LinkedInLogo className={className} />;
+}
+
+/**
+ * Is the company page saved? `ready` is a looser server predicate — for X, any
+ * seat satisfies it, and seats are shared across agents — so it cannot decide
+ * on its own whether the setup a person came here to do is finished.
+ */
+function companyOnFile(intake: AgentIntakeContext | null): boolean {
+  return Boolean(intake?.setup.data?.company);
+}
+
+/**
+ * Does this agent hold everything it drafts from? A client who set up LinkedIn
+ * first has seats, so `ready` reads true for X while the X company page is
+ * still missing — the payload is the only thing that can tell them apart.
+ * Callers that ship no payload have nothing but the server predicate.
+ */
+function intakeComplete(intake: AgentIntakeContext): boolean {
+  return intake.setup.ready && (!intake.setup.data || companyOnFile(intake));
+}
+
+function IntakeForm({ intake }: { intake: AgentIntakeContext }) {
+  if (intake.kind === "x") {
+    return intake.setup.data ? <XAgentIntake {...intake.setup.data} /> : null;
+  }
+  return intake.setup.data ? <LinkedInAgentIntake {...intake.setup.data} /> : null;
+}
+
+/**
+ * The way into an agent's data: warning-toned while the data is still missing,
+ * quiet once it is on file. `onOpen` switches the run dialog to its data pane;
+ * without a payload to render there the affordance links to the full page.
+ */
+function AgentDataButton({
+  kind,
+  ready,
+  href,
+  onOpen,
+}: {
+  kind: IntakeKind;
+  ready: boolean;
+  href: string;
+  onOpen?: () => void;
+}) {
+  const className = cn(
+    "inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
+    ready
+      ? "border-border bg-surface-2 text-muted hover:border-border-strong hover:text-foreground"
+      : "border-warning/30 bg-warning/10 text-warning hover:border-warning/50 hover:bg-warning/15",
+  );
+  const label = `${INTAKE_LABEL[kind]} agent data`;
+  // The short visible text needs the platform back for anyone who cannot see
+  // the glyph, and it stays inside the accessible name so voice control can
+  // still say what it reads.
+  const name = ready ? label : `${label}: setup needed`;
+  const body = (
+    <>
+      <IntakeGlyph kind={kind} className="h-3 w-3" />
+      {ready ? label : "Setup needed"}
+    </>
+  );
+  return onOpen ? (
+    <button type="button" onClick={onOpen} className={className} aria-label={name}>
+      {body}
+    </button>
+  ) : (
+    <a href={href} className={className} aria-label={name}>
+      {body}
+    </a>
   );
 }
 
@@ -261,12 +382,13 @@ export function ClientCustomAgents({
   viewerIsClient: boolean;
   /** Spendable credits right now (balance clipped by caps) — client viewers only. */
   availableCredits?: number;
-  /** X agent intake state: gates the X run behind the "X agent data" page. */
-  xSetup?: { ready: boolean; href: string };
-  /** LinkedIn agent intake state: gates e10 runs behind the "LinkedIn agent data" page. */
-  linkedinSetup?: { ready: boolean; href: string };
+  /** X agent intake state and, when the page could prefetch it, its data form. */
+  xSetup?: XAgentSetup;
+  /** LinkedIn agent intake state — same shape for the e10 agents. */
+  linkedinSetup?: LinkedInAgentSetup;
 }) {
   const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
+  const [runIntakeFirst, setRunIntakeFirst] = useState(false);
   const [scheduleAgent, setScheduleAgent] = useState<RunnableAgentSummary | null>(null);
 
   const agentByName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
@@ -274,6 +396,11 @@ export function ClientCustomAgents({
     () => new Map(schedules.map((schedule) => [schedule.agentId, schedule])),
     [schedules],
   );
+
+  function openRun(agent: RunnableAgentSummary, intakeFirst = false) {
+    setRunIntakeFirst(intakeFirst);
+    setRunAgent(agent);
+  }
 
   if (agents.length === 0 && runs.length === 0) return null;
 
@@ -308,6 +435,7 @@ export function ClientCustomAgents({
             const reviewHref = viewerIsClient
               ? "/tasks"
               : reviewRuns[0]?.href ?? `/clients/${clientId}/assets`;
+            const intake = intakeFor(agent.key, xSetup, linkedinSetup);
             return (
               <div
                 key={agent.id}
@@ -340,13 +468,15 @@ export function ClientCustomAgents({
                     </Link>
                   )}
                 </div>
-                <div className="mt-3 flex items-center gap-2">
+                <div className="mt-3 flex flex-wrap items-center gap-2">
                   <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
-                  {xSetup && !xSetup.ready && isXAgentIdentity(agent.key) && (
-                    <Badge tone="warning">Setup needed</Badge>
-                  )}
-                  {linkedinSetup && !linkedinSetup.ready && isLinkedInAgentIdentity(agent.key) && (
-                    <Badge tone="warning">Setup needed</Badge>
+                  {intake && (
+                    <AgentDataButton
+                      kind={intake.kind}
+                      ready={intakeComplete(intake)}
+                      href={intake.setup.href}
+                      {...(intake.setup.data ? { onOpen: () => openRun(agent, true) } : {})}
+                    />
                   )}
                 </div>
                 <div className="mt-3 rounded-md border border-border bg-surface-2/70 px-3 py-2">
@@ -375,7 +505,7 @@ export function ClientCustomAgents({
                       variant="ghost"
                       disabled={short}
                       title={short ? "Not enough credits. Ask your Karos team for a top-up." : undefined}
-                      onClick={() => setRunAgent(agent)}
+                      onClick={() => openRun(agent)}
                     >
                       <Icon name="Play" className="h-3.5 w-3.5" /> Run now
                     </Button>
@@ -451,6 +581,7 @@ export function ClientCustomAgents({
           viewerIsClient={viewerIsClient}
           {...(xSetup ? { xSetup } : {})}
           {...(linkedinSetup ? { linkedinSetup } : {})}
+          {...(runIntakeFirst ? { initialPane: "data" as const } : {})}
           onClose={() => setRunAgent(null)}
         />
       )}
@@ -627,6 +758,9 @@ function AgentScheduleModal({
 
 /* ═══════════════════════ run dialog ═══════════════════════ */
 
+/** The brief, or the agent's own data form — the intake-driven agents own both. */
+type RunPane = "run" | "data";
+
 function RunCustomAgentModal({
   agent,
   clientId,
@@ -635,6 +769,7 @@ function RunCustomAgentModal({
   viewerIsClient,
   xSetup,
   linkedinSetup,
+  initialPane,
   onClose,
 }: {
   agent: RunnableAgentSummary;
@@ -644,10 +779,12 @@ function RunCustomAgentModal({
   clients?: Array<{ id: string; name: string }>;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
-  /** X agent intake state — when not ready, the modal routes to setup instead of running. */
-  xSetup?: { ready: boolean; href: string };
-  /** LinkedIn agent intake state — same gate for the e10 agents. */
-  linkedinSetup?: { ready: boolean; href: string };
+  /** X agent intake state and, when prefetched, the data form rendered inline. */
+  xSetup?: XAgentSetup;
+  /** LinkedIn agent intake state — same shape for the e10 agents. */
+  linkedinSetup?: LinkedInAgentSetup;
+  /** "data" opens straight on the agent's data; so does a missing company page. */
+  initialPane?: RunPane;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -658,13 +795,50 @@ function RunCustomAgentModal({
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
+  const intake = intakeFor(agent.key, xSetup, linkedinSetup);
+  const intakeReady = intake?.setup.ready ?? true;
+  const hasIntakeForm = Boolean(intake?.setup.data);
+  // The data opens on the company page being missing, not on the server gate:
+  // `ready` is satisfied by a shared seat, so an X run would otherwise skip
+  // straight to the brief for a client who set LinkedIn up first. This only
+  // chooses the pane — `ready` alone still decides what a run does.
+  const openOnData = hasIntakeForm && (!companyOnFile(intake) || initialPane === "data");
+  const [pane, setPane] = useState<RunPane>(openOnData ? "data" : "run");
+  // Did the data open because the run wanted it, rather than because someone
+  // asked for it from the card? Held in state so it survives the props refresh
+  // that saving the company page triggers underneath this dialog.
+  const [openedForSetup] = useState(() => openOnData && initialPane !== "data");
+  // Only someone who has seen the brief can go "back" to it. A dialog that
+  // opened on the data has not shown it yet, so its way out reads forward.
+  const [seenRun, setSeenRun] = useState(!openOnData);
+  const dataPaneRef = useRef<HTMLDivElement>(null);
   const primaryField =
     profile.fields.find((field) => field.key === "request") ??
     profile.fields.find((field) => field.required) ??
     profile.fields[0];
+  // A server-side setup gate can still fire when this dialog's `ready` was
+  // stale, so the message needs its own way back to the data.
+  const setupErrorKind: IntakeKind | null = !error
+    ? null
+    : error.startsWith(X_SETUP_REQUIRED_PREFIX)
+      ? "x"
+      : error.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX)
+        ? "linkedin"
+        : null;
+
+  // Both panes share the dialog's single scroll box, so opening the data from
+  // low down in the brief would otherwise land in the middle of the form.
+  useEffect(() => {
+    if (hasIntakeForm && pane === "data") dataPaneRef.current?.scrollIntoView({ block: "start" });
+  }, [hasIntakeForm, pane]);
 
   function setField(key: string, value: string) {
     setFields((current) => ({ ...current, [key]: value }));
+  }
+
+  function showRun() {
+    setSeenRun(true);
+    setPane("run");
   }
 
   function submit() {
@@ -734,22 +908,24 @@ function RunCustomAgentModal({
     );
   }
 
-  if (isXAgentIdentity(agent.key) && xSetup && !xSetup.ready) {
+  // Gate without a payload to render inline: send the person to the full page.
+  if (intake && !intakeReady && !hasIntakeForm) {
+    const label = `${INTAKE_LABEL[intake.kind]} agent data`;
     return (
       <Modal open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
-          <p className="text-sm text-foreground">Set up the X agent data first.</p>
+          <p className="text-sm text-foreground">Set up the {label} first.</p>
           <p className="text-xs leading-relaxed text-muted">
-            This agent drafts from the X agent data page: the company page, a seat per
-            person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
-            will not run without it.
+            This agent drafts from the {label}: the company page, a seat per person, and the
+            ongoing drops. It takes a few minutes to fill in once, and the agent will not run
+            without it.
           </p>
           <div className="flex items-center gap-2 pt-1">
             <a
-              href={xSetup.href}
+              href={intake.setup.href}
               className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
             >
-              Set up X agent data
+              Set up {label}
               <Icon name="ArrowRight" className="h-3.5 w-3.5" />
             </a>
             <Button variant="ghost" onClick={onClose}>
@@ -761,36 +937,68 @@ function RunCustomAgentModal({
     );
   }
 
-  if (isLinkedInAgentIdentity(agent.key) && linkedinSetup && !linkedinSetup.ready) {
-    return (
-      <Modal open onClose={onClose} title={agent.name}>
-        <div className="mt-4 space-y-3">
-          <p className="text-sm text-foreground">Set up the LinkedIn agent data first.</p>
-          <p className="text-xs leading-relaxed text-muted">
-            This agent drafts from the LinkedIn agent data page: the company page, a seat per
-            person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
-            will not run without it.
-          </p>
-          <div className="flex items-center gap-2 pt-1">
-            <a
-              href={linkedinSetup.href}
-              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
-            >
-              Set up LinkedIn agent data
-              <Icon name="ArrowRight" className="h-3.5 w-3.5" />
-            </a>
-            <Button variant="ghost" onClick={onClose}>
-              Not now
-            </Button>
-          </div>
-        </div>
-      </Modal>
-    );
-  }
+  const showData = hasIntakeForm && pane === "data";
+  // Lead the eye on once the setup that held up a run is done; anyone who came
+  // to read or edit data they already have gets the quiet version.
+  const continueToRun = openedForSetup && companyOnFile(intake);
 
   return (
-    <Modal open onClose={onClose} title={agent.name} description={agent.description} className="max-w-2xl">
-      <div className="space-y-5">
+    <Modal
+      open
+      onClose={onClose}
+      title={showData && intake ? `${INTAKE_LABEL[intake.kind]} agent data` : agent.name}
+      description={
+        showData
+          ? companyOnFile(intake)
+            ? "This is what the agent drafts from. Change or add anything; it applies to the next run."
+            : "We draft from this, so we ask for it before the first run: the company page, a seat for each person, and your ongoing drops."
+          : agent.description
+      }
+      className={showData ? "max-w-3xl" : "max-w-2xl"}
+      closeOnBackdrop={!showData}
+    >
+      {intake && hasIntakeForm && (
+        // Both panes stay mounted. Every field in the intake cards is local
+        // state, so unmounting the form to show the brief would discard typed
+        // text; `hidden` keeps the idle pane out of the tab order and the
+        // accessibility tree too.
+        <div ref={dataPaneRef} className="space-y-5" hidden={!showData}>
+          <div className="flex flex-wrap items-center gap-2">
+            {intakeReady ? (
+              <Button size="sm" variant={continueToRun ? "accent" : "subtle"} onClick={showRun}>
+                {seenRun ? (
+                  <>
+                    <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> Back to the run
+                  </>
+                ) : (
+                  <>
+                    Continue to the run
+                    <Icon name="ArrowRight" className="h-3.5 w-3.5" />
+                  </>
+                )}
+              </Button>
+            ) : (
+              <Button size="sm" variant="ghost" className="ml-auto" onClick={onClose}>
+                Not now
+              </Button>
+            )}
+          </div>
+          <IntakeForm intake={intake} />
+        </div>
+      )}
+
+      <div className="space-y-5" hidden={showData}>
+        {intake && (
+          <div className="flex flex-wrap items-center gap-2">
+            <AgentDataButton
+              kind={intake.kind}
+              ready={intakeComplete(intake)}
+              href={intake.setup.href}
+              {...(hasIntakeForm ? { onOpen: () => setPane("data") } : {})}
+            />
+          </div>
+        )}
+
         <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="max-w-lg">
@@ -912,16 +1120,25 @@ function RunCustomAgentModal({
         {error && (
           <p className="text-xs text-danger" role="alert">
             {error}
-            {error.startsWith(X_SETUP_REQUIRED_PREFIX) && selectedClientId && (
-              <a href={`/clients/${selectedClientId}/x-agent`} className="ml-1.5 underline">
-                Open X agent data →
-              </a>
-            )}
-            {error.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) && selectedClientId && (
-              <a href={`/clients/${selectedClientId}/linkedin-agent`} className="ml-1.5 underline">
-                Open LinkedIn agent data →
-              </a>
-            )}
+            {setupErrorKind &&
+              (intake && hasIntakeForm ? (
+                <button
+                  type="button"
+                  onClick={() => setPane("data")}
+                  className="ml-1.5 cursor-pointer underline"
+                >
+                  Open {INTAKE_LABEL[setupErrorKind]} agent data →
+                </button>
+              ) : (
+                selectedClientId && (
+                  <a
+                    href={`/clients/${selectedClientId}/${INTAKE_ROUTE[setupErrorKind]}`}
+                    className="ml-1.5 underline"
+                  >
+                    Open {INTAKE_LABEL[setupErrorKind]} agent data →
+                  </a>
+                )
+              ))}
           </p>
         )}
 

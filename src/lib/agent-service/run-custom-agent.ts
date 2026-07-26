@@ -68,7 +68,7 @@ export async function submitCustomAgentRun(args: {
   if (isXAgent(agent.key)) {
     if (!(await hasXAgentIntake(client.id))) {
       return {
-        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
+        error: `${X_SETUP_REQUIRED_PREFIX} first: fill in the company page, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
       };
     }
     try {
@@ -87,7 +87,7 @@ export async function submitCustomAgentRun(args: {
   if (isLinkedInAgent(agent.key)) {
     if (!(await hasLinkedInAgentIntake(client.id, agent.key))) {
       return {
-        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open the "LinkedIn agent data" page (under Agent-specific documents) and save the company page form - the agent drafts from that. Nothing has run.`,
+        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first: save the company page form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
       };
     }
     try {

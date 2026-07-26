@@ -12,6 +12,7 @@ export function Modal({
   description,
   children,
   className,
+  closeOnBackdrop = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -19,6 +20,11 @@ export function Modal({
   description?: string;
   children: React.ReactNode;
   className?: string;
+  /**
+   * Set false when a stray click outside would discard typed input. Escape and
+   * the ✕ still close — those are deliberate gestures.
+   */
+  closeOnBackdrop?: boolean;
 }) {
   React.useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -39,7 +45,10 @@ export function Modal({
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        {...(closeOnBackdrop ? { onClick: onClose } : {})}
+      />
       <div
         className={cn(
           "relative z-10 flex max-h-[min(calc(100dvh-2rem),720px)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius)] border border-border-strong bg-surface shadow-2xl animate-fade-up",

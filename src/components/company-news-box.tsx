@@ -5,8 +5,8 @@
  * input per client, stored once (the xNewsUpdates collection keeps its
  * historical name) and fanned out at run time to every agent that consumes
  * news — X gets whats-new.json, the LinkedIn company page gets
- * company-updates.md Section A. Mounted on both agent data pages; do not
- * build a per-platform copy of this box.
+ * company-updates.md Section A. Mounted inside both agent intake surfaces; do
+ * not build a per-platform copy of this box.
  */
 
 import { useState, useTransition } from "react";

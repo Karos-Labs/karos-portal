@@ -64,7 +64,7 @@ export function ClientHome({
   jobs: Job[];
   assets: Asset[];
   integrations: ClientIntegration[];
-  /** X agent intake state - gates the X run behind the "X agent data" page. */
+  /** X agent intake state — gates the X run until the X agent data is filled in. */
   xSetup?: { ready: boolean; href: string };
 }) {
   // Resolve a job's icon/color from the runnable-agent summaries (all agents are
