@@ -283,6 +283,70 @@ export async function deleteClient(id: string): Promise<void> {
   await col.clients().doc(id).delete();
 }
 
+/**
+ * Collections whose docs carry a `clientId` field — swept by deleteClientCascade
+ * so a deleted client's data can never resurface in cross-client staff views
+ * (task board, assets, calendar). The credit LEDGER is deliberately retained as
+ * a financial audit trail; usage logs likewise.
+ */
+const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
+  "jobs",
+  "assets",
+  "transcripts",
+  "contextItems",
+  "clientCompetitors",
+  "clientContextDocs",
+  "clientActivityLogs",
+  "clientIntegrations",
+  "clientTasks",
+  "taskComments",
+  "actionItems",
+  "scheduledRuns",
+  "clientMarketingAnalytics",
+  "campaigns",
+  "clientSeats",
+  "agentIntake",
+  "xNewsUpdates",
+  "xTakes",
+  "xDraftFeedback",
+  "plannedScheduledRuns",
+];
+
+/** Per-client singleton docs (doc ID = clientId) removed alongside the cascade. */
+const CLIENT_DOC_COLLECTIONS: Array<keyof typeof col> = [
+  "clientReports",
+  "clientSeoGeo",
+  "clientInsightsCache",
+  "clientCredits",
+  "clientSettings",
+];
+
+/**
+ * Permanently delete a client AND all of its scoped sub-documents. Batched
+ * (400/commit) so arbitrarily large clients don't blow the batch limit. The
+ * client doc itself is deleted last, so a partial failure leaves the client
+ * visible (and the delete retryable) rather than orphaning its data silently.
+ */
+export async function deleteClientCascade(clientId: string): Promise<{ deleted: number }> {
+  let deleted = 0;
+  for (const name of CLIENT_SCOPED_COLLECTIONS) {
+    for (;;) {
+      const snap = await col[name]().where("clientId", "==", clientId).limit(400).get();
+      if (snap.empty) break;
+      const batch = adminDb().batch();
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+      deleted += snap.size;
+      if (snap.size < 400) break;
+    }
+  }
+  const docBatch = adminDb().batch();
+  for (const name of CLIENT_DOC_COLLECTIONS) docBatch.delete(col[name]().doc(clientId));
+  await docBatch.commit();
+  await col.clients().doc(clientId).delete();
+  return { deleted };
+}
+
 /** Find a client by its join token (clientKeyId). Returns null when not found or key is falsy. */
 export async function getClientByKeyId(clientKeyId: string): Promise<Client | null> {
   if (!clientKeyId) return null;

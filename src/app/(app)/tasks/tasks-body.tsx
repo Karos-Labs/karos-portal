@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import {
   listClientTasks,
   listClients,
@@ -26,7 +25,22 @@ import type { AppUser, ClientTask } from "@/lib/types";
 export async function TasksBody({ user, viewClientId }: { user: AppUser; viewClientId?: string }) {
   let scopedClientId: string | undefined;
   if (user.role === "CLIENT_USER") {
-    if (!user.clientId) redirect("/dashboard");
+    // A client user with no linked client renders an empty state — redirecting
+    // would loop (/dashboard → /assets → /tasks → …), and there is nothing
+    // cross-client a clientless viewer may ever see.
+    if (!user.clientId) {
+      return (
+        <div>
+          <PageHeader
+            title="Workspace"
+            description="What's next on the board, what already happened, and everything your agents have delivered."
+          />
+          <p className="text-sm text-muted-2">
+            Your account isn&apos;t linked to a workspace yet — contact your Karos account manager.
+          </p>
+        </div>
+      );
+    }
     scopedClientId = user.clientId;
   } else if (viewClientId) {
     const client = await getClient(viewClientId);
@@ -70,18 +84,24 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     );
   }
 
-  // Staff overview (no client selected): show all tasks across all clients
+  // Staff overview (no client selected): the cross-client Task Board.
+  // Visibility fence: employees only see tasks of their ASSIGNED clients
+  // (matching /jobs, /assets, /calendar — this board used to show every
+  // client's tasks to any staff member), and tasks whose client no longer
+  // exists (orphans of deleted clients) never surface for anyone.
   const [allTasks, clients] = await Promise.all([
     listClientTasks({ limit: 500 }),
-    listClients(),
+    listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined),
   ]);
 
   const clientMap = new Map(clients.map((c) => [c.id, c.name]));
 
-  const annotatedTasks: (ClientTask & { _clientName?: string })[] = allTasks.map((t) => ({
-    ...t,
-    _clientName: clientMap.get(t.clientId),
-  }));
+  const annotatedTasks: (ClientTask & { _clientName?: string })[] = allTasks
+    .filter((t) => clientMap.has(t.clientId))
+    .map((t) => ({
+      ...t,
+      _clientName: clientMap.get(t.clientId),
+    }));
 
   return (
     <div>

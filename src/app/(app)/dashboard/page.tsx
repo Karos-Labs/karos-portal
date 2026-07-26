@@ -21,13 +21,17 @@ export default async function DashboardPage() {
   // for the client rollout note).
   const isAdmin = user.role === "KAROS_ADMIN";
   const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
-  const [clients, jobs, myActionItems, allUsers, customAgents] = await Promise.all([
+  const [clients, allJobs, myActionItems, allUsers, customAgents] = await Promise.all([
     listClients(employeeFilter),
     listJobs(),
     isAdmin ? listActionItemsByAssignee(user.uid) : Promise.resolve([]),
     isAdmin ? listUsers() : Promise.resolve([]),
     listCustomAgents(),
   ]);
+  // Visibility fence: employees see their assigned clients' jobs only, and
+  // orphaned jobs of deleted clients never count toward anyone's stats.
+  const visibleClientIds = new Set(clients.map((c) => c.id));
+  const jobs = allJobs.filter((j) => visibleClientIds.has(j.clientId));
   const managedJobs = jobs.filter((j) => j.agentId === AGENT_SERVICE_AGENT_ID);
   const enabledAgents = customAgents.filter((a) => a.enabled);
   // Reassignment targets: active staff only.

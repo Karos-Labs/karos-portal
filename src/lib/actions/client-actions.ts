@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import {
   createClient,
   updateClient,
-  deleteClient,
+  deleteClientCascade,
   getClientByKeyId,
   tryAcquireAiProcessingLock,
   releaseAiProcessingLock,
@@ -182,14 +182,15 @@ export async function updateClientAction(id: string, input: Partial<Client> & { 
 }
 
 /**
- * Permanently delete a client and revalidate the clients listing.
- * Orphaned sub-documents (jobs, assets, context docs, etc.) referencing
- * this clientId remain in Firestore but are no longer surfaced in the UI.
+ * Permanently delete a client and every scoped sub-document (tasks, assets,
+ * jobs, docs, competitors, activity, …) via deleteClientCascade — orphaned
+ * rows used to linger and resurface in cross-client staff views (task board,
+ * assets, calendar) as phantom "spillage" from deleted clients.
  * Staff-only — admin or employee access required.
  */
 export async function deleteClientAction(clientId: string): Promise<void> {
   await requireStaff();
-  await deleteClient(clientId);
+  await deleteClientCascade(clientId);
   revalidatePath("/clients");
   revalidatePath(`/clients/${clientId}`);
 }

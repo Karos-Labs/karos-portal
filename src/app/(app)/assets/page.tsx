@@ -44,7 +44,9 @@ export default async function AssetsPage({
 
   const allAssets = await listAssets();
   const clientIds = new Set(clients.map((c) => c.id));
-  const assets = user.role === "KAROS_EMPLOYEE" ? allAssets.filter((a) => clientIds.has(a.clientId)) : allAssets;
+  // Admins and employees alike only see assets of EXISTING (visible) clients —
+  // orphaned assets of deleted clients used to leak into this cross-client view.
+  const assets = allAssets.filter((a) => clientIds.has(a.clientId));
   return (
     <>
       <PageHeader title="Assets" description="All content generated across your clients." />

@@ -14,7 +14,9 @@ export default async function JobsPage() {
     listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined),
   ]);
   const allowed = new Set(clients.map((c) => c.id));
-  const visible = user.role === "KAROS_EMPLOYEE" ? jobs.filter((j) => allowed.has(j.clientId)) : jobs;
+  // Admins and employees alike only see jobs of EXISTING (visible) clients —
+  // orphaned jobs of deleted clients used to leak into this cross-client view.
+  const visible = jobs.filter((j) => allowed.has(j.clientId));
   const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "-";
   const isAdmin = user.role === "KAROS_ADMIN";
 

@@ -76,8 +76,10 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       single = true;
       defaultClientId = viewClient.id;
       title = `${viewClient.name} - Calendar`;
-    } else if (user.role === "KAROS_EMPLOYEE") {
-      // Employees only see their assigned clients (admins see all → idSet stays null).
+    } else {
+      // Scope to the staff member's visible clients — for employees that's their
+      // assigned set, for admins every existing client. Never null: an unfenced
+      // overview also rendered orphaned runs/assets of DELETED clients.
       idSet = new Set(clients.map((c) => c.id));
     }
   }
