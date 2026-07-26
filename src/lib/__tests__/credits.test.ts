@@ -9,6 +9,7 @@ import {
   defaultClientCredits,
   isBillableClientActor,
   rollCreditWindows,
+  scheduledAgentWeeklyCost,
 } from "../credits";
 import type { ClientCredits } from "../types";
 
@@ -18,6 +19,12 @@ const NOW = Date.UTC(2026, 6, 8, 12);
 function credits(patch: Partial<ClientCredits> = {}): ClientCredits {
   return { ...defaultClientCredits("c1", NOW), ...patch };
 }
+
+describe("scheduled agent pricing", () => {
+  it("multiplies posts, outputs, and the agent's unit cost", () => {
+    expect(scheduledAgentWeeklyCost(25, 3, 2)).toBe(150);
+  });
+});
 
 describe("credit window keys", () => {
   it("computes ISO week keys (UTC)", () => {

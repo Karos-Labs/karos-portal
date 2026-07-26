@@ -332,6 +332,8 @@ export interface Job {
   id: string;
   clientId: string;
   agentId: string;
+  /** Exact custom-agent identity for repo-agent runs. Older jobs may only have agentName. */
+  customAgentId?: string;
   agentName: string;
   title: string;
   status: JobStatus;
@@ -496,8 +498,14 @@ export interface PlannedScheduledRun {
   minute: number;
   /** weekly cadence: 0=Sun … 6=Sat. */
   weekday?: number;
+  /** Multi-fire weekly cadence. When present, supersedes weekday. */
+  weekdays?: number[];
   /** monthly cadence: 1–31 (clamped to the month's length). */
   dayOfMonth?: number;
+  /** Distinct deliverables requested from each scheduled run. Defaults to 1. */
+  outputsPerRun?: number;
+  /** Whether each scheduled fire spends the client's credits. */
+  billClientCredits?: boolean;
   /** Next fire time (epoch millis) — the scheduling cursor the cron drains. */
   nextRunAt: number;
   status: "active" | "paused" | "completed";

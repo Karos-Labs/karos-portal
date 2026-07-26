@@ -34,7 +34,14 @@ export async function GET(req: NextRequest) {
   async function actorFor(run: PlannedScheduledRun): Promise<AppUser> {
     const cached = actorCache.get(run.createdBy);
     if (cached) return cached;
-    const user = (await getUser(run.createdBy)) ?? ({ uid: run.createdBy || "scheduler", name: "Scheduler" } as AppUser);
+    const stored = await getUser(run.createdBy);
+    const user = stored ?? ({
+      uid: run.createdBy || "scheduler",
+      name: run.billClientCredits ? "Client schedule" : "Scheduler",
+      ...(run.billClientCredits
+        ? { role: "CLIENT_USER", clientId: run.clientId }
+        : { role: "KAROS_ADMIN" }),
+    } as AppUser);
     actorCache.set(run.createdBy, user);
     return user;
   }
@@ -51,7 +58,11 @@ export async function GET(req: NextRequest) {
       const { jobId, error } = await submitCustomAgentJob(actor, {
         clientId: run.clientId,
         agentId: run.customAgentId,
-        prompt: run.prompt,
+        prompt:
+          (run.outputsPerRun ?? 1) > 1
+            ? `Create exactly ${run.outputsPerRun} distinct outputs for this scheduled run.\n\n${run.prompt}`
+            : run.prompt,
+        chargeMultiplier: run.billClientCredits ? (run.outputsPerRun ?? 1) : 1,
       });
 
       const advance: Partial<PlannedScheduledRun> = {
@@ -67,6 +78,7 @@ export async function GET(req: NextRequest) {
           hour: run.hour,
           minute: run.minute,
           weekday: run.weekday,
+          weekdays: run.weekdays,
           dayOfMonth: run.dayOfMonth,
           from: now,
         });

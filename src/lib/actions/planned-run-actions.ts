@@ -7,11 +7,14 @@ import {
   getClient,
   getCustomAgent,
   getPlannedScheduledRun,
+  listJobs,
+  listPlannedScheduledRuns,
   updatePlannedScheduledRun,
 } from "@/lib/data";
-import { computeNextRun } from "@/lib/scheduled-runs";
+import { CREDIT_COSTS, isBillableClientActor, scheduledAgentWeeklyCost } from "@/lib/credits";
+import { computeNextRun, weeklyCadenceDays } from "@/lib/scheduled-runs";
 import type { PlannedRunCadence } from "@/lib/types";
-import { logActivity, requireStaff } from "./_shared";
+import { logActivity, requireClientAccess, requireStaff } from "./_shared";
 
 const MAX_PROMPT_CHARS = 4_000;
 
@@ -31,6 +34,16 @@ export interface PlannedRunInput {
   dayOfMonth?: number;
   /** "once" cadence: explicit target time (epoch millis). */
   runAt?: number;
+}
+
+export interface ClientAgentScheduleInput {
+  clientId: string;
+  customAgentId: string;
+  postsPerWeek: number;
+  outputsPerRun: number;
+  prompt: string;
+  hour?: number;
+  minute?: number;
 }
 
 /** Staff can act on a client only if admin, or an employee assigned to it. */
@@ -117,15 +130,119 @@ export async function createPlannedRunAction(
   return { id };
 }
 
-/** Pause, resume, or cancel a scheduled run. Staff-only. */
+/**
+ * Creates or updates the single always-on weekly schedule shown on a client's
+ * AI Agents card. Client users may configure only agents that have already
+ * completed a successful run for their workspace (or were explicitly granted).
+ */
+export async function configureClientAgentScheduleAction(
+  input: ClientAgentScheduleInput,
+): Promise<{ id?: string; weeklyCredits?: number; error?: string }> {
+  const user = await requireClientAccess(input.clientId);
+  const [client, agent] = await Promise.all([
+    getClient(input.clientId),
+    getCustomAgent(input.customAgentId),
+  ]);
+  if (!client) return { error: "Client not found." };
+  if (!agent || !agent.enabled) return { error: "Agent not found." };
+
+  if (user.role === "CLIENT_USER" && !(client.customAgentIds ?? []).includes(agent.id)) {
+    const successful = new Set(["review", "approved", "delivered"]);
+    const jobs = await listJobs({ clientId: input.clientId });
+    const activated = jobs.some(
+      (job) =>
+        job.external?.taskType === "custom" &&
+        successful.has(job.status) &&
+        (job.customAgentId === agent.id || (!job.customAgentId && job.agentName === agent.name)),
+    );
+    if (!activated) return { error: "Agent not found." };
+  }
+
+  const postsPerWeek = clampInt(input.postsPerWeek, 1, 7);
+  const outputsPerRun = clampInt(input.outputsPerRun, 1, 10);
+  const prompt = input.prompt.trim();
+  if (!prompt) return { error: "Describe what the agent should create each time." };
+  if (prompt.length > MAX_PROMPT_CHARS) {
+    return { error: `Prompt is too long (max ${MAX_PROMPT_CHARS.toLocaleString()} characters).` };
+  }
+
+  const hour = clampInt(input.hour ?? 9, 0, 23);
+  const minute = clampInt(input.minute ?? 0, 0, 59);
+  const weekdays = weeklyCadenceDays(postsPerWeek);
+  const now = Date.now();
+  const nextRunAt = computeNextRun({
+    cadence: "weekly",
+    hour,
+    minute,
+    weekdays,
+    from: now,
+  });
+  const billClientCredits = isBillableClientActor(user);
+  const weeklyCredits = scheduledAgentWeeklyCost(
+    agent.creditCost ?? CREDIT_COSTS.customAgentRun,
+    postsPerWeek,
+    outputsPerRun,
+  );
+
+  const schedules = await listPlannedScheduledRuns({ clientId: input.clientId });
+  const existing = schedules.find(
+    (run) => run.customAgentId === agent.id && run.cadence === "weekly" && run.status !== "completed",
+  );
+  const patch = {
+    agentName: agent.name,
+    agentIcon: agent.icon,
+    agentColor: agent.color,
+    prompt,
+    cadence: "weekly" as const,
+    hour,
+    minute,
+    weekday: weekdays[0],
+    weekdays,
+    outputsPerRun,
+    billClientCredits,
+    nextRunAt,
+    status: "active" as const,
+    updatedAt: now,
+  };
+
+  let id: string;
+  if (existing) {
+    id = existing.id;
+    await updatePlannedScheduledRun(existing.id, patch);
+  } else {
+    id = await createPlannedScheduledRun({
+      clientId: input.clientId,
+      customAgentId: agent.id,
+      ...patch,
+      createdBy: user.uid,
+      createdAt: now,
+    });
+  }
+
+  void logActivity({
+    clientId: input.clientId,
+    timestamp: now,
+    type: "CAMPAIGN_CREATED",
+    title: `Set ${agent.name} to ${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} per week`,
+    actor: user.name,
+    actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
+    metadata: { scheduledRunId: id, customAgentId: agent.id, postsPerWeek, outputsPerRun },
+  });
+
+  revalidatePath("/calendar");
+  revalidatePath(`/clients/${input.clientId}`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
+  return { id, weeklyCredits };
+}
+
+/** Pause, resume, or cancel a scheduled run. Clients may control their own. */
 export async function setPlannedRunStatusAction(
   id: string,
   status: "active" | "paused" | "completed",
 ): Promise<{ error?: string }> {
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
-  const auth = await authorizeClient(run.clientId);
-  if ("error" in auth) return { error: auth.error };
+  await requireClientAccess(run.clientId);
 
   const patch: Record<string, unknown> = { status, updatedAt: Date.now() };
   // Resuming a recurring run: re-anchor its next fire to the future so a stale
@@ -136,6 +253,7 @@ export async function setPlannedRunStatusAction(
       hour: run.hour,
       minute: run.minute,
       weekday: run.weekday,
+      weekdays: run.weekdays,
       dayOfMonth: run.dayOfMonth,
       from: Date.now(),
     });
@@ -145,12 +263,11 @@ export async function setPlannedRunStatusAction(
   return {};
 }
 
-/** Deletes a scheduled run outright. Staff-only. */
+/** Deletes a scheduled run outright. Clients may delete their own. */
 export async function deletePlannedRunAction(id: string): Promise<{ error?: string }> {
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
-  const auth = await authorizeClient(run.clientId);
-  if ("error" in auth) return { error: auth.error };
+  await requireClientAccess(run.clientId);
   await deletePlannedScheduledRun(id);
   revalidatePath("/calendar");
   return {};

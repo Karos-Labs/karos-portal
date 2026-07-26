@@ -48,6 +48,7 @@ function fmt(t: number): string {
 /** Native download action for an asset's photos — anchors to the shared download route
  *  (single image, or a zip when the asset carries a carousel). */
 export function AssetDownloadButtons({ asset, className }: { asset: Asset; className?: string }) {
+  if (asset.locked) return null;
   const images = assetImages(asset);
   if (images.length === 0) return null;
   return (
