@@ -25,6 +25,7 @@ import { ClientAgentAccessCard } from "@/components/custom-agents";
 import { ScheduledRunsCard } from "@/components/scheduled-runs";
 import { ClientEditor } from "@/components/client-editor";
 import { LogoutButton } from "@/components/logout-button";
+import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { relativeTime } from "@/lib/utils";
 import type { ClientIntegration, Transcript, ClientCredits, CreditLedgerEntry, CustomAgent, ClientSettings, EmployeeSeat, ScheduledRun } from "@/lib/types";
 
@@ -53,6 +54,14 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
     isAdmin ? listScheduledRuns({ clientId: id }) : Promise.resolve([]),
   ])) as [ClientIntegration[], Transcript[], ClientCredits, CreditLedgerEntry[], CustomAgent[], ClientSettings | null, ScheduledRun[]];
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
+
+  // Both agent controls below act on THIS client, so neither may offer a
+  // per-client agent instance belonging to another one: granting it would be
+  // inert (both submit cores refuse the pair) and scheduling it would build a
+  // row that refuses on every fire.
+  const clientAgents = customAgents.filter((a) =>
+    agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
+  );
 
   // Sanitized LinkedIn seats for the multi-seat workspace — strip tokens; the UI
   // never needs (and must never receive) the credentials, encrypted or not.
@@ -111,7 +120,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
             </p>
             <ClientAgentAccessCard
               clientId={client.id}
-              agents={customAgents}
+              agents={clientAgents}
               allowedIds={client.customAgentIds ?? []}
             />
           </Card>
@@ -130,7 +139,7 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
             <ScheduledRunsCard
               clientId={client.id}
               runs={scheduledRuns}
-              agents={customAgents
+              agents={clientAgents
                 .filter((a) => a.enabled)
                 .map((a) => ({ id: a.id, name: a.name, entrySkillDir: a.entrySkillDir }))}
             />

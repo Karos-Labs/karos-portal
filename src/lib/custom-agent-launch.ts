@@ -8,6 +8,8 @@
  * still receive the outcome-focused fallback at the bottom of this file.
  */
 
+import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
+
 export type AgentBriefFieldType = "text" | "textarea" | "number" | "select";
 
 export interface AgentBriefField {
@@ -740,6 +742,44 @@ export function isLinkedInAgentIdentity(key: string): boolean {
 
 /** The e10 twin of X_SETUP_REQUIRED_PREFIX. */
 export const LINKEDIN_SETUP_REQUIRED_PREFIX = "Set up the LinkedIn agent data";
+
+/**
+ * Key prefixes of the per-client agent instances: one imported customAgents doc
+ * per client, named after that client's lab-repo folder
+ * (karos-linkedin-company-<agentsRepoSlug>). The instance's entry skill is
+ * baked under that folder, so the pair is fixed — the instance can only draft
+ * for the client its key names.
+ */
+const PER_CLIENT_AGENT_KEY_PREFIXES = ["karos-linkedin-company-"];
+
+/**
+ * The lab-repo client slug a per-client agent instance is bound to, or null
+ * when the key names no single client: every agent that is not an instance
+ * (karos-x-agent, the LinkedIn master, reddit, tiktok, instagram,
+ * branded-shorts, landing-builder…) plus a bare prefix with no slug after it.
+ */
+export function perClientAgentSlug(key: string): string | null {
+  for (const prefix of PER_CLIENT_AGENT_KEY_PREFIXES) {
+    if (!key.startsWith(prefix)) continue;
+    return normalizeLabSlug(key.slice(prefix.length)) || null;
+  }
+  return null;
+}
+
+/**
+ * Whether `agentKey` may run for the client whose lab-repo slug is
+ * `clientSlug`. Agents bound to no client run for every client; an instance
+ * runs only for its own, so a client with no slug set matches no instance.
+ * Both the agent list on the agents page and the submit core's refusal read
+ * this one predicate, so a card is never offered that the server would reject.
+ */
+export function agentKeyMatchesClientSlug(
+  agentKey: string,
+  clientSlug: string | null | undefined,
+): boolean {
+  const boundTo = perClientAgentSlug(agentKey);
+  return boundTo === null || boundTo === normalizeLabSlug(clientSlug);
+}
 
 export function launchProfileFor(agent: AgentIdentity): AgentLaunchProfile {
   const identity = `${agent.key} ${agent.name}`.toLowerCase();

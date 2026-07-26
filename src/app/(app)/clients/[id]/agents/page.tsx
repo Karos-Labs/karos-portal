@@ -23,7 +23,11 @@ import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { buildLinkedInAgentIntakeView, buildXAgentIntakeView } from "@/lib/agent-intake-views";
-import { isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
+import {
+  agentKeyMatchesClientSlug,
+  isLinkedInAgentIdentity,
+  isXAgentIdentity,
+} from "@/lib/custom-agent-launch";
 import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
 import { assetImages } from "@/lib/asset-images";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
@@ -104,8 +108,8 @@ async function intakeSetups(
   ]);
   // `ready` must agree with the run gates the submit cores apply, so it is read
   // off the same row those gates read instead of asking them again: both
-  // hasXAgentIntake() and hasLinkedInAgentIntake() with no agent key are "the
-  // company page form is saved".
+  // hasXAgentIntake() and hasLinkedInAgentIntake() both mean "the company page
+  // form is saved", for every one of their agents' keys.
   return {
     ...(xData
       ? {
@@ -122,7 +126,11 @@ async function intakeSetups(
 
 /**
  * A client's AI Agents page. Clients can run only the custom agents that an
- * admin granted them; staff can run every enabled custom agent.
+ * admin granted them; staff can run every enabled custom agent. Neither list
+ * may include a per-client agent instance belonging to a different client —
+ * its skill is baked under that client's lab folder, so a run here would draft
+ * the wrong company. Both branches filter on agentKeyMatchesClientSlug, and
+ * the submit core refuses a mismatched pair regardless of how it was launched.
  */
 export default async function ClientAgentsPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -161,7 +169,14 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         .filter((agentId): agentId is string => Boolean(agentId)),
     );
     const agents = allAgents
-      .filter((agent) => agent.enabled && (allowedIds.has(agent.id) || completedAgentIds.has(agent.id)))
+      .filter(
+        (agent) =>
+          agent.enabled &&
+          (allowedIds.has(agent.id) || completedAgentIds.has(agent.id)) &&
+          // The binding wins over both routes in: a grant and an inherited
+          // delivered run are equally unable to move an instance off its client.
+          agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
+      )
       .map(toSummary);
     // Client viewers see only runs of agents they're allowed — not the
     // history of staff-fired agents outside their allowlist.
@@ -209,7 +224,9 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     listCustomAgents(),
     listPlannedScheduledRuns({ clientId: id }),
   ]);
-  const enabledAgents = customAgents.filter((a) => a.enabled).map(toSummary);
+  const enabledAgents = customAgents
+    .filter((a) => a.enabled && agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug))
+    .map(toSummary);
 
   // Thumbnail previews of what the managed agents have actually delivered, so
   // the "Live" view can show the formats a running agent produces. Keyed by

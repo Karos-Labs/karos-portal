@@ -12,6 +12,7 @@
 import "server-only";
 import { getClient, listCustomAgents } from "@/lib/data";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import type { AgentCatalogEntry } from "@/lib/ai/prompts/proactive-assistant";
 
 /** Client-safe summary of a custom agent — never exposes instructions/skill paths. */
@@ -23,7 +24,9 @@ export interface ClientCustomAgentSummary {
 
 /**
  * The custom agents a client can actually use: assigned to the client
- * (client.customAgentIds) AND enabled. Empty when none are granted.
+ * (client.customAgentIds) AND enabled AND not a per-client instance bound to a
+ * different client — both submit cores refuse that pair, so proposing it in a
+ * task would be an offer nothing can fulfil. Empty when none are granted.
  */
 export async function getClientCustomAgents(clientId: string): Promise<ClientCustomAgentSummary[]> {
   const client = await getClient(clientId);
@@ -31,7 +34,12 @@ export async function getClientCustomAgents(clientId: string): Promise<ClientCus
   if (allowed.size === 0) return [];
   const agents = await listCustomAgents();
   return agents
-    .filter((a) => a.enabled && allowed.has(a.id))
+    .filter(
+      (a) =>
+        a.enabled &&
+        allowed.has(a.id) &&
+        agentKeyMatchesClientSlug(a.key, client?.agentsRepoSlug),
+    )
     .map((a) => ({ id: a.id, name: a.name, description: a.description }));
 }
 
