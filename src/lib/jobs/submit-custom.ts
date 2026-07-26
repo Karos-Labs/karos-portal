@@ -22,7 +22,12 @@ import {
   hasLinkedInAgentIntake,
   isLinkedInAgent,
 } from "@/lib/agent-service/linkedin-agent-context";
-import { LINKEDIN_SETUP_REQUIRED_PREFIX, X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
+import {
+  LINKEDIN_SETUP_REQUIRED_PREFIX,
+  X_SETUP_REQUIRED_PREFIX,
+  agentKeyMatchesClientSlug,
+  perClientAgentSlug,
+} from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
@@ -91,6 +96,17 @@ export async function submitCustomAgentJob(
     }
   }
 
+  // A per-client agent instance runs an entry skill baked under the one client
+  // folder its key names, so pairing it with another client would draft that
+  // client's data against another company's playbook. The agents page keeps
+  // mismatched cards off the list; this refuses the pair however it arrives —
+  // a stale page, a saved link, an MCP call, or a scheduled run.
+  if (!agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) {
+    return {
+      error: `${agent.name} runs only for the client whose lab repo slug is "${perClientAgentSlug(agent.key)}", and ${client.name}'s slug is ${client.agentsRepoSlug ? `"${client.agentsRepoSlug}"` : "not set"}. Nothing has run — use this client's own agent.`,
+    };
+  }
+
   const prompt = input.prompt.trim();
   if (!prompt) return { error: "Describe what you want the agent to produce." };
   if (prompt.length > MAX_PROMPT_CHARS) {
@@ -143,7 +159,7 @@ export async function submitCustomAgentJob(
   // drop as company-updates.md, CVs, learning logs, and prior batches (see
   // linkedin-agent-context.ts). Hard-gated the same way.
   if (isLinkedInAgent(agent.key)) {
-    if (!(await hasLinkedInAgentIntake(input.clientId, agent.key))) {
+    if (!(await hasLinkedInAgentIntake(input.clientId))) {
       return {
         error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first: save the company page form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
       };

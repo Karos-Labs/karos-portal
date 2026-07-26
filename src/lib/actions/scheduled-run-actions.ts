@@ -9,6 +9,7 @@ import {
   getScheduledRun,
   updateScheduledRun,
 } from "@/lib/data";
+import { unfireableScheduleReason } from "@/lib/jobs/schedule-gate";
 import { computeNextRunAt, isValidCadence } from "@/lib/run-cadence";
 import type { AssetType, RunCadence } from "@/lib/types";
 import { requireAdmin } from "./_shared";
@@ -51,6 +52,11 @@ export async function createScheduledRunAction(
   if (!client) return { error: "Client not found." };
   const agent = await getCustomAgent(input.agentId);
   if (!agent) return { error: "Agent not found." };
+  // This card can pair any of this client's agents with any cadence, and the
+  // row fires unattended through the other submit core — so the same gates a
+  // client-facing schedule clears apply here, before a row exists to churn.
+  const blocked = await unfireableScheduleReason(client, agent);
+  if (blocked) return { error: blocked };
 
   const now = Date.now();
   const id = await createScheduledRun({
@@ -85,6 +91,12 @@ export async function updateScheduledRunAction(
   if (invalid) return { error: invalid };
   const agent = await getCustomAgent(input.agentId);
   if (!agent) return { error: "Agent not found." };
+  // An edit can swap the agent and re-enable the row, so it clears the gates too.
+  const client = await getClient(existing.clientId);
+  if (client) {
+    const blocked = await unfireableScheduleReason(client, agent);
+    if (blocked) return { error: blocked };
+  }
 
   await updateScheduledRun(id, {
     agentId: agent.id,
@@ -110,6 +122,19 @@ export async function toggleScheduledRunAction(
   await requireAdmin();
   const existing = await getScheduledRun(id);
   if (!existing) return { error: "Scheduled run not found." };
+  // Switching a row back on is an enable, so it clears the same gates a create
+  // does. Switching it OFF is always allowed — including for a row the gates now
+  // refuse, which is exactly the row someone needs to be able to turn off.
+  if (enabled) {
+    const [agent, client] = await Promise.all([
+      getCustomAgent(existing.agentId),
+      getClient(existing.clientId),
+    ]);
+    if (agent && client) {
+      const blocked = await unfireableScheduleReason(client, agent);
+      if (blocked) return { error: blocked };
+    }
+  }
   // Re-enabling after a lapse: bump nextRunAt to the next future slot so a
   // long-disabled run doesn't fire immediately for every window it missed.
   const nextRunAt =

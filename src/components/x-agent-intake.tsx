@@ -76,6 +76,15 @@ function fieldError(error: string | null) {
   return error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null;
 }
 
+/**
+ * saveXCompanyIntakeAction refuses the save without the voice and off-limits
+ * answers, and a saved company page is what lets a run start — so those two
+ * carry the marker the run brief in the same dialog uses for its own.
+ */
+function RequiredMark() {
+  return <span className="ml-1 text-danger">*</span>;
+}
+
 const premiumValue = (p?: boolean) => (p === true ? "yes" : p === false ? "no" : "auto");
 
 const premiumSummary = (v: string) => (v === "yes" ? "Yes" : v === "no" ? "No" : "Auto-detect");
@@ -84,6 +93,17 @@ const premiumSummary = (v: string) => (v === "yes" ? "Yes" : v === "no" ? "No" :
 function rosterSummary(roster: string): string {
   const count = roster.split(",").filter((h) => h.trim()).length;
   return count === 0 ? "" : `${count} account${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * Reads the take drop back in the collapsed seat summary. Takes arrive newest
+ * first, and each carries the date it was dropped. No takes stays empty for the
+ * summary card's own empty-value treatment.
+ */
+function takesSummary(takes: XSeatView["takes"]): string {
+  const latest = takes[0];
+  if (!latest) return "";
+  return `${takes.length} take${takes.length === 1 ? "" : "s"} · latest ${latest.date}`;
 }
 
 /** X Premium tri-state: auto-detect by default, pin it when the client knows. */
@@ -249,7 +269,10 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
           />
         </div>
         <div>
-          <Label htmlFor="xc-voice">How do you want to come across on X?</Label>
+          <Label htmlFor="xc-voice">
+            How do you want to come across on X?
+            <RequiredMark />
+          </Label>
           <Textarea
             id="xc-voice"
             rows={2}
@@ -259,13 +282,16 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
           />
         </div>
         <div>
-          <Label htmlFor="xc-offlimits">Anything we must never post</Label>
+          <Label htmlFor="xc-offlimits">
+            Anything we must never post
+            <RequiredMark />
+          </Label>
           <Textarea
             id="xc-offlimits"
             rows={2}
             value={offLimits}
             onChange={(e) => setOffLimits(e.target.value)}
-            placeholder="Topics, client names, specific numbers."
+            placeholder='Topics, client names, specific numbers. Write "nothing" if everything is fair game.'
           />
         </div>
         <PremiumField idPrefix="xc" value={premium} onChange={setPremium} />
@@ -432,6 +458,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
         { label: "Anything we must never post", value: offLimits },
         { label: "Accounts you want to be near", value: rosterSummary(roster) },
         { label: "X Premium", value: premiumSummary(premium) },
+        { label: "Your takes and topics", value: takesSummary(seat.takes) },
       ]}
       open={editing}
       onEdit={() => setEditing(true)}

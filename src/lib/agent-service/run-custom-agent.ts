@@ -14,7 +14,12 @@ import {
   hasLinkedInAgentIntake,
   isLinkedInAgent,
 } from "./linkedin-agent-context";
-import { LINKEDIN_SETUP_REQUIRED_PREFIX, X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
+import {
+  LINKEDIN_SETUP_REQUIRED_PREFIX,
+  X_SETUP_REQUIRED_PREFIX,
+  agentKeyMatchesClientSlug,
+  perClientAgentSlug,
+} from "@/lib/custom-agent-launch";
 import type { Client, CustomAgent } from "@/lib/types";
 
 /* limits — mirror agent-service/src/schemas/task-types/custom.json */
@@ -47,6 +52,19 @@ export async function submitCustomAgentRun(args: {
   const { agent, client, actor } = args;
   if (!isAgentServiceConfigured()) {
     return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
+  }
+
+  // The twin of the guard in lib/jobs/submit-custom.ts, for the other submit
+  // core: a per-client agent instance runs an entry skill baked under the one
+  // client folder its key names, so pairing it with another client would draft
+  // that client's data against another company's playbook. This core is reached
+  // from a stored (agentId, clientId) pair on a scheduledRuns row, which may
+  // have been created while a mismatched card was still on offer, so the pair is
+  // re-checked on every fire rather than trusted.
+  if (!agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) {
+    return {
+      error: `${agent.name} runs only for the client whose lab repo slug is "${perClientAgentSlug(agent.key)}", and ${client.name}'s slug is ${client.agentsRepoSlug ? `"${client.agentsRepoSlug}"` : "not set"}. Nothing has run — use this client's own agent.`,
+    };
   }
 
   const prompt = args.prompt.trim();
@@ -85,7 +103,7 @@ export async function submitCustomAgentRun(args: {
   // linkedin-agent-context.ts) — so scheduler-fired LinkedIn runs read the
   // same live client data as manual ones. Hard-gated the same way.
   if (isLinkedInAgent(agent.key)) {
-    if (!(await hasLinkedInAgentIntake(client.id, agent.key))) {
+    if (!(await hasLinkedInAgentIntake(client.id))) {
       return {
         error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first: save the company page form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
       };

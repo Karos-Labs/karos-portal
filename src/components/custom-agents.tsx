@@ -389,6 +389,20 @@ export function ClientCustomAgents({
 
   if (agents.length === 0 && runs.length === 0) return null;
 
+  // The open schedule dialog's own copy of the card's gate: props refresh
+  // underneath it, so the agent data can go missing while it is open.
+  const scheduleIntake = scheduleAgent ? intakeFor(scheduleAgent.key, xSetup, linkedinSetup) : null;
+  const scheduleSetupNeeded =
+    scheduleAgent && scheduleIntake && !companyOnFile(scheduleIntake)
+      ? {
+          kind: scheduleIntake.kind,
+          onOpenData: () => {
+            setScheduleAgent(null);
+            openRun(scheduleAgent, true);
+          },
+        }
+      : null;
+
   return (
     <section className="mt-10">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -421,6 +435,10 @@ export function ClientCustomAgents({
               ? "/tasks"
               : reviewRuns[0]?.href ?? `/clients/${clientId}/assets`;
             const intake = intakeFor(agent.key, xSetup, linkedinSetup);
+            // A scheduled run fires unattended, so every fire would be refused
+            // while the company page is missing. An existing schedule stays
+            // open to manage — pausing it must never be blocked.
+            const scheduleNeedsData = Boolean(intake) && !companyOnFile(intake) && !schedule;
             return (
               <div
                 key={agent.id}
@@ -493,7 +511,18 @@ export function ClientCustomAgents({
                     >
                       <Icon name="Play" className="h-3.5 w-3.5" /> Run now
                     </Button>
-                    <Button size="sm" variant="subtle" onClick={() => setScheduleAgent(agent)}>
+                    <Button
+                      size="sm"
+                      variant="subtle"
+                      title={
+                        scheduleNeedsData && intake
+                          ? `Add the ${INTAKE_LABEL[intake.kind]} agent data first — every scheduled run drafts from it.`
+                          : undefined
+                      }
+                      onClick={() =>
+                        scheduleNeedsData ? openRun(agent, true) : setScheduleAgent(agent)
+                      }
+                    >
                       <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" />
                       {schedule ? "Manage" : "Set schedule"}
                     </Button>
@@ -575,6 +604,7 @@ export function ClientCustomAgents({
           clientId={clientId}
           schedule={scheduleByAgent.get(scheduleAgent.id)}
           availableCredits={availableCredits}
+          {...(scheduleSetupNeeded ? { setupNeeded: scheduleSetupNeeded } : {})}
           onClose={() => setScheduleAgent(null)}
         />
       )}
@@ -587,12 +617,15 @@ function AgentScheduleModal({
   clientId,
   schedule,
   availableCredits,
+  setupNeeded,
   onClose,
 }: {
   agent: RunnableAgentSummary;
   clientId: string;
   schedule?: ClientAgentScheduleRow;
   availableCredits?: number;
+  /** Set when this agent drafts from intake and its company page is missing. */
+  setupNeeded?: { kind: IntakeKind; onOpenData: () => void };
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -607,6 +640,9 @@ function AgentScheduleModal({
   const costPerOutput = agentRunCost(agent);
   const weeklyCost = scheduledAgentWeeklyCost(costPerOutput, postsPerWeek, outputsPerRun);
   const insufficient = availableCredits !== undefined && availableCredits < costPerOutput * outputsPerRun;
+  // Nothing unattended can start before the agent has what it drafts from.
+  // A schedule that already exists stays editable, so it can still be paused.
+  const blockedBySetup = Boolean(setupNeeded) && !schedule;
 
   function save() {
     setError(null);
@@ -718,6 +754,20 @@ function AgentScheduleModal({
           )}
         </div>
 
+        {blockedBySetup && setupNeeded && (
+          <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            Add the {INTAKE_LABEL[setupNeeded.kind]} agent data first. Every scheduled run drafts
+            from it, so none can start until it is saved.{" "}
+            <button
+              type="button"
+              onClick={setupNeeded.onOpenData}
+              className="cursor-pointer underline"
+            >
+              Open {INTAKE_LABEL[setupNeeded.kind]} agent data →
+            </button>
+          </p>
+        )}
+
         {error && <p className="text-xs text-danger" role="alert">{error}</p>}
 
         <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
@@ -730,7 +780,12 @@ function AgentScheduleModal({
           </div>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
-            <Button variant="accent" onClick={save} loading={pending} disabled={insufficient}>
+            <Button
+              variant="accent"
+              onClick={save}
+              loading={pending}
+              disabled={insufficient || blockedBySetup}
+            >
               {schedule ? "Update schedule" : "Start always-on agent"}
             </Button>
           </div>
@@ -777,6 +832,8 @@ function RunCustomAgentModal({
   const profile = launchProfileFor(agent);
   const [fields, setFields] = useState<Record<string, string>>(() => initialAgentBrief(profile));
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  // Has anyone put work into the brief that a stray click would throw away?
+  const [briefTouched, setBriefTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
   const intake = intakeFor(agent.key, xSetup, linkedinSetup);
@@ -794,7 +851,10 @@ function RunCustomAgentModal({
   // Only someone who has seen the brief can go "back" to it. A dialog that
   // opened on the data has not shown it yet, so its way out reads forward.
   const [seenRun, setSeenRun] = useState(!openOnData);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const dataPaneRef = useRef<HTMLDivElement>(null);
+  const runPaneRef = useRef<HTMLDivElement>(null);
+  const shownPane = useRef<RunPane>(pane);
   const primaryField =
     profile.fields.find((field) => field.key === "request") ??
     profile.fields.find((field) => field.required) ??
@@ -809,13 +869,20 @@ function RunCustomAgentModal({
         ? "linkedin"
         : null;
 
-  // Both panes share the dialog's single scroll box, so opening the data from
-  // low down in the brief would otherwise land in the middle of the form.
+  // Both panes share the dialog's single scroll box, which also holds the title
+  // and the sentence explaining the swap, so a switch has to go back to the top
+  // of that box rather than to the top of the pane. The control that did the
+  // switching lived in the pane it hid, so focus has to move too. Neither is
+  // wanted on first mount — the dialog already opens at the top.
   useEffect(() => {
-    if (pane === "data") dataPaneRef.current?.scrollIntoView({ block: "start" });
+    if (shownPane.current === pane) return;
+    shownPane.current = pane;
+    (pane === "data" ? dataPaneRef : runPaneRef).current?.focus({ preventScroll: true });
+    scrollRef.current?.scrollTo({ top: 0 });
   }, [pane]);
 
   function setField(key: string, value: string) {
+    setBriefTouched(true);
     setFields((current) => ({ ...current, [key]: value }));
   }
 
@@ -909,41 +976,70 @@ function RunCustomAgentModal({
           : agent.description
       }
       className={showData ? "max-w-3xl" : "max-w-2xl"}
-      closeOnBackdrop={!showData}
+      // Both panes hold work a mis-click must not throw away: the intake form
+      // in one, the brief in the other. Escape, the ✕ and the pane's own
+      // dismiss stay the deliberate ways out.
+      closeOnBackdrop={!intake && !briefTouched}
+      scrollRef={scrollRef}
     >
       {intake && (
         // Both panes stay mounted. Every field in the intake cards is local
         // state, so unmounting the form to show the brief would discard typed
         // text; `hidden` keeps the idle pane out of the tab order and the
-        // accessibility tree too.
-        <div ref={dataPaneRef} className="space-y-5" hidden={!showData}>
+        // accessibility tree too. Each pane takes focus when it is shown, so it
+        // needs to be focusable without drawing a ring of its own.
+        <div
+          ref={dataPaneRef}
+          tabIndex={-1}
+          className="space-y-5 focus:outline-none"
+          hidden={!showData}
+        >
           <div className="flex flex-wrap items-center gap-2">
-            {intakeReady ? (
-              <Button size="sm" variant={continueToRun ? "accent" : "subtle"} onClick={showRun}>
-                {seenRun ? (
-                  <>
-                    <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> Back to the run
-                  </>
-                ) : (
-                  <>
-                    Continue to the run
-                    <Icon name="ArrowRight" className="h-3.5 w-3.5" />
-                  </>
-                )}
-              </Button>
-            ) : (
-              <Button size="sm" variant="ghost" className="ml-auto" onClick={onClose}>
-                Not now
-              </Button>
+            {/* The way on stays in place while the setup is unfinished so that
+                saving the company page changes only its tone, never the layout
+                under the reader's hands. */}
+            <Button
+              size="sm"
+              variant={continueToRun ? "accent" : "subtle"}
+              disabled={!intakeReady}
+              onClick={showRun}
+            >
+              {seenRun ? (
+                <>
+                  <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> Back to the run
+                </>
+              ) : (
+                <>
+                  Continue to the run
+                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
+                </>
+              )}
+            </Button>
+            {!intakeReady && (
+              <p className="text-xs text-muted">Save the company page below to continue.</p>
             )}
           </div>
           <IntakeForm intake={intake} />
+          <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
+            <Button variant="ghost" onClick={onClose}>
+              {openedForSetup ? "Cancel run" : "Close"}
+            </Button>
+          </div>
         </div>
       )}
 
-      <div className="space-y-5" hidden={showData}>
+      <div
+        ref={runPaneRef}
+        tabIndex={-1}
+        className="space-y-5 focus:outline-none"
+        hidden={showData}
+      >
         {intake && (
           <div className="flex flex-wrap items-center gap-2">
+            {/* Reaching the brief at all means the company page is on file, so
+                in practice this reads quiet. It still asks, because the flag it
+                asks about belongs to the caller and the tone must not lie if
+                that flag ever parts company with the rows shipped beside it. */}
             <AgentDataButton
               kind={intake.kind}
               ready={intakeComplete(intake)}
@@ -1065,7 +1161,10 @@ function RunCustomAgentModal({
           agentName={agent.name}
           items={contextItems}
           selectedIds={selectedFiles}
-          onChange={setSelectedFiles}
+          onChange={(ids) => {
+            setBriefTouched(true);
+            setSelectedFiles(ids);
+          }}
           profile={profile.attachments}
           canUpload={!viewerIsClient}
         />

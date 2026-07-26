@@ -114,6 +114,9 @@ export async function saveLinkedInCompanyIntakeAction(input: {
     createdBy: user.uid,
   });
   revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
+  // The AI Agents page renders these forms inline in the agent's run dialog and
+  // derives the run gate from the same docs, so it goes stale on every write here.
+  revalidatePath(`/clients/${input.clientId}/agents`);
   return {};
 }
 
@@ -174,6 +177,7 @@ export async function addLinkedInSeatAction(input: {
     createdBy: user.uid,
   });
   revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
   return { seatId };
 }
 
@@ -231,6 +235,7 @@ export async function saveLinkedInSeatIntakeAction(input: {
     createdBy: user.uid,
   });
   revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
   return {};
 }
 
@@ -285,6 +290,7 @@ export async function uploadLinkedInSeatCvAction(
     cvUploadedAt: Date.now(),
   });
   revalidatePath(`/clients/${clientId}/linkedin-agent`);
+  revalidatePath(`/clients/${clientId}/agents`);
   return { cvName: file.name.slice(0, MAX_NAME) };
 }
 
@@ -353,5 +359,6 @@ export async function addLiDraftFeedbackAction(input: {
     createdAt: Date.now(),
   });
   revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
   return {};
 }

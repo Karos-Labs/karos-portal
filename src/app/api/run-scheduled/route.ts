@@ -6,12 +6,23 @@ import type { AppUser, PlannedScheduledRun } from "@/lib/types";
 
 export const maxDuration = 120;
 
+/** A stored refusal is one readable sentence on the schedule row, not a log. */
+const MAX_ERROR_CHARS = 400;
+
 /**
  * Scheduled-run cron. Every tick it drains active ScheduledRuns whose nextRunAt
  * has passed and fires the custom agent via the same core the web action uses
  * (submitCustomAgentJob) — so a scheduled run is indistinguishable from a manual
  * one once it fires. One-off runs complete; recurring runs advance to their next
- * slot. The actor is the staff creator, so runs never charge client credits.
+ * slot. The actor is the run's creator: a staff-created schedule fires free,
+ * while a schedule a client switched on (billClientCredits) charges that
+ * client's credits on every fire, outputsPerRun included.
+ *
+ * The submit core can refuse before it writes a job row (setup gates, credit
+ * ceilings, service misconfiguration), which leaves no job, no failed status and
+ * no charge behind. Every such refusal is written to the run's lastError so a
+ * schedule that can never fire is visible instead of silently green; a clean
+ * fire clears it.
  */
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -68,6 +79,11 @@ export async function GET(req: NextRequest) {
       const advance: Partial<PlannedScheduledRun> = {
         lastRunAt: now,
         ...(jobId ? { lastJobId: jobId } : {}),
+        // Written as null rather than omitted: Firestore is configured to ignore
+        // undefined values, so an omitted key would leave the previous refusal
+        // in place forever.
+        lastError: error ? error.slice(0, MAX_ERROR_CHARS) : null,
+        lastErrorAt: error ? Date.now() : null,
         updatedAt: Date.now(),
       };
       if (run.cadence === "once") {
@@ -87,8 +103,20 @@ export async function GET(req: NextRequest) {
 
       results.push(error ? { runId: run.id, status: "failed", error, jobId } : { runId: run.id, status: "submitted", jobId });
     } catch (e) {
-      // Leave the run active so the next tick retries; record nothing destructive.
-      results.push({ runId: run.id, status: "failed", error: e instanceof Error ? e.message : "Unknown error" });
+      // Leave the run active so the next tick retries, and leave the cursor
+      // alone; only the reason is recorded, so a run that throws every tick is
+      // diagnosable rather than merely quiet.
+      const message = e instanceof Error ? e.message : "Unknown error";
+      try {
+        await updatePlannedScheduledRun(run.id, {
+          lastError: message.slice(0, MAX_ERROR_CHARS),
+          lastErrorAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      } catch {
+        // The row itself is unreachable — the response below still reports it.
+      }
+      results.push({ runId: run.id, status: "failed", error: message });
     }
   }
 

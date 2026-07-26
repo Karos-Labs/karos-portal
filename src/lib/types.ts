@@ -294,6 +294,10 @@ export interface ScheduledRun {
   nextRunAt: number;
   lastRunAt?: number | null;
   lastJobId?: string | null;
+  /** Why the most recent fire produced no job; null ⇒ the last fire was clean. */
+  lastError?: string | null;
+  /** Epoch millis of `lastError`. */
+  lastErrorAt?: number | null;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -475,10 +479,12 @@ export type PlannedRunCadence = "once" | "daily" | "weekly" | "monthly";
 
 /**
  * A planned agent run: a managed (catalog) product queued to fire at a future
- * time, optionally on a repeating cadence. Staff-created; the /api/run-scheduled
- * cron submits the actual job via submitCustomAgentJob() when `nextRunAt` passes,
- * then advances (recurring) or completes (once) the schedule. Clients only view
- * their own upcoming runs — they never create or edit them.
+ * time, optionally on a repeating cadence. Created by staff (any cadence) or by
+ * a client switching an agent on weekly from its card, in which case
+ * `billClientCredits` makes every fire spend that client's credits. The
+ * /api/run-scheduled cron submits the actual job via submitCustomAgentJob()
+ * when `nextRunAt` passes, then advances (recurring) or completes (once) the
+ * schedule.
  */
 export interface PlannedScheduledRun {
   id: string;
@@ -513,6 +519,16 @@ export interface PlannedScheduledRun {
   lastRunAt?: number;
   /** Job id created by the most recent fire. */
   lastJobId?: string;
+  /**
+   * Why the most recent fire produced nothing. A submit that is refused before
+   * a job row exists (setup gates, credit ceilings, service misconfiguration)
+   * leaves no job, no failed status and no charge, so this is the only trace it
+   * left. `null` ⇒ the last fire was clean (undefined values do not clear a
+   * Firestore field, so cleared means written null).
+   */
+  lastError?: string | null;
+  /** Epoch millis of `lastError`. */
+  lastErrorAt?: number | null;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
