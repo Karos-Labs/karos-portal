@@ -109,20 +109,12 @@ async function intakeSetups(
   return {
     ...(xData
       ? {
-          xSetup: {
-            ready: xData.company !== null,
-            href: `/clients/${clientId}/x-agent`,
-            data: xData,
-          },
+          xSetup: { ready: xData.company !== null, data: xData },
         }
       : {}),
     ...(linkedinData
       ? {
-          linkedinSetup: {
-            ready: linkedinData.company !== null,
-            href: `/clients/${clientId}/linkedin-agent`,
-            data: linkedinData,
-          },
+          linkedinSetup: { ready: linkedinData.company !== null, data: linkedinData },
         }
       : {}),
   };
