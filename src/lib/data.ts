@@ -285,10 +285,6 @@ export async function releaseAiProcessingLock(clientId: string, errorMessage?: s
   );
 }
 
-export async function deleteClient(id: string): Promise<void> {
-  await col.clients().doc(id).delete();
-}
-
 /**
  * Collections whose docs carry a `clientId` field — swept by deleteClientCascade
  * so a deleted client's data can never resurface in cross-client staff views
@@ -334,6 +330,9 @@ const CLIENT_DOC_COLLECTIONS: Array<keyof typeof col> = [
  * visible (and the delete retryable) rather than orphaning its data silently.
  */
 export async function deleteClientCascade(clientId: string): Promise<{ deleted: number }> {
+  // Defensive: an empty id would turn the scoped where() sweeps into no-ops but
+  // could still delete singleton docs at a garbage path — refuse outright.
+  if (!clientId.trim()) throw new Error("deleteClientCascade: clientId is required");
   let deleted = 0;
   for (const name of CLIENT_SCOPED_COLLECTIONS) {
     for (;;) {
