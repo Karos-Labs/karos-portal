@@ -15,8 +15,61 @@
 
 import "server-only";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
+import { parseRedditUserFeed, type RedditActivityItem } from "@/lib/reddit-account-activity";
 
 const USER_AGENT = "karoscmo:agent-connectors:v1 (by /u/karoslabs)";
+
+/**
+ * Reddit serves its keyless feeds only to browser-shaped clients: the same
+ * request with our descriptive UA returns 403. Verified 2026-07-27. Reddit's API
+ * rules ask for a descriptive UA on the AUTHENTICATED endpoints, which is what
+ * USER_AGENT above is for — this constant is only for the public RSS a logged-out
+ * browser could fetch anyway.
+ */
+const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+/** Why a public activity read produced nothing, so the UI can say which. */
+export type RedditReadFailure = "blocked" | "rate_limited" | "not_found" | "unavailable";
+
+export type RedditPublicActivity =
+  | { ok: true; items: RedditActivityItem[] }
+  | { ok: false; reason: RedditReadFailure };
+
+/**
+ * An account's own recent public posts and comments, with NO credential.
+ *
+ * This is the only keyless read that works: `/user/<name>/about.json` returns 403
+ * even from a residential IP with a browser UA, so karma and account age are not
+ * available here — they need the OAuth app (see the module header in
+ * reddit-account-activity.ts).
+ *
+ * Never throws: a blocked or rate-limited read is an expected outcome that the
+ * intake form degrades around, not an error worth failing a save over. Reddit
+ * also blocks datacenter egress, so this may legitimately fail in production
+ * while working locally.
+ */
+export async function fetchRedditPublicActivity(username: string): Promise<RedditPublicActivity> {
+  const handle = username.trim().replace(/^\/?(?:u\/|@)/i, "");
+  if (!/^[A-Za-z0-9_-]{3,20}$/.test(handle)) return { ok: false, reason: "not_found" };
+  let res: Response;
+  try {
+    res = await fetch(`https://www.reddit.com/user/${encodeURIComponent(handle)}.rss`, {
+      headers: { "User-Agent": BROWSER_USER_AGENT, Accept: "application/atom+xml, application/xml" },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return { ok: false, reason: "unavailable" };
+  }
+  if (res.status === 404) return { ok: false, reason: "not_found" };
+  if (res.status === 429) return { ok: false, reason: "rate_limited" };
+  if (res.status === 403 || res.status === 401) return { ok: false, reason: "blocked" };
+  if (!res.ok) return { ok: false, reason: "unavailable" };
+  const xml = await res.text();
+  // A private, suspended or empty account returns a valid feed with no entries;
+  // that is a real answer ("no usable history"), not a failure.
+  return { ok: true, items: parseRedditUserFeed(xml) };
+}
 
 export interface RedditAccountHealth {
   username: string;

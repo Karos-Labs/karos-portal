@@ -23,6 +23,7 @@ import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "
 import { SavedFormCard } from "@/components/saved-form-card";
 import {
   addRedditDraftFeedbackAction,
+  lookUpRedditAccountAction,
   saveRedditCompanyIntakeAction,
 } from "@/lib/actions/reddit-agent-actions";
 
@@ -80,6 +81,36 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
   const [disclosurePosture, setDisclosurePosture] = useState(intake?.disclosurePosture ?? "");
   const [offLimits, setOffLimits] = useState(intake?.offLimits ?? "");
   const [mode, setMode] = useState(intake?.mode ?? "");
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookupNote, setLookupNote] = useState<string | null>(null);
+
+  /**
+   * Reads the account's own public activity and fills the rest of the form in,
+   * so the client does not have to describe their own Reddit history. Nothing is
+   * saved until they press save, so this can never overwrite an answer they
+   * corrected by hand — and they see everything before it is stored.
+   */
+  async function lookUp() {
+    setError(null);
+    setLookupNote(null);
+    setLookingUp(true);
+    try {
+      const result = await lookUpRedditAccountAction({ clientId, username });
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      if (result.handle) setUsername(result.handle);
+      if (result.history) setAccountHistory(result.history);
+      if (result.subreddits?.length) setSubreddits(result.subreddits.join(", "));
+      setLookupNote(
+        result.notice ??
+          "Filled in from this account's public activity. Check it and change anything that looks wrong - Reddit does not let us see karma or account age, so add those if you know them.",
+      );
+    } finally {
+      setLookingUp(false);
+    }
+  }
 
   function save() {
     setError(null);
@@ -143,7 +174,16 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
             onChange={(e) => setUsername(e.target.value)}
             placeholder="u/your-account (leave empty if you have not picked one yet)"
           />
-          <p className="mt-1 text-xs text-muted">
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <Button size="sm" variant="subtle" onClick={lookUp} disabled={lookingUp || !username.trim()}>
+              {lookingUp ? "Reading the account…" : "Look it up and fill this in"}
+            </Button>
+            <p className="text-xs text-muted">
+              We read its public activity and answer the rest for you.
+            </p>
+          </div>
+          {lookupNote ? <p className="mt-2 text-xs text-muted">{lookupNote}</p> : null}
+          <p className="mt-2 text-xs text-muted">
             A real account with normal history does far better than a brand account, and is far
             safer. We draft either way, but nothing can be posted until you have one.
           </p>

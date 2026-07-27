@@ -192,6 +192,90 @@ Until then the instructions above require the degradation to be declared, which
 is the honest failure mode: a draft whose thread the agent could not read is the
 one thing a client will notice immediately.
 
+## Filling the form in for the client
+
+The product promise is that the agent does the work, so the form is a *review*
+surface, not a questionnaire. The client types one thing — the account handle —
+and presses **"Look it up and fill this in"**; `lookUpRedditAccountAction` reads
+that account's own public activity and proposes the rest.
+
+It deliberately **does not write**. Values come back, the form fills them in, the
+person presses save. So a later lookup can never overwrite an answer someone
+corrected by hand, and nothing is stored that a human has not seen — which is why
+there is no per-field provenance tracking to keep in sync.
+
+### What is readable with no credential, measured 2026-07-27
+
+Tested from a residential IP, both with a descriptive User-Agent and a browser one:
+
+| Endpoint | Result | What it gives |
+|---|---|---|
+| `reddit.com/user/<name>.rss` | **HTTP 200** (browser UA only) | The 25 most recent posts and comments, each with its subreddit and timestamp |
+| `reddit.com/user/<name>/about.json` | **HTTP 403** on `www` and `old`, with either UA | nothing |
+
+So, derived today: the subreddits they actually participate in ranked by
+frequency, posting cadence, the post-vs-comment mix, how recently they were
+active, and whether the account has any usable history at all.
+
+**Not derivable today: karma, account age, removal rate.** `about.json` is the
+only public source and it is refused outright. Those are exactly the fields that
+decide warming vs established and whether a subreddit's newcomer gate blocks
+posting (r/marketing wants 30+ days and 300+ karma), so they stay
+human-answered — and the derived summary says so in the client's own words rather
+than leaving them blank.
+
+Reddit also blocks datacenter egress, so this read may fail in production while
+working locally. That is handled, not assumed: `fetchRedditPublicActivity` never
+throws, and each failure mode (`blocked` / `rate_limited` / `not_found` /
+`unavailable`) becomes client-facing copy that keeps the form usable and invites
+the person to answer by hand.
+
+## What the Reddit OAuth app unlocks (Tomer)
+
+One-time setup. It is **not** a posting credential and grants no posting ability:
+there is no post-to-Reddit code path in this portal and there will not be one.
+Everything below is read-only.
+
+**What it fixes:** karma, account age and removal rate become readable, so the
+last three human-answered fields fill themselves in and the account-safety
+judgment stops depending on the client's self-report. The connector code, the
+scopes and the callback route already exist and are unused — nothing needs
+writing.
+
+**Steps**
+
+1. Log in as the program's Reddit account and go to
+   <https://www.reddit.com/prefs/apps> → "create another app…" → type **web app**
+   (not "script" — this portal uses the authorization-code flow).
+2. Set the redirect URI to the portal's existing callback:
+   `https://app.karoslabs.com/api/auth/social/reddit/callback`
+   (that route is already implemented and live).
+3. Copy the client ID (the string under the app name) and the client secret.
+4. Put them in Secret Manager as `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET`,
+   granting the portal's service account `roles/secretmanager.secretAccessor`.
+   Values never go in a file, a commit, or chat.
+
+**What is already built and waiting**
+
+- `OAUTH_CONFIGS.reddit` in `src/lib/integrations/oauth.ts` — authorize/token URLs
+  and scopes `identity`, `history`, `read`, with `duration: permanent`. Read-only
+  by construction: no `submit`, no `edit`, no `modposts`.
+- `fetchRedditAccountHealth` and `fetchRedditOwnHistory` in
+  `src/lib/integrations/reddit.ts` — karma, account age, and own post/comment
+  history including the `removed` flag.
+- The Reddit integration card, already `READ_ONLY_PLATFORM_IDS`, so connecting it
+  can never add a publish target.
+
+**The one business question, not an engineering one:** Reddit's 2023 API terms
+require a paid Data API license for meaningful commercial volume. These reads are
+low-volume and account-scoped (one client's own account, on demand), which is the
+tier the free terms cover — but volume across many clients is worth a deliberate
+decision before it grows. Noted in `integrations/reddit.ts` too.
+
+**Note this does NOT solve thread discovery.** The OAuth app authenticates reads
+of *an account's own* data. Finding threads to answer is a different leg, and its
+blocker is datacenter egress — see "Known operational constraint" above.
+
 ## Out of scope (parked)
 
 - **Posting / Reddit OAuth write scopes.** Not a later track — a hard product

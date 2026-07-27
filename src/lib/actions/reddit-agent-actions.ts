@@ -28,6 +28,8 @@ import {
   getClient,
   upsertAgentIntake,
 } from "@/lib/data";
+import { deriveAccountProfile } from "@/lib/reddit-account-activity";
+import { fetchRedditPublicActivity } from "@/lib/integrations/reddit";
 import {
   REDDIT_COMMENT_CAP,
   parseRedditThreadUrl,
@@ -37,6 +39,8 @@ import {
 import { requireClientAccess } from "./_shared";
 
 const MAX_TEXT = 2_000;
+/** Mirrors the cap in parseSubredditList, for the proposed list. */
+const MAX_SUBREDDITS = 30;
 
 /** The closed reason set the weekly manager aggregates per subreddit. */
 const NOT_POSTED_REASON_CODES = [
@@ -52,6 +56,59 @@ type NotPostedReasonCode = (typeof NOT_POSTED_REASON_CODES)[number];
 
 function isReasonCode(value: string): value is NotPostedReasonCode {
   return (NOT_POSTED_REASON_CODES as readonly string[]).includes(value);
+}
+
+/* ──────────────── looking the account up for the client ──────────────── */
+
+/**
+ * Reads the account's own public activity and PROPOSES the answers, so a client
+ * types a handle instead of describing their own Reddit history to us. The agent
+ * doing the work is the whole point of the product.
+ *
+ * It deliberately does NOT write. The values come back, the form fills them in,
+ * and the person presses save — so a later lookup can never overwrite an answer
+ * someone corrected by hand, and nothing is stored that a human has not seen.
+ *
+ * Karma and account age are absent on purpose: `/user/<name>/about.json` returns
+ * 403 with no credential, so those need the Reddit OAuth app. Until it exists
+ * they stay human-answered, and `summary` says so in the client's words.
+ */
+export async function lookUpRedditAccountAction(input: {
+  clientId: string;
+  username: string;
+}): Promise<{
+  handle?: string;
+  history?: string;
+  subreddits?: string[];
+  /** Set when the read failed; client-facing copy explaining what to do instead. */
+  notice?: string;
+  error?: string;
+}> {
+  await requireClientAccess(input.clientId);
+  const parsed = parseRedditUsername(input.username);
+  if (parsed !== null && typeof parsed === "object") return parsed;
+  if (parsed === null) return { error: "Enter the account name first, like u/your-name." };
+
+  const activity = await fetchRedditPublicActivity(parsed);
+  if (!activity.ok) {
+    // Every one of these is a normal outcome, not a bug: Reddit blocks
+    // datacenter egress, rate-limits bursts, and 404s a private or renamed
+    // account. The form stays usable and the person can answer by hand.
+    const notice =
+      activity.reason === "not_found"
+        ? "We could not find that account. Check the spelling, or fill the rest in yourself."
+        : activity.reason === "rate_limited"
+          ? "Reddit is rate-limiting us right now. Try again in a minute, or fill the rest in yourself."
+          : "We could not read that account from here, which Reddit does sometimes. Fill the rest in yourself and we will keep working.";
+    return { handle: parsed, notice };
+  }
+
+  const profile = deriveAccountProfile(activity.items, Date.now());
+  return {
+    handle: parsed,
+    history: profile.summary,
+    subreddits: profile.subreddits.slice(0, MAX_SUBREDDITS).map((s) => s.name),
+  };
 }
 
 /* ─────────────────────────── the form ─────────────────────────── */
