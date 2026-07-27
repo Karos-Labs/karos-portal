@@ -94,23 +94,44 @@ export async function saveRedditCompanyIntakeAction(input: {
   const username = parseRedditUsername(input.username);
   if (username !== null && typeof username === "object") return username;
   const mode = input.mode === "warming" || input.mode === "established" ? input.mode : undefined;
+  const subredditsRaw = input.subreddits.trim();
+  const offLimitsRaw = input.offLimitsSubreddits.trim();
   const subreddits = parseSubredditList(input.subreddits);
   const offLimitsSubreddits = parseSubredditList(input.offLimitsSubreddits);
+
+  // An answer we cannot read is a misunderstanding, not a blank. Ask rather
+  // than store nothing — silently keeping none of a BINDING off-limits list is
+  // the failure that gets an account banned in a subreddit it was banned from.
+  if (subredditsRaw && subreddits.length === 0) {
+    return {
+      error:
+        "We could not read a subreddit in that list. Write them as names, like r/SaaS, r/marketing.",
+    };
+  }
+  if (offLimitsRaw && offLimitsSubreddits.length === 0) {
+    return {
+      error:
+        "We could not read a subreddit in the list to stay out of. Write them as names, like r/SaaS, r/marketing - you can add why after them.",
+    };
+  }
 
   // The upsert MERGES, so an answer the client cleared would otherwise keep
   // steering every future run. A stale "established" mode or a dropped
   // off-limits subreddit is the failure that gets an account banned, so the
   // deletes happen before the write.
+  //
+  // Every condition keys on the RAW input being blank, never on a parse result.
+  // Keying the two list fields on their parsed length would turn an answer we
+  // failed to parse into a delete — and the guards above only hold while they
+  // and the drop below agree on what "the client cleared this" means.
   const existing = await getAgentIntake(input.clientId, "reddit", null);
   if (existing) {
     const drop: Array<
       "accountHistory" | "subreddits" | "offLimitsSubreddits" | "disclosurePosture" | "mode"
     > = [];
     if (!input.accountHistory.trim() && existing.accountHistory) drop.push("accountHistory");
-    if (subreddits.length === 0 && existing.subreddits?.length) drop.push("subreddits");
-    if (offLimitsSubreddits.length === 0 && existing.offLimitsSubreddits?.length) {
-      drop.push("offLimitsSubreddits");
-    }
+    if (!subredditsRaw && existing.subreddits?.length) drop.push("subreddits");
+    if (!offLimitsRaw && existing.offLimitsSubreddits?.length) drop.push("offLimitsSubreddits");
     if (!input.disclosurePosture.trim() && existing.disclosurePosture) drop.push("disclosurePosture");
     if (!mode && existing.mode) drop.push("mode");
     await clearAgentIntakeFields(existing.id, drop);

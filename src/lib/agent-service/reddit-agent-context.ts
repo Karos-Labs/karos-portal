@@ -33,6 +33,7 @@ import {
   listRedditDraftFeedback,
 } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
+import { subredditKey } from "@/lib/reddit-drafts";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import type { AgentIntake, RedditDraftFeedback } from "@/lib/types";
 
@@ -139,22 +140,40 @@ function feedbackSection(rows: RedditDraftFeedback[], account: string, label: st
  * re-litigate it.
  */
 function subredditRulesSection(rows: RedditDraftFeedback[]): string {
-  const strikes = new Map<string, { promo: number; removed: number; wrongSub: number; died: number }>();
+  // Keyed case-insensitively (subredditKey): the stored subreddit is free text
+  // that arrives from parsed agent output, so "r/SaaS" and "r/saas" are the same
+  // subreddit and MUST share one tally. Keying on the raw string splits the
+  // count and the two-strike downgrade below silently never fires. `label` keeps
+  // the first spelling seen so the injected file still reads naturally.
+  const strikes = new Map<
+    string,
+    { label: string; promo: number; removed: number; wrongSub: number; died: number }
+  >();
   for (const row of rows) {
-    if (row.action !== "not_posted" || !row.subreddit) continue;
-    const tally = strikes.get(row.subreddit) ?? { promo: 0, removed: 0, wrongSub: 0, died: 0 };
-    if (row.reasonCode === "too_promotional" || row.reasonCode === "rules") tally.promo += 1;
-    if (row.reasonCode === "removed") tally.removed += 1;
-    if (row.reasonCode === "wrong_subreddit") tally.wrongSub += 1;
-    if (row.reasonCode === "thread_died") tally.died += 1;
-    strikes.set(row.subreddit, tally);
+    if (!row.subreddit) continue;
+    // A removal is reported against a reply the client DID post, so it arrives
+    // on a "posted" row — counting it only on not_posted rows would drop the
+    // strongest negative signal Reddit gives us. The other codes only mean
+    // something on a draft that was never posted.
+    const isRemoval = row.reasonCode === "removed";
+    if (!isRemoval && row.action !== "not_posted") continue;
+    const key = subredditKey(row.subreddit);
+    if (!key) continue;
+    const tally =
+      strikes.get(key) ?? { label: row.subreddit.trim(), promo: 0, removed: 0, wrongSub: 0, died: 0 };
+    if (isRemoval) tally.removed += 1;
+    else if (row.reasonCode === "too_promotional" || row.reasonCode === "rules") tally.promo += 1;
+    else if (row.reasonCode === "wrong_subreddit") tally.wrongSub += 1;
+    else if (row.reasonCode === "thread_died") tally.died += 1;
+    strikes.set(key, tally);
   }
   if (strikes.size === 0) {
     return "## Per-subreddit rules earned from this client's outcomes\n- Nothing yet — no draft has come back rejected.";
   }
-  const lines = [...strikes.entries()]
-    .sort((a, b) => b[1].promo + b[1].removed - (a[1].promo + a[1].removed))
-    .map(([subreddit, t]) => {
+  const lines = [...strikes.values()]
+    .sort((a, b) => b.promo + b.removed - (a.promo + a.removed))
+    .map((t) => {
+      const subreddit = t.label;
       const notes: string[] = [];
       if (t.promo >= PROMO_STRIKES_TO_DOWNGRADE) {
         notes.push(

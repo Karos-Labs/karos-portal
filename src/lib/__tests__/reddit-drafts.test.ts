@@ -5,6 +5,7 @@ import {
   parseRedditThreadUrl,
   parseRedditUsername,
   parseSubredditList,
+  subredditKey,
 } from "@/lib/reddit-drafts";
 import { parseXDrafts } from "@/lib/x-drafts";
 
@@ -205,13 +206,118 @@ describe("parseRedditUsername", () => {
 describe("parseSubredditList", () => {
   it("normalizes, dedupes and drops junk without failing the save", () => {
     expect(
-      parseSubredditList("r/SaaS, /r/marketing\nEntrepreneur\nhttps://reddit.com/r/smallbusiness/\nr/saas, !!"),
-    ).toEqual(["r/SaaS", "r/marketing", "r/Entrepreneur", "r/smallbusiness"]);
+      parseSubredditList("r/SaaS, /r/marketing\nhttps://reddit.com/r/smallbusiness/\nr/saas"),
+    ).toEqual(["r/SaaS", "r/marketing", "r/smallbusiness"]);
     expect(parseSubredditList("")).toEqual([]);
+  });
+
+  it("reads subreddits out of prose, because the off-limits box invites it", () => {
+    // Regression: requiring each comma-piece to be ONLY a name silently
+    // discarded any annotated answer. Paired with a caller that reads an empty
+    // result as "the client cleared this", that deleted a binding off-limits
+    // list. Every one of these used to return [].
+    expect(parseSubredditList("r/SEO and r/marketing - I got banned in both")).toEqual([
+      "r/SEO",
+      "r/marketing",
+    ]);
+    expect(parseSubredditList("r/SaaS r/marketing r/Entrepreneur")).toEqual([
+      "r/SaaS",
+      "r/marketing",
+      "r/Entrepreneur",
+    ]);
+    expect(parseSubredditList("r/SaaS; r/marketing")).toEqual(["r/SaaS", "r/marketing"]);
+    expect(parseSubredditList("we were banned from r/SEO")).toEqual(["r/SEO"]);
+    expect(parseSubredditList("r/politics (banned)")).toEqual(["r/politics"]);
+    // Bare names still work when no r/ token appears anywhere.
+    expect(parseSubredditList("SaaS, marketing")).toEqual(["r/SaaS", "r/marketing"]);
+    // And genuinely unreadable input still yields nothing, so the caller can ask
+    // instead of guessing.
+    expect(parseSubredditList("anywhere political")).toEqual([]);
   });
 
   it("caps a runaway paste", () => {
     const many = Array.from({ length: 60 }, (_, i) => `r/sub${i}`).join(", ");
     expect(parseSubredditList(many)).toHaveLength(30);
+  });
+});
+
+/**
+ * The pinned structure has to be reachable from what the agent ACTUALLY writes,
+ * not just from a fixture written to match the parser. This case is built from
+ * the lab repo's real 2026-07-08 karoslabs launch run
+ * (clients/karoslabs/outputs/reddit-agent/2026-07-08-launch-run/client/
+ * 01-market-your-saas-focus/{answer.md,about.txt}) — the same thread, URL,
+ * subreddit verdict, reply opening, disclosure posture and gate line, re-laid
+ * out into the DRAFTS.md structure docs/reddit-agent-portal.md pins.
+ *
+ * If this breaks, the contract and the real deliverable have drifted apart.
+ */
+describe("the pinned structure against real lab output", () => {
+  const REAL = `# Reddit answer drafts — Karos Labs
+
+## Account 1 · Karos Labs — company account (u/karos-al) · warming
+*Account pending nomination; program-wide warming mode.*
+
+### Draft 1 · F1 thorough value answer
+
+- **Thread:** [How do you guys ACTUALLY market your SaaS?](https://www.reddit.com/r/SaaS/comments/1uqssai/how_do_you_guys_actually_market_your_saas/)
+- **Subreddit:** r/SaaS — mention-ok when relevant, but self-promotion is capped at once per 60 days per the 2026-04-14 mod announcement
+- **Thread posted:** 2026-07-08, same day, live comment field still growing
+- **Why this thread:** the existing comments cover an SEO tool stack and video advice, but nobody names the core problem, eight channels at month one with no read on why users convert
+
+> At a month in with 150 users and 5 to 10 a day, the problem is not that you are missing a channel. It is that you are running eight of them at once, so none of them gets enough attention to tell you whether it works. That is the most common way early growth stalls, and the fix is subtraction, not addition.
+>
+> Before adding ads, do the boring diagnostic first. You already have a real cohort. Ask the last 20 or 30 people who signed up two questions: what were you trying to do when you found us, and what almost stopped you from signing up.
+
+\`2847 chars\`
+
+- **Disclosure:** none needed (warming mode ships value-only, no Karos mention)
+- **Why this is safe here:** there is no product mention to delete, so the answer stands on its own; it speaks only from the content-operations and channel-focus pillars, with no invented numbers
+- **Gates:** value-first PASS · promo/disclosure PASS · no-AI-tells PASS · earned-claim PASS · culture-fit PASS · freshness PASS
+- **Source:** 2026 SaaS-marketing playbooks, verified 2026-07-08 via WebSearch
+`;
+
+  it("extracts every field the reader renders", () => {
+    const batch = parseRedditDrafts(REAL);
+    expect(batch).not.toBeNull();
+    const account = batch!.accounts[0];
+    expect(account.handle).toBe("u/karos-al");
+    expect(account.mode).toBe("warming");
+
+    const draft = account.drafts[0];
+    expect(draft.threadTitle).toBe("How do you guys ACTUALLY market your SaaS?");
+    expect(draft.threadUrl).toBe(
+      "https://www.reddit.com/r/SaaS/comments/1uqssai/how_do_you_guys_actually_market_your_saas",
+    );
+    expect(draft.subreddit).toBe("r/SaaS");
+    // The real r/SaaS verdict is permissive but capped. The note carries the cap
+    // so the poster sees it, and the badge stays honest about the verdict.
+    expect(draft.verdict).toBe("mention-ok");
+    expect(draft.verdictNote).toContain("once per 60 days");
+    expect(draft.posted).toContain("2026-07-08");
+    expect(draft.whyThread).toContain("eight channels at month one");
+    // Both paragraphs of the reply survive, separated, so the clipboard copy is
+    // the whole answer and not just the opening.
+    expect(draft.text.startsWith("At a month in with 150 users")).toBe(true);
+    expect(draft.text).toContain("\n\nBefore adding ads");
+    expect(draft.chars).toBe("2847 chars");
+    // Warming mode carries no disclosure line, and "none needed" must not render
+    // as one.
+    expect(draft.disclosure).toBeUndefined();
+    expect(draft.whySafe).toContain("no product mention to delete");
+    expect(draft.gates).toContain("freshness PASS");
+    expect(draft.meta.some((m) => m.startsWith("Source:"))).toBe(true);
+  });
+});
+
+describe("subredditKey", () => {
+  it("folds case so one subreddit cannot split its own tally", () => {
+    // The promo-downgrade rule counts outcomes per subreddit. The stored value
+    // is free text from parsed agent output, so keying on it raw let "r/SaaS"
+    // and "r/saas" count separately and the two-strike downgrade never fire.
+    expect(subredditKey("r/SaaS")).toBe(subredditKey("r/saas"));
+    expect(subredditKey("r/SaaS")).toBe(subredditKey("SaaS"));
+    expect(subredditKey("  /r/SaaS  ")).toBe("saas");
+    expect(subredditKey("")).toBe("");
   });
 });

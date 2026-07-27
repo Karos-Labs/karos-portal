@@ -48,9 +48,13 @@ const NOT_POSTED_REASONS: Array<{ value: string; label: string }> = [
   { value: "wrong_subreddit", label: "Wrong subreddit" },
   { value: "thread_died", label: "The thread went quiet" },
   { value: "rules", label: "Against the subreddit's rules" },
-  { value: "removed", label: "I posted it and it was removed or downvoted" },
   { value: "other", label: "Something else" },
 ];
+// "removed" is deliberately NOT in the list above. A removal happens to a reply
+// the client DID post, so recording it as "not posted" would both lie to them on
+// the card and corrupt the posted-vs-not signal the voice profile learns from.
+// It is reported from the posted confirmation instead.
+const REMOVED_REASON = "removed";
 
 /** "742 chars" → "742 / 10,000" (Reddit's comment cap). */
 function charLabel(chars?: string): string | null {
@@ -101,6 +105,7 @@ function DraftCard({
   const [finalText, setFinalText] = useState("");
   const [reason, setReason] = useState("");
   const [reasonCode, setReasonCode] = useState(NOT_POSTED_REASONS[0].value);
+  const [removedReported, setRemovedReported] = useState(false);
 
   const draftRef = `${accountTitle} · ${draft.formula}`;
 
@@ -147,6 +152,36 @@ function DraftCard({
       }
       setSent(action);
       setMode("idle");
+      router.refresh();
+    });
+  }
+
+  /**
+   * Reported after the fact, against a reply that WAS posted: an answer taken
+   * down by automod or a moderator is the strongest negative signal Reddit
+   * gives, and the run context never repeats that pattern in that subreddit.
+   * Written as its own row so the original "posted" outcome stays true.
+   */
+  function reportRemoved() {
+    setError(null);
+    start(async () => {
+      const result = await addRedditDraftFeedbackAction({
+        clientId,
+        accountTitle,
+        ...(jobId ? { jobId } : {}),
+        assetId,
+        draftRef,
+        action: "posted",
+        reasonCode: REMOVED_REASON,
+        reason: "The client reported this reply was removed or heavily downvoted.",
+        ...(draft.subreddit ? { subreddit: draft.subreddit } : {}),
+        ...(draft.threadUrl ? { threadUrl: draft.threadUrl } : {}),
+      });
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setRemovedReported(true);
       router.refresh();
     });
   }
@@ -352,20 +387,32 @@ function DraftCard({
           {error ? <p className="text-xs text-red-400">{error}</p> : null}
         </div>
       ) : sent === "posted" || sent === "posted_with_edits" ? (
-        <div className="mt-3 flex items-center gap-3">
-          <p className="text-[11px] text-muted-2">
-            {copied ? "Reply copied. Paste it in the thread." : "Copy the reply above and paste it in the thread."}
-          </p>
-          {draft.threadUrl ? (
-            <a
-              href={draft.threadUrl}
-              target="_blank"
-              rel="noopener"
-              className="text-[11px] text-muted underline hover:text-foreground"
-            >
-              Reopen the thread →
-            </a>
-          ) : null}
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-[11px] text-muted-2">
+              {copied ? "Reply copied. Paste it in the thread." : "Copy the reply above and paste it in the thread."}
+            </p>
+            {draft.threadUrl ? (
+              <a
+                href={draft.threadUrl}
+                target="_blank"
+                rel="noopener"
+                className="text-[11px] text-muted underline hover:text-foreground"
+              >
+                Reopen the thread →
+              </a>
+            ) : null}
+          </div>
+          {removedReported ? (
+            <p className="text-[11px] text-muted-2">
+              Logged. We will not use that approach in {draft.subreddit ?? "that subreddit"} again.
+            </p>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={reportRemoved} disabled={pending}>
+              {pending ? "Sending…" : "It was removed or downvoted"}
+            </Button>
+          )}
+          {error ? <p className="text-xs text-red-400">{error}</p> : null}
         </div>
       ) : sent === "edit_request" ? (
         <p className="mt-3 text-[11px] text-muted-2">
@@ -373,7 +420,9 @@ function DraftCard({
         </p>
       ) : (
         <p className="mt-3 text-[11px] text-muted-2">
-          Logged - the reason tunes this subreddit&apos;s rules and the account&apos;s voice for the next run.
+          {draft.subreddit
+            ? `Logged - the reason tunes ${draft.subreddit}'s rules and the account's voice for the next run.`
+            : "Logged - the reason tunes the account's voice for the next run."}
         </p>
       )}
     </div>

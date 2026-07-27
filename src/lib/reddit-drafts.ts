@@ -61,27 +61,53 @@ export function parseRedditUsername(raw: string): string | null | { error: strin
 }
 
 /**
- * Splits a comma / newline separated subreddit list into normalized "r/name"
- * entries, deduplicated. Tolerates "r/x", "/r/x", bare "x" and full URLs
- * because clients paste all four. Unparseable pieces are dropped rather than
- * failing the whole save — a stray line should not block the form.
+ * Pulls the subreddits out of whatever the client typed, as normalized "r/name"
+ * entries, deduplicated case-insensitively.
+ *
+ * People do not type clean lists. The off-limits box in particular invites an
+ * explanation ("r/SEO and r/marketing, we got banned in both"), so this reads
+ * every `r/<name>` token anywhere in the text rather than requiring each
+ * comma-separated piece to be nothing but a name — that earlier rule silently
+ * discarded any annotated answer, and callers that treat an empty result as
+ * "the client cleared this" would then delete a binding list.
+ *
+ * Only when no `r/` token appears at all does it fall back to treating the text
+ * as bare comma / newline separated names, so "SaaS, marketing" still works
+ * while "anywhere political" correctly yields nothing and the caller can ask.
  */
 export function parseSubredditList(raw: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const piece of raw.split(/[\n,]/)) {
-    let name = piece.trim();
-    if (!name) continue;
-    const fromUrl = name.match(/reddit\.com\/r\/([^/?#\s]+)/i);
-    name = (fromUrl ? fromUrl[1] : name.replace(/^\/?r\//i, "")).replace(/\/+$/, "");
-    if (!/^[A-Za-z0-9_]{2,30}$/.test(name)) continue;
+  const push = (name: string): void => {
+    if (!/^[A-Za-z0-9_]{2,30}$/.test(name)) return;
     const key = name.toLowerCase();
-    if (seen.has(key)) continue;
+    if (seen.has(key) || out.length >= MAX_SUBREDDITS) return;
     seen.add(key);
     out.push(`r/${name}`);
-    if (out.length >= MAX_SUBREDDITS) break;
+  };
+
+  // Any r/<name>, including inside a full URL and regardless of surrounding
+  // words or punctuation.
+  const tokens = raw.matchAll(/(?:^|[^A-Za-z0-9_])r\/([A-Za-z0-9_]{2,30})/gi);
+  for (const token of tokens) push(token[1]);
+  if (out.length > 0) return out;
+
+  // No r/ token anywhere: treat it as a plain list of names.
+  for (const piece of raw.split(/[\n,;]/)) {
+    const name = piece.trim().replace(/\/+$/, "");
+    if (name) push(name);
   }
   return out;
+}
+
+/**
+ * The case-insensitive key a subreddit aggregates under. Subreddit names are
+ * case-insensitive on Reddit but arrive as free text, so "r/SaaS" and "r/saas"
+ * must land in the same bucket — otherwise a per-subreddit rule that counts
+ * outcomes silently splits its tally and never fires.
+ */
+export function subredditKey(subreddit: string): string {
+  return subreddit.trim().replace(/^\/?r\//i, "").toLowerCase();
 }
 
 export interface RedditParsedDraft {
