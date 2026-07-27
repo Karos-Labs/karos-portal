@@ -61,6 +61,12 @@ export function buildRunnerEnv(config: ServiceConfig, spec?: JobSpec): Record<st
   // the X agent's reactive lanes degrade to WebSearch, everything else unaffected.
   if (config.xaiApiKey) env.XAI_API_KEY = config.xaiApiKey;
   if (config.apifyToken) env.APIFY_TOKEN = config.apifyToken;
+  // Reddit agent discovery: the account-scoped RSS pair lifts the keyless
+  // rate limit the daily cadence otherwise trips. Read by NAME by the lab's
+  // stdlib Python engine (config_loader.OPTIONAL_ENV); values never logged.
+  if (config.redditRssUser) env.REDDIT_RSS_USER = config.redditRssUser;
+  if (config.redditRssFeedToken) env.REDDIT_RSS_FEED_TOKEN = config.redditRssFeedToken;
+  if (config.redditAccount) env.REDDIT_ACCOUNT = config.redditAccount;
   // On Cloud Run the api enforces IAM, so the runner must present an ID token
   // (audience = the api URL it calls back to) alongside its per-job token.
   if (config.executor === "cloudrun") env.RUNNER_IAM_AUDIENCE = config.internalBaseUrl;

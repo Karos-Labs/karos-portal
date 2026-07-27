@@ -150,6 +150,47 @@ Undo: remove `XAI_API_KEY=xai-api-key:latest` from the worker's `--set-secrets`
 and redeploy (or `gcloud secrets delete xai-api-key`). Without the key the X
 agent still runs; its reactive lanes fall back to WebSearch.
 
+## Reddit agent discovery (`REDDIT_RSS_USER`, `REDDIT_RSS_FEED_TOKEN`)
+
+The Reddit agent finds threads through Reddit's keyless RSS. Keyless works for a
+single on-demand scan, but the daily cadence's multi-subreddit scans hit HTTP 429
+— the lab engine warns about this itself in daily mode. The fix is the
+**account-scoped RSS pair**, the `user=` and `feed=` params from
+<https://www.reddit.com/prefs/feeds> for whichever Reddit account you like.
+
+These are NOT an API app and NOT a posting credential. There is no posting code
+path in this portal and there will not be one; the pair only raises a read rate
+limit. No Reddit approval is needed to get them.
+
+Create both secrets BEFORE deploying a revision that references them (step 3
+fails otherwise, same as `xai-api-key`):
+
+```bash
+printf '%s' '<the user= value>' | gcloud secrets create reddit-rss-user --data-file=-
+printf '%s' '<the feed= value>' | gcloud secrets create reddit-rss-feed-token --data-file=-
+for s in reddit-rss-user reddit-rss-feed-token; do
+  gcloud secrets add-iam-policy-binding "$s" \
+    --member serviceAccount:agent-service-sa@$PROJECT_ID.iam.gserviceaccount.com \
+    --role roles/secretmanager.secretAccessor
+done
+```
+
+Undo: remove both `REDDIT_*` entries from the worker's `--set-secrets` and
+redeploy (or delete the secrets). Without them the Reddit agent still runs; its
+discovery degrades and the canonical instructions require the run to declare the
+degradation in `internal/RUN.md`.
+
+**Known limit — this is a rate limit, not the IP block.** Reddit also blocks
+datacenter egress for keyless reads, which is a separate mechanism: the lab's
+good 2026-07-08 run worked because it ran from a residential IP, and recorded
+that `WebFetch` of reddit.com was blocked even there. The RSS pair may therefore
+be necessary without being sufficient from Cloud Run. If reads still fail, the
+remaining options are a residential proxy or `SCRAPECREATORS_API_KEY`
+(`api.scrapecreators.com` is already in `config/egress-allowlist.json`).
+Do NOT reach for the Karos sheet entry labelled "Reddit" — per the 2026-07-07
+dev note in the lab repo's `clients/karoslabs/internal/reddit-agent/AGENT-MEMORY.md`,
+that entry is actually `OPENAI_API_KEY` and is pending a relabel.
+
 ## Rolling a new agents-repo version
 
 Re-run step 3 with a new `_AGENTS_REF`. The runner image rebakes the repo at
