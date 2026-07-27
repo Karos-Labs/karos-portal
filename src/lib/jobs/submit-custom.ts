@@ -23,7 +23,13 @@ import {
   isLinkedInAgent,
 } from "@/lib/agent-service/linkedin-agent-context";
 import {
+  buildRedditAgentContextFiles,
+  hasRedditAgentIntake,
+  isRedditAgent,
+} from "@/lib/agent-service/reddit-agent-context";
+import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
+  REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
   agentKeyMatchesClientSlug,
   perClientAgentSlug,
@@ -169,6 +175,25 @@ export async function submitCustomAgentJob(
     } catch (e) {
       return {
         error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
+  // Reddit agent (e15): the same contract — the account we draft as, its
+  // history, off-limits subreddits, the disclosure wording, the per-subreddit
+  // verdicts earned from the client's own outcomes, and prior drafts for
+  // anti-duplication (see reddit-agent-context.ts). Hard-gated the same way.
+  if (isRedditAgent(agent.key)) {
+    if (!(await hasRedditAgentIntake(input.clientId))) {
+      return {
+        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first: save the account form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildRedditAgentContextFiles(input.clientId, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's Reddit intake data: ${e instanceof Error ? e.message : "unknown error"}`,
       };
     }
   }

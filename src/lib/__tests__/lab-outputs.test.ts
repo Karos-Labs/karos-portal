@@ -88,6 +88,14 @@ describe("guessAssetType", () => {
     expect(guessAssetType("linkedin-agent")).toBe("social_post");
     expect(guessAssetType("rebrand")).toBe("note");
   });
+
+  it("keeps Reddit out of the publishable social bucket", () => {
+    // social_post is publishable to twitter/linkedin/facebook/tiktok, so a
+    // Reddit reply typed that way could be pushed to another platform. Reddit is
+    // draft-only by hard contract: "note" has an empty publish list.
+    expect(guessAssetType("reddit-agent")).toBe("note");
+    expect(guessAssetType("karos-reddit-agent")).toBe("note");
+  });
 });
 
 describe("normalizeLabSlug", () => {

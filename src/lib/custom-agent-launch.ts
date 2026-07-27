@@ -367,6 +367,43 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     },
   },
   {
+    // Exact key on purpose, the same rule as e13 and e10: only the intake-driven
+    // Reddit agent gets this brief and its setup gate. A regex on /reddit/ would
+    // be fine today (no other agent mentions Reddit) but a match on words like
+    // monitor, listen or research would hijack the reputation and intelligence
+    // agents below, so the key is the safer test.
+    matches: (identity) => identity.startsWith("karos-reddit-agent "),
+    profile: {
+      eyebrow: "Reddit reply",
+      intro:
+        "Finds a live thread worth answering and drafts one genuinely helpful reply, from your Reddit agent data. The subreddits, the questions worth answering and the voice are built from that data - this form only scopes the run. We never post to Reddit; you post the reply yourself.",
+      fields: [
+        {
+          key: "request",
+          label: "Anything to steer this run?",
+          type: "textarea",
+          helper: "Optional. The agent picks the thread from the stored Reddit agent data either way.",
+          placeholder: "A subreddit to prioritise, a question type to look for.",
+        },
+      ],
+      quickStarts: [
+        "Find the freshest question you can answer well.",
+        "Prioritise the subreddits where we have the most standing.",
+        "Look for a question our product genuinely answers, value first.",
+      ],
+      deliverables: [
+        "One reply drafted against a live thread, with the thread link and the subreddit's promo verdict",
+        "A why-this-is-safe note and the gate results, so you can post it with confidence",
+      ],
+      estimate: "~10–20 min",
+      attachments: {
+        label: "Extra material for this run (optional)",
+        hint: "One-off references for this reply. The account, its history, off-limits subreddits and your disclosure wording live in your Reddit agent data, not here.",
+        accept: DOCUMENTS_AND_IMAGES,
+      },
+    },
+  },
+  {
     matches: (identity) => /newsletter/.test(identity),
     profile: {
       eyebrow: "Newsletter brief",
@@ -742,6 +779,22 @@ export function isLinkedInAgentIdentity(key: string): boolean {
 
 /** The e10 twin of X_SETUP_REQUIRED_PREFIX. */
 export const LINKEDIN_SETUP_REQUIRED_PREFIX = "Set up the LinkedIn agent data";
+
+/**
+ * The Reddit agent (e15) runs on stored intake the same way. Client-safe twin
+ * of the server-side isRedditAgent in agent-service/reddit-agent-context.ts.
+ */
+export function isRedditAgentIdentity(key: string): boolean {
+  return key === "karos-reddit-agent";
+}
+
+/**
+ * The e15 twin of X_SETUP_REQUIRED_PREFIX. Keep these three as literal string
+ * constants: agent-intake-gate.test.ts regex-matches them out of the submit
+ * cores' source, so folding them into a shared helper makes that matcher find
+ * nothing and throw.
+ */
+export const REDDIT_SETUP_REQUIRED_PREFIX = "Set up the Reddit agent data";
 
 /**
  * Key prefixes of the per-client agent instances: one imported customAgents doc

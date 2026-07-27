@@ -150,18 +150,58 @@ Undo: remove `XAI_API_KEY=xai-api-key:latest` from the worker's `--set-secrets`
 and redeploy (or `gcloud secrets delete xai-api-key`). Without the key the X
 agent still runs; its reactive lanes fall back to WebSearch.
 
-## Rolling a new agents-repo version
+## Reddit agent discovery (`REDDIT_RSS_USER`, `REDDIT_RSS_FEED_TOKEN`)
 
-Re-run step 3 with a new `_AGENTS_REF`. The runner image rebakes the repo at
-that ref; every job records the exact SHA it ran. Per-job override is the
-`agent_version` field on the job request.
+**The Reddit agent needs no secret to run.** Its discovery is Reddit's keyless
+RSS, which is exactly what the lab's good 2026-07-08 run used: that run had no
+`REDDIT_*` variable set at all, and the engine's only required variable is
+`CLAUDE_API_KEY`. Do not treat these as missing prerequisites.
 
-## Known residual (track before heavy untrusted-content use)
+They are an OPTIONAL rate-limit helper. Keyless RSS is fine for a single
+on-demand scan; a *daily* cadence scanning several subreddits in a burst hits
+HTTP 429, and the lab engine warns about that itself in daily mode. The fix is
+the account-scoped RSS pair — the `user=` and `feed=` params from
+<https://www.reddit.com/prefs/feeds> for whichever Reddit account you like.
+Neither is an API app or a posting credential; there is no posting code path in
+this portal and there will not be one.
 
-`ANTHROPIC_API_KEY` is present in the runner container so the SDK can call the
-API; a prompt-injected agent could read it via its own Bash tools. Mitigations
-in place: minimal env allow-list (the per-job runner token is stripped), no
-`curl`/`wget`/network Bash tools allow-listed, and the egress proxy. The full
-fix is proxy-side key injection (job containers hold no key; the proxy adds the
-`x-api-key` header for `api.anthropic.com`) — a follow-up requiring an
-auth-injecting proxy in place of tinyproxy.
+The worker already forwards `REDDIT_RSS_USER`, `REDDIT_RSS_FEED_TOKEN` and
+`REDDIT_ACCOUNT` into each runner execution when they are set, and the lab's
+Python engine reads them by name. They are deliberately **not** in the worker's
+`--set-secrets` line, because `--set-secrets` fails on a secret that does not
+exist — so listing them pre-emptively would break every deploy for a token that
+may never be needed.
+
+Add them only if a real run actually rate-limits:
+
+```bash
+printf '%s' '<the user= value>' | gcloud secrets create reddit-rss-user --data-file=-
+printf '%s' '<the feed= value>' | gcloud secrets create reddit-rss-feed-token --data-file=-
+for s in reddit-rss-user reddit-rss-feed-token; do
+  gcloud secrets add-iam-policy-binding "$s" \
+    --member serviceAccount:agent-service-sa@$PROJECT_ID.iam.gserviceaccount.com \
+    --role roles/secretmanager.secretAccessor
+done
+```
+
+Then append `,REDDIT_RSS_USER=reddit-rss-user:latest,REDDIT_RSS_FEED_TOKEN=reddit-rss-feed-token:latest`
+to the worker's `--set-secrets` in `cloudbuild.yaml` **in the same change** —
+that line is declarative, so anything not listed is dropped from the service on
+the next deploy. Undo: remove both entries and redeploy.
+
+**Separately: the rate limit is not the IP block.** Reddit also blocks datacenter
+egress for keyless reads. The lab's good run worked from a residential IP, and
+even there `WebFetch` of reddit.com was blocked. So the RSS pair may be
+necessary without being sufficient from Cloud Run — and it is equally possible
+neither is needed. Find out with one real run before provisioning anything: if
+discovery works, do nothing; if it 429s, add the pair; if reads are refused
+outright, the pair will not help and the options are a residential proxy or
+`SCRAPECREATORS_API_KEY` (`api.scrapecreators.com` is already in
+`config/egress-allowlist.json`). The canonical instructions require a degraded
+run to declare it in `internal/RUN.md` rather than present a thread it could not
+read.
+
+Do NOT reach for the Karos sheet entry labelled "Reddit" — per the 2026-07-07
+dev note in the lab repo's
+`clients/karoslabs/internal/reddit-agent/AGENT-MEMORY.md`, that entry is actually
+`OPENAI_API_KEY` and is pending a relabel.

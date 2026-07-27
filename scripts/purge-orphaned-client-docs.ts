@@ -61,6 +61,7 @@ const CLIENT_SCOPED_COLLECTIONS = [
   "xNewsUpdates",
   "xTakes",
   "xDraftFeedback",
+  "redditDraftFeedback",
   "plannedScheduledRuns",
 ];
 

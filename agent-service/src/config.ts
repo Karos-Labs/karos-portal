@@ -21,6 +21,16 @@ export interface ServiceConfig {
   xaiApiKey?: string;
   /** optional Apify token injected into runners (seat voice-collection legs); degrades when unset */
   apifyToken?: string;
+  /**
+   * Optional account-scoped Reddit RSS params (the user= / feed= pair from
+   * reddit.com/prefs/feeds) plus the handle shown in the User-Agent. NOT an API
+   * app and not a posting credential — Reddit's keyless RSS rate-limits daily
+   * multi-subreddit scans to HTTP 429 without them. Absent = the Reddit agent's
+   * discovery degrades and the run must declare it.
+   */
+  redditRssUser?: string;
+  redditRssFeedToken?: string;
+  redditAccount?: string;
   defaultTimeoutMs: number;
   maxAttempts: number;
   jobTtlSeconds: number;
@@ -77,6 +87,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   if (env.ANTHROPIC_API_KEY) config.anthropicApiKey = env.ANTHROPIC_API_KEY;
   if (env.XAI_API_KEY) config.xaiApiKey = env.XAI_API_KEY;
   if (env.APIFY_TOKEN) config.apifyToken = env.APIFY_TOKEN;
+  if (env.REDDIT_RSS_USER) config.redditRssUser = env.REDDIT_RSS_USER;
+  if (env.REDDIT_RSS_FEED_TOKEN) config.redditRssFeedToken = env.REDDIT_RSS_FEED_TOKEN;
+  if (env.REDDIT_ACCOUNT) config.redditAccount = env.REDDIT_ACCOUNT;
   if (env.JOB_HTTP_PROXY) config.jobHttpProxy = env.JOB_HTTP_PROXY;
   if (executor === "cloudrun") {
     config.cloudRun = {

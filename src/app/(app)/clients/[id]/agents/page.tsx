@@ -16,16 +16,22 @@ import {
   ClientCustomAgents,
   type CustomAgentRunRow,
   type LinkedInAgentSetup,
+  type RedditAgentSetup,
   type RunnableAgentSummary,
   type XAgentSetup,
 } from "@/components/custom-agents";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
-import { buildLinkedInAgentIntakeView, buildXAgentIntakeView } from "@/lib/agent-intake-views";
+import {
+  buildLinkedInAgentIntakeView,
+  buildRedditAgentIntakeView,
+  buildXAgentIntakeView,
+} from "@/lib/agent-intake-views";
 import {
   agentKeyMatchesClientSlug,
   isLinkedInAgentIdentity,
+  isRedditAgentIdentity,
   isXAgentIdentity,
 } from "@/lib/custom-agent-launch";
 import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
@@ -93,10 +99,15 @@ async function intakeSetups(
   clientId: string,
   agents: RunnableAgentSummary[],
   opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string },
-): Promise<{ xSetup?: XAgentSetup; linkedinSetup?: LinkedInAgentSetup }> {
+): Promise<{
+  xSetup?: XAgentSetup;
+  linkedinSetup?: LinkedInAgentSetup;
+  redditSetup?: RedditAgentSetup;
+}> {
   const hasX = agents.some((agent) => isXAgentIdentity(agent.key));
   const hasLinkedIn = agents.some((agent) => isLinkedInAgentIdentity(agent.key));
-  const [xData, linkedinData] = await Promise.all([
+  const hasReddit = agents.some((agent) => isRedditAgentIdentity(agent.key));
+  const [xData, linkedinData, redditData] = await Promise.all([
     hasX ? buildXAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) : null,
     hasLinkedIn
       ? buildLinkedInAgentIntakeView(clientId, {
@@ -105,11 +116,15 @@ async function intakeSetups(
           ...(opts.linkedinPageUrl ? { pageUrlSuggestion: opts.linkedinPageUrl } : {}),
         })
       : null,
+    hasReddit ? buildRedditAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) : null,
   ]);
   // `ready` must agree with the run gates the submit cores apply, so it is read
-  // off the same row those gates read instead of asking them again: both
-  // hasXAgentIntake() and hasLinkedInAgentIntake() both mean "the company page
-  // form is saved", for every one of their agents' keys.
+  // off the same row those gates read instead of asking them again:
+  // hasXAgentIntake(), hasLinkedInAgentIntake() and hasRedditAgentIntake() all
+  // mean "the company-level form is saved" — respectively
+  // agentIntake(clientId, "x"|"linkedin"|"reddit", null) — for every one of
+  // their agents' keys. Reddit's company-level form is the account form, and
+  // like the other two a shared ClientSeat never satisfies it.
   return {
     ...(xData
       ? {
@@ -119,6 +134,11 @@ async function intakeSetups(
     ...(linkedinData
       ? {
           linkedinSetup: { ready: linkedinData.company !== null, data: linkedinData },
+        }
+      : {}),
+    ...(redditData
+      ? {
+          redditSetup: { ready: redditData.company !== null, data: redditData },
         }
       : {}),
   };
