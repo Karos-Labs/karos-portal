@@ -52,6 +52,7 @@ const CLIENT_SCOPED_COLLECTIONS = [
   "clientIntegrations",
   "clientTasks",
   "taskComments",
+  "feedbacks",
   "actionItems",
   "scheduledRuns",
   "clientMarketingAnalytics",
@@ -61,6 +62,7 @@ const CLIENT_SCOPED_COLLECTIONS = [
   "xNewsUpdates",
   "xTakes",
   "xDraftFeedback",
+  "liDraftFeedback",
   "redditDraftFeedback",
   "plannedScheduledRuns",
 ];

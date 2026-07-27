@@ -293,7 +293,19 @@ export async function releaseAiProcessingLock(clientId: string, errorMessage?: s
  * Collections whose docs carry a `clientId` field — swept by deleteClientCascade
  * so a deleted client's data can never resurface in cross-client staff views
  * (task board, assets, calendar). The credit LEDGER is deliberately retained as
- * a financial audit trail; usage logs likewise.
+ * a financial audit trail; usage logs likewise. `users` is excluded too: a
+ * client's members are accounts with their own lifecycle (deleteUser), not
+ * client data — sweeping them here would strand their Firebase Auth records.
+ *
+ * Adding a clientId-scoped collection to `col`? THREE places have to change
+ * together, and none of them is compile-checked (the type is
+ * Array<keyof typeof col>, so an omission is silent):
+ *   1. this list,
+ *   2. the hand-maintained mirror in scripts/purge-orphaned-client-docs.ts,
+ *   3. the roster in __tests__/client-cascade.test.ts that guards this list.
+ * Drift between 1 and 2 is how liDraftFeedback went unswept in the first place,
+ * and the roster cannot see this private list, so a collection missing from (3)
+ * is untested rather than failing.
  */
 const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "jobs",
@@ -306,6 +318,7 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "clientIntegrations",
   "clientTasks",
   "taskComments",
+  "feedbacks",
   "actionItems",
   "scheduledRuns",
   "clientMarketingAnalytics",
@@ -315,9 +328,7 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "xNewsUpdates",
   "xTakes",
   "xDraftFeedback",
-  // Keep this list and the mirror in scripts/purge-orphaned-client-docs.ts in
-  // step — the type is Array<keyof typeof col>, so an omission here is not a
-  // compile error and no test covers the contents.
+  "liDraftFeedback",
   "redditDraftFeedback",
   "plannedScheduledRuns",
 ];
