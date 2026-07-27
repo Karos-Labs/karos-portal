@@ -1430,6 +1430,13 @@ export interface AgentIntake {
    * direction).
    */
   mode?: "warming" | "established";
+  /**
+   * Reddit only — the account's own recent writing, read from its public feed.
+   * This is the voice source: the agent replicates how this person actually
+   * writes instead of inferring a voice from brand docs. Not client-visible
+   * beyond the intake form, never quoted in a draft.
+   */
+  voiceSamples?: string[];
   createdBy: string;
   createdAt: number;
   updatedAt: number;

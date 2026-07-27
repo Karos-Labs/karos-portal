@@ -19,9 +19,11 @@ const FEED = `<?xml version="1.0" encoding="UTF-8"?>
     <title>/u/karos_al on How do you guys ACTUALLY market your SaaS?</title>
     <link href="https://www.reddit.com/r/SaaS/comments/1uqssai/how_do_you_guys/os0o1vi/"/>
     <updated>2026-07-20T16:59:58+00:00</updated>
+    <content type="html">&lt;div class="md"&gt;&lt;p&gt;The problem is not a missing channel. You are running eight at once, so none gets enough attention to tell you whether it works.&lt;/p&gt;&lt;p&gt;Cut to the one that is pulling and go deeper.&lt;/p&gt;&lt;/div&gt;</content>
   </entry>
   <entry>
     <category term="SaaS" label="r/SaaS"/>
+    <content type="html">&lt;div class="md"&gt;&lt;p&gt;short&lt;/p&gt;&lt;/div&gt;</content>
     <title>Small teams &amp; the &quot;one channel&quot; rule</title>
     <link href="https://www.reddit.com/r/SaaS/comments/1uqaaaa/small_teams/"/>
     <updated>2026-07-19T10:00:00+00:00</updated>
@@ -31,6 +33,7 @@ const FEED = `<?xml version="1.0" encoding="UTF-8"?>
     <title>/u/karos_al on Agency vs in-house</title>
     <link href="https://www.reddit.com/r/marketing/comments/1up7a5a/agency_vs/orucdtm/"/>
     <updated>2026-07-14T19:01:03+00:00</updated>
+    <content type="html">&lt;div class="md"&gt;&lt;p&gt;Both fail the same way, which is nobody owning the decision. Pick the option where one person is accountable and you will be fine either way.&lt;/p&gt;&lt;/div&gt;</content>
   </entry>
   <entry>
     <category term="u_karos_al" label="u/karos_al"/>
@@ -52,6 +55,9 @@ describe("parseRedditUserFeed", () => {
     // A comment carries an extra id after the thread slug; a post does not.
     expect(items.map((i) => i.kind)).toEqual(["comment", "post", "comment", "post"]);
     expect(items[1].title).toBe('Small teams & the "one channel" rule');
+    // The body is double-escaped HTML in the feed; it arrives as plain words.
+    expect(items[0].text).toContain("You are running eight at once");
+    expect(items[0].text).not.toContain("<p>");
     expect(items[0].at).toBe(Date.parse("2026-07-20T16:59:58+00:00"));
   });
 
@@ -86,14 +92,36 @@ describe("deriveAccountProfile", () => {
     expect(profile.postCount).toBe(2);
     expect(profile.summary).toContain("2 comments and 2 posts");
     expect(profile.summary).toContain("r/SaaS (2)");
-    // It says out loud what it cannot see, so the client knows to add it.
-    expect(profile.summary).toMatch(/karma and account age are not publicly readable/i);
+    // The summary LEADS with the writing, because that is the point.
+    expect(profile.summary).toMatch(/^Read \d+ of their own recent replies to learn the voice\./);
+  });
+
+  it("captures their actual writing as the voice source, longest first", () => {
+    const profile = deriveAccountProfile(parseRedditUserFeed(FEED), NOW);
+    expect(profile.samples).toHaveLength(2);
+    // Longest first, and the HTML is stripped to their plain words with the
+    // paragraph break preserved.
+    expect(profile.samples[0]).toBe(
+      "The problem is not a missing channel. You are running eight at once, so none gets enough attention to tell you whether it works.\n\nCut to the one that is pulling and go deeper.",
+    );
+    expect(profile.samples[1]).toContain("nobody owning the decision");
+    // A one-word acknowledgement teaches nothing about voice and is dropped.
+    expect(profile.samples.some((s) => s === "short")).toBe(false);
+  });
+
+  it("says the voice is coming from brand docs when there is nothing to learn from", () => {
+    const terse = parseRedditUserFeed(FEED).map((i) => ({ ...i, text: "ok" }));
+    const profile = deriveAccountProfile(terse, NOW);
+    expect(profile.samples).toEqual([]);
+    expect(profile.summary).toMatch(/no substantial writing/i);
+    expect(profile.summary).toMatch(/brand docs/i);
   });
 
   it("treats no public activity as no usable history, the safe direction", () => {
     const profile = deriveAccountProfile([], NOW);
     expect(profile.itemCount).toBe(0);
     expect(profile.subreddits).toEqual([]);
+    expect(profile.samples).toEqual([]);
     expect(profile.summary).toMatch(/no usable history/i);
     expect(profile.summary).toMatch(/value-only/i);
   });

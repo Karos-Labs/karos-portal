@@ -215,6 +215,7 @@ function toRedditIntakeView(intake: AgentIntake | null): RedditIntakeView | null
       : {}),
     ...(intake.disclosurePosture ? { disclosurePosture: intake.disclosurePosture } : {}),
     ...(intake.mode ? { mode: intake.mode } : {}),
+    ...(intake.voiceSamples?.length ? { voiceSamples: intake.voiceSamples } : {}),
   };
 }
 

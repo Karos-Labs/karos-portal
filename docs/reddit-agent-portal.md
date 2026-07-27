@@ -210,25 +210,31 @@ Tested from a residential IP, both with a descriptive User-Agent and a browser o
 
 | Endpoint | Result | What it gives |
 |---|---|---|
-| `reddit.com/user/<name>.rss` | **HTTP 200** (browser UA only) | The 25 most recent posts and comments, each with its subreddit and timestamp |
+| `reddit.com/user/<name>.rss` | **HTTP 200** (browser UA only) | Each entry carries a `content` body, so this is **their own writing** — the 25 most recent posts and comments in full — plus subreddit and timestamp |
 | `reddit.com/user/<name>/about.json` | **HTTP 403** on `www` and `old`, with either UA | nothing |
 
-So, derived today: the subreddits they actually participate in ranked by
-frequency, posting cadence, the post-vs-comment mix, how recently they were
-active, and whether the account has any usable history at all.
+The writing is the prize. `deriveAccountProfile` keeps up to 8 of their
+substantial replies (comments preferred, longest first, one-liners dropped) and
+`reddit-agent-context.ts` injects them as **the voice source**, outranking any
+register inferred from the brand docs. The lab's voice profile openly marks itself
+"no real account sample yet" — this fills that hole with the person actually
+writing, which is also the strongest defence against the no-AI-tells gate in the
+three roster subreddits that ban AI-sounding content.
 
-**Not derivable today: karma, account age, removal rate.** `about.json` is the
-only public source and it is refused outright. Those are exactly the fields that
-decide warming vs established and whether a subreddit's newcomer gate blocks
-posting (r/marketing wants 30+ days and 300+ karma), so they stay
-human-answered — and the derived summary says so in the client's own words rather
-than leaving them blank.
+Also derived: the subreddits they participate in ranked by frequency (which, read
+against the agent's researched roster, is where the gaps are), posting cadence,
+the post-vs-comment mix, and how recently they were active.
+
+**Not readable: karma and account age.** `about.json` is the only public source
+and it is refused outright. These matter far less than the writing — they only
+feed the account-safety read (a subreddit's newcomer gate, warming vs
+established), so they stay human-answered and nothing about voice replication
+waits on them.
 
 Reddit also blocks datacenter egress, so this read may fail in production while
 working locally. That is handled, not assumed: `fetchRedditPublicActivity` never
 throws, and each failure mode (`blocked` / `rate_limited` / `not_found` /
-`unavailable`) becomes client-facing copy that keeps the form usable and invites
-the person to answer by hand.
+`unavailable`) becomes client-facing copy that keeps the form usable.
 
 ## What the Reddit OAuth app unlocks (Tomer)
 
@@ -237,9 +243,10 @@ there is no post-to-Reddit code path in this portal and there will not be one.
 Everything below is read-only.
 
 **What it fixes:** karma, account age and removal rate become readable, so the
-last three human-answered fields fill themselves in and the account-safety
-judgment stops depending on the client's self-report. The connector code, the
-scopes and the callback route already exist and are unused — nothing needs
+account-safety judgment stops depending on the client's self-report. This is a
+polish item, not a blocker — the voice work, the subreddit spread and the cadence
+all come from the keyless feed above and already work. The connector code, the
+scopes and the callback route already exist and are unused, so nothing needs
 writing.
 
 **Steps**

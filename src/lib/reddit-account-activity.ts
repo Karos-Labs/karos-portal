@@ -9,18 +9,21 @@
  * WHAT THIS CAN AND CANNOT SEE, verified empirically 2026-07-27 from a
  * residential IP with a browser User-Agent:
  *
- * - `reddit.com/user/<name>.rss` → HTTP 200. Gives the 25 most recent posts and
- *   comments with their subreddit and timestamp. That is enough for subreddit
- *   distribution, cadence, and the post-vs-comment mix.
+ * - `reddit.com/user/<name>.rss` → HTTP 200. Each entry carries a `content` body,
+ *   so this gives THEIR OWN WRITING — the 25 most recent posts and comments in
+ *   full — plus the subreddit and timestamp. That is the whole prize: the voice
+ *   is learned from what they actually wrote, and the subreddit spread shows
+ *   where they already have standing (and, by contrast with the agent's
+ *   researched roster, where the gaps are).
  * - `reddit.com/user/<name>/about.json` → HTTP **403**, on both www and old, with
- *   a browser UA and with a descriptive one. So karma, account age and the
- *   verified flags are NOT publicly readable at all.
+ *   a browser UA and with a descriptive one. So karma and account age are not
+ *   publicly readable.
  *
- * Karma, account age and removal rate therefore need the authenticated read
- * (OAuth scopes identity + history, already configured in integrations/oauth.ts
- * and implemented in integrations/reddit.ts) — see docs/reddit-agent-portal.md
- * "What the Reddit OAuth app unlocks". Until that app exists, the account-safety
- * fields stay human-answered and the subreddit/cadence fields are derived.
+ * Karma and account age matter far less than the writing: they only feed the
+ * account-safety read (a subreddit's newcomer gate, warming vs established).
+ * They come with the authenticated read (OAuth scopes identity + history) when
+ * that app exists — see docs/reddit-agent-portal.md — and nothing about voice
+ * replication waits on it.
  */
 
 /** One post or comment from an account's public feed. */
@@ -32,6 +35,8 @@ export interface RedditActivityItem {
   url: string;
   /** epoch millis */
   at: number;
+  /** What they actually wrote, HTML stripped. The whole point: this is the voice. */
+  text: string;
 }
 
 export interface RedditAccountProfile {
@@ -46,6 +51,12 @@ export interface RedditAccountProfile {
   /** Items per week across the observed window, one decimal. */
   perWeek?: number;
   /**
+   * Their own recent writing, longest first, comments preferred. This is what
+   * the agent learns the voice from — the lab's voice profile has a "no real
+   * account sample yet" hole and this fills it.
+   */
+  samples: string[];
+  /**
    * A sentence a person can read and correct, written for the intake form's
    * history field. Deliberately hedged about what the feed cannot show.
    */
@@ -53,6 +64,21 @@ export interface RedditAccountProfile {
 }
 
 const ENTRY = /<entry>([\s\S]*?)<\/entry>/g;
+
+/**
+ * Reddit wraps each entry's body in double-escaped HTML, so it needs unescaping
+ * twice before the tags can be removed. Block boundaries become newlines so a
+ * multi-paragraph comment still reads as one when the agent sees it.
+ */
+function stripHtml(raw: string): string {
+  let out = unescapeXml(unescapeXml(raw));
+  // A block close is a paragraph break, not a line break: how someone breaks
+  // their writing up is part of the voice, so it survives into the sample.
+  out = out.replace(/<\/(?:p|div|li|blockquote|h[1-6])>/gi, "\n\n");
+  out = out.replace(/<br\s*\/?>/gi, "\n");
+  out = out.replace(/<[^>]+>/g, "");
+  return out.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
 
 function unescapeXml(s: string): string {
   return s
@@ -81,6 +107,7 @@ export function parseRedditUserFeed(xml: string): RedditActivityItem[] {
     const url = entry.match(/<link[^>]*\bhref="([^"]+)"/)?.[1];
     const updated = entry.match(/<updated[^>]*>([^<]+)<\/updated>/)?.[1];
     const title = entry.match(/<title[^>]*>([\s\S]*?)<\/title>/)?.[1];
+    const content = entry.match(/<content[^>]*>([\s\S]*?)<\/content>/)?.[1];
     if (!url || !updated) continue;
     const at = Date.parse(updated);
     if (Number.isNaN(at)) continue;
@@ -99,12 +126,17 @@ export function parseRedditUserFeed(xml: string): RedditActivityItem[] {
       title: title ? unescapeXml(title).trim() : "",
       url,
       at,
+      text: content ? stripHtml(content) : "",
     });
   }
   return items.sort((a, b) => b.at - a.at);
 }
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+/** Below this a comment is an acknowledgement, not a voice sample. */
+const MIN_SAMPLE_CHARS = 120;
+const MAX_SAMPLES = 8;
+const MAX_SAMPLE_CHARS = 1_500;
 
 /**
  * Turns the feed into the shape the intake form pre-fills from.
@@ -124,6 +156,7 @@ export function deriveAccountProfile(
       postCount: 0,
       commentCount: 0,
       subreddits: [],
+      samples: [],
       summary:
         "No public activity found on this account. Either it is brand new, or its history is private or removed. Treat it as having no usable history: value-only replies until it has earned some.",
     };
@@ -155,6 +188,15 @@ export function deriveAccountProfile(
         ? `last active about ${Math.max(1, Math.round(daysSince / 7))} weeks ago`
         : `last active about ${Math.max(1, Math.round(daysSince / 30))} months ago`;
 
+  // Their own words, longest first: length is the best cheap proxy for a sample
+  // that actually carries voice. Comments beat posts (a post can be a link with
+  // no prose), and one-liners like "this" teach nothing.
+  const samples = [...items]
+    .filter((i) => i.text.length >= MIN_SAMPLE_CHARS)
+    .sort((a, b) => (a.kind === b.kind ? b.text.length - a.text.length : a.kind === "comment" ? -1 : 1))
+    .slice(0, MAX_SAMPLES)
+    .map((i) => i.text.slice(0, MAX_SAMPLE_CHARS));
+
   const top = subreddits
     .slice(0, 5)
     .map((s) => `${s.name} (${s.count})`)
@@ -167,11 +209,13 @@ export function deriveAccountProfile(
         : `${postCount} posts and no comments`;
 
   const summary = [
-    `Public activity: the ${items.length} most recent items are ${mix}, ${recency}, roughly ${perWeek} a week.`,
+    samples.length > 0
+      ? `Read ${samples.length} of their own recent replies to learn the voice.`
+      : "Found no substantial writing on this account, so the voice will come from the brand docs instead.",
+    `The ${items.length} most recent items are ${mix}, ${recency}, roughly ${perWeek} a week.`,
     subreddits.length > 0
       ? `Active in ${top}.`
       : "No community activity, only posts to their own profile.",
-    "Karma and account age are not publicly readable, so add them here if you know them.",
   ].join(" ");
 
   return {
@@ -179,6 +223,7 @@ export function deriveAccountProfile(
     postCount,
     commentCount,
     subreddits,
+    samples,
     firstSeenAt,
     lastSeenAt,
     perWeek,

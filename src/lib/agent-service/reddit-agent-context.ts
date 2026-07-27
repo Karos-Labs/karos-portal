@@ -114,6 +114,43 @@ function accountSection(intake: AgentIntake | null): string {
   return lines.join("\n");
 }
 
+/**
+ * The account's own recent writing, read from its public feed at intake.
+ *
+ * This is the voice source and it outranks everything else: the lab voice
+ * profile derives a register from the brand docs and openly marks itself "no real
+ * account sample yet", which is a guess about how a person writes. These are the
+ * person actually writing. Match the rhythm, sentence length, punctuation habits
+ * and vocabulary here — including the rough edges, because those are what make a
+ * reply read as human in subreddits that ban AI-sounding content.
+ *
+ * Never quoted or reused as content: they are old replies to other threads, and
+ * repeating one would be both off-topic and obviously recycled.
+ */
+function voiceSection(intake: AgentIntake | null): string {
+  const samples = intake?.voiceSamples ?? [];
+  if (samples.length === 0) {
+    return [
+      "## How this account actually writes",
+      "- No samples captured. Derive the register from the client's brand voice docs",
+      "  and keep it plain and helpful; flag in the poster note that the voice is",
+      "  provisional until the account has public writing to learn from.",
+    ].join("\n");
+  }
+  const blocks = samples.map((sample, i) => `### Sample ${i + 1}\n\n${sample}`);
+  return [
+    "## How this account actually writes (THE voice source)",
+    "",
+    "Their own recent Reddit replies, read from the account's public feed. This is",
+    "how the person writes: match the rhythm, sentence length, punctuation habits",
+    "and vocabulary, rough edges included. It OUTRANKS any register inferred from",
+    "the brand docs, and it is the strongest defence against the no-AI-tells gate.",
+    "Never quote or reuse this text in a draft — these are replies to other threads.",
+    "",
+    ...blocks,
+  ].join("\n");
+}
+
 function feedbackSection(rows: RedditDraftFeedback[], account: string, label: string): string {
   const scoped = rows.filter((r) => r.account === account).slice(0, FEEDBACK_ROWS);
   if (scoped.length === 0) return `## ${label}\n- No feedback yet.`;
@@ -298,6 +335,8 @@ export async function buildRedditAgentContextFiles(
     "",
     accountSection(intake),
     "",
+    voiceSection(intake),
+    "",
     subredditRulesSection(feedback),
     "",
     feedbackSection(feedback, "company", "Learning log — this account"),
@@ -310,7 +349,7 @@ export async function buildRedditAgentContextFiles(
     url: await upload(clientId, runKey, "reddit-portal-intake.md", intakeMd, "text/markdown"),
     content_type: "text/markdown",
     description:
-      "Portal-collected Reddit intake: the account we draft as, its history, the program mode, off-limits subreddits, disclosure wording, the per-subreddit verdicts this client's own outcomes have earned, and the learning log. Overrides any older reddit-agent files in the repo.",
+      "Portal-collected Reddit intake: the account we draft as, SAMPLES OF ITS OWN RECENT WRITING (the voice source — match it), the program mode, off-limits subreddits, disclosure wording, the per-subreddit verdicts this client's own outcomes have earned, and the learning log. Overrides any older reddit-agent files in the repo.",
   });
 
   return files;

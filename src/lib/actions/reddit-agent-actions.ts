@@ -80,6 +80,8 @@ export async function lookUpRedditAccountAction(input: {
   handle?: string;
   history?: string;
   subreddits?: string[];
+  /** Their own recent writing — the voice source. */
+  voiceSamples?: string[];
   /** Set when the read failed; client-facing copy explaining what to do instead. */
   notice?: string;
   error?: string;
@@ -108,6 +110,7 @@ export async function lookUpRedditAccountAction(input: {
     handle: parsed,
     history: profile.summary,
     subreddits: profile.subreddits.slice(0, MAX_SUBREDDITS).map((s) => s.name),
+    ...(profile.samples.length > 0 ? { voiceSamples: profile.samples } : {}),
   };
 }
 
@@ -136,6 +139,8 @@ export async function saveRedditCompanyIntakeAction(input: {
   offLimits: string;
   /** "" = let the agent decide from the history, else the client's override. */
   mode: string;
+  /** The account's own writing from the lookup — the voice source. */
+  voiceSamples?: string[];
 }): Promise<{ error?: string }> {
   const user = await requireClientAccess(input.clientId);
   if (!(await getClient(input.clientId))) return { error: "Client not found." };
@@ -184,13 +189,19 @@ export async function saveRedditCompanyIntakeAction(input: {
   const existing = await getAgentIntake(input.clientId, "reddit", null);
   if (existing) {
     const drop: Array<
-      "accountHistory" | "subreddits" | "offLimitsSubreddits" | "disclosurePosture" | "mode"
+      | "accountHistory"
+      | "subreddits"
+      | "offLimitsSubreddits"
+      | "disclosurePosture"
+      | "mode"
+      | "voiceSamples"
     > = [];
     if (!input.accountHistory.trim() && existing.accountHistory) drop.push("accountHistory");
     if (!subredditsRaw && existing.subreddits?.length) drop.push("subreddits");
     if (!offLimitsRaw && existing.offLimitsSubreddits?.length) drop.push("offLimitsSubreddits");
     if (!input.disclosurePosture.trim() && existing.disclosurePosture) drop.push("disclosurePosture");
     if (!mode && existing.mode) drop.push("mode");
+    if (!input.voiceSamples?.length && existing.voiceSamples?.length) drop.push("voiceSamples");
     await clearAgentIntakeFields(existing.id, drop);
   }
 
@@ -206,6 +217,9 @@ export async function saveRedditCompanyIntakeAction(input: {
     ...(offLimitsSubreddits.length > 0 ? { offLimitsSubreddits } : {}),
     ...(input.disclosurePosture.trim() ? { disclosurePosture: input.disclosurePosture.trim() } : {}),
     ...(mode ? { mode } : {}),
+    ...(input.voiceSamples?.length
+      ? { voiceSamples: input.voiceSamples.slice(0, 8).map((v) => v.slice(0, 1_500)) }
+      : {}),
     createdBy: user.uid,
   });
   revalidatePath(`/clients/${input.clientId}/reddit-agent`);

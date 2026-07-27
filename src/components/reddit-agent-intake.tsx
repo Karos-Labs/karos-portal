@@ -37,6 +37,8 @@ export interface RedditIntakeView {
   disclosurePosture?: string;
   offLimits: string;
   mode?: "warming" | "established";
+  /** The account's own writing, captured at lookup — the voice source. */
+  voiceSamples?: string[];
 }
 
 export interface RedditFeedbackRowView {
@@ -83,6 +85,10 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
   const [mode, setMode] = useState(intake?.mode ?? "");
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupNote, setLookupNote] = useState<string | null>(null);
+  // Their own recent writing, read at lookup. Held here and saved with the form
+  // so the run can learn the voice from it; not shown as raw text because it is
+  // their words, not an answer to review.
+  const [voiceSamples, setVoiceSamples] = useState<string[]>(intake?.voiceSamples ?? []);
 
   /**
    * Reads the account's own public activity and fills the rest of the form in,
@@ -103,6 +109,7 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
       if (result.handle) setUsername(result.handle);
       if (result.history) setAccountHistory(result.history);
       if (result.subreddits?.length) setSubreddits(result.subreddits.join(", "));
+      if (result.voiceSamples?.length) setVoiceSamples(result.voiceSamples);
       setLookupNote(
         result.notice ??
           "Filled in from this account's public activity. Check it and change anything that looks wrong - Reddit does not let us see karma or account age, so add those if you know them.",
@@ -124,6 +131,7 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
         disclosurePosture,
         offLimits,
         mode,
+        voiceSamples,
       });
       if (result.error) {
         setError(result.error);
@@ -143,6 +151,7 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
     setDisclosurePosture(intake?.disclosurePosture ?? "");
     setOffLimits(intake?.offLimits ?? "");
     setMode(intake?.mode ?? "");
+    setVoiceSamples(intake?.voiceSamples ?? []);
     setEditing(false);
   }
 
@@ -183,6 +192,17 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
             </p>
           </div>
           {lookupNote ? <p className="mt-2 text-xs text-muted">{lookupNote}</p> : null}
+          {voiceSamples.length > 0 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
+              <p className="text-xs text-muted">
+                Learning the voice from {voiceSamples.length} of this account&apos;s own recent
+                replies. We match how they write; we never reuse the text.
+              </p>
+              <Button size="sm" variant="ghost" onClick={() => setVoiceSamples([])}>
+                Do not use these
+              </Button>
+            </div>
+          ) : null}
           <p className="mt-2 text-xs text-muted">
             A real account with normal history does far better than a brand account, and is far
             safer. We draft either way, but nothing can be posted until you have one.
