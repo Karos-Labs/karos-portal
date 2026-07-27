@@ -15,7 +15,13 @@ import {
   isLinkedInAgent,
 } from "./linkedin-agent-context";
 import {
+  buildRedditAgentContextFiles,
+  hasRedditAgentIntake,
+  isRedditAgent,
+} from "./reddit-agent-context";
+import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
+  REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
   agentKeyMatchesClientSlug,
   perClientAgentSlug,
@@ -113,6 +119,28 @@ export async function submitCustomAgentRun(args: {
     } catch (e) {
       return {
         error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
+  // Reddit agent (e15): the same contract — the account, its history,
+  // off-limits subreddits, the disclosure wording, the per-subreddit verdicts
+  // earned from the client's outcomes, and prior drafts (see
+  // reddit-agent-context.ts) — so scheduler-fired Reddit runs read the same
+  // live client data as manual ones. Hard-gated the same way. This matters more
+  // for Reddit than for the others: the daily cadence means most runs arrive
+  // through here, not through the run dialog.
+  if (isRedditAgent(agent.key)) {
+    if (!(await hasRedditAgentIntake(client.id))) {
+      return {
+        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first: save the account form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildRedditAgentContextFiles(client.id, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's Reddit intake data: ${e instanceof Error ? e.message : "unknown error"}`,
       };
     }
   }

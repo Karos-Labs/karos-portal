@@ -5,9 +5,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon, LinkedInLogo, XLogo } from "@/components/icon";
-import { AgentIdentity, AgentMark, AgentPlatformBadges } from "@/components/agent-identity";
+import {
+  AgentIdentity,
+  AgentMark,
+  AgentPlatformBadges,
+  SocialPlatformMark,
+} from "@/components/agent-identity";
 import { AgentInputFiles } from "@/components/agent-input-files";
 import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
+import { RedditAgentIntake } from "@/components/reddit-agent-intake";
 import { XAgentIntake } from "@/components/x-agent-intake";
 import { Modal } from "@/components/modal";
 import { JobStatusBadge } from "@/components/job-status";
@@ -29,9 +35,11 @@ import {
   buildCustomAgentPrompt,
   initialAgentBrief,
   isLinkedInAgentIdentity,
+  isRedditAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
+  REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
 import type { ContextItem, CustomAgent, JobStatus } from "@/lib/types";
@@ -87,13 +95,13 @@ function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "ke
   );
 }
 
-/* ═══════════ intake-driven agents (X e13, LinkedIn e10) ═══════════ */
+/* ═══════ intake-driven agents (X e13, LinkedIn e10, Reddit e15) ═══════ */
 
 /**
- * The X and LinkedIn agents draft from stored intake, so their data forms live
- * inside the run dialog: inline on a first run, behind the "<platform> agent
- * data" button once the data exists. `ready` is the server run gate; `data` is
- * the payload rendered inline.
+ * The X, LinkedIn and Reddit agents draft from stored intake, so their data
+ * forms live inside the run dialog: inline on a first run, behind the
+ * "<platform> agent data" button once the data exists. `ready` is the server run
+ * gate; `data` is the payload rendered inline.
  */
 export interface XAgentSetup {
   ready: boolean;
@@ -106,32 +114,66 @@ export interface LinkedInAgentSetup {
   data: ComponentProps<typeof LinkedInAgentIntake>;
 }
 
-type IntakeKind = "x" | "linkedin";
+/** The e15 twin of XAgentSetup. */
+export interface RedditAgentSetup {
+  ready: boolean;
+  data: ComponentProps<typeof RedditAgentIntake>;
+}
+
+type IntakeKind = "x" | "linkedin" | "reddit";
 
 type AgentIntakeContext =
   | { kind: "x"; setup: XAgentSetup }
-  | { kind: "linkedin"; setup: LinkedInAgentSetup };
+  | { kind: "linkedin"; setup: LinkedInAgentSetup }
+  | { kind: "reddit"; setup: RedditAgentSetup };
 
-const INTAKE_LABEL: Record<IntakeKind, string> = { x: "X", linkedin: "LinkedIn" };
+const INTAKE_LABEL: Record<IntakeKind, string> = { x: "X", linkedin: "LinkedIn", reddit: "Reddit" };
 
 /** Route segment of the full agent data page, for callers with no inline payload. */
-const INTAKE_ROUTE: Record<IntakeKind, string> = { x: "x-agent", linkedin: "linkedin-agent" };
+const INTAKE_ROUTE: Record<IntakeKind, string> = {
+  x: "x-agent",
+  linkedin: "linkedin-agent",
+  reddit: "reddit-agent",
+};
+
+/**
+ * What the agent drafts from, in the client's words — the run dialog says this
+ * when the data is still missing. Per kind, because the three agents hold
+ * genuinely different data: X and LinkedIn have a company page and seats,
+ * Reddit has one account plus the subreddits it may answer in.
+ */
+const INTAKE_ASKS: Record<IntakeKind, string> = {
+  x: "the company page, a seat for each person, and your ongoing drops",
+  linkedin: "the company page, a seat for each person, and your ongoing drops",
+  reddit: "the account we draft as, and how you want mentions handled",
+};
+
+/** The first thing to do in the data pane, per kind. */
+const INTAKE_FIRST_STEP: Record<IntakeKind, string> = {
+  x: "Save the company page below to continue.",
+  linkedin: "Save the company page below to continue.",
+  reddit: "Save your Reddit account below to continue.",
+};
 
 /** Which intake surface governs this agent, given what the page shipped. */
 function intakeFor(
   agentKey: string,
   xSetup?: XAgentSetup,
   linkedinSetup?: LinkedInAgentSetup,
+  redditSetup?: RedditAgentSetup,
 ): AgentIntakeContext | null {
   if (xSetup && isXAgentIdentity(agentKey)) return { kind: "x", setup: xSetup };
   if (linkedinSetup && isLinkedInAgentIdentity(agentKey)) {
     return { kind: "linkedin", setup: linkedinSetup };
   }
+  if (redditSetup && isRedditAgentIdentity(agentKey)) return { kind: "reddit", setup: redditSetup };
   return null;
 }
 
 function IntakeGlyph({ kind, className }: { kind: IntakeKind; className?: string }) {
-  return kind === "x" ? <XLogo className={className} /> : <LinkedInLogo className={className} />;
+  if (kind === "x") return <XLogo className={className} />;
+  if (kind === "linkedin") return <LinkedInLogo className={className} />;
+  return <SocialPlatformMark platform="reddit" className={className} />;
 }
 
 /**
@@ -154,8 +196,11 @@ function intakeComplete(intake: AgentIntakeContext): boolean {
 }
 
 function IntakeForm({ intake }: { intake: AgentIntakeContext }) {
+  // One explicit branch per kind on purpose: a trailing fallback would silently
+  // render another platform's form for a kind added later.
   if (intake.kind === "x") return <XAgentIntake {...intake.setup.data} />;
-  return <LinkedInAgentIntake {...intake.setup.data} />;
+  if (intake.kind === "linkedin") return <LinkedInAgentIntake {...intake.setup.data} />;
+  return <RedditAgentIntake {...intake.setup.data} />;
 }
 
 /**
@@ -358,6 +403,7 @@ export function ClientCustomAgents({
   availableCredits,
   xSetup,
   linkedinSetup,
+  redditSetup,
 }: {
   clientId: string;
   agents: RunnableAgentSummary[];
@@ -371,6 +417,7 @@ export function ClientCustomAgents({
   xSetup?: XAgentSetup;
   /** LinkedIn agent intake state — same shape for the e10 agents. */
   linkedinSetup?: LinkedInAgentSetup;
+  redditSetup?: RedditAgentSetup;
 }) {
   const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
   const [runIntakeFirst, setRunIntakeFirst] = useState(false);
@@ -391,7 +438,7 @@ export function ClientCustomAgents({
 
   // The open schedule dialog's own copy of the card's gate: props refresh
   // underneath it, so the agent data can go missing while it is open.
-  const scheduleIntake = scheduleAgent ? intakeFor(scheduleAgent.key, xSetup, linkedinSetup) : null;
+  const scheduleIntake = scheduleAgent ? intakeFor(scheduleAgent.key, xSetup, linkedinSetup, redditSetup) : null;
   const scheduleSetupNeeded =
     scheduleAgent && scheduleIntake && !companyOnFile(scheduleIntake)
       ? {
@@ -434,7 +481,7 @@ export function ClientCustomAgents({
             const reviewHref = viewerIsClient
               ? "/tasks"
               : reviewRuns[0]?.href ?? `/clients/${clientId}/assets`;
-            const intake = intakeFor(agent.key, xSetup, linkedinSetup);
+            const intake = intakeFor(agent.key, xSetup, linkedinSetup, redditSetup);
             // A scheduled run fires unattended, so every fire would be refused
             // while the company page is missing. An existing schedule stays
             // open to manage — pausing it must never be blocked.
@@ -594,6 +641,7 @@ export function ClientCustomAgents({
           viewerIsClient={viewerIsClient}
           {...(xSetup ? { xSetup } : {})}
           {...(linkedinSetup ? { linkedinSetup } : {})}
+          {...(redditSetup ? { redditSetup } : {})}
           {...(runIntakeFirst ? { initialPane: "data" as const } : {})}
           onClose={() => setRunAgent(null)}
         />
@@ -808,6 +856,7 @@ function RunCustomAgentModal({
   viewerIsClient,
   xSetup,
   linkedinSetup,
+  redditSetup,
   initialPane,
   onClose,
 }: {
@@ -822,6 +871,7 @@ function RunCustomAgentModal({
   xSetup?: XAgentSetup;
   /** LinkedIn agent intake state — same shape for the e10 agents. */
   linkedinSetup?: LinkedInAgentSetup;
+  redditSetup?: RedditAgentSetup;
   /** "data" opens straight on the agent's data; so does a missing company page. */
   initialPane?: RunPane;
   onClose: () => void;
@@ -836,7 +886,7 @@ function RunCustomAgentModal({
   const [briefTouched, setBriefTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
-  const intake = intakeFor(agent.key, xSetup, linkedinSetup);
+  const intake = intakeFor(agent.key, xSetup, linkedinSetup, redditSetup);
   const intakeReady = intake?.setup.ready ?? true;
   // The data opens on the company page being missing, not on the server gate:
   // `ready` is satisfied by a shared seat, so an X run would otherwise skip
@@ -867,7 +917,9 @@ function RunCustomAgentModal({
       ? "x"
       : error.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX)
         ? "linkedin"
-        : null;
+        : error.startsWith(REDDIT_SETUP_REQUIRED_PREFIX)
+          ? "reddit"
+          : null;
 
   // Both panes share the dialog's single scroll box, which also holds the title
   // and the sentence explaining the swap, so a switch has to go back to the top
@@ -972,7 +1024,7 @@ function RunCustomAgentModal({
         showData
           ? companyOnFile(intake)
             ? "This is what the agent drafts from. Change or add anything; it applies to the next run."
-            : "We draft from this, so we ask for it before the first run: the company page, a seat for each person, and your ongoing drops."
+            : `We draft from this, so we ask for it before the first run: ${intake ? INTAKE_ASKS[intake.kind] : ""}.`
           : agent.description
       }
       className={showData ? "max-w-3xl" : "max-w-2xl"}
@@ -1015,8 +1067,8 @@ function RunCustomAgentModal({
                 </>
               )}
             </Button>
-            {!intakeReady && (
-              <p className="text-xs text-muted">Save the company page below to continue.</p>
+            {!intakeReady && intake && (
+              <p className="text-xs text-muted">{INTAKE_FIRST_STEP[intake.kind]}</p>
             )}
           </div>
           <IntakeForm intake={intake} />

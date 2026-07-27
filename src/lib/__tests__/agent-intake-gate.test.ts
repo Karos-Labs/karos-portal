@@ -3,16 +3,19 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
+  REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
   agentKeyMatchesClientSlug,
   isLinkedInAgentIdentity,
+  isRedditAgentIdentity,
   isXAgentIdentity,
   perClientAgentSlug,
 } from "@/lib/custom-agent-launch";
 
 /**
- * The X (e13) and LinkedIn (e10) agents run ON stored intake, so both submit
- * cores hard-gate a run that has none. Two things can silently break:
+ * The X (e13), LinkedIn (e10) and Reddit (e15) agents run ON stored intake, so
+ * both submit cores hard-gate a run that has none. Two things can silently
+ * break:
  *
  *  1. The refusal message must START with the exported prefix — the run dialog
  *     detects it with `startsWith` to offer a way into the agent data. A copy
@@ -26,13 +29,18 @@ import {
  */
 const CORES = ["src/lib/jobs/submit-custom.ts", "src/lib/agent-service/run-custom-agent.ts"];
 
-function gateMessages(file: string): { x: string; linkedin: string } {
+function gateMessages(file: string): { x: string; linkedin: string; reddit: string } {
   const src = readFileSync(join(process.cwd(), file), "utf8");
-  const found = [...src.matchAll(/error: `\$\{(X|LINKEDIN)_SETUP_REQUIRED_PREFIX\}([^`]*)`/g)];
+  const found = [
+    ...src.matchAll(/error: `\$\{(X|LINKEDIN|REDDIT)_SETUP_REQUIRED_PREFIX\}([^`]*)`/g),
+  ];
   const x = found.find((m) => m[1] === "X");
   const linkedin = found.find((m) => m[1] === "LINKEDIN");
-  if (!x || !linkedin) throw new Error(`Could not locate both setup-gate messages in ${file}`);
-  return { x: x[2], linkedin: linkedin[2] };
+  const reddit = found.find((m) => m[1] === "REDDIT");
+  if (!x || !linkedin || !reddit) {
+    throw new Error(`Could not locate all three setup-gate messages in ${file}`);
+  }
+  return { x: x[2], linkedin: linkedin[2], reddit: reddit[2] };
 }
 
 describe("agent data setup gate", () => {
@@ -40,27 +48,34 @@ describe("agent data setup gate", () => {
     const [interactive, scheduled] = CORES.map(gateMessages);
     expect(scheduled.x).toBe(interactive.x);
     expect(scheduled.linkedin).toBe(interactive.linkedin);
+    expect(scheduled.reddit).toBe(interactive.reddit);
   });
 
   it("interpolates the prefix as the literal opening of each message", () => {
     for (const file of CORES) {
-      const { x, linkedin } = gateMessages(file);
+      const { x, linkedin, reddit } = gateMessages(file);
       // The prefix is the whole start of the string, so the rendered message
       // begins with it and the dialog's startsWith check holds.
       expect(`${X_SETUP_REQUIRED_PREFIX}${x}`.startsWith(X_SETUP_REQUIRED_PREFIX)).toBe(true);
       expect(
         `${LINKEDIN_SETUP_REQUIRED_PREFIX}${linkedin}`.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX),
       ).toBe(true);
+      expect(
+        `${REDDIT_SETUP_REQUIRED_PREFIX}${reddit}`.startsWith(REDDIT_SETUP_REQUIRED_PREFIX),
+      ).toBe(true);
       expect(x.endsWith("Nothing has run.")).toBe(true);
       expect(linkedin.endsWith("Nothing has run.")).toBe(true);
+      expect(reddit.endsWith("Nothing has run.")).toBe(true);
     }
   });
 
-  it("keeps the X and LinkedIn refusals distinguishable", () => {
-    const { x, linkedin } = gateMessages(CORES[0]);
-    expect(x).not.toBe(linkedin);
+  it("keeps the three refusals distinguishable", () => {
+    const { x, linkedin, reddit } = gateMessages(CORES[0]);
+    expect(new Set([x, linkedin, reddit]).size).toBe(3);
     expect(x).toContain("fill in the company page");
     expect(linkedin).toContain("save the company page form");
+    // Reddit's company-level form is the account form, not a company page.
+    expect(reddit).toContain("save the account form");
   });
 
   it("names where the agent data lives", () => {
@@ -69,8 +84,8 @@ describe("agent data setup gate", () => {
     // dialog would be circular — hence no "Agent-specific documents" sidebar
     // section (deleted) and no separate data page to send anyone to.
     for (const file of CORES) {
-      const { x, linkedin } = gateMessages(file);
-      for (const message of [x, linkedin]) {
+      const { x, linkedin, reddit } = gateMessages(file);
+      for (const message of [x, linkedin, reddit]) {
         expect(message).toContain("The agent data sits with the agent on the AI Agents page.");
         expect(message).not.toMatch(/Agent-specific documents/i);
         expect(message).not.toMatch(/data page/i);
@@ -103,15 +118,31 @@ describe("agent data setup gate", () => {
     expect(liGate).toContain('getAgentIntake(clientId, "linkedin", null)');
     expect(liGate).not.toMatch(/listAgentIntake|listClientSeats|seats\.length/);
     expect(liGate).not.toContain("karos-linkedin-agent");
+
+    // Reddit's floor is its account form. Seats are shared across agents and
+    // Reddit does not use them at all, so reading one here would accept a run
+    // set up for another platform entirely.
+    const reddit = readFileSync(
+      join(process.cwd(), "src/lib/agent-service/reddit-agent-context.ts"),
+      "utf8",
+    );
+    const redditGate = reddit.match(/export async function hasRedditAgentIntake[\s\S]*?\n}/)?.[0];
+    expect(redditGate).toBeDefined();
+    expect(redditGate).toContain('getAgentIntake(clientId, "reddit", null)');
+    expect(redditGate).not.toMatch(/listAgentIntake|listClientSeats|seats\.length/);
   });
 
-  it("gates exactly the two intake-driven agent identities", () => {
+  it("gates exactly the three intake-driven agent identities", () => {
     expect(isXAgentIdentity("karos-x-agent")).toBe(true);
     expect(isLinkedInAgentIdentity("karos-linkedin-agent")).toBe(true);
     expect(isLinkedInAgentIdentity("karos-linkedin-company-karoslabs")).toBe(true);
+    expect(isRedditAgentIdentity("karos-reddit-agent")).toBe(true);
     // A lookalike import is not intake-driven and must never hit the gate.
     expect(isXAgentIdentity("acme-x-ghostwriter")).toBe(false);
     expect(isLinkedInAgentIdentity("acme-linkedin-ghostwriter")).toBe(false);
+    expect(isRedditAgentIdentity("acme-reddit-ghostwriter")).toBe(false);
+    // The emitted per-client lab sub-skills are not the portal agent either.
+    expect(isRedditAgentIdentity("karos-reddit-thorough-value-karoslabs")).toBe(false);
   });
 });
 
@@ -209,6 +240,10 @@ describe("per-client agent instance binding", () => {
     expect(gate).toContain("agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)");
     expect(gate).toContain("hasXAgentIntake(client.id)");
     expect(gate).toContain("hasLinkedInAgentIntake(client.id)");
+    // Reddit runs daily, so most of its runs arrive through a schedule rather
+    // than the run dialog — an ungated Reddit schedule would be the quietest
+    // failure of the three.
+    expect(gate).toContain("hasRedditAgentIntake(client.id)");
 
     // Every action that can put a schedule live, in both collections: staff
     // create, the client's always-on card, resuming a paused row, and the

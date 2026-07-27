@@ -17,8 +17,10 @@ import "server-only";
 
 import { hasXAgentIntake, isXAgent } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake, isLinkedInAgent } from "@/lib/agent-service/linkedin-agent-context";
+import { hasRedditAgentIntake, isRedditAgent } from "@/lib/agent-service/reddit-agent-context";
 import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
+  REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
   agentKeyMatchesClientSlug,
   perClientAgentSlug,
@@ -36,13 +38,17 @@ export async function unfireableScheduleReason(
   if (!agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) {
     return `${agent.name} runs only for the client whose lab repo slug is "${perClientAgentSlug(agent.key)}", and ${client.name}'s slug is ${client.agentsRepoSlug ? `"${client.agentsRepoSlug}"` : "not set"}. Use this client's own agent — the schedule stays off until then.`;
   }
-  // The agents that draft FROM stored agent data (X e13, LinkedIn e10) need the
-  // company page saved. Unattended fires have no one to answer the form.
+  // The agents that draft FROM stored agent data (X e13, LinkedIn e10, Reddit
+  // e15) need their company-level form saved. Unattended fires have no one to
+  // answer it.
   if (isXAgent(agent.key) && !(await hasXAgentIntake(client.id))) {
     return `${X_SETUP_REQUIRED_PREFIX} first: fill in the company page, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. The schedule stays off until then.`;
   }
   if (isLinkedInAgent(agent.key) && !(await hasLinkedInAgentIntake(client.id))) {
     return `${LINKEDIN_SETUP_REQUIRED_PREFIX} first: save the company page form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. The schedule stays off until then.`;
+  }
+  if (isRedditAgent(agent.key) && !(await hasRedditAgentIntake(client.id))) {
+    return `${REDDIT_SETUP_REQUIRED_PREFIX} first: save the account form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. The schedule stays off until then.`;
   }
   return null;
 }

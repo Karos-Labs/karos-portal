@@ -52,6 +52,30 @@ describe("custom agent launch profiles", () => {
     }
   });
 
+  it("routes the e15 Reddit agent to its own intake-driven brief", () => {
+    const reddit = launchProfileFor({ key: "karos-reddit-agent", name: "Reddit Agent" });
+    expect(reddit.eyebrow).toBe("Reddit reply");
+    // Intake-driven, so the brief only scopes the run. It must never ask for
+    // what the agent BUILDS (the subreddit roster, the questions worth
+    // answering, the voice) or already stores (the account and its history).
+    expect(reddit.fields.map((field) => field.key)).toEqual(["request"]);
+    expect(reddit.fields.map((field) => field.key)).not.toEqual(
+      expect.arrayContaining(["account", "subreddits", "voice", "thread_url"]),
+    );
+    // The reply is a hand-off, never a publish: the brief must promise that.
+    expect(reddit.intro).toMatch(/never post to Reddit|you post the reply yourself/i);
+
+    // Exact-key matching keeps a lookalike import on the generic brief, and
+    // keeps the Reddit brief from hijacking agents whose descriptions mention
+    // monitoring, listening or research.
+    expect(launchProfileFor({ key: "acme-reddit-ghostwriter", name: "Reddit Ghostwriter" }).eyebrow).toBe(
+      "Reddit Ghostwriter work order",
+    );
+    expect(
+      launchProfileFor({ key: "karos-reputation", name: "Brand Reputation Monitoring" }).eyebrow,
+    ).toBe("Reputation brief");
+  });
+
   it("keeps unknown imported agents runnable with a complete fallback brief", () => {
     const profile = launchProfileFor({ key: "future-agent", name: "Future Agent" });
     expect(profile.fields.find((field) => field.key === "request")?.required).toBe(true);

@@ -84,7 +84,14 @@ export function guessAssetType(agentFolder: string): AssetType {
   if (f.includes("instagram") || f.includes("tiktok")) return "instagram_post";
   if (f.includes("newsletter") || f.includes("email")) return "email";
   if (f.includes("blog") || f.includes("seo")) return "article";
-  if (f.includes("x-agent") || f.includes("linkedin") || f.includes("reddit") || f.includes("social")) {
+  // Reddit is checked BEFORE the social bucket and deliberately lands on "note".
+  // PUBLISHABLE_PLATFORMS maps social_post to twitter/linkedin/facebook/tiktok,
+  // so typing a Reddit reply social_post would offer it for publishing to those
+  // platforms — a reply written for one thread, cross-posted elsewhere. Reddit
+  // is draft-only by hard contract and "note" has an empty publish list, which
+  // also matches the asset type the webhook gives a live Reddit run.
+  if (f.includes("reddit")) return "note";
+  if (f.includes("x-agent") || f.includes("linkedin") || f.includes("social")) {
     return "social_post";
   }
   return "note";

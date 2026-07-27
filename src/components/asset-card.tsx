@@ -23,6 +23,8 @@ import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
+import { parseRedditDrafts } from "@/lib/reddit-drafts";
+import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
 import { relativeTime, cn } from "@/lib/utils";
 import type { Asset, PublishMode } from "@/lib/types";
 
@@ -430,19 +432,35 @@ export function AssetCard({
   const [busy, setBusy] = useState(false);
 
   // Agent draft batches carry pinned markdown structures — render them as the
-  // drafts reader (pick / edit / skip per draft) instead of raw text. LinkedIn
-  // is sniffed FIRST: its "## Account" headings contain the X sniff's
-  // "# Account " substring, so order matters.
+  // drafts reader (pick / edit / skip per draft) instead of raw text.
+  //
+  // ORDER IS LOAD-BEARING. LinkedIn and Reddit both use "## Account N · …"
+  // headings, which contain the X sniff's "# Account " substring, so BOTH must
+  // be tested before X or an X reader claims their batches. Each of the two
+  // carries a distinct h1 marker, so they cannot claim each other.
   const liBatch = useMemo(
     () => (asset.content?.includes("# LinkedIn drafts") ? parseLiDrafts(asset.content) : null),
     [asset.content],
   );
-  const xBatch = useMemo(
-    () => (!liBatch && asset.content?.includes("# Account ") ? parseXDrafts(asset.content) : null),
+  const redditBatch = useMemo(
+    () =>
+      !liBatch && asset.content?.includes("# Reddit answer drafts")
+        ? parseRedditDrafts(asset.content)
+        : null,
     [asset.content, liBatch],
+  );
+  const xBatch = useMemo(
+    () =>
+      !liBatch && !redditBatch && asset.content?.includes("# Account ")
+        ? parseXDrafts(asset.content)
+        : null,
+    [asset.content, liBatch, redditBatch],
   );
   const xDraftCount = xBatch ? xBatch.accounts.reduce((n, a) => n + a.drafts.length, 0) : 0;
   const liDraftCount = liBatch ? liBatch.accounts.reduce((n, a) => n + a.drafts.length, 0) : 0;
+  const redditDraftCount = redditBatch
+    ? redditBatch.accounts.reduce((n, a) => n + a.drafts.length, 0)
+    : 0;
   // The run's attachable media (slides, PDFs, video) for the LinkedIn reader —
   // the webhook stores the client-facing artifact list in meta.artifacts. The
   // service may omit content_type, so fall back to extension sniffing; and a
@@ -708,6 +726,24 @@ export function AssetCard({
                   ? "1 LinkedIn draft, ready to review."
                   : `${liDraftCount} LinkedIn drafts across ${liBatch.accounts.length} accounts.`}{" "}
                 Expand to read and pick.
+              </p>
+            )
+          ) : redditBatch ? (
+            open ? (
+              <div className="mt-3">
+                <RedditDraftsBatch
+                  clientId={asset.clientId}
+                  {...(asset.jobId ? { jobId: asset.jobId } : {})}
+                  assetId={asset.id}
+                  accounts={redditBatch.accounts}
+                />
+              </div>
+            ) : (
+              <p className="mt-1 text-sm text-muted">
+                {redditDraftCount === 1
+                  ? "1 Reddit reply, drafted against a live thread."
+                  : `${redditDraftCount} Reddit replies, drafted against live threads.`}{" "}
+                Expand to read and post.
               </p>
             )
           ) : xBatch ? (

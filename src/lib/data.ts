@@ -45,6 +45,7 @@ import type {
   XTake,
   XDraftFeedback,
   LiDraftFeedback,
+  RedditDraftFeedback,
 } from "@/lib/types";
 import {
   CreditError,
@@ -107,17 +108,19 @@ const col = {
   // by a snapshot of the digest that produced it so the LLM only reruns when
   // there's actually something new to report (see /api/clients/[id]/insights).
   clientInsightsCache: () => adminDb().collection("clientInsightsCache"),
-  // Agent intake & seats (X e13 · LinkedIn e10) — per-agent client data on top
-  // of onboarding. clientSeats + agentIntake are shared across agents.
-  // xNewsUpdates is the SHARED company news drop (SCRUM-51): one client input
-  // fanned out to both the X and LinkedIn agents — the collection keeps its
-  // historical name to avoid a data migration.
+  // Agent intake & seats (X e13 · LinkedIn e10 · Reddit e15) — per-agent client
+  // data on top of onboarding. clientSeats + agentIntake are shared across
+  // agents. xNewsUpdates is the SHARED company news drop (SCRUM-51): one client
+  // input fanned out to both the X and LinkedIn agents — the collection keeps
+  // its historical name to avoid a data migration. Reddit shares no news drop
+  // (it answers questions, it does not broadcast news).
   clientSeats: () => adminDb().collection("clientSeats"),
   agentIntake: () => adminDb().collection("agentIntake"),
   xNewsUpdates: () => adminDb().collection("xNewsUpdates"),
   xTakes: () => adminDb().collection("xTakes"),
   xDraftFeedback: () => adminDb().collection("xDraftFeedback"),
   liDraftFeedback: () => adminDb().collection("liDraftFeedback"),
+  redditDraftFeedback: () => adminDb().collection("redditDraftFeedback"),
   // Planned agent runs shown on the unified calendar. Kept separate from the
   // recurring generator scheduler because the two records have different schemas.
   plannedScheduledRuns: () => adminDb().collection("plannedScheduledRuns"),
@@ -312,6 +315,10 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "xNewsUpdates",
   "xTakes",
   "xDraftFeedback",
+  // Keep this list and the mirror in scripts/purge-orphaned-client-docs.ts in
+  // step — the type is Array<keyof typeof col>, so an omission here is not a
+  // compile error and no test covers the contents.
+  "redditDraftFeedback",
   "plannedScheduledRuns",
 ];
 
@@ -2277,4 +2284,23 @@ export async function listLiDraftFeedback(
   if (account) q = q.where("account", "==", account);
   const snap = await q.get();
   return snap.docs.map((d) => withId<LiDraftFeedback>(d)).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function addRedditDraftFeedback(
+  data: Omit<RedditDraftFeedback, "id">,
+): Promise<string> {
+  const ref = await col.redditDraftFeedback().add(data);
+  return ref.id;
+}
+
+export async function listRedditDraftFeedback(
+  clientId: string,
+  account?: string,
+): Promise<RedditDraftFeedback[]> {
+  let q = col.redditDraftFeedback().where("clientId", "==", clientId);
+  if (account) q = q.where("account", "==", account);
+  const snap = await q.get();
+  return snap.docs
+    .map((d) => withId<RedditDraftFeedback>(d))
+    .sort((a, b) => b.createdAt - a.createdAt);
 }
