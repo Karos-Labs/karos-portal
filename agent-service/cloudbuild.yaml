@@ -99,14 +99,13 @@ steps:
       # secret must exist (bootstrap-gcp.sh creates it) or this deploy step fails.
       # XAI_API_KEY powers the X agent's live X reads; create the xai-api-key secret BEFORE
       # deploying this revision (see DEPLOY.md "X agent live reads").
-      # REDDIT_RSS_USER / REDDIT_RSS_FEED_TOKEN are the account-scoped user= / feed= pair from
-      # reddit.com/prefs/feeds — NOT an API app, NOT a posting credential. They lift the keyless
-      # RSS rate limit the Reddit agent's daily cadence otherwise trips (HTTP 429). Create the
-      # reddit-rss-user and reddit-rss-feed-token secrets BEFORE deploying this revision, exactly
-      # like xai-api-key: --set-secrets is declarative, so a secret listed here must exist or the
-      # deploy step fails, and one NOT listed here is dropped from the service on the next deploy.
-      # See DEPLOY.md "Reddit agent discovery".
-      - --set-secrets=AGENT_SERVICE_TOKENS=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest,REDIS_URL=agent-redis-url:latest,AGENT_ARTIFACTS_BUCKET=agent-artifacts-bucket:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,APIFY_TOKEN=apify-token:latest,XAI_API_KEY=xai-api-key:latest,REDDIT_RSS_USER=reddit-rss-user:latest,REDDIT_RSS_FEED_TOKEN=reddit-rss-feed-token:latest
+      # The Reddit agent needs NO secret to run: its discovery is keyless RSS, which is what the
+      # lab's good local run used. REDDIT_RSS_USER / REDDIT_RSS_FEED_TOKEN are an OPTIONAL
+      # rate-limit helper (the account-scoped user= / feed= pair from reddit.com/prefs/feeds) and
+      # are deliberately NOT listed here, because --set-secrets fails on a secret that does not
+      # exist. Add them to this line only when those secrets are actually created — the worker
+      # already forwards the names when set. See DEPLOY.md "Reddit agent discovery".
+      - --set-secrets=AGENT_SERVICE_TOKENS=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest,REDIS_URL=agent-redis-url:latest,AGENT_ARTIFACTS_BUCKET=agent-artifacts-bucket:latest,ANTHROPIC_API_KEY=anthropic-api-key:latest,APIFY_TOKEN=apify-token:latest,XAI_API_KEY=xai-api-key:latest
 
   - id: update-runner-job
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
