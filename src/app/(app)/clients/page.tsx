@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
-import { listClients, listAssets, listJobs } from "@/lib/data";
+import { listClients, listAssets, listJobs, getClientCredits } from "@/lib/data";
+import { availableCredits } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { CreateClientButton } from "@/components/create-client";
@@ -8,7 +9,17 @@ import { ClientsGrid, type ClientCardCounts } from "@/components/clients-grid";
 export default async function ClientsPage() {
   const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const clients = await listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined);
-  const [assets, jobs] = await Promise.all([listAssets(), listJobs()]);
+  const [assets, jobs, creditsByClient] = await Promise.all([
+    listAssets(),
+    listJobs(),
+    // Every credit denial tells the client to "ask your Karos team", but no
+    // staff surface showed a balance — the only credits control in the product
+    // was buried in one client's Settings page (QA F117). SPENDABLE, not raw
+    // balance: it is the number the charge transaction actually honours.
+    Promise.all(
+      clients.map(async (c) => [c.id, availableCredits(await getClientCredits(c.id))] as const),
+    ).then((entries) => Object.fromEntries(entries) as Record<string, number>),
+  ]);
 
   // Reduced HERE, not in the browser: the grid used to receive every asset and
   // every job in the database, serialized into the RSC payload, to print two
@@ -35,7 +46,7 @@ export default async function ClientsPage() {
           action={<CreateClientButton />}
         />
       ) : (
-        <ClientsGrid clients={clients} counts={counts} />
+        <ClientsGrid clients={clients} counts={counts} credits={creditsByClient} />
       )}
     </>
   );

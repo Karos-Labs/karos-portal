@@ -9,6 +9,7 @@ import { Icon } from "@/components/icon";
 import { updateClientAction, deleteClientAction } from "@/lib/actions";
 import { cn } from "@/lib/utils";
 import { BrandFavicon } from "@/components/brand-favicon";
+import { LOW_CREDIT_THRESHOLD } from "@/lib/constants";
 import type { Client } from "@/lib/types";
 
 /* ── Client avatar: logo or initials fallback ────────────────────────── */
@@ -345,6 +346,7 @@ type SortKey = "name" | "recent" | "deliverables";
 export function ClientsGrid({
   clients: initialClients,
   counts,
+  credits = {},
 }: {
   clients: Client[];
   /**
@@ -353,6 +355,8 @@ export function ClientsGrid({
    * print two numbers per card.
    */
   counts: Record<string, ClientCardCounts>;
+  /** Spendable credits per client id — availableCredits(), resolved server-side. */
+  credits?: Record<string, number>;
 }) {
   const [clients, setClients] = useState(initialClients);
   const [editTarget, setEditTarget] = useState<Client | null>(null);
@@ -419,6 +423,7 @@ export function ClientsGrid({
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((c) => {
           const { assets: assetCount, jobs: jobCount } = countsFor(c.id);
+          const spendable = credits[c.id];
           return (
             <div key={c.id} className="group relative">
               <Link href={`/clients/${c.id}`}>
@@ -443,13 +448,22 @@ export function ClientsGrid({
                       <Badge tone={c.status === "active" ? "neon" : "neutral"}>{c.status}</Badge>
                     </div>
                   </div>
-                  <div className="mt-4 flex gap-4 text-xs text-muted">
+                  <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted">
                     <span className="flex items-center gap-1">
                       <Icon name="FolderOpen" className="h-3.5 w-3.5" /> {assetCount} assets
                     </span>
                     <span className="flex items-center gap-1">
                       <Icon name="ListChecks" className="h-3.5 w-3.5" /> {jobCount} jobs
                     </span>
+                    {spendable != null && (
+                      <Badge
+                        tone={
+                          spendable === 0 ? "danger" : spendable <= LOW_CREDIT_THRESHOLD ? "warning" : "neutral"
+                        }
+                      >
+                        {spendable === 0 ? "Out of credits" : `${spendable} credits`}
+                      </Badge>
+                    )}
                   </div>
                 </Card>
               </Link>
