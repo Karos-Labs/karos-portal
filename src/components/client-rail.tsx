@@ -207,7 +207,12 @@ export function ClientRail({
               <span className="font-mono font-medium text-foreground">{creditBalance}</span>
             </Link>
           )}
-          <NotificationBell actionItems={actionItems} reviewJobs={reviewJobs} taskAlerts={taskAlerts} />
+          <NotificationBell
+            actionItems={actionItems}
+            reviewJobs={reviewJobs}
+            taskAlerts={taskAlerts}
+            viewerIsClient
+          />
         </div>
       </div>
 

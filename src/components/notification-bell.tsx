@@ -24,6 +24,12 @@ interface Props {
   panelPlacement?: "down" | "up" | "right";
   /** Render trigger as an icon button (default) or a full-width labeled row (account menu). */
   variant?: "icon" | "row";
+  /**
+   * True when the bell is rendered in the client shell. Review rows then point
+   * at the client's own Workspace archive — /jobs/[id] is staff-only and
+   * bounces a client back to their dashboard (QA F51).
+   */
+  viewerIsClient?: boolean;
 }
 
 export function NotificationBell({
@@ -32,6 +38,7 @@ export function NotificationBell({
   taskAlerts,
   panelPlacement = "down",
   variant = "icon",
+  viewerIsClient = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -183,24 +190,25 @@ export function NotificationBell({
                   {visibleJobs.map((j) => (
                     <div
                       key={j.jobId}
-                      className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
+                      className="flex items-start gap-1 px-4 py-3 transition-colors hover:bg-surface-2"
                     >
-                      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
-                        <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="line-clamp-2 text-xs font-medium text-foreground">
-                          New content ready:{" "}
-                          <span className="text-foreground">{j.title}</span>
-                        </p>
-                        <Link
-                          href={`/jobs/${j.jobId}`}
-                          onClick={() => setOpen(false)}
-                          className="mt-0.5 inline-block text-[10px] text-muted-2 hover:text-foreground"
-                        >
-                          {j.agentName} · Pending review · {relativeTime(j.updatedAt)}
-                        </Link>
-                      </div>
+                      <Link
+                        href={viewerIsClient ? "/tasks?tab=archive" : `/jobs/${j.jobId}`}
+                        onClick={() => setOpen(false)}
+                        className="flex min-w-0 flex-1 gap-3"
+                      >
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
+                          <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="line-clamp-2 text-xs font-medium text-foreground">
+                            New content ready: <span className="text-foreground">{j.title}</span>
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-muted-2">
+                            {j.agentName} · Pending review · {relativeTime(j.updatedAt)}
+                          </p>
+                        </div>
+                      </Link>
                       <button
                         onClick={() => dismissJob(j.jobId)}
                         className={cn(
