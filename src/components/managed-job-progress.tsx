@@ -12,14 +12,26 @@ const STEPS = [
  * Three-step progress strip for managed (agent-service) jobs. Server-safe —
  * pure render from the job status; the page's AutoRefresh keeps it live.
  */
-export function ManagedJobProgress({ status }: { status: JobStatus }) {
+export function ManagedJobProgress({
+  status,
+  className,
+}: {
+  status: JobStatus;
+  /** Overrides the standalone strip's chrome when it sits inside a list row. */
+  className?: string;
+}) {
   const failed = status === "failed";
   // A failed managed job never reached "review" (that's a success state), so pin
   // the failure to the working step rather than the final one.
   const current = status === "queued" ? 0 : status === "running" || failed ? 1 : 2;
 
   return (
-    <div className="mb-6 flex items-center gap-2 rounded-[var(--radius)] border border-border bg-surface px-4 py-3">
+    <div
+      className={cn(
+        "mb-6 flex items-center gap-2 rounded-[var(--radius)] border border-border bg-surface px-4 py-3",
+        className,
+      )}
+    >
       {STEPS.map((step, i) => {
         const reached = i <= current;
         // "in progress" pulse only on a non-terminal working step (i !== 2 already

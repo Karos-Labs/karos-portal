@@ -17,6 +17,7 @@ import {
   type CustomAgentRunRow,
   type RunnableAgentSummary,
 } from "@/components/custom-agents";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
@@ -194,8 +195,14 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // denial text that appears after a run has already been refused.
     const creditBlock = spendable !== undefined ? creditBlockReason(credits) : undefined;
     const agentSetup = await buildAgentSetup(id, agents);
+    // A client run takes 10–20 minutes and the client's rows carry no link, so
+    // without this the page never moved again after "Start run". Mounted only
+    // while something is actually in flight; it unmounts when the server
+    // renders a terminal status.
+    const runInFlight = runs.some((run) => run.status === "queued" || run.status === "running");
     return (
       <>
+        {runInFlight && <AutoRefresh />}
         <PageHeader
           title="AI Agents"
           description="Your active AI team—run agents now or set their weekly production pace."

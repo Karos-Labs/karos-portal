@@ -10,6 +10,7 @@ import { AgentInputFiles } from "@/components/agent-input-files";
 import { Modal } from "@/components/modal";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { JobStatusBadge } from "@/components/job-status";
+import { ManagedJobProgress } from "@/components/managed-job-progress";
 import {
   createCustomAgentAction,
   deleteCustomAgentAction,
@@ -622,18 +623,26 @@ export function ClientCustomAgents({
                 "flex items-center gap-3 px-4 py-2.5",
                 i > 0 && "border-t border-border",
               );
-              return run.href ? (
-                <Link
-                  key={run.id}
-                  href={run.href}
-                  className={cn(rowClass, "transition-colors hover:bg-surface-2")}
-                >
-                  {row}
-                  <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
-                </Link>
-              ) : (
-                <div key={run.id} className={rowClass}>
-                  {row}
+              // Client rows carry no link, so an in-flight run had nowhere to go
+              // and watch: the three-step strip comes to the row instead. Ten to
+              // twenty minutes on a frozen "Queued" reads as a stuck run.
+              const inFlight = run.status === "queued" || run.status === "running";
+              return (
+                <div key={run.id}>
+                  {run.href ? (
+                    <Link href={run.href} className={cn(rowClass, "transition-colors hover:bg-surface-2")}>
+                      {row}
+                      <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
+                    </Link>
+                  ) : (
+                    <div className={rowClass}>{row}</div>
+                  )}
+                  {inFlight && (
+                    <ManagedJobProgress
+                      status={run.status}
+                      className="mb-0 rounded-none border-0 border-t border-border bg-surface-2/50 px-4 py-2"
+                    />
+                  )}
                 </div>
               );
             })}
