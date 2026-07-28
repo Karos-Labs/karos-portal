@@ -3,28 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { getJob, updateJob } from "@/lib/data";
 import { cancelAgentServiceJob } from "@/lib/agent-service/client";
-import { submitManagedJob, type SubmitManagedJobInput } from "@/lib/jobs/submit-managed";
 import type { Job } from "@/lib/types";
 import { requireClientAccess, requireStaff } from "./_shared";
 
-/**
- * Submits a job to the external agent service and mirrors it as a platform
- * `jobs` doc. Progress arrives via the signed webhook
- * (/api/agent-service/webhook); the jobs UI polls the doc as usual. The actual
- * work lives in the shared `submitManagedJob` core so the MCP `submit_job` tool
- * runs the identical path — this wrapper only adds staff auth + cache busting.
+/*
+ * submitManagedJobAction was removed with the managed-product run UI (F39/F45):
+ * its only caller was managed-products.tsx, which nothing imported. The
+ * submitManagedJob CORE is untouched — execution-engine.ts calls it when a
+ * content_generation task resolves to a catalog product, so Social posts,
+ * Newsletter issue, Blog article and Landing page still run from the client's
+ * task board. The MCP `submit_job` tool runs that same core.
  */
-export async function submitManagedJobAction(
-  input: SubmitManagedJobInput,
-): Promise<{ jobId?: string; error?: string }> {
-  const user = await requireStaff();
-  const result = await submitManagedJob(user, input);
-  if (result.jobId && !result.error) {
-    revalidatePath("/jobs");
-    revalidatePath(`/clients/${input.clientId}`);
-  }
-  return result;
-}
 
 /** Requests cancellation of a running agent-service job (managed or custom). */
 export async function cancelManagedJobAction(jobId: string): Promise<{ error?: string }> {
