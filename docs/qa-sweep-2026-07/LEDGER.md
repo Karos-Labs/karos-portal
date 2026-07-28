@@ -133,14 +133,14 @@ are tracked in the CD table at the bottom.
 | F104 | MEDIUM | A | CREDITS | 2 | OPEN | yes | Hitting a spend cap never explains itself and offers no way forward | findings-p161-199.md |
 | F105 | MEDIUM | B | CREDITS | 2 | OPEN | — | The auto-publish switch snaps back with no explanation, and Disconnect silently does nothing wh | findings-p161-199.md |
 | F141 | LOW | A | CREDITS | 2 | OPEN | yes | The credit ledger is the only place that tells a client what anything costs | findings-p161-199.md |
-| F107 | HIGH | B | CALENDAR | 2 | OPEN | — | Choosing "Manual push" when approving tells you to publish from the calendar. There is no Publi | findings-p161-199.md |
-| F108 | HIGH | B | CALENDAR | 2 | OPEN | — | Scheduled runs are previewed in your timezone but stored and printed in the server's | findings-p161-199.md |
-| F151 | HIGH | A | CALENDAR | 2 | OPEN | yes | The calendar day detail prints the raw run record — internal status, product code, job hash, ma | findings-p161-199.md |
-| F109 | MEDIUM | A | CALENDAR | 2 | OPEN | yes | A calendar run badged "Ready to review" has nothing to click | findings-p161-199.md |
-| F110 | MEDIUM | B | CALENDAR | 2 | OPEN | — | Pause and Cancel on a scheduled run fail silently, and Cancel deletes it forever with no confir | findings-p161-199.md |
-| F111 | MEDIUM | A | CALENDAR | 2 | OPEN | yes | The month calendar is a fixed seven-column grid at every screen size, with chips well under the | findings-p161-199.md |
-| F112 | LOW | A | CALENDAR | 2 | OPEN | yes | A client's Calendar is read-only and its empty state offers no next step | findings-p161-199.md |
-| F142 | LOW | A | CALENDAR | 2 | OPEN | yes | The calendar's primary button wraps to two lines | findings-p161-199.md |
+| F107 | HIGH | B | CALENDAR | 2 | RESOLVED | — | Choosing "Manual push" when approving tells you to publish from the calendar. There is no Publi | findings-p161-199.md |
+| F108 | HIGH | B | CALENDAR | 2 | RESOLVED | — | Scheduled runs are previewed in your timezone but stored and printed in the server's | findings-p161-199.md |
+| F151 | HIGH | A | CALENDAR | 2 | RESOLVED | yes | The calendar day detail prints the raw run record — internal status, product code, job hash, ma | findings-p161-199.md |
+| F109 | MEDIUM | A | CALENDAR | 2 | RESOLVED | yes | A calendar run badged "Ready to review" has nothing to click | findings-p161-199.md |
+| F110 | MEDIUM | B | CALENDAR | 2 | RESOLVED | — | Pause and Cancel on a scheduled run fail silently, and Cancel deletes it forever with no confir | findings-p161-199.md |
+| F111 | MEDIUM | A | CALENDAR | 2 | RESOLVED | yes | The month calendar is a fixed seven-column grid at every screen size, with chips well under the | findings-p161-199.md |
+| F112 | LOW | A | CALENDAR | 2 | RESOLVED | yes | A client's Calendar is read-only and its empty state offers no next step | findings-p161-199.md |
+| F142 | LOW | A | CALENDAR | 2 | RESOLVED | yes | The calendar's primary button wraps to two lines | findings-p161-199.md |
 | F113 | HIGH | A | SHELL | 2 | OPEN | yes | Opening any client page swallows the whole staff sidebar — and employees have no way to get it  | findings-p161-199.md |
 | F115 | MEDIUM | B | SHELL | 2 | OPEN | — | An approved user is never told they were approved; the pending screen is a static dead end | findings-p161-199.md |
 | F116 | MEDIUM | A | SHELL | 2 | OPEN | yes | Clients get no notification badge on desktop — the bell is buried in the account menu | findings-p161-199.md |
