@@ -173,7 +173,7 @@ are tracked in the CD table at the bottom.
 | CD-D2 | AGENTS | 2 | RESOLVED | TikTok connector state shown as pending verification, not pretending |
 | CD-E1 | SHELL | 2 | RESOLVED | Remove "Agent-specific documents" section from the client rail (setup lives on AI Agents cards) |
 | CD-E2 | SHELL | 2 | RESOLVED | Brand colors: 3-4 swatches + internal usage-percentage catalog (staff-visible %, client sees swatches) |
-| CD-E3 | SHELL | 2 | RESOLVED | Sidebar must never scroll: fixed sections (nav, client, docs compact, competitors, colors) fit viewport |
+| CD-E3 | SHELL | 2 | RESOLVED-PARTIAL | No-scroll contract holds at ≥1440×900 after CD-H2's inline Brand Colors; at 1280×800 rails are 56px (staff) / 80px (client) over — Albert decision pending: accept scroll there or name a section to compress |
 | CD-F1 | — | end-loop | RESHAPED→CD-G7 | Fleet regenerate: superseded by CD-G7 completion-pass design (internal agents, no API key top-up) |
 | CD-F2 | SHELL | 2 | RESOLVED | Competitor Track favicons: every row shows the real favicon (fix resolution/fallback for rows showing the generic building icon) |
 | CD-G1 | AGENTS/P3 | 3 | RESOLVED | Agents roster → full-page per-agent detail route; no Run Now on cards; click opens page (rescopes.md third batch) |
