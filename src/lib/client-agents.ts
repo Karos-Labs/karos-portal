@@ -406,9 +406,13 @@ export function rosterStatus(input: {
   if (input.scheduleRefusal?.trim()) return { tone: "attention", label: "Needs attention" };
 
   if (input.launchState === null) {
+    // No umbrella and no schedule firing: nobody has set this agent up for this
+    // client yet, and its detail page says exactly that. The two must agree —
+    // a roster promising "Ready to start" that opens onto "Not set up yet" is
+    // a card that lied about the page behind it.
     return input.scheduleActive
       ? { tone: "live", label: "Live" }
-      : { tone: "idle", label: "Ready to start" };
+      : { tone: "idle", label: "Not set up yet" };
   }
 
   switch (input.launchState) {

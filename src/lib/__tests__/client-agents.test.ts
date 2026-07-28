@@ -286,7 +286,9 @@ describe("rosterStatus", () => {
     });
     expect(rosterStatus({ launchState: null, scheduleActive: false })).toEqual({
       tone: "idle",
-      label: "Ready to start",
+      // Must match the detail page hero for the same agent — a card promising
+      // "Ready to start" that opens onto "Not set up yet" lied about its page.
+      label: "Not set up yet",
     });
   });
 });
