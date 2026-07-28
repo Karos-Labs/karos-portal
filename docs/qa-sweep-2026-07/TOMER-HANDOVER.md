@@ -155,7 +155,7 @@ Read the printed plan before applying. Nothing here was run by the agents.
 |---|---|---|---|
 | §2.1 | `backfill-agent-blurbs.ts --apply` | F127 | Albert |
 | §2.2 | `backfill-asset-titles.ts --apply` | F33 | Albert |
-| §2.8 | **write** `scripts/backfill-client-agents.ts`, then run it per client | Phase 3 on existing clients | engineer, then Albert |
+| §2.8 | run `scripts/backfill-client-agents.ts` per client (written, never run) | Phase 3 on existing clients | Albert |
 | §2.9 | `refresh-apply.ts --apply` per client (CD-G7) | fleet data quality | Albert |
 | §2.10 | set `creditCost` + `launchCreditCost` per agent in the admin editor | F130, and every client Launch button | Albert (admin UI, no script) |
 | §2.11 | `grant-all-agents.ts` sanity pass + the fill-only manual profile edits | roster completeness | Albert |
@@ -234,8 +234,8 @@ Pre-sweep maintenance, unchanged: `backfill-branding.ts`,
 `purge-orphaned-client-docs.ts`, `redate-content-calendar.ts`,
 `schedule-approved-assets.ts`.
 
-**Not present and needed: `scripts/backfill-client-agents.ts` (§2.8).** It has
-never existed on any branch.
+**Written but never run: `scripts/backfill-client-agents.ts` (§2.8).** The code
+is merged; the migration is an ops step Albert performs per client.
 
 ### 2.4 Credit reload + SEO/GEO regenerate (call directive C2)
 
@@ -305,31 +305,59 @@ Still true at HEAD: `liveIngestEnabled()` is
 `src/lib/integrations/analytics-providers.ts:41-43`, gating on
 `process.env.ANALYTICS_LIVE_INGEST === "1"` (:42), enforced at :217 and :468.
 
-### 2.8 `scripts/backfill-client-agents.ts` — SPEC ONLY, THE BIGGEST UNBUILT ITEM
+### 2.8 `scripts/backfill-client-agents.ts` — WRITTEN, NOT YET RUN
 
-**New in v2, and the single most consequential gap in the handover.**
+**Changed in v3: the script now exists** (`scripts/backfill-client-agents.ts`).
+It is code-merged and ops-pending — the LEDGER discipline F127's blurb backfill
+follows. Nothing has been written to Firestore by it.
 
 Phase 3's whole model hangs off two new collections. Every *new* umbrella is
-created through the UI, but **no existing client has one**: there is no
-migration. `phase3-design.md` §9 (lines 893–944) specifies the script in full —
-7 steps, `--dry-run` default / `--apply` / `--client <id>` / `--delete` /
-`--stamp-jobs`, idempotent via deterministic ids — and **none of it is written**.
-`git log --all -- scripts/backfill-client-agents.ts` is empty; nothing else in
-`scripts/` touches `clientAgents`.
+created through the UI, but **no existing client has one** until this runs, so
+slots, template streams, per-template feedback, per-slot notes and the options
+picker stay dark for pre-Phase-3 clients. A client with a live weekly schedule
+and no umbrella (the flagship Instagram case) gets the **legacy branch** of the
+detail page instead — see §4.14. CD-H8 built that branch precisely to make this
+gap survivable, and its own comment says so (`legacy-agent-panel.tsx`).
 
-Consequences you will meet immediately:
+```bash
+npx tsx scripts/backfill-client-agents.ts                          # whole fleet, plan only
+npx tsx scripts/backfill-client-agents.ts --client=<id>            # one client, plan only
+npx tsx scripts/backfill-client-agents.ts --client=<id> --apply    # writes
+npx tsx scripts/backfill-client-agents.ts --client=<id> --apply --stamp-jobs
+npx tsx scripts/backfill-client-agents.ts --client=<id> --apply --delete   # rollback
+```
 
-- A client with a live weekly schedule and no umbrella (the flagship Instagram
-  case) gets the **legacy branch** of the detail page, not the umbrella one —
-  see §4.14. CD-H8 built that branch precisely to make the gap survivable, and
-  its own code comment says so (`legacy-agent-panel.tsx:36-38`).
-- Slots, template streams, per-template feedback, per-slot notes and the options
-  picker are all umbrella-gated, so **none of them exist for pre-Phase-3
-  clients** until this runs.
+**Dry run is the default.** The plan prints per client — every umbrella it would
+create with its launch state and the evidence for it, every template it would
+seed, every slot with the day it is fitted to, and an anomalies list. Read that
+before `--apply`; the credentials in `.env.local` point at production.
 
-The step that needs the most care is **step 4, slot derivation**: it fits slots
-to assets' *existing* dates and must never re-date an asset. Read §4.10 before
-writing it — a naive implementation collides with the chain planner.
+What it will not do, by construction:
+
+- **Never re-dates an asset.** §9 step 4 fits slots to the dates assets already
+  have (bucketed in the schedule's zone, the F108 contract). Read §4.10 before
+  changing it — a naive implementation collides with the chain planner.
+- **Never touches an existing umbrella.** A doc that exists is skipped whole,
+  not topped up: it may have been curated, and a half-merge would be
+  unexplainable. Redo one with `--delete --client=<id>` first.
+- **Never invents a template.** An asset whose stream cannot be derived is
+  reported as an anomaly and left alone.
+- **Never stamps `runType` on legacy jobs** (heuristic launch-detection is
+  unreliable). `--stamp-jobs` writes `clientAgentId` only, for grouping.
+- **X umbrellas get no templates and no retroactive option slots** — the daily
+  pick has no template streams, and options generate forward-only from the
+  first batch that lands after go-live.
+
+`--delete` requires `--client` and refuses to roll back the fleet at once. It
+removes only umbrellas it created (`createdBy: "backfill"`) plus their slots,
+and clears the two nullable linkage fields it wrote.
+
+The planning half is a pure exported function (`planClient`) covered by 16 unit
+tests against fixtures, so the decision that reaches production is checkable
+without a database. It imports the app's own helpers — identity mapping,
+template derivation, day-key bucketing, deterministic doc ids — rather than
+restating them, because a backfill that classified an asset differently from the
+app would build a registry the app then disagreed with.
 
 ### 2.9 CD-G7 fleet completion refresh — `refresh-export.ts` → `refresh-apply.ts`
 
@@ -1301,7 +1329,7 @@ what used to be true.*
 1.5 verification system · **1.6 Phase 3 + CD-G/CD-H**) ·
 §2 Ops runbook (2.1 blurbs · 2.2 asset titles · 2.3 scripts inventory ·
 2.4 credits + regenerate · 2.5 password · 2.6 agent-service env ·
-2.7 ANALYTICS_LIVE_INGEST · **2.8 backfill-client-agents (unbuilt)** ·
+2.7 ANALYTICS_LIVE_INGEST · **2.8 backfill-client-agents (built, unrun)** ·
 **2.9 CD-G7 refresh** · **2.10 per-agent pricing** · **2.11 grants + fill-only**) ·
 §3 Infra (3.1 CPU throttling · 3.2 video/GCP · 3.3 TikTok) ·
 §4 Deferred seams (**4.1 the metadata contract** · 4.2 managed-products retired ·
