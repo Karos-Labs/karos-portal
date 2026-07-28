@@ -22,38 +22,38 @@ consumed_by: [e10, e11, e12, e13, e14, karos-chat]
 
 > HOW the brand speaks, in enough detail that any agent or writer produces on-voice copy on the first try. Visual rules live in branding-guidelines; this is words only.
 
-## 1. Voice in one line
+## Voice in one line
 <e.g. "A smart, trustworthy friend who understands finance but never talks down to you.">
 
-## 2. Five voice adjectives
+## Five voice adjectives
 - **<Adjective>** — <what it means in practice, one line>
 - **<Adjective>** — <>
 - **<Adjective>** — <>
 - **<Adjective>** — <>
 - **<Adjective>** — <>
 
-## 3. Voice dimensions
+## Voice dimensions
 - Formal ↔ casual: <position + when it moves>
 - Serious ↔ playful: <>
 - Plain ↔ technical: <>
 - Reserved ↔ bold: <>
 - Warm ↔ neutral: <>
 
-## 4. Persona
+## Persona
 <Who is "speaking" when the brand posts. The character, relationship to reader, what they would and would not say.>
 
-## 5. Writing dos and don'ts
+## Writing dos and don'ts
 ### DO
 - <rule with concrete example>
 ### DON'T
 - <rule with better alternative>
 - <buzzwords/jargon to avoid>
 
-## 6. Compliance in copy (HARD GATES)
+## Compliance in copy (HARD GATES)
 - Never state or imply: <banned claim>
 - Always frame <sensitive topic> as: <required framing>
 
-## 7. Grammar & mechanics
+## Grammar & mechanics
 - Person / address: <>
 - Tense & active voice: <>
 - Sentence length & rhythm: <>
@@ -61,18 +61,18 @@ consumed_by: [e10, e11, e12, e13, e14, karos-chat]
 - Emoji policy: <>
 - Numbers: <>
 
-## 8. Vocabulary
+## Vocabulary
 ### Words & phrases we use
 ### Words & phrases we avoid
 ### Names & spellings (exact)
 
-## 9. Blog / long-form guidelines
+## Blog / long-form guidelines
 - **Target length:** <range>
 - **Structure:** <>
 - **Headline formula:** <>
 - **CTA placement:** <>
 
-## 10. Social voice by platform
+## Social voice by platform
 | Platform | Tone | Format | Focus | Platform-specific rule |
 |----------|------|--------|-------|------------------------|
 | Instagram | <> | <> | <> | <> |
@@ -80,13 +80,13 @@ consumed_by: [e10, e11, e12, e13, e14, karos-chat]
 | LinkedIn | <> | <> | <> | <> |
 | X / Twitter | <> | <> | <> | <> |
 
-## 11. CTA taxonomy
+## CTA taxonomy
 <Which CTA per post intent: visibility / sell / both.>
 
-## 12. Sample phrases & taglines
+## Sample phrases & taglines
 <8-12 examples a writer can pattern-match against.>
 
-## 13. Quick reminder for writers
+## Quick reminder for writers
 > <The 2-3 non-negotiables.>
 
 ## Change Log
@@ -108,24 +108,24 @@ consumed_by: [e10, e11, e12, e13, e14, a3, s5, s6, karos-chat]
 
 > The strategic brain of the profile. WHAT the brand says and to whom, where it plays, how it wins.
 
-## 1. Positioning statement
+## Positioning statement
 > For **<audience>**, **<brand>** is the **<category>** that **<differentiator>**, because **<reason to believe>**.
 
-## 2. Value propositions
+## Value propositions
 1. **<prop>** — <one-line support / proof>
 2. **<prop>** — <>
 3. **<prop>** — <>
 
-## 3. Messaging pillars
+## Messaging pillars
 <3-5 recurring themes everything ladders up to.>
 
-## 4. Proof points / reasons to believe
+## Proof points / reasons to believe
 <Evidence behind every claim: data, credentials, track record, named partners.>
 
-## 5. Message hierarchy
+## Message hierarchy
 <What we lead with, and the order.>
 
-## 6. Audience & ICP
+## Audience & ICP
 ### Ideal customer profile
 <The core buyer in a paragraph.>
 
@@ -143,28 +143,28 @@ consumed_by: [e10, e11, e12, e13, e14, a3, s5, s6, karos-chat]
 ### Voice-of-customer
 <Real language customers use.>
 
-## 7. Goals & KPIs
+## Goals & KPIs
 > Define the recommended KPI framework for this business. Fill in KPI name, area, and cadence from your knowledge of this business type. For Baseline: use only a figure from a named, verifiable source — otherwise write "to capture with client". For Target: if the client has not stated a goal, write "to define with client". NEVER write "data unavailable" in any cell. Omit a row only if the metric is genuinely irrelevant for this business model.
 
 | Area | KPI | Baseline | Target | Cadence |
 |------|-----|----------|--------|---------|
 
-## 8. Where to play
+## Where to play
 <Segments, channels, and niches to prioritize.>
 
-## 9. How to win
+## How to win
 <The strategic play: the wedge, what compounds, the unfair advantage.>
 
-## 10. Competitive white space
+## Competitive white space
 <The unowned territory no rival holds.>
 
-## 11. Channel priorities & cadence
+## Channel priorities & cadence
 <Per channel: role, priority, cadence, format mix.>
 
-## 12. Roadmap
+## Roadmap
 <Phased and qualitative: foundation → execution → optimization.>
 
-## 13. Risks & watch-outs
+## Risks & watch-outs
 <Market, competitive, regulatory, and timing risks.>
 
 ## Change Log
@@ -191,7 +191,7 @@ consumed_by: [e12, e13, e14, a3, s5]
 ## Executive Summary
 <4-6 sentences that a CEO reads before the full briefing. Answer: what kind of market is this, who are the most dangerous rivals, what is the single clearest competitive advantage <Client> can own, and what is the most urgent strategic move. This is not a list of facts — it is a strategic judgment.>
 
-## 1. Market Landscape
+## Market Landscape
 
 ### Market dynamics
 <What is the nature of this competitive environment? Is the market crowded with undifferentiated players, dominated by 1-2 giants with a long tail, a fragmented niche, or an emerging category? What are the 2-3 macro forces shaping competition right now (pricing pressure, commoditization, audience shifts, new technology enabling new entrants)?>
@@ -202,13 +202,13 @@ consumed_by: [e12, e13, e14, a3, s5]
 ### Market maturity and trajectory
 <Is this market growing, consolidating, or mature? What recent competitive moves, category pivots, or new entrants are reshaping the landscape? What is happening RIGHT NOW that a strategist must account for?>
 
-## 2. Competitive Position Overview
+## Competitive Position Overview
 
 | Competitor | Category | Positioning (their words) | Price (stated, with source) | Key Differentiator | Primary Weakness | Threat to <Client> |
 |------------|----------|---------------------------|-----------------------------|--------------------|-----------------|---------------------|
 <Fill all rows with real data. For price: only if published on their website with URL. Threat: HIGH / MEDIUM / LOW with one-word reason.>
 
-## 3. Where <Client> Wins
+## Where <Client> Wins
 <The specific competitive advantages <Client> holds over the field. Name the competitor being beaten for each advantage. "Quality" and "service" are not advantages — name the observable, defensible edges that buyers actually care about.>
 
 - **<Advantage 1>** — <exactly what the advantage is> vs. <named competitor(s)> who <what they lack>. Strategic implication: <why this matters to buyers and how the agency should amplify it>.
@@ -216,7 +216,7 @@ consumed_by: [e12, e13, e14, a3, s5]
 - **<Advantage 3>** — <evidence + competitive contrast + strategic implication>
 - **<Advantage 4 if applicable>** — <>
 
-## 4. Where <Client> Lags
+## Where <Client> Lags
 <Honest, specific gaps relative to competitors. This intelligence is what the agency needs to build a realistic strategy. Do not soften or omit these — they are as valuable as the wins.>
 
 - **<Gap 1>** — <competitor who outperforms here> does <specifically what better>. This matters because <buyer reason>. The gap manifests in <observable evidence>. Mitigation: <what <Client> could do to neutralize this gap>.
@@ -224,7 +224,7 @@ consumed_by: [e12, e13, e14, a3, s5]
 - **<Gap 3>** — <same format>
 - **<Gap 4 if applicable>** — <>
 
-## 5. Deep Dives — Top Direct Competitors
+## Deep Dives — Top Direct Competitors
 
 ### Competitor 1: <Name> (<domain.com>)
 **Category:** direct / secondary / indirect
@@ -261,17 +261,17 @@ consumed_by: [e12, e13, e14, a3, s5]
 **Threat level:** MEDIUM — <>
 **How to beat them:** <>
 
-## 6. Social Presence Scan
+## Social Presence Scan
 <For each major platform where competitors are meaningfully active: who leads, what their content approach is, and what <Client> should learn or counter. Follower counts only from live measurements with source and date — omit the count if not measured, describe the presence qualitatively instead.>
 
-## 7. Competitive White Space
+## Competitive White Space
 <The specific positioning territory, audience segment, or use case that NO current competitor owns effectively. This is where the agency builds sustainable leverage. Each entry must name WHY it is open and WHY <Client> is specifically positioned to claim it.>
 
 1. **<White space 1>** — <what the gap is> + <why no competitor owns it> + <why <Client> can claim it> + <what the first move looks like>
 2. **<White space 2>** — <same format>
 3. **<White space 3>** — <same format>
 
-## 8. Watch List
+## Watch List
 <Emerging or fast-moving players to track. For each: name the signal that flags them as a rising threat and what <Client> should monitor.>
 
 - **<Company>** — <why they're on the watch list, what signal to watch>
@@ -298,7 +298,7 @@ consumed_by: [e10, e11, e12, e13, e14, a3, s6, karos-chat]
 
 > The factual core: what it is, what it sells, who it serves, how it makes money, and what may and may not be claimed.
 
-## 1. Overview
+## Overview
 - **Product / company name:**
 - **Website:**
 - **One-liner:** <who it's for + what it does + the unique mechanism>
@@ -307,45 +307,45 @@ consumed_by: [e10, e11, e12, e13, e14, a3, s6, karos-chat]
 - **Product type:** <SaaS | DTC e-commerce | marketplace | services | hybrid | other>
 - **Stage:** <pre-launch | early | growth | established>
 
-## 2. What it does
+## What it does
 <2-4 paragraphs in plain language.>
 
-## 3. Target customers
+## Target customers
 <Who buys / uses this, in plain terms.>
 
-## 4. Business model
+## Business model
 - **How they make money:**
 - **Pricing (only figures the client publishes):** <tiers, minimums — with source URL. Write "not published" if not stated.>
 - **Unit / entry point:**
 
-## 5. Key features / offerings
+## Key features / offerings
 1. **<feature>** — <what it is + why it matters>
 2. **<feature>** — <>
 3. **<feature>** — <>
 
-## 6. Primary CTAs
+## Primary CTAs
 <Main actions the brand asks for, verbatim.>
 
-## 7. Regulatory, compliance & claims (HARD GATES)
+## Regulatory, compliance & claims (HARD GATES)
 - **Regulatory status:**
 - **Required disclosures / disclaimers:**
 - **Banned claims (NEVER say or imply):**
 - **Required framing:**
 - **Substantiation required:**
 
-## 8. Proof points & credibility
+## Proof points & credibility
 <Audits, certifications, track record, named partners. Every figure must have a source.>
 
-## 9. Channels & how customers interact
+## Channels & how customers interact
 
-## 10. Tech signals / stack
+## Tech signals / stack
 <Observable stack and infrastructure.>
 
-## 11. FAQ (foundational)
+## FAQ (foundational)
 | Question | Answer |
 |----------|--------|
 
-## 12. Do-not-misstate
+## Do-not-misstate
 <Facts commonly gotten wrong.>
 
 ## Sources
@@ -369,13 +369,13 @@ consumed_by: [e12, s6]
 
 > The VISUAL identity and asset inventory. Read by products that produce images.
 
-## 1. Logo
+## Logo
 - **Primary lockup:** <description>
 - **Variants:** <inverse, icon/symbol, monochrome>
 - **Clear space & minimum size:**
 - **Do nots:** <stretch, recolor, add effects>
 
-## 2. Color
+## Color
 | Role | Name | Hex | Where used |
 |------|------|-----|-----------|
 | Primary | <> | <#> | <> |
@@ -384,30 +384,30 @@ consumed_by: [e12, s6]
 | Background | <> | <#> | <> |
 | Text | <> | <#> | <> |
 
-## 3. Typography
+## Typography
 - **Display / headline:** <family, weights>
 - **Body:** <family, weights>
 - **Rule:** keep to ≤2 type families.
 
-## 4. Imagery & photography
+## Imagery & photography
 <Style, mood, color treatment, do/don't.>
 
-## 5. Iconography & graphic elements
+## Iconography & graphic elements
 <Icon style, shapes, recurring motifs.>
 
-## 6. Layout & composition
+## Layout & composition
 <Grid, spacing, margins, post/slide rules.>
 
-## 7. Motion (if applicable)
+## Motion (if applicable)
 <Transitions, pacing, caption animation.>
 
-## 8. Asset inventory
+## Asset inventory
 | Asset | Variant | Location |
 |-------|---------|----------|
 | Logos | <primary/inverse/icon> | <path> |
 | Fonts | <families> | <path> |
 
-## 9. Source / status
+## Source / status
 <Website-scraped draft | client-uploaded | finalized brand kit.>
 
 ## Change Log
@@ -432,22 +432,22 @@ consumed_by: [all]
 ## How to use this
 Before producing any deliverable, read this file and obey it. A rule here overrides a general default. If two rules conflict, the most recent dated entry wins.
 
-## 1. Hard do-nots (never do these)
+## Hard do-nots (never do these)
 - <things the client explicitly said they never want> — <source + date>
 
-## 2. Always do these
+## Always do these
 - <standing requests the client makes every time> — <source + date>
 
-## 3. Observed patterns
+## Observed patterns
 - <patterns inferred from repeated feedback> — <evidence>
 
-## 4. Approval & workflow preferences
+## Approval & workflow preferences
 - <how they like to work: who approves, how fast, what channels>
 
-## 5. Sensitivities & escalation
+## Sensitivities & escalation
 - <topics to handle carefully; when to escalate>
 
-## 6. Quick facts agents keep getting wrong
+## Quick facts agents keep getting wrong
 - <recurring factual corrections>
 
 ## Change Log
@@ -498,7 +498,7 @@ consumed_by: [e10, e11, e12, e13, e14, karos-chat]
 
 > DEFINITIVE ICP BLUEPRINT. Every content agent and copywriter reads this document before producing a single word. Nothing here is generic. Every bullet is traceable to client onboarding data, a named review platform, a competitor's hero copy, or a clearly-labeled industry pattern. If a bullet cannot meet that standard, it is omitted silently — never replaced with a placeholder.
 
-## 1. ICP Persona Profile
+## ICP Persona Profile
 
 > Define the primary ideal customer profile. If two genuinely distinct buyer personas exist, add a "Secondary ICP" sub-section and repeat all sub-bullets. Otherwise one block is sufficient. Every field must name a specific role, context, or metric — not a category.
 
@@ -524,7 +524,7 @@ consumed_by: [e10, e11, e12, e13, e14, karos-chat]
 - <KPI or outcome>
 - <KPI or outcome>
 
-## 2. Tech Stack & Current Solutions
+## Tech Stack & Current Solutions
 
 > What this persona uses TODAY to solve the problems the client addresses. Named products, not category labels. Each entry must be traceable: "client-stated:", "website-observed:", or "industry pattern:". This section is the enemy narrative — name it precisely.
 
@@ -545,7 +545,7 @@ consumed_by: [e10, e11, e12, e13, e14, karos-chat]
 - <specific trigger — e.g. "end of annual contract cycle", "headcount doubles past 50", "compliance deadline">
 - <trigger>
 
-## 3. Content Engagement Patterns
+## Content Engagement Patterns
 
 > Where this persona spends attention professionally. Specific enough that a content agent can immediately act: named platforms, named communities, named formats. No generic lists.
 
@@ -569,7 +569,7 @@ consumed_by: [e10, e11, e12, e13, e14, karos-chat]
 - <specific trust signal — e.g. "G2 reviews from named peer companies in their exact industry vertical">
 - <trust signal>
 
-## 4. Linguistic Profile & Vocabulary
+## Linguistic Profile & Vocabulary
 
 > The most direct input content agents use for calibrating copy register. Copy that uses this persona's vocabulary reads as peer-written. Copy that ignores it reads as vendor-speak and is rejected before the second sentence.
 

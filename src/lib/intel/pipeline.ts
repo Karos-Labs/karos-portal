@@ -548,7 +548,7 @@ ${fillFrontmatter(template, client, docType, "internal")}
 INSTRUCTIONS:
 - Your output MUST begin with the opening \`---\` of the YAML frontmatter and proceed section by section in the exact order shown in the template above. Do not start from the middle of the document.
 - Fill every section completely. Replace all <placeholder> text and every \`> ...\` blockquote with real, specific content.
-- Keep all section headings (## N. Heading) exactly as written.
+- Keep all section headings exactly as written. Do NOT add numbers to them — the viewer numbers sections from their position, so a literal number in the text can only disagree with it.
 - For quantitative metrics without a source: use "—" (em dash) in table cells. For qualitative sections: derive and infer — never use any placeholder phrase.
 - For Goals & KPIs tables: fill the KPI name and cadence from business context; use "to capture with client" for unknown baselines and "to define with client" for unknown targets. Never use "data unavailable" in any table cell.
 - COMPLETE ALL SECTIONS — this document has ${template.match(/^## /gm)?.length ?? "multiple"} sections; every one must appear in the output.

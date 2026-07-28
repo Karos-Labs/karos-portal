@@ -9,6 +9,19 @@ export interface DocSection {
   body: string;
 }
 
+/**
+ * Drop a literal "3. " / "3) " prefix from a section heading.
+ *
+ * Documents generated before the numbers came out of the templates have them
+ * baked into the text, where nothing can renumber them — and an auto-synced
+ * block inserted at the top shifted the sequence, so the first numbered heading
+ * a client read was "2.". Numbering is positional now; this strips the old one
+ * so a stored document cannot show two.
+ */
+export function stripHeadingNumber(heading: string): string {
+  return heading.replace(/^\s*\d+\s*[.)]\s+/, "");
+}
+
 /** Markdown inline link: `[label](target)`. */
 export const LINK_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
 

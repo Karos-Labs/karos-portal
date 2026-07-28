@@ -12,6 +12,7 @@ import {
   renderFullDoc,
   renderSectionBody,
   stripDocPreamble,
+  stripHeadingNumber,
 } from "@/lib/doc-render";
 import { generateIntelReportAction, updateIntelScheduleAction } from "@/lib/actions";
 import { CorrectInfoModal } from "@/components/correct-info-modal";
@@ -120,8 +121,9 @@ function renderForPrint(markdown: string): string {
     .replace(/^---+$/gm, "")
     // H4+ sub-headings — the Market Strategy template's persona headings
     .replace(/^#{4,6}\s+(.+)$/gm, "<h4>$1</h4>")
-    // H2 headings
-    .replace(/^##\s+(.+)$/gm, "<h2>$1</h2>")
+    // H2 headings — legacy literal numbers stripped; documents generated before
+    // the numbers came out of the templates still carry them.
+    .replace(/^##\s+(.+)$/gm, (_m, h: string) => `<h2>${stripHeadingNumber(h)}</h2>`)
     // H3 sub-headings
     .replace(/^###\s+(.+)$/gm, "<h3>$1</h3>")
     // Bold / italic / code
@@ -193,7 +195,23 @@ function renderForPrint(markdown: string): string {
 
 function buildPrintWindow(content: string, title: string): void {
   const clean = stripDocPreamble(content);
-  const body = renderForPrint(clean);
+  // Built from the SAME section list the drawer indexes, so the PDF's section
+  // numbers cannot disagree with the ones on screen (parseDocSections drops
+  // placeholder sections, and a renderer counting its own headings would number
+  // them differently).
+  const sections = parseDocSections(content);
+  const body =
+    sections.length >= 2
+      ? [
+          renderForPrint(leadIn(content)),
+          ...sections.map(
+            (s, i) =>
+              `<h2>${esc(`${i + 1}. ${stripHeadingNumber(s.heading)}`)}</h2>\n${renderForPrint(s.body)}`,
+          ),
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : renderForPrint(clean);
 
   const html = `<!DOCTYPE html>
 <html>
@@ -457,7 +475,7 @@ function DocOverlay({
                           }
                           className="w-full rounded-md px-2 py-1 text-left text-xs leading-snug text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
                         >
-                          {s.heading}
+                          {i + 1}. {stripHeadingNumber(s.heading)}
                         </button>
                       </li>
                     ))}
@@ -478,7 +496,7 @@ function DocOverlay({
                         }
                         className="shrink-0 rounded-full border border-border px-2.5 py-1 text-[11px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
                       >
-                        {s.heading}
+                        {i + 1}. {stripHeadingNumber(s.heading)}
                       </button>
                     ))}
                   </div>
@@ -489,7 +507,7 @@ function DocOverlay({
                   {sections.map((s, i) => (
                     <section key={sectionId(s.heading, i)} id={sectionId(s.heading, i)}>
                       <h2 className="mt-7 mb-2.5 scroll-mt-4 text-base font-semibold text-neon/90">
-                        {s.heading}
+                        {i + 1}. {stripHeadingNumber(s.heading)}
                       </h2>
                       <div dangerouslySetInnerHTML={{ __html: renderSectionBody(s.body) }} />
                     </section>
