@@ -51,6 +51,80 @@ export function looksLikeMarkdown(text: string | null | undefined): boolean {
   );
 }
 
+/**
+ * Lines that are the run record talking to itself, not to the reader: a
+ * `status:` / `job:` / `product:` key line, or any line carrying a database
+ * hash or a lab product code. Agent deliverables open with exactly this kind of
+ * header ("status: pending_review · product e13 · job e52ffe1e · draft-only").
+ */
+const INTERNAL_KEY_LINE_RE =
+  /^\s*(status|state|product|job|run|task|id|uuid|hash|module|version|owner|source|slug|key|delivery_mode|mode)\s*[:=]/i;
+const INTERNAL_TOKEN_RE = /\b(?:[0-9a-f]{8,}|product\s+e\d+|job\s+[0-9a-f]{6,})\b/i;
+
+/**
+ * Strip inline Markdown marks from a single line, leaving readable text.
+ * Paired emphasis only — a lone `*` or `_` is a literal character in captions
+ * far more often than it is markup (same reasoning as looksLikeMarkdown).
+ */
+export function stripInlineMarkdown(line: string): string {
+  return line
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1") // images → alt text
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // links → label
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*(\S[^*]*?)\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .trim();
+}
+
+/**
+ * A one-line, client-safe plain-text teaser for arbitrary agent output.
+ *
+ * Slicing raw content is what put "# Karos X — … status: pending_review ·
+ * product e13 · job e52ffe1e … **one post in every avenue**" on the calendar's
+ * day detail: four leak classes at once (markdown syntax, raw enum, internal
+ * product id, database hash). This drops the record's own bookkeeping lines and
+ * flattens what's left. Run at the SERVER boundary so the internal strings never
+ * reach a client's payload, not at render.
+ */
+export function toPlainSummary(text: string | null | undefined, maxChars = 240): string {
+  if (!text) return "";
+  const body = text
+    .replace(/^﻿/, "")
+    .replace(/```[a-zA-Z]*\r?\n([\s\S]*?)```/g, "$1") // keep fenced text, drop the fence
+    .replace(/^\s*---[\s\S]*?\n---[ \t]*\r?\n?/, ""); // YAML frontmatter
+
+  const parts: string[] = [];
+  for (const raw of body.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^[-*_]{3,}$/.test(line)) continue; // horizontal rule
+    if (/^\|[-:\s|]+\|$/.test(line)) continue; // table separator
+    if (INTERNAL_KEY_LINE_RE.test(line)) continue;
+    if (INTERNAL_TOKEN_RE.test(line)) continue;
+
+    const stripped = stripInlineMarkdown(
+      line
+        .replace(/^#{1,6}\s+/, "") // heading marker
+        .replace(/^>\s?/, "") // blockquote arrow
+        .replace(/^[-*+]\s+/, "") // bullet
+        .replace(/^\d+[.)]\s+/, "") // ordered item
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .replace(/\s*\|\s*/g, " · "), // table row → readable run
+    );
+    if (stripped) parts.push(stripped);
+    if (parts.join(" ").length >= maxChars) break;
+  }
+
+  const flat = parts.join(" ").replace(/\s+/g, " ").trim();
+  if (flat.length <= maxChars) return flat;
+  const cut = flat.slice(0, maxChars);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > maxChars * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
 /** Split a context doc into `## heading` sections, dropping empty/placeholder ones. */
 export function parseDocSections(content: string): DocSection[] {
   const clean = stripDocPreamble(content);

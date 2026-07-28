@@ -9,6 +9,7 @@ import {
 import { assetImages } from "@/lib/asset-images";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import { integrationIsUsable } from "@/lib/integration-status";
+import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
 import { PageHeader, EmptyState } from "@/components/ui";
@@ -21,10 +22,36 @@ import {
   type RunAssetView,
   type ScheduleAgentOption,
 } from "@/components/run-calendar";
-import type { Asset, AppUser } from "@/lib/types";
+import type { Asset, AppUser, AssetType } from "@/lib/types";
 
 // Jobs that have actually run (produced or attempted output).
 const PAST_JOB_STATUSES = new Set(["review", "approved", "delivered", "failed"]);
+
+/** Plain-English noun for what a run actually produced. */
+const OUTPUT_NOUN: Record<AssetType, [string, string]> = {
+  instagram_post: ["post", "posts"],
+  social_post: ["post", "posts"],
+  article: ["article", "articles"],
+  email: ["email", "emails"],
+  note: ["note", "notes"],
+};
+
+/**
+ * "drafted 8 posts" — composed from the run's own deliverables instead of
+ * echoing the record's internal summary text.
+ */
+function describeRunOutput(views: RunAssetView[]): string | undefined {
+  if (views.length === 0) return undefined;
+  const types = new Set(views.map((v) => v.type));
+  const [one, many] =
+    types.size === 1 ? OUTPUT_NOUN[[...types][0]] ?? ["item", "items"] : ["item", "items"];
+  return `${views.length} ${views.length === 1 ? one : many}`;
+}
+
+/** Titles come straight from the agent — a leading `#` or `**` is not a title. */
+function cleanTitle(title: string): string {
+  return stripInlineMarkdown(title.replace(/^#{1,6}\s+/, "")) || title;
+}
 
 function postKind(a: Asset): CalendarPost["kind"] | null {
   if (a.status === "published" && (a.scheduledAt != null || a.publishedAt != null)) return "published";
@@ -173,11 +200,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     .filter((j) => !(isClient && j.status === "failed")) // hide internal failures from clients
     .map((j) => {
       const agent = agentByName.get(j.agentName);
+      // Sanitized here, at the server boundary, not at render: slicing raw
+      // content shipped the run record's own bookkeeping — markdown syntax, the
+      // internal status word, the lab product code and the job hash — into the
+      // payload of the panel a client opens to see what ran.
       const views: RunAssetView[] = (assetsByJob.get(j.id) ?? []).map((a) => ({
         id: a.id,
         type: a.type,
-        title: a.title,
-        textPreview: (a.content ?? "").slice(0, 240),
+        title: cleanTitle(a.title),
+        textPreview: toPlainSummary(a.content, 240),
         images: assetImages(a),
       }));
       return {
@@ -190,6 +221,9 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         productColor: agent?.color ?? "#FF6B2C",
         productIcon: agent?.icon ?? "Bot",
         jobStatus: j.status,
+        ...(describeRunOutput(views) ? { outputSummary: describeRunOutput(views) } : {}),
+        // Job id is staff bookkeeping: a tooltip for them, absent for clients.
+        ...(isClient ? {} : { staffRef: `Job ${j.id}${agent ? ` · agent ${agent.id}` : ""}` }),
         assets: views,
         images: views.flatMap((v) => v.images),
       };
@@ -207,11 +241,12 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         assetId: a.id,
         clientId: a.clientId,
         clientName: single ? undefined : nameOf(a.clientId),
-        title: a.title,
+        title: cleanTitle(a.title),
         at,
         kind,
         images: assetImages(a),
-        textPreview: (a.content ?? "").slice(0, 160),
+        // Same leak class as the run cards above — same treatment.
+        textPreview: toPlainSummary(a.content, 160),
       };
     })
     .filter((p): p is CalendarPost => p != null);

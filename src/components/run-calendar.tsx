@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { AgentMark } from "@/components/agent-identity";
 import { Badge, Button } from "@/components/ui";
+import { JOB_STATUS_META } from "@/components/job-status";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
@@ -38,6 +39,10 @@ export interface CalendarRun {
   productIcon: string;
   // past
   jobStatus?: JobStatus;
+  /** Composed by the server: "drafted 8 posts". Never the record's own summary text. */
+  outputSummary?: string;
+  /** Staff-only tooltip carrying the job id — omitted from a client's payload. */
+  staffRef?: string;
   assets?: RunAssetView[];
   /** Every image across the run's assets, in order — feeds the run lightbox. */
   images?: AssetImage[];
@@ -254,11 +259,14 @@ function PastRunCard({
 }) {
   const images = run.images ?? [];
   const textAssets = (run.assets ?? []).filter((a) => a.images.length === 0 && a.textPreview);
-  const statusTone =
-    run.jobStatus === "failed" ? "danger" : run.jobStatus === "delivered" || run.jobStatus === "approved" ? "success" : "neutral";
+  const status = run.jobStatus
+    ? JOB_STATUS_META[run.jobStatus] ?? { tone: "neutral" as const, label: "Done" }
+    : { tone: "neutral" as const, label: "Done" };
 
   return (
-    <div className="rounded-lg border border-border bg-surface p-3">
+    // Product code and job id are staff bookkeeping — a tooltip the server only
+    // fills in for staff, never body copy on a client's screen.
+    <div className="rounded-lg border border-border bg-surface p-3" title={run.staffRef}>
       <div className="flex items-start gap-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
           <AgentMark identity={run.productName} icon={run.productIcon} className="h-4 w-4" />
@@ -266,10 +274,13 @@ function PastRunCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium">{run.productName}</p>
-            <Badge tone={statusTone}>{run.jobStatus === "review" ? "Ready to review" : (run.jobStatus ?? "done")}</Badge>
+            {/* Never `run.jobStatus` raw — that prints the database enum. */}
+            <Badge tone={status.tone}>{status.label}</Badge>
             {run.clientName && <Badge tone="neutral">{run.clientName}</Badge>}
           </div>
-          <p className="mt-0.5 text-xs text-muted-2">Ran {timeStr(run.at)}</p>
+          <p className="mt-0.5 text-xs text-muted-2">
+            {run.outputSummary ? `${run.outputSummary} · ` : ""}Ran {timeStr(run.at)}
+          </p>
 
           {run.jobStatus === "failed" ? (
             <p className="mt-2 text-xs text-danger">The run failed and produced no assets.</p>

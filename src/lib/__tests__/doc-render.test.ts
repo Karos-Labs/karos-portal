@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { looksLikeMarkdown, renderAssetBody, renderFullDoc } from "@/lib/doc-render";
+import {
+  looksLikeMarkdown,
+  renderAssetBody,
+  renderFullDoc,
+  stripInlineMarkdown,
+  toPlainSummary,
+} from "@/lib/doc-render";
 
 /**
  * The asset detail modal is the only deliverable viewer a client can reach, so
@@ -82,5 +88,69 @@ describe("renderAssetBody", () => {
     const html = renderAssetBody("# Title\n\n<img src=x onerror=alert(1)>");
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;img");
+  });
+});
+
+/**
+ * The calendar's day detail is a client surface fed by whatever the agent wrote.
+ * The real photographed leak (2026-07-22) carried four classes at once: markdown
+ * syntax, the raw status enum, the lab product code and a job hash.
+ */
+describe("toPlainSummary", () => {
+  const REAL_LEAK = [
+    "# Karos X — full draft batch across every avenue (company page + seat)",
+    "",
+    "status: pending_review · product e13 · 2026-07-22 · job e52ffe1e · draft-only, nothing posted",
+    "",
+    "This batch drafts **one post in every avenue** for both managed accounts:",
+  ].join("\n");
+
+  it("drops the record's bookkeeping line entirely", () => {
+    const out = toPlainSummary(REAL_LEAK);
+    expect(out).not.toContain("pending_review");
+    expect(out).not.toContain("e13");
+    expect(out).not.toContain("e52ffe1e");
+    expect(out).not.toContain("status:");
+  });
+
+  it("keeps the human sentences, without their markdown", () => {
+    const out = toPlainSummary(REAL_LEAK);
+    expect(out).toContain("Karos X");
+    expect(out).toContain("one post in every avenue");
+    expect(out).not.toContain("#");
+    expect(out).not.toContain("**");
+  });
+
+  it("flattens bullets, quotes and inline code", () => {
+    expect(toPlainSummary("- first\n- second\n> quoted\n`code`")).toBe("first second quoted code");
+  });
+
+  it("keeps a literal asterisk in a caption", () => {
+    expect(toPlainSummary("5 * 3 = 15")).toBe("5 * 3 = 15");
+  });
+
+  it("resolves links to their label", () => {
+    expect(toPlainSummary("See [our guide](https://example.com/x) today")).toBe(
+      "See our guide today",
+    );
+  });
+
+  it("truncates on a word boundary with an ellipsis", () => {
+    const out = toPlainSummary("alpha bravo charlie delta echo foxtrot", 20);
+    expect(out.endsWith("…")).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(21);
+    expect(out).not.toContain("delt…");
+  });
+
+  it("survives empty and absent content", () => {
+    expect(toPlainSummary("")).toBe("");
+    expect(toPlainSummary(null)).toBe("");
+    expect(toPlainSummary("status: queued")).toBe("");
+  });
+});
+
+describe("stripInlineMarkdown", () => {
+  it("unwraps paired emphasis but leaves lone marks alone", () => {
+    expect(stripInlineMarkdown("**bold** and *italic* and 2 * 3")).toBe("bold and italic and 2 * 3");
   });
 });
