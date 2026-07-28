@@ -207,7 +207,19 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           title="AI Agents"
           description="Your active AI team—run agents now or set their weekly production pace."
         />
-        {agents.length > 0 && agentServiceConfigured ? (
+        {/* Two different conditions used to share the never-set-up empty state,
+            so an outage or a bad deploy told a client with three live agents
+            and a run history that they had never been set up. Only an empty
+            allowlist gets that copy now; an unconfigured service keeps the
+            agents, schedules and history on screen behind an honest notice. */}
+        {agents.length > 0 && !agentServiceConfigured && (
+          <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+            <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
+            Agent runs are paused right now — starting a new run will not work until this clears.
+            Your Karos team has been notified. Everything below is unaffected.
+          </p>
+        )}
+        {agents.length > 0 ? (
           <ClientCustomAgents
             clientId={id}
             agents={agents}
