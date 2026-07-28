@@ -51,10 +51,18 @@ function toSummary(agent: CustomAgent): RunnableAgentSummary {
  * submitted prompt: the raw request is an operator's free text (typos, stray
  * capitals) and never belongs in a client's run history, so it is dropped here
  * at the RSC boundary rather than hidden at render.
+ *
+ * LAUNCH runs are not runs as far as a client is concerned — they are the
+ * setup, and the launch card is already telling that story in three phases. A
+ * generic row beside it would give the same event two identities (the F147
+ * failure this architecture exists to kill), offer a Cancel the card doesn't,
+ * and advertise "· 1 draft" for a deliverable that is staff-only by design.
+ * Staff keep the rows: they link to /jobs and are the run's real history.
  */
 function toRunRows(jobs: Job[], staff: boolean): CustomAgentRunRow[] {
   return jobs
     .filter((j) => j.agentId === "agent-service" && j.external?.taskType === "custom")
+    .filter((j) => staff || j.runType !== "launch")
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 8)
     .map((j) => ({
@@ -201,7 +209,13 @@ function toClientAgentRows(args: {
         ...(gate.allowed ? {} : { code: gate.code, reason: gate.reason }),
       },
       ...(setup ? { setupHref: setup.href, setupLabel: setup.label } : {}),
-      templates: umbrella.templates ?? [],
+      // Templates cross to a client viewer ONLY once the umbrella is live.
+      // While it is `curating` the registry holds what the setup run PROPOSED,
+      // which staff have not confirmed yet (the Q3 gate) — sending it and
+      // deciding not to paint it inside a client component would still put
+      // unconfirmed AI-written names and rationales in the RSC payload.
+      templates:
+        args.viewerIsClient && umbrella.launchState !== "live" ? [] : (umbrella.templates ?? []),
     });
   }
   return rows;
