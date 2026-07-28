@@ -62,6 +62,15 @@ export interface LiRunRowView {
   href?: string;
 }
 
+/**
+ * The marker for a field the server refuses to save empty. The seat forms
+ * rejected a blank "must never post" answer while marking nothing required, so
+ * the only way to learn the rule was to fail the save.
+ */
+function RequiredMark() {
+  return <span className="ml-1 text-danger">*</span>;
+}
+
 function fieldError(error: string | null) {
   return error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null;
 }
@@ -356,7 +365,10 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
           </p>
         </div>
         <div>
-          <Label htmlFor={`ls-offlimits-${seat.id}`}>Anything we must never post</Label>
+          <Label htmlFor={`ls-offlimits-${seat.id}`}>
+            Anything we must never post
+            <RequiredMark />
+          </Label>
           <Textarea
             id={`ls-offlimits-${seat.id}`}
             rows={2}
@@ -478,7 +490,10 @@ function AddSeatForm({ clientId }: { clientId: string }) {
           </p>
         </div>
         <div>
-          <Label htmlFor="la-offlimits">Anything we must never post</Label>
+          <Label htmlFor="la-offlimits">
+            Anything we must never post
+            <RequiredMark />
+          </Label>
           <Textarea
             id="la-offlimits"
             rows={2}

@@ -75,6 +75,15 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * The marker for a field the server refuses to save empty. The seat forms
+ * rejected a blank "must never post" answer while marking nothing required, so
+ * the only way to learn the rule was to fail the save.
+ */
+function RequiredMark() {
+  return <span className="ml-1 text-danger">*</span>;
+}
+
 function fieldError(error: string | null) {
   return error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null;
 }
@@ -234,13 +243,16 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
           />
         </div>
         <div>
-          <Label htmlFor="xc-offlimits">Anything we must never post</Label>
+          <Label htmlFor="xc-offlimits">
+            Anything we must never post
+            <RequiredMark />
+          </Label>
           <Textarea
             id="xc-offlimits"
             rows={2}
             value={offLimits}
             onChange={(e) => setOffLimits(e.target.value)}
-            placeholder="Topics, client names, specific numbers."
+            placeholder='Topics, client names, specific numbers. Write "nothing" if everything is fair game.'
           />
         </div>
         <PremiumField idPrefix="xc" value={premium} onChange={setPremium} />
@@ -360,7 +372,10 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
           />
         </div>
         <div>
-          <Label htmlFor={`xs-offlimits-${seat.id}`}>Anything we must never post</Label>
+          <Label htmlFor={`xs-offlimits-${seat.id}`}>
+            Anything we must never post
+            <RequiredMark />
+          </Label>
           <Textarea
             id={`xs-offlimits-${seat.id}`}
             rows={2}
@@ -486,7 +501,10 @@ function AddSeatForm({ clientId }: { clientId: string }) {
           </div>
         </div>
         <div>
-          <Label htmlFor="xa-offlimits">Anything we must never post</Label>
+          <Label htmlFor="xa-offlimits">
+            Anything we must never post
+            <RequiredMark />
+          </Label>
           <Textarea
             id="xa-offlimits"
             rows={2}
