@@ -11,9 +11,18 @@ import type { BrandColor, BrandingGuidelines, ClientCompetitor } from "@/lib/typ
 
 /* ── Competitor favicon with fallback ────────────────────────────────── */
 
-export function CompetitorFavicon({ url }: { url?: string }) {
+export function CompetitorFavicon({ url, company }: { url?: string; company?: string }) {
   return (
-    <BrandFavicon website={url} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+    <BrandFavicon
+      website={url}
+      /* Two jobs (CD-F2): a name that IS a domain resolves a real favicon when
+         the row has no url, and anything left over gets an initials chip
+         instead of the anonymous building glyph. */
+      name={company}
+      accentColor="#ff6b2c"
+      faviconSize={32}
+      className="h-4 w-4 rounded-[3px] text-[8px]"
+    />
   );
 }
 
@@ -204,7 +213,7 @@ export function CompetitorTrack({
             const isRemoving = removingId === c.id;
             const linkContent = (
               <>
-                <CompetitorFavicon url={c.url} />
+                <CompetitorFavicon url={c.url} company={c.company} />
                 <span className="flex-1 truncate text-xs text-muted group-hover:text-foreground">
                   {c.company}
                 </span>
