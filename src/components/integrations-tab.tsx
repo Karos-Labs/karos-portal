@@ -147,24 +147,32 @@ function ChannelSection({
   title,
   blurb,
   platforms,
-  isLive,
+  statusOf,
   renderCard,
   leadingCards,
 }: {
   title: string;
   blurb: string;
   platforms: PlatformConfig[];
-  /** True when this platform is connected and usable (not dead-token). */
-  isLive: (p: PlatformConfig) => boolean;
+  /**
+   * Three buckets, not two. "needs-reconnect" MUST keep its full card: an
+   * expired token is the one state a client has to act on, and collapsing it
+   * into the add-list hid the Reconnect badge behind a click and replaced the
+   * warning with the platform's marketing blurb — a broken channel reading as
+   * fine and filed away. Only a platform with no integration doc at all is
+   * genuinely "not set up" and safe to collapse.
+   */
+  statusOf: (p: PlatformConfig) => "live" | "needs-reconnect" | "absent";
   renderCard: (p: PlatformConfig) => React.ReactNode;
   /** Always-full cards that belong to this section (the merged Google suite). */
   leadingCards?: React.ReactNode;
 }) {
   const [expanded, setExpanded] = useState<string[]>([]);
-  const live = platforms.filter(isLive);
-  const rest = platforms.filter((p) => !isLive(p));
-  const opened = rest.filter((p) => expanded.includes(p.id));
-  const collapsed = rest.filter((p) => !expanded.includes(p.id));
+  const live = platforms.filter((p) => statusOf(p) === "live");
+  const needsReconnect = platforms.filter((p) => statusOf(p) === "needs-reconnect");
+  const absent = platforms.filter((p) => statusOf(p) === "absent");
+  const opened = absent.filter((p) => expanded.includes(p.id));
+  const collapsed = absent.filter((p) => !expanded.includes(p.id));
 
   return (
     <section className="space-y-3">
@@ -173,9 +181,12 @@ function ChannelSection({
         <p className="text-xs text-muted-2">{blurb}</p>
       </div>
 
-      {(live.length > 0 || opened.length > 0 || leadingCards) && (
+      {(live.length > 0 || needsReconnect.length > 0 || opened.length > 0 || leadingCards) && (
         <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {/* Healthy first, then the ones needing attention — both as full
+              cards, so a Reconnect badge is never a click away. */}
           {live.map(renderCard)}
+          {needsReconnect.map(renderCard)}
           {leadingCards}
           {opened.map(renderCard)}
         </div>
@@ -912,12 +923,25 @@ export function IntegrationsTab({
   // what's visually on screen (e.g. "6/9" while only 7 cards are shown).
   const googleMergedIds = new Set<string>(GOOGLE_READ_ONLY_SUB_PLATFORM_IDS);
   const standalonePlatforms = PLATFORM_REGISTRY.filter((p) => !googleMergedIds.has(p.id));
-  const connectedGoogleCount = GOOGLE_READ_ONLY_SUB_PLATFORM_IDS.filter((id) =>
-    integrations.some((i) => i.platform === id),
-  ).length;
+  // Counts follow the same three-bucket rule as the grid. The badge used to
+  // count any integration DOC as connected, with no status check, so an expired
+  // channel was tallied as working — the count and the card contradicted each
+  // other. "Connected" now means usable; anything needing a reconnect is
+  // reported separately rather than being quietly folded into a green number.
+  const usableGoogleCount = GOOGLE_READ_ONLY_SUB_PLATFORM_IDS.filter((id) => {
+    const i = integrations.find((x) => x.platform === id);
+    return !!i && integrationIsUsable(i);
+  }).length;
+  const staleGoogleCount = GOOGLE_READ_ONLY_SUB_PLATFORM_IDS.filter((id) => {
+    const i = integrations.find((x) => x.platform === id);
+    return !!i && !integrationIsUsable(i);
+  }).length;
   const connectedCount =
-    standalonePlatforms.filter((p) => integrations.some((i) => i.platform === p.id)).length +
-    (connectedGoogleCount > 0 ? 1 : 0);
+    standalonePlatforms.filter((p) => platformStatus(p) === "live").length +
+    (usableGoogleCount > 0 ? 1 : 0);
+  const needsReconnectCount =
+    standalonePlatforms.filter((p) => platformStatus(p) === "needs-reconnect").length +
+    (usableGoogleCount === 0 && staleGoogleCount > 0 ? 1 : 0);
   const totalCardCount = standalonePlatforms.length + 1; // +1 for the merged Google Services Suite card
 
   // Two sections, driven by each platform's registry `category` — a new
@@ -976,13 +1000,15 @@ export function IntegrationsTab({
   }
 
   /**
-   * A channel worth leading with: connected AND usable. A dead-token
-   * integration is deliberately NOT "live" — it needs attention, and
-   * integrationIsUsable is the same test the rest of the product gates on.
+   * Which of the three buckets a platform sits in. "absent" means no
+   * integration doc at all — the only state that is genuinely not set up. A
+   * dead-token integration is "needs-reconnect": still a channel the client
+   * owns, and the one that most needs to stay on screen.
    */
-  function isLivePlatform(platform: PlatformConfig): boolean {
+  function platformStatus(platform: PlatformConfig): "live" | "needs-reconnect" | "absent" {
     const integration = integrations.find((i) => i.platform === platform.id);
-    return !!integration && integrationIsUsable(integration);
+    if (!integration) return "absent";
+    return integrationIsUsable(integration) ? "live" : "needs-reconnect";
   }
 
   function renderPlatformCard(platform: PlatformConfig) {
@@ -1014,10 +1040,19 @@ export function IntegrationsTab({
             Link accounts so agents can publish content and pull performance data automatically.
           </p>
         </div>
-        {connectedCount > 0 && (
-          <Badge tone="neon">
-            {connectedCount} / {totalCardCount} connected
-          </Badge>
+        {(connectedCount > 0 || needsReconnectCount > 0) && (
+          <div className="shrink-0 text-right">
+            {connectedCount > 0 && (
+              <Badge tone="neon">
+                {connectedCount} / {totalCardCount} connected
+              </Badge>
+            )}
+            {needsReconnectCount > 0 && (
+              <p className="mt-1 text-[11px] text-warning">
+                {needsReconnectCount} {needsReconnectCount === 1 ? "needs" : "need"} attention
+              </p>
+            )}
+          </div>
         )}
       </div>
 
@@ -1041,7 +1076,7 @@ export function IntegrationsTab({
         title="Social publishing &amp; engagement"
         blurb="Channels your agents post and schedule content to."
         platforms={publishingPlatforms}
-        isLive={isLivePlatform}
+        statusOf={platformStatus}
         renderCard={renderPlatformCard}
       />
 
@@ -1054,7 +1089,7 @@ export function IntegrationsTab({
         title="Analytics &amp; performance intelligence"
         blurb="Read-only sources agents pull performance data and content ideas from."
         platforms={analyticsStandalonePlatforms}
-        isLive={isLivePlatform}
+        statusOf={platformStatus}
         renderCard={renderPlatformCard}
         leadingCards={
           // The merged Google suite is one card covering three services and has
