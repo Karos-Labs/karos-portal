@@ -268,7 +268,7 @@ export function LinkedInSeatsWorkspace({
                       Their LinkedIn sign-in is removed with the seat, so they would have to sign in
                       again.{" "}
                       {reAddCharges
-                        ? `You're over your ${seatLimit}-seat plan, so adding someone back costs ${seatCost} credits - removing a seat is not refunded.`
+                        ? `You're over your ${seatLimit}-seat plan, so adding someone back is a one-time ${seatCost}-credit charge — removing a seat is not refunded.`
                         : "Removing a seat is not refunded."}
                     </p>
                     <p className="text-[11px] text-muted-2">
