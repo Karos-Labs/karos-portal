@@ -79,7 +79,7 @@ export function LegacyAgentPanel({
    * the client's own jobs, and deliberately just an id and a phase — the strip
    * says a run is happening, never what it will contain.
    */
-  activeRun?: { id: string; status: "queued" | "running" } | null;
+  activeRun?: { id: string; status: "queued" | "running"; refunds: boolean } | null;
   setup?: AgentSetupState;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
@@ -107,7 +107,7 @@ export function LegacyAgentPanel({
             status={activeRun.status}
             className="mb-0 rounded-none border-0 border-t border-info/20 bg-transparent px-4 py-2"
           />
-          <CancelRunControl runId={activeRun.id} />
+          <CancelRunControl runId={activeRun.id} refunds={activeRun.refunds} />
         </div>
       )}
 

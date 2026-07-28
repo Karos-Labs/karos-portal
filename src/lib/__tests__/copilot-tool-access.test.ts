@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   BRANDING_TOOL_REFUSAL,
   brandingToolRefusal,
+  CLIENT_SAFE_COPILOT_TOOLS,
+  COPILOT_TOOL_REFUSAL,
+  copilotToolRefusal,
   copilotToolsFor,
   isStaffCopilotActor,
-  STAFF_ONLY_COPILOT_TOOLS,
 } from "@/lib/copilot-tool-access";
 import type { AppUser } from "@/lib/types";
 
@@ -45,10 +47,34 @@ describe("copilot tool registry — staff-only writes", () => {
   it("withholds it from an admin impersonating a client", () => {
     // "View as Client" arrives as a CLIENT_USER carrying impersonatedBy
     // (auth.ts). Impersonation shows what the client sees; it is not a staff
-    // capability escalator — same line isBillableClientActor draws for credits.
+    // capability escalator. Note this is the OPPOSITE answer to
+    // isBillableClientActor, which excludes impersonated sessions so an admin's
+    // preview spends no real credits — different question, opposite line, both
+    // correct. (An earlier comment here claimed they matched.)
     const tools = copilotToolsFor(actor("CLIENT_USER", "admin-uid"), ALL_TOOLS);
     expect(tools).not.toHaveProperty("update_branding_guidelines");
     expect(isStaffCopilotActor(actor("CLIENT_USER", "admin-uid"))).toBe(false);
+  });
+
+  it("denies a staff role that arrives inside an impersonated session", () => {
+    // Belt on the rung above: whatever role the session claims, an
+    // impersonation marker means the surface being driven is the client's.
+    expect(isStaffCopilotActor(actor("KAROS_ADMIN", "admin-uid"))).toBe(false);
+    expect(
+      copilotToolsFor(actor("KAROS_ADMIN", "admin-uid"), ALL_TOOLS),
+    ).not.toHaveProperty("update_branding_guidelines");
+  });
+
+  it("is an ALLOWLIST — a newly registered tool is withheld until it is named", () => {
+    // The failure mode of the denylist this replaced: register a write tool on
+    // the route, forget this file, and a client session can call it. With the
+    // list inverted, forgetting is the SAFE direction.
+    const withNewTool = { ...ALL_TOOLS, wipe_client_data: "danger" };
+    const tools = copilotToolsFor(actor("CLIENT_USER"), withNewTool);
+    expect(tools).not.toHaveProperty("wipe_client_data");
+    expect(copilotToolsFor(actor("KAROS_ADMIN"), withNewTool)).toHaveProperty(
+      "wipe_client_data",
+    );
   });
 
   it("keeps it for staff sessions", () => {
@@ -89,6 +115,16 @@ describe("copilot branding tool — execute-level refusal", () => {
     expect(brandingToolRefusal(actor("KAROS_ADMIN"))).toBeNull();
     expect(brandingToolRefusal(actor("KAROS_EMPLOYEE"))).toBeNull();
   });
+
+  it("derives from the same allowlist, so a new tool is refused too", () => {
+    expect(copilotToolRefusal(actor("CLIENT_USER"), "wipe_client_data")).toBe(
+      COPILOT_TOOL_REFUSAL,
+    );
+    for (const name of CLIENT_SAFE_COPILOT_TOOLS) {
+      expect(copilotToolRefusal(actor("CLIENT_USER"), name)).toBeNull();
+    }
+    expect(copilotToolRefusal(actor("KAROS_ADMIN"), "wipe_client_data")).toBeNull();
+  });
 });
 
 /**
@@ -124,9 +160,11 @@ describe("chat route wiring", () => {
     expect(route).toMatch(/canUpdateBranding:\s*isStaffCopilotActor\(user\)/);
   });
 
-  it("keeps the staff-only list and the tool name in step", () => {
-    for (const name of STAFF_ONLY_COPILOT_TOOLS) {
-      expect(route).toContain(`${name}: updateBrandingTool`);
+  it("registers every allowlisted tool it claims to offer a client", () => {
+    // The allowlist is only a fence if its names match the registry's keys — a
+    // typo here silently withholds a tool clients are supposed to have.
+    for (const name of CLIENT_SAFE_COPILOT_TOOLS) {
+      expect(route).toMatch(new RegExp(`\\b${name}:\\s*\\w+Tool\\b`));
     }
   });
 });

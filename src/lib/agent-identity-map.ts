@@ -150,6 +150,37 @@ export function resolveContentIdentity(
 }
 
 /**
+ * The ONE name a RUN row prints — /jobs, the calendar's past-run cards, the
+ * Workspace activity timeline, an agent's run history.
+ *
+ * Four surfaces were each writing `resolveContentIdentity({ job }, …).label`
+ * inline, which is four places for one of them to quietly go back to reading
+ * `job.agentName`. It is also the only thing the surface test can hold onto:
+ * a test that re-declares the call proves the RULES (agent-identity-map.test.ts
+ * already does that) and nothing at all about the wiring.
+ *
+ * The job ALONE, deliberately — never its assets. A run row IS the job, so its
+ * fallback rung must stay the run's own recorded name; feeding the deliverables
+ * in would let an asset-derived label outrank it.
+ */
+export function runRowLabel(job: IdentityJob, clientAgents: ClientAgentIdentity[]): string {
+  return resolveContentIdentity({ job }, clientAgents).label;
+}
+
+/**
+ * The same, for a row that has not fired yet (the calendar's scheduled cards).
+ * The schedule carries the LAB agent's repo name
+ * ("karos-instagram-tiktok-content-agent"), so printing it verbatim is the
+ * F147 defect wearing a third name.
+ */
+export function scheduleRowLabel(
+  scheduledRun: Pick<PlannedScheduledRun, "clientAgentId" | "customAgentId" | "agentName">,
+  clientAgents: ClientAgentIdentity[],
+): string {
+  return resolveContentIdentity({ scheduledRun }, clientAgents).label;
+}
+
+/**
  * Umbrellas grouped by client, for the surfaces that render rows of MANY
  * clients at once (the staff calendar overview, /jobs).
  *

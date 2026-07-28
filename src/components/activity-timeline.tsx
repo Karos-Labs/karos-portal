@@ -10,6 +10,22 @@ import { cn } from "@/lib/utils";
 import { addActivityNoteAction } from "@/lib/actions";
 import type { ActivityEventType, ActivityLog, ClientReport, Job, Role } from "@/lib/types";
 
+/**
+ * The ONLY job fields this timeline may hold.
+ *
+ * It used to take `Job[]`, which the server built by spreading whole job
+ * documents — so every row of the payload carried the run's `input` (the
+ * operator's prompt and brief), its `events` (the internal execution trace),
+ * `clientAgentId`, and `meta.agentsRepoSha`, the git SHA of the private lab
+ * repo. None of it is painted; all of it is readable in the RSC payload, which
+ * is precisely the case this codebase's redaction rule exists for. Five fields
+ * are what the timeline renders, so five fields are what it receives.
+ */
+export type TimelineJob = Pick<
+  Job,
+  "id" | "agentName" | "status" | "title" | "createdAt" | "error"
+>;
+
 /* ── Unified display event ───────────────────────────────────────────── */
 
 interface TimelineEvent {
@@ -38,7 +54,7 @@ function eventsFromLogs(logs: ActivityLog[]): TimelineEvent[] {
   }));
 }
 
-function eventsFromJobs(jobs: Job[]): TimelineEvent[] {
+function eventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
   return jobs.map((j) => ({
     id: `job:${j.id}`,
     timestamp: j.createdAt,
@@ -52,6 +68,68 @@ function eventsFromJobs(jobs: Job[]): TimelineEvent[] {
     actorRole: "staff" as const,
     agentIdentity: j.agentName,
   }));
+}
+
+/** Server-local calendar day — the grain a client's timeline is aggregated to. */
+function dayKeyOf(t: number): string {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+/**
+ * The client face of the same jobs: ONE row per agent per day (A3/A4).
+ *
+ * Per-run rows are the batch tell in its purest form. A week of "daily" posts
+ * is produced by one or two fires, so the client's timeline printed several
+ * "<agent> delivered a draft" lines carrying the SAME minute — the generation
+ * lump, itemised, on the screen whose whole job is to narrate steady work. It
+ * also said "delivered a draft", and a draft is precisely the thing that is not
+ * delivered to a client: it is staff-reviewed first (approveAssetAction calls
+ * requireStaff) and the archive excludes it by design.
+ *
+ * So runs collapse to one row per agent per day, stamped at that day's last
+ * fire, and the run's internal title (the catalog product code plus the client
+ * name) is dropped. Failures stay one row each — a failed run is a distinct
+ * event with its own message — but under a title that matches what happened.
+ */
+function clientEventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
+  const events: TimelineEvent[] = [];
+  const days = new Map<string, { agentName: string; at: number }>();
+
+  for (const j of jobs) {
+    if (j.status === "failed") {
+      events.push({
+        id: `job:${j.id}`,
+        timestamp: j.createdAt,
+        type: "CAMPAIGN_CREATED",
+        title: `${j.agentName} couldn't finish a run`,
+        // Already routed through clientSafeRefusal at the server boundary.
+        description: j.error ?? undefined,
+        actor: "Karos",
+        actorRole: "system",
+        agentIdentity: j.agentName,
+      });
+      continue;
+    }
+    const key = `${dayKeyOf(j.createdAt)}::${j.agentName}`;
+    const seen = days.get(key);
+    if (seen) seen.at = Math.max(seen.at, j.createdAt);
+    else days.set(key, { agentName: j.agentName, at: j.createdAt });
+  }
+
+  for (const [key, day] of days) {
+    events.push({
+      id: `job-day:${key}`,
+      timestamp: day.at,
+      type: "CAMPAIGN_CREATED",
+      title: `${day.agentName} worked on your content`,
+      actor: "Karos",
+      actorRole: "system",
+      agentIdentity: day.agentName,
+    });
+  }
+
+  return events;
 }
 
 function eventsFromReport(report: ClientReport | null): TimelineEvent[] {
@@ -71,7 +149,7 @@ function eventsFromReport(report: ClientReport | null): TimelineEvent[] {
 
 function buildEvents(
   logs: ActivityLog[],
-  jobs: Job[],
+  jobs: TimelineJob[],
   report: ClientReport | null,
   currentUserRole: Role,
 ): TimelineEvent[] {
@@ -84,7 +162,10 @@ function buildEvents(
   const hasIntelLog = logEvents.some((e) => e.type === "INTEL_GENERATION");
   const reportEvents = hasIntelLog ? [] : eventsFromReport(report);
 
-  const all = [...logEvents, ...eventsFromJobs(jobs), ...reportEvents];
+  const jobEvents =
+    currentUserRole === "CLIENT_USER" ? clientEventsFromJobs(jobs) : eventsFromJobs(jobs);
+
+  const all = [...logEvents, ...jobEvents, ...reportEvents];
   // Sort newest first, stable-ish via id as tiebreaker
   return all.sort((a, b) => b.timestamp - a.timestamp || a.id.localeCompare(b.id));
 }
@@ -325,7 +406,7 @@ const PAGE_SIZE = 15;
 
 interface Props {
   activityLogs: ActivityLog[];
-  jobs: Job[];
+  jobs: TimelineJob[];
   report: ClientReport | null;
   clientId: string;
   currentUserRole: Role;

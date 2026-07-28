@@ -78,4 +78,75 @@ describe("toClientPortalView", () => {
     const withFuture = { ...makeClient(), someNewSecret: "leak-me" } as unknown as Client;
     expect(JSON.stringify(toClientPortalView(withFuture))).not.toContain("leak-me");
   });
+
+  /**
+   * The branding sub-projection used to spread-and-delete: `{ ...g }` with one
+   * field rebuilt, plus an early `return g` for a record with no palette. So
+   * every other field was opted IN by default, one level down from the
+   * whitelist above — including the storage path this same test file asserts is
+   * excluded at the top level.
+   */
+  describe("branding sub-projection", () => {
+    const branded = (patch: Partial<Client["brandingGuidelines"]> = {}) =>
+      toClientPortalView(
+        makeClient({
+          brandingGuidelines: {
+            dominantColors: [
+              { hex: "#e91e8c", dominanceRank: 1, role: "Logo fill", usagePct: 60 },
+              { hex: "#101014", dominanceRank: 2, usagePct: 40 },
+            ],
+            fontHeading: "Söhne",
+            toneKeywords: ["warm", "direct"],
+            logoUrl: "https://cdn.test/logo.png",
+            logoStoragePath: "clients/c1/branding/logo.png",
+            updatedAt: 42,
+            ...patch,
+          },
+        }),
+      ).brandingGuidelines!;
+
+    it("strips the agency's internal usage mix from every swatch", () => {
+      const view = branded();
+      expect(view.dominantColors?.every((c) => c.usagePct === undefined)).toBe(true);
+      expect(JSON.stringify(view)).not.toContain("usagePct");
+    });
+
+    it("drops the storage path nested inside branding, not just at the top level", () => {
+      expect(branded().logoStoragePath).toBeUndefined();
+      expect(JSON.stringify(branded())).not.toContain("clients/c1/branding");
+    });
+
+    it("still drops it for a record with NO palette (the old early return)", () => {
+      const view = branded({ dominantColors: undefined });
+      expect(view.logoStoragePath).toBeUndefined();
+      expect(view.dominantColors).toBeUndefined();
+    });
+
+    it("excludes an unknown future branding field by default", () => {
+      const view = branded({ someNewInternal: "leak-me" } as never);
+      expect(JSON.stringify(view)).not.toContain("leak-me");
+    });
+
+    it("keeps what the brand panel renders and lets the client edit", () => {
+      const view = branded({
+        primaryAccent: "#e91e8c",
+        guidelines: "Warm, never shouty.",
+        visualStyle: "Minimalist",
+      });
+      expect(view.dominantColors).toHaveLength(2);
+      expect(view.dominantColors?.[0]).toEqual({
+        hex: "#e91e8c",
+        dominanceRank: 1,
+        role: "Logo fill",
+      });
+      expect(view.fontHeading).toBe("Söhne");
+      expect(view.toneKeywords).toEqual(["warm", "direct"]);
+      expect(view.logoUrl).toBe("https://cdn.test/logo.png");
+      expect(view.guidelines).toBe("Warm, never shouty.");
+      expect(view.visualStyle).toBe("Minimalist");
+      // The legacy scalar the modal falls back to for pre-palette records.
+      expect(view.primaryAccent).toBe("#e91e8c");
+      expect(view.updatedAt).toBe(42);
+    });
+  });
 });

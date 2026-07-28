@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   listAssets,
-  listClientIntegrations,
   listClients,
   listCustomAgents,
   listJobs,
@@ -12,13 +11,13 @@ import { assetImages } from "@/lib/asset-images";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import {
   identitiesByClient,
-  resolveContentIdentity,
+  runRowLabel,
+  scheduleRowLabel,
   type ClientAgentIdentity,
 } from "@/lib/agent-identity-map";
-import { integrationIsUsable } from "@/lib/integration-status";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
-import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
-import { describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
+import { pushablePlatformsByClient } from "@/lib/publish-targets";
+import { clientCadenceLabel, describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
 import { isValidTimeZone } from "@/lib/run-cadence";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { PageHeader, EmptyState } from "@/components/ui";
@@ -240,11 +239,17 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         clientId: r.clientId,
         clientName: single ? undefined : nameOf(r.clientId),
         at: r.nextRunAt,
-        productName: resolveContentIdentity({ scheduledRun: r }, umbrellasFor(r.clientId)).label,
+        productName: scheduleRowLabel(r, umbrellasFor(r.clientId)),
         productColor: r.agentColor,
         productIcon: r.agentIcon,
         cadence: r.cadence,
-        cadenceLabel: describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
+        // Pace for a client, mechanics for staff. describeCadence prints "3×
+        // weekly", which names RUNS — and on a schedule storing several outputs
+        // per fire that number is not the client's post count at all. Same
+        // vocabulary AgentScheduleModal's paceOnly branch settled on.
+        cadenceLabel: isClient
+          ? clientCadenceLabel({ ...r, timeZone: runZone(r.timeZone) })
+          : describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
         // The zone the schedule's wall clock was set in. Sent to the browser so
         // the chip's day bucket and printed time are computed there exactly as
         // they were on the server — and so the card's cadence label and its
@@ -269,7 +274,17 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       // content shipped the run record's own bookkeeping — markdown syntax, the
       // internal status word, the lab product code and the job hash — into the
       // payload of the panel a client opens to see what ran.
-      const views: RunAssetView[] = (assetsByJob.get(j.id) ?? []).map((a) => ({
+      // A3/A4. `assets` carries a client's future-dated posts as redacted
+      // placeholders, and they were being counted into this card's summary: a
+      // run that produced a week of slots printed "7 posts · Ran 3:14 PM",
+      // which states outright that the whole week came out of one fire at one
+      // minute — the batch tell in its purest form. A past run card may only
+      // speak of what the client has actually been given; the rest of that run
+      // is upcoming work, and upcoming work lives on the calendar as slots.
+      // Staff keep the full run (invariant A10.6).
+      const runAssets = assetsByJob.get(j.id) ?? [];
+      const deliveredAssets = isClient ? runAssets.filter((a) => !a.locked) : runAssets;
+      const views: RunAssetView[] = deliveredAssets.map((a) => ({
         id: a.id,
         type: a.type,
         title: cleanTitle(a.title),
@@ -287,7 +302,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         // the deliverables in would let an asset-derived label outrank it.
         // The family rule still fires from the job's own `external.taskType`,
         // which is what a managed "Social posts (IG/TikTok)" run carries.
-        productName: resolveContentIdentity({ job: j }, umbrellasFor(j.clientId)).label,
+        productName: runRowLabel(j, umbrellasFor(j.clientId)),
         productColor: agent?.color ?? "#FF6B2C",
         productIcon: agent?.icon ?? "Bot",
         jobStatus: j.status,
@@ -331,32 +346,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // publishAssetNowAction is requireStaff(), so this is built ONLY for staff —
   // a client viewer's payload gains nothing. Integrations are read for the
   // clients that actually own a pushable post, not for every client in scope.
-  let connectedPlatformsByClient: Record<string, string[]> | undefined;
-  if (!isClient) {
-    const pushableClientIds = [
-      ...new Set(
-        assets
-          .filter(
-            (a) =>
-              (a.status === "approved" || a.status === "scheduled") &&
-              a.publishMode !== "placeholder" &&
-              (PUBLISHABLE_PLATFORMS[a.type] ?? []).length > 0,
-          )
-          .map((a) => a.clientId),
-      ),
-    ];
-    if (pushableClientIds.length > 0) {
-      const perClient = await Promise.all(
-        pushableClientIds.map(async (id) => {
-          const integrations = await listClientIntegrations(id);
-          // Platform ids only — never the integration records, which carry
-          // decrypted OAuth credentials.
-          return [id, integrations.filter(integrationIsUsable).map((i) => i.platform)] as const;
-        }),
-      );
-      connectedPlatformsByClient = Object.fromEntries(perClient);
-    }
-  }
+  //
+  // The predicate itself lives in lib/publish-targets.ts, which exists so "is
+  // this post pushable" cannot drift between the surfaces that ask it. This
+  // file had kept a byte-identical copy of that function's body inline — three
+  // status/mode/platform conditions and the integration read — which is the
+  // second answer the shared module was extracted to prevent.
+  const connectedPlatformsByClient = isClient
+    ? undefined
+    : await pushablePlatformsByClient(assets);
 
   // ── Empty state ─────────────────────────────────────────────────────
   // A month of blank squares under a header promising "what your agents will

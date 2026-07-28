@@ -153,8 +153,15 @@ const INTERNAL_TOKEN_RE =
 export const GENERATED_BLOCK_LINE_RE =
   /^\s*(?:<\/|<(?:p|h[1-6]|ul|ol|li|hr|div|table|thead|tbody|tr|th|td|blockquote)\b)/;
 
-/** Is this line the record's own bookkeeping rather than prose for the reader? */
-function isInternalLine(line: string): boolean {
+/**
+ * Is this line the record's own bookkeeping rather than prose for the reader?
+ *
+ * Exported for the deliverable PARSERS (x-drafts / li-drafts). They lift free
+ * text straight out of an agent's markdown — the italic account and lane notes
+ * — and that text is written by the same agent, in the same file, as the header
+ * this predicate exists to catch. See the note in either parser.
+ */
+export function isInternalLine(line: string): boolean {
   return INTERNAL_KEY_LINE_RE.test(line) || INTERNAL_TOKEN_RE.test(line);
 }
 

@@ -65,17 +65,48 @@ export const CLIENT_ARCHIVE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
  */
 export function getClientArchiveAssets(assets: Asset[], opts?: { now?: number }): Asset[] {
   const now = opts?.now ?? Date.now();
-  const cutoff = now - CLIENT_ARCHIVE_WINDOW_MS;
-  const postedAt = (a: Asset) => a.publishedAt ?? a.updatedAt ?? a.createdAt;
   return assets
-    .filter((a) => {
-      if (isLaunchDeliverable(a)) return false;
-      if (a.status === "draft") return false;
-      if (!isAssetUnlockedForClient(a, now)) return false;
-      if (a.status === "published") return postedAt(a) >= cutoff;
-      return true;
-    })
-    .sort((a, b) => postedAt(b) - postedAt(a));
+    .filter((a) => isInClientArchive(a, now))
+    .sort((a, b) => clientDeliveryStamp(b) - clientDeliveryStamp(a));
+}
+
+/**
+ * The moment the archive sorts and ages a row by: when the client got it.
+ *
+ * Also THE timestamp client-facing deliverable rows print. `createdAt` is the
+ * generation instant, and a week of "daily" posts shares one of those — so
+ * stamping a client's rows with it publishes the batch shape on every surface
+ * that lists deliverables (A3/A4). Published work carries its posting time;
+ * everything else carries the last time it moved, which for an approved
+ * deliverable is the approval. Staff surfaces keep `createdAt`: for them the
+ * generation instant is the fact worth knowing.
+ */
+export function clientDeliveryStamp(
+  a: Pick<Asset, "publishedAt" | "updatedAt" | "createdAt">,
+): number {
+  return a.publishedAt ?? a.updatedAt ?? a.createdAt;
+}
+
+/**
+ * Archive membership as ONE predicate — the four rules above, in one place.
+ *
+ * Every surface that wants to say "this is (or will be) in your archive" has to
+ * ask THIS, not re-derive a subset. Two surfaces had grown one-rule replicas of
+ * the set (`status !== "draft"`), which answers "yes, linkable" for a
+ * future-dated post, a launch deliverable, and a published post that has already
+ * aged past the 30-day window — three ways to land a client on a screen that
+ * provably excludes the row they just clicked. A link is only honest if the
+ * asset behind it passes the same filter the archive itself applies.
+ */
+export function isInClientArchive(
+  a: Pick<Asset, "meta" | "status" | "scheduledAt" | "publishedAt" | "updatedAt" | "createdAt">,
+  now: number,
+): boolean {
+  if (isLaunchDeliverable(a)) return false;
+  if (a.status === "draft") return false;
+  if (!isAssetUnlockedForClient(a, now)) return false;
+  if (a.status === "published") return clientDeliveryStamp(a) >= now - CLIENT_ARCHIVE_WINDOW_MS;
+  return true;
 }
 
 /**

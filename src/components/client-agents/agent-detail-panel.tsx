@@ -114,7 +114,10 @@ export function AgentDetailPanel({
               and no page to reach that could. The banner is where a client now
               meets that run, so the existing control mounts here rather than a
               second one being written for it. */}
-          <CancelRunControl runId={agent.activeRun.id} />
+          <CancelRunControl
+            runId={agent.activeRun.id}
+            refunds={agent.availableCredits !== undefined}
+          />
         </div>
       )}
 

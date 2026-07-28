@@ -6,7 +6,7 @@ import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
 import { clientSafeRefusal, isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
-import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
+import { runRowLabel, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgentFeedback } from "@/lib/data-client-agents";
 import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-agents";
 import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
@@ -93,7 +93,7 @@ export function toRunRows(
     .map((j) => ({
       id: j.id,
       agentName: j.agentName,
-      label: resolveContentIdentity({ job: j }, umbrellas).label,
+      label: runRowLabel(j, umbrellas),
       status: j.status,
       createdAt: j.createdAt,
       assetCount: j.assetIds.length,

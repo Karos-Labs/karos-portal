@@ -10,8 +10,9 @@ import {
 import { listClientAgents } from "@/lib/data-client-agents";
 import { TasksBoard } from "@/components/tasks-board";
 import { ProgressView } from "@/components/progress-view";
+import type { TimelineJob } from "@/components/activity-timeline";
 import { PageHeader } from "@/components/ui";
-import { contentLabelsByAsset, resolveContentIdentity } from "@/lib/agent-identity-map";
+import { contentLabelsByAsset, runRowLabel } from "@/lib/agent-identity-map";
 import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import type { AppUser, ClientTask } from "@/lib/types";
@@ -69,8 +70,8 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     const assets = isClientViewer
       ? getClientLibraryAssets(getClientArchiveAssets(rawAssets), { forClient: true })
       : getClientLibraryAssets(rawAssets);
-    // The activity timeline maps every job to "<agent> delivered a draft", and
-    // on failure prints the stored error verbatim. Two things must not go
+    // The activity timeline narrates these runs, and on failure prints the
+    // stored error verbatim. Two things must not go
     // through that door for a client: a LAUNCH run (its story is the launch
     // card's three phases — a second telling is the double identity again, and
     // it announces a deliverable that is staff-only by design), and the raw
@@ -87,16 +88,27 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     // and only the finished label crosses into the payload: the archive is a
     // client component and has no business holding umbrella ids or launch
     // states to re-derive a heading from.
-    const labelledJobs = jobs.map((job) => {
-      const label = resolveContentIdentity({ job }, umbrellas).label;
-      return label === job.agentName ? job : { ...job, agentName: label };
-    });
+    //
+    // PROJECTED, not spread. This list is serialized into the RSC payload the
+    // browser downloads, and a whole Job carries `input` (the operator's prompt
+    // and brief), `events` (the internal execution trace), `clientAgentId` and
+    // `meta.agentsRepoSha` — the git SHA of the private lab repo. The timeline
+    // paints five fields; five fields is what crosses. Built by CONSTRUCTION so
+    // a field added to Job later is excluded by default (the redactLockedAsset
+    // rule), which is exactly what a `{ ...job }` here defeated.
     const agentLabelByAssetId = contentLabelsByAsset(assets, jobs, umbrellas);
-    const timelineJobs = isClientViewer
-      ? labelledJobs
-          .filter((job) => job.runType !== "launch")
-          .map((job) => (job.error ? { ...job, error: clientSafeRefusal(job.error) } : job))
-      : labelledJobs;
+    const timelineJobs: TimelineJob[] = jobs
+      .filter((job) => !isClientViewer || job.runType !== "launch")
+      .map((job) => ({
+        id: job.id,
+        agentName: runRowLabel(job, umbrellas),
+        status: job.status,
+        title: job.title,
+        createdAt: job.createdAt,
+        ...(job.error
+          ? { error: isClientViewer ? clientSafeRefusal(job.error) : job.error }
+          : {}),
+      }));
     return (
       <div>
         <PageHeader

@@ -12,12 +12,22 @@
 import "server-only";
 import { getClient, listCustomAgents } from "@/lib/data";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import type { AgentCatalogEntry } from "@/lib/ai/prompts/proactive-assistant";
 
 /** Client-safe summary of a custom agent — never exposes instructions/skill paths. */
 export interface ClientCustomAgentSummary {
   id: string;
   name: string;
+  /**
+   * The CURATED client line, never `CustomAgent.description`. That field is the
+   * lab manifest's own copy, written for the people who build agents ("Master
+   * content-social skill…"), and this summary feeds the copilot's prompt — an
+   * LLM the client is charged for, whose output the client reads. A prompt is
+   * not a private place: the model quotes what it is given, so shipping the
+   * manifest here is the CD-G2 defect with an extra step. Resolved through
+   * clientAgentBlurb, the same helper every visible agent surface uses.
+   */
   description: string;
   /**
    * Per-run price for billable client actors; null ⇒ CREDIT_COSTS.customAgentRun.
@@ -41,7 +51,11 @@ export async function getClientCustomAgents(clientId: string): Promise<ClientCus
     .map((a) => ({
       id: a.id,
       name: a.name,
-      description: a.description,
+      description: clientAgentBlurb({
+        key: a.key,
+        name: a.name,
+        clientBlurb: a.clientBlurb ?? null,
+      }),
       creditCost: a.creditCost ?? null,
     }));
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card, CardTitle, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
+import { isInClientArchive } from "@/lib/asset-visibility";
 import type { Asset, ClientTask } from "@/lib/types";
 
 const ASSET_TYPE_LABEL: Record<Asset["type"], string> = {
@@ -49,6 +50,12 @@ export function ClientHomeOverview({
   const recentAssets = [...assets]
     .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))
     .slice(0, 5);
+
+  // eslint-disable-next-line react-hooks/purity -- Date.now() intentional: the
+  // archive is a time-windowed view (30 days) and a future-dated post is not in
+  // it yet, so "does this row have a destination" can only be answered against
+  // the current moment. Read once per render.
+  const now = Date.now();
 
   return (
     /* CD-H4: `min-w-0` on the cards, not decoration. A grid item's automatic
@@ -146,10 +153,15 @@ export function ClientHomeOverview({
         ) : (
           <ul className="space-y-2">
             {recentAssets.map((a) => {
-              // Same rule as the attention row above: a draft is not in the
-              // archive, so a draft row links nowhere rather than landing the
-              // client on a screen that provably excludes the item they clicked.
-              const inArchive = a.status !== "draft";
+              // Same rule as the attention row above: a row links to the
+              // archive only when the archive would actually hold it, rather
+              // than landing the client on a screen that provably excludes the
+              // item they clicked. This used to test `status !== "draft"` — one
+              // of the archive's four rules — so a future-dated post, a launch
+              // deliverable, or a post already aged past the 30-day window all
+              // rendered as links to a list they are not in. One predicate,
+              // asked here instead of re-derived.
+              const inArchive = isInClientArchive(a, now);
               const body = (
                 <>
                   <div className="min-w-0 flex-1">

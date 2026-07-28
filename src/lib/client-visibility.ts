@@ -5,17 +5,48 @@ import type { BrandingGuidelines, Client } from "@/lib/types";
  * get swatches only, so it is removed HERE — at the boundary — not hidden
  * behind a render conditional: the rail is a "use client" component, so a
  * field that reaches it is readable from view-source whether or not it is
- * painted. Same rule as the rest of this projection: build by construction.
+ * painted.
+ *
+ * Built by CONSTRUCTION, which is the rule this module states two functions
+ * down and this one was breaking: it spread `...g` and rebuilt one field, so
+ * every OTHER field of BrandingGuidelines was opted in by default — including
+ * `logoStoragePath`, the Firebase Storage path, which the Client-level
+ * projection below is careful to exclude by name and which arrived anyway
+ * nested one level in. And the early `return g` for a client with no palette
+ * handed the stored object back whole.
+ *
+ * Everything the client's own surfaces read is listed. The eight legacy scalar
+ * color fields stay because BrandingModal falls back to them for a client
+ * whose record predates `dominantColors` — dropping them would show that
+ * client an empty palette and let a save blank it.
  */
 function toClientBrandingView(g: BrandingGuidelines): BrandingGuidelines {
-  if (!g.dominantColors?.length) return g;
   return {
-    ...g,
-    dominantColors: g.dominantColors.map(({ hex, dominanceRank, role }) => ({
-      hex,
-      dominanceRank,
-      ...(role ? { role } : {}),
-    })),
+    ...(g.dominantColors
+      ? {
+          dominantColors: g.dominantColors.map(({ hex, dominanceRank, role }) => ({
+            hex,
+            dominanceRank,
+            ...(role ? { role } : {}),
+          })),
+        }
+      : {}),
+    // Legacy scalars — plain hexes, and the modal's fallback for old records.
+    ...(g.primaryAccent ? { primaryAccent: g.primaryAccent } : {}),
+    ...(g.secondaryAccent ? { secondaryAccent: g.secondaryAccent } : {}),
+    ...(g.brandNeutralDark ? { brandNeutralDark: g.brandNeutralDark } : {}),
+    ...(g.brandNeutralLight ? { brandNeutralLight: g.brandNeutralLight } : {}),
+    ...(g.primaryColor ? { primaryColor: g.primaryColor } : {}),
+    ...(g.secondaryColor ? { secondaryColor: g.secondaryColor } : {}),
+    ...(g.uiBackground ? { uiBackground: g.uiBackground } : {}),
+    ...(g.uiText ? { uiText: g.uiText } : {}),
+    ...(g.fontHeading ? { fontHeading: g.fontHeading } : {}),
+    ...(g.fontBody ? { fontBody: g.fontBody } : {}),
+    ...(g.toneKeywords ? { toneKeywords: g.toneKeywords } : {}),
+    ...(g.logoUrl ? { logoUrl: g.logoUrl } : {}),
+    ...(g.guidelines ? { guidelines: g.guidelines } : {}),
+    ...(g.visualStyle ? { visualStyle: g.visualStyle } : {}),
+    updatedAt: g.updatedAt,
   };
 }
 
