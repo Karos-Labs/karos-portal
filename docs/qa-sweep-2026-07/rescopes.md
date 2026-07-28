@@ -484,3 +484,26 @@ starting. Updated by the orchestrator after each verification gate.
 - Accepted: F104 static reset clause (no computed dates — single-phrasing rule);
   admin sees client blocked strip + support button (nit, end-loop).
 - Browser-floor note (handover): F126 fix uses regex lookbehind in a module-scope literal — parse-throws (blank page) below Safari 16.4 (Mar 2023). Acceptable for this portal; document as the explicit browser floor.
+
+## WORKSPACE lens results — 4 bounces (2 serious)
+- **F55 PROVEN UNAUTHENTICATED XSS** in oauth-popup.ts: JSON.stringify does not
+  escape < or /, so </script> in error_description executes; reachable pre-CSRF
+  at callback/route.ts:289-291. Fix = \u003c escaping in both script builders.
+  PRE-EXISTING sink (lifted from the callback), centralized+multiplied by F55 —
+  means the DEPLOYED app has this today. TOMER-HANDOVER must flag it as a
+  ship-blocker for the current production build, not just this branch.
+- **F149 churn-guard violation**: locked future assets could be marked posted
+  (redaction preserves status, drops publishMode; no server future-date guard)
+  → client could unlock the whole pre-generated batch. Fix at BOTH layers.
+- F56: card gate is render-only; clientKeyId ships in every client RSC payload
+  via the whole-Client prop → client-safe projection required. (Rotate path and
+  group-admin widening refuted clean and scoped correctly.)
+- F53: second instance at linkedin-seats-workspace.tsx:155 still live.
+- Flags bounced too: F69 raw error text into client Activity tab; F62 competitor
+  rows bleed across clients (no key={clientId}).
+- Refuted clean: F61 refunds, F48/F58 batch (transaction-gated, no double
+  charge), F64/F66 param keys, F63 completeness, F5 container queries, F68
+  fencing.
+- Logged for end-loop/handover: listReviewJobsForClients unbounded scan; staff
+  task feed limit-200 fetch-then-filter (employee under-report); F66 impossible
+  status options; F51 notification vs F149 archive (Phase 3).
