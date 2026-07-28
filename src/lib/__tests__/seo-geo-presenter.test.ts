@@ -504,12 +504,57 @@ describe("presence + prompts", () => {
     expect(buildPresence(insights()).rosterShare?.value).toBe("18%");
   });
 
-  it("tags prompts that mention the client by name and stays silent otherwise", () => {
-    // No affirmative "category question" claim: the pipeline's brand/category
-    // split matches the full alias set, which the doc doesn't store, so a
-    // definite tag could contradict the presence tiles.
-    const tags = buildPromptViews(insights()).map((p) => p.tagLabel);
-    expect(tags).toEqual([null, "mentions you"]);
+  /** QA F17: the chip is driven by the persisted per-prompt intent — the same
+   *  classifier the comparison itself uses — not a display-name string match. */
+  it("tags the questions the comparison actually excludes", () => {
+    const views = buildPromptViews(
+      insights({
+        promptSet: ["best fintech tool for startups", "Is Acme legit?", "Acme alternatives", "acme.com"],
+        intentPrompts: [
+          { prompt: "best fintech tool for startups", intent: "discovery" },
+          { prompt: "Is Acme legit?", intent: "brand" },
+          // Classifier returns "comparison" before it checks the brand name, so this
+          // IS in the like-for-like comparison — it used to wear the opposite chip.
+          { prompt: "Acme alternatives", intent: "comparison" },
+          // Bare domain: the pipeline counts it as naming you; the old name match missed it.
+          { prompt: "acme.com", intent: "navigational" },
+        ],
+      }),
+    );
+    expect(views.map((p) => p.tagLabel)).toEqual([null, "mentions you", null, "mentions you"]);
+    expect(views[1].tagExplainer).toContain("like-for-like");
+  });
+
+  it("keeps the chip count equal to brandPresence.total on a partial run", () => {
+    // Two branded prompts, only one of which any engine answered. brandPresence
+    // counts measured prompts only, so an unmeasured branded row must not wear a chip.
+    const data = insights({
+      promptSet: ["Is Acme legit?", "Acme reviews"],
+      intentPrompts: [
+        { prompt: "Is Acme legit?", intent: "brand" },
+        { prompt: "Acme reviews", intent: "brand" },
+      ],
+      answerGrid: [
+        {
+          prompt: "Is Acme legit?",
+          intent: "brand",
+          cells: [{ engine: "chatgpt", source: "OpenAI", tier: "MEASURED", state: "named" }],
+        },
+        {
+          prompt: "Acme reviews",
+          intent: "brand",
+          cells: [{ engine: "chatgpt", source: null, tier: "UNAVAILABLE", state: "unavailable" }],
+        },
+      ],
+      brandPresence: { named: 1, total: 1 },
+    });
+    const chips = buildPromptViews(data).filter((p) => p.tagLabel).length;
+    expect(chips).toBe(data.brandPresence.total);
+  });
+
+  it("stays silent rather than guessing when a snapshot has no stored intents", () => {
+    const tags = buildPromptViews(insights({ intentPrompts: [] })).map((p) => p.tagLabel);
+    expect(tags).toEqual([null, null]);
   });
 
   it("covers the low-brand, high-category takeaway quadrant", () => {

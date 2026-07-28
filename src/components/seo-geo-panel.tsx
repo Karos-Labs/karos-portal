@@ -584,8 +584,9 @@ export function SeoGeoPanel({
                 <li key={`q-${i}`} className="flex items-center justify-between gap-2 text-xs">
                   <span className="text-muted">{p.text}</span>
                   {p.tagLabel && (
-                    <span className="shrink-0 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
                       {p.tagLabel}
+                      {p.tagExplainer && <InfoTip text={p.tagExplainer} />}
                     </span>
                   )}
                 </li>

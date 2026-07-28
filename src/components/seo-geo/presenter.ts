@@ -23,7 +23,6 @@ import {
   computeCheckScore,
   dedupeGapsByRecId,
   engineVisibilityScore,
-  findMention,
   normalizeBrandKey,
   type EngineId,
   type SeoGeoInsights,
@@ -928,23 +927,50 @@ export function buildAnswerGridViews(insights: SeoGeoInsights): AnswerGridView |
 
 export interface PromptView {
   text: string;
-  /**
-   * "mentions you" when the client's display name appears in the prompt;
-   * null otherwise. Deliberately makes no "category question" claim: the
-   * pipeline's brand/category split matches the full alias set (domain,
-   * short label), which isn't stored on the doc, so a definite tag here
-   * could contradict the presence tile above. Follow-up: persist per-prompt
-   * brand flags in clientSeoGeo so both surfaces classify identically.
-   */
+  /** "mentions you" for the questions the comparison excludes; null otherwise. */
   tagLabel: string | null;
+  /** What the tag means — the chip used to be the only marker on an inert row. */
+  tagExplainer: string | null;
 }
 
+/**
+ * QA F17 — the chip and the count came from two different classifiers.
+ *
+ * The chip matched only the client's DISPLAY NAME against the prompt text. The
+ * "questions that name you" count comes from the pipeline's intent classifier,
+ * which matches the full alias set (name, domain, short label) and returns
+ * "comparison" for anything containing alternative/vs/compare BEFORE it checks the
+ * brand name. So "Karos alternatives" was counted as a category question and
+ * included in the like-for-like comparison while wearing a chip saying the
+ * opposite; and a multi-word brand lost its chip on the bare-domain prompt, which
+ * the pipeline does count as naming you.
+ *
+ * Driven by the persisted per-prompt intent now — the single source of truth the
+ * comparison itself uses. The chip is additionally scoped to prompts an engine
+ * actually ANSWERED (via the answer grid), because brandPresence.total counts only
+ * measured prompts: without that, a partial run showed more chips than the sentence
+ * claimed. Chip count now equals brandPresence.total by construction, on complete
+ * and partial runs alike.
+ */
 export function buildPromptViews(insights: SeoGeoInsights): PromptView[] {
-  const clientName = insights.roster[0] ?? "";
-  return insights.promptSet.map((prompt) => ({
-    text: prompt,
-    tagLabel: clientName && findMention(prompt, clientName) >= 0 ? "mentions you" : null,
-  }));
+  const intentByPrompt = new Map((insights.intentPrompts ?? []).map((p) => [p.prompt, p.intent]));
+  const grid = insights.answerGrid ?? [];
+  const hasGrid = grid.length > 0;
+  const measured = new Set(
+    grid.filter((r) => (r.cells ?? []).some((c) => c.state !== "unavailable")).map((r) => r.prompt),
+  );
+  return insights.promptSet.map((prompt) => {
+    const intent = intentByPrompt.get(prompt);
+    const namesYou =
+      (intent === "brand" || intent === "navigational") && (!hasGrid || measured.has(prompt));
+    return {
+      text: prompt,
+      tagLabel: namesYou ? "mentions you" : null,
+      tagExplainer: namesYou
+        ? "This question names your brand, so engines are near-guaranteed to mention you. We leave it out of the competitor comparison to keep that like-for-like."
+        : null,
+    };
+  });
 }
 
 /* ── Flag-to-team prefills ────────────────────────────────────────── */
