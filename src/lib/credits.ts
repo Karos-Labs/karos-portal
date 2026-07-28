@@ -235,6 +235,40 @@ export function isCreditDenialMessage(message: string): boolean {
 }
 
 /**
+ * One short line per denial code, for PRE-flight UI (a disabled Run button)
+ * rather than the post-failure denial above. Each names the reset that actually
+ * unblocks it: a weekly or monthly cap is not fixed by a top-up, so telling a
+ * capped client to ask for more credits is worse than saying nothing.
+ */
+export const CREDIT_BLOCK_REASON: Record<CreditDenialCode, string> = {
+  insufficient_balance: "Not enough credits — ask your Karos team for a top-up.",
+  weekly_limit: "Weekly limit reached — resets Monday.",
+  monthly_limit: "Monthly limit reached — resets on the 1st.",
+};
+
+/**
+ * Which of the three terms in `availableCredits` is currently the smallest —
+ * i.e. the limit a client would hit next. Independent of the price of any one
+ * action: the binding term is the minimum, and a cost only decides *whether*
+ * it binds, never *which*. Ties resolve in assessCharge's own order (balance,
+ * then weekly, then monthly) so the pre-flight reason names the same limit the
+ * server denial would.
+ */
+export function bindingCreditLimit(credits: ClientCredits, now?: number): CreditDenialCode {
+  const rolled = now != null ? rollCreditWindows(credits, now) : credits;
+  const weekLeft = rolled.weeklyLimit != null ? rolled.weeklyLimit - rolled.weekSpent : Infinity;
+  const monthLeft = rolled.monthlyLimit != null ? rolled.monthlyLimit - rolled.monthSpent : Infinity;
+  if (rolled.balance <= weekLeft && rolled.balance <= monthLeft) return "insufficient_balance";
+  if (weekLeft <= monthLeft) return "weekly_limit";
+  return "monthly_limit";
+}
+
+/** The line to show beside a run control that spendable credits have blocked. */
+export function creditBlockReason(credits: ClientCredits, now?: number): string {
+  return CREDIT_BLOCK_REASON[bindingCreditLimit(credits, now)];
+}
+
+/**
  * Thrown by the data layer when a charge is denied. `message` is written for
  * the client user; callers surface it verbatim (job error, 402 body, {error}).
  */

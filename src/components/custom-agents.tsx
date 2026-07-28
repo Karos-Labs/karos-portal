@@ -291,6 +291,7 @@ export function ClientCustomAgents({
   contextItems,
   viewerIsClient,
   availableCredits,
+  creditBlockReason,
   agentSetup,
   viewer,
 }: {
@@ -302,6 +303,12 @@ export function ClientCustomAgents({
   viewerIsClient: boolean;
   /** Spendable credits right now (balance clipped by caps) — client viewers only. */
   availableCredits?: number;
+  /**
+   * Which limit clips `availableCredits`, phrased for the client and resolved
+   * server-side from the denial code (never a keyword guess at a message).
+   * Shown beside a Run button that spendable credits have blocked.
+   */
+  creditBlockReason?: string;
   /** Prefills the support form offered when a schedule is stuck on a refusal. */
   viewer?: { name: string; email: string };
   /**
@@ -464,13 +471,6 @@ export function ClientCustomAgents({
                       size="sm"
                       variant="ghost"
                       disabled={short || Boolean(blockedSetup)}
-                      title={
-                        blockedSetup
-                          ? `Add your ${blockedSetup.label} first — this agent drafts from it and cannot run without it.`
-                          : short
-                            ? "Not enough credits. Ask your Karos team for a top-up."
-                            : undefined
-                      }
                       onClick={() => setRunAgent(agent)}
                     >
                       <Icon name="Play" className="h-3.5 w-3.5" /> Run now
@@ -481,6 +481,30 @@ export function ClientCustomAgents({
                     </Button>
                   </div>
                 </div>
+                {/* Why "Run now" is off, on the card itself. The Button primitive
+                    sets disabled:pointer-events-none, so a `title` on a disabled
+                    button can never be shown — the reason has to be painted.
+                    Both reasons render: they block for different lengths of time
+                    and are fixed by different people. */}
+                {(blockedSetup || short) && (
+                  <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
+                    {blockedSetup && (
+                      <p className="text-[11px] text-warning">
+                        Run now needs your {blockedSetup.label} — this agent drafts from it.
+                      </p>
+                    )}
+                    {short && (
+                      <p className="text-[11px] text-warning">
+                        {creditBlockReason ?? "Not enough credits."}
+                      </p>
+                    )}
+                    {short && viewer && (
+                      <div className="-mx-3">
+                        <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

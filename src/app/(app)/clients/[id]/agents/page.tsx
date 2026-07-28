@@ -9,7 +9,7 @@ import {
   listJobs,
   listPlannedScheduledRuns,
 } from "@/lib/data";
-import { availableCredits, isBillableClientActor } from "@/lib/credits";
+import { availableCredits, creditBlockReason, isBillableClientActor } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
@@ -183,6 +183,11 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // Impersonating admins see the client view but never spend real credits —
     // show the gate only to billable client actors.
     const spendable = isBillableClientActor(user) ? availableCredits(credits) : undefined;
+    // Which of the three limits clips that number. The card shows it beside a
+    // blocked Run button: "ask for a top-up" is wrong advice for a client who
+    // is capped for the week, and the correct wording existed only in the
+    // denial text that appears after a run has already been refused.
+    const creditBlock = spendable !== undefined ? creditBlockReason(credits) : undefined;
     const agentSetup = await buildAgentSetup(id, agents);
     return (
       <>
@@ -201,6 +206,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             agentSetup={agentSetup}
             viewer={{ name: user.name, email: user.email }}
             {...(spendable !== undefined ? { availableCredits: spendable } : {})}
+            {...(creditBlock !== undefined ? { creditBlockReason: creditBlock } : {})}
           />
         ) : (
           <EmptyState
