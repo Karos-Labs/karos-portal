@@ -10,11 +10,39 @@ import {
   CREDIT_BLOCK_REASON,
   CREDIT_COSTS,
   CREDIT_WINDOW_RESET,
+  TASK_EXECUTION_COSTS,
   availableCredits,
   bindingCreditLimit,
 } from "@/lib/credits";
 import { cn, relativeTime } from "@/lib/utils";
 import type { ClientCredits, CreditLedgerEntry, Role } from "@/lib/types";
+
+/**
+ * Every client-billable price, read straight off the pricing constants so the
+ * card can never quote a stale figure. Agent runs are deliberately "from N":
+ * CustomAgent.creditCost overrides the flat default per agent, so the real price
+ * lives on the agent card, not here.
+ */
+const PRICE_ROWS: Array<{ label: string; price: string; note?: string }> = [
+  { label: "Copilot message", price: `${CREDIT_COSTS.chatMessage}` },
+  { label: "Correct one document", price: `${CREDIT_COSTS.targetedCorrection}` },
+  { label: "Correct every document", price: `${CREDIT_COSTS.globalCorrection}` },
+  {
+    label: "Agent run",
+    price: `from ${CREDIT_COSTS.customAgentRun}`,
+    note: "each agent shows its own price",
+  },
+  { label: "Blog article", price: `${TASK_EXECUTION_COSTS.blog_article}` },
+  { label: "Newsletter issue", price: `${TASK_EXECUTION_COSTS.newsletter_issue}` },
+  { label: "Social posts", price: `${TASK_EXECUTION_COSTS.social_post}` },
+  { label: "Landing page", price: `${TASK_EXECUTION_COSTS.landing_page}` },
+  { label: "Other task execution", price: `${CREDIT_COSTS.taskExecution}` },
+  {
+    label: "Extra LinkedIn seat",
+    price: `${CREDIT_COSTS.employeeSeat}`,
+    note: "one-time, beyond your plan's seats",
+  },
+];
 
 /** Compact "N / cap" usage line with a progress bar; cap-less shows plain spend. */
 function UsageMeter({
@@ -164,6 +192,14 @@ export function CreditsPanel({
           <p className="mt-0.5 text-sm text-muted-2">
             AI actions (agent runs, copilot messages, task executions, doc corrections) spend credits.
           </p>
+          {/* The subtitle named the actions but never their prices, so the
+              ledger — a record of what you have ALREADY been charged — was the
+              only place in the product that told a client what anything costs.
+              Rendered from the pricing constants, never a hand-typed copy. */}
+          <p className="mt-1 text-xs text-muted-2">
+            Copilot message {CREDIT_COSTS.chatMessage} · doc correction{" "}
+            {CREDIT_COSTS.targetedCorrection} · agent run from {CREDIT_COSTS.customAgentRun}.
+          </p>
         </div>
         <div className="text-right">
           <p className="font-mono text-2xl font-semibold">{spendable}</p>
@@ -194,6 +230,33 @@ export function CreditsPanel({
           resetNote={CREDIT_WINDOW_RESET.monthly_limit}
         />
       </div>
+
+      {/* Full price list, collapsed. Native <details> so it needs no state and
+          is keyboard-operable and open-by-default for anyone printing or using
+          a reader that ignores the disclosure. */}
+      <details className="group mt-4 rounded-md border border-border">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs text-muted transition-colors hover:text-foreground">
+          <span className="flex items-center gap-1.5">
+            <Icon name="Receipt" className="h-3.5 w-3.5 text-muted-2" />
+            What actions cost
+          </span>
+          <Icon
+            name="ChevronDown"
+            className="h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform group-open:rotate-180"
+          />
+        </summary>
+        <ul className="divide-y divide-border border-t border-border">
+          {PRICE_ROWS.map((row) => (
+            <li key={row.label} className="flex items-baseline justify-between gap-3 px-3 py-1.5">
+              <span className="min-w-0 text-xs text-muted">
+                {row.label}
+                {row.note && <span className="ml-1 text-[11px] text-muted-2">({row.note})</span>}
+              </span>
+              <span className="shrink-0 font-mono text-xs text-foreground">{row.price}</span>
+            </li>
+          ))}
+        </ul>
+      </details>
 
       {/* Hitting a cap used to be silent: two meters, one of them red, and no
           sentence anywhere. The wording already existed but only ever appeared
