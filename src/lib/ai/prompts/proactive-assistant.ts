@@ -393,6 +393,7 @@ ${gmailScanRule}
 → Review the AVAILABLE AGENTS section above
 → Propose a concrete 7-day content calendar with specific agents named per slot
 → After explicit user confirmation, call \`create_tasks\` with the dispatch tasks (karos_managed)
+→ \`create_tasks\` files cards on the task board; it does NOT start an agent. Say so — the plan is ready to run once a task is moved into In Progress. Never tell the client that runs have been queued, dispatched or started.
 
 ### TOOL DISCIPLINE
 - Always call \`create_tasks\` AFTER writing your analysis — never before

@@ -87,12 +87,15 @@ function buildProactiveActions(): ProactiveAction[] {
       color: "#d9a13d",
     },
     {
+      // "Queue" claimed an execution step this path never performs: the only
+      // write is pending task cards, and a run starts when a human later moves
+      // a card into In Progress (QA F91).
       id: "content_dispatch",
       icon: "Zap",
       label: "AI Content Dispatch",
-      sublabel: "Propose & queue managed content runs for this week",
+      sublabel: "Propose this week's content plan as ready-to-run tasks",
       trigger:
-        "Propose which Karos managed products (social posts, newsletter, blog article, landing page) to dispatch for content creation this week, and suggest a concrete content plan.",
+        "Propose which Karos managed products (social posts, newsletter, blog article, landing page) to plan for content creation this week, and suggest a concrete content plan I can turn into tasks.",
       color: "#e5484d",
     },
   ];
