@@ -592,12 +592,12 @@ function FeedbackBox({
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
         Tell us what is working and what is not - in your own words, as much detail as you like.
-        It goes straight into the agent&apos;s next run. To pick, edit or skip an individual
-        draft, open it from{" "}
+        It goes straight into the agent&apos;s next run. Once your Karos team approves a batch,
+        picking, editing and skipping happens on the drafts themselves, in{" "}
         <a href="/tasks?tab=archive" className="underline hover:text-foreground">
           your archive
-        </a>{" "}
-        — each of those choices reaches the agent too.
+        </a>
+        — and each of those choices reaches the agent too.
       </p>
       {runs.length > 0 ? (
         /* The run's state through the app's own mapper — these used to print the
