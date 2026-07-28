@@ -185,9 +185,43 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
 
 /* ── Capture context ──────────────────────────────────────────────── */
 
+/**
+ * QA F20: this emitted a raw machine date ("2026-05-12") straight into client copy.
+ * Fixed locale + UTC so the string is deterministic (server-rendered, and pinned by
+ * tests) rather than drifting with the render host.
+ */
 export function formatCaptured(capturedAt: number): string {
   if (!Number.isFinite(capturedAt)) return "an earlier run";
-  return new Date(capturedAt).toISOString().slice(0, 10);
+  return new Date(capturedAt).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+const DAY_MS = 86_400_000;
+/** Past this, a snapshot is old enough that the panel says so (monthly cadence + slack). */
+export const SNAPSHOT_STALE_DAYS = 45;
+
+/** Relative age of a snapshot, in the client's language. Null when undateable. */
+export function snapshotAge(capturedAt: number, now = Date.now()): { days: number; label: string; stale: boolean } | null {
+  if (!Number.isFinite(capturedAt)) return null;
+  const days = Math.max(0, Math.floor((now - capturedAt) / DAY_MS));
+  const months = Math.round(days / 30);
+  const label =
+    days === 0
+      ? "today"
+      : days === 1
+        ? "yesterday"
+        : days < 45
+          ? `${days} days ago`
+          : months < 2
+            ? "about a month ago"
+            : months < 12
+              ? `${months} months ago`
+              : "over a year ago";
+  return { days, label, stale: days >= SNAPSHOT_STALE_DAYS };
 }
 
 /**
@@ -202,15 +236,72 @@ export function capturedNothing(insights: SeoGeoInsights): boolean {
   return (insights.promptSet?.length ?? 0) === 0;
 }
 
-export function buildContextLine(insights: SeoGeoInsights): string {
+export function buildContextLine(insights: SeoGeoInsights, now = Date.now()): string {
+  const age = snapshotAge(insights.capturedAt, now);
+  const dated = `Snapshot from ${formatCaptured(insights.capturedAt)}${age ? ` (${age.label})` : ""}`;
   if (capturedNothing(insights)) {
-    return `Snapshot from ${formatCaptured(insights.capturedAt)} · AI answer capture did not complete this run`;
+    return `${dated} · AI answer capture did not complete this run`;
   }
   return [
-    `Snapshot from ${formatCaptured(insights.capturedAt)}`,
+    dated,
     `${insights.promptSet.length} real buyer questions`,
     `${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} AI engines measured`,
   ].join(" · ");
+}
+
+/* ── Capture strip (QA F20 / CD-B4) ───────────────────────────────── */
+
+export interface CaptureStripView {
+  line: string;
+  /** "warning" once the snapshot is past the staleness threshold. */
+  tone: Tone;
+  /** True while a refresh run holds the workspace lock — an in-place state
+   *  instead of a top-of-page banner naming controls the client doesn't have. */
+  refreshing: boolean;
+  /** "Next snapshot: …" when a schedule is on; null when it will never fire. */
+  nextLine: string | null;
+  /** Ask-us-to-schedule prefill, when no refresh is scheduled. */
+  scheduleFlagPrefill: FlagPrefill | null;
+  /** Shown beside the prefill button; explains why we're asking. */
+  noScheduleLine: string | null;
+}
+
+/**
+ * QA F20. Across the report a client is told "we'll retry on the next snapshot",
+ * "this is measured on the next snapshot", "we ask every engine the same questions
+ * on every snapshot" — while no control on the page produces a next snapshot and no
+ * date says when one is due. The snapshot is only ever written by the intel
+ * pipeline, which has exactly three entry points: client creation, a staff-only
+ * regenerate action, and an admin-only monthly schedule that never fires for a
+ * client whose schedule was never switched on. So for those clients the promised
+ * next snapshot never happens and the report ages silently forever.
+ *
+ * This strip says, in one place: how old this snapshot is, whether it is stale,
+ * whether a refresh is running right now, and when the next one is due — or, when
+ * nothing is scheduled, offers the existing flag-to-team route to ask for one.
+ */
+export function buildCaptureStrip(
+  insights: SeoGeoInsights,
+  opts: { scheduleEnabled?: boolean; nextRunAt?: number | null; refreshing?: boolean } = {},
+  now = Date.now(),
+): CaptureStripView {
+  const age = snapshotAge(insights.capturedAt, now);
+  const scheduled = !!opts.scheduleEnabled && Number.isFinite(opts.nextRunAt ?? NaN);
+  return {
+    line: buildContextLine(insights, now),
+    tone: age?.stale ? "warning" : "neutral",
+    refreshing: !!opts.refreshing,
+    nextLine: scheduled ? `Next snapshot: ${formatCaptured(opts.nextRunAt as number)}` : null,
+    noScheduleLine: scheduled
+      ? null
+      : "No refresh is scheduled yet, so this snapshot won't update on its own.",
+    scheduleFlagPrefill: scheduled
+      ? null
+      : {
+          subject: "Request: schedule regular search and AI visibility snapshots",
+          message: `Our latest snapshot is from ${formatCaptured(insights.capturedAt)}${age ? ` (${age.label})` : ""}. Please set up a regular refresh so it stays current.`,
+        },
+  };
 }
 
 /* ── Engines ──────────────────────────────────────────────────────── */

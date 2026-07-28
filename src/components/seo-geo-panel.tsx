@@ -4,7 +4,7 @@ import { BrandFavicon } from "@/components/brand-favicon";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 import {
   buildAnswerGridViews,
-  buildContextLine,
+  buildCaptureStrip,
   buildDiscoveredViews,
   buildEngineViews,
   buildGapViews,
@@ -322,6 +322,9 @@ export function SeoGeoPanel({
   trackedCompetitors,
   clientWebsite,
   isClientViewer = false,
+  intelScheduleEnabled = false,
+  intelScheduleNextRunAt = null,
+  isRefreshing = false,
 }: {
   insights: SeoGeoInsights | null;
   /** The CURRENT tracked-5 (same selector as the sidebar) — keeps every panel
@@ -334,6 +337,14 @@ export function SeoGeoPanel({
    *  `SeoGeoInsights.gaps` is explicitly documented as never being rendered raw
    *  to a client (dev-handoff §4). */
   isClientViewer?: boolean;
+  /** Whether a recurring refresh will actually fire (QA F20). The report promises
+   *  a "next snapshot" throughout; without this the panel cannot say whether one
+   *  is ever coming. */
+  intelScheduleEnabled?: boolean;
+  intelScheduleNextRunAt?: number | null;
+  /** A refresh run holds the workspace lock right now — rendered in place on the
+   *  capture strip instead of leaving a stale snapshot looking current. */
+  isRefreshing?: boolean;
 }) {
   if (!insights) {
     return (
@@ -385,6 +396,14 @@ export function SeoGeoPanel({
   // the product is broken, when one leg of one run degraded.
   const captureFailed = capturedNothing(insights);
 
+  // QA F20: age, staleness tone, in-place refresh state, and the real "next
+  // snapshot" date (or the ask-us-to-schedule route when none will ever fire).
+  const strip = buildCaptureStrip(insights, {
+    scheduleEnabled: intelScheduleEnabled,
+    nextRunAt: intelScheduleNextRunAt,
+    refreshing: isRefreshing,
+  });
+
   const measuredEngines = engines.filter((e) => e.status === "measured");
   const unmeasuredEngines = engines.filter((e) => e.status !== "measured");
   const unwiredNames = engines.filter((e) => e.status === "not-wired").map((e) => e.name);
@@ -432,7 +451,36 @@ export function SeoGeoPanel({
 
       {/* 2 · Where we looked: the "N of 5 engines" disclosure, all engines visible */}
       <Card>
-        <p className="font-mono text-[11px] text-muted">{buildContextLine(insights)}</p>
+        <p
+          className="font-mono text-[11px]"
+          style={{ color: strip.tone === "warning" ? TONE_COLORS.warning : "var(--muted)" }}
+        >
+          {strip.line}
+        </p>
+        {/* QA F20: an in-place refreshing state, so a stale snapshot never sits
+            there looking current while a run is rewriting it. */}
+        {strip.refreshing && (
+          <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-neon">
+            <Icon name="Loader" className="h-3 w-3 animate-spin" />
+            Refreshing this snapshot now — the numbers below are the previous run.
+          </p>
+        )}
+        {!strip.refreshing && strip.nextLine && (
+          <p className="mt-1.5 text-[11px] text-muted-2">{strip.nextLine}</p>
+        )}
+        {/* The report promises a "next snapshot" throughout, and for a client whose
+            schedule was never switched on, one never comes. Say so, and give them
+            the existing route to ask for one. */}
+        {!strip.refreshing && strip.scheduleFlagPrefill && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] text-muted-2">{strip.noScheduleLine}</span>
+            <FlagButton
+              subject={strip.scheduleFlagPrefill.subject}
+              message={strip.scheduleFlagPrefill.message}
+              label="Ask us to schedule refreshes"
+            />
+          </div>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {engines.map((view) => (
             <EngineChip key={view.engine} view={view} />

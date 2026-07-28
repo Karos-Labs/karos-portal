@@ -4,10 +4,12 @@ import {
   agentLabelFor,
   bucketLabel,
   buildAnswerGridViews,
+  buildCaptureStrip,
   buildContextLine,
   buildIntentPromptViews,
   capturedNothing,
   formatPrompt,
+  snapshotAge,
   buildDiscoveredViews,
   buildRosterChips,
   buildRosterDrift,
@@ -508,9 +510,12 @@ describe("score views + context line (fixes 2 + 3)", () => {
     expect(scoreBand(70).tone).toBe("success");
   });
 
+  /** Two days after the fixture's capture, so the relative age is deterministic. */
+  const NOW = Date.UTC(2026, 6, 14);
+
   it("answers 'why only 3 models' in the context line", () => {
-    expect(buildContextLine(insights())).toBe(
-      "Snapshot from 2026-07-12 · 2 real buyer questions · 3 of 5 AI engines measured",
+    expect(buildContextLine(insights(), NOW)).toBe(
+      "Snapshot from July 12, 2026 (2 days ago) · 2 real buyer questions · 3 of 5 AI engines measured",
     );
   });
 
@@ -519,10 +524,10 @@ describe("score views + context line (fixes 2 + 3)", () => {
   it("says the capture didn't complete instead of claiming zero questions", () => {
     const degraded = insights({ promptSet: [], geoVisibilityEnginesScored: 0 });
     expect(capturedNothing(degraded)).toBe(true);
-    expect(buildContextLine(degraded)).toBe(
-      "Snapshot from 2026-07-12 · AI answer capture did not complete this run",
+    expect(buildContextLine(degraded, NOW)).toBe(
+      "Snapshot from July 12, 2026 (2 days ago) · AI answer capture did not complete this run",
     );
-    expect(buildContextLine(degraded)).not.toContain("0 real buyer questions");
+    expect(buildContextLine(degraded, NOW)).not.toContain("0 real buyer questions");
   });
 
   it("treats a normal run as captured", () => {
@@ -770,11 +775,63 @@ describe("question typography + grouping (QA F18)", () => {
   });
 });
 
+describe("snapshot age + the promised next snapshot (QA F20)", () => {
+  const CAPTURED = Date.UTC(2026, 4, 12); // 2026-05-12, the PDF's example
+  const stale = () => insights({ capturedAt: CAPTURED });
+  const NOW = Date.UTC(2026, 6, 14);
+
+  it("humanizes the date instead of emitting a machine string", () => {
+    expect(formatCaptured(CAPTURED)).toBe("May 12, 2026");
+    expect(formatCaptured(Number.NaN)).toBe("an earlier run");
+  });
+
+  it("says how old the snapshot is, and flags it once it is stale", () => {
+    expect(snapshotAge(CAPTURED, NOW)).toMatchObject({ label: "2 months ago", stale: true });
+    expect(snapshotAge(Date.UTC(2026, 6, 13), NOW)).toMatchObject({ label: "yesterday", stale: false });
+    expect(snapshotAge(NOW, NOW)).toMatchObject({ label: "today", stale: false });
+    expect(snapshotAge(Number.NaN, NOW)).toBeNull();
+  });
+
+  it("warns on the capture strip once the snapshot passes the staleness threshold", () => {
+    expect(buildCaptureStrip(stale(), {}, NOW).tone).toBe("warning");
+    expect(buildCaptureStrip(insights(), {}, NOW).tone).toBe("neutral");
+    expect(buildCaptureStrip(stale(), {}, NOW).line).toContain("2 months ago");
+  });
+
+  it("prints the real next-snapshot date when a schedule will actually fire", () => {
+    const view = buildCaptureStrip(
+      stale(),
+      { scheduleEnabled: true, nextRunAt: Date.UTC(2026, 7, 1) },
+      NOW,
+    );
+    expect(view.nextLine).toBe("Next snapshot: August 1, 2026");
+    expect(view.scheduleFlagPrefill).toBeNull();
+    expect(view.noScheduleLine).toBeNull();
+  });
+
+  it("offers the ask-us-to-schedule route when no refresh will ever fire", () => {
+    // The monthly schedule never fires for a client whose admin never enabled it,
+    // so the report ages silently forever while promising a "next snapshot".
+    for (const opts of [{}, { scheduleEnabled: false, nextRunAt: Date.UTC(2026, 7, 1) }, { scheduleEnabled: true, nextRunAt: null }]) {
+      const view = buildCaptureStrip(stale(), opts, NOW);
+      expect(view.nextLine).toBeNull();
+      expect(view.noScheduleLine).toContain("won't update on its own");
+      expect(view.scheduleFlagPrefill?.subject).toContain("schedule regular");
+      expect(view.scheduleFlagPrefill?.message).toContain("May 12, 2026");
+    }
+  });
+
+  it("reports an in-place refreshing state while a run holds the lock", () => {
+    expect(buildCaptureStrip(stale(), { refreshing: true }, NOW).refreshing).toBe(true);
+    expect(buildCaptureStrip(stale(), {}, NOW).refreshing).toBe(false);
+  });
+});
+
 describe("flag prefills (fix 4)", () => {
   it("prefills the connector request with the engine and snapshot date", () => {
     const prefill = engineFlagPrefill("Perplexity", insights());
     expect(prefill.subject).toBe("Request: measure Perplexity in our AI visibility snapshot");
-    expect(prefill.message).toContain("snapshot 2026-07-12");
+    expect(prefill.message).toContain("snapshot July 12, 2026");
   });
 
   it("attaches the right prefill to unmeasured engine views", () => {
@@ -790,7 +847,7 @@ describe("flag prefills (fix 4)", () => {
   it("builds one request covering every unwired engine", () => {
     const prefill = unwiredRequestPrefill(["Perplexity", "Copilot"], insights());
     expect(prefill.subject).toBe("Request: measure Perplexity and Copilot in our AI visibility snapshot");
-    expect(prefill.message).toContain("snapshot 2026-07-12");
+    expect(prefill.message).toContain("snapshot July 12, 2026");
   });
 
   it("degrades gracefully when capturedAt is invalid instead of throwing", () => {
