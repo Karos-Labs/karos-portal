@@ -76,7 +76,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // while drafts sat in review (QA F68).
     user.role === "CLIENT_USER"
       ? user.clientId
-        ? listReviewJobs(user.clientId)
+        ? listReviewJobs(user.clientId, { limit: 15 })
         : Promise.resolve([] as AgentReviewNotification[])
       : listReviewJobsForClients([...staffClientNames.keys()], { limit: 15 }),
     user.role === "CLIENT_USER"

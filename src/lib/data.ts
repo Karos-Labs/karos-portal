@@ -1675,7 +1675,10 @@ export async function listAssignedActionItems(
  * the forensic /jobs link, and resolving there would cost a whole-collection
  * umbrella read on every staff page load.
  */
-export async function listReviewJobs(clientId: string): Promise<AgentReviewNotification[]> {
+export async function listReviewJobs(
+  clientId: string,
+  opts?: { limit?: number },
+): Promise<AgentReviewNotification[]> {
   const [snap, umbrellas] = await Promise.all([
     col.jobs()
       .where("clientId", "==", clientId)
@@ -1683,16 +1686,24 @@ export async function listReviewJobs(clientId: string): Promise<AgentReviewNotif
       .get(),
     listClientAgents({ clientId }),
   ]);
-  return snap.docs.map((d) => {
-    const j = withId<Job>(d);
-    return {
+  return snap.docs
+    .map((d) => withId<Job>(d))
+    // Newest first and bounded, exactly like the staff feed below — this half
+    // was neither. Firestore hands back document order, so the bell's rows sat
+    // in whatever sequence the collection happened to be in, and every review
+    // in the queue crossed into the payload. A runway sweep tops a client up
+    // with up to fourteen jobs in one minute (A3/A4), so an uncapped feed turns
+    // one fire into fourteen bell rows carrying the same stamp — the batch tell
+    // on the shell of every page. The cap is the same 15 the staff feed uses.
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, opts?.limit ?? 15)
+    .map((j) => ({
       jobId: j.id,
       title: j.title,
       agentName: resolveContentIdentity({ job: j }, umbrellas).label,
       updatedAt: j.updatedAt,
       clientId: j.clientId,
-    };
-  });
+    }));
 }
 
 /**
