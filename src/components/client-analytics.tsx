@@ -3,6 +3,7 @@ import { Card, CardTitle, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
+import { platformLabel } from "@/lib/integrations/platforms";
 import type { Asset, ClientIntegration, Job } from "@/lib/types";
 
 /** One stat in the thin summary row (QA F124) — label and number on one line,
@@ -138,7 +139,7 @@ export function ClientAnalytics({
                   className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2"
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium capitalize">{i.platform}</p>
+                    <p className="truncate text-sm font-medium">{platformLabel(i.platform)}</p>
                     {i.accountName && <p className="truncate text-xs text-muted-2">{i.accountName}</p>}
                   </div>
                   {integrationNeedsReconnect(i) ? (
