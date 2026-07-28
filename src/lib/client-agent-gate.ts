@@ -3,7 +3,8 @@ import "server-only";
 import { getCustomAgent } from "@/lib/data";
 import { getClientAgentByKey } from "@/lib/data-client-agents";
 import { umbrellaRunBlock } from "@/lib/client-agent-runs";
-import type { AppUser, ClientAgent } from "@/lib/types";
+import { resolveTaskCustomAgentId } from "@/lib/task-agent-link";
+import type { AppUser, ClientAgent, ClientTask } from "@/lib/types";
 
 /**
  * The server half of the §2 guard rail: a CLIENT may not fire, or re-schedule,
@@ -50,4 +51,41 @@ export async function clientAgentRunRefusal(input: {
   const umbrella = await resolveUmbrellaForAgent(input.clientId, input.customAgentId);
   if (!umbrella) return null;
   return umbrellaRunBlock(umbrella.launchState)?.reason ?? null;
+}
+
+/**
+ * The same refusal for a run that reaches the agent through the TASK BOARD or
+ * the copilot instead of the agent card (D1).
+ *
+ * Why this needs to exist separately. The task engine dispatches every run it
+ * makes as TASK_ENGINE_ACTOR — a synthetic KAROS_ADMIN with no client behind it
+ * — because the job it stamps has no user in scope by the time it fires. Read
+ * naively, that actor walks straight through `clientAgentRunRefusal`: it is
+ * staff, and staff pass. But the actor doing the DISPATCHING is not the actor
+ * being BILLED. The client whose card the task sits on is charged for that run
+ * (chargeClientCredits fires against the session user, before the engine is
+ * ever called), so a client could run a not-yet-live agent — and pay for it —
+ * simply by dragging its task on the board instead of pressing the button the
+ * guard was written to cover.
+ *
+ * Hence the rule this module now enforces everywhere: the guard keys on the
+ * BILLED actor. Every call site passes the real session user, never the
+ * dispatcher, and every call site evaluates it BEFORE the charge — a refusal
+ * after the debit would be a charge with no run behind it.
+ *
+ * Tasks with no custom agent linked (managed products, in-process work) have no
+ * umbrella and are never blocked.
+ */
+export async function clientTaskRunRefusal(input: {
+  user: Pick<AppUser, "role">;
+  clientId: string;
+  task: Pick<ClientTask, "metadata">;
+}): Promise<string | null> {
+  const customAgentId = resolveTaskCustomAgentId(input.task);
+  if (!customAgentId) return null;
+  return clientAgentRunRefusal({
+    user: input.user,
+    clientId: input.clientId,
+    customAgentId,
+  });
 }

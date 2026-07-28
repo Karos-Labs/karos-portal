@@ -17,6 +17,7 @@ import {
   plannedTaskExecutionCost,
 } from "@/lib/execution-engine";
 import { CreditError, isBillableClientActor } from "@/lib/credits";
+import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import type { ClientTask } from "@/lib/types";
 
 /** The batch a "run pending tasks" click would execute: the same selection the
@@ -57,6 +58,12 @@ export async function runPendingTasksBatchAction(
     // Product-aware pricing: each task charges what will actually run it.
     let firstDenial: string | null = null;
     for (const t of batch) {
+      // §2 guard rail, keyed on the BILLED actor (D1). "Run all pending" is the
+      // widest door of all — it would have fired every not-yet-live agent on
+      // the board in one press. A blocked task is SKIPPED rather than failing
+      // the batch: the rest of the queue is legitimately runnable, and the
+      // agent's own card is where that refusal is explained.
+      if (await clientTaskRunRefusal({ user, clientId, task: t })) continue;
       const claimed = await claimTaskForExecution(t.id, clientId, ["pending"]);
       if (!claimed) continue;
       try {
@@ -117,8 +124,15 @@ export async function previewPendingTasksBatchAction(
     return { ok: false, error: "Forbidden" };
   }
 
-  const batch = await pendingTasksBatch(clientId);
+  const all = await pendingTasksBatch(clientId);
   const billable = isBillableClientActor(user);
+  // The runner now skips tasks the §2 guard rail refuses (D1), so the preview
+  // has to skip them too — this dialog's whole job is to announce the spend
+  // before it happens, and counting runs that will not happen overstates it.
+  const refusals = await Promise.all(
+    all.map((t) => clientTaskRunRefusal({ user, clientId, task: t })),
+  );
+  const batch = all.filter((_, i) => !refusals[i]);
   const costs = billable ? await Promise.all(batch.map((t) => plannedTaskExecutionCost(t))) : [];
   return {
     ok: true,
