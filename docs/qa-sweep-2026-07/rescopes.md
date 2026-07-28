@@ -452,3 +452,4 @@ starting. Updated by the orchestrator after each verification gate.
   (owner-tab chips count completed tasks; Done column) — tasks-board =
   WORKSPACE F136/F72 territory; client-home-overview karos_managed
   overstatement folds into F149/A4 notes.
+- F63 completeness ledger: WORKSPACE sweep (36 sites, 4947e51) + DASHBOARD already-done (client-analytics via F145/4d88b0a, verified) + AGENTS 3-site micro-commit (in flight). Flip F63 only when the AGENTS micro-commit merges.
