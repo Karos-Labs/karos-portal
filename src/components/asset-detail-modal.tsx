@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
 import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AudienceSimulation } from "@/components/audience-simulation";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
+import { parseLiDrafts } from "@/lib/li-drafts";
+import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
+import { parseXDrafts } from "@/lib/x-drafts";
+import { XDraftsBatch } from "@/components/x-drafts-review";
 import { markAssetPostedAction } from "@/lib/actions";
 import { PLATFORM_LABELS } from "@/lib/integrations/platforms";
 import { assetImages } from "@/lib/asset-images";
@@ -89,6 +93,48 @@ export function AssetDetailModal({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<"details" | "simulation">("details");
+
+  // Agent draft batches are pinned markdown structures, not captions. This
+  // modal is the ONLY deliverable viewer a client can reach (the asset card
+  // lives on staff-only routes), so the pick / edit / skip reader has to mount
+  // here too — otherwise the loop the intake forms promise doesn't exist for
+  // the person it was written for. LinkedIn is sniffed FIRST: its "## Account"
+  // headings contain the X sniff's "# Account " substring, so order matters
+  // (same order as asset-card.tsx).
+  const content = asset?.content;
+  const liBatch = useMemo(
+    () => (content?.includes("# LinkedIn drafts") ? parseLiDrafts(content) : null),
+    [content],
+  );
+  const xBatch = useMemo(
+    () => (!liBatch && content?.includes("# Account ") ? parseXDrafts(content) : null),
+    [content, liBatch],
+  );
+  // The run's attachable media for the LinkedIn reader — same filter as the
+  // asset card: only durable re-hosted links (a failed re-host leaves an
+  // auth-gated service URL a browser can't open).
+  const assetMeta = asset?.meta;
+  const liMedia = useMemo<LiMediaFile[]>(() => {
+    if (!liBatch) return [];
+    const MEDIA_EXTENSIONS = /\.(png|jpe?g|gif|webp|pdf|mp4|mov|webm)$/i;
+    const artifacts =
+      (assetMeta?.artifacts as Array<{ name?: string; url?: string; contentType?: string }> | undefined) ?? [];
+    return artifacts
+      .filter((a): a is { name: string; url: string; contentType?: string } => {
+        if (!a.name || !a.url) return false;
+        if (!a.url.includes("firebasestorage.googleapis.com")) return false;
+        if (a.contentType) {
+          return (
+            a.contentType.startsWith("image/") ||
+            a.contentType === "application/pdf" ||
+            a.contentType.startsWith("video/")
+          );
+        }
+        return MEDIA_EXTENSIONS.test(a.name);
+      })
+      .map((a) => ({ name: a.name, url: a.url }));
+  }, [assetMeta, liBatch]);
+
   if (!asset) return null;
 
   const template = templateForAsset(asset);
@@ -137,7 +183,12 @@ export function AssetDetailModal({
   const coverImageUrl = images.length > 0 ? images[0].url : null;
 
   return (
-    <Modal open={open} onClose={onClose} title={asset.title} className="max-w-2xl">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={asset.title}
+      className={liBatch || xBatch ? "max-w-3xl" : "max-w-2xl"}
+    >
       {/* Tabs */}
       <div className="mb-4 flex gap-1 border-b border-border">
         <TabButton active={tab === "details"} onClick={() => setTab("details")} icon="FileText">
@@ -199,17 +250,42 @@ export function AssetDetailModal({
           <img src={coverImageUrl} alt={asset.title} className="w-full rounded-lg border border-border" />
         )}
 
-        {/* Content */}
-        <div>
-          <div className="mb-1.5 flex items-center justify-between gap-2">
-            <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Content</p>
-            {/* Posting happens by hand from a phone, and this modal is the
-                phone's way into a post — so copy is a primary action here, not
-                the card's hover-revealed icon. */}
-            <CopyCaptionButton asset={asset} variant="full" />
+        {/* Content — a parsed drafts batch gets the per-draft reader (pick,
+            edit, skip, each choice feeding the agent's next run); anything
+            else gets the caption with a copy button. */}
+        {liBatch ? (
+          <div>
+            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
+            <LiDraftsBatch
+              clientId={asset.clientId}
+              {...(asset.jobId ? { jobId: asset.jobId } : {})}
+              assetId={asset.id}
+              accounts={liBatch.accounts}
+              media={liMedia}
+            />
           </div>
-          <p className="whitespace-pre-wrap text-sm text-foreground/90">{asset.content}</p>
-        </div>
+        ) : xBatch ? (
+          <div>
+            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
+            <XDraftsBatch
+              clientId={asset.clientId}
+              {...(asset.jobId ? { jobId: asset.jobId } : {})}
+              assetId={asset.id}
+              accounts={xBatch.accounts}
+            />
+          </div>
+        ) : (
+          <div>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Content</p>
+              {/* Posting happens by hand from a phone, and this modal is the
+                  phone's way into a post — so copy is a primary action here, not
+                  the card's hover-revealed icon. */}
+              <CopyCaptionButton asset={asset} variant="full" />
+            </div>
+            <p className="whitespace-pre-wrap text-sm text-foreground/90">{asset.content}</p>
+          </div>
+        )}
 
         {hashtags.length > 0 && (
           <p className="text-xs text-muted">{hashtags.map((h) => "#" + h).join(" ")}</p>
