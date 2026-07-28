@@ -122,6 +122,18 @@ function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) 
 
 /* ── Platform card ───────────────────────────────────────────────────── */
 
+/**
+ * Client-safe text for an action that threw. These server actions signal refusal
+ * by throwing bare authorization words ("Forbidden", "Unauthorized"), which are
+ * engineering vocabulary, not a sentence a client should be shown; anything else
+ * a caller throws is already written for a human, so it passes through.
+ */
+function actionErrorText(e: unknown, fallback: string): string {
+  const raw = e instanceof Error ? e.message.trim() : "";
+  if (!raw || /^(forbidden|unauthorized)\.?$/i.test(raw)) return fallback;
+  return raw;
+}
+
 function PlatformCard({
   platform,
   integration,
@@ -168,6 +180,13 @@ function PlatformCard({
   const [saving, setSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  /**
+   * Failures from the card's own controls (auto-publish, Disconnect). Separate
+   * from formError, which renders inside the admin credentials form and is
+   * therefore invisible whenever that form is collapsed — which is exactly when
+   * these two controls are used.
+   */
+  const [actionError, setActionError] = useState<string | null>(null);
   const [seatsOpen, setSeatsOpen] = useState(false);
   const [accountName, setAccountName] = useState(integration?.accountName ?? "");
   const [fields, setFields] = useState<Record<string, string>>(() => {
@@ -218,12 +237,18 @@ function PlatformCard({
 
   async function handleAutoPublishToggle() {
     const next = !autoPublish;
-    setAutoPublish(next); // optimistic — revalidation corrects on failure
+    setAutoPublish(next); // optimistic — reverted below if the write is refused
     setTogglingAuto(true);
+    setActionError(null);
     try {
       await setIntegrationAutoPublishAction(clientId, platform.id, next);
-    } catch {
+    } catch (e) {
+      // The revert stays; what was missing is the reason. A switch that moves
+      // twice on its own is indistinguishable from a network blip.
       setAutoPublish(!next);
+      setActionError(
+        actionErrorText(e, "Couldn't change auto-publish. Please try again."),
+      );
     } finally {
       setTogglingAuto(false);
     }
@@ -231,12 +256,16 @@ function PlatformCard({
 
   async function handleDisconnect() {
     setDisconnecting(true);
+    setActionError(null);
     try {
       await deleteIntegrationAction(clientId, platform.id);
       setAdvancedOpen(false);
       onDisconnected();
-    } catch {
-      // revalidation corrects state
+    } catch (e) {
+      // The old comment here claimed "revalidation corrects state" — nothing
+      // revalidates on the failure path, so the card just stayed Connected and
+      // said nothing.
+      setActionError(actionErrorText(e, "Couldn't disconnect this channel. Please try again."));
     } finally {
       setDisconnecting(false);
     }
@@ -387,17 +416,30 @@ function PlatformCard({
                 Reconnect
               </Button>
             )}
-            <Button
-              size="sm"
-              variant="danger"
-              onClick={handleDisconnect}
-              loading={disconnecting}
-              className={hasOAuthSupport ? "" : "flex-1"}
-            >
-              <Icon name="Unplug" className="h-3.5 w-3.5" />
-              Disconnect
-            </Button>
+            {/* Staff only. deleteIntegrationAction is requireStaff, so for a
+                client this button could never do anything but fail — and it
+                failed silently, giving them a spinner and nothing else, every
+                single time. Gated on staff rather than isAdmin because
+                employees are permitted to disconnect. */}
+            {!isClientViewer && (
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={handleDisconnect}
+                loading={disconnecting}
+                className={hasOAuthSupport ? "" : "flex-1"}
+              >
+                <Icon name="Unplug" className="h-3.5 w-3.5" />
+                Disconnect
+              </Button>
+            )}
           </div>
+        )}
+
+        {actionError && (
+          <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            {actionError}
+          </p>
         )}
 
         {/* LinkedIn employee-advocacy roster lives in a modal, not inline —
@@ -557,6 +599,8 @@ function GoogleUnifiedCard({
 }) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+  /** Failure text for a per-service disconnect — this card had no error slot. */
+  const [subError, setSubError] = useState<string | null>(null);
 
   const byId = new Map(integrations.map((i) => [i.platform, i]));
   const connectedCount = GOOGLE_SUB_SERVICES.filter((s) => byId.has(s.id)).length;
@@ -570,11 +614,15 @@ function GoogleUnifiedCard({
 
   async function handleDisconnectSub(id: string) {
     setDisconnectingId(id);
+    setSubError(null);
     try {
       await deleteIntegrationAction(clientId, id);
       onDisconnected();
-    } catch {
-      // revalidation corrects state
+    } catch (e) {
+      // Same empty catch as the platform card had, and the same claim that
+      // "revalidation corrects state" — it doesn't on the failure path. This
+      // card had no error slot at all, so the refusal had nowhere to go.
+      setSubError(actionErrorText(e, "Couldn't disconnect this service. Please try again."));
     } finally {
       setDisconnectingId(null);
     }
@@ -736,6 +784,11 @@ function GoogleUnifiedCard({
                   </div>
                 );
               })}
+              {subError && (
+                <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                  {subError}
+                </p>
+              )}
               <p className="pt-1 text-[11px] text-muted-2">
                 Reconnecting always goes through the button above — Google issues one token pair
                 covering all three services at once, so there&apos;s no separate per-service OAuth.
