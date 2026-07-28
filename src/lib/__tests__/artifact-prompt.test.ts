@@ -46,10 +46,12 @@ describe("buildArtifactGenerationPrompt — employee advocacy (Phase 5.5 item 2)
     expect(out).toMatch(/authentic first-person voice/);
   });
 
-  it("falls back to a resumeUrl reference when no raw text is on file", () => {
+  it("never pastes a resume URL into the prompt — generation runs with no tools", () => {
     const out = prompt({ advocacy: { name: "Grace", resumeUrl: "https://cv.example/grace.pdf" } });
-    expect(out).toContain("https://cv.example/grace.pdf");
+    expect(out).not.toContain("https://cv.example/grace.pdf");
     expect(out).not.toContain("PROFESSIONAL BACKGROUND (analyse");
+    // The advocacy voice override itself still applies.
+    expect(out).toContain("EMPLOYEE ADVOCACY — WRITE AS THIS PERSON, NOT THE BRAND");
   });
 
   it("caps very long resume text at 2000 chars", () => {

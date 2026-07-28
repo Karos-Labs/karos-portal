@@ -185,7 +185,7 @@ function ProfileTab({
       <Card>
         <CardTitle className="mb-1">Resume / CV</CardTitle>
         <p className="mb-3 text-xs text-muted-2">
-          Used to write LinkedIn advocacy content in your authentic voice.
+          Stored for your Karos team — they use it when writing your LinkedIn advocacy posts.
         </p>
         <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
       </Card>
