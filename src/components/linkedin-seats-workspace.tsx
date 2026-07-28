@@ -273,7 +273,7 @@ export function LinkedInSeatsWorkspace({
                         : "Removing a seat is not refunded."}
                     </p>
                     <p className="text-[11px] text-muted-2">
-                      To stop their posts temporarily, pause the seat instead - that keeps the
+                      To stop their posts temporarily, pause the seat instead — that keeps the
                       sign-in and can be undone.
                     </p>
                     <div className="flex flex-wrap gap-2 pt-0.5">
