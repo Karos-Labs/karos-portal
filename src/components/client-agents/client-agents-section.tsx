@@ -6,6 +6,8 @@ import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ClientAgentLaunchCard } from "./launch-card";
 import { ClientAgentLiveCard } from "./live-card";
+import { AgentEconomicsCard } from "./agent-economics";
+import type { AgentEconomics } from "@/lib/credit-reporting";
 import {
   bindClientAgentAction,
   goLiveClientAgentAction,
@@ -33,6 +35,7 @@ export function ClientAgentsSection({
   viewerIsClient,
   viewer,
   bindable,
+  economics,
   clientId,
 }: {
   agents: ClientAgentCardRow[];
@@ -40,6 +43,15 @@ export function ClientAgentsSection({
   viewer?: { name: string; email: string };
   /** Staff only: enabled lab agents that have no umbrella for this client yet. */
   bindable?: Array<{ id: string; name: string }>;
+  /**
+   * Staff only (§6.2b): USD spend per bound agent, keyed by customAgentId, with
+   * the launch price currently set on the lab agent. Absent for clients — this
+   * is cost data, and the client's side of the same question is credits.
+   */
+  economics?: Record<
+    string,
+    { economics: AgentEconomics; launchCreditCost: number | null }
+  >;
   clientId: string;
 }) {
   const visible = agents;
@@ -93,6 +105,14 @@ export function ClientAgentsSection({
               )}
               {!viewerIsClient && agent.launchState !== "not_launched" && (
                 <CurationPane agent={agent} />
+              )}
+              {!viewerIsClient && economics?.[agent.customAgentId] && (
+                <AgentEconomicsCard
+                  customAgentId={agent.customAgentId}
+                  agentName={agent.displayName}
+                  economics={economics[agent.customAgentId].economics}
+                  launchCreditCost={economics[agent.customAgentId].launchCreditCost}
+                />
               )}
             </div>
           ))}

@@ -15,6 +15,8 @@ import type { ClientAgentScheduleRow, RunnableAgentSummary } from "@/components/
 export interface ClientAgentCardRow {
   id: string;
   clientId: string;
+  /** The bound lab agent. Stable across re-imports of the umbrella. */
+  customAgentId: string;
   /** Identity string for the platform mark ("<key> <name>"). */
   identity: string;
   /** Stored lucide icon of the bound lab agent (mark fallback). */

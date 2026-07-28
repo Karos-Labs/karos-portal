@@ -18,6 +18,7 @@ import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { summarizeAgentEconomics } from "@/lib/credit-reporting";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
 import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
@@ -252,6 +253,30 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     viewerIsStaff: true,
     now: Date.now(),
   });
+  // §6.2(b). USD this client has spent per bound agent, split by run type.
+  // Computed from the jobs already loaded above — no extra read — and staff-only:
+  // it is passed to the staff branch of the section and nowhere else.
+  const agentById = new Map(customAgents.map((a) => [a.id, a]));
+  const jobsByAgent = new Map<string, typeof jobs>();
+  for (const job of jobs) {
+    if (!job.customAgentId) continue;
+    const bucket = jobsByAgent.get(job.customAgentId);
+    if (bucket) bucket.push(job);
+    else jobsByAgent.set(job.customAgentId, [job]);
+  }
+  const economicsByAgent: Record<
+    string,
+    { economics: ReturnType<typeof summarizeAgentEconomics>; launchCreditCost: number | null }
+  > = {};
+  for (const umbrella of umbrellas) {
+    const agent = agentById.get(umbrella.customAgentId);
+    if (!agent) continue;
+    economicsByAgent[umbrella.customAgentId] = {
+      economics: summarizeAgentEconomics(jobsByAgent.get(umbrella.customAgentId) ?? []),
+      launchCreditCost: agent.launchCreditCost ?? null,
+    };
+  }
+
   const boundAgentIds = new Set(umbrellas.map((u) => u.customAgentId));
   const bindable = customAgents
     .filter((a) => a.enabled && !boundAgentIds.has(a.id))
@@ -322,6 +347,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             agents={staffAgentRows}
             viewerIsClient={false}
             bindable={bindable}
+            economics={economicsByAgent}
             viewer={{ name: user.name, email: user.email }}
           />
           <ClientCustomAgents

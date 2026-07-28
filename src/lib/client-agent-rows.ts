@@ -281,6 +281,7 @@ export async function toClientAgentRows(args: {
     rows.push({
       id: umbrella.id,
       clientId: umbrella.clientId,
+      customAgentId: agent.id,
       identity: `${agent.key} ${agent.name}`,
       icon: agent.icon,
       displayName: umbrella.displayName,
