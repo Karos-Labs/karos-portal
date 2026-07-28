@@ -53,6 +53,8 @@ import {
   defaultClientCredits,
   rollCreditWindows,
 } from "@/lib/credits";
+import { resolveContentIdentity } from "@/lib/agent-identity-map";
+import { listClientAgents } from "@/lib/data-client-agents";
 import { engagementScore, rankByEngagement } from "@/lib/analytics";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
@@ -1655,15 +1657,34 @@ export async function listAssignedActionItems(
 /**
  * Returns jobs for a client that are in the `review` state — i.e. the AI has
  * finished generating content and the client needs to approve or reject it.
+ *
+ * `agentName` here is the §7.3 identity, not the stored name: a managed run is
+ * RECORDED as "Social posts (IG/TikTok)", and the client's bell was the last
+ * surface still printing that second identity next to the umbrella's own name
+ * (F147 residual). One scoped umbrella read per client shell render buys the
+ * resolution; it stays in this function so only the finished label crosses
+ * into AgentReviewNotification, which is serialized to a client component.
+ * The staff cross-client feed below keeps the stored name — its readers hold
+ * the forensic /jobs link, and resolving there would cost a whole-collection
+ * umbrella read on every staff page load.
  */
 export async function listReviewJobs(clientId: string): Promise<AgentReviewNotification[]> {
-  const snap = await col.jobs()
-    .where("clientId", "==", clientId)
-    .where("status", "==", "review")
-    .get();
+  const [snap, umbrellas] = await Promise.all([
+    col.jobs()
+      .where("clientId", "==", clientId)
+      .where("status", "==", "review")
+      .get(),
+    listClientAgents({ clientId }),
+  ]);
   return snap.docs.map((d) => {
     const j = withId<Job>(d);
-    return { jobId: j.id, title: j.title, agentName: j.agentName, updatedAt: j.updatedAt, clientId: j.clientId };
+    return {
+      jobId: j.id,
+      title: j.title,
+      agentName: resolveContentIdentity({ job: j }, umbrellas).label,
+      updatedAt: j.updatedAt,
+      clientId: j.clientId,
+    };
   });
 }
 

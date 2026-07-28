@@ -177,12 +177,12 @@ function BindAgentControl({
             setError(null);
           }}
           className="h-8 w-48 text-xs"
-          aria-label="Lab agent to bind"
+          aria-label="Agent to set up for this client"
         >
           {/* Honest about what this does: it binds a lab agent so it HAS a
               template set and schedule to be set up. It is not a purchase, a
               grant, or a statement about what this client may run. */}
-          <option value="">Bind a lab agent…</option>
+          <option value="">Set up an agent for this client…</option>
           {agents.map((agent) => (
             <option key={agent.id} value={agent.id}>
               {agent.name}
@@ -196,13 +196,13 @@ function BindAgentControl({
           loading={pending}
           onClick={() => bind()}
         >
-          <Icon name="Plus" className="h-3.5 w-3.5" /> Bind
+          <Icon name="Plus" className="h-3.5 w-3.5" /> Add
         </Button>
       </div>
       {confirming && (
         <div className="max-w-sm rounded-[var(--radius)] border border-warning/30 bg-warning/10 p-2.5 text-right">
           <p className="text-[11px] text-warning">
-            {selectedName} is already producing for this client. Binding it as new hides its Run
+            {selectedName} is already producing for this client. Adding it as new hides its Run
             button, its schedule row and its run history from the client until you launch it — its
             weekly schedule keeps firing, so pause that too if you mean to stop it.
           </p>
@@ -211,10 +211,10 @@ function BindAgentControl({
               Cancel
             </Button>
             <Button size="sm" variant="ghost" disabled={pending} onClick={() => bind("new")}>
-              Bind as new
+              Add as new
             </Button>
             <Button size="sm" variant="accent" disabled={pending} onClick={() => bind("live")}>
-              Bind as live
+              Add as live
             </Button>
           </div>
         </div>
