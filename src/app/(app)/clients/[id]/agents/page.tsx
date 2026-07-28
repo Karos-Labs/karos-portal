@@ -22,6 +22,8 @@ import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
+import { isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
+import type { AgentSetupState } from "@/components/custom-agents";
 import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
 import { assetImages } from "@/lib/asset-images";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
@@ -82,6 +84,46 @@ function toScheduleRows(
 }
 
 /**
+ * Intake readiness, resolved once per agent with the SAME call the submit core
+ * makes (submitCustomAgentJob → hasXAgentIntake / hasLinkedInAgentIntake). The
+ * LinkedIn check answers differently per agent key — the multi-seat agent runs
+ * on any stored intake, the company-page agents need the company form — so a
+ * single shared flag would block agents the server would run, and a card cannot
+ * derive this from the key alone.
+ */
+async function buildAgentSetup(
+  clientId: string,
+  agents: Array<{ id: string; key: string }>,
+): Promise<Record<string, AgentSetupState>> {
+  const resolved = await Promise.all(
+    agents.map(async (agent): Promise<[string, AgentSetupState] | null> => {
+      if (isXAgentIdentity(agent.key)) {
+        return [
+          agent.id,
+          {
+            ready: await hasXAgentIntake(clientId),
+            href: `/clients/${clientId}/x-agent`,
+            label: "X agent data",
+          },
+        ];
+      }
+      if (isLinkedInAgentIdentity(agent.key)) {
+        return [
+          agent.id,
+          {
+            ready: await hasLinkedInAgentIntake(clientId, agent.key),
+            href: `/clients/${clientId}/linkedin-agent`,
+            label: "LinkedIn agent data",
+          },
+        ];
+      }
+      return null;
+    }),
+  );
+  return Object.fromEntries(resolved.filter((entry): entry is [string, AgentSetupState] => entry !== null));
+}
+
+/**
  * A client's AI Agents page. Clients can run only the custom agents that an
  * admin granted them; staff can run every enabled custom agent.
  */
@@ -100,13 +142,6 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   const agentServiceConfigured = isAgentServiceConfigured();
-  // Intake-driven agents gate: their run modals route to the data page until
-  // intake exists (X e13, LinkedIn e10).
-  const xSetup = { ready: await hasXAgentIntake(id), href: `/clients/${id}/x-agent` };
-  const linkedinSetup = {
-    ready: await hasLinkedInAgentIntake(id),
-    href: `/clients/${id}/linkedin-agent`,
-  };
 
   // Client users: explicitly granted agents plus any agent that has already
   // delivered a successful run for this workspace.
@@ -137,6 +172,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // Impersonating admins see the client view but never spend real credits —
     // show the gate only to billable client actors.
     const spendable = isBillableClientActor(user) ? availableCredits(credits) : undefined;
+    const agentSetup = await buildAgentSetup(id, agents);
     return (
       <>
         <PageHeader
@@ -151,8 +187,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             schedules={toScheduleRows(scheduledRuns)}
             contextItems={contextItems}
             viewerIsClient
-            xSetup={xSetup}
-            linkedinSetup={linkedinSetup}
+            agentSetup={agentSetup}
             viewer={{ name: user.name, email: user.email }}
             {...(spendable !== undefined ? { availableCredits: spendable } : {})}
           />
@@ -196,6 +231,9 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     if (urls.length > 0) jobPreviews[job.id] = urls.slice(0, 6);
   }
 
+  const staffAgents = customAgents.filter((a) => a.enabled).map(toSummary);
+  const agentSetup = await buildAgentSetup(id, staffAgents);
+
   return (
     <>
       <PageHeader
@@ -217,13 +255,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       {agentServiceConfigured ? (
         <ClientCustomAgents
           clientId={id}
-          agents={customAgents.filter((a) => a.enabled).map(toSummary)}
+          agents={staffAgents}
           runs={toRunRows(jobs, true)}
           schedules={toScheduleRows(scheduledRuns)}
           contextItems={contextItems}
           viewerIsClient={false}
-          xSetup={xSetup}
-          linkedinSetup={linkedinSetup}
+          agentSetup={agentSetup}
           viewer={{ name: user.name, email: user.email }}
         />
       ) : (

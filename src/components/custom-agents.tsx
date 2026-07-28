@@ -27,8 +27,6 @@ import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
 import {
   buildCustomAgentPrompt,
   initialAgentBrief,
-  isLinkedInAgentIdentity,
-  isXAgentIdentity,
   launchProfileFor,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
@@ -100,18 +98,19 @@ function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
 
 /**
  * The intake page an agent drafts from, when it has one (X e13, LinkedIn e10).
- * `ready` is the server's answer to "has this client filled it in yet".
+ *
+ * Readiness is resolved PER AGENT on the server and handed down keyed by agent
+ * id. It cannot be recomputed here from one shared flag: `hasLinkedInAgentIntake`
+ * answers differently depending on the agent key it is given (the multi-seat
+ * agent accepts any stored intake; the company-page agents require the company
+ * form), and the submit core passes that key. A single shared answer would block
+ * an agent the server would happily run.
  */
-function setupTargetFor(
-  agentKey: string,
-  xSetup?: { ready: boolean; href: string },
-  linkedinSetup?: { ready: boolean; href: string },
-): { ready: boolean; href: string; label: string } | null {
-  if (xSetup && isXAgentIdentity(agentKey)) return { ...xSetup, label: "X agent data" };
-  if (linkedinSetup && isLinkedInAgentIdentity(agentKey)) {
-    return { ...linkedinSetup, label: "LinkedIn agent data" };
-  }
-  return null;
+export interface AgentSetupState {
+  ready: boolean;
+  href: string;
+  /** e.g. "X agent data" — names the intake page in copy and link labels. */
+  label: string;
 }
 
 /**
@@ -310,8 +309,7 @@ export function ClientCustomAgents({
   contextItems,
   viewerIsClient,
   availableCredits,
-  xSetup,
-  linkedinSetup,
+  agentSetup,
   viewer,
 }: {
   clientId: string;
@@ -324,10 +322,11 @@ export function ClientCustomAgents({
   availableCredits?: number;
   /** Prefills the support form offered when a schedule is stuck on a refusal. */
   viewer?: { name: string; email: string };
-  /** X agent intake state: gates the X run behind the "X agent data" page. */
-  xSetup?: { ready: boolean; href: string };
-  /** LinkedIn agent intake state: gates e10 runs behind the "LinkedIn agent data" page. */
-  linkedinSetup?: { ready: boolean; href: string };
+  /**
+   * Intake readiness per agent id, resolved server-side with the same call the
+   * submit core makes. Agents without an intake gate are simply absent.
+   */
+  agentSetup?: Record<string, AgentSetupState>;
 }) {
   const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
   const [scheduleAgent, setScheduleAgent] = useState<RunnableAgentSummary | null>(null);
@@ -368,7 +367,7 @@ export function ClientCustomAgents({
               (run) => run.agentName === agent.name && run.status === "review" && run.assetCount > 0,
             );
             const readyAssetCount = reviewRuns.reduce((total, run) => total + run.assetCount, 0);
-            const setup = setupTargetFor(agent.key, xSetup, linkedinSetup);
+            const setup = agentSetup?.[agent.id] ?? null;
             // Readiness is computed once, next to the "Setup needed" chip, and
             // gates the run button with it: the submit core refuses these runs
             // server-side, so an enabled Run beside a blocked chip can only
@@ -562,8 +561,7 @@ export function ClientCustomAgents({
           clientId={clientId}
           contextItems={contextItems}
           viewerIsClient={viewerIsClient}
-          {...(xSetup ? { xSetup } : {})}
-          {...(linkedinSetup ? { linkedinSetup } : {})}
+          {...(agentSetup?.[runAgent.id] ? { setup: agentSetup[runAgent.id] } : {})}
           onClose={() => setRunAgent(null)}
         />
       )}
@@ -746,8 +744,7 @@ function RunCustomAgentModal({
   clients,
   contextItems,
   viewerIsClient,
-  xSetup,
-  linkedinSetup,
+  setup,
   onClose,
 }: {
   agent: RunnableAgentSummary;
@@ -757,10 +754,11 @@ function RunCustomAgentModal({
   clients?: Array<{ id: string; name: string }>;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
-  /** X agent intake state — when not ready, the modal routes to setup instead of running. */
-  xSetup?: { ready: boolean; href: string };
-  /** LinkedIn agent intake state — same gate for the e10 agents. */
-  linkedinSetup?: { ready: boolean; href: string };
+  /**
+   * This agent's intake readiness, resolved server-side for this exact agent.
+   * When not ready the modal routes to setup instead of running.
+   */
+  setup?: AgentSetupState;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -847,49 +845,24 @@ function RunCustomAgentModal({
     );
   }
 
-  if (isXAgentIdentity(agent.key) && xSetup && !xSetup.ready) {
+  // One gate for every intake-driven agent. `setup` is already this agent's own
+  // answer, so the modal never re-derives readiness from the agent key.
+  if (setup && !setup.ready) {
     return (
       <Modal open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
-          <p className="text-sm text-foreground">Set up the X agent data first.</p>
+          <p className="text-sm text-foreground">Set up the {setup.label} first.</p>
           <p className="text-xs leading-relaxed text-muted">
-            This agent drafts from the X agent data page: the company page, a seat per
+            This agent drafts from the {setup.label} page: the company page, a seat per
             person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
             will not run without it.
           </p>
           <div className="flex items-center gap-2 pt-1">
             <a
-              href={xSetup.href}
+              href={setup.href}
               className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
             >
-              Set up X agent data
-              <Icon name="ArrowRight" className="h-3.5 w-3.5" />
-            </a>
-            <Button variant="ghost" onClick={onClose}>
-              Not now
-            </Button>
-          </div>
-        </div>
-      </Modal>
-    );
-  }
-
-  if (isLinkedInAgentIdentity(agent.key) && linkedinSetup && !linkedinSetup.ready) {
-    return (
-      <Modal open onClose={onClose} title={agent.name}>
-        <div className="mt-4 space-y-3">
-          <p className="text-sm text-foreground">Set up the LinkedIn agent data first.</p>
-          <p className="text-xs leading-relaxed text-muted">
-            This agent drafts from the LinkedIn agent data page: the company page, a seat per
-            person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
-            will not run without it.
-          </p>
-          <div className="flex items-center gap-2 pt-1">
-            <a
-              href={linkedinSetup.href}
-              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
-            >
-              Set up LinkedIn agent data
+              Set up {setup.label}
               <Icon name="ArrowRight" className="h-3.5 w-3.5" />
             </a>
             <Button variant="ghost" onClick={onClose}>
