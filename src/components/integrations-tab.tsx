@@ -123,16 +123,15 @@ function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) 
 /* ── Platform card ───────────────────────────────────────────────────── */
 
 /**
- * Client-safe text for an action that threw. These server actions signal refusal
- * by throwing bare authorization words ("Forbidden", "Unauthorized"), which are
- * engineering vocabulary, not a sentence a client should be shown; anything else
- * a caller throws is already written for a human, so it passes through.
+ * Refusals from the card's actions arrive as DATA ({ error }) and are already
+ * written for a client to read, so they render verbatim. A throw reaching these
+ * handlers is therefore not a refusal but a transport failure — or an exception
+ * Next has masked behind an opaque production digest ("An error occurred in the
+ * Server Components render… digest: 1234567890"). Never render that: the catch
+ * blocks below always substitute their own line, which is the allowlist
+ * direction F34 established (no internal string reaches a client because a
+ * filter failed to recognise it).
  */
-function actionErrorText(e: unknown, fallback: string): string {
-  const raw = e instanceof Error ? e.message.trim() : "";
-  if (!raw || /^(forbidden|unauthorized)\.?$/i.test(raw)) return fallback;
-  return raw;
-}
 
 /**
  * One channels section, connected first. Every platform used to render as an
@@ -318,14 +317,16 @@ function PlatformCard({
     setTogglingAuto(true);
     setActionError(null);
     try {
-      await setIntegrationAutoPublishAction(clientId, platform.id, next);
-    } catch (e) {
-      // The revert stays; what was missing is the reason. A switch that moves
-      // twice on its own is indistinguishable from a network blip.
+      const res = await setIntegrationAutoPublishAction(clientId, platform.id, next);
+      if (res.error) {
+        // The revert stays; what was missing is the reason. A switch that moves
+        // twice on its own is indistinguishable from a network blip.
+        setAutoPublish(!next);
+        setActionError(res.error);
+      }
+    } catch {
       setAutoPublish(!next);
-      setActionError(
-        actionErrorText(e, "Couldn't change auto-publish. Please try again."),
-      );
+      setActionError("Couldn't change auto-publish. Please try again.");
     } finally {
       setTogglingAuto(false);
     }
@@ -335,14 +336,18 @@ function PlatformCard({
     setDisconnecting(true);
     setActionError(null);
     try {
-      await deleteIntegrationAction(clientId, platform.id);
+      const res = await deleteIntegrationAction(clientId, platform.id);
+      if (res.error) {
+        // The old comment here claimed "revalidation corrects state" — nothing
+        // revalidates on the failure path, so the card just stayed Connected and
+        // said nothing.
+        setActionError(res.error);
+        return;
+      }
       setAdvancedOpen(false);
       onDisconnected();
-    } catch (e) {
-      // The old comment here claimed "revalidation corrects state" — nothing
-      // revalidates on the failure path, so the card just stayed Connected and
-      // said nothing.
-      setActionError(actionErrorText(e, "Couldn't disconnect this channel. Please try again."));
+    } catch {
+      setActionError("Couldn't disconnect this channel. Please try again.");
     } finally {
       setDisconnecting(false);
     }
@@ -693,13 +698,17 @@ function GoogleUnifiedCard({
     setDisconnectingId(id);
     setSubError(null);
     try {
-      await deleteIntegrationAction(clientId, id);
+      const res = await deleteIntegrationAction(clientId, id);
+      if (res.error) {
+        // Same empty catch as the platform card had, and the same claim that
+        // "revalidation corrects state" — it doesn't on the failure path. This
+        // card had no error slot at all, so the refusal had nowhere to go.
+        setSubError(res.error);
+        return;
+      }
       onDisconnected();
-    } catch (e) {
-      // Same empty catch as the platform card had, and the same claim that
-      // "revalidation corrects state" — it doesn't on the failure path. This
-      // card had no error slot at all, so the refusal had nowhere to go.
-      setSubError(actionErrorText(e, "Couldn't disconnect this service. Please try again."));
+    } catch {
+      setSubError("Couldn't disconnect this service. Please try again.");
     } finally {
       setDisconnectingId(null);
     }
