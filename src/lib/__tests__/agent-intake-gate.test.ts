@@ -389,21 +389,30 @@ describe("per-client agent instance binding", () => {
     }
     // Turning a schedule OFF is never blocked — that is the row someone most
     // needs to be able to switch off. Both resume paths ask before enabling.
+    //
+    // Both indices are asserted PRESENT before they are ordered. A bare
+    // `indexOf(a) < indexOf(b)` passes whenever `a` is missing, because the -1
+    // it returns is less than every real position — so deleting the enabling
+    // branch outright, which is exactly the regression this pins, would have
+    // read as "correctly ordered".
+    const orderedBefore = (body: string, guard: string, gate: string) => {
+      const guardAt = body.indexOf(guard);
+      const gateAt = body.indexOf(gate);
+      expect(guardAt, `the enabling branch \`${guard}\` is gone`).toBeGreaterThan(-1);
+      expect(gateAt, `the schedule gate is gone from this action`).toBeGreaterThan(-1);
+      expect(guardAt, `\`${guard}\` no longer fences the gate`).toBeLessThan(gateAt);
+    };
     const planned = readFileSync(
       join(process.cwd(), "src/lib/actions/planned-run-actions.ts"),
       "utf8",
     );
     const resume = planned.slice(planned.indexOf("export async function setPlannedRunStatusAction"));
-    expect(resume.indexOf('if (status === "active") {')).toBeLessThan(
-      resume.indexOf("await unfireableScheduleReason("),
-    );
+    orderedBefore(resume, 'if (status === "active") {', "await unfireableScheduleReason(");
     const legacy = readFileSync(
       join(process.cwd(), "src/lib/actions/scheduled-run-actions.ts"),
       "utf8",
     );
     const toggle = legacy.slice(legacy.indexOf("export async function toggleScheduledRunAction"));
-    expect(toggle.indexOf("if (enabled) {")).toBeLessThan(
-      toggle.indexOf("await unfireableScheduleReason("),
-    );
+    orderedBefore(toggle, "if (enabled) {", "await unfireableScheduleReason(");
   });
 });
