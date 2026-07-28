@@ -5,7 +5,12 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Icon, LinkedInLogo, XLogo } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { renderFullDoc, stripDocPreamble } from "@/lib/doc-render";
+import {
+  parseDocSections,
+  renderFullDoc,
+  renderSectionBody,
+  stripDocPreamble,
+} from "@/lib/doc-render";
 import { generateIntelReportAction, updateIntelScheduleAction } from "@/lib/actions";
 import { CorrectInfoModal } from "@/components/correct-info-modal";
 import {
@@ -307,6 +312,19 @@ function ExportMenu({
 
 /* ── Full-document slide-over (50% width) ─────────────────────────────── */
 
+/** Any body text sitting before the first `##` heading — parseDocSections drops it. */
+function leadIn(content: string): string {
+  const clean = stripDocPreamble(content);
+  const idx = clean.search(/^##\s+/m);
+  return idx > 0 ? clean.slice(0, idx).trim() : "";
+}
+
+/** Stable, unique anchor id for a section heading. */
+function sectionId(heading: string, i: number): string {
+  const slug = heading.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `doc-section-${i}-${slug || "untitled"}`;
+}
+
 function DocOverlay({
   doc,
   label,
@@ -324,6 +342,13 @@ function DocOverlay({
   // renderFullDoc("") returns "" — with no branch here the panel used to open
   // onto a completely blank body with no message and no explanation.
   const body = renderFullDoc(doc.content);
+  // parseDocSections gives heading/body pairs AND drops sections whose body is
+  // nothing but "Unknown" / "Not provided" / "TBD" — both were already written
+  // and had no callers. Below two sections there is nothing to index, so those
+  // documents keep the single-pass render.
+  const sections = parseDocSections(doc.content);
+  const indexed = sections.length >= 2;
+  const lead = leadIn(doc.content);
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -375,15 +400,74 @@ function DocOverlay({
           </div>
 
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
-            {body ? (
+            {!body ? (
+              <p className="mx-auto w-full max-w-2xl text-sm text-muted">
+                This document has not been generated yet — ask your Karos team to regenerate it.
+              </p>
+            ) : indexed ? (
+              <div className="mx-auto flex w-full max-w-3xl gap-6">
+                <nav
+                  aria-label="Sections"
+                  className="sticky top-0 hidden w-44 shrink-0 self-start md:block"
+                >
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                    Contents
+                  </p>
+                  <ul className="space-y-0.5">
+                    {sections.map((s, i) => (
+                      <li key={sectionId(s.heading, i)}>
+                        <button
+                          onClick={() =>
+                            document
+                              .getElementById(sectionId(s.heading, i))
+                              ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                          }
+                          className="w-full rounded-md px-2 py-1 text-left text-xs leading-snug text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                        >
+                          {s.heading}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+
+                <div className="min-w-0 flex-1 break-words [&_code]:break-all [&_table]:min-w-0">
+                  {/* Narrow panels get the index as a scrollable chip row — a
+                      44px column would leave no room for the document itself. */}
+                  <div className="mb-4 -mx-1 flex gap-1.5 overflow-x-auto pb-1 md:hidden">
+                    {sections.map((s, i) => (
+                      <button
+                        key={sectionId(s.heading, i)}
+                        onClick={() =>
+                          document
+                            .getElementById(sectionId(s.heading, i))
+                            ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                        }
+                        className="shrink-0 rounded-full border border-border px-2.5 py-1 text-[11px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                      >
+                        {s.heading}
+                      </button>
+                    ))}
+                  </div>
+
+                  {lead && (
+                    <div dangerouslySetInnerHTML={{ __html: renderSectionBody(lead) }} />
+                  )}
+                  {sections.map((s, i) => (
+                    <section key={sectionId(s.heading, i)} id={sectionId(s.heading, i)}>
+                      <h2 className="mt-7 mb-2.5 scroll-mt-4 text-base font-semibold text-neon/90">
+                        {s.heading}
+                      </h2>
+                      <div dangerouslySetInnerHTML={{ __html: renderSectionBody(s.body) }} />
+                    </section>
+                  ))}
+                </div>
+              </div>
+            ) : (
               <div
                 className="mx-auto w-full max-w-2xl break-words [&_code]:break-all [&_table]:min-w-0"
                 dangerouslySetInnerHTML={{ __html: body }}
               />
-            ) : (
-              <p className="mx-auto w-full max-w-2xl text-sm text-muted">
-                This document has not been generated yet — ask your Karos team to regenerate it.
-              </p>
             )}
           </div>
         </div>
