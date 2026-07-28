@@ -27,7 +27,7 @@ are tracked in the CD table at the bottom.
 | F12 | HIGH | B | SEO | 2 | RESOLVED | yes | There is no way to see what any AI engine actually answered — the per-question answer grid is c | findings-p009-046.md |
 | F133 | HIGH | B | SEO | 2 | RESOLVED | yes | The report says the site was never cited and cited 11 times, on the same screen | findings-p009-046.md |
 | F152 | HIGH | B | SEO | 2 | RESOLVED | — | Two of the nine signed-off v1 fixes shipped and were silently reverted by a merge the same day | findings-p009-046.md |
-| F15 | MEDIUM | B | COPILOT | 2 | OPEN | — | Clicking an AI action posts a fabricated message in the client's own voice, stage directions in | findings-p009-046.md |
+| F15 | MEDIUM | B | COPILOT | 2 | RESOLVED | — | Clicking an AI action posts a fabricated message in the client's own voice, stage directions in | findings-p009-046.md |
 | F16 | MEDIUM | B | SEO | 2 | RESOLVED | yes | The "Search engines" filter files four search checks under "AI answers" instead | findings-p009-046.md |
 | F17 | MEDIUM | A | SEO | 2 | RESOLVED | yes | The "mentions you" chip does nothing, and the number of chips contradicts the sentence above it | findings-p009-046.md |
 | F18 | MEDIUM | A | SEO | 2 | RESOLVED | yes | The buyer-questions list is an unpunctuated flat dump, and it hides the competitor roster and t | findings-p009-046.md |
@@ -111,15 +111,15 @@ are tracked in the CD table at the bottom.
 | F86 | LOW | B | DOCS | 2 | RESOLVED | yes | No document tells you how old it is — no last-updated, no version, and no way to navigate a fou | findings-p123-160.md |
 | F139 | LOW | A | DOCS | 2 | RESOLVED | yes | A teammate's real name is used as the example of a wrong fact in client-facing copy | findings-p123-160.md |
 | F140 | LOW | A | DOCS | 2 | RESOLVED | yes | A fill-in-the-blank label ships as "EVERY ___ MONTH(S)" | findings-p123-160.md |
-| F87 | HIGH | B | COPILOT | 2 | OPEN | — | "Competitor Deep-Dive" asks for a competitor's web address it has no way to open | findings-p123-160.md |
-| F88 | HIGH | A | COPILOT | 2 | OPEN | yes | All four AI actions disappear after the first message, and the only way back destroys the threa | findings-p123-160.md |
-| F89 | HIGH | A | COPILOT | 2 | OPEN | — | Raw model markup is shown to the client — asterisks, hashes and table pipes land in the panel | findings-p123-160.md |
-| F90 | HIGH | B | COPILOT | 2 | OPEN | — | The War Room reports "Consensus reached" when it created nothing, then closes before the reason | findings-p123-160.md |
-| F91 | MEDIUM | B | COPILOT | 2 | OPEN | — | "AI Content Dispatch" says it queues content runs; nothing is queued | findings-p123-160.md |
-| F92 | MEDIUM | B | COPILOT | 2 | OPEN | — | A War Room run can create an extra campaign the console never mentions, the count excludes, and | findings-p123-160.md |
-| F93 | MEDIUM | A | COPILOT | 2 | OPEN | — | Escape or a stray click outside throws away a minute-long War Room run with no warning | findings-p123-160.md |
-| F94 | MEDIUM | A | COPILOT | 2 | OPEN | yes | On a phone the Copilot opens as a sliver and the four actions sit below the fold | findings-p123-160.md |
-| F95 | MEDIUM | A | COPILOT | 2 | OPEN | — | The copilot is given a credit price list that omits the most expensive thing a client can buy | findings-p123-160.md |
+| F87 | HIGH | B | COPILOT | 2 | RESOLVED | — | "Competitor Deep-Dive" asks for a competitor's web address it has no way to open | findings-p123-160.md |
+| F88 | HIGH | A | COPILOT | 2 | RESOLVED | yes | All four AI actions disappear after the first message, and the only way back destroys the threa | findings-p123-160.md |
+| F89 | HIGH | A | COPILOT | 2 | RESOLVED | — | Raw model markup is shown to the client — asterisks, hashes and table pipes land in the panel | findings-p123-160.md |
+| F90 | HIGH | B | COPILOT | 2 | RESOLVED | — | The War Room reports "Consensus reached" when it created nothing, then closes before the reason | findings-p123-160.md |
+| F91 | MEDIUM | B | COPILOT | 2 | RESOLVED | — | "AI Content Dispatch" says it queues content runs; nothing is queued | findings-p123-160.md |
+| F92 | MEDIUM | B | COPILOT | 2 | RESOLVED | — | A War Room run can create an extra campaign the console never mentions, the count excludes, and | findings-p123-160.md |
+| F93 | MEDIUM | A | COPILOT | 2 | RESOLVED | — | Escape or a stray click outside throws away a minute-long War Room run with no warning | findings-p123-160.md |
+| F94 | MEDIUM | A | COPILOT | 2 | RESOLVED | yes | On a phone the Copilot opens as a sliver and the four actions sit below the fold | findings-p123-160.md |
+| F95 | MEDIUM | A | COPILOT | 2 | RESOLVED | — | The copilot is given a credit price list that omits the most expensive thing a client can buy | findings-p123-160.md |
 | F97 | BLOCKER | B | DASHBOARD | 1 | RESOLVED | — | The client's top call to action promises an approval they cannot make, and the link lands on th | findings-p123-160.md |
 | F125 | BLOCKER | B | DASHBOARD | 1 | RESOLVED | yes | AI Insights is badged "Demo data" and still tells the client to cut LinkedIn spend | findings-p123-160.md |
 | F99 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | The client dashboard is one unbroken scroll and the plain-English weekly briefing sits dead las | findings-p123-160.md |
@@ -141,17 +141,17 @@ are tracked in the CD table at the bottom.
 | F111 | MEDIUM | A | CALENDAR | 2 | RESOLVED | yes | The month calendar is a fixed seven-column grid at every screen size, with chips well under the | findings-p161-199.md |
 | F112 | LOW | A | CALENDAR | 2 | RESOLVED | yes | A client's Calendar is read-only and its empty state offers no next step | findings-p161-199.md |
 | F142 | LOW | A | CALENDAR | 2 | RESOLVED | yes | The calendar's primary button wraps to two lines | findings-p161-199.md |
-| F113 | HIGH | A | SHELL | 2 | OPEN | yes | Opening any client page swallows the whole staff sidebar — and employees have no way to get it  | findings-p161-199.md |
-| F115 | MEDIUM | B | SHELL | 2 | OPEN | — | An approved user is never told they were approved; the pending screen is a static dead end | findings-p161-199.md |
-| F116 | MEDIUM | A | SHELL | 2 | OPEN | yes | Clients get no notification badge on desktop — the bell is buried in the account menu | findings-p161-199.md |
-| F117 | MEDIUM | B | SHELL | 2 | OPEN | yes | No admin surface shows any client's credit balance, yet every denial tells the client to "ask y | findings-p161-199.md |
-| F118 | MEDIUM | A | SHELL | 2 | OPEN | — | The Connect page promises "submit managed jobs" and walks through an Instagram job the MCP serv | findings-p161-199.md |
-| F119 | MEDIUM | A | SHELL | 2 | OPEN | — | The smallest type in the portal sits below the accessibility contrast floor in 143 places | findings-p161-199.md |
+| F113 | HIGH | A | SHELL | 2 | RESOLVED | yes | Opening any client page swallows the whole staff sidebar — and employees have no way to get it  | findings-p161-199.md |
+| F115 | MEDIUM | B | SHELL | 2 | RESOLVED | — | An approved user is never told they were approved; the pending screen is a static dead end | findings-p161-199.md |
+| F116 | MEDIUM | A | SHELL | 2 | RESOLVED | yes | Clients get no notification badge on desktop — the bell is buried in the account menu | findings-p161-199.md |
+| F117 | MEDIUM | B | SHELL | 2 | RESOLVED | yes | No admin surface shows any client's credit balance, yet every denial tells the client to "ask y | findings-p161-199.md |
+| F118 | MEDIUM | A | SHELL | 2 | RESOLVED | — | The Connect page promises "submit managed jobs" and walks through an Instagram job the MCP serv | findings-p161-199.md |
+| F119 | MEDIUM | A | SHELL | 2 | RESOLVED | — | The smallest type in the portal sits below the accessibility contrast floor in 143 places | findings-p161-199.md |
 | F120 | MEDIUM | A | SHELL | 2 | RESOLVED | yes | The three agent pages print the raw database job status "review" to clients, when the portal al | findings-p161-199.md |
-| F143 | MEDIUM | A | SHELL | 2 | OPEN | yes | Every notification is truncated mid-sentence and none of them are notifications | findings-p161-199.md |
-| F146 | MEDIUM | A | SHELL | 2 | OPEN | yes | The Meetings list is not in date order — synced meetings land wherever the sync ran | findings-p161-199.md |
-| F121 | LOW | B | SHELL | 2 | OPEN | yes | Dismissing a "new content ready" notification only hides it until the next page load | findings-p161-199.md |
-| F122 | LOW | A | SHELL | 2 | OPEN | yes | Platform names are title-cased from their ids: "Linkedin", "Youtube" | findings-p161-199.md |
+| F143 | MEDIUM | A | SHELL | 2 | RESOLVED | yes | Every notification is truncated mid-sentence and none of them are notifications | findings-p161-199.md |
+| F146 | MEDIUM | A | SHELL | 2 | RESOLVED | yes | The Meetings list is not in date order — synced meetings land wherever the sync ran | findings-p161-199.md |
+| F121 | LOW | B | SHELL | 2 | RESOLVED | yes | Dismissing a "new content ready" notification only hides it until the next page load | findings-p161-199.md |
+| F122 | LOW | A | SHELL | 2 | RESOLVED | yes | Platform names are title-cased from their ids: "Linkedin", "Youtube" | findings-p161-199.md |
 | F123 | LOW | A | SHELL | 2 | RESOLVED | yes | "20 agent runs · last 9h ago." | findings-p161-199.md |
 
 **Cluster reassignments (2026-07-28, file-ownership rule):** F110→AGENTS
@@ -171,11 +171,11 @@ are tracked in the CD table at the bottom.
 | CD-C1 | — | loop | OPEN | Mock-client pass sanity-checks competitor/citation data vs stored snapshots |
 | CD-D1 | ARCH | 3/4 | OPEN | Video deliverables: portal renders storage-URL field; GCP wiring → Tomer |
 | CD-D2 | AGENTS | 2 | RESOLVED | TikTok connector state shown as pending verification, not pretending |
-| CD-E1 | SHELL | 2 | OPEN | Remove "Agent-specific documents" section from the client rail (setup lives on AI Agents cards) |
-| CD-E2 | SHELL | 2 | OPEN | Brand colors: 3-4 swatches + internal usage-percentage catalog (staff-visible %, client sees swatches) |
-| CD-E3 | SHELL | 2 | OPEN | Sidebar must never scroll: fixed sections (nav, client, docs compact, competitors, colors) fit viewport |
+| CD-E1 | SHELL | 2 | RESOLVED | Remove "Agent-specific documents" section from the client rail (setup lives on AI Agents cards) |
+| CD-E2 | SHELL | 2 | RESOLVED | Brand colors: 3-4 swatches + internal usage-percentage catalog (staff-visible %, client sees swatches) |
+| CD-E3 | SHELL | 2 | RESOLVED | Sidebar must never scroll: fixed sections (nav, client, docs compact, competitors, colors) fit viewport |
 | CD-F1 | — | end-loop | OPEN | Fleet regenerate: script + execute — re-run intel pipeline for ALL clients (concurrency-limited) after all tweaks merge; Anthropic key top-up first (Albert) |
-| CD-F2 | SHELL | 2 | OPEN | Competitor Track favicons: every row shows the real favicon (fix resolution/fallback for rows showing the generic building icon) |
+| CD-F2 | SHELL | 2 | RESOLVED | Competitor Track favicons: every row shows the real favicon (fix resolution/fallback for rows showing the generic building icon) |
 
 ## Guard zones (all phases)
 - No deep rework of AI Insights (fix listed defects only) — call directive B5.
