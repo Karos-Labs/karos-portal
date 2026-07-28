@@ -208,3 +208,19 @@ starting. Updated by the orchestrator after each verification gate.
   PAST_JOB_STATUSES gained it (one line, AGENTS-made, CALENDAR rebase-aware).
   All clusters: treat "cancelled" as terminal/past, distinct from "failed" —
   touches job-status.tsx maps (F41 AGENTS / F120 SHELL must include it).
+
+## CALENDAR cluster report highlights (pre-verification)
+- F108 TZ contract: schedule intent = wall clock + IANA timeZone; nextRunAt =
+  derived epoch millis; run-cadence.ts exports the single Intl zone
+  implementation. ALL clusters creating/editing schedules must pass the stored
+  zone. AGENTS asked to send viewer timeZone from the client schedule dialog.
+- F151: toPlainSummary/stripInlineMarkdown now in doc-render.ts;
+  JOB_STATUS_META exported from job-status.tsx — F41 (AGENTS) and F120 (SHELL)
+  MUST consume that map, not re-invent (includes "cancelled" as terminal).
+- New defect (product decision for Albert): PAUSED schedules vanish from the
+  calendar (filtered to status==="active"); resume exists only on AI Agents.
+  End-loop triage.
+- New defect (pre-existing, handover): publishAssetNowAction releases its claim
+  on failure with only publishError recorded — no attempt log/idempotency key.
+- F110 deviation pending drift ruling: pause extended to clients
+  (canManageRuns), delete stays staff.
