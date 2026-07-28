@@ -732,9 +732,25 @@ function ScheduleModal({
 
   if (!open) return null;
 
-  // Preview always reflects "the next upcoming occurrence of dayOfMonth" — saving
-  // re-anchors nextRunAt the same way (see updateIntelScheduleAction).
-  const previewNextRun = enabled ? computeFirstIntelScheduleRun(dayOfMonth) : null;
+  // The saved next run and the preview only agree at a one-month interval: the
+  // cron advances by adding the interval to the slot that just fired, while the
+  // preview is the next calendar occurrence of dayOfMonth. So show the SAVED
+  // date until something is edited, and relabel it once it is — the modal is the
+  // only place a schedule can be inspected, and "Next run" was the one number an
+  // admin opens it to check.
+  const edited =
+    enabled !== schedule.enabled ||
+    intervalMonths !== schedule.intervalMonths ||
+    dayOfMonth !== schedule.dayOfMonth;
+  // A schedule saved with no stored next run has nothing to report but the
+  // preview, so it gets the preview's label too rather than a bare date.
+  const previewing = edited || schedule.nextRunAt === null;
+  const nextRunLabel = previewing ? "Next run after saving" : "Next run";
+  const nextRunAt = enabled
+    ? previewing
+      ? computeFirstIntelScheduleRun(dayOfMonth)
+      : schedule.nextRunAt
+    : null;
 
   return createPortal(
     <div
@@ -828,10 +844,10 @@ function ScheduleModal({
               <span className="text-muted-2">Cadence: </span>
               {enabled ? describeIntelSchedule({ intervalMonths, dayOfMonth }) : "Off"}
             </p>
-            {enabled && previewNextRun && (
+            {enabled && nextRunAt && (
               <p className="text-muted">
-                <span className="text-muted-2">Next run: </span>
-                {formatDate(previewNextRun)}
+                <span className="text-muted-2">{nextRunLabel}: </span>
+                {formatDate(nextRunAt)}
               </p>
             )}
             <p className="text-muted">
