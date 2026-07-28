@@ -767,24 +767,42 @@ function CancelRunControl({ runId }: { runId: string }) {
  * Exported so the live client-agent card's "Adjust pace" reuses THIS dialog
  * rather than growing a second schedule UI over the same action. One dialog,
  * one `configureClientAgentScheduleAction`, one set of clamps.
+ *
+ * `paceOnly` is the CLIENT face of it, and it exists for the churn rule (D3,
+ * A3/A4). The staff dialog has two dials because the schedule really has two
+ * dimensions: how many days the agent fires, and how many items each fire
+ * produces. Shown to a client, that second dial states the batch shape outright
+ * — "3 runs × 5 outputs = 15 drafts a week" tells them their week is generated
+ * in lumps ahead of time, which is exactly what the week strip is careful never
+ * to reveal. A client may be told the PACE (how many posts a week, which days),
+ * never the batching that produces it.
+ *
+ * So the client form offers one number, posts per week, and pins outputs per
+ * run to 1 — a genuinely one-post-per-fire schedule, which is both what the
+ * product is and the only shape whose honest description contains no batch.
  */
 export function AgentScheduleModal({
   agent,
   clientId,
   schedule,
   availableCredits,
+  paceOnly = false,
   onClose,
 }: {
   agent: RunnableAgentSummary;
   clientId: string;
   schedule?: ClientAgentScheduleRow;
   availableCredits?: number;
+  /** Client viewers: pace language only, no batch dial. */
+  paceOnly?: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [postsPerWeek, setPostsPerWeek] = useState(schedule?.postsPerWeek ?? 3);
-  const [outputsPerRun, setOutputsPerRun] = useState(schedule?.outputsPerRun ?? 1);
+  const [outputsPerRun, setOutputsPerRun] = useState(
+    paceOnly ? 1 : (schedule?.outputsPerRun ?? 1),
+  );
   const [prompt, setPrompt] = useState(schedule?.prompt ?? "Create the next on-brand post for our audience.");
   const [time, setTime] = useState(
     `${String(schedule?.hour ?? 9).padStart(2, "0")}:${String(schedule?.minute ?? 0).padStart(2, "0")}`,
@@ -839,8 +857,12 @@ export function AgentScheduleModal({
     <Modal
       open
       onClose={onClose}
-      title={`Keep ${agent.name} running`}
-      description="Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
+      title={paceOnly ? `${agent.name} pace` : `Keep ${agent.name} running`}
+      description={
+        paceOnly
+          ? "How often this agent posts for you. Change it whenever you like — it takes effect from the next post."
+          : "Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
+      }
       footer={
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -853,18 +875,26 @@ export function AgentScheduleModal({
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
             <Button variant="accent" onClick={save} loading={pending} disabled={insufficient}>
-              {schedule ? "Update schedule" : "Start always-on agent"}
+              {paceOnly
+                ? schedule
+                  ? "Save pace"
+                  : "Start posting"
+                : schedule
+                  ? "Update schedule"
+                  : "Start always-on agent"}
             </Button>
           </div>
         </div>
       }
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
+        <div className={cn("grid gap-3", paceOnly ? "grid-cols-1" : "grid-cols-2")}>
           <div>
-            {/* Runs, not posts: this is the number of DAYS the agent fires, and
-                each fire produces "outputs per run" items. */}
-            <Label htmlFor={`schedule-posts-${agent.id}`}>Runs per week</Label>
+            {/* Staff see RUNS (days the agent fires) beside outputs-per-fire.
+                Clients see POSTS A WEEK and nothing else — see paceOnly above. */}
+            <Label htmlFor={`schedule-posts-${agent.id}`}>
+              {paceOnly ? "Posts per week" : "Runs per week"}
+            </Label>
             <Select
               id={`schedule-posts-${agent.id}`}
               value={postsPerWeek}
@@ -875,22 +905,26 @@ export function AgentScheduleModal({
               ))}
             </Select>
           </div>
-          <div>
-            <Label htmlFor={`schedule-outputs-${agent.id}`}>Outputs per run</Label>
-            <Select
-              id={`schedule-outputs-${agent.id}`}
-              value={outputsPerRun}
-              onChange={(event) => setOutputsPerRun(Number(event.target.value))}
-            >
-              {OUTPUTS_PER_RUN_OPTIONS.map((count) => (
-                <option key={count} value={count}>{count}</option>
-              ))}
-            </Select>
-          </div>
+          {!paceOnly && (
+            <div>
+              <Label htmlFor={`schedule-outputs-${agent.id}`}>Outputs per run</Label>
+              <Select
+                id={`schedule-outputs-${agent.id}`}
+                value={outputsPerRun}
+                onChange={(event) => setOutputsPerRun(Number(event.target.value))}
+              >
+                {OUTPUTS_PER_RUN_OPTIONS.map((count) => (
+                  <option key={count} value={count}>{count}</option>
+                ))}
+              </Select>
+            </div>
+          )}
         </div>
 
         <div>
-          <Label htmlFor={`schedule-time-${agent.id}`}>Production time</Label>
+          <Label htmlFor={`schedule-time-${agent.id}`}>
+            {paceOnly ? "Time of day" : "Production time"}
+          </Label>
           <Input
             id={`schedule-time-${agent.id}`}
             type="time"
@@ -915,15 +949,26 @@ export function AgentScheduleModal({
             <span className="text-sm text-foreground">Estimated weekly cost</span>
             <span className="font-mono text-sm text-neon">{weeklyCost} credits</span>
           </div>
-          <p className="mt-1 text-[11px] text-muted-2">
-            {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
-            {outputsPerRun === 1 ? "" : "s"} × {costPerOutput} credits.
-            Credits are charged when each scheduled run starts.
-          </p>
-          <p className="mt-1 text-[11px] text-foreground">
-            {postsPerWeek * outputsPerRun} new draft{postsPerWeek * outputsPerRun === 1 ? "" : "s"} a
-            week.
-          </p>
+          {paceOnly ? (
+            /* Pace × price. No "runs", no "outputs per run", no weekly draft
+               total — every one of those describes the batch, not the pace. */
+            <p className="mt-1 text-[11px] text-muted-2">
+              {postsPerWeek} post{postsPerWeek === 1 ? "" : "s"} a week at {costPerOutput} credits
+              each. Credits are charged as each post is made.
+            </p>
+          ) : (
+            <>
+              <p className="mt-1 text-[11px] text-muted-2">
+                {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
+                {outputsPerRun === 1 ? "" : "s"} × {costPerOutput} credits.
+                Credits are charged when each scheduled run starts.
+              </p>
+              <p className="mt-1 text-[11px] text-foreground">
+                {postsPerWeek * outputsPerRun} new draft
+                {postsPerWeek * outputsPerRun === 1 ? "" : "s"} a week.
+              </p>
+            </>
+          )}
           {availableCredits !== undefined && (
             <p className={cn("mt-1 text-[11px]", insufficient ? "text-danger" : "text-muted-2")}>
               {availableCredits} credits currently available.

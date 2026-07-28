@@ -178,6 +178,9 @@ export function ClientAgentLiveCard({
         <AgentScheduleModal
           agent={agent.runnable}
           clientId={agent.clientId}
+          // Clients get the pace face of this dialog: how many posts a week,
+          // never how they are batched (D3 / A3-A4).
+          paceOnly={viewerIsClient}
           {...(agent.schedule ? { schedule: agent.schedule } : {})}
           {...(agent.availableCredits !== undefined
             ? { availableCredits: agent.availableCredits }
@@ -355,16 +358,24 @@ function TemplateRows({
 
 /**
  * The daily pick-of-3 product has no template streams — its product IS the
- * day's choice (§4.5). The picker itself lands with WP-9; until then this row
- * says what the client gets and when, and promises nothing it cannot do.
+ * day's choice (§4.5).
+ *
+ * The picker lands with WP-9. Until it does, this row may only describe what
+ * actually ships in this branch (D6): the previous copy said "Pick the one you
+ * like, edit it if you want, and post it", which describes three controls that
+ * do not exist anywhere in the portal yet. A client who read it would go
+ * looking for them. It now names only what is real — the feedback button on
+ * this card, and the Workspace where approved posts land — and makes no promise
+ * about a future release, since a promise dated "soon" is the same defect one
+ * release later.
  */
 function OptionsRow() {
   return (
     <div className="mt-4 rounded-md border border-border bg-surface-2/70 px-3 py-2">
-      <p className="text-sm text-foreground">Today&rsquo;s pick</p>
+      <p className="text-sm text-foreground">Today&rsquo;s post</p>
       <p className="mt-0.5 text-[11px] text-muted-2">
-        Three post options arrive each morning. Pick the one you like, edit it if you want, and post
-        it.
+        This agent writes one post a day for you. Use Give feedback to steer what it makes, and
+        approved posts appear in your Workspace.
       </p>
     </div>
   );
