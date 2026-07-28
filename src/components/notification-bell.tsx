@@ -78,6 +78,14 @@ export function NotificationBell({
 
   const total = visibleActions.length + visibleJobs.length + taskAlerts.length;
 
+  // CD-H7b: one number, one noun. The badge clamped at "9+" while the panel
+  // header read "32 active" — the same set, described two ways, so opening the
+  // panel looked like it had found 23 more. The clamp now only bites in the
+  // hundreds (where a badge genuinely cannot hold the digits), and the header
+  // calls the set what the bell's own aria-label and the Company tab's
+  // screen-reader text already call it: unread.
+  const badgeLabel = total > 99 ? "99+" : String(total);
+
   // eslint-disable-next-line react-hooks/purity -- Date.now() intentional: rows
   // are stepped back once they age past STALE_MS; recomputed on every open.
   const now = Date.now();
@@ -110,7 +118,7 @@ export function NotificationBell({
           <span className="flex-1 text-left">Notifications</span>
           {total > 0 && (
             <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-neon px-1 text-[10px] font-bold">
-              {total > 9 ? "9+" : total}
+              {badgeLabel}
             </span>
           )}
         </button>
@@ -133,7 +141,7 @@ export function NotificationBell({
                 "rounded-full bg-neon px-1 text-[10px] font-bold",
               )}
             >
-              {total > 9 ? "9+" : total}
+              {badgeLabel}
             </span>
           )}
         </button>
@@ -167,7 +175,7 @@ export function NotificationBell({
               <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
               {total > 0 ? (
                 <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-semibold text-muted">
-                  {total} active
+                  {badgeLabel} unread
                 </span>
               ) : (
                 <span className="text-[11px] text-muted-2">All clear</span>
