@@ -810,3 +810,23 @@ with a brief visual confirmation ("Copied" flash / check) so the click reads
 as successful. Coexists with the existing hover tooltip and CD-E2 rules
 (clients see swatches + hex only; internal usage percentages stay staff-only).
 Both mounts (staff sidebar + client rail) get it. Owner: shell3-fixer.
+
+### P3 WP-4+ round deferrals (structural — carry to Tomer handover + future work)
+- `matchAssetsToSlots` exists+tested but unwired: wiring it re-dates existing
+  client assets and `reflowClientChain` has zero slot awareness — the two
+  planners would fight. Must land TOGETHER, exercised against real data.
+- Calendar slot rendering: no component renders AgentSlot outside the agents
+  week strip; client calendar has no slot concept. Depends on the above.
+- §4.4 grey-paused-slots: blocked on calendar slot rendering (paused schedules
+  are filtered out entirely at calendar-body today).
+- `assignOptionRefs` unwired: WP-9 picker reads slot.optionRefs which nothing
+  populates yet; natural home ensureSlotHorizon + X batch parse.
+- Slot-note consumption paths 1/2 (day-of context file, revision pass): need
+  per-slot cron firing with karos_slot_id + webhook slot branch (Tomer seam).
+- RULING NEEDED (Albert or orchestrator): WP-9 learning-log volume — 2 negative
+  rows/day/slot burns the 30-row x-agent-context window in ~2 weeks and can
+  evict genuine client feedback. Options: raise cap, separate auto-log stream,
+  or decay. Blocked before WP-9 runs at volume.
+- Blockers FIXED this round worth Tomer's attention: launchCreditCost now has
+  its (staff) write path; scheduled fires stamp runType; ledger operation
+  vocabulary introduced.
