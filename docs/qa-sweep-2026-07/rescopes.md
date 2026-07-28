@@ -470,3 +470,16 @@ starting. Updated by the orchestrator after each verification gate.
   add link in summary row hint).
 - F97-class soft-nav desync applies to the new /clients/[id] ?tab= — fold into
   the same one-useEffect fix class (SHELL or end-loop).
+
+## CREDITS lens results + bounces
+- F103 bounced: three-bucket ruling (healthy cards + needs-reconnect cards +
+  no-doc-at-all collapsed; connectedCount = usable only).
+- F105 bounced: thrown server-action errors are MASKED in prod (repo-documented)
+  → convert integration actions to return-as-data or always-fallback.
+- COPILOT queue addition: chat/route.ts:164 injects raw credits.balance into the
+  system prompt ("Current balance: N") — fourth surface undoing F102 in
+  conversation; fold into F95 credits-appendix work.
+- F53 merge check: verify BOTH linkedin-seats-workspace instances (:126 and
+  :155) drop $29/mo when WORKSPACE merges.
+- Accepted: F104 static reset clause (no computed dates — single-phrasing rule);
+  admin sees client blocked strip + support button (nit, end-loop).
