@@ -268,6 +268,81 @@ describe("projectRunOccurrences", () => {
       local(2026, 6, 9, 9),
     ]);
   });
+
+  /**
+   * F108. Only the FIRST occurrence comes from the stored nextRunAt, which the
+   * scheduler computed in the schedule's own zone. Every later one is
+   * recomputed by this function, so an unthreaded zone makes the calendar
+   * disagree with itself: chip 1 right, chips 2..n on the runtime's clock (UTC
+   * in production). Asserted in the schedule's zone rather than the test
+   * runner's, so these hold wherever the suite runs.
+   */
+  describe("zone-pinned projection", () => {
+    /** The wall clock the given zone reads at an instant. */
+    function wall(zone: string, at: number): { hour: number; weekday: string } {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+        hour: "2-digit",
+        hour12: false,
+        weekday: "short",
+      }).formatToParts(new Date(at));
+      return {
+        hour: Number(parts.find((p) => p.type === "hour")!.value),
+        weekday: parts.find((p) => p.type === "weekday")!.value,
+      };
+    }
+
+    it("keeps every Sao Paulo occurrence at 09:00 local, not the runtime's 06:00", () => {
+      const zone = "America/Sao_Paulo";
+      const base = {
+        cadence: "daily" as const,
+        hour: 9,
+        minute: 0,
+      };
+      const nextRunAt = computeNextRun({ ...base, from: MON_8AM, timeZone: zone });
+      const occurrences = projectRunOccurrences(
+        { ...base, nextRunAt },
+        { from: MON_8AM, horizonDays: 14, timeZone: zone },
+      );
+      expect(occurrences.length).toBeGreaterThan(10);
+      // The whole projection, not just the stored first fire.
+      for (const at of occurrences) expect(wall(zone, at).hour).toBe(9);
+    });
+
+    it("keeps a Tokyo 22:00 weekday run on weekdays — no weekend chip", () => {
+      const zone = "Asia/Tokyo";
+      const base = {
+        cadence: "weekly" as const,
+        weekdays: [1, 2, 3, 4, 5],
+        hour: 22,
+        minute: 0,
+      };
+      const nextRunAt = computeNextRun({ ...base, from: MON_8AM, timeZone: zone });
+      const occurrences = projectRunOccurrences(
+        { ...base, nextRunAt },
+        { from: MON_8AM, horizonDays: 21, timeZone: zone },
+      );
+      expect(occurrences.length).toBeGreaterThan(5);
+      for (const at of occurrences) {
+        const { hour, weekday } = wall(zone, at);
+        expect(hour).toBe(22);
+        // 22:00 in Tokyo is 13:00 UTC the same day, but 09:00 the NEXT day in
+        // Auckland and the previous evening in New York — a projection on any
+        // clock but Tokyo's drifts across the date line into Sat/Sun.
+        expect(["Sat", "Sun"]).not.toContain(weekday);
+      }
+    });
+
+    it("without a zone the walk falls back to the runtime clock (legacy rows)", () => {
+      // Not an endorsement — the documented legacy behaviour, pinned so that
+      // dropping the argument at a call site shows up as a diff here.
+      const run = { cadence: "daily" as const, hour: 9, minute: 0, nextRunAt: local(2026, 6, 6, 9) };
+      expect(projectRunOccurrences(run, { from: MON_8AM, horizonDays: 2 })).toEqual([
+        local(2026, 6, 6, 9),
+        local(2026, 6, 7, 9),
+      ]);
+    });
+  });
 });
 
 describe("weeklyCadenceDays", () => {

@@ -248,10 +248,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       // A recurring cadence (e.g. "weekly · Mon-Fri") fires many times — project
       // every upcoming occurrence within the horizon instead of only the single
       // next fire, so a 5x/week schedule shows 5 chips a week, not 1. Projected
-      // in the SCHEDULE's zone, not the container's: every occurrence after the
-      // first is computed, and a UTC server would otherwise slide a Sao Paulo
-      // 09:00 chip to 06:00 and a Tokyo 22:00 chip onto the wrong day (F108).
-      return projectRunOccurrences(r, { from: scheduleNow }).map((at) => ({
+      // in the SCHEDULE's zone, not the container's: only the first occurrence
+      // comes from the stored cursor, so on a UTC server every later chip of a
+      // Sao Paulo 09:00 run would slide to 06:00, and a Tokyo 22:00 run would
+      // land on the previous day — putting a weekday-only run on a weekend
+      // (F108).
+      return projectRunOccurrences(r, {
+        from: scheduleNow,
+        timeZone: runZone(r.timeZone),
+      }).map((at) => ({
         id: r.id,
         kind: "scheduled" as const,
         clientId: r.clientId,

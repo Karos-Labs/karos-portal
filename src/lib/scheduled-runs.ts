@@ -115,6 +115,16 @@ export const SCHEDULE_PROJECTION_DAYS = 90;
  * computeNextRun, each step starting strictly after the last, so a "weekly ·
  * Mon–Fri" run yields one timestamp per weekday rather than the single next
  * occurrence a calendar would otherwise show.
+ *
+ * `timeZone` is the zone the run's wall clock was SET in, and it is not
+ * optional in practice: only the FIRST occurrence comes from the stored
+ * nextRunAt, which the scheduler computed in that zone. Every later one is
+ * recomputed here, so without the zone the projection silently falls back to
+ * the runtime's calendar — UTC in production. A Sao Paulo 09:00 schedule then
+ * projects 06:00 from its second chip onward, and a Tokyo 22:00 schedule
+ * projects onto the previous day, which puts a weekday-only run on a weekend.
+ * The stored first fire stays correct throughout, so the calendar disagrees
+ * with itself rather than being uniformly wrong (F108).
  */
 export function projectRunOccurrences(
   run: {
@@ -126,7 +136,7 @@ export function projectRunOccurrences(
     dayOfMonth?: number;
     nextRunAt: number;
   },
-  opts: { from: number; horizonDays?: number },
+  opts: { from: number; horizonDays?: number; timeZone?: string },
 ): number[] {
   const horizon = opts.from + (opts.horizonDays ?? SCHEDULE_PROJECTION_DAYS) * DAY_MS;
   if (run.cadence === "once") {
@@ -144,6 +154,9 @@ export function projectRunOccurrences(
       weekdays: run.weekdays,
       dayOfMonth: run.dayOfMonth,
       from: cursor,
+      // Same clock the stored nextRunAt was computed on, so occurrence 2
+      // onwards lands on the same wall time as occurrence 1.
+      ...(opts.timeZone ? { timeZone: opts.timeZone } : {}),
     });
   }
   return occurrences;
