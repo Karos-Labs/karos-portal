@@ -1193,3 +1193,24 @@ the ONE place a reader learns which of those lines the tree has since overtaken.
 - **LEDGER legend** gained the five status values the tables actually use
   (STRUCK-BY-ALBERT, RESOLVED-PARTIAL, RESOLVED-PORTAL / TOMER-INFRA,
   RESHAPED→CD-x, OPEN-ALBERT).
+
+### CD-J1 — SEO/GEO measurement v2 (Albert, 2026-07-29)
+Verbatim directives:
+1. QUESTION LOGIC: standardize the methodology — today branded/category question
+   counts vary per client (8 vs 12 vs 5 vs 6) with no stated logic. One
+   deterministic rule across all clients (fixed counts per category; engine
+   failures normalized in display, never silently shrinking the denominator).
+2. SCORE PRESENTATION: never "Named in 8 of 8 / 0 of 12" — a PERCENTAGE score;
+   clicking it opens a plain popup: "We measured N questions; you were named
+   in M."
+3. YOU-VS-COMPETITORS PER ENGINE: category-only prompts (excluding by-name
+   questions — "that sort of is cheating").
+4. ROSTER SANITY: tracked competitors must overlap with brands actually named
+   in AI answers; a client tracking only never-named competitors is a flagged
+   defect; surface named-but-untracked brands as staff suggestions.
+5. RECOMMENDATIONS: one plain-language standard across ALL clients (Karos
+   Labs' list is the bar — "very straightforward… they just click approve");
+   no jargon-grade lines ("Answer capsules 40-60 words under key H2s" class).
+6. APPROVE MECHANISM: verify + surface what approve actually does (persist →
+   activity log → staff execute) so the flow is understood.
+Then: handover to Tomer includes the methodology as his SEO/geo section.
