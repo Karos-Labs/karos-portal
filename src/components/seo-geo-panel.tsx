@@ -323,11 +323,28 @@ function UnmeasuredEngineCard({ view }: { view: EngineView }) {
 
 export function SeoGeoScores({ insights }: { insights: SeoGeoInsights }) {
   const scores = buildScoreViews(insights);
+  const trust = buildSnapshotTrust(insights);
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {scores.map((view) => (
-        <ScoreTile key={view.key} view={view} />
-      ))}
+    <div className="space-y-6">
+      {/* CD-B4: say it once, above the numbers, when this snapshot was produced
+          by a measurement setup we've since replaced — rather than presenting
+          superseded maths as the client's position today. It travels WITH the
+          scores: lifting the tiles above the fold must not leave the warning
+          behind in a collapsed section. */}
+      {trust.isLegacy && (
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-3.5 py-2.5">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-warning">
+            <Icon name="TriangleAlert" className="h-4 w-4 shrink-0" />
+            {trust.title}
+          </p>
+          <p className="mt-1 text-xs text-muted">{trust.description}</p>
+        </div>
+      )}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {scores.map((view) => (
+          <ScoreTile key={view.key} view={view} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -442,11 +459,9 @@ export function SeoGeoPanel({
 
   const engines = buildEngineViews(insights, trackedCompetitors, clientWebsite);
   const presence = buildPresence(insights);
-  // CD-B4: one snapshot-trust view generalizing F1's narrow planPendingRefresh
-  // guard. It answers both "were these numbers produced by the current pipeline?"
-  // and "does this snapshot carry a written plan?" — the second being one symptom
-  // of the first.
-  const trust = buildSnapshotTrust(insights);
+  // CD-B4's snapshot-trust view (was this produced by the current pipeline? does
+  // it carry a written plan?) is read by SeoGeoScores and SeoGeoPlan, which own
+  // the two surfaces that report it.
   const prompts = buildPromptViews(insights);
   // Grouped under plain-English intent headings (F18) — the fallback list for
   // snapshots with no persisted answer grid.
@@ -512,20 +527,10 @@ export function SeoGeoPanel({
 
   return (
     <div className="space-y-6">
-      {/* 0 · CD-B4: say it once, at the top, when this snapshot was produced by a
-          measurement setup we've since replaced — rather than presenting
-          superseded maths as the client's position today. */}
-      {trust.isLegacy && (
-        <div className="rounded-md border border-warning/30 bg-warning/10 px-3.5 py-2.5">
-          <p className="flex items-center gap-1.5 text-sm font-medium text-warning">
-            <Icon name="TriangleAlert" className="h-4 w-4 shrink-0" />
-            {trust.title}
-          </p>
-          <p className="mt-1 text-xs text-muted">{trust.description}</p>
-        </div>
-      )}
-
-      {/* 1 · Headline scores, coverage shown separately from the grade */}
+      {/* 0/1 · CD-B4's legacy-snapshot notice and the headline scores, rendered
+          together by SeoGeoScores: the warning qualifies these numbers, so when
+          the client dashboard lifts the tiles above the fold the warning has to
+          go with them rather than stay behind in a collapsed section. */}
       {!hideScores && <SeoGeoScores insights={insights} />}
 
       {/* 2 · Where we looked: the "N of 5 engines" disclosure, all engines visible */}
