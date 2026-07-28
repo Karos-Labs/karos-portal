@@ -830,3 +830,35 @@ Both mounts (staff sidebar + client rail) get it. Owner: shell3-fixer.
 - Blockers FIXED this round worth Tomer's attention: launchCreditCost now has
   its (staff) write path; scheduled fires stamp runType; ledger operation
   vocabulary introduced.
+
+## Albert-match review results (CD-G wave, 2026-07-28)
+MATCH: CD-G1/G2/G3 roster+detail (zero Run buttons, copy clean), CD-G8/G9b
+dock (pinned, content-sized, overlay dismissal, lg+ rail stable), CD-G10
+toolbar, CD-G11 swatch copy (all three mounts), churn spot-checks (no
+Upcoming rows, no staff prompt on calendar, no batch language anywhere).
+MISMATCH shortlist → mop-up round (CD-H series):
+- CD-H1: counter tiles must be the FIRST section under Overview (currently
+  y≈1062 behind AI Insights + Performance tab) — the exact CD-G6 complaint.
+- CD-H2: sidebars scroll again (staff 701/635 @1280×800; client 759/733 even
+  @1440×900) — CD-E3 breach. Lever: Brand Colors collapses to header-inline
+  swatches (keeps everything visible; approved spacing untouched).
+- CD-H3: competitor ↗ missing on rows with no stored url (Okara.ai, ploy.ai)
+  — derive the same way the favicon fallback does; refresh teams also fill
+  real urls data-side.
+- CD-H4: client dashboard Overview cards clip at 375 (missing min-w-0 in the
+  grid; badges + "Open archive" cut off).
+- CD-H5: client shell narrow-width parity with CD-G9c — bell moves into the
+  client Company sheet (+dot on Company tab); slim logo+credits strip stays
+  (branding, not a menu — flagged for Albert).
+- CD-H6: Company sheet left "open" across a md-resize parks invisible
+  fixed-inset click catchers over desktop — close/gate on breakpoint.
+- CD-H7 (cosmetic set): 66px search stub at 1280 w/ rail open; badge "9+" vs
+  panel "32 active" count copy; "Mon–Fri 09:00 · next 11:00 AM" zone mismatch
+  on the calendar run card; Landing Builder generic fallback blurb.
+- CD-H8 (to p3-builder after its merge): live-schedule-no-umbrella detail page
+  is a stub for the flagship Instagram case — enrich the legacy branch with
+  Create-new-post, pace controls and deliverables (templates stay
+  umbrella-gated); §9 backfill script remains the data-side fix.
+- Environmental, report-only: 10px right gutter persists wherever classic
+  scrollbars are on (scrollbar-gutter: stable) — needs Albert's eye on his
+  machine.
