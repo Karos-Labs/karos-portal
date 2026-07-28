@@ -233,8 +233,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           )}
           {/* Client-context mode gets its own persistent bar — see F60. */}
           <ClientContextBar />
-          {/* Same bottom-padding ladder as the client shell: below md a fixed
-              tab bar (client context) and the copilot strip sit over the page. */}
+          {/* Scroll reserve, same ladder as the client shell. The staff main had
+              none, so the last rows of a fully-scrolled page sat behind the
+              copilot strip. Below md the reserve covers the STACK — copilot
+              strip on top of the 54px bottom tab bar (MOBILE_TAB_BAR_H, client
+              context); at md+ the bar is gone and only the strip needs clearing. */}
           <main className="flex-1 overflow-x-clip px-4 pb-28 pt-6 md:px-8 md:pb-16 md:pt-8 lg:pb-8">
             <div className="@container mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
           </main>

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
+import { MOBILE_TAB_BAR_H } from "@/lib/constants";
 
 /**
  * The narrow-width (<md) chrome both portal shells share: a fixed bottom tab
@@ -18,15 +19,6 @@ import { cn } from "@/lib/utils";
  * brand controls), so the bar and the sheet frame live here and the contents
  * stay with each shell.
  */
-
-/**
- * Bar height in px. Exported because the copilot's collapsed strip parks
- * directly ABOVE the bar at narrow width (CD-G9b's 54px offset contract) — the
- * two numbers have to agree or the strip either floats or sits under the tabs.
- * If the copilot work lands its own shared constant in lib/constants.ts, fold
- * this into it rather than keeping two.
- */
-export const MOBILE_TAB_BAR_HEIGHT = 54;
 
 export interface MobileTabItem {
   href: string;
@@ -77,8 +69,10 @@ export function MobileTabBar({
 
   return (
     <nav
+      /* Height comes from lib/constants (MOBILE_TAB_BAR_H) — the copilot dock
+         offsets its collapsed strip off the same number (CD-G9b). */
       className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-border bg-background/95 backdrop-blur-sm md:hidden"
-      style={{ height: MOBILE_TAB_BAR_HEIGHT }}
+      style={{ height: MOBILE_TAB_BAR_H }}
     >
       {items.map((item) => {
         const active = isTabActive(pathname, item);
