@@ -57,6 +57,15 @@ export function StrategyWarRoom({
     capSkipped: number;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Live round counter, so the wait is legible while the agents debate. */
+  const [progress, setProgress] = useState<{ round: number; total: number } | null>(null);
+  /**
+   * Escape and a backdrop click both reach Modal's onClose, which unmounts this
+   * component and aborts the stream — the server then skips persistence, so
+   * six sequential model calls are discarded with no warning (QA F93). While a
+   * run is live, a close request raises this confirmation instead.
+   */
+  const [confirmingClose, setConfirmingClose] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const completedRef = useRef(false);
@@ -66,6 +75,7 @@ export function StrategyWarRoom({
       switch (ev.type) {
         case "round_start":
           setLines((p) => [...p, { kind: "round", round: ev.round, total: ev.totalRounds }]);
+          setProgress({ round: ev.round, total: ev.totalRounds });
           break;
         case "agent_message":
           setLines((p) => [
@@ -171,8 +181,18 @@ export function StrategyWarRoom({
     onComplete();
   }, [status, onComplete]);
 
+  // Every dismissal path — Escape, the backdrop, the corner X — comes through
+  // Modal's onClose, so intercepting here covers all three.
+  const requestClose = useCallback(() => {
+    if (status === "running") {
+      setConfirmingClose(true);
+      return;
+    }
+    onClose();
+  }, [status, onClose]);
+
   return (
-    <Modal open onClose={onClose} className="max-w-2xl">
+    <Modal open onClose={requestClose} className="max-w-2xl">
       <div className="space-y-3">
         {/* Header */}
         <div className="flex items-center gap-2.5">
@@ -195,10 +215,16 @@ export function StrategyWarRoom({
           <h2 className="font-mono text-sm font-semibold uppercase tracking-[0.14em] text-foreground">
             The Strategy War Room
           </h2>
+          {status === "running" && progress && (
+            <span className="ml-auto shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">
+              Round {progress.round} / {progress.total}
+            </span>
+          )}
         </div>
         <p className="text-xs text-muted-2">
           Three specialist agents are debating your Task Map live — proposing, critiquing, and
-          stress-testing against your analytics until they reach consensus.
+          stress-testing against your analytics until they reach consensus. This takes about a
+          minute; leaving before it finishes discards the run.
         </p>
 
         {/* Console */}
@@ -218,6 +244,45 @@ export function StrategyWarRoom({
             )}
           </div>
         </div>
+
+        {/* Running footer — an explicit way out, so Escape is not the only
+            instinct available mid-run (QA F93). */}
+        {status === "running" &&
+          (confirmingClose ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
+              <p className="flex min-w-0 items-center gap-2 text-sm text-warning">
+                <Icon name="TriangleAlert" className="h-4 w-4 shrink-0" />
+                The agents are still working. Leaving now discards the run — nothing is saved.
+              </p>
+              <div className="flex shrink-0 items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setConfirmingClose(false)}
+                  className="text-xs font-semibold text-neon hover:underline"
+                >
+                  Keep running
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="text-xs text-muted-2 underline underline-offset-2 hover:text-foreground"
+                >
+                  Discard run
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2 px-1">
+              <p className="text-[11px] text-muted-2">Keep this open — the run stops if you leave.</p>
+              <button
+                type="button"
+                onClick={() => setConfirmingClose(true)}
+                className="shrink-0 text-xs text-muted-2 underline underline-offset-2 hover:text-foreground"
+              >
+                Cancel run
+              </button>
+            </div>
+          ))}
 
         {/* Footer — a green tick over "0 tasks locked" was the last thing a
             client saw after a minute of waiting, with no idea why nothing
