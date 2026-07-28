@@ -523,3 +523,15 @@ Both sides preserved in every case:
   CREDITS three-bucket ChannelSection KEPT + F5 grid restored.
 Gates after: tsc clean, build clean, 634 tests / 53 files.
 PHASE 2 FIXING COMPLETE — 9/9 clusters merged.
+
+## Second independent WORKSPACE lens (PASS, no bounces)
+Cross-validated the first lens: independently re-derived the F55 XSS and F149
+churn hole before finding them already fixed. Two gaps raised:
+- F100: verified COMPLETE on the integration branch (lens read its pre-merge
+  worktree; only a code comment in fireflies/route.ts remains, which F100
+  excludes by rule).
+- F107 part 1: genuinely open - CLOSED by orchestrator directly (assets-view +
+  assets/page thread connectedPlatformsByClient; calendar builder shape reused).
+  jobs/[id] detail page not threaded: single-job staff view, left for end-loop.
+Non-blocking noted: F68 employee task feed fetch-200-then-filter; F136 tabCounts
+excludes completed (benign).
