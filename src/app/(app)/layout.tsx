@@ -14,6 +14,7 @@ import {
   listClientCompetitors,
 } from "@/lib/data";
 import { ActiveClientProvider } from "@/lib/active-client-context";
+import { availableCredits } from "@/lib/credits";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldBlockForOnboarding } from "@/lib/onboarding";
@@ -85,6 +86,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         getClientCredits(user.clientId),
       ]);
 
+      // The SPENDABLE figure, not the raw balance. The pill is labelled "credits
+      // remaining", and what the charge transaction actually enforces is the
+      // balance clipped by the weekly/monthly caps. This is the same call the
+      // Agents page makes, so the rail and that page can no longer print two
+      // different "available" numbers for the same second.
+      const spendableCredits = availableCredits(credits, Date.now());
+
       return (
         <ActiveClientProvider>
           <div className="flex min-h-screen flex-col md:flex-row">
@@ -97,7 +105,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               actionItems={actionItems as ActionItemNotification[]}
               reviewJobs={reviewJobs}
               taskAlerts={taskAlerts}
-              creditBalance={credits.balance}
+              spendableCredits={spendableCredits}
             />
 
             <div className="flex min-w-0 flex-1 flex-col">

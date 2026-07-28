@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card, CardTitle, Button, Badge, Label, Input } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { adjustCreditsAction, setCreditLimitsAction } from "@/lib/actions";
+import { availableCredits } from "@/lib/credits";
 import { relativeTime } from "@/lib/utils";
 import type { ClientCredits, CreditLedgerEntry, Role } from "@/lib/types";
 
@@ -52,6 +53,12 @@ export function CreditsPanel({
 }) {
   const router = useRouter();
   const isAdmin = role === "KAROS_ADMIN";
+  // What the client can actually spend — the same helper the rail and the
+  // Agents page use, so the three surfaces can no longer disagree. `now` is
+  // omitted deliberately: the doc arrives from getClientCredits, which already
+  // rolled its windows, and calling Date.now() during a client render would
+  // make the value differ between the server and hydration passes.
+  const spendable = availableCredits(credits);
 
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -116,8 +123,17 @@ export function CreditsPanel({
           </p>
         </div>
         <div className="text-right">
-          <p className="font-mono text-2xl font-semibold">{credits.balance}</p>
+          <p className="font-mono text-2xl font-semibold">{spendable}</p>
           <p className="text-xs text-muted-2">credits available</p>
+          {/* The headline used to be credits.balance, which is NOT what the
+              client can spend: assessCharge clips it by the weekly/monthly caps.
+              With a cap binding, this card promised 180 while the Agents page
+              said 0 and every Run button was dead. The raw balance is still
+              worth showing — it's what a cap release would hand back — but it
+              is the secondary number now. */}
+          {spendable !== credits.balance && (
+            <p className="mt-0.5 text-[11px] text-muted-2">{credits.balance} on balance</p>
+          )}
         </div>
       </div>
 
