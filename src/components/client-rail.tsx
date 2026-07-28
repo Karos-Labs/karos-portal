@@ -150,7 +150,7 @@ export function ClientRail({
             </nav>
 
             <div className="mt-4 border-t border-border pt-4">
-              <ClientProfilePanel client={client} compact />
+              <ClientProfilePanel client={client} />
             </div>
 
             <div className="mt-4 border-t border-border pt-4">
@@ -179,7 +179,7 @@ export function ClientRail({
           </div>
 
           {/* Bottom account menu */}
-          <div className="shrink-0 border-t border-border p-2">
+          <div className="shrink-0 border-t border-border p-3">
             {/* The bell sits ON the rail, not inside the account dropdown — a
                 badge only signals if it is visible without opening a menu, and
                 staff get exactly that in the workspace header (QA F116). */}
