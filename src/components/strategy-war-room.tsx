@@ -194,8 +194,9 @@ export function StrategyWarRoom({
   return (
     <Modal open onClose={requestClose} className="max-w-2xl">
       <div className="space-y-3">
-        {/* Header */}
-        <div className="flex items-center gap-2.5">
+        {/* Header — pr-8 clears the Modal's absolutely-positioned close button,
+            same convention as Modal's own title. */}
+        <div className="flex items-center gap-2.5 pr-8">
           <span className="relative flex h-2.5 w-2.5">
             <span
               className={cn(
