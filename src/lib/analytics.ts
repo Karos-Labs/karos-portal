@@ -78,6 +78,31 @@ export function rankByEngagement<T extends Scored>(
   return { top, bottom };
 }
 
+/* ── Briefing data-provenance gate ───────────────────────────────────── */
+
+/** The provenance facts the gate reads — keeps it usable from any caller. */
+type Sourced = { platform: string; source: "mock" | "live" };
+
+/**
+ * True when NOTHING in this set can honestly describe how the client is doing
+ * right now — every row is either invented (mock) or belongs to a channel whose
+ * login has expired.
+ *
+ * The mock half is QA F125's blocker: a client must never be shown paragraphs of
+ * numbered budget advice derived from invented figures. The stale half is F145's
+ * bounce: once expired channels were readmitted to the digest (so the briefing
+ * could say "reconnect" rather than silently dropping a channel), their leftover
+ * LIVE rows could vouch for freshness the client no longer has — analytics/sync
+ * writes no new rows after a 401/403, so those rows sit there indefinitely and a
+ * single one of them would have flipped the gate false and released a full,
+ * unbadged briefing over otherwise-mock data. A dead channel's history is real
+ * but frozen, so it cannot carry the "this is current" claim either.
+ */
+export function engagementIsMockOrStale(records: Sourced[], stalePlatforms: string[]): boolean {
+  const staleSet = new Set(stalePlatforms);
+  return records.length > 0 && records.every((r) => r.source === "mock" || staleSet.has(r.platform));
+}
+
 /* ── Platform metric normalization ───────────────────────────────────── */
 
 /** Raw, platform-native metrics payload before normalization. */

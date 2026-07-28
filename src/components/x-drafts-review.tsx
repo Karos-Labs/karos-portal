@@ -281,7 +281,7 @@ export function XDraftsBatch({
   return (
     <div className="space-y-5">
       <p className="text-sm text-muted">
-        About a week of posting to choose from. Pick your favourites (each pick opens X with the
+        About a week of posting to choose from. Pick your favorites (each pick opens X with the
         post ready), edit freely, and skip with a reason. Every choice sharpens that
         account&apos;s voice for the next batch.
       </p>

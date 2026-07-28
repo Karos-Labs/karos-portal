@@ -27,7 +27,7 @@ export default async function TranscriptsPage() {
         title="Meetings"
         description={
           isStaff
-            ? "Fireflies transcripts, auto-summarised and routed to clients."
+            ? "Fireflies transcripts, auto-summarized and routed to clients."
             : "Summaries from your calls with the Karos team."
         }
         action={
@@ -56,7 +56,7 @@ export default async function TranscriptsPage() {
               <code className="rounded bg-surface-2 px-1 py-0.5 text-xs text-neon">
                 @karoslabs.com
               </code>{" "}
-              participant are summarised and matched to a client by company name.
+              participant are summarized and matched to a client by company name.
             </p>
           </div>
         </Card>
