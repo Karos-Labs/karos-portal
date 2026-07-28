@@ -302,10 +302,17 @@ function TaskCard({
         </div>
       )}
 
-      <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{task.title}</h3>
-      {task.description && <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{task.description}</p>}
+      {/* Compact by design: title, chips, age. The description lives in the
+          ticket modal (and the hover tooltip) — its two extra lines per card
+          were what pushed the count off screen (QA F136). */}
+      <h3
+        className="line-clamp-2 text-sm font-semibold leading-snug text-foreground"
+        title={task.description || task.title}
+      >
+        {task.title}
+      </h3>
 
-      <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-2">
+      <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-2">
         {!(task.source === "copilot" || owner === "karos_managed") && (
           <div className="inline-flex min-w-0 items-center gap-1 truncate">
             <Icon name={source.icon} className="h-3 w-3 shrink-0" />
@@ -315,10 +322,11 @@ function TaskCard({
         <span className="ml-auto shrink-0 whitespace-nowrap">{relativeTime(task.updatedAt || task.createdAt)}</span>
       </div>
 
-      {/* flex-wrap: on narrow columns the buttons stack instead of spilling
-          past the card border when the hover bar appears */}
+      {/* Actions only take space while hovered/focused, so the resting card
+          height stays compact. flex-wrap: on narrow columns the buttons stack
+          instead of spilling past the card border. */}
       <div
-        className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 opacity-0 transition-opacity group-hover:opacity-100"
+        className="mt-2 hidden flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 group-hover:flex group-focus-within:flex"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -436,12 +444,12 @@ function BoardColumn({
       <div
         ref={setNodeRef}
         className={cn(
-          "min-h-[280px] rounded-lg border border-border/70 bg-surface-2/65 p-2 transition-colors",
+          "min-h-[160px] rounded-lg border border-border/70 bg-surface-2/65 p-2 transition-colors",
           isTarget && "border-neon/45 bg-neon/10",
         )}
       >
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-          <div id={droppableId} className="flex min-h-[250px] flex-col gap-2">
+          <div id={droppableId} className="flex min-h-[130px] flex-col gap-2">
             {tasks.map((task) => (
               <SortableTaskCard
                 key={task.id}
@@ -456,7 +464,7 @@ function BoardColumn({
             {tasks.length === 0 && (
               <div
                 className={cn(
-                  "flex min-h-[150px] items-center justify-center rounded-md border border-dashed text-center",
+                  "flex min-h-[110px] items-center justify-center rounded-md border border-dashed text-center",
                   isTarget ? "border-neon/50 bg-neon/10" : "border-border/90",
                 )}
               >
@@ -538,10 +546,15 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
     return () => clearInterval(id);
   }, [hasExecuting, refreshBoard]);
 
+  // Open work only: a chip counting Done cards disagreed with every other
+  // count in the portal (dashboard attention row, notification bell).
   const tabCounts = useMemo(
     () => ({
-      karos: localTasks.filter((t) => inferOwner(t) === "karos_managed").length,
-      client: localTasks.filter((t) => inferOwner(t) === "client_managed").length,
+      karos: localTasks.filter((t) => inferOwner(t) === "karos_managed" && t.status !== "completed")
+        .length,
+      client: localTasks.filter(
+        (t) => inferOwner(t) === "client_managed" && t.status !== "completed",
+      ).length,
     }),
     [localTasks],
   );
