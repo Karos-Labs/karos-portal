@@ -11,7 +11,7 @@ import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
-import { looksLikeMarkdown, renderFullDoc } from "@/lib/doc-render";
+import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { markAssetPostedAction } from "@/lib/actions";
 import { PLATFORM_LABELS } from "@/lib/integrations/platforms";
 import { assetImages } from "@/lib/asset-images";
@@ -340,11 +340,13 @@ export function AssetDetailModal({
  *
  * This modal is the only viewer a client can reach, so it may not print
  * machine formatting on screen: an agent deliverable that carries Markdown
- * structure (headings, bullets, tables, bold) goes through the same
- * client-safe renderer the context docs use — which HTML-escapes the source
- * before it touches any markup. Plain captions keep the verbatim
- * whitespace-pre-wrap paragraph: their line breaks are the content, and
- * reflowing them would misrepresent what gets posted.
+ * structure (headings, bullets, tables, bold, blockquotes) goes through
+ * renderAssetBody — the asset-specific entry point of the client-safe renderer,
+ * which HTML-escapes the source before it touches any markup and, unlike the
+ * context-doc entry point, strips no preamble (an agent's first line is its own
+ * headline and a leading `---` is a draft separator, not frontmatter). Plain
+ * captions keep the verbatim whitespace-pre-wrap paragraph: their line breaks
+ * are the content, and reflowing them would misrepresent what gets posted.
  */
 function AssetContentBody({ content }: { content: string }) {
   if (!looksLikeMarkdown(content)) {
@@ -353,7 +355,7 @@ function AssetContentBody({ content }: { content: string }) {
   return (
     <div
       className="break-words [&_code]:break-all [&_table]:min-w-0"
-      dangerouslySetInnerHTML={{ __html: renderFullDoc(content) }}
+      dangerouslySetInnerHTML={{ __html: renderAssetBody(content) }}
     />
   );
 }
