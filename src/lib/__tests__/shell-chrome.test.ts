@@ -79,6 +79,30 @@ describe("narrow-viewport shell chrome", () => {
     expect(dock).not.toContain("railRef");
   });
 
+  it("counts a click inside a portaled dialog as inside the sheet", () => {
+    // The Strategy War Room opens from the sheet but renders through Modal,
+    // which portals to document.body — so a ref containment test alone reads
+    // every click in the dialog as "outside" and closes the copilot behind it.
+    // Below lg that made the copilot vanish the moment you touched the dialog.
+    const handler = /function handleOutside\([\s\S]*?\n    \}/.exec(dock)?.[0] ?? "";
+    expect(handler).toContain("data-overlay-root");
+
+    // The escape has to come BEFORE the dismissal, or it escapes nothing.
+    expect(handler.indexOf("data-overlay-root")).toBeLessThan(
+      handler.indexOf("setSheetOpen(false)"),
+    );
+
+    // The attribute is only meaningful if the portal root actually carries it.
+    const modal = src("components/modal.tsx");
+    expect(modal).toContain("createPortal(");
+    expect(modal).toContain("document.body");
+    expect(modal).toMatch(/data-overlay-root/);
+
+    // Attribute, not a class-name match: class names get restyled, and this
+    // has to hold for every overlay that portals through Modal.
+    expect(handler).not.toMatch(/closest\(["'`]\./);
+  });
+
   it("gives the expanded sheet a height cap rather than a fixed box", () => {
     // A fixed 70dvh box left dead air between sparse content and the input row.
     expect(dock).toContain("max-h-[70dvh]");

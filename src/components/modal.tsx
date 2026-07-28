@@ -51,7 +51,17 @@ export function Modal({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div
+      // A portaled overlay is mounted on document.body, so it is NOT inside the
+      // DOM subtree of whatever opened it. Any surface running an outside-click
+      // dismissal (the copilot dock's sheet, CD-G9b) therefore reads a click in
+      // here as "outside" and closes itself behind the dialog. This attribute is
+      // how such a test recognises a click that is still inside the UI the user
+      // is working in — an attribute rather than a class name so it survives
+      // restyling and covers every overlay that portals through this component.
+      data-overlay-root=""
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+    >
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
       <div
         className={cn(
