@@ -387,6 +387,7 @@ export function Sidebar({
           isAdmin={activeClient.isAdmin}
           clientId={activeClient.client.id}
           isAiProcessing={isAiProcessingLockActive(activeClient.client)}
+          aiProcessingError={activeClient.client.aiProcessingError ?? null}
           intelSchedule={clientIntelSchedule(activeClient.client)}
           /* Staff-only shell: internal-tier documents are readable here. */
           allowInternalFallback

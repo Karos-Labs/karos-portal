@@ -140,6 +140,7 @@ export function ClientRail({
                 isAdmin={isAdmin}
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
+                aiProcessingError={client.aiProcessingError ?? null}
                 intelSchedule={clientIntelSchedule(client)}
               />
             </div>
@@ -269,6 +270,7 @@ export function ClientRail({
                 isAdmin={isAdmin}
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
+                aiProcessingError={client.aiProcessingError ?? null}
                 intelSchedule={clientIntelSchedule(client)}
               />
             </div>

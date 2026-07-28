@@ -15,7 +15,7 @@ import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
 import type { Client, SocialLinks } from "@/lib/types";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
-import { requireStaff } from "./_shared";
+import { requireStaff, logGenerationFailure } from "./_shared";
 
 export async function createClientAction(input: {
   name: string;
@@ -93,6 +93,7 @@ export async function createClientAction(input: {
       console.error("[onboard] Pipeline crashed unexpectedly:", e);
     } finally {
       await releaseAiProcessingLock(id, failure);
+      await logGenerationFailure(id, failure);
     }
   });
 

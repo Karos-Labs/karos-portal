@@ -379,7 +379,17 @@ export function ClientsGrid({
                         <p className="text-xs text-muted-2">{c.industry || c.website || "-"}</p>
                       </div>
                     </div>
-                    <Badge tone={c.status === "active" ? "neon" : "neutral"}>{c.status}</Badge>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {/* A failed generation cycle only ever wrote a string onto
+                          the client record, which nothing surfaced unless you
+                          opened that one client (QA F69). */}
+                      {c.aiProcessingError && (
+                        <span title={c.aiProcessingError}>
+                          <Badge tone="danger">Generation failed</Badge>
+                        </span>
+                      )}
+                      <Badge tone={c.status === "active" ? "neon" : "neutral"}>{c.status}</Badge>
+                    </div>
                   </div>
                   <div className="mt-4 flex gap-4 text-xs text-muted">
                     <span className="flex items-center gap-1">

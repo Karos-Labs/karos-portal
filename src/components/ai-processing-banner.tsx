@@ -55,7 +55,12 @@ export function AiProcessingBanner({
         ) : isClientViewer ? (
           <p>
             <span className="font-medium">We hit a snag building your workspace strategy.</span>{" "}
-            <span className="text-muted">Our team has been notified and is on it - nothing for you to do.</span>
+            {/* Says only what the product does: the failure is on the client's
+                activity timeline and badged on the staff client list — no email
+                or push is sent, so it must not claim one (QA F69). */}
+            <span className="text-muted">
+              Your Karos team can see it and is on it — nothing for you to do.
+            </span>
           </p>
         ) : (
           <p>
