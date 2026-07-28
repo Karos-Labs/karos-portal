@@ -750,8 +750,13 @@ standalone condensation pass (`refreshClientContextDocsAction` in
 true at HEAD, and it applies to you: **if you wire any new pipeline that
 regenerates client-tier docs, corrections must be injected there too.**
 
-Read this together with §4.13.1 — the condensation pass has a live corruption
-bug, so anyone going in to fix that is already in the right file to handle this.
+Read this together with §4.13.1. The `stripPreamble` corruption bug that entry
+described is **fixed and retired** — do not go looking for it. What is still
+open there is narrower and lives in the same files: `stripTrailingMetaCommentary`
+is wired at the condensation boundary only, so the four `stripPreamble` calls in
+`src/lib/intel/pipeline.ts` store the model's output unscrubbed. Anyone going in
+to wrap those is already in the right file to handle the corrections injection
+above.
 
 ### 4.7 `applyGlobalDocCorrectionAction` — do not mount as-is
 
@@ -1176,19 +1181,38 @@ Small but easy to misread, because it moved during the build.
   writes, pre-existing).
 - SEO Approve → `logActivity` is unbounded/no-dedupe and client-callable
   (self-inflicted scope only).
-- **Copilot: one of the two closed, one is live and belongs to you.**
+- **Copilot: both of the two are now closed** (v2 listed one as live).
   - *Benchmarks — FIXED.* The fetch is still unscoped
     (`src/app/api/clients/[id]/chat/route.ts:80`) but a provenance filter now
     sits between it and the prompt: rows whose `source !== "live"` are dropped
     for `CLIENT_USER` and `sampleSize` is recomputed (:207-213, consumed
     :238-242).
-  - *Branding write — STILL OPEN.* The `update_branding_guidelines` tool is
-    registered **ungated** (:685-690) with no role check in the tool set or in
-    `execute` (:264-293), so a billed `CLIENT_USER` can push free-form text into
-    the **internal-tier** branding doc (`tier: existingDoc?.tier ?? "internal"`
-    at :282), and the `catch {}` at :289-291 swallows a failed write. This
-    crosses the §6.6 boundary — a client-driven write into internal-tier
-    content — and should be gated before the next client demo.
+  - *Branding write — FIXED (035a2f6), and the remaining path is ACCEPTED.*
+    v2 described `update_branding_guidelines` as registered ungated, so a
+    billed `CLIENT_USER` could push free-form chat text into the
+    **internal-tier** branding doc. That is closed:
+    `src/lib/copilot-tool-access.ts` strips the tool out of a client session's
+    registry entirely (`copilotToolsFor`, the primary fence — an unlisted tool
+    cannot be called) and `brandingToolRefusal` refuses inside `execute` as
+    defence in depth. Impersonation does not lift it: an admin in "View as
+    Client" arrives as a `CLIENT_USER` and is denied, the same line
+    `isBillableClientActor` draws for credits.
+
+    **What remains is the sanctioned rail path, and pass 2 ruled it correct —
+    do not "fix" it.** A client CAN still change their own branding, through
+    BrandColorsSection → BrandingModal → `saveBrandingGuidelinesAction`
+    (`src/lib/actions/branding-actions.ts:47`). That is a different act from
+    the one v2 flagged, on three counts: it **authorizes**
+    (`requireClientAccess`); it **protects the internal field** — `usagePct` is
+    the agency's mix guidance, stripped at the RSC boundary by
+    `toClientBrandingView` (`src/lib/client-visibility.ts`) so it never reaches
+    the browser, and re-applied from storage on save by `preserveInternalUsage`
+    (:27), matched on hex first and position second, so a client reordering
+    swatches cannot blank the agency's numbers; and it is **audited** — every
+    save writes a `BRANDING_UPDATED` activity log naming the actor and role.
+    A client owning their own colors is the product working; what §6.6 forbids
+    is an *unauthorized, unaudited* write into internal-tier content, which is
+    what the chat tool was and the rail is not.
 - **`assignOptionRefs`/`matchAssetsToSlots` dead-code pairs** — §4.10, §4.15.
 - The non-docked floating `ChatbotWidget` branch (`floatingPosition`, fixed
   380px panel) is unreachable — end-loop deletion, found during CD-G8.
