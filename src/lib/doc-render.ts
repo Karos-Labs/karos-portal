@@ -9,6 +9,18 @@ export interface DocSection {
   body: string;
 }
 
+/** Markdown inline link: `[label](target)`. */
+export const LINK_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+
+/**
+ * Only web-ish schemes become anchors. Model-written document text is not a
+ * trusted source of URLs, and `javascript:` / `data:` in an href is a script
+ * sink that escaping alone does not close.
+ */
+export function isSafeHref(href: string): boolean {
+  return /^(https?:\/\/|mailto:|\/|#)/i.test(href.trim());
+}
+
 const PLACEHOLDER_RE =
   /\b(n\/a|unknown|not\s+provided|not\s+applicable|data\s+unavailable|tbd)\b/gi;
 
@@ -78,6 +90,15 @@ export function renderSectionBody(md: string): string {
   // from the next), so it renders rather than vanishing.
   let out = esc(md).replace(/^---+\s*$/gm, '<hr class="my-4 border-0 border-t border-border" />');
 
+  // Deeper headings FIRST: `^###\s` cannot match "#### Persona" (the fourth
+  // character is a hash, not a space), so without this rule the shipped Market
+  // Strategy template's persona headings fell through to the paragraph rule and
+  // the client read four literal hash marks.
+  out = out.replace(
+    /^#{4,6}\s+(.+)$/gm,
+    '<p class="mt-3 mb-1 text-xs font-semibold text-foreground">$1</p>',
+  );
+
   out = out.replace(
     /^###\s+(.+)$/gm,
     '<p class="mt-4 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">$1</p>',
@@ -118,21 +139,34 @@ export function renderSectionBody(md: string): string {
   // pass below. Without sentinels the second wrap regex re-matches the <li> elements already
   // inside <ul>, producing invalid <ul><ol><li>…</li></ol></ul> that browsers parse by moving
   // the <ol> out, leaving an empty <ul> and hiding all bullet content.
-  out = out.replace(/^[-*+]\s+(.+)$/gm, "\x02$1\x03");
+  //
+  // Leading whitespace is allowed: a nested sub-bullet used to fail the rule and
+  // fall through to the paragraph pass, printing a bare dash outside the styled
+  // list at the wrong indentation. \x06 marks an indented item so it can keep
+  // its nesting without a second list level.
+  out = out.replace(/^([ \t]+)?[-*+]\s+(.+)$/gm, (_m, indent: string | undefined, text: string) =>
+    indent ? `\x02\x06${text}\x03` : `\x02${text}\x03`,
+  );
   out = out.replace(
     /(\x02[\s\S]*?\x03\n?)+/g,
     (block) => {
-      const items = block.replace(/\x02([\s\S]*?)\x03/g, "<li>$1</li>");
+      const items = block
+        .replace(/\x02\x06([\s\S]*?)\x03/g, '<li class="ml-4">$1</li>')
+        .replace(/\x02([\s\S]*?)\x03/g, "<li>$1</li>");
       return `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-neon/50 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${items}</ul>\n`;
     },
   );
 
   // Ordered lists — sentinel bytes \x04/\x05, distinct from the bullet sentinels above.
-  out = out.replace(/^\d+\.\s+(.+)$/gm, "\x04$1\x05");
+  out = out.replace(/^([ \t]+)?\d+\.\s+(.+)$/gm, (_m, indent: string | undefined, text: string) =>
+    indent ? `\x04\x06${text}\x05` : `\x04${text}\x05`,
+  );
   out = out.replace(
     /(\x04[\s\S]*?\x05\n?)+/g,
     (block) => {
-      const items = block.replace(/\x04([\s\S]*?)\x05/g, "<li>$1</li>");
+      const items = block
+        .replace(/\x04\x06([\s\S]*?)\x05/g, '<li class="ml-4">$1</li>')
+        .replace(/\x04([\s\S]*?)\x05/g, "<li>$1</li>");
       return `<ol class="my-2 space-y-1.5 ml-4 list-decimal [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] marker:text-neon/50">${items}</ol>\n`;
     },
   );
@@ -149,6 +183,17 @@ export function renderSectionBody(md: string): string {
   out = out.replace(
     /^(?!<[a-zA-Z/]|$|\s*$)(.+)$/gm,
     '<p class="text-sm text-muted leading-[1.7] my-1">$1</p>',
+  );
+
+  // Links, last: by now every block wrapper is in place, so a line that is only
+  // a link still sits inside its paragraph. Before this the renderer had no link
+  // rule at all and a source reference printed as bracket text followed by a raw
+  // address. The href is already escaped, and a non-web scheme (javascript:,
+  // data:) is refused and left as plain text.
+  out = out.replace(LINK_RE, (whole, text: string, href: string) =>
+    isSafeHref(href)
+      ? `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-neon underline underline-offset-2 hover:opacity-80">${text}</a>`
+      : whole,
   );
 
   return out.replace(/\n{3,}/g, "\n\n").trim();

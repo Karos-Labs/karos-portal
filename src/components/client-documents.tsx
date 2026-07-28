@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { Icon, LinkedInLogo, XLogo } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import {
+  isSafeHref,
+  LINK_RE,
   parseDocSections,
   renderFullDoc,
   renderSectionBody,
@@ -116,6 +118,8 @@ function renderForPrint(markdown: string): string {
   let out = esc(markdown)
     // Separator lines
     .replace(/^---+$/gm, "")
+    // H4+ sub-headings — the Market Strategy template's persona headings
+    .replace(/^#{4,6}\s+(.+)$/gm, "<h4>$1</h4>")
     // H2 headings
     .replace(/^##\s+(.+)$/gm, "<h2>$1</h2>")
     // H3 sub-headings
@@ -146,17 +150,27 @@ function renderForPrint(markdown: string): string {
     return html + "</table>\n";
   });
 
-  // Bullet lists (sentinel to avoid nested re-match)
-  out = out.replace(/^[-*+]\s+(.+)$/gm, "\x02$1\x03");
+  // Bullet lists (sentinel to avoid nested re-match). Leading whitespace is
+  // allowed so an indented sub-bullet joins the list instead of printing a bare
+  // dash as a paragraph; \x06 marks it for the indent class.
+  out = out.replace(/^([ \t]+)?[-*+]\s+(.+)$/gm, (_m, indent: string | undefined, text: string) =>
+    indent ? `\x02\x06${text}\x03` : `\x02${text}\x03`,
+  );
   out = out.replace(/(\x02[\s\S]*?\x03\n?)+/g, (block) => {
-    const items = block.replace(/\x02([\s\S]*?)\x03/g, "<li>$1</li>");
+    const items = block
+      .replace(/\x02\x06([\s\S]*?)\x03/g, '<li class="indent">$1</li>')
+      .replace(/\x02([\s\S]*?)\x03/g, "<li>$1</li>");
     return `<ul>${items}</ul>\n`;
   });
 
   // Ordered lists
-  out = out.replace(/^\d+\.\s+(.+)$/gm, "\x04$1\x05");
+  out = out.replace(/^([ \t]+)?\d+\.\s+(.+)$/gm, (_m, indent: string | undefined, text: string) =>
+    indent ? `\x04\x06${text}\x05` : `\x04${text}\x05`,
+  );
   out = out.replace(/(\x04[\s\S]*?\x05\n?)+/g, (block) => {
-    const items = block.replace(/\x04([\s\S]*?)\x05/g, "<li>$1</li>");
+    const items = block
+      .replace(/\x04\x06([\s\S]*?)\x05/g, '<li class="indent">$1</li>')
+      .replace(/\x04([\s\S]*?)\x05/g, "<li>$1</li>");
     return `<ol>${items}</ol>\n`;
   });
 
@@ -167,6 +181,12 @@ function renderForPrint(markdown: string): string {
 
   // Remaining plain lines → paragraphs
   out = out.replace(/^(?!<[a-zA-Z/]|$|\s*$)(.+)$/gm, "<p>$1</p>");
+
+  // Links, last — same rule and same scheme guard as the on-screen renderer, so
+  // the PDF matches the screen instead of printing bracket-and-parenthesis text.
+  out = out.replace(LINK_RE, (whole, text: string, href: string) =>
+    isSafeHref(href) ? `<a href="${href}">${text}</a>` : whole,
+  );
 
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -194,9 +214,12 @@ function buildPrintWindow(content: string, title: string): void {
          page-break-after: avoid; }
     h3 { font-size: 10pt; font-weight: 600; text-transform: uppercase;
          letter-spacing: 0.08em; color: #555; margin: 16px 0 4px; }
+    h4 { font-size: 11pt; font-weight: 600; color: #111; margin: 12px 0 4px; }
     p  { margin: 5px 0; font-size: 11pt; color: #222; }
+    a  { color: #0b5fa5; }
     ul, ol { margin: 6px 0; padding-left: 22px; }
     li { margin: 3px 0; font-size: 11pt; }
+    li.indent { margin-left: 18px; }
     ul li::marker { color: #888; }
     table { width: 100%; border-collapse: collapse; margin: 12px 0;
             page-break-inside: avoid; font-size: 10pt; }
