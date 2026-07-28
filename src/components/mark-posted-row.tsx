@@ -23,7 +23,14 @@ export function MarkPostedRow({ asset, compact = false }: { asset: Asset; compac
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A locked (future-dated) card is a redacted placeholder: redactLockedAsset
+  // keeps `status` and drops `publishMode`, so the plain predicate said TRUE
+  // and one click per future day would flip the post to published — ending the
+  // redaction and revealing the whole pre-generated batch. That is exactly the
+  // churn scenario A3/A4 exists to prevent, so locked cards get no control at
+  // all (the action refuses it too — the UI is not the guard).
   const eligible =
+    !asset.locked &&
     (asset.status === "approved" || asset.status === "scheduled" || asset.status === "delivered") &&
     asset.publishMode !== "placeholder";
   if (!eligible) return null;
