@@ -1,18 +1,22 @@
 # Tomer handover — QA sweep 2026-07
 
-> **Status: DRAFT v1 — 2026-07-28.** Written mid-campaign (Phase 2, wave A) and
-> refreshed as later phases land. Section numbers are stable anchors — later
-> updates append or amend inside sections, never renumber them. Every code
-> reference is file + symbol (never line numbers — they rot); every claim below
-> was verified against the working tree on the date in the changelog row.
+> **Status: v2 — 2026-07-28, reconciled against final HEAD `f7a126b`.** Section
+> numbers are stable anchors — later updates append or amend inside sections,
+> never renumber them. Every code reference is file + symbol; **the agent-service
+> contract seams in §4 additionally carry `file:line`**, because you have to build
+> a payload against them without reading the repo. Those line numbers were read
+> (not inferred) at `f7a126b` — if one has drifted, the symbol beside it is the
+> re-locator. Everywhere else the rule stands: symbols, not lines.
 
 | Version | Date | State of campaign when written |
 |---|---|---|
-| v1 (this draft) | 2026-07-28 | Phase 1 merged · CALENDAR cluster merged · DOCS cluster merge in progress · AGENTS / SEO / WORKSPACE / remaining clusters in flight · Phase 3 not started (`phase3-design.md` does not exist yet) |
+| v1 (draft) | 2026-07-28 | Phase 1 merged · CALENDAR merged · DOCS merging · AGENTS / SEO / WORKSPACE / rest in flight · Phase 3 not started (`phase3-design.md` did not exist yet) |
+| **v2 (this)** | **2026-07-28** | **All Phase-2 clusters merged · Phase 3 WP-0…WP-9 merged · CD-G wave (G1–G11) merged · Albert-match review run · CD-H mop-up (H1–H8) merged at `f7a126b` · 879 tests green.** Phase-3 §8.3 seams T1–T7 are now real, verified, and expanded with everything the WP-4+ and CD-G/CD-H waves left open |
 
 **Audience:** Tomer, doing the final integration mile (agent-service runtime,
 GCP infra, connectors) — plus Albert for the ops steps in §2. Read §1 to
-orient, §6 before touching any code, then work §2–§5.
+orient, §6 before touching any code, then work §2–§5. If you only have an hour:
+**§4.1 (the metadata contract you build against) and §4.8 (T1–T7)**.
 
 ---
 
@@ -35,9 +39,15 @@ lives in `docs/qa-sweep-2026-07/`:
 | `inventory/findings-p*.md` | Full spec per finding (`## F<n>` entries), verified field-by-field against the PDF. Tail of `findings-p161-199.md` = killed-claims list + colophon. |
 | `inventory/screenshots/` | 87 annotated live-portal screenshots, `F<n>.png`. |
 | `call-directives-2026-07-27.md` | Albert's lettered directives (A architecture, B SEO, C ops, D Tomer/infra, E context). |
+| `phase3-design.md` | **The launch-vs-runs architecture** (F148 umbrella) — data model, state machine, slots, credits split, §8 agent-service contract, §9 backfill spec, §10 work packages, §12 Albert rulings + open questions. Written after v1 of this doc; §4 below is its Tomer-facing extract. |
 | `master-plan.md` | Phasing model, cluster map, deferred-to-Tomer criteria. |
 | `team-design.md` | The verification system (below). |
 | `fixer-brief.md` | Standing brief every fixer follows — §6 of this doc distills its hazards. |
+
+Albert's directives kept arriving during execution (five batches). Batches 3–5
+live in `rescopes.md` as **CD-G1…CD-G11**, the post-wave Albert-match review's
+mismatch list as **CD-H1…CD-H8**. Where those disagree with the PDF or with
+`phase3-design.md` §7.1, they win.
 
 ### 1.2 How to read LEDGER.md
 
@@ -66,22 +76,24 @@ All 8 blockers, each its own fixer + full gate, merged serially:
 
 All RESOLVED except **F127 = OPS-PENDING** on the backfill script run (§2.1).
 
-### 1.4 Phase 2 — subsystem clusters (in progress at draft time)
+### 1.4 Phase 2 — subsystem clusters (ALL MERGED — amended for v2)
 
-- **CALENDAR — merged** (`f811c08`, fixes `14e7510..dce2bc7` + 3 verifier
-  bounces `22c495b`/`aceb6da`/`90dbbdc`): F107, F108, F151, F109, F110, F111,
-  F112, F142 all RESOLVED (some with accepted residuals — §5.2).
-- **DOCS — merge in progress** in the integration worktree as this draft is
-  written (F86 tier-clamp bounce accepted; expect F74–F86/F138–F140 rows to
-  flip shortly after this draft).
-- **AGENTS, SEO, WORKSPACE, COPILOT, DASHBOARD, CREDITS, SHELL — in flight**
-  in fixer worktrees. Where this doc says "arrives with the AGENTS merge",
-  the current integration branch does **not** have it yet.
+Every cluster named in v1 as "in flight" has since merged and passed the §1.5
+gate: **CALENDAR** (`f811c08`), **DOCS**, **AGENTS**, **SEO**, **WORKSPACE**
+(`567305a`, a hand-verified 7-file conflict resolution + a second independent
+lens pass), **COPILOT**, **DASHBOARD**, **CREDITS**, **SHELL**. Anywhere v1 said
+"arrives with the AGENTS merge" or "in flight at draft time", **it has landed** —
+those sentences below have been corrected in place rather than deleted, so you
+can see what moved.
+
+At HEAD the ledger carries **no OPEN engineering rows**. What remains open is
+three OPS-PENDING rows (F127, F33, F130 — §2), two OPEN ops/loop items
+(CD-C1, CD-G7), one OPEN infra item (CD-D1 video — §3.2), and the §4 seams.
 
 ### 1.5 The verification system every merged fix passed
 
 1. **Deterministic gates** — `npx tsc --noEmit` · `npm run build` ·
-   `npx vitest run`.
+   `npx vitest run` (**879 tests across 71 files, green at `f7a126b`**).
 2. **Three adversarial Opus lenses**, each prompted to refute the fix:
    *risk* (blast radius: credits, roles, webhook contracts, Firestore writes),
    *drift* (matches the prescribed fix + call directives, guard zones intact),
@@ -93,6 +105,41 @@ Trust implication for you: a RESOLVED row means the symptom was re-verified in
 a running portal, not just code-reviewed. The bounce commits are part of each
 finding's fix — don't cherry-pick a fix commit without its bounces.
 
+Phase 3 and the CD-G wave added a fourth step: an **Albert-match lens** that
+re-reads his verbatim words against localhost after a wave merges. It is what
+produced CD-H; assume any future wave earns one too.
+
+### 1.6 Phase 3 + the CD-G / CD-H waves (merged — new in v2)
+
+This is the work v1 could not describe, and it is most of what you inherit.
+
+- **Phase 3 (`phase3-design.md`) designed and built the launch-vs-runs model**:
+  new collections `clientAgents` (parent umbrella), `agentSlots` (the calendar
+  plan), `clientAgentFeedback` (two-level feedback); a launch state machine
+  (`not_launched → launching → curating → live`, plus `launch_failed`); a
+  client-billed **launch** priced separately from a **run**; per-slot notes; and
+  the X agent's daily 3-option picker. Merged as WP-0 through WP-9 with three
+  lens rounds (`af08a9d`, then `687b728` "Phase 3 merged — 872 tests").
+- **CD-G wave** (`rescopes.md`, third–fifth Albert batches): the agents roster
+  became cards-only, with a **full-page per-agent detail route** (CD-G1); client
+  blurbs rewritten concrete (CD-G2); "one agent per platform" copy killed and
+  Bind demoted to staff plumbing (CD-G3); staff sidebar restored to baseline
+  (CD-G4); Regenerate admin-only + a dashboard entry point (CD-G5); **F124
+  reverted by Albert** (CD-G6); the copilot dock pinned bottom/full-width
+  (CD-G8) and dismissible at narrow width with the chrome relocated into
+  Company (CD-G9); board toolbar straightened (CD-G10); swatches copy their hex
+  (CD-G11).
+- **Albert-match review** then walked his verbatim feedback against localhost
+  and produced the **CD-H mop-up** (H1–H8, merged `a2aeb31` + `f7a126b`): tiles
+  first under Overview, sidebars stop scrolling, competitor ↗ fallback, 375px
+  clipping, client-shell narrow parity, breakpoint-gated Company sheet, a
+  cosmetic set, and **CD-H8** — the legacy "live schedule but no umbrella" agent
+  detail page stopped being a stub.
+- **CD-G7 fleet completion refresh** (data, not code) is the one wave still
+  OPEN: `scripts/refresh-export.ts` → per-client proposal JSON →
+  `scripts/refresh-apply.ts --apply`. §2.9. It is where the pipeline bugs in
+  §4.13 were discovered.
+
 ---
 
 ## 2. Ops runbook (Albert or Tomer)
@@ -101,6 +148,19 @@ Standing rule for everything in this section: **the dev `.env.local` points at
 production Firestore.** Every script in `scripts/` is dry-run by default,
 writes only with `--apply`, and is guarded by `require.main === module`.
 Read the printed plan before applying. Nothing here was run by the agents.
+
+**The OPS-PENDING inventory at HEAD**, in the order it should be run:
+
+| # | Step | Blocks | Owner |
+|---|---|---|---|
+| §2.1 | `backfill-agent-blurbs.ts --apply` | F127 | Albert |
+| §2.2 | `backfill-asset-titles.ts --apply` | F33 | Albert |
+| §2.8 | **write** `scripts/backfill-client-agents.ts`, then run it per client | Phase 3 on existing clients | engineer, then Albert |
+| §2.9 | `refresh-apply.ts --apply` per client (CD-G7) | fleet data quality | Albert |
+| §2.10 | set `creditCost` + `launchCreditCost` per agent in the admin editor | F130, and every client Launch button | Albert (admin UI, no script) |
+| §2.11 | `grant-all-agents.ts` sanity pass + the fill-only manual profile edits | roster completeness | Albert |
+| §2.4 | credit reload + SEO/GEO regenerate | C2 | Albert |
+| §2.5 | Hello-account password rotation | D3 | Albert |
 
 ### 2.1 `scripts/backfill-agent-blurbs.ts` — required to finish F127
 
@@ -130,21 +190,52 @@ Things to know before running:
   are skipped. Blurbs are lint-checked against `LAB_JARGON_RE` (the same
   gate as `src/lib/agent-service/custom-agent-import.ts`).
 
-### 2.2 `scripts/backfill-asset-titles.ts` — NOT YET WRITTEN
+**Amended for v2 (CD-G2).** The blurbs were rewritten to Albert's pattern —
+concrete and short ("Improve your Instagram reach with a daily post, different
+templates, and an agent that scans"), no lab vocabulary. Two things changed:
 
-Placeholder. F33 (every deliverable titled "<Agent name> - <Client name>") is
-with the in-flight AGENTS cluster; if its fix needs a backfill of existing
-asset titles, the script lands here under the same dry-run convention. At
-draft time no such file exists in `scripts/` — refresh this row when the
-AGENTS cluster merges.
+- The script's `BLURBS` table (`scripts/backfill-agent-blurbs.ts:99`, 10
+  entries) now has a **runtime twin in app code**: `src/lib/agent-blurbs.ts`
+  (`PRODUCT_BLURBS`:36, `BLURBS`:54 — 17 entries, a superset). The resolver
+  `clientAgentBlurb` (`agent-blurbs.ts:155`) prefers a curated `clientBlurb`,
+  then product type, then an identity match, then an honest contentless
+  fallback. So **the roster and detail pages read correctly today even before
+  the script runs** — the backfill now only persists the copy.
+- Because a `scripts/` file cannot import `@/`, the two tables are
+  hand-maintained twins (documented at `backfill-agent-blurbs.ts:13-20`).
+  **Edit both or they drift.**
 
-### 2.3 Other scripts in `scripts/` (pre-sweep maintenance, same convention)
+### 2.2 `scripts/backfill-asset-titles.ts` — WRITTEN (v1 said it wasn't)
 
-`backfill-branding.ts`, `clear-ai-processing-lock.ts` (§2.4),
+**Correction:** v1 called this a placeholder. It exists at HEAD (123 lines) and
+F33 is OPS-PENDING on running it. It rewrites only assets whose title is
+character-for-character their job's `"<Agent> - <Client>"` title — a deliberately
+conservative match (`backfill-asset-titles.ts:17-21`) so a hand-edited title is
+never touched. `--apply` at :84, `require.main` guard at :123.
+
+```bash
+npx tsx scripts/backfill-asset-titles.ts
+npx tsx scripts/backfill-asset-titles.ts --apply
+```
+
+Going forward the defect is fixed at the source: the webhook strips the suffix
+via `assetTitleFromJobTitle` (`webhook/route.ts:388`, shared definition in
+`src/lib/job-title.ts`). The old code looked for an em dash while every builder
+wrote a hyphen, so it had never once fired.
+
+### 2.3 Everything in `scripts/` at HEAD (13 files, same convention)
+
+Sweep-relevant: `backfill-agent-blurbs.ts` (§2.1), `backfill-asset-titles.ts`
+(§2.2), `refresh-export.ts` + `refresh-apply.ts` (§2.9), `grant-all-agents.ts`
+(§2.11), `clear-ai-processing-lock.ts` (§2.4).
+
+Pre-sweep maintenance, unchanged: `backfill-branding.ts`,
 `dedupe-competitors.ts`, `import-lab-client.ts`, `migrate-legacy-roles.ts`,
 `purge-orphaned-client-docs.ts`, `redate-content-calendar.ts`,
-`schedule-approved-assets.ts`. None are part of this sweep's pending ops, but
-they're the house style any new migration must follow.
+`schedule-approved-assets.ts`.
+
+**Not present and needed: `scripts/backfill-client-agents.ts` (§2.8).** It has
+never existed on any branch.
 
 ### 2.4 Credit reload + SEO/GEO regenerate (call directive C2)
 
@@ -184,7 +275,7 @@ in the ledger header). From `.env.example`:
 
 | Var | Local dev value | Notes |
 |---|---|---|
-| `AGENT_SERVICE_URL` | `http://localhost:8080` | Unset hides the managed-agents UI entirely (F34's misleading empty state — AGENTS cluster is fixing the copy, not the gate). |
+| `AGENT_SERVICE_URL` | `http://localhost:8080` | Unset hides the managed-agents UI entirely. F34 fixed the *copy*, not the gate — so an unset URL still means an empty agents surface, it just says so honestly now. |
 | `AGENT_SERVICE_TOKEN` | `dev-token` | Sent as `X-Karos-Service-Token`; must match an entry in the service's `AGENT_SERVICE_TOKENS`. |
 | `AGENT_SERVICE_AUDIENCE` | empty locally | Prod only — enables the Cloud Run IAM ID token alongside the app token. |
 | `AGENT_WEBHOOK_SECRET` | `dev-webhook-secret` | HMAC for `/api/agent-service/webhook`; comma-separated for rotation; **receiver rejects everything when unset**. |
@@ -210,49 +301,163 @@ says connect — consistent with the flag being unset). Decision needed
 the connect-state copy until then. Nobody on the sweep could see the GCP env
 to confirm the current value.
 
+Still true at HEAD: `liveIngestEnabled()` is
+`src/lib/integrations/analytics-providers.ts:41-43`, gating on
+`process.env.ANALYTICS_LIVE_INGEST === "1"` (:42), enforced at :217 and :468.
+
+### 2.8 `scripts/backfill-client-agents.ts` — SPEC ONLY, THE BIGGEST UNBUILT ITEM
+
+**New in v2, and the single most consequential gap in the handover.**
+
+Phase 3's whole model hangs off two new collections. Every *new* umbrella is
+created through the UI, but **no existing client has one**: there is no
+migration. `phase3-design.md` §9 (lines 893–944) specifies the script in full —
+7 steps, `--dry-run` default / `--apply` / `--client <id>` / `--delete` /
+`--stamp-jobs`, idempotent via deterministic ids — and **none of it is written**.
+`git log --all -- scripts/backfill-client-agents.ts` is empty; nothing else in
+`scripts/` touches `clientAgents`.
+
+Consequences you will meet immediately:
+
+- A client with a live weekly schedule and no umbrella (the flagship Instagram
+  case) gets the **legacy branch** of the detail page, not the umbrella one —
+  see §4.14. CD-H8 built that branch precisely to make the gap survivable, and
+  its own code comment says so (`legacy-agent-panel.tsx:36-38`).
+- Slots, template streams, per-template feedback, per-slot notes and the options
+  picker are all umbrella-gated, so **none of them exist for pre-Phase-3
+  clients** until this runs.
+
+The step that needs the most care is **step 4, slot derivation**: it fits slots
+to assets' *existing* dates and must never re-date an asset. Read §4.10 before
+writing it — a naive implementation collides with the chain planner.
+
+### 2.9 CD-G7 fleet completion refresh — `refresh-export.ts` → `refresh-apply.ts`
+
+Two-step, per client, and the only sanctioned write path for the fleet data
+completion pass. Albert authorized these writes explicitly.
+
+```bash
+npx tsx scripts/refresh-export.ts --out=/abs/dir [--client=<id>]   # read-only dump
+# a refresh team produces <client>.proposal.json against docs/qa-sweep-2026-07/refresh/BRIEF-TEMPLATE.md
+npx tsx scripts/refresh-apply.ts --file=/abs/proposal.json --client=<id>          # dry run
+npx tsx scripts/refresh-apply.ts --file=/abs/proposal.json --client=<id> --apply  # writes
+```
+
+`--client` is **mandatory and single**: one client per invocation, cross-checked
+against the proposal's own `clientId` (`refresh-apply.ts:809`) and client name
+(:831-837). Writes land as one atomic batch per client over `clientContextDocs`,
+`clientCompetitors`, and one `clients` doc.
+
+The completion semantics are **enforced in code, not merely documented**
+(`refresh-apply.ts:11-25`): nothing is ever deleted; a doc may not shrink >10%
+and may never lose a `## ` section; competitor fields may not be blanked; brand
+colors need 3–4 unique hexes with sequential `dominanceRank` and `usagePct`
+summing to exactly 100; **every other client profile field is fill-only**. That
+last rule is why §2.11 exists.
+
+### 2.10 Per-agent pricing — the F130 decision Albert has to make in the UI
+
+F130 ("every agent priced identically at 25 credits per output") is OPS-PENDING,
+not code-pending: the flat price is gone from the code and the per-agent fields
+exist, but **nobody has set them**. Both live in one admin-only surface, the
+agent editor modal (`src/components/custom-agents.tsx:1366`, reachable only
+behind `isAdmin` at :251/:328):
+
+| Field | Editor | Persisted by | Validation |
+|---|---|---|---|
+| `creditCost` — credits per run | `custom-agents.tsx:1539-1553` | `custom-agent-actions.ts:152`/:188 (`requireAdmin`) | positive integer, :97 |
+| `launchCreditCost` — one-time setup price | `custom-agents.tsx:1562-1577` ("Credits for setup (one time)") | same | positive integer **and strictly greater than the effective run cost**, `custom-agent-actions.ts:109` |
+
+**Until `launchCreditCost` is set, clients cannot launch that agent at all.**
+That is deliberate (ruling Q10): `evaluateLaunchGate` returns
+`pricing_uncalibrated` (`src/lib/client-agents.ts:275-282`) and the card paints
+a disabled CTA with the reason, rather than billing a number nobody chose.
+Staff launches are free and proceed — they are how you accumulate the
+measurements. The staff economics card then shows the measured setup-vs-run USD
+ratio and a suggested price (`src/components/client-agents/agent-economics.tsx`,
+computed by `calibrateLaunchPrice` in `src/lib/credit-reporting.ts:198`, which
+deliberately excludes untyped legacy jobs at :194-196).
+
+### 2.11 Roster grants + the fill-only manual edits
+
+- **`scripts/grant-all-agents.ts`** implements CD-G3's "they should be able to
+  run every single agent if they want to": it adds every enabled agent to each
+  client's `customAgentIds`, additively and de-duplicated (:81-87), skipping
+  disabled agents (:47). The revoke flag is **`--revoke-ids=a,b`** (:38, applied
+  :71-79) — note it is *not* a bare `--revoke`. A grant pass already ran
+  (`27e89e6`); re-run it after importing any new lab agent.
+- **Fill-only fields need a human.** `refresh-apply.ts` will not overwrite a
+  profile field a human already set, and it skips-and-reports instead
+  (`refresh-apply.ts:582`, :601). The refresh teams found the fields that are
+  simply *empty* fleet-wide and cannot be sourced automatically:
+  - **Typography** — `fontHeading` / `fontBody` are unset for 4+ clients
+    (`BRANDING_FILL_FIELDS`, `refresh-apply.ts:95`). Either put them in the
+    proposal JSON before `--apply`, or type them into the client's branding
+    surface afterwards.
+  - **Karos Labs' own guideline** — "no bright accents" is a house rule that
+    exists nowhere in the stored branding doc. Add it to `guidelines` (also a
+    fill-only field) so generation stops proposing them.
+
 ---
 
 ## 3. Infra
 
 ### 3.1 Cloud Run: `after()` background work needs CPU
 
-`cloudbuild.yaml` (`cloud-run-deploy` step) currently deploys with
-`--min-instances=1` (already present — keeps one instance warm) but **without
-`--no-cpu-throttling`**. Several merged fixes run follow-up work in Next.js
-`after()` — e.g. the DOCS cluster's sibling-tier correction propagation, and
-UI copy that says generation "continues in the background". Under
+**Re-verified at HEAD and still true.** `cloudbuild.yaml`'s `cloud-run-deploy`
+step (lines 110–138, args block :113-137) carries `--min-instances=1` (:122),
+`--max-instances=10`, `--memory=1Gi`, `--cpu=1`, `--timeout=300`,
+`--concurrency=80` — and **no CPU-allocation flag of any kind**. Several merged
+fixes run follow-up work in Next.js `after()` — the DOCS cluster's sibling-tier
+correction propagation, the webhook's usage logging (`webhook/route.ts:596`),
+and UI copy that says generation "continues in the background". Under
 request-based billing the CPU is throttled once the response is sent, so all
 `after()` work is best-effort. **Add `--no-cpu-throttling` to the deploy args**
 (instance-based billing) or move those jobs to Cloud Tasks/Scheduler. Related:
 the 20-minute stale-lock self-heal (§2.4) is the safety net when background
 work is killed mid-cycle.
 
+Note this got *more* load-bearing since v1: several Phase-3 side effects in the
+webhook (chain reflow, options assignment, launch-state advance, task sync) are
+deliberately best-effort after the single-use claim — see §4.1. They run inline,
+not in `after()`, so they are safe from throttling; but the usage logger is not.
+
 ### 3.2 Video deliverables — GCP block storage (F150 / CD-D1)
 
 Plan agreed on the call: videos live in GCP block storage; the agent service
 fetches from there; **no media in git**. Split of labor:
 
-- **Portal side (this campaign builds it):** render/URL plumbing against a
-  storage-URL field on assets. F150 is OPEN with the WORKSPACE cluster at
-  draft time — refresh here with the field name + component seam when it
-  lands.
+- **Portal side — LANDED (v1 said OPEN).** The field is
+  **`Asset.videoUrl?: string | null`** (`src/lib/types.ts:443`, with a doc
+  comment at :435-442 marking the GCP wiring as yours). The detail modal renders
+  `<video controls poster preload="metadata">` at
+  `src/components/asset-detail-modal.tsx:258-267`, fed by `assetVideos(asset)`
+  (:185). The resolver `assetVideos` (`src/lib/asset-images.ts:102-128`) reads
+  three sources in order: `asset.videoUrl` (:112), `meta.videos` (:114), then
+  `meta.files` / `meta.artifacts` (:118-125). A second surface renders it at
+  `src/components/task-ticket-modal.tsx:126`.
+  **So: drop a URL into `videoUrl`, or ship a `video/*` artifact through the
+  normal webhook path, and it plays.** CD-D1 stays OPEN only for your half.
 - **Tomer side:** the actual GCP bucket, upload path, and the agent-service
   fetch. The portal will not sign URLs or proxy bytes until you decide the
   access model (public bucket vs signed URLs — signed URLs will need a
-  server-side signer beside the existing Admin-SDK credentials).
-- Known duplication to resolve while in there: the ~20-line LinkedIn media
-  artifact filter (`liMedia`, durable re-hosted artifacts only) is duplicated
-  verbatim in `src/components/asset-card.tsx` and
-  `src/components/asset-detail-modal.tsx` — extract a shared helper as part
-  of the video work; until then any change must edit both.
+  server-side signer beside the existing Admin-SDK credentials). Note the
+  webhook re-hosts client-facing artifacts into our own storage today, with a
+  25 MB per-file / 150 MB per-delivery budget (`webhook/route.ts:34-35`) — video
+  will blow through that, which is exactly why it goes to block storage instead.
+- ~~Known duplication to resolve while in there~~ — **DONE, v1 is now wrong.**
+  The `liMedia` filter was extracted to `assetLiMedia(meta)` at
+  `src/lib/asset-images.ts:146-162`; both call sites are now four-line wrappers
+  (`asset-detail-modal.tsx:128-131`, `asset-card.tsx:448-451`). Edit the helper,
+  not the components.
 
 ### 3.3 TikTok connector (CD-D2 / call directive D2)
 
 Blocked on TikTok verifying the Karos Labs account — nothing code-side can
 unblock it. Current portal state: TikTok OAuth wiring exists
 (`TIKTOK_CLIENT_KEY`/`TIKTOK_CLIENT_SECRET` in `.env.example`, brand styling
-in `src/components/integrations-tab.tsx`), and CD-D2 (AGENTS cluster, OPEN at
-draft time) makes the portal show the TikTok agent's connector state as
+in `src/components/integrations-tab.tsx`), and **CD-D2 is now RESOLVED** — the
+portal shows the TikTok agent's connector state as
 **"pending verification" rather than pretending**. Two cautions from
 `.env.example` that apply to you when verification lands:
 
@@ -270,60 +475,161 @@ draft time) makes the portal show the TikTok agent's connector state as
 Per `master-plan.md`, a finding is deferred to you only if it needs external
 credentials/infra we don't hold, changes the agent-service runtime contract
 beyond the portal's side of the webhook, or Albert deferred it on the call.
-At draft time **no ledger row carries DEFERRED-TOMER yet** — the items below
-are the known Tomer-bound work from the call directives and orchestrator
-rulings; the ledger rows will be re-tagged as clusters close.
+The ledger still carries no `DEFERRED-TOMER` row (the deferrals were tracked as
+CD items and P3 round-deferrals instead) — **this section is the authoritative
+list**, and v2 expands it from 7 subsections to 15.
 
-### 4.1 Launch-vs-runs model — agent-service seams (Phase 3 will refine)
+### 4.1 Launch-vs-runs — THE METADATA CONTRACT (built; v1's placeholder replaced)
 
-The call's core product decision (directives A1–A5; findings F147/F148): every
-client-facing content agent becomes parent (platform agent per client) +
-children (template streams), with a one-time **launch** (setup/research)
-phase and a recurring **runs** phase. **Phase 3 designs and builds the portal
-side; `phase3-design.md` did not exist when this draft was written — treat
-this subsection as a placeholder to be replaced by that design's contract.**
-What is fixed today, and where the runtime seams are:
+Phase 3 shipped. Everything v1 flagged as "to be designed" now exists and is
+running, so this subsection is no longer a placeholder — it is the payload spec.
 
-- **Submit path:** `submitManagedJobAction`
-  (`src/lib/actions/external-job-actions.ts`) and the custom-agent path
-  (`src/lib/actions/custom-agent-actions.ts`) both funnel into the shared
-  `submitManagedJob` core (`src/lib/jobs/submit-managed.ts`) — the same core
-  the task-board execution engine (`src/lib/execution-engine.ts`) and the MCP
-  `submit_job` tool use. Any launch-vs-run distinction the service needs
-  (e.g. a `phase: "launch" | "run"` field) enters here.
-- **Result path:** `/api/agent-service/webhook`
-  (`src/app/api/agent-service/webhook/route.ts`) — creates all deliverables
-  as `status: "draft"` and mirrors runs into `jobs` with agentId
-  `"agent-service"`. Archive=posted-only (directive A4) is built against
-  this: drafts are staff-facing until approval.
-- **Catalog:** `src/lib/agent-service/products.ts` (the four managed lab
-  products) + the `customAgents` collection (lab-repo skills, granted per
-  client via `client.customAgentIds`, run as task_type `"custom"`).
-- **Mark-as-posted building block (extend, don't reinvent):** `MarkPostedRow`
-  in `src/components/asset-detail-modal.tsx` → `markAssetPostedAction`
-  (`src/lib/actions/asset-actions.ts`) — deliberately client-callable, gated
-  server-side to approved/scheduled/delivered, races guarded against the
-  publish cron via the publish claim. Directive A4's flow terminates here.
-- **Cost split (A5):** credits pricing maths is pure in `src/lib/credits.ts`
-  (client-safe), transactional charge/grant in `src/lib/data.ts`. The
-  launch-cost vs run-cost split (CD-A5) will extend these — no flat
-  "25 credits per output" anywhere when done (F130).
-- **Churn guard you must never break:** clients must not be able to tell
-  content is pre-generated internally (directive A3) — no payload, copy, or
-  timing signal that content exists before its calendar day.
+**The one-paragraph model:** each client-facing content agent gets a per-client
+umbrella (`clientAgents`). It is launched once (a paid setup/research run that
+designs the client's template set), then runs recurringly — one run per template
+stream, or, for X, one batch sliced into daily 3-option picks. A calendar plan
+(`agentSlots`) holds intent (template + day + optional note) independently of
+whether content exists yet, which is what makes directive A3 structural.
 
-### 4.2 Managed-products retirement (F39/F45 — signed off, lands with AGENTS merge)
+#### 4.1a What we send you — `metadata`, and the four keys that matter
 
-Orchestrator ruling: the dead managed-products UI is deleted
-(`src/components/managed-products.tsx`, `src/components/client-managed-agents.tsx`,
-the `submitManagedJobAction` UI wiring and the dead jobPreviews block) while
-the `submitManagedJob` CORE is preserved — the execution-engine task-board
-path still runs the four catalog products. **At draft time the files still
-exist on the integration branch; the deletion arrives with the AGENTS cluster
-merge.** Restoration = `git revert` of that retirement commit. Under Phase 3
-the managed-product run UI returns inside the unified launch-vs-runs model —
-never as the old four cards. Do not resurrect the deleted components when
-wiring the service.
+Every custom-agent submit funnels through one core:
+**`submitCustomAgentJob` in `src/lib/jobs/submit-custom.ts:132`**. It builds the
+outbound `metadata` object at **`submit-custom.ts:312-332`**. Values are always
+strings (your schema is `z.record(z.string(), z.string())`).
+
+| Key | Emitted at | Values | Meaning |
+|---|---|---|---|
+| `platform_job_id` | `submit-custom.ts:323` | our job id | Always present. The webhook's fallback identity — see 4.1c. |
+| `karos_task_id` | :324 | task id | Present when a board task dispatched the run. |
+| `karos_job_token` / `karos_mcp_url` | :325 | signed token / URL | Job-scoped MCP callback credential. |
+| **`karos_run_type`** | **:329** | `launch` \| `scheduled` \| `manual_template` \| `manual` | How the run was initiated. Union at `src/lib/types.ts:371`. Absent ⇒ legacy/untyped. |
+| **`karos_client_agent_id`** | **:330** | umbrella doc id | Which per-client umbrella this run belongs to. |
+| **`karos_template_key`** | **:331** | template key | Which template stream this run produces. |
+| **`karos_slot_id`** | — | — | **DESIGNED, NOT EMITTED.** Zero occurrences in `src/`. See §4.9. |
+
+These same three values are also stamped on our own job doc
+(`submit-custom.ts:247-249`), and **the job doc wins over the echo** on the way
+back — the metadata is the fallback for jobs written before the fields existed.
+
+**Reserved keys.** `RESERVED_METADATA` (`submit-custom.ts:56-64`) lists the seven
+keys the core owns. A caller passing one through `extraMetadata` has it
+**dropped, not silently overridden** (:320-322) — deliberate, so the mistake is
+visible in the payload rather than fatal. `extraMetadata` is the sanctioned door
+for anything new (`SubmitCustomAgentInput.extraMetadata`, :95).
+
+**What we need from you: echo `metadata` back verbatim on the webhook.** That
+round-trip is the entire contract. It is already proven in production by the
+`platform_job_id` fallback path, so this is a statement of the existing
+behavior, not a request for a change.
+
+#### 4.1b What you send us — the webhook payload
+
+`/api/agent-service/webhook` — `src/app/api/agent-service/webhook/route.ts`.
+Schema at **`route.ts:108-122`**; HMAC verified fail-closed (:136-149 — with
+`AGENT_WEBHOOK_SECRET` unset **every** request is rejected 503).
+
+Status mapping is at **`route.ts:38-45`**: `done → review`, `failed`/
+`dead_letter → failed`, and **`cancelled → cancelled`** — a deliberate stop is
+not a breakage, and the badge, the progress strip and every failure count tell
+them apart (finding F30).
+
+#### 4.1c Response codes — what each one means for your retry queue
+
+This matters more than anything else in this section, because the claim is
+single-use and your retries are the only safety net:
+
+| Code | Emitted at | Your move |
+|---|---|---|
+| 503 "Webhook not configured" | `route.ts:138` | Our secret is unset. Retry after we fix env. |
+| 401 | :148 | Signature/timestamp rejected. Do not retry blindly. |
+| 400 | :155, :159 | Malformed JSON or payload shape. **Retrying will not help.** |
+| 404 "No matching platform job" | :188 | Submission race — we haven't persisted `serviceJobId` yet. **Retry**; the window closes long before your schedule runs out. |
+| **503 "Refund write failed — retry delivery"** | **:209** | A failed run's credit refund did not write. **Retry** — the deterministic `refund_<chargeEntryId>` ledger id makes redelivery safe after a half-applied attempt. |
+| **503 "Template lookup failed — retry delivery"** | **:234-237** | We could not resolve the template stream. **Retry.** |
+| 200 `{ok:true, skipped:true, reason:"Already processed"}` | :250 | The atomic claim was already taken. Stop retrying — this is success. |
+| 200 `{ok:true, job_id, status}` | :611 | Processed. |
+
+The two 503s exist because of one rule: **anything that can throw must happen
+BEFORE the single-use claim** (`claimExternalJobCompletion`, :248). Both the
+refund (:202-211) and the template lookup (:224-243) were deliberately hoisted
+above it, and both fail the delivery rather than proceeding, because after the
+claim a redelivery short-circuits on "Already processed" and the damage is
+permanent. If you add work to this handler, keep that ordering.
+
+#### 4.1d What the webhook does with your metadata
+
+- **Template stamping.** The key is read from our job doc first, the echo second
+  (`route.ts:227`), then **whitelisted against the umbrella's own template
+  registry and fenced by client** (:229-243 — `umbrella.clientId === job.clientId`
+  at :239). Only a surviving match is written onto the asset as
+  `templateKey`/`templateName` (:421-428). Managed catalog products take
+  precedence, since a managed product *is* its own template (:421-422). This is
+  the join the archive groups by and the chip the calendar paints; before it, per-
+  template runs produced posts with no template at all.
+- **Launch runs** (`karos_run_type === "launch"` **and** a client-agent id,
+  :263-264): deliverables are created with `meta.launchDeliverable = true` and
+  `meta.clientAgentId` (:408), **chain reflow is skipped entirely** (:443), and
+  the umbrella is advanced by `applyLaunchOutcome` (:528-542) — `launching →
+  curating`, or `→ launch_failed`. If a client-facing `templates.json` artifact
+  is present it is captured off the bytes already fetched (:329-331, capped
+  20 KB) and seeds the template registry — **that is seam T1**, and it is
+  optional: staff curation works without it.
+  The flag is written **on the asset** rather than inferred later, so the
+  exclusion survives whatever status or date the asset ends up with; it is
+  enforced server-side in `getClientLibraryAssets`
+  (`src/lib/asset-visibility.ts:26`, predicate :40-42).
+- **Options-batch slot assignment (X).** When an X drafts batch lands, its days
+  are sliced into daily 3-option picks: `syncOptionsFromBatchAsset`
+  (`route.ts:464`, implementation `src/lib/client-agent-slots.ts:215`). Read the
+  comment at `client-agent-slots.ts:193-214` — the first implementation hung this
+  off the horizon generator, which was the wrong seam and made the feature
+  reachable in theory only. It is **fenced by client** (umbrellas looked up by
+  the job's own client, :226) and **idempotent** (assignment never touches a day
+  that already has options), which is what makes it safe to run *after* the
+  single-use claim. Best-effort by design: a failure retries on the next batch.
+- **Chain reflow** for everything else (:444), also best-effort — see §4.10 for
+  why that is currently a hazard rather than a nicety.
+
+#### 4.1e The rest of the model, unchanged from v1 but now real
+
+- **Catalog:** `src/lib/agent-service/products.ts` (four managed lab products) +
+  the `customAgents` collection (lab-repo skills, granted per client via
+  `client.customAgentIds`, run as task_type `"custom"`).
+- **Mark-as-posted (extend, don't reinvent):** `MarkPostedRow` was **extracted
+  out of the modal** into `src/components/mark-posted-row.tsx:21` (v1's pointer
+  is stale) → `markAssetPostedAction` (`src/lib/actions/asset-actions.ts:259`).
+  Mounted in the detail modal (:351) and on the calendar day card
+  (`run-calendar.tsx:546`). Client-callable by design, gated server-side to
+  approved/scheduled/delivered, raced against the publish cron via the publish
+  claim.
+- **Cost split (A5) — built.** See §4.12 for the vocabulary you will see in the
+  ledger and on jobs.
+- **Churn guard you must never break:** clients must not be able to tell content
+  is pre-generated internally (directive A3). This is now structural, not
+  copy-deep: the client projection of a slot returns **intent only** — template
+  key, day, whether the day has passed — and deliberately no asset id and no
+  content (`upcomingSlots`, `client-agent-slots.ts:265-285`, read the comment).
+  Launch runs are hidden from clients' run lists (`client-agent-rows.ts:70`) and
+  from the archive (`tasks-body.tsx:80`). If you add a surface, add it to that
+  list.
+
+### 4.2 Managed-products retirement (F39/F45 — DONE, commit `fbecbbf`)
+
+Orchestrator ruling: the dead managed-products UI is deleted while the
+`submitManagedJob` CORE is preserved — the execution-engine task-board path
+still runs the four catalog products.
+
+**Amended for v2: the deletion has landed.** `src/components/managed-products.tsx`
+and `src/components/client-managed-agents.tsx` were both removed in **`fbecbbf`**
+("retire dead managed-products UI (capability lives on task board)"). Restoration
+= `git revert fbecbbf`. Residue you may trip over: an explanatory comment where
+the feeder block used to be (`src/app/(app)/clients/[id]/agents/page.tsx:231-233`)
+and a stale mention of "the managed-products UI" in `cloudbuild.yaml:134`.
+
+Under Phase 3 the managed-product run UI returned inside the unified
+launch-vs-runs model — never as the old four cards. Do not resurrect the deleted
+components when wiring the service.
 
 ### 4.3 Reddit agent — re-application notes for when it lands
 
@@ -346,14 +652,13 @@ established patterns instead of inventing new ones:**
    components, same order discipline. Documented in F46's commit `271c381`.
 2. **Draft titles:** strip/translate lab-internal vocabulary ("Avenue 3 ·
    News-reaction…") at the reader render boundary in
-   `src/components/x-drafts-review.tsx` / `li-drafts-review.tsx` — this is
-   F70's prescribed fix (WORKSPACE cluster, in flight at draft time); apply
-   the same boundary treatment to the Reddit reader.
+   `src/components/x-drafts-review.tsx` / `li-drafts-review.tsx` — F70's
+   prescribed fix, **now merged**; apply the same boundary treatment to the
+   Reddit reader.
 3. **Intake copy:** mirror the X/LinkedIn intake pages
    (`src/components/x-agent-intake.tsx`, `linkedin-agent-intake.tsx`) as
-   corrected by F28 (AGENTS cluster, in flight at draft time — it rewrites
-   where drafts actually live). There is no `reddit-agent-intake.tsx` today;
-   build it from those.
+   corrected by F28 (**merged** — it rewrites where drafts actually live).
+   There is no `reddit-agent-intake.tsx` today; build it from those.
 4. **Run status labels:** consume `JOB_STATUS_META` (§6.5) — never print raw
    `job.status`.
 5. **Reply-cap economics (F27) and empty-input refusal (F36):** re-check both
@@ -362,45 +667,326 @@ established patterns instead of inventing new ones:**
 6. Integration standard: follow `docs/agent-integration-playbook.md` and the
    e13 X-agent reference (`docs/x-agent-portal.md`).
 
-### 4.4 F107 part 1 — Publish Now unreachable from the assets list (open)
+### 4.4 F107 part 1 — Publish Now unreachable from the job detail page (half closed)
 
 F107's calendar surface is RESOLVED: staff-gated `PublishNowRow` in
 `AssetDetailModal` (composed with `MarkPostedRow`: Publish Now = staff push
 through our API, MarkPostedRow = client attestation), with
 `connectedPlatforms` threaded staff-only through the calendar RSC payload
 (`connectedPlatformsByClient` in `src/app/(app)/calendar/calendar-body.tsx`).
-**Still open (WORKSPACE wave B owns it):** the staff assets list never passes
-`connectedPlatforms` into `AssetCard` — verified at draft time:
-`src/components/assets-view.tsx` and the job detail page
-(`src/app/(app)/jobs/[id]/page.tsx`) don't fetch/pass it, so the prop
-defaults empty and `PublishNowRow` never renders there. The seam is ready:
-`AssetCard` already accepts optional `connectedPlatforms` and forwards it to
-the modal. If wave B doesn't close it, close it during integration.
+**Half closed — amended for v2.** The assets list was fixed:
+`src/components/assets-view.tsx` now declares the prop (:35), types it (:49) and
+spreads it into `<AssetCard>` (:124-126), fed from
+`src/app/(app)/assets/page.tsx:82` (`pushablePlatformsByClient`) → :94. The
+calendar path passes it too (`calendar-body.tsx:326,372` → `run-calendar.tsx:910`).
+
+**Still open, one file:** the job detail page. `src/app/(app)/jobs/[id]/page.tsx:61`
+is still `{realAssets.map((a) => a && <AssetCard key={a.id} asset={a} canApprove />)}`
+— no `connectedPlatforms`, and the file never imports `listClientIntegrations`
+or `pushablePlatformsByClient`. `AssetCard` treats the prop as optional
+(`asset-card.tsx:416-421`, defaulting to `[]` at :461), so **Publish Now silently
+never appears on that page**. Two lines to close it; copy the pattern from
+`assets/page.tsx:82`.
 
 ### 4.5 `publishAssetNowAction` — no idempotency ledger
 
-Pre-existing, logged by the CALENDAR risk lens: `publishAssetNowAction`
-(`src/lib/actions/asset-actions.ts`) claims the asset atomically
-(`claimAssetForPublish`), but on platform failure it releases the claim and
-records only `publishError` — no attempt log, no idempotency key toward the
-platform API. Fine at today's volume; if you scale real platform pushes,
-add an attempt record / idempotency key before retry loops exist.
+Pre-existing, logged by the CALENDAR risk lens, **re-verified unchanged at
+HEAD**: `publishAssetNowAction` (`src/lib/actions/asset-actions.ts:336-393`)
+claims the asset atomically (`claimAssetForPublish`, :362), but on platform
+failure it releases the claim (:371) and records only `publishError` (:376) —
+no attempt log, no idempotency key toward the platform API.
+`publishAssetToPlatform` (`src/lib/integrations/publishers.ts:312`) carries none
+either, and the cron mirrors the same shape (`src/app/api/publish/route.ts:130,161`).
+Fine at today's volume; if you scale real platform pushes, add an attempt record
+/ idempotency key before retry loops exist.
 
 ### 4.6 Corrections vs standalone condensation (F77 residual)
 
 Client doc corrections enter generation via the internal source only. A
 standalone condensation pass (`refreshClientContextDocsAction` in
-`src/lib/actions/intel-actions.ts`) would MISS accumulated corrections —
-noted for Phase 3: if you or Phase 3 wire any new pipeline that regenerates
-client-tier docs, corrections must be injected there too.
+`src/lib/actions/intel-actions.ts`) would MISS accumulated corrections — still
+true at HEAD, and it applies to you: **if you wire any new pipeline that
+regenerates client-tier docs, corrections must be injected there too.**
+
+Read this together with §4.13.1 — the condensation pass has a live corruption
+bug, so anyone going in to fix that is already in the right file to handle this.
 
 ### 4.7 `applyGlobalDocCorrectionAction` — do not mount as-is
 
-`src/lib/actions/intel-actions.ts` exports `applyGlobalDocCorrectionAction`
-with **zero UI callers** at draft time. It repeats the exact
-charge-without-`{changed}`-flag shape F74 fixed on the targeted-correction
-path (client billed even when the correction was a no-op). If anything ever
-mounts it, port F74's `{changed}` + refund pattern first.
+**Re-verified at HEAD — all three halves still true.**
+`src/lib/actions/intel-actions.ts:656-666` exports `applyGlobalDocCorrectionAction`
+(inner `applyGlobalDocCorrection` :668-731) with **zero callers anywhere in
+`src/`** — the only other mentions in the repo are in this document. It charges
+unconditionally at :685 and then skips the per-doc write when content is
+unchanged (:697-705) **without refunding**: exactly the shape F74 fixed on the
+targeted path. The pattern to port sits 200 lines above it in the same file —
+`{ changed }` at :468, the "you have not been charged" branch at :472-475, and
+`refundDocCorrection` at :519. If anything ever mounts it, port that first.
+
+### 4.8 T1–T7 — the agent-service seams (from `phase3-design.md` §8.3)
+
+Nothing in Phase 3 *waits* on these: every one has a working degraded mode, and
+all seven degraded modes are what is running at HEAD. Verified against code.
+
+| # | Seam | Our side (built, verified) | What you wire |
+|---|---|---|---|
+| **T1** | **Structured launch output** — setup runs emit a client-facing `templates.json`, `[{key, name, rationale}]`, keys kebab-case per the lab item-folder convention | Webhook captures it off bytes already fetched: `route.ts:329-331` (predicate `isLaunchTemplatesArtifact`, `src/lib/jobs/launch-outcome.ts`), seeds the registry via `applyLaunchOutcome` (`route.ts:530`). **Only for launch runs**, so a normal run shipping a `templates.json` cannot reseed a registry. Degraded mode: staff curate by hand. | Lab setup skills emit the file; the service passes it through as an ordinary artifact (it may already — it *is* just an artifact) |
+| **T2** | **Launch progress events** — a `job.progress` webhook variant `{job_id, stage, detail?}` | Not accepted yet: the schema is `z.literal("job.completed")` (`route.ts:109`), so a progress event 400s today. Adding it is additive — a new discriminated variant plus a `JobRunEvent` append. `LaunchProgressCard` (`src/components/client-agents/launch-card.tsx`) then upgrades from 2 stages to real ones. | Service emits progress callbacks at research/template checkpoints |
+| **T3** | **Day-of single-output generation** — task accepts `template_key` + `count: 1`, produces exactly one on-template post | We already send the pinned prompt + `karos_template_key` (§4.1a) and the webhook stamps the result (`route.ts:421-428`). Missing on our side: per-slot firing (§4.9). | Lab engine honors single-slot mode — today it batches. Confirm per product |
+| **T4** | **Note revision as a cheap light run** | Portal fallback is a full custom run, behind a flag; today a note is applied by a **human** — the copy says so and must keep saying so (`src/lib/slot-notes.ts:63-76`) | A dedicated revise skill / task param |
+| **T5** | **Video deliverables (F150 / CD-D1)** | **Landed portal-side** — `Asset.videoUrl` (`types.ts:443`), `<video controls>` (`asset-detail-modal.tsx:258-267`), resolver `assetVideos` (`asset-images.ts:102-128`) | GCP block storage + upload path; service fetches from storage. §3.2 |
+| **T6** | **TikTok connector** | CD-D2 pending-verification chip, RESOLVED, decoupled from launch | TikTok app verification + connector. §3.3 |
+| **T7** | **X daily 3-option generation** — "produce exactly 3 distinct option drafts for `<date>`", consuming the pick/edit/posted learning log | Picker, telemetry and learning-log serialization are **live** (§4.12, `option-picker.tsx`, `slot-option-actions.ts`, `agent-service/x-agent-context.ts`). The interim **batch-slicing** selector is what runs today: a weekly batch lands and `syncOptionsFromBatchAsset` slices it across days (§4.1d) | Lab X skill gains a native daily-options mode + the pick-history optimization contract; the slicer then retires |
+
+### 4.9 Per-slot cron firing + `karos_slot_id` — NOT BUILT (Tomer seam)
+
+The design's highest-fidelity path, and the one thing the slot model is still
+missing. Today:
+
+- The scheduled cron is **`src/app/api/run-scheduled/route.ts`** (there is no
+  `src/app/api/cron/` directory; registered in `vercel.json` at `*/5 * * * *`).
+  It drains `listDuePlannedScheduledRuns(now, 25)` (:32) and fires **one job per
+  schedule row** (:64), stamping `runType: "scheduled"` (:80) and
+  `clientAgentId` (:81) when the row carries one.
+- **It never iterates `agentSlots` and never sends `karos_slot_id`.** The key is
+  reserved in the core (`submit-custom.ts:91` documents it as the intended use of
+  `extraMetadata`) but no caller passes one, and `RESERVED_METADATA` does not
+  list it.
+- The webhook therefore has **no slot branch**. `phase3-design.md` §8.2 specifies
+  one: a slot-linked run should stamp `templateKey`/`templateName` from metadata
+  (that half is built), link `assetId`/`jobId` onto the slot, and **skip reflow
+  in favor of pinning `scheduledAt` to the slot's day** (that half is not).
+
+What this blocks — **slot-note consumption paths 1 and 2**. `src/lib/slot-notes.ts`
+is explicit about it (read the header comment, :9-13): three paths exist in the
+design, in declining fidelity — (1) day-of generation receives the note as a
+`context_file`, (2) a revision pass rewrites an already-generated draft, (3) a
+human applies it. **Only path 3 ships**, and the client-facing echo string is
+worded to promise exactly that and nothing more (`slotNoteEcho`, :73-76:
+"Noted — your Karos team factors this into that day's post."). If you build
+per-slot firing, paths 1 and 2 open up — **and the copy must change with them,
+in that order.** Copy that implies the agent already read the note, while a
+human is still the mechanism, is the same class of lie the sweep spent 137
+findings removing.
+
+Build order when you get here: per-slot cron firing (emit `karos_slot_id` via
+`extraMetadata`) → webhook slot branch → T3 single-output mode → then the copy.
+
+### 4.10 `matchAssetsToSlots` + `reflowClientChain` — two planners, one calendar
+
+**The most dangerous item in this document.** Land these together or not at all.
+
+`src/lib/slot-plan.ts` is a pure, well-tested module. Two of its exports are
+**dead code with passing tests**:
+
+| Symbol | Line | Callers |
+|---|---|---|
+| `matchAssetsToSlots` | `slot-plan.ts:269` | **none outside tests** |
+| `validateSlotReorder` | :350 | **none outside tests** |
+| `applySlotMatches` (the write twin) | `src/lib/data-client-agents.ts:250` | **none anywhere** |
+
+Wired and working, for contrast: `generateSlotHorizon` (:125) and
+`slotScheduleFor` (:64) via `ensureSlotHorizon`
+(`src/lib/client-agent-slots.ts:94`), `reorderTemplateKeys` (:379) via
+`client-agent-run-actions.ts:238`, and `assignOptionRefs` (:423) via
+`client-agent-slots.ts:177`.
+
+Meanwhile **`reflowClientChain` (`src/lib/chain.ts:22`, a 35-line file) has zero
+slot awareness** — no reference to `AgentSlot`, `agentSlots`, `dateKey` or
+`clientAgentId` anywhere in it. It lists a client's assets, plans the one-post-
+per-day chain, and applies the assignments. Its callers:
+`webhook/route.ts:444`, `asset-chain-actions.ts:29`, `lab-output-actions.ts:281`
+— **none of them fences off a live umbrella's family.**
+
+The contract that should stop the collision already exists as a *comment*:
+`ClientAgent.chainFamily` (`src/lib/types.ts:1658`) says "while it is live, the
+slot planner owns this family for this client and plain reflow must not re-date
+its assets" — but the field is read only by `agent-identity-map.ts:108`, for
+labeling. Nothing enforces it.
+
+So: wire `matchAssetsToSlots` on its own and every webhook delivery, import and
+staff reflow will re-date the assets the slot planner just placed — the two
+planners fight, and the client watches their calendar shuffle. **Requirements:**
+
+1. Land the matcher, its write twin, and a `chainFamily` exclusion in
+   `reflowClientChain` **in one change**.
+2. Exercise it against **real client data**, not fixtures — the fixtures pass
+   today and told us nothing.
+3. Honor the invariant the tests do encode: **no asset is ever moved to a past
+   day**, and per-template `deriveOrderKey` order is preserved.
+
+### 4.11 Calendar slot rendering — nothing renders a slot outside the week strip
+
+Verified: `AgentSlot` appears in exactly five non-test files, **all under
+`src/lib/`** (`types.ts`, `slot-plan.ts`, `client-agent-slots.ts`,
+`data-client-agents.ts`, `slot-notes.ts`). **Zero usages in `src/components/` or
+`src/app/`.** Components consume a flattened, server-redacted projection instead
+— `ClientAgentCardRow["week"]` (`src/components/client-agents/types.ts:71-84`),
+built at `src/lib/client-agent-rows.ts:365` from `upcomingSlots` (7 days).
+
+The only surface that paints slots is **`WeekStrip`
+(`src/components/client-agents/live-card.tsx:400`)**, mounted on the live card
+(:146) and the agent detail page (`agent-detail-panel.tsx:191`). Siblings:
+`StaffSlotNotes` (`live-card.tsx:483`), `slot-note-modal.tsx:57`,
+`option-picker.tsx:50`.
+
+**The client calendar has no slot concept at all** — a case-insensitive search
+for "slot" in `src/app/(app)/calendar/calendar-body.tsx` and `page.tsx` returns
+nothing. Consequences:
+
+- Slots are visible on the agents surface but not on the calendar, which is
+  where a client actually looks at their month.
+- **§4.4 paused-grey depends on this.** `calendar-body.tsx:200` filters
+  `scheduledRuns` to `status === "active"`, so a paused schedule vanishes
+  entirely rather than greying. You cannot grey what you do not render — build
+  calendar slot rendering first, and it depends in turn on §4.10.
+
+### 4.12 Credits, run types, and the ledger vocabulary you will see
+
+Built by WP-6; here is what the data looks like so you can read it.
+
+- **`JobRunType`** — `src/lib/types.ts:371`: `"launch" | "scheduled" |
+  "manual_template" | "manual"`, stored on the job at `Job.runType`
+  (`types.ts:380`, optional — **legacy jobs have none, deliberately**: heuristic
+  launch-detection is unreliable, so analytics buckets them honestly as "before
+  run-type tracking"). Stamped by four paths: `run-scheduled/route.ts:80`
+  (`scheduled`), `client-agent-actions.ts:288` (`launch`),
+  `client-agent-run-actions.ts:132` (`manual_template`),
+  `custom-agent-actions.ts:373` (`manual`). Three paths deliberately do **not**
+  stamp: the task engine (`execution-engine.ts:266`), the MCP tool
+  (`mcp/tools.ts:334`), and the managed-product path (`submit-managed.ts:105`).
+- **`CreditOperation`** — `src/lib/types.ts:1369-1385`: `agent_run` (legacy),
+  `chat_message`, `task_execution`, `doc_correction`, `custom_agent_run`,
+  **`agent_launch`** (:1382), `seat_purchase`, `manual`.
+- **`agent_launch` is charged in exactly one place**: the shared submit core,
+  `src/lib/jobs/submit-custom.ts:270`, with the operation coming from the
+  caller's `charge` override (:273) that `submitClientAgentLaunchAction` sets
+  (`client-agent-actions.ts:294`). It is gated by `isBillableClientActor(user)`
+  (:268), so staff and impersonated launches never charge, and a `CreditError`
+  deletes the job (:284) so no orphan survives. Because it uses the same jobId
+  pairing as a normal run, **the webhook's failure refund hands launch credits
+  back with no extra code** (`route.ts:202-211`).
+- **Two label maps exist, and the live one is the bucket map.**
+  `CREDIT_OPERATION_LABEL` (`src/lib/credits.ts:431`, `agent_launch: "Setup"` at
+  :437) currently has **no production consumer** — the credits panel renders
+  `CREDIT_BUCKET_LABEL` (`credits.ts:466-471`) via
+  `creditBucketFor(operation, runType)` (:453-464, `agent_launch → "setup"` at
+  :457). Buckets are `setup | scheduled | manual | other`. If you add an
+  operation, add it to both or the panel will silently bucket it as "other".
+
+### 4.13 Pipeline bugs found by the CD-G7 refresh — code fixes still owed
+
+The fleet refresh (§2.9) fixes **data**. Three defects live in **code** and will
+re-corrupt on the next Regenerate. Whoever runs the next intel pass needs these.
+
+1. **Every client-tier doc loses its first `##` section — fleet-wide.**
+   Symptom: `target-audience@client` opens mid-document on "### Secondary ICP",
+   observed on 2 of 2 clients examined.
+   **The cause is not an index off-by-one** (the rescopes note calls it one; the
+   note is a good bug report and an inexact diagnosis). It is a frontmatter-fence
+   misdetection in **`stripPreamble`, `src/lib/text-utils.ts:31-36`**, called from
+   `src/lib/intel/condense.ts:88` and :114:
+
+   ```
+   32    const fmStart = fmSearchWindow.search(/^---\r?\n/m);
+   33    if (fmStart > 0) s = s.slice(fmStart);
+   ```
+
+   The `m` flag makes `^---` match **any** line start, not the document start. If
+   the condensed output has no leading YAML frontmatter, the first Markdown
+   horizontal rule inside the leading 400 characters is taken for an opening
+   fence: line 33 discards everything before it (the H1 *and* the first `##`
+   section), then :34/:36 discard everything through the next `---`. The 400-char
+   window is exactly why the damage is always confined to the first section.
+   It hits client-tier docs specifically because internal docs are themselves
+   stored post-`stripPreamble` (`intel/pipeline.ts:595`), so the condenser is fed
+   frontmatter-less input while being told to "update the frontmatter"
+   (`condense.ts:64-68`) — a no-op — and its output arrives bare.
+   **The existing guard fires and cannot save it:** `condense.ts:84-93` computes
+   `missingFirst` and retries (:96-108), but the retry's output goes through the
+   same `stripPreamble` at :114 and is returned at :116 **with no
+   re-validation**. Deterministic re-corruption, every Regenerate.
+   Same function, same bug class, worth fixing together: `text-utils.ts:42`
+   deletes the first `# ` line found *anywhere* in the document, not just a
+   leading H1. There are no tests for `stripPreamble` — add some.
+2. **Leaked LLM meta-commentary in stored docs, and no scrubber exists.** The
+   only defenses are prompt instructions (`intel/brain.ts:184`,
+   `intel/pipeline.ts:518`), which are not enforcement. The nearest thing to a
+   scrubber, `isInternalLine` (`src/lib/doc-render.ts:157`), is invoked **only**
+   from the one-line teaser `toPlainSummary` (:216) — `renderFullDoc` (:452) and
+   `parseDocSections` (:229) never call it, so meta-commentary in a stored body
+   renders verbatim to the client.
+3. **The palette extractor is unreliable and unvalidated.** Stored palettes
+   matched no live-site hex for the clients examined. `gatherSiteIntelligence`
+   (`src/lib/branding.ts:326`) asks a model to *report* nav/hero/CTA colors as
+   **free text** (:372); that text is fed into a prompt and a second model call
+   emits the palette (`generateObject`, :716/:737). Validation is format-only —
+   `normalizeHex` (:21) expands 3-digit and strips alpha, and :752 falls back to
+   the raw lowercased string when it rejects. **Nothing compares the returned
+   hexes against anything observed on the site.** The one genuinely observed
+   source, `extractColorsFromSvg` (:202, logo SVG only), is passed as advisory
+   prompt text (:539). The anti-hallucination rules in the schema (:434-437) are
+   prose, not code. Until this is fixed, brand colors need the human gate that
+   `refresh-apply.ts` enforces (§2.9).
+
+### 4.14 The route map — roster, detail, and the legacy branch
+
+CD-G1 split the agents surface in two. Knowing which page a client lands on
+explains most "why does this client not have X" questions.
+
+- **Roster** — `src/app/(app)/clients/[id]/agents/page.tsx` (client branch
+  :59-221, staff branch :223-366). Cards are built by
+  `src/components/client-agents/roster.tsx` and the whole card is a `<Link>` to
+  the detail route (`roster.tsx:54`, `roster-card.tsx:45-52`). **There is no Run
+  button on a roster card** — by ruling, and structurally: `AgentRosterEntry`
+  (`roster.tsx:15-24`) carries no gate, no template and no run payload, so the
+  card could not offer one.
+- **Detail** — `src/app/(app)/clients/[id]/agents/[agentId]/page.tsx:63`, a
+  server component. Auth/redirect :68-75, a 7-way parallel fetch :86-97, a
+  grant-or-earned 404 gate for client viewers :103-112, row projection via
+  `toClientAgentRows` :126-142, blurb via `clientAgentBlurb` :151-155, delivered
+  work :173-192. This page is "the agent's home" per Albert.
+- **Three hero states**, chosen by ternary. The third is the one to know:
+  **`page.tsx:265` — `) : status.tone === "live" ? (`** is the **legacy branch**:
+  a client with a firing weekly schedule but **no `clientAgents` umbrella**
+  (i.e. every pre-Phase-3 client, until §2.8 runs). It renders
+  `LegacyAgentPanel` (:276-287,
+  `src/components/client-agents/legacy-agent-panel.tsx`), which CD-H8 built out
+  from a stub: **Create-new-post** priced button (:84-91) with painted refusal
+  reasons (:93-107), **pace controls** (:110-131 → `AgentScheduleModal` with
+  `paceOnly` for clients), and the deliverables list (rendered by the page at
+  :296-326). Its gate is server-side: `evaluateLegacyRunGate`
+  (`src/lib/client-agent-runs.ts:258`), called at page :205-211.
+  **Deliberately absent** (documented at `legacy-agent-panel.tsx:35-38`):
+  template rows, week strip, per-template feedback, slot notes — all
+  umbrella-gated. **The backfill script (§2.8) is the real fix; this panel is
+  the bridge.**
+- Thirteen components live under `src/components/client-agents/` — roster and
+  card, `launch-card.tsx` (pre-live states), `live-card.tsx` (live card, exports
+  `TemplateRows`/`WeekStrip`/`OptionsRow`), `agent-detail-panel.tsx`,
+  `legacy-agent-panel.tsx`, `client-agents-section.tsx` (staff),
+  `agent-economics.tsx` (staff USD + launch calibration), `feedback-modal.tsx`,
+  `option-picker.tsx`, `slot-note-modal.tsx`, `types.ts`.
+
+### 4.15 `assignOptionRefs` — webhook-driven steady state, plus a go-live catch-up
+
+Small but easy to misread, because it moved during the build.
+
+- **Steady state is the webhook.** Each incoming X batch is sliced across the
+  plan at the moment it lands: `webhook/route.ts:464` →
+  `syncOptionsFromBatchAsset` (`client-agent-slots.ts:215`) →
+  `assignOptionsForUmbrella` (:155) → `assignOptionRefs` (`slot-plan.ts:423`).
+- **Go-live has a separate catch-up path** for a batch that already existed
+  before the umbrella went live: `ensureSlotHorizon`
+  (`client-agent-slots.ts:94`) calls `latestXBatchAsset` (:250) once, at :128-129.
+- **Why not the horizon generator**: the first implementation hung assignment off
+  `ensureSlotHorizon`, whose other callers are template-gated — and an options
+  umbrella has no templates by design. So week 1 got refs only by luck and week 2's
+  batch, the recurring one the product actually runs on, was never sliced at all.
+  The comment at `client-agent-slots.ts:193-214` records this; don't undo it.
+- Day boundaries come from the **schedule's** IANA zone, not the container's
+  (:164-170) — the F108 contract (§6.4). On a UTC container a Tel Aviv client's
+  "today" starts hours earlier.
 
 ---
 
@@ -419,13 +1005,38 @@ mounts it, port F74's `{changed}` + refund pattern first.
    internal tier; the client-tier Branding doc lags until the next
    condensation run. Accept, or trigger condensation on branding save.
 3. **Paused-schedule visibility:** PAUSED schedules vanish from the calendar
-   (it filters to `status === "active"`), and resume lives only on the AI
-   Agents page. Product call: show paused rows greyed on the calendar?
-4. **Attention-count inflation (post-F97):** the dashboard attention row now
-   folds in every draft — "Needs your attention: 21 items" is possible.
-   Spec-sanctioned, dissolves with archive=posted-only (F149/A4), but worth
-   Albert's eyes with that work.
+   (`calendar-body.tsx:200` filters to `status === "active"`), and resume lives
+   only on the AI Agents page. Phase 3's default answer is Q7 — hide future
+   slots from clients, grey them for staff — but it is **blocked on §4.11**:
+   nothing renders a slot on the calendar to grey.
+4. **Attention-count inflation (post-F97):** the dashboard attention row folded
+   in every draft. **Resolved by WP-5's archive rework** — clients no longer see
+   drafts at all (`asset-visibility.ts:73`), so the count no longer inflates.
+   Kept here as history because the copy debt in §5.2 references it.
 5. **`ANALYTICS_LIVE_INGEST`** — §2.7.
+6. **The X learning-log window — OPEN RULING, needed before WP-9 runs at volume.**
+   The learning log that teaches the X agent a client's taste is capped at
+   **`FEEDBACK_ROWS_PER_ACCOUNT = 30`**
+   (`src/lib/agent-service/x-agent-context.ts:44`, applied :74) — and the window
+   is **per account bucket, not per client**, fed newest-first from
+   `listXDraftFeedback` (:155, `data.ts:2309-2317`).
+   Each daily pick auto-writes the **two** unpicked options as `not_posted` rows
+   (`src/lib/actions/slot-option-actions.ts:166-179`, literal at :175), and
+   marking the winner posted writes a third (`recordPostedOptionFeedback`,
+   `asset-actions.ts:408-420`, invoked from `markAssetPostedAction` at :312). So
+   the real burn is **up to 3 rows/day**, not the 2 the ruling assumed. For a
+   single-account client all three land in the same `"company"` bucket and
+   **exhaust the 30-row window in ~10 days**, evicting genuine client feedback —
+   the signal the log exists to carry.
+   Options, in the orchestrator's order of preference: raise the cap; split the
+   auto-log into its own stream so it cannot evict human feedback; or decay
+   auto-rows faster than human ones. **This is a product call, not an
+   engineering one** — it decides what the agent remembers about a client.
+7. **P3 deferrals worth Albert's eyes** (from the WP-4+ round): clients lost the
+   cross-agent "recent runs" list (runs now live per-agent on detail pages —
+   acceptable under CD-G1, but it was a real surface); and the client run gesture
+   takes **no attachments**, since the generic dialog's picker is now unreachable
+   for clients. If client attachments matter, that needs a design call.
 
 ### 5.2 Accepted residuals (logged, deliberate — do not "fix" in passing)
 
@@ -469,14 +1080,39 @@ mounts it, port F74's `{changed}` + refund pattern first.
   labels to paragraphs; hard-wrapped (~100-col) source keeps mid-sentence
   line breaks.
 
+**Added in v2 (Phase 3 / CD-G / CD-H):**
+
+- **Slot notes are human-applied only** — paths 1 and 2 are unbuilt (§4.9). The
+  copy is deliberately worded to promise a human; changing the copy before the
+  mechanism would be a regression, not an improvement.
+- **The options picker runs on a sliced weekly batch**, not on day-of
+  generation (seam T7). Churn-honest because option texts cross the RSC boundary
+  only on their own day, but it is the degraded mode.
+- **Paused umbrellas cannot grey on the calendar** — §4.11, blocked twice over.
+- **`ScheduledRunsCard` toggle/delete are still silent.** The legacy
+  `/api/scheduler` route was hardened (cron auth :28, `Promise.allSettled` :44,
+  a structured `{processed, fired, skipped, failed, results}` response :93-99)
+  and the create path now surfaces errors (`scheduled-runs.tsx:85`, rendered
+  :253) — but `onToggle` (:93-98) and `onDelete` (:100-105) remain
+  fire-and-forget with no `try/catch`. Half of v1's claim closed; this half did
+  not.
+- **`asset-card.tsx:589` still calls `markAssetPostedAction` inline** rather than
+  using the extracted `MarkPostedRow`. Harmless, but it is a third code path to
+  the same action.
+- **Environmental, report-only:** a 10px right gutter persists wherever classic
+  scrollbars are enabled (`scrollbar-gutter: stable`). The forced root scrollbar
+  was removed as ruled, so macOS gets true edge-to-edge; other platforms are
+  unchanged in substance. Needs Albert's eye on his own machine.
+- **Pre-existing `react-hooks` purity lint errors** (`Date.now()` in the agents
+  page and `launch-card.tsx`) pre-date this wave — end-loop sweep.
+
 ### 5.3 Finding-shaped gaps logged for end-loop triage (no PDF number)
 
-- Legacy `/api/scheduler` + `ScheduledRunsCard`
-  (`src/components/scheduled-runs.tsx`, client settings page) share the
-  silent-failure shape F110 fixed elsewhere, on the `scheduledRuns`
-  collection.
-- `src/components/client-home.tsx` is dead code (zero importers) carrying a
-  stale approval-lie string — slated for end-loop deletion; **do not revive**.
+- Legacy `/api/scheduler` + `ScheduledRunsCard` — **partly fixed**, see §5.2.
+  The toggle/delete silent failures survive.
+- `src/components/client-home.tsx` is **still** dead code at HEAD (zero
+  importers) carrying a stale approval-lie string — end-loop deletion;
+  **do not revive**.
 - `client-guidelines` is a permanently dead `DOC_TABS` row (internal-only
   tier, `pickDoc` never surfaces it).
 - `AiProcessingBanner` mounts only on dashboard/settings — on other client
@@ -485,11 +1121,31 @@ mounts it, port F74's `{changed}` + refund pattern first.
   writes, pre-existing).
 - SEO Approve → `logActivity` is unbounded/no-dedupe and client-callable
   (self-inflicted scope only).
-- Copilot chat route feeds **unscoped** benchmark records into the
-  credit-charged client prompt, and can write free-form guidelines text into
-  the INTERNAL branding doc (`src/app/api/clients/[id]/chat/route.ts`,
-  branding tool-call branch) — COPILOT cluster owns both; if still open at
-  final handover they move to §4.
+- **Copilot: one of the two closed, one is live and belongs to you.**
+  - *Benchmarks — FIXED.* The fetch is still unscoped
+    (`src/app/api/clients/[id]/chat/route.ts:80`) but a provenance filter now
+    sits between it and the prompt: rows whose `source !== "live"` are dropped
+    for `CLIENT_USER` and `sampleSize` is recomputed (:207-213, consumed
+    :238-242).
+  - *Branding write — STILL OPEN.* The `update_branding_guidelines` tool is
+    registered **ungated** (:685-690) with no role check in the tool set or in
+    `execute` (:264-293), so a billed `CLIENT_USER` can push free-form text into
+    the **internal-tier** branding doc (`tier: existingDoc?.tier ?? "internal"`
+    at :282), and the `catch {}` at :289-291 swallows a failed write. This
+    crosses the §6.6 boundary — a client-driven write into internal-tier
+    content — and should be gated before the next client demo.
+- **`assignOptionRefs`/`matchAssetsToSlots` dead-code pairs** — §4.10, §4.15.
+- The non-docked floating `ChatbotWidget` branch (`floatingPosition`, fixed
+  380px panel) is unreachable — end-loop deletion, found during CD-G8.
+- `src/components/theme-toggle.tsx` became unreferenced when the CD-G9c chrome
+  relocation landed (the relocations use labeled `ThemeSwitch` rows) — delete in
+  the end loop.
+- `calendar-body.tsx` ~:178 falls back to `agent.description` for a blurb — the
+  same CD-G2 defect class on the calendar surface. Fix via `clientAgentBlurb`
+  (`src/lib/agent-blurbs.ts:155`), which every other surface already uses.
+- **Feedback-list gaps** (from the WP-2/WP-3 lens round, accepted for now): the
+  200-row feedback cap counts resolved rows and no delete exists, so the copy can
+  advise an impossible action; and Withdraw renders as "Resolved" in the list.
 
 ---
 
@@ -531,6 +1187,14 @@ reports false "zero matches / zero importers". Use:
 LC_ALL=C grep -an "buildRecommendations" src/lib/seo-geo.ts
 ```
 
+Re-verified at HEAD: 80,257 bytes, 1,603 CRLF pairs, **2 NUL bytes**, both the
+Map-key separator (`seo-geo.ts:1379` sets, :1384 gets; the map is built at :1378).
+A plain `grep -n "byKey" src/lib/seo-geo.ts` still exits 1 with **zero output**,
+and a recursive grep over `src/lib/` silently omits the file entirely. Only
+`grep -a` surfaces it. (Counting the NULs from zsh needs `python3` or
+`tr -dc '\000'` — a NUL cannot survive in `argv`, so passing one to `grep` gives
+a false negative.)
+
 Do NOT "fix" the line endings or the NUL — it is load-bearing data.
 
 ### 6.3 The worktree-fork-from-main hazard
@@ -562,12 +1226,18 @@ runtime-local behavior until re-saved (§5.2).
 
 ### 6.5 `JOB_STATUS_META` — the one status-label choke point
 
-`src/components/job-status.tsx` exports `JOB_STATUS_META` (tone + label per
-`JobStatus`) and `JobStatusBadge`. **Every** surface that shows run state goes
-through it — printing raw `job.status` puts the database enum ("review") in
+`src/components/job-status.tsx:9-20` exports `JOB_STATUS_META` (tone + label per
+`JobStatus`) and `JobStatusBadge` (:22). **Every** surface that shows run state
+goes through it — printing raw `job.status` puts the database enum ("review") in
 front of a client, which is exactly findings F41/F120. Do not add a second
-label map. The AGENTS merge adds a `cancelled` status: terminal, distinct
-from `failed` (a cancel is not a failure — F30).
+label map; re-verified at HEAD, there still isn't one (the other status maps in
+the tree are different domains: `Asset["status"]`, `TaskStatus`, `BoardStatus`).
+**`cancelled` has landed** (`job-status.tsx:19`, `JobStatus` at
+`src/lib/types.ts:210`): terminal, distinct from `failed`, because a cancel is
+not a failure (F30). The webhook maps it explicitly (`route.ts:44`).
+
+The credit vocabulary has the same choke-point discipline but **two** maps —
+see §4.12 before adding an operation.
 
 ### 6.6 Sanitize at the server boundary, not at render
 
@@ -591,12 +1261,58 @@ docs. If a client's browser can see it in the payload, it's shipped.
   never written inline in app code**, because dev credentials point at
   production Firestore.
 - Verification gates before any merge: `npx tsc --noEmit` ·
-  `npm run build` · `npx vitest run`.
+  `npm run build` · `npx vitest run` (879 tests / 71 files green at `f7a126b` —
+  if your branch reports fewer, you dropped a file).
 - Guard zones still standing: no AI Insights rework beyond listed defects
   (directive B5); never expose content pre-generation (A3/A4).
 
+### 6.8 The ordering rule inside the webhook (new in v2)
+
+If you touch `/api/agent-service/webhook` for any reason, internalize this
+before you type: **`claimExternalJobCompletion` is single-use.** Everything that
+can throw and must not be lost — the failure refund, the template lookup — is
+deliberately hoisted **above** the claim and fails the delivery with a 503 so
+your retry queue re-drives it. Everything after the claim (chain reflow, options
+assignment, launch-state advance, task sync) is **best-effort by construction**
+and must swallow its own errors, because a redelivery will short-circuit on
+"Already processed" and never run it again. Adding a throwing call below the
+claim is how you lose a client's deliverable. Full map in §4.1c.
+
+### 6.9 Zones, one last time
+
+Every day-boundary computation in the slot system reads the **schedule's stored
+IANA zone**, never the container's. Slot horizon, options assignment
+(`client-agent-slots.ts:164-170`) and note eligibility all follow §6.4. On a UTC
+Cloud Run container a Tel Aviv client's "today" starts hours earlier, and reading
+it in the wrong zone silently skips the day they are actually living in — no
+error, no log, just a missing post.
+
 ---
 
-*Refresh protocol: when a cluster merges, update §1.4, re-tag §4 items whose
-ledger rows changed, move closed §5 items to §5.2 with their commit, and add
-a changelog row. Keep section numbers stable.*
+*Refresh protocol: when a wave merges, update §1.4/§1.6, re-tag §4 items whose
+ledger rows changed, move closed §5 items to §5.2 with their commit, and add a
+changelog row. Keep section numbers stable — append (§4.16, §2.12) rather than
+renumber. When you close a §4 seam, say so in place with the commit rather than
+deleting the entry: half this document's value to the next reader is knowing
+what used to be true.*
+
+**Section list (v2):**
+§1 State of the branch (1.1 campaign · 1.2 ledger · 1.3 Phase 1 · 1.4 Phase 2 ·
+1.5 verification system · **1.6 Phase 3 + CD-G/CD-H**) ·
+§2 Ops runbook (2.1 blurbs · 2.2 asset titles · 2.3 scripts inventory ·
+2.4 credits + regenerate · 2.5 password · 2.6 agent-service env ·
+2.7 ANALYTICS_LIVE_INGEST · **2.8 backfill-client-agents (unbuilt)** ·
+**2.9 CD-G7 refresh** · **2.10 per-agent pricing** · **2.11 grants + fill-only**) ·
+§3 Infra (3.1 CPU throttling · 3.2 video/GCP · 3.3 TikTok) ·
+§4 Deferred seams (**4.1 the metadata contract** · 4.2 managed-products retired ·
+4.3 Reddit · 4.4 Publish Now · 4.5 publish idempotency · 4.6 corrections vs
+condensation · 4.7 global correction action · **4.8 T1–T7** ·
+**4.9 per-slot cron + slot notes** · **4.10 the two planners** ·
+**4.11 calendar slot rendering** · **4.12 credits/runType vocabulary** ·
+**4.13 pipeline bugs** · **4.14 route map + legacy branch** ·
+**4.15 assignOptionRefs**) ·
+§5 Residuals + product decisions (5.1 Albert sign-offs incl. **the X
+learning-log ruling** · 5.2 accepted residuals · 5.3 end-loop gaps) ·
+§6 Conventions (6.1 CLAUDE.md · 6.2 NUL grep · 6.3 worktree fork · 6.4 timezone ·
+6.5 JOB_STATUS_META · 6.6 sanitize at the boundary · 6.7 working style ·
+**6.8 webhook ordering** · **6.9 zones**).
