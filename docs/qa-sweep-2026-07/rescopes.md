@@ -1193,3 +1193,9 @@ the ONE place a reader learns which of those lines the tree has since overtaken.
 - **LEDGER legend** gained the five status values the tables actually use
   (STRUCK-BY-ALBERT, RESOLVED-PARTIAL, RESOLVED-PORTAL / TOMER-INFRA,
   RESHAPED→CD-x, OPEN-ALBERT).
+- **Change Log preservation** — the pipeline now carries an existing
+  `## Change Log` forward across a regeneration (`src/lib/intel/changelog.ts`,
+  wired at the Phase 4 doc-write path): the generator's output is stripped of any
+  log it invented, then the stored document's section is re-attached, matched on
+  docType + tier. `refresh-apply-core.ts`'s "the pipeline drops it" warning is
+  therefore stale — retiring it is the ops-builder's round.
