@@ -138,7 +138,7 @@ export async function submitCustomAgentRun(args: {
   if (isRedditAgent(agent.key)) {
     if (!(await hasRedditAgentIntake(client.id))) {
       return {
-        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first: save the account form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
+        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the account form there. Nothing has run.`,
       };
     }
     try {

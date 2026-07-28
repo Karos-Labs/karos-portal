@@ -71,22 +71,35 @@ describe("agent data setup gate", () => {
 
   it("keeps the three refusals distinguishable", () => {
     const { x, linkedin, reddit } = gateMessages(CORES[0]);
-    expect(new Set([x, linkedin, reddit]).size).toBe(3);
-    expect(x).toContain("fill in the company page");
-    expect(linkedin).toContain("save the company page form");
+    // Compared as RENDERED — prefix included. What a reader receives is
+    // "Set up the X agent data first. …", and that is what has to tell the
+    // three apart. X and LinkedIn deliberately share their tail: both drafts
+    // come from a company page form, and inventing a difference in the wording
+    // to satisfy a test would make one of the two describe itself wrongly.
+    const rendered = [
+      `${X_SETUP_REQUIRED_PREFIX}${x}`,
+      `${LINKEDIN_SETUP_REQUIRED_PREFIX}${linkedin}`,
+      `${REDDIT_SETUP_REQUIRED_PREFIX}${reddit}`,
+    ];
+    expect(new Set(rendered).size).toBe(3);
+    expect(x).toContain("the company page form");
+    expect(linkedin).toContain("the company page form");
     // Reddit's company-level form is the account form, not a company page.
-    expect(reddit).toContain("save the account form");
+    expect(reddit).toContain("the account form");
   });
 
   it("names where the agent data lives", () => {
-    // The data lives in the agent, so the copy names that destination. It also
-    // surfaces inside the run dialog, where telling the reader to open the
-    // dialog would be circular — hence no "Agent-specific documents" sidebar
-    // section (deleted) and no separate data page to send anyone to.
+    // The data lives in the agent, so the copy names that destination — and
+    // names the CLICK that reaches it, because a reader who is told where a
+    // thing lives still has to find it. It also surfaces inside the run dialog,
+    // where telling the reader to open the dialog would be circular — hence no
+    // "Agent-specific documents" sidebar section (deleted) and no separate data
+    // page to send anyone to.
     for (const file of CORES) {
       const { x, linkedin, reddit } = gateMessages(file);
       for (const message of [x, linkedin, reddit]) {
-        expect(message).toContain("The agent data sits with the agent on the AI Agents page.");
+        expect(message).toContain("Open this agent on your AI Agents page");
+        expect(message).toContain('follow "Set it up" under "What it knows about you"');
         expect(message).not.toMatch(/Agent-specific documents/i);
         expect(message).not.toMatch(/data page/i);
       }
@@ -106,18 +119,26 @@ describe("agent data setup gate", () => {
     expect(gate).toContain('getAgentIntake(clientId, "x", null)');
     expect(gate).not.toMatch(/listClientSeats|seats\.length/);
 
-    // The LinkedIn floor holds for every e10 key, master included: a client
-    // with a seat and no company page sees "Setup needed" on the page, so a
-    // key-specific exemption would accept a run the page cannot reach.
+    // The LinkedIn company floor holds for the company-page INSTANCES, which
+    // are the keys with a company form of their own to fill. The Path-B master
+    // (karos-linkedin-agent) has none, so it gates on any LinkedIn intake
+    // instead — company page or seat. Collapsing the two locked the master out
+    // of a workspace that is fully set up on the seat side, which is why the
+    // gate keeps its agent-key argument.
     const li = readFileSync(
       join(process.cwd(), "src/lib/agent-service/linkedin-agent-context.ts"),
       "utf8",
     );
     const liGate = li.match(/export async function hasLinkedInAgentIntake[\s\S]*?\n}/)?.[0];
     expect(liGate).toBeDefined();
+    expect(liGate).toContain("agentKey");
+    // The default branch — every company-page instance — is still the
+    // seatId-null company doc, and reads no seat list.
     expect(liGate).toContain('getAgentIntake(clientId, "linkedin", null)');
-    expect(liGate).not.toMatch(/listAgentIntake|listClientSeats|seats\.length/);
-    expect(liGate).not.toContain("karos-linkedin-agent");
+    expect(liGate).not.toMatch(/listClientSeats|seats\.length/);
+    // The master's branch is keyed on the master's own identity, so no instance
+    // can reach the wider check.
+    expect(liGate).toContain('agentKey === "karos-linkedin-agent"');
 
     // Reddit's floor is its account form. Seats are shared across agents and
     // Reddit does not use them at all, so reading one here would accept a run
@@ -239,7 +260,8 @@ describe("per-client agent instance binding", () => {
     const gate = readFileSync(join(process.cwd(), "src/lib/jobs/schedule-gate.ts"), "utf8");
     expect(gate).toContain("agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)");
     expect(gate).toContain("hasXAgentIntake(client.id)");
-    expect(gate).toContain("hasLinkedInAgentIntake(client.id)");
+    // Keyed, so the Path-B master is judged by the rule that applies to it.
+    expect(gate).toContain("hasLinkedInAgentIntake(client.id, agent.key)");
     // Reddit runs daily, so most of its runs arrive through a schedule rather
     // than the run dialog — an ungated Reddit schedule would be the quietest
     // failure of the three.
