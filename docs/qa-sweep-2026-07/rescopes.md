@@ -891,3 +891,22 @@ for 2/2 clients — the palette extractor is unreliable.
 - Pass-1 audit no-home items now homed: CD-H rows added to LEDGER; CD-D2's
   promised Phase-3 agent representation logged as an OPEN Tomer-adjacent item
   in the handover's residuals (not built, no row claimed it built).
+
+## Closing audit — pass 1 outcome (2026-07-28)
+NOT CLEAN, as expected of a first pass. ~185 items verified with evidence;
+~26 defects/discrepancies found and ALL closed in three fix rounds
+(batch 1: 13 items incl. the ungated copilot internal-tier write + 14-script
+safety envelope; batch 2: 9 items incl. F131 rung/F30 cancel/F31 progress
+regressions from CD-G1; WP-7: F147 identity wired across all surfaces) plus
+5 ledger relabels (F150, CD-A3, CD-E3, CD-D1, CD-H series added). Merged
+HEAD 2bf30be, 979 tests, build clean.
+Open residuals carried to pass 2 verification:
+- saveBrandingGuidelinesAction writes tier-internal for CLIENT_USER sessions
+  (the sanctioned rail editor path) — decide whether the no-client-internal-
+  writes rule is absolute, and if so gate the ACTION not just the chat tool.
+- notification-bell.tsx:236 sends clients from job notifications into the
+  draft-free archive (F97×F149 class, small).
+- redate-content-calendar.ts still process.exits at module scope.
+- REC_COPY["BOTH-07"] unreachable copy.
+Pass 2 = full re-verification of the changed surface + sampled re-check of
+pass-1-verified rows; clean pass 2 then confirmed by a delta pass 3.
