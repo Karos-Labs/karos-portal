@@ -34,23 +34,47 @@ function countSections(content: string): number {
   return (content.match(/^## /gm) ?? []).length;
 }
 
+/** What the nav should show for one doc type: a readable doc, or a placeholder row. */
+type DocPick =
+  | { kind: "doc"; doc: ClientContextDoc }
+  | { kind: "rebuilding" }
+  | { kind: "none" };
+
 /**
- * Prefer the client-facing tier. Fall back to internal when the client tier has fewer
- * ## sections — catches condensation runs that silently dropped a leading section.
- * Never surfaces internal-only tier.
+ * Prefer the client-facing tier.
+ *
+ * `allowInternalFallback` is the tier boundary, not a preference: the internal
+ * tier is analyst-grade copy (methodology notes, sourcing workflow, competitor
+ * labels) that types.ts restricts to admin/employee. Only the staff sidebar may
+ * pass it. For a client viewer a missing or degraded client-tier copy resolves
+ * to a "being rebuilt" row — never to the internal document. Internal-only tier
+ * is never surfaced on either path.
  */
-function pickDoc(docs: ClientContextDoc[], docType: ContextDocType): ClientContextDoc | null {
+function pickDoc(
+  docs: ClientContextDoc[],
+  docType: ContextDocType,
+  allowInternalFallback: boolean,
+): DocPick {
   const clientTier = docs.find((d) => d.docType === docType && d.tier === "client");
   const internalTier = docs.find((d) => d.docType === docType && d.tier === "internal");
 
-  if (!clientTier) return internalTier ?? null;
-  if (!internalTier) return clientTier;
-
-  if (countSections(clientTier.content) < countSections(internalTier.content)) {
-    return internalTier;
+  if (!allowInternalFallback) {
+    if (clientTier) return { kind: "doc", doc: clientTier };
+    // An internal twin with no client-facing copy means condensation has not
+    // produced (or has lost) the client version — say so instead of leaking it.
+    return internalTier ? { kind: "rebuilding" } : { kind: "none" };
   }
 
-  return clientTier;
+  if (!clientTier) return internalTier ? { kind: "doc", doc: internalTier } : { kind: "none" };
+  if (!internalTier) return { kind: "doc", doc: clientTier };
+
+  // Staff only: a client copy with fewer ## sections means condensation dropped
+  // one, so show the complete internal document instead.
+  if (countSections(clientTier.content) < countSections(internalTier.content)) {
+    return { kind: "doc", doc: internalTier };
+  }
+
+  return { kind: "doc", doc: clientTier };
 }
 
 /* ── Print / export helpers ───────────────────────────────────────────── */
@@ -710,6 +734,7 @@ export function ClientDocuments({
   clientId,
   isAiProcessing,
   intelSchedule,
+  allowInternalFallback = false,
 }: {
   contextDocs: ClientContextDoc[];
   isAdmin?: boolean;
@@ -718,15 +743,22 @@ export function ClientDocuments({
   isAiProcessing?: boolean;
   /** Admin-only recurring regeneration schedule. Only meaningful (and only ever rendered) when isAdmin. */
   intelSchedule?: IntelScheduleInfo;
+  /**
+   * Staff-only escape hatch: show the internal-tier document when the
+   * client-facing copy is missing or looks under-condensed. Defaults to false so
+   * a client-facing mount can never opt in by omission.
+   */
+  allowInternalFallback?: boolean;
 }) {
   const router = useRouter();
   const [openDoc, setOpenDoc] = useState<{ doc: ClientContextDoc; label: string } | null>(null);
   const [regenModalOpen, setRegenModalOpen] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
 
-  const available = DOC_TABS.map((t) => ({ ...t, doc: pickDoc(contextDocs, t.docType) })).filter(
-    (i) => i.doc,
-  );
+  const available = DOC_TABS.map((t) => ({
+    ...t,
+    pick: pickDoc(contextDocs, t.docType, allowInternalFallback),
+  })).filter((i) => i.pick.kind !== "none");
 
   return (
     <div>
@@ -767,20 +799,38 @@ export function ClientDocuments({
         </p>
       ) : (
         <ul>
-          {available.map((item) => (
-            <li key={item.docType}>
-              <button
-                onClick={() => setOpenDoc({ doc: item.doc!, label: item.label })}
-                className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
-              >
-                <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
-                <span className="flex-1 truncate text-sm text-muted group-hover:text-foreground">
-                  {item.label}
-                </span>
-                <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
-              </button>
-            </li>
-          ))}
+          {available.map((item) =>
+            item.pick.kind === "doc" ? (
+              <li key={item.docType}>
+                <button
+                  onClick={() =>
+                    setOpenDoc({
+                      doc: (item.pick as { kind: "doc"; doc: ClientContextDoc }).doc,
+                      label: item.label,
+                    })
+                  }
+                  className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
+                >
+                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
+                  <span className="flex-1 truncate text-sm text-muted group-hover:text-foreground">
+                    {item.label}
+                  </span>
+                  <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                </button>
+              </li>
+            ) : (
+              <li key={item.docType}>
+                <div className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left">
+                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2/60" />
+                  <span className="flex-1 truncate text-sm text-muted-2">{item.label}</span>
+                  <span className="shrink-0 text-[10px] text-muted-2">Rebuilding</span>
+                </div>
+                <p className="px-2 pb-1.5 text-[11px] text-muted-2">
+                  This document is being rebuilt — check back shortly.
+                </p>
+              </li>
+            ),
+          )}
         </ul>
       )}
 

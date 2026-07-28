@@ -106,7 +106,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Locked (future-dated) content never reaches a client-facing model prompt.
   const promptAssets =
     user.role === "CLIENT_USER" ? assets.filter((a) => isAssetUnlockedForClient(a, Date.now())) : assets;
-  const baseSystemPrompt = buildCopilotSystemPrompt(client, report, competitors, jobs, promptAssets, contextDocs);
+  // Same boundary for documents: internal-tier docs are analyst-grade copy that
+  // types.ts restricts to admin/employee, and internal-only is never published —
+  // neither may reach a prompt the client is talking to. Mirrors the asset filter
+  // above rather than relying on the prompt builder's tier preference.
+  const promptContextDocs =
+    user.role === "CLIENT_USER" ? contextDocs.filter((d) => d.tier === "client") : contextDocs;
+  const baseSystemPrompt = buildCopilotSystemPrompt(client, report, competitors, jobs, promptAssets, promptContextDocs);
 
   /* ── Shared Google integration lookup ────────────────────────────── */
   const googleIntegration = integrations.find(

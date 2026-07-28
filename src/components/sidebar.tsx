@@ -388,6 +388,8 @@ export function Sidebar({
           clientId={activeClient.client.id}
           isAiProcessing={isAiProcessingLockActive(activeClient.client)}
           intelSchedule={clientIntelSchedule(activeClient.client)}
+          /* Staff-only shell: internal-tier documents are readable here. */
+          allowInternalFallback
         />
       </div>
 
