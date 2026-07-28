@@ -98,17 +98,29 @@ admin automatically (yours is pre-filled). Everyone else who signs up lands in a
 
 ## Deploy to Google Cloud Run
 
-Deployment is Cloud Build → Artifact Registry → Cloud Run, driven by `cloudbuild.yaml`.
-A trigger on `main` builds and deploys automatically; the file's header comments cover the
-one-time GCP setup (APIs, Artifact Registry repo, IAM bindings, Secret Manager entries).
+Two independent environments: **prep** (auto-deployed on every push to `main`) and
+**production** (deployed only by manually running a promotion workflow). They're separate
+GCP projects — separate Cloud Run, Cloud Build, Artifact Registry, Secret Manager — but
+share one Firebase project (same Auth users, same Firestore data). See
+[DEPLOY_ENVIRONMENTS.md](DEPLOY_ENVIRONMENTS.md) for the full architecture, the one-time
+GCP setup, and the day-to-day promote flow.
 
-To deploy manually:
+Short version:
+- Push to `main` → GitHub Actions runs lint/type-check/tests, then builds & deploys to prep
+  (`.github/workflows/deploy-prep.yml`, driven by `cloudbuild.yaml`).
+- Verify at the prep URL, then run **Promote to Production** from the Actions tab
+  (`.github/workflows/promote-production.yml`) with that commit's SHA — it copies the
+  already-built prep image into production (no rebuild) and deploys it
+  (`cloudbuild.promote.yaml`).
+
+To build/deploy one environment manually (e.g. for a break-glass fix):
 
 ```bash
-gcloud builds submit --config cloudbuild.yaml \
-  --substitutions _REGION=europe-west1,_APP_URL=https://<your-cloud-run-url>
+gcloud builds submit --project=<PROJECT_ID> --config cloudbuild.yaml \
+  --substitutions _APP_URL=https://<that-env's-url>,_EMAIL_FROM="Karos CMO <donotreply@karoslabs.com>"
 ```
 
 Server-side secrets are mounted from Secret Manager (see the `--set-secrets` list in
 `cloudbuild.yaml`); the public `NEXT_PUBLIC_FIREBASE_*` values come from `.env.production`
-at build time. Point your Fireflies webhook at the production URL.
+at build time and are identical in both environments (same Firebase project). Point your
+Fireflies webhook at the production URL.
