@@ -697,8 +697,15 @@ const FIX_AREAS: Record<string, { label: string; gloss: string }> = {
   indexing: { label: "Search engine access", gloss: "Making sure engines can find and list your pages." },
 };
 
+/**
+ * QA F4: "agent-direct" does NOT mean an actuator applies the fix. Nothing in the
+ * portal writes to a client's website: there is no apply action, no job type, and
+ * both gap producers hardcode `artifactRef: null`. The route means Karos drafts the
+ * change and the client approves it on the action plan. Do NOT reintroduce the word
+ * "automatically" until an apply path exists that writes artifactRef.
+ */
 const FIX_ROUTES: Record<string, string> = {
-  "agent-direct": "Karos can apply this fix for you automatically.",
+  "agent-direct": "Karos drafts this fix for your approval.",
   "existing-product": "This is handled through a tool already in your Karos plan.",
   advisory: "Our team will recommend the changes. This one takes content or outreach work, not a switch we can flip.",
 };

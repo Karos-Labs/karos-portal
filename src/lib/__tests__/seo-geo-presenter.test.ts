@@ -301,7 +301,19 @@ describe("funnel chip (SCRUM-52 amendment)", () => {
   it("only renders the chip for existing-product delivery", () => {
     const [direct] = buildGapViews([gap({ id: "GEO-20", delivery: "agent-direct" })], "c");
     expect(direct.agentChip).toBeNull();
-    expect(direct.fixRoute).toBe("Karos can apply this fix for you automatically.");
+    // QA F4: no apply path exists (both producers hardcode artifactRef: null), so
+    // this route promises a draft-for-approval, never an automatic fix.
+    expect(direct.fixRoute).toBe("Karos drafts this fix for your approval.");
+  });
+
+  it("never promises an automatic fix on any delivery route (QA F4)", () => {
+    const views = buildGapViews(
+      (["agent-direct", "existing-product", "advisory", "weird"] as const).map((delivery) =>
+        gap({ delivery: delivery as VisibilityGap["delivery"] }),
+      ),
+      "c",
+    );
+    for (const v of views) expect(v.fixRoute.toLowerCase()).not.toContain("automatic");
   });
 
   it("falls back to the plain route sentence when no route resolves (closed map)", () => {
