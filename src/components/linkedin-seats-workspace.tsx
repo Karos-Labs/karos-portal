@@ -49,9 +49,22 @@ export function LinkedInSeatsWorkspace({
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [gate, setGate] = useState<string | null>(null);
+  /** Seat awaiting the second click of the two-step remove. */
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  /** Failure text for the remove path, shown inside the confirming row. */
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const atLimit = seats.length >= seatLimit;
+  /**
+   * Whether re-adding someone after this removal would be charged again.
+   * evaluateSeatAddition charges when `currentSeatCount >= seatLimit`, so after
+   * dropping one seat the re-add is free iff `seats.length - 1 < seatLimit` —
+   * i.e. it costs credits exactly when the roster is currently OVER the limit.
+   * Derived from the live count rather than a stored per-seat price because the
+   * charge that matters here is the future re-add, not the original purchase.
+   */
+  const reAddCharges = seats.length > seatLimit;
 
   function submitSeat() {
     setError(null);
@@ -84,10 +97,26 @@ export function LinkedInSeatsWorkspace({
     });
   }
 
+  /**
+   * Second step of the remove. Previously this fired on the first click of a
+   * 16px trash icon two pixels from Pause, and ignored the result entirely: an
+   * authorization failure (requireSeatAccess THROWS) refreshed the row back
+   * into place with no message at all.
+   */
   function remove(seat: SeatView) {
+    setRemoveError(null);
     startTransition(async () => {
-      await removeEmployeeSeatAction(clientId, seat.id);
-      router.refresh();
+      try {
+        const res = await removeEmployeeSeatAction(clientId, seat.id);
+        if (!res.ok) {
+          setRemoveError(res.error);
+          return;
+        }
+        setConfirmingId(null);
+        router.refresh();
+      } catch {
+        setRemoveError("Couldn't remove this seat. Please try again.");
+      }
     });
   }
 
@@ -208,15 +237,70 @@ export function LinkedInSeatsWorkspace({
                   </button>
                   <button
                     type="button"
-                    onClick={() => remove(seat)}
+                    onClick={() => {
+                      setRemoveError(null);
+                      setConfirmingId(seat.id);
+                    }}
                     disabled={pending}
-                    className={cn("text-muted-2 transition-colors hover:text-danger disabled:opacity-40")}
+                    className={cn(
+                      "text-muted-2 transition-colors hover:text-danger disabled:opacity-40",
+                      confirmingId === seat.id && "text-danger",
+                    )}
                     title="Remove seat"
                   >
                     <Icon name="Trash2" className="h-4 w-4" />
                   </button>
                 </div>
               </div>
+
+              {/* Row 3: two-step remove confirm — same warning-strip shape as
+                  the monetization gate above. Removal is not refunded and the
+                  employee's LinkedIn sign-in goes with the seat, so the first
+                  click can no longer be the destructive one. */}
+              {confirmingId === seat.id && (
+                <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/40 bg-danger/10 p-3">
+                  <Icon name="TriangleAlert" className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+                  <div className="min-w-0 space-y-1.5">
+                    <p className="text-xs font-medium text-foreground">
+                      Remove {seat.employeeName}?
+                    </p>
+                    <p className="text-xs text-muted">
+                      Their LinkedIn sign-in is removed with the seat, so they would have to sign in
+                      again.{" "}
+                      {reAddCharges
+                        ? `You're over your ${seatLimit}-seat plan, so adding someone back costs ${seatCost} credits - removing a seat is not refunded.`
+                        : "Removing a seat is not refunded."}
+                    </p>
+                    <p className="text-[11px] text-muted-2">
+                      To stop their posts temporarily, pause the seat instead - that keeps the
+                      sign-in and can be undone.
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-0.5">
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        onClick={() => remove(seat)}
+                        loading={pending}
+                        disabled={pending}
+                      >
+                        Yes, remove seat
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setConfirmingId(null);
+                          setRemoveError(null);
+                        }}
+                        disabled={pending}
+                      >
+                        Keep it
+                      </Button>
+                    </div>
+                    {removeError && <p className="text-xs text-danger">{removeError}</p>}
+                  </div>
+                </div>
+              )}
             </li>
           ))}
         </ul>
