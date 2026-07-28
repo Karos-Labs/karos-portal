@@ -14,12 +14,31 @@ import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
+import { NotificationBell } from "@/components/notification-bell";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { LogoutButton } from "@/components/logout-button";
 import { MobileCompanySheet, MobileTabBar, useCompanySheet } from "@/components/mobile-shell";
 import { isAiProcessingLockActive } from "@/lib/constants";
-import type { AppUser, Client, Role } from "@/lib/types";
+import type {
+  ActionItemNotification,
+  AgentReviewNotification,
+  AppUser,
+  Client,
+  ClientTask,
+  Role,
+} from "@/lib/types";
+
+/** The three feeds the bell renders — threaded down from the app layout. */
+interface NotificationFeeds {
+  actionItems: ActionItemNotification[];
+  reviewJobs: AgentReviewNotification[];
+  taskAlerts: (ClientTask & { _clientName?: string })[];
+}
+
+function unreadTotal({ actionItems, reviewJobs, taskAlerts }: NotificationFeeds): number {
+  return actionItems.length + reviewJobs.length + taskAlerts.length;
+}
 
 interface NavItem {
   href: string;
@@ -197,10 +216,27 @@ function ClientContextPicker({ clients, isAdmin }: { clients: Client[]; isAdmin:
 
 /* ── User menu ───────────────────────────────────────────────────────── */
 
-function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
+/**
+ * The staff account zone. CD-G9c moved the floating top-right cluster —
+ * support, light/dark, notifications — in here, so the workspace no longer
+ * carries a header bar whose only job was three icons. That consciously
+ * overrules F116's "a badge behind a dropdown is not a badge": the trigger
+ * keeps an unread DOT so the signal survives the move, and the full panel is
+ * two clicks away (open menu → Notifications).
+ */
+function UserMenu({
+  user,
+  realAdmin,
+  feeds,
+}: {
+  user: AppUser;
+  realAdmin?: AppUser;
+  feeds: NotificationFeeds;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const unread = unreadTotal(feeds);
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -223,20 +259,29 @@ function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
           open ? "bg-surface-2" : "hover:bg-surface-2",
         )}
       >
-        {user.photoURL ? (
-          <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={user.photoURL}
-              alt=""
-              className="h-8 w-8 shrink-0 rounded-full object-cover"
+        <span className="relative shrink-0">
+          {user.photoURL ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={user.photoURL}
+                alt=""
+                className="h-8 w-8 shrink-0 rounded-full object-cover"
+              />
+            </>
+          ) : (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-neon">
+              {initials(user.name)}
+            </div>
+          )}
+          {unread > 0 && (
+            <span
+              className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-neon ring-2 ring-background"
+              aria-hidden="true"
             />
-          </>
-        ) : (
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-neon">
-            {initials(user.name)}
-          </div>
-        )}
+          )}
+        </span>
+        {unread > 0 && <span className="sr-only">{unread} unread notifications</span>}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{user.name}</p>
           <p className="truncate text-[11px] text-muted-2">
@@ -257,6 +302,16 @@ function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 overflow-hidden rounded-[12px] border border-border bg-surface shadow-xl">
             <div className="p-1">
+              {/* Panel opens UPWARD out of the menu: the menu itself already
+                  hangs off the foot of the rail, and "right" would push a
+                  320px panel off-screen inside the narrow mobile drawer. */}
+              <NotificationBell
+                actionItems={feeds.actionItems}
+                reviewJobs={feeds.reviewJobs}
+                taskAlerts={feeds.taskAlerts}
+                variant="row"
+                panelPlacement="up"
+              />
               <Link
                 href="/settings"
                 onClick={() => setOpen(false)}
@@ -265,6 +320,8 @@ function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
                 <Icon name="Settings" className="h-4 w-4" />
                 Settings
               </Link>
+              <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
+              <ThemeSwitch />
               <div className="my-1 h-px bg-border" />
               <button
                 onClick={handleLogout}
@@ -289,16 +346,30 @@ export function Sidebar({
   pendingCount = 0,
   realAdmin,
   clients = [],
+  actionItems = [],
+  reviewJobs = [],
+  taskAlerts = [],
 }: {
   user: AppUser;
   pendingCount?: number;
   realAdmin?: AppUser;
   clients?: Client[];
+  /**
+   * Bell feeds. They used to be handed to AppHeader, the floating top-right
+   * strip; CD-G9c retired that strip and the bell now lives in the account
+   * menu (and, at narrow width in client context, in the Company sheet).
+   */
+  actionItems?: ActionItemNotification[];
+  reviewJobs?: AgentReviewNotification[];
+  taskAlerts?: (ClientTask & { _clientName?: string })[];
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const { activeClient } = useActiveClient();
   const [companyOpen, setCompanyOpen] = useCompanySheet();
+
+  const feeds: NotificationFeeds = { actionItems, reviewJobs, taskAlerts };
+  const unread = unreadTotal(feeds);
 
   const clientHomePath =
     user.role === "CLIENT_USER" && user.clientId ? `/clients/${user.clientId}` : null;
@@ -517,7 +588,7 @@ export function Sidebar({
         {isStaff && (
           <ClientContextPicker clients={clients} isAdmin={user.role === "KAROS_ADMIN"} />
         )}
-        <UserMenu user={user} realAdmin={realAdmin} />
+        <UserMenu user={user} realAdmin={realAdmin} feeds={feeds} />
       </div>
     </div>
   );
@@ -533,6 +604,7 @@ export function Sidebar({
             items={items}
             companyOpen={companyOpen}
             onOpenCompany={() => setCompanyOpen(true)}
+            companyUnread={unread}
           />
 
           <MobileCompanySheet open={companyOpen} onClose={() => setCompanyOpen(false)}>
@@ -568,8 +640,8 @@ export function Sidebar({
               isStaff
             />
 
-            {/* Tail mirrors the client sheet's, plus the sign-out the drawer
-                used to carry — without the drawer there is no other way out. */}
+            {/* Tail mirrors the client sheet's, plus the chrome CD-G9c moved off
+                the retired top bar and the sign-out the drawer used to carry. */}
             <div className="space-y-0.5 border-t border-border pt-4">
               <Link
                 href="/settings"
@@ -578,6 +650,13 @@ export function Sidebar({
                 <Icon name="Settings" className="h-4 w-4 text-muted-2" />
                 Settings
               </Link>
+              <NotificationBell
+                actionItems={actionItems}
+                reviewJobs={reviewJobs}
+                taskAlerts={taskAlerts}
+                variant="row"
+                panelPlacement="up"
+              />
               <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
               <ThemeSwitch />
               <LogoutButton compact />
@@ -601,11 +680,19 @@ export function Sidebar({
             </Link>
             <button
               onClick={() => setOpen((o) => !o)}
-              className="text-muted transition-colors hover:text-foreground"
+              className="relative text-muted transition-colors hover:text-foreground"
               aria-label={open ? "Close menu" : "Open menu"}
               aria-expanded={open}
             >
               <Icon name={open ? "X" : "Menu"} className="h-5 w-5" />
+              {/* The bell moved into the drawer's account menu (CD-G9c), so the
+                  only thing left on screen has to carry its dot. */}
+              {!open && unread > 0 && (
+                <span
+                  className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-neon ring-2 ring-background"
+                  aria-hidden="true"
+                />
+              )}
             </button>
           </div>
 

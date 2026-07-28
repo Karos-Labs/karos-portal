@@ -30,7 +30,6 @@ import { ClientRail } from "@/components/client-rail";
 import { CopilotDock } from "@/components/copilot-dock";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
-import { AppHeader } from "@/components/app-header";
 import { ClientContextBar } from "@/components/client-context-bar";
 import { StaffCopilotDock } from "@/components/staff-chatbot-widget";
 import type { ActionItemNotification, AgentReviewNotification, Client, ClientTask } from "@/lib/types";
@@ -215,11 +214,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <ActiveClientProvider>
       <div className="flex min-h-screen flex-col md:flex-row">
+        {/* Support, light/dark and the bell used to float in an AppHeader strip
+            at the top right of every staff page. CD-G9c retired that strip —
+            the rail's account menu carries them now, and the Company sheet
+            carries them at narrow width in client context. */}
         <Sidebar
           user={user}
           pendingCount={pendingCount}
           realAdmin={realAdmin}
           clients={clients}
+          actionItems={actionItems as ActionItemNotification[]}
+          reviewJobs={scopedReviewJobs}
+          taskAlerts={scopedTaskAlerts}
         />
         <div className="flex min-w-0 flex-1 flex-col">
           {isImpersonating && realAdmin && (
@@ -227,13 +233,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           )}
           {/* Client-context mode gets its own persistent bar — see F60. */}
           <ClientContextBar />
-          <AppHeader
-            actionItems={actionItems as ActionItemNotification[]}
-            reviewJobs={scopedReviewJobs}
-            taskAlerts={scopedTaskAlerts}
-            userName={user.name}
-            userEmail={user.email}
-          />
           {/* Same bottom-padding ladder as the client shell: below md a fixed
               tab bar (client context) and the copilot strip sit over the page. */}
           <main className="flex-1 overflow-x-clip px-4 pb-28 pt-6 md:px-8 md:pb-16 md:pt-8 lg:pb-8">
