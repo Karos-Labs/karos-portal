@@ -210,9 +210,32 @@ export default async function ClientAgentDetailPage({
     creditBlockReason: creditBlockReasons[agent.id] ?? null,
   });
 
+  // F31. The legacy branch had no run state at all: a client pressed "Create a
+  // new post", the page did not change, and nothing on it refreshed — so the
+  // twenty minutes the run takes were indistinguishable from the press having
+  // done nothing. Resolved here rather than in the panel for the usual reason:
+  // only an id and a phase cross the boundary, never the job's prompt, events
+  // or asset ids.
+  //
+  // Attribution matches the "what it has made" join above — customAgentId is
+  // authoritative, agentName keeps runs fired before that field existed. Launch
+  // runs are excluded by construction: this shape has no umbrella to launch.
+  const legacyRun = umbrella
+    ? null
+    : (jobs
+        .filter(
+          (job) =>
+            job.external?.taskType === "custom" &&
+            (job.status === "queued" || job.status === "running") &&
+            job.runType !== "launch" &&
+            (job.customAgentId === agent.id ||
+              (!job.customAgentId && job.agentName === agent.name)),
+        )
+        .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null);
+
   return (
     <>
-      {(launchInFlight || row?.activeRun) && <AutoRefresh />}
+      {(launchInFlight || row?.activeRun || legacyRun) && <AutoRefresh />}
       <div className="mb-4">
         <Link
           href={`/clients/${id}/agents`}
@@ -284,6 +307,11 @@ export default async function ClientAgentDetailPage({
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
               {...(spendable !== undefined ? { availableCredits: spendable } : {})}
+              activeRun={
+                legacyRun
+                  ? { id: legacyRun.id, status: legacyRun.status === "running" ? "running" : "queued" }
+                  : null
+              }
             />
           ) : (
             <EmptyState

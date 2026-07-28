@@ -4,8 +4,10 @@ import { useState } from "react";
 import { Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
+import { ManagedJobProgress } from "@/components/managed-job-progress";
 import {
   AgentScheduleModal,
+  CancelRunControl,
   RunCustomAgentModal,
   type AgentSetupState,
   type ClientAgentScheduleRow,
@@ -31,6 +33,17 @@ import type { LegacyRunGateResult } from "@/lib/client-agent-runs";
  * is the same paceOnly schedule modal the live card uses, and it is offered
  * because the schedule is exactly what this shape DOES have.
  *
+ * IT ALSO GETS THE RUN BACK (F31). Pressing "Create a new post" here used to
+ * produce no visible change whatsoever: the panel showed no run row and no
+ * progress, and the page mounted no AutoRefresh for this branch, so a client sat
+ * on a static page for the twenty minutes the run takes with no way to tell
+ * whether anything had started — and, once F30's control was reachable again,
+ * nothing to cancel from. The strip is the pieces that already exist, not a new
+ * idiom: the same banner promise the umbrella panel makes, the ManagedJobProgress
+ * strip the run rows use, and the same CancelRunControl. What the run PRODUCES
+ * still arrives the umbrella way — under "What it has made for you" on the page
+ * below, which links the Workspace.
+ *
  * WHAT IT DOES NOT GET, deliberately: template rows, the week strip, per-template
  * feedback, notes. Every one of those reads the umbrella's registry or its slot
  * plan, and this agent has neither. Faking them would put invented streams in
@@ -52,6 +65,7 @@ export function LegacyAgentPanel({
   viewerIsClient,
   viewer,
   availableCredits,
+  activeRun,
 }: {
   clientId: string;
   agent: RunnableAgentSummary;
@@ -60,6 +74,12 @@ export function LegacyAgentPanel({
   /** Server-evaluated, already resolved to a paintable reason (F25/F131). */
   gate: LegacyRunGateResult;
   schedule: ClientAgentScheduleRow | null;
+  /**
+   * This agent's run that has not landed yet (F31). Resolved server-side from
+   * the client's own jobs, and deliberately just an id and a phase — the strip
+   * says a run is happening, never what it will contain.
+   */
+  activeRun?: { id: string; status: "queued" | "running" } | null;
   setup?: AgentSetupState;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
@@ -71,6 +91,26 @@ export function LegacyAgentPanel({
 
   return (
     <div className="space-y-6">
+      {activeRun && (
+        <div className="rounded-[var(--radius)] border border-info/30 bg-info/10">
+          <div className="flex items-start gap-2 px-4 py-3">
+            <span
+              className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-info animate-pulse-neon"
+              aria-hidden="true"
+            />
+            <p className="text-xs text-info">
+              Making your next post now — this takes 10–20 minutes. Your Karos team reviews it when
+              it lands, and finished posts appear in your Workspace once approved.
+            </p>
+          </div>
+          <ManagedJobProgress
+            status={activeRun.status}
+            className="mb-0 rounded-none border-0 border-t border-info/20 bg-transparent px-4 py-2"
+          />
+          <CancelRunControl runId={activeRun.id} />
+        </div>
+      )}
+
       <section>
         <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 p-4">
           <div className="min-w-0 flex-1">
