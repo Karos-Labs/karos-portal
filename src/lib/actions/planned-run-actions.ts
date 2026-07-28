@@ -14,8 +14,7 @@ import {
 import { CREDIT_COSTS, isBillableClientActor, scheduledAgentWeeklyCost } from "@/lib/credits";
 import {
   computeNextRun,
-  MAX_OUTPUTS_PER_RUN,
-  MAX_RUNS_PER_WEEK,
+  scheduleLimitsFor,
   weeklyCadenceDays,
 } from "@/lib/scheduled-runs";
 import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
@@ -230,7 +229,14 @@ export async function configureClientAgentScheduleAction(
   // here while the dialog offered 5, so a stale page or a direct call could
   // schedule twice the outputs the product sells — and the scheduler bills
   // chargeMultiplier = outputsPerRun on every fire.
-  const postsPerWeek = clampInt(input.postsPerWeek, 1, MAX_RUNS_PER_WEEK);
+  //
+  // F27: the Reddit agent's ceiling is lower than the generic one and is
+  // enforced HERE, not only in the dialog. A reply is a post into someone
+  // else's community; the product is one a day, five a week, and the generic
+  // 7x5 would both bill for 35 and get the client's account treated as spam by
+  // the subreddits the agent is building standing in.
+  const limits = scheduleLimitsFor(agent.key);
+  const postsPerWeek = clampInt(input.postsPerWeek, 1, limits.maxRunsPerWeek);
 
   // WHAT A CLIENT MAY CHANGE HERE: the posting days and the time of day. That
   // is the whole of "pace". Two fields are deliberately NOT theirs, and the
@@ -245,11 +251,18 @@ export async function configureClientAgentScheduleAction(
   //
   // Enforced here rather than only in the dialog because a server action is a
   // public HTTP surface: hiding a control is not the same as refusing a value.
+  //
+  // The Reddit ceiling overrides even the preserve-the-stored-value rule: a row
+  // written before the cap existed (or by a staff member with an older page)
+  // holds a number the product does not sell, and re-saving it would re-commit
+  // to billing it. Pinned, not clamped — five answers written in one sitting is
+  // a different product from one a day, and it is the one automod removes.
   const actorIsClient = user.role === "CLIENT_USER";
-  const outputsPerRun =
-    actorIsClient && existing
-      ? (existing.outputsPerRun ?? 1)
-      : clampInt(input.outputsPerRun, 1, MAX_OUTPUTS_PER_RUN);
+  const outputsPerRun = clampInt(
+    actorIsClient && existing ? (existing.outputsPerRun ?? 1) : input.outputsPerRun,
+    1,
+    limits.maxOutputsPerRun,
+  );
   const prompt =
     actorIsClient && existing?.prompt?.trim() ? existing.prompt.trim() : input.prompt.trim();
   if (!prompt) return { error: "Describe what the agent should create each time." };

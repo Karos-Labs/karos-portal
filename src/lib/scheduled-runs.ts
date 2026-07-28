@@ -19,6 +19,7 @@
  */
 
 import { localYMD, isValidTimeZone, weekdayOf, zonedWallToUtc } from "@/lib/run-cadence";
+import { isRedditAgentIdentity } from "@/lib/custom-agent-launch";
 import type { PlannedRunCadence } from "@/lib/types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -33,6 +34,39 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 export const MAX_RUNS_PER_WEEK = 7;
 export const MAX_OUTPUTS_PER_RUN = 5;
+
+/**
+ * The Reddit agent (e15) is capped harder than the rest, and not for a
+ * technical reason: a Reddit reply is a post into someone else's community, and
+ * the product is at most one reply a day, five a week. The generic dial offers
+ * 7 runs x 5 outputs — 35 replies a week — and BILLS for them
+ * (chargeMultiplier = outputsPerRun on every fire), which is both an invoice
+ * nobody agreed to and the fastest way to get a client's account banned from
+ * the subreddits the agent is meant to build standing in (F27).
+ *
+ * outputsPerRun is pinned rather than clamped: "5 replies in one run" is not a
+ * smaller version of the product, it is a different one — five answers written
+ * in a single sitting, to whatever threads happened to be open, which is what
+ * automod treats as spam.
+ */
+export const REDDIT_MAX_RUNS_PER_WEEK = 5;
+export const REDDIT_OUTPUTS_PER_RUN = 1;
+
+/**
+ * The scheduling ceilings for one agent. Pure and shared so the dialog's
+ * dropdowns and the server clamp cannot drift — the server one is the
+ * load-bearing half, since hiding an option is not the same as refusing a
+ * value.
+ */
+export function scheduleLimitsFor(agentKey: string): {
+  maxRunsPerWeek: number;
+  maxOutputsPerRun: number;
+} {
+  if (isRedditAgentIdentity(agentKey)) {
+    return { maxRunsPerWeek: REDDIT_MAX_RUNS_PER_WEEK, maxOutputsPerRun: REDDIT_OUTPUTS_PER_RUN };
+  }
+  return { maxRunsPerWeek: MAX_RUNS_PER_WEEK, maxOutputsPerRun: MAX_OUTPUTS_PER_RUN };
+}
 
 /**
  * Next fire time (epoch millis) strictly after `from` for a recurring cadence.

@@ -35,7 +35,7 @@ import {
 import { cancelClientAgentJobAction } from "@/lib/actions/external-job-actions";
 import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
-import { MAX_OUTPUTS_PER_RUN, MAX_RUNS_PER_WEEK } from "@/lib/scheduled-runs";
+import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import {
   agentKeyMatchesClientSlug,
   buildCustomAgentPrompt,
@@ -159,8 +159,16 @@ function intakeDrivenLabel(key: string): string | null {
 }
 
 /** The dialog's dropdowns, built from the same bounds the server clamps to. */
-const RUNS_PER_WEEK_OPTIONS = Array.from({ length: MAX_RUNS_PER_WEEK }, (_, i) => i + 1);
-const OUTPUTS_PER_RUN_OPTIONS = Array.from({ length: MAX_OUTPUTS_PER_RUN }, (_, i) => i + 1);
+/**
+ * The dropdown ranges, read from the SAME per-agent limits the server clamps
+ * with (scheduleLimitsFor). The Reddit agent's ceiling is lower than the
+ * generic one (F27), and a dialog offering more than the server will accept
+ * either silently rewrites the client's choice on save or bills for a pace the
+ * product does not sell.
+ */
+function countOptions(max: number): number[] {
+  return Array.from({ length: max }, (_, i) => i + 1);
+}
 
 function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
   return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
@@ -1132,7 +1140,13 @@ export function AgentScheduleModal({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [postsPerWeek, setPostsPerWeek] = useState(schedule?.postsPerWeek ?? 3);
+  // Per-agent ceilings (F27). Clamped on the way IN as well: a stored row
+  // written before the cap existed would otherwise seed a value the dropdown
+  // cannot show, which renders as an empty select.
+  const limits = scheduleLimitsFor(agent.key);
+  const [postsPerWeek, setPostsPerWeek] = useState(
+    Math.min(schedule?.postsPerWeek ?? 3, limits.maxRunsPerWeek),
+  );
   // ALWAYS the stored value, in both faces of the dialog. Pinning this to 1 for
   // paceOnly (as it briefly did) was two bugs in one: a schedule stored at 3×5
   // quoted its weekly cost from 3×1 — five times under — and pressing "Save
@@ -1140,7 +1154,9 @@ export function AgentScheduleModal({
   // fifth of what they were paying for. A client adjusting pace changes which
   // DAYS the agent fires, and nothing else; the server enforces the same rule
   // rather than trusting this value (configureClientAgentScheduleAction).
-  const [outputsPerRun, setOutputsPerRun] = useState(schedule?.outputsPerRun ?? 1);
+  const [outputsPerRun, setOutputsPerRun] = useState(
+    Math.min(schedule?.outputsPerRun ?? 1, limits.maxOutputsPerRun),
+  );
   const [prompt, setPrompt] = useState(schedule?.prompt ?? "Create the next on-brand post for our audience.");
   const [time, setTime] = useState(
     `${String(schedule?.hour ?? 9).padStart(2, "0")}:${String(schedule?.minute ?? 0).padStart(2, "0")}`,
@@ -1256,7 +1272,7 @@ export function AgentScheduleModal({
               value={postsPerWeek}
               onChange={(event) => setPostsPerWeek(Number(event.target.value))}
             >
-              {RUNS_PER_WEEK_OPTIONS.map((count) => (
+              {countOptions(limits.maxRunsPerWeek).map((count) => (
                 <option key={count} value={count}>{count}</option>
               ))}
             </Select>
@@ -1269,7 +1285,7 @@ export function AgentScheduleModal({
                 value={outputsPerRun}
                 onChange={(event) => setOutputsPerRun(Number(event.target.value))}
               >
-                {OUTPUTS_PER_RUN_OPTIONS.map((count) => (
+                {countOptions(limits.maxOutputsPerRun).map((count) => (
                   <option key={count} value={count}>{count}</option>
                 ))}
               </Select>

@@ -1,9 +1,14 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   clientCadenceLabel,
   computeNextRun,
   describeCadence,
+  MAX_OUTPUTS_PER_RUN,
+  MAX_RUNS_PER_WEEK,
   projectRunOccurrences,
+  scheduleLimitsFor,
   weeklyCadenceDays,
 } from "@/lib/scheduled-runs";
 
@@ -350,5 +355,74 @@ describe("weeklyCadenceDays", () => {
     expect(weeklyCadenceDays(1)).toEqual([2]);
     expect(weeklyCadenceDays(3)).toEqual([1, 3, 5]);
     expect(weeklyCadenceDays(7)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+});
+
+
+/**
+ * F27. A Reddit reply is a post into someone else's community, and the product
+ * is one a day at most. The generic dial offers 7 runs x 5 outputs and the
+ * scheduler BILLS chargeMultiplier = outputsPerRun on every fire, so the
+ * un-capped dialog both invoiced 35 replies a week and drove the client's
+ * account into the behaviour subreddits remove and ban for.
+ */
+describe("scheduleLimitsFor", () => {
+  it("caps the Reddit agent at five runs a week, one reply each", () => {
+    expect(scheduleLimitsFor("karos-reddit-agent")).toEqual({
+      maxRunsPerWeek: 5,
+      maxOutputsPerRun: 1,
+    });
+  });
+
+  it("leaves every other agent on the generic ceiling", () => {
+    for (const key of [
+      "karos-x-agent",
+      "karos-linkedin-agent",
+      "karos-linkedin-company-karoslabs",
+      "karos-instagram-agent",
+      // A lookalike import is not the portal's Reddit agent and is not capped
+      // by its product rule.
+      "acme-reddit-ghostwriter",
+    ]) {
+      expect(scheduleLimitsFor(key)).toEqual({
+        maxRunsPerWeek: MAX_RUNS_PER_WEEK,
+        maxOutputsPerRun: MAX_OUTPUTS_PER_RUN,
+      });
+    }
+  });
+
+  it("holds the weekly reply ceiling at 5, not 35", () => {
+    const reddit = scheduleLimitsFor("karos-reddit-agent");
+    expect(reddit.maxRunsPerWeek * reddit.maxOutputsPerRun).toBe(5);
+    const generic = scheduleLimitsFor("karos-instagram-agent");
+    expect(generic.maxRunsPerWeek * generic.maxOutputsPerRun).toBe(35);
+  });
+});
+
+describe("the server clamps to those limits, not only the dialog", () => {
+  it("applies the per-agent ceiling to both stored fields", () => {
+    // A server action is a public HTTP surface: hiding an option is not the
+    // same as refusing a value, and a stale page or a direct call is exactly
+    // how the 35-a-week schedule got written.
+    const src = readFileSync(
+      join(process.cwd(), "src/lib/actions/planned-run-actions.ts"),
+      "utf8",
+    );
+    const start = src.indexOf("export async function configureClientAgentScheduleAction");
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf("\nexport async function ", start + 1));
+    expect(body).toContain("scheduleLimitsFor(agent.key)");
+    expect(body).toContain("clampInt(input.postsPerWeek, 1, limits.maxRunsPerWeek)");
+    expect(body).toContain("limits.maxOutputsPerRun");
+    // The clamp wraps the preserve-the-stored-value branch too, so re-saving a
+    // row written before the cap cannot re-commit to billing it.
+    expect(body).not.toMatch(/const outputsPerRun =\s*\n?\s*actorIsClient/);
+  });
+
+  it("keeps the dialog's dropdowns on the same source of truth", () => {
+    const ui = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
+    expect(ui).toContain("scheduleLimitsFor(agent.key)");
+    expect(ui).toContain("countOptions(limits.maxRunsPerWeek)");
+    expect(ui).toContain("countOptions(limits.maxOutputsPerRun)");
   });
 });
