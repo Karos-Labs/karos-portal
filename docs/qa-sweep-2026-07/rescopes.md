@@ -168,3 +168,21 @@ starting. Updated by the orchestrator after each verification gate.
   even with channels connected; copy nuance + env question for TOMER-HANDOVER.
   (d) Staff with zero usable integrations lose the demo briefing + badge (falls to
   pipeline branch) — minor, note only.
+
+## Wave-1 closing walk residuals (assign in wave B/C)
+- x-drafts-review draft metadata renders literal single-asterisk emphasis
+  ("*How Brands Grow*") — F70's owner (WORKSPACE) should render or strip inline
+  emphasis at the reader boundary. One occurrence in 9.8k chars; low.
+- renderAssetBody flattens ALL-CAPS section labels (ABOUT THIS DRAFT / HOW TO
+  POST…) into body-size <p> — markers stripped but hierarchy flat. DOCS cluster:
+  consider promoting recognized label lines to headings.
+- Hard-wrapped source text (~100 cols) keeps mid-sentence line breaks in rendered
+  deliverables — cosmetic; consider soft-unwrap in renderAssetBody paragraphs.
+- LOCAL ENV: AGENT_SERVICE_URL/TOKEN unset in .env.local → staff agents page shows
+  "Agent service not configured", client lens shows empty state; F24/F131 live
+  states not constructible locally. F34's misleading empty-state copy confirmed
+  live (dashboard says "20 agent runs" while agents page claims none happened) —
+  AGENTS cluster has F34; handover env note added.
+- customAgents collection contains a "Reddit Agent" record (staff library card)
+  even though portal Reddit surfaces don't exist — consistent with lab import;
+  no action, context for AGENTS/TOMER.

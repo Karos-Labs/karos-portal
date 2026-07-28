@@ -1,6 +1,12 @@
 # QA Sweep 2026-07 — Findings ledger (single source of truth)
 
-Status values: OPEN · IN-PROGRESS · RESOLVED · DEFERRED-TOMER · STRUCK.
+Status values: OPEN · IN-PROGRESS · RESOLVED · OPS-PENDING (code merged, human
+ops step required — see notes) · DEFERRED-TOMER · STRUCK.
+Phase 1 notes: F24/F131 verified by code lenses post-bounce; live trigger states
+not constructible locally (agent service env unset). F127 OPS-PENDING on
+`npx tsx scripts/backfill-agent-blurbs.ts` (dry-run first, then --apply; needs
+Albert). F47 verified with one residual (literal *italics* in X-reader draft
+metadata — logged to F70's owner in rescopes).
 A row flips to RESOLVED only after the three-step gate (tsc/build → Opus
 risk+drift+mock-client lenses → Fable review) passes. Spec for each finding lives
 in inventory/ (file column); screenshots in inventory/screenshots/.
@@ -30,9 +36,9 @@ are tracked in the CD table at the bottom.
 | F22 | MEDIUM | B | SEO | 2 | OPEN | yes | Urgent cards sort below important ones under a header that says the list is ordered by impact | findings-p009-046.md |
 | F23 | MEDIUM | B | SEO | 2 | OPEN | yes | When the AI capture fails, the report tells the client it asked zero buyer questions | findings-p009-046.md |
 | F144 | LOW | A | SEO | 2 | OPEN | yes | Rename the "Search engines" label — the call agreed it reads as AI search | findings-p009-046.md |
-| F24 | BLOCKER | A | AGENTS | 1 | OPEN | yes | An always-on agent that has failed every single run still shows a green pulsing "Live" badge | findings-p009-046.md |
-| F127 | BLOCKER | B | AGENTS | 1 | OPEN | yes | Agent descriptions are raw lab-repo skill manifests, shipped to clients unedited | findings-p009-046.md |
-| F131 | BLOCKER | A | AGENTS | 1 | OPEN | yes | "Run now" is fully enabled on an agent whose own card says "Setup needed" | findings-p047-084.md |
+| F24 | BLOCKER | A | AGENTS | 1 | RESOLVED | yes | An always-on agent that has failed every single run still shows a green pulsing "Live" badge | findings-p009-046.md |
+| F127 | BLOCKER | B | AGENTS | 1 | OPS-PENDING | yes | Agent descriptions are raw lab-repo skill manifests, shipped to clients unedited | findings-p009-046.md |
+| F131 | BLOCKER | A | AGENTS | 1 | RESOLVED | yes | "Run now" is fully enabled on an agent whose own card says "Setup needed" | findings-p047-084.md |
 | F25 | HIGH | A | AGENTS | 2 | OPEN | yes | A client who hits their spend cap gets a greyed-out Run button, no explanation, and advice that | findings-p047-084.md |
 | F27 | HIGH | B | AGENTS | 2 | OPEN | yes | The Reddit agent's schedule dialog offers up to 35 replies a week and bills for them — the prod | findings-p047-084.md |
 | F28 | HIGH | B | AGENTS | 2 | OPEN | — | The agent intake pages tell clients to pick, edit and skip drafts "in your Workspace archive" — | findings-p047-084.md |
@@ -61,8 +67,8 @@ are tracked in the CD table at the bottom.
 | F135 | LOW | A | CALENDAR | 2 | OPEN | yes | "3 runs × 1 outputs × 25 credits" — unpluralised units in the cost line | findings-p047-084.md |
 | F147 | HIGH | B | ARCH | 3 | OPEN | yes | One content stream, two agent identities: "Instagram Agent" and "Social posts (IG/TikTok)" run  | findings-p047-084.md |
 | F148 | HIGH | B | ARCH | 3 | OPEN | — | The portal has no launch-vs-runs model — the architecture the team decided on has nowhere to li | findings-p047-084.md |
-| F46 | BLOCKER | B | WORKSPACE | 1 | OPEN | — | A client can never act on a draft — the pick/post/skip loop the intake copy promises does not e | findings-p047-084.md |
-| F47 | BLOCKER | B | WORKSPACE | 1 | OPEN | — | The client's Archive shows the agent deliverable as raw text with all its formatting symbols on | findings-p085-122.md |
+| F46 | BLOCKER | B | WORKSPACE | 1 | RESOLVED | — | A client can never act on a draft — the pick/post/skip loop the intake copy promises does not e | findings-p047-084.md |
+| F47 | BLOCKER | B | WORKSPACE | 1 | RESOLVED | — | The client's Archive shows the agent deliverable as raw text with all its formatting symbols on | findings-p085-122.md |
 | F48 | HIGH | B | WORKSPACE | 2 | OPEN | — | "Autopilot on" stays on forever but only ever runs one batch | findings-p085-122.md |
 | F50 | HIGH | B | WORKSPACE | 2 | OPEN | — | "Refresh Task Map" promises a market-footprint scan; the run never looks outside the account | findings-p085-122.md |
 | F51 | HIGH | B | WORKSPACE | 2 | OPEN | — | A client clicking "New content ready" in their notification bell gets silently bounced to their | findings-p085-122.md |
