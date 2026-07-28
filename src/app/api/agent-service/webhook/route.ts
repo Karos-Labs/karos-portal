@@ -25,6 +25,7 @@ import { reflowClientChain } from "@/lib/chain";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { applyLaunchOutcome, isLaunchTemplatesArtifact } from "@/lib/jobs/launch-outcome";
 import { getClientAgent } from "@/lib/data-client-agents";
+import { syncOptionsFromBatchAsset } from "@/lib/client-agent-slots";
 import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
 import { logger } from "@/services/logger";
 
@@ -445,6 +446,30 @@ export async function POST(req: NextRequest) {
             at: Date.now(),
             level: "error",
             message: "Calendar reflow failed - run the staff reflow action",
+          }),
+        );
+
+        // §4.5b — an X drafts BATCH landing is the moment its days can be
+        // sliced into daily options. This is where the batch actually arrives:
+        // the recurring X run delivers here every week, and the horizon path
+        // (which is template-gated, and an options umbrella has no templates)
+        // never sees it. Identified by the same parse predicate as every other
+        // X surface, and looked up BY this job's client so a crafted payload
+        // cannot reach another tenant's plan.
+        //
+        // Safe after the single-use claim: assignment never touches a day that
+        // already has options, so a redelivery adds nothing. Best-effort for
+        // the same reason the reflow above is — the deliverable is already
+        // written, and the next batch re-attempts any day still unassigned.
+        await syncOptionsFromBatchAsset({
+          clientId: job.clientId,
+          assetId,
+          content: primaryText ? primaryText.content : "",
+        }).catch(() =>
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message: "Daily options assignment failed - retries on the next batch",
           }),
         );
       }

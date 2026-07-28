@@ -4,6 +4,7 @@ import { listAssets, listPlannedScheduledRuns, updatePlannedScheduledRun } from 
 import {
   createAgentSlots,
   listAgentSlots,
+  listClientAgents,
   updateAgentSlot,
   updateClientAgent,
 } from "@/lib/data-client-agents";
@@ -119,9 +120,14 @@ export async function ensureSlotHorizon(
     ...(options ? { optionsTemplateKey: OPTIONS_TEMPLATE_KEY } : {}),
   });
   const created = await createAgentSlots(drafts, actorUid);
-  const assigned = options
-    ? await assignOptionsToSlots(umbrella, now)
-    : 0;
+  // Go-live catch-up only: a batch that already existed before this umbrella
+  // went live. Steady state is syncOptionsFromBatchAsset, invoked as each new
+  // batch lands through the webhook — this path fires once and never again.
+  let assigned = 0;
+  if (options) {
+    const batch = await latestXBatchAsset(umbrella.clientId);
+    if (batch) assigned = await assignOptionsForUmbrella({ umbrella, batch, now });
+  }
   return { created, ...(assigned > 0 ? { assigned } : {}) };
 }
 
@@ -146,14 +152,23 @@ export async function ensureSlotHorizon(
  * (client-agent-rows). Writing tomorrow's refs today reveals nothing, because
  * nothing reads them until tomorrow.
  */
-async function assignOptionsToSlots(umbrella: ClientAgent, now: number): Promise<number> {
-  const batch = await latestXBatchAsset(umbrella.clientId);
-  if (!batch) return 0;
-
+async function assignOptionsForUmbrella(input: {
+  umbrella: ClientAgent;
+  batch: { assetId: string; parsed: XParsedBatch };
+  now: number;
+}): Promise<number> {
+  const { umbrella, batch } = input;
   const candidates = optionCandidatesFromBatch(batch.parsed);
   if (candidates.length === 0) return 0;
 
-  const todayKey = dateKeyInZone(now, runtimeTimeZone());
+  // The day boundary comes from the SCHEDULE's zone, not the container's — the
+  // F108 contract every other slot path follows. On a UTC container, a Tel Aviv
+  // client's "today" starts hours earlier, and reading it in the wrong zone
+  // silently skips the day they are actually living in.
+  const scheduleRun = await resolveUmbrellaSchedule(umbrella);
+  const zone = scheduleRun?.timeZone ?? runtimeTimeZone();
+  const todayKey = dateKeyInZone(input.now, zone);
+
   const slots = (await listAgentSlots({ clientAgentId: umbrella.id }))
     // Today and forward only. A past day cannot be picked (the action refuses
     // it), so assigning to one would burn drafts on a day nobody can act on.
@@ -176,12 +191,61 @@ async function assignOptionsToSlots(umbrella: ClientAgent, now: number): Promise
 }
 
 /**
+ * Slice a batch across the plan AT THE MOMENT THE BATCH LANDS (B1, second pass).
+ *
+ * The first attempt hung assignment off `ensureSlotHorizon`, which was the wrong
+ * seam and made the feature reachable in theory only. Its options-mode-reachable
+ * caller is the ONE-SHOT go-live: the other two callers are template-gated, and
+ * an options umbrella has no templates by design. So week 1 got refs only if a
+ * batch happened to pre-exist at go-live, and week 2's batch — the recurring one
+ * this product actually runs on — was never sliced at all.
+ *
+ * The batch arrives through the custom-agent webhook, so that is where this is
+ * invoked. Identified by the same parse predicate as everywhere else: DRAFTS.md
+ * carries no marker, and `parseXDrafts` returning non-null IS the test.
+ *
+ * IDEMPOTENT, which matters because the webhook's claim is single-use but this
+ * runs after it: `assignOptionRefs` never touches a day that already has
+ * options, so a redelivery, a retry, or a second batch in the same week adds
+ * refs only to days that had none.
+ *
+ * Fenced by clientId at the call site — the umbrellas are looked up BY the job's
+ * client, so a crafted payload cannot reach another tenant's plan.
+ */
+export async function syncOptionsFromBatchAsset(input: {
+  clientId: string;
+  assetId: string;
+  content: string;
+  now?: number;
+}): Promise<{ assigned: number }> {
+  // Cheap prefilter before the line-by-line parse — most assets are posts.
+  if (!input.content.includes("# Account ")) return { assigned: 0 };
+  const parsed = parseXDrafts(input.content);
+  if (!parsed) return { assigned: 0 };
+
+  const umbrellas = (await listClientAgents({ clientId: input.clientId })).filter(
+    (umbrella) => umbrella.launchState === "live" && isOptionsMode(umbrella),
+  );
+  if (umbrellas.length === 0) return { assigned: 0 };
+
+  const now = input.now ?? Date.now();
+  let assigned = 0;
+  for (const umbrella of umbrellas) {
+    assigned += await assignOptionsForUmbrella({
+      umbrella,
+      batch: { assetId: input.assetId, parsed },
+      now,
+    });
+  }
+  return { assigned };
+}
+
+/**
  * The newest asset for this client whose content is an X drafts batch.
  *
- * Identified by PARSING rather than by a flag: DRAFTS.md batches arrive through
- * the ordinary custom-agent webhook path with no marker distinguishing them, and
- * `parseXDrafts` already returns null for anything that is not one — so the
- * parse IS the test, and it is the same test every other X surface applies.
+ * Used only by the go-live path, which has to catch up on a batch that already
+ * existed before the umbrella went live. Steady state runs through
+ * syncOptionsFromBatchAsset as each new batch lands.
  */
 async function latestXBatchAsset(
   clientId: string,
@@ -190,13 +254,13 @@ async function latestXBatchAsset(
   const byNewest = [...assets].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   for (const asset of byNewest) {
     const content = asset.content ?? "";
-    // Cheap prefilter before the line-by-line parse — most assets are posts.
     if (!content.includes("# Account ")) continue;
     const parsed = parseXDrafts(content);
     if (parsed) return { assetId: asset.id, parsed };
   }
   return null;
 }
+
 
 /**
  * The next `days` days of an umbrella's plan, in date order — what the week
