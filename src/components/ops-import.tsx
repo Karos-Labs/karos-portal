@@ -4,24 +4,46 @@ import { useState, useTransition } from "react";
 import { Badge, Button, Card, CardTitle, EmptyState, Spinner } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { Modal } from "@/components/modal";
+import { LabImportButton } from "@/components/lab-import";
 import {
   applyOpsBundleAction,
   planOpsBundleAction,
+  scanLabForUpdatesAction,
   type ApplyOutcome,
+  type BundleOrigin,
   type PlanSummary,
+  type UpdateScan,
 } from "@/lib/actions";
 import { cn } from "@/lib/utils";
 
 /**
- * Admin Ops Import — review a locally-produced bundle, then land it.
+ * Admin Ops Import — find locally-produced work, review it, then land it.
+ *
+ * Two discovery sources, deliberately rendered the same way: proposals
+ * committed to the lab repo ("Check for updates") and proposals dropped in the
+ * server's inbox directory. Both produce identical plan cards through the same
+ * validator, and each card says which source it came from.
  *
  * PLAN BEFORE WRITE IS THE STRUCTURE, NOT THE COPY: there is no code path from
  * this component to a write that does not first render the dry-run diff. The
  * Import button only appears once a plan exists, and the server re-validates
- * the file from disk anyway — the plan shown here authorizes nothing.
+ * the bundle from its source anyway — the plan shown here authorizes nothing.
  */
 
-interface BundleRow {
+/** A discovered bundle, from either source, before anything is validated. */
+interface SourceRow {
+  origin: BundleOrigin;
+  ref: string;
+  label: string;
+  clientName: string | null;
+  /** Shape counts (inbox) or repo path (lab) — whatever the source can cheaply say. */
+  subtitle: string | null;
+  error: string | null;
+  hasSeoGeo: boolean;
+}
+
+/** What the server hands us for the inbox half at page load. */
+export interface InboxBundleRow {
   file: string;
   clientId: string | null;
   clientName: string | null;
@@ -42,60 +64,114 @@ type ApplyState =
   | { status: "done"; outcome: ApplyOutcome }
   | { status: "failed"; errors: string[] };
 
-export function OpsImport({ bundles }: { bundles: BundleRow[] }) {
+const keyOf = (r: { origin: BundleOrigin; ref: string }) => `${r.origin}:${r.ref}`;
+
+function inboxRow(b: InboxBundleRow): SourceRow {
+  return {
+    origin: "inbox",
+    ref: b.file,
+    label: b.file,
+    clientName: b.clientName,
+    subtitle: b.counts
+      ? `${b.counts.docs} document${b.counts.docs === 1 ? "" : "s"} · ` +
+        `${b.counts.competitorUpdates} competitor update${b.counts.competitorUpdates === 1 ? "" : "s"} · ` +
+        `${b.counts.competitorCreates} new`
+      : null,
+    error: b.error,
+    hasSeoGeo: b.hasSeoGeo,
+  };
+}
+
+export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
   const [plans, setPlans] = useState<Record<string, PlanState>>({});
   const [applied, setApplied] = useState<Record<string, ApplyState>>({});
   const [confirming, setConfirming] = useState<PlanSummary | null>(null);
   const [bulk, setBulk] = useState<"idle" | "confirm" | "running">("idle");
+  const [scan, setScan] = useState<UpdateScan | null>(null);
+  const [scanning, setScanning] = useState(false);
   const [, startTransition] = useTransition();
 
-  const planFor = (file: string): PlanState => plans[file] ?? { status: "idle" };
-  const applyFor = (file: string): ApplyState => applied[file] ?? { status: "idle" };
+  const planFor = (k: string): PlanState => plans[k] ?? { status: "idle" };
+  const applyFor = (k: string): ApplyState => applied[k] ?? { status: "idle" };
 
-  function loadPlan(file: string) {
-    setPlans((p) => ({ ...p, [file]: { status: "loading" } }));
+  /** Inbox bundles plus whatever the last scan turned up in the lab repo. */
+  const rows: SourceRow[] = [
+    ...(scan?.clients ?? []).flatMap((c) =>
+      c.proposals.map(
+        (p): SourceRow => ({
+          origin: "lab",
+          ref: p.ref,
+          label: p.name,
+          clientName: c.clientName,
+          subtitle: p.ref,
+          error: p.error,
+          hasSeoGeo: false,
+        }),
+      ),
+    ),
+    ...bundles.map(inboxRow),
+  ];
+
+  function loadPlan(row: SourceRow) {
+    const k = keyOf(row);
+    setPlans((p) => ({ ...p, [k]: { status: "loading" } }));
     startTransition(async () => {
-      const res = await planOpsBundleAction(file);
+      const res = await planOpsBundleAction({ origin: row.origin, ref: row.ref });
       setPlans((p) => ({
         ...p,
-        [file]: res.ok ? { status: "ready", plan: res.plan } : { status: "rejected", errors: res.errors },
+        [k]: res.ok ? { status: "ready", plan: res.plan } : { status: "rejected", errors: res.errors },
       }));
     });
   }
 
   async function runApply(plan: PlanSummary) {
-    setApplied((a) => ({ ...a, [plan.file]: { status: "running" } }));
+    const k = keyOf(plan);
+    setApplied((a) => ({ ...a, [k]: { status: "running" } }));
     const res = await applyOpsBundleAction({
-      file: plan.file,
+      origin: plan.origin,
+      ref: plan.ref,
       includeSeoGeo: plan.seoGeo?.ok === true,
     });
     setApplied((a) => ({
       ...a,
-      [plan.file]: res.ok ? { status: "done", outcome: res.outcome } : { status: "failed", errors: res.errors },
+      [k]: res.ok ? { status: "done", outcome: res.outcome } : { status: "failed", errors: res.errors },
     }));
     // The stored state just moved, so the rendered diff is now history.
-    setPlans((p) => ({ ...p, [plan.file]: { status: "idle" } }));
+    setPlans((p) => ({ ...p, [k]: { status: "idle" } }));
+  }
+
+  function checkForUpdates() {
+    setScanning(true);
+    startTransition(async () => {
+      setScan(await scanLabForUpdatesAction());
+      setScanning(false);
+    });
   }
 
   /** Every bundle that has a rendered, unapplied, unlocked plan. */
-  const readyPlans = bundles
-    .map((b) => planFor(b.file))
+  const readyPlans = rows
+    .map((r) => planFor(keyOf(r)))
     .filter((s): s is { status: "ready"; plan: PlanSummary } => s.status === "ready")
     .map((s) => s.plan)
-    .filter((p) => !p.lockedReason && p.counts.totalWrites > 0 && applyFor(p.file).status === "idle");
-
-  if (bundles.length === 0) {
-    return (
-      <EmptyState
-        icon={<Icon name="Inbox" className="h-6 w-6" />}
-        title="The ops inbox is empty"
-        description="Drop per-client proposal JSON files into OPS_IMPORT_DIR and reload this page."
-      />
-    );
-  }
+    .filter((p) => !p.lockedReason && p.counts.totalWrites > 0 && applyFor(keyOf(p)).status === "idle");
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Anything new in the lab repo?</p>
+          <p className="mt-0.5 text-xs text-muted">
+            Scans every client with a lab slug for committed proposals and un-imported runs.
+          </p>
+        </div>
+        <Button size="sm" variant="subtle" disabled={scanning} onClick={checkForUpdates}>
+          {scanning ? <Spinner className="h-3.5 w-3.5" /> : <Icon name="RefreshCw" className="h-3.5 w-3.5" />}
+          Check for updates
+        </Button>
+      </div>
+
+      {scan && <ScanSummary scan={scan} />}
+
       {readyPlans.length > 1 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-2 px-4 py-3">
           <p className="text-sm text-muted">
@@ -108,23 +184,35 @@ export function OpsImport({ bundles }: { bundles: BundleRow[] }) {
         </div>
       )}
 
-      {bundles.map((bundle) => (
-        <BundleCard
-          key={bundle.file}
-          bundle={bundle}
-          plan={planFor(bundle.file)}
-          apply={applyFor(bundle.file)}
-          onPlan={() => loadPlan(bundle.file)}
-          onImport={(p) => setConfirming(p)}
+      {rows.length === 0 ? (
+        <EmptyState
+          icon={<Icon name="Inbox" className="h-6 w-6" />}
+          title={scan ? "Nothing to import" : "No bundles found yet"}
+          description={
+            scan
+              ? "The scan found no committed proposals, and the inbox is empty."
+              : "Click Check for updates to scan the lab repo, or drop proposal JSONs into OPS_IMPORT_DIR."
+          }
         />
-      ))}
+      ) : (
+        rows.map((row) => (
+          <BundleCard
+            key={keyOf(row)}
+            row={row}
+            plan={planFor(keyOf(row))}
+            apply={applyFor(keyOf(row))}
+            onPlan={() => loadPlan(row)}
+            onImport={(p) => setConfirming(p)}
+          />
+        ))
+      )}
 
       {/* Per-bundle confirm — names exactly what will be written. */}
       <Modal
         open={confirming !== null}
         onClose={() => setConfirming(null)}
         title="Import into the live portal?"
-        description={confirming ? `${confirming.clientName} · ${confirming.file}` : undefined}
+        description={confirming ? `${confirming.clientName} · ${confirming.label}` : undefined}
         className="max-w-lg"
       >
         {confirming && (
@@ -161,7 +249,7 @@ export function OpsImport({ bundles }: { bundles: BundleRow[] }) {
         <div className="mt-4 space-y-4">
           <div className="max-h-[320px] space-y-3 overflow-y-auto">
             {readyPlans.map((p) => (
-              <div key={p.file} className="rounded-md border border-border px-3 py-2.5">
+              <div key={keyOf(p)} className="rounded-md border border-border px-3 py-2.5">
                 <p className="text-sm font-medium">{p.clientName}</p>
                 <WriteManifest plan={p} compact />
               </div>
@@ -189,6 +277,73 @@ export function OpsImport({ bundles }: { bundles: BundleRow[] }) {
           </div>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+/**
+ * The answer to "is there anything new anywhere?" — including the un-imported
+ * post runs, which import through the same lab flow the client pages use.
+ */
+function ScanSummary({ scan }: { scan: UpdateScan }) {
+  if (!scan.configured || scan.error) {
+    return (
+      <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3">
+        <p className="flex items-center gap-1.5 text-sm font-medium text-warning">
+          <Icon name="TriangleAlert" className="h-4 w-4 shrink-0" />
+          Could not scan the lab repo
+        </p>
+        <p className="mt-1 text-xs text-muted">{scan.error}</p>
+      </div>
+    );
+  }
+
+  const runsFound = scan.clients.reduce((n, c) => n + c.newRuns.length, 0);
+  const propsFound = scan.clients.reduce((n, c) => n + c.proposals.length, 0);
+
+  return (
+    <div className="rounded-lg border border-border bg-surface-2 px-4 py-3">
+      <p className="text-sm">
+        Scanned <span className="font-mono text-xs">{scan.repo}</span> — {scan.checked} client
+        {scan.checked === 1 ? "" : "s"} with a lab slug.{" "}
+        {propsFound === 0 && runsFound === 0 ? (
+          <span className="text-muted">Nothing new.</span>
+        ) : (
+          <span className="text-muted">
+            {propsFound} proposal{propsFound === 1 ? "" : "s"}, {runsFound} un-imported run
+            {runsFound === 1 ? "" : "s"}.
+          </span>
+        )}
+      </p>
+
+      {scan.clients.some((c) => c.newRuns.length > 0 || c.error) && (
+        <div className="mt-3 space-y-1">
+          {scan.clients.map((c) =>
+            c.error ? (
+              <p key={c.clientId} className="text-xs text-danger">
+                {c.clientName}: {c.error}
+              </p>
+            ) : c.newRuns.length === 0 ? null : (
+              <div
+                key={c.clientId}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="text-xs font-medium">
+                    {c.clientName} — {c.newRuns.length} un-imported run{c.newRuns.length === 1 ? "" : "s"}
+                  </p>
+                  <p className="truncate font-mono text-[10px] text-muted-2">
+                    {c.newRuns.map((r) => r.runName).join(" · ")}
+                  </p>
+                </div>
+                {/* Posts land through the existing lab importer — drafts, chain
+                    reflow, per-item idempotency — never a second writer. */}
+                <LabImportButton clientId={c.clientId} />
+              </div>
+            ),
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -224,14 +379,22 @@ function WriteManifest({ plan, compact }: { plan: PlanSummary; compact?: boolean
   );
 }
 
+function OriginBadge({ origin }: { origin: BundleOrigin }) {
+  return origin === "lab" ? (
+    <Badge tone="info">lab repo</Badge>
+  ) : (
+    <Badge tone="neutral">inbox</Badge>
+  );
+}
+
 function BundleCard({
-  bundle,
+  row,
   plan,
   apply,
   onPlan,
   onImport,
 }: {
-  bundle: BundleRow;
+  row: SourceRow;
   plan: PlanState;
   apply: ApplyState;
   onPlan: () => void;
@@ -241,22 +404,16 @@ function BundleCard({
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <CardTitle>{bundle.clientName ?? bundle.file}</CardTitle>
-          <p className="mt-1 font-mono text-xs text-muted-2">{bundle.file}</p>
-          {bundle.counts && (
-            <p className="mt-1.5 text-xs text-muted">
-              {bundle.counts.docs} document{bundle.counts.docs === 1 ? "" : "s"} ·{" "}
-              {bundle.counts.competitorUpdates} competitor update
-              {bundle.counts.competitorUpdates === 1 ? "" : "s"} · {bundle.counts.competitorCreates} new
-              {bundle.hasSeoGeo && " · SEO/GEO snapshot"}
-            </p>
-          )}
+          <CardTitle>{row.clientName ?? row.label}</CardTitle>
+          <p className="mt-1 font-mono text-xs text-muted-2">{row.label}</p>
+          {row.subtitle && <p className="mt-1.5 truncate text-xs text-muted">{row.subtitle}</p>}
         </div>
         <div className="flex items-center gap-2">
-          {bundle.hasSeoGeo && <Badge tone="info">seo/geo</Badge>}
+          <OriginBadge origin={row.origin} />
+          {row.hasSeoGeo && <Badge tone="info">seo/geo</Badge>}
           {apply.status === "done" && <Badge tone="success">imported</Badge>}
           {plan.status !== "ready" && apply.status !== "done" && (
-            <Button size="sm" variant="subtle" disabled={plan.status === "loading" || !!bundle.error} onClick={onPlan}>
+            <Button size="sm" variant="subtle" disabled={plan.status === "loading" || !!row.error} onClick={onPlan}>
               {plan.status === "loading" ? (
                 <Spinner className="h-3.5 w-3.5" />
               ) : (
@@ -268,9 +425,9 @@ function BundleCard({
         </div>
       </div>
 
-      {bundle.error && (
+      {row.error && (
         <p className="mt-3 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
-          {bundle.error}
+          {row.error}
         </p>
       )}
 
