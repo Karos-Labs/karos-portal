@@ -137,7 +137,7 @@ are tracked in the CD table at the bottom.
 | F108 | HIGH | B | CALENDAR | 2 | OPEN | — | Scheduled runs are previewed in your timezone but stored and printed in the server's | findings-p161-199.md |
 | F151 | HIGH | A | CALENDAR | 2 | OPEN | yes | The calendar day detail prints the raw run record — internal status, product code, job hash, ma | findings-p161-199.md |
 | F109 | MEDIUM | A | CALENDAR | 2 | OPEN | yes | A calendar run badged "Ready to review" has nothing to click | findings-p161-199.md |
-| F110 | MEDIUM | B | AGENTS | 2 | OPEN | — | Pause and Cancel on a scheduled run fail silently, and Cancel deletes it forever with no confir | findings-p161-199.md |
+| F110 | MEDIUM | B | CALENDAR | 2 | OPEN | — | Pause and Cancel on a scheduled run fail silently, and Cancel deletes it forever with no confir | findings-p161-199.md |
 | F111 | MEDIUM | A | CALENDAR | 2 | OPEN | yes | The month calendar is a fixed seven-column grid at every screen size, with chips well under the | findings-p161-199.md |
 | F112 | LOW | A | CALENDAR | 2 | OPEN | yes | A client's Calendar is read-only and its empty state offers no next step | findings-p161-199.md |
 | F142 | LOW | A | CALENDAR | 2 | OPEN | yes | The calendar's primary button wraps to two lines | findings-p161-199.md |

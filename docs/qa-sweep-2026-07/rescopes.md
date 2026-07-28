@@ -200,3 +200,11 @@ starting. Updated by the orchestrator after each verification gate.
   payload fields. **Still open for WORKSPACE (wave B): F107 part 1** — pass
   connectedPlatforms into AssetCard from assets-view.tsx:113 and
   jobs/[id]/page.tsx:61, else Publish Now never appears on the staff assets list.
+- **F110 re-pointed CALENDAR (final)**: fix lives in run-calendar.tsx (+
+  calendar-body.tsx:71); custom-agents.tsx togglePause (~:790 post-AGENTS) is the
+  reference pattern only. My AGENTS reassignment was wrong — primary-file matrix
+  keyed off the reference citation.
+- AGENTS F30 introduced a "cancelled" JobStatus; calendar-body.tsx:18
+  PAST_JOB_STATUSES gained it (one line, AGENTS-made, CALENDAR rebase-aware).
+  All clusters: treat "cancelled" as terminal/past, distinct from "failed" —
+  touches job-status.tsx maps (F41 AGENTS / F120 SHELL must include it).
