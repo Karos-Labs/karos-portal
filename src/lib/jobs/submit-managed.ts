@@ -10,6 +10,7 @@ import {
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import type { AppUser, ManagedTaskType } from "@/lib/types";
 import { logActivity } from "@/lib/actions/_shared";
+import { managedRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
 
 /**
@@ -180,7 +181,12 @@ export async function submitManagedJob(
     clientId: input.clientId,
     timestamp: Date.now(),
     type: "CAMPAIGN_CREATED",
-    title: `Managed job started: ${label}`,
+    // Machinery language, deliberately: this row is the operator's record that a
+    // submission left the building. It is minted through the shared builder so
+    // the client projection that hides it (activity-titles.ts) cannot drift
+    // away from the string it has to match — the runway sweep dispatches here,
+    // and a top-up writes one of these per job inside the same minute.
+    title: managedRunStartedTitle(label),
     actor: user.name,
     actorRole: "staff",
     metadata: { jobId, taskType: input.taskType },

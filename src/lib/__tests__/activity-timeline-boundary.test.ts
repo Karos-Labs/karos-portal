@@ -49,11 +49,27 @@ describe("the activity timeline's RSC boundary", () => {
     // an internal note…"). They used to cross in full — title, body and the
     // staff author's name — and were filtered at render, which is redaction
     // that has already lost.
-    expect(projection()).toMatch(/!isClientViewer \|\| log\.type !== "MANUAL_NOTE"/);
+    // Shape-tolerant, meaning-strict: the MANUAL_NOTE test must sit behind the
+    // viewer check in the projection's filter, however that filter is wrapped.
+    expect(projection()).toMatch(/!isClientViewer \|\|[\s\S]{0,120}log\.type !== "MANUAL_NOTE"/);
     // And the browser no longer re-decides it: a second answer to "may this
     // viewer read this row" is how the two come to disagree, and the one that
     // runs after the payload shipped is the one that does not count.
     expect(code(ui)).not.toContain('!== "MANUAL_NOTE"');
+  });
+
+  it("drops machinery rows on the server too", () => {
+    // "Managed job started: <product>" is the dispatcher's own record. It
+    // reached the client's Activity tab verbatim — machine vocabulary on the
+    // screen that narrates their work, one row per dispatch, so a runway
+    // top-up wrote up to fourteen at the same minute. Dropped in the same
+    // filter as the staff notes, for the same reason: the payload is the last
+    // place the decision still counts. activity-titles.test.ts pins the
+    // classifier to the writers.
+    expect(projection()).toMatch(/!isRunMachineryTitle\(log\.title\)/);
+    // Client-scoped, like every other redaction here — a staff timeline still
+    // shows which run fired and when.
+    expect(projection()).toMatch(/!isClientViewer \|\|/);
   });
 
   it("projects by construction, so a new ActivityLog field is excluded by default", () => {

@@ -7,6 +7,7 @@ import { chargeClientCredits } from "@/lib/data";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CreditError } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
+import { customRunStartedTitle } from "@/lib/activity-titles";
 import { cancelAgentServiceJob, isAgentServiceConfigured, submitAgentServiceJob } from "./client";
 import type { AgentServiceContextFile } from "./types";
 import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "./x-agent-context";
@@ -254,7 +255,7 @@ export async function submitCustomAgentRun(args: {
     clientId: client.id,
     timestamp: Date.now(),
     type: "CAMPAIGN_CREATED",
-    title: `Agent run started: ${agent.name}`,
+    title: customRunStartedTitle(agent.name),
     actor: actor.name,
     actorRole: actor.role,
     metadata: { jobId, taskType: "custom", agentKey: agent.key },

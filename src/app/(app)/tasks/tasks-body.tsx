@@ -15,6 +15,7 @@ import { PageHeader } from "@/components/ui";
 import { contentLabelsByAsset, runRowLabel } from "@/lib/agent-identity-map";
 import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
 import { clientSafeActor } from "@/lib/activity-actors";
+import { isRunMachineryTitle } from "@/lib/activity-titles";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import type { AppUser, ClientTask } from "@/lib/types";
 
@@ -109,8 +110,21 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     // at render for a client while crossing the boundary in full — title, body
     // and the staff author's name. Dropped HERE instead, exactly like the
     // launch runs below.
+    //
+    // Machinery rows go with them. "Managed job started: Social posts
+    // (IG/TikTok)" is the operator's dispatch record, and it reached the client
+    // verbatim: the machine's vocabulary on the one screen that narrates their
+    // work, one row per dispatch, so a runway top-up wrote up to fourteen of
+    // them inside a single minute (the batch tell the run aggregation below was
+    // added to close). The client is told nothing less — every writer of these
+    // rows mints a job too, and a client's jobs are already narrated here,
+    // collapsed to one row per agent per day in outcome language. See
+    // activity-titles.ts for why the launch/setup row is on that list as well.
     const timelineActivity: TimelineActivity[] = activityLogs
-      .filter((log) => !isClientViewer || log.type !== "MANUAL_NOTE")
+      .filter(
+        (log) =>
+          !isClientViewer || (log.type !== "MANUAL_NOTE" && !isRunMachineryTitle(log.title)),
+      )
       .map((log) => ({
         id: log.id,
         timestamp: log.timestamp,

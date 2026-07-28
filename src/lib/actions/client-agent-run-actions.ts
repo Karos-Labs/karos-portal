@@ -22,6 +22,7 @@ import {
 import { clientSafeRunError } from "@/lib/custom-agent-launch";
 import { reorderTemplateKeys } from "@/lib/slot-plan";
 import { logActivity, requireClientAccess } from "./_shared";
+import { templateRunStartedTitle } from "@/lib/activity-titles";
 import type { AppUser, ClientAgent, ClientAgentTemplate, CustomAgent } from "@/lib/types";
 
 /**
@@ -156,7 +157,7 @@ export async function runClientAgentTemplateAction(input: {
     clientId: input.clientId,
     timestamp: Date.now(),
     type: "CAMPAIGN_CREATED",
-    title: `${umbrella.displayName}: ${template.name} run started`,
+    title: templateRunStartedTitle(umbrella.displayName, template.name),
     actor: user.name,
     actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
     metadata: {
