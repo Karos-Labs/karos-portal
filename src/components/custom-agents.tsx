@@ -30,6 +30,8 @@ import { MAX_OUTPUTS_PER_RUN, MAX_RUNS_PER_WEEK } from "@/lib/scheduled-runs";
 import {
   buildCustomAgentPrompt,
   initialAgentBrief,
+  isLinkedInAgentIdentity,
+  isXAgentIdentity,
   launchProfileFor,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
@@ -98,6 +100,19 @@ export interface ClientAgentScheduleRow {
   lastError?: string | null;
   /** Epoch millis of that refusal. */
   lastErrorAt?: number | null;
+}
+
+/**
+ * The intake page an agent refuses to run without, by agent key — or null for
+ * agents with no such gate. Used on the STAFF hub, where the client is chosen
+ * inside the run dialog and per-agent readiness therefore cannot be resolved
+ * before the card is drawn (the client page passes a resolved `agentSetup` map
+ * instead). Names the gate; does not claim to know whether it is satisfied.
+ */
+function intakeDrivenLabel(key: string): string | null {
+  if (isXAgentIdentity(key)) return "X agent data";
+  if (isLinkedInAgentIdentity(key)) return "LinkedIn agent data";
+  return null;
 }
 
 /** The dialog's dropdowns, built from the same bounds the server clamps to. */
@@ -258,6 +273,17 @@ export function CustomAgentsHub({
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
+                  {/* Intake-driven agents refuse a run whose client has not filled
+                      in their data page — and that gate could only be discovered
+                      by writing the whole brief and reading the refusal. The
+                      readiness itself depends on the client picked inside the
+                      dialog, so the hub names the gate rather than pretending to
+                      resolve it. */}
+                  {intakeDrivenLabel(agent.key) && (
+                    <Badge tone="neutral">
+                      Needs {intakeDrivenLabel(agent.key)}
+                    </Badge>
+                  )}
                   {/* No client blurb ⇒ the client's card is still falling back to
                       the lab manifest below. Flagged here, fixed in the editor. */}
                   {!agent.clientBlurb?.trim() && <Badge tone="warning">No client blurb</Badge>}
