@@ -1,5 +1,6 @@
 "use server";
 
+import { intelReportImportedTitle } from "@/lib/activity-titles";
 import { revalidatePath } from "next/cache";
 import {
   getClient,
@@ -205,7 +206,7 @@ export async function importReportAction(
     clientId,
     timestamp: now,
     type: "INTEL_GENERATION",
-    title: "Intel Report imported",
+    title: intelReportImportedTitle(),
     description: `Markdown report parsed - score ${report.overallScore}/100 (${report.overallGrade}), ${parsed.competitorRows.length} competitors`,
     actor: user.name,
     actorRole: "staff",

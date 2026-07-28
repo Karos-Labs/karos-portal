@@ -870,7 +870,7 @@ all seven degraded modes are what is running at HEAD. Verified against code.
 | **T4** | **Note revision as a cheap light run** | Portal fallback is a full custom run, behind a flag; today a note is applied by a **human** — the copy says so and must keep saying so (`src/lib/slot-notes.ts:63-76`) | A dedicated revise skill / task param |
 | **T5** | **Video deliverables (F150 / CD-D1)** | **Landed portal-side** — `Asset.videoUrl` (`types.ts:459`), `<video controls>` (`asset-detail-modal.tsx:271-280`), resolver `assetVideos` (`asset-images.ts:102-128`). F150 is the one `DEFERRED-TOMER` row in the ledger | GCP block storage + upload path; service fetches from storage. §3.2 |
 | **T6** | **TikTok connector** | CD-D2 pending-verification chip, RESOLVED, decoupled from launch | TikTok app verification + connector. §3.3 |
-| **T7** | **X daily 3-option generation** — "produce exactly 3 distinct option drafts for `<date>`", consuming the pick/edit/posted learning log | Picker, telemetry and learning-log serialization are **live** (§4.12, `option-picker.tsx`, `slot-option-actions.ts`, `agent-service/x-agent-context.ts`). The interim **batch-slicing** selector is what runs today: a weekly batch lands and `syncOptionsFromBatchAsset` slices it across days (§4.1d) | Lab X skill gains a native daily-options mode + the pick-history optimization contract; the slicer then retires |
+| **T7** | **X daily 3-option generation** — "produce exactly 3 distinct option drafts for `<date>`", consuming the pick/edit/posted learning log | Picker, telemetry and learning-log serialization are **live** (§4.12, `option-picker.tsx`, `slot-option-actions.ts`, `src/lib/agent-service/x-agent-context.ts`). The interim **batch-slicing** selector is what runs today: a weekly batch lands and `syncOptionsFromBatchAsset` slices it across days (§4.1d) | Lab X skill gains a native daily-options mode + the pick-history optimization contract; the slicer then retires |
 
 ### 4.9 Per-slot cron firing + `karos_slot_id` — NOT BUILT (Tomer seam)
 
@@ -1185,7 +1185,7 @@ Small but easy to misread, because it moved during the build.
    internal tier; the client-tier Branding doc lags until the next
    condensation run. Accept, or trigger condensation on branding save.
 3. **Paused-schedule visibility:** PAUSED schedules vanish from the calendar
-   (`calendar-body.tsx:200` filters to `status === "active"`), and resume lives
+   (`calendar-body.tsx:233` filters to `status === "active"`), and resume lives
    only on the AI Agents page. Phase 3's default answer is Q7 — hide future
    slots from clients, grey them for staff — but it is **blocked on §4.11**:
    nothing renders a slot on the calendar to grey.
@@ -1198,7 +1198,7 @@ Small but easy to misread, because it moved during the build.
 6. **The X learning-log window — OPEN RULING, needed before WP-9 runs at volume.**
    The learning log that teaches the X agent a client's taste is capped at
    **`FEEDBACK_ROWS_PER_ACCOUNT = 30`**
-   (`src/lib/agent-service/x-agent-context.ts:45`, applied :75) — and the window
+   (`src/lib/src/lib/agent-service/x-agent-context.ts:45`, applied :75) — and the window
    is **per account bucket, not per client**, fed newest-first from
    `listXDraftFeedback` (called :156; defined `data.ts:2348-2356`, the
    newest-first sort at :2355).
@@ -1289,15 +1289,15 @@ Small but easy to misread, because it moved during the build.
   (`src/components/scheduled-runs.tsx:50`) now carries per-row `busy`/`error`
   state (:52-54); **`onToggle` (:56-76) and `onDelete` (:78-95) each wrap the
   action in `try`/`catch`, capture `{ error }`, and render it at :163**, and the
-  delete asks for confirmation first (`confirmingDelete`, :55). The rationale is
-  the comment at :40-49. The legacy `/api/scheduler` route (120 lines) is hardened
+  delete asks for confirmation first (`confirmingDelete`, :54). The rationale is
+  the comment at :40-49. The legacy `/api/scheduler` route (121 lines) is hardened
   the same way: cron auth :32-33 (`requireCronSecret`, imported :11),
   `Promise.allSettled` :48, a structured
   `{processed, fired, skipped, failed, results}` response :114-120. The create
   path's own error state is `ScheduledRunsCard` :180, rendered :347. **Nothing
   here is owed.**
 - **`asset-card.tsx` still calls `markAssetPostedAction` inline** — `handleMarkPosted`
-  at :599, the call at :601 — rather than using the extracted `MarkPostedRow`.
+  at :603, the call at :607 — rather than using the extracted `MarkPostedRow`.
   Harmless, but it is a third code path to the same action.
 - **Environmental, report-only:** a 10px right gutter persists wherever classic
   scrollbars are enabled (`scrollbar-gutter: stable`). The forced root scrollbar

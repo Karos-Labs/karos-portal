@@ -8,6 +8,7 @@ import {
   isRunMachineryTitle,
   labImportTitle,
   opsImportTitle,
+  intelReportImportedTitle,
   managedRunStartedTitle,
   templateRunStartedTitle,
 } from "@/lib/activity-titles";
@@ -32,6 +33,9 @@ const WRITERS = [
   "src/lib/agent-service/run-custom-agent.ts",
   "src/lib/actions/client-agent-actions.ts",
   "src/lib/actions/client-agent-run-actions.ts",
+  "src/lib/actions/lab-output-actions.ts",
+  "src/lib/actions/ops-import-actions.ts",
+  "src/lib/actions/competitor-actions.ts",
 ] as const;
 
 function read(rel: string): string {
@@ -63,6 +67,7 @@ describe("run-machinery activity titles", () => {
     expect(isRunMachineryTitle(templateRunStartedTitle("Social", "Daily post"))).toBe(true);
     expect(isRunMachineryTitle(labImportTitle("2026-07-21-sonnet-trial", 4))).toBe(true);
     expect(isRunMachineryTitle(opsImportTitle("lab repo abc123", "14 document(s)"))).toBe(true);
+    expect(isRunMachineryTitle(intelReportImportedTitle())).toBe(true);
   });
 
   it("still matches the rows already written to production", () => {
@@ -104,7 +109,7 @@ describe("run-machinery activity titles", () => {
         'from "@/lib/activity-titles"',
       );
       expect(src, `${rel} inlines a machinery title`).not.toMatch(
-        /title:\s*`[^`]*(?:job started|run started|setup started)/i,
+        /title:\s*`[^`]*(?:job started|run started|setup started|imported lab run|ops import from|intel report imported)/i,
       );
     }
   });
@@ -116,7 +121,7 @@ describe("run-machinery activity titles", () => {
     for (const file of walk(join(process.cwd(), "src"))) {
       if (file.endsWith("activity-titles.ts")) continue;
       if (file.includes("__tests__")) continue;
-      if (/title:\s*[`"'][^`"']*(?:job started|run started|setup started)/i.test(code(readFileSync(file, "utf8")))) {
+      if (/title:\s*[`"'][^`"']*(?:job started|run started|setup started|imported lab run|ops import from|intel report imported)/i.test(code(readFileSync(file, "utf8")))) {
         offenders.push(file);
       }
     }

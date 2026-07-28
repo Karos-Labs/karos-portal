@@ -71,6 +71,11 @@ export function opsImportTitle(sourceLabel: string, detail: string): string {
   return `Ops import from ${sourceLabel}: ${detail}`;
 }
 
+/** competitor-actions' staff import of a locally-produced intel report. */
+export function intelReportImportedTitle(): string {
+  return "Intel Report imported";
+}
+
 /**
  * The shapes above, matched on the STORED string.
  *
@@ -91,6 +96,10 @@ const RUN_MACHINERY_PATTERNS: readonly RegExp[] = [
   // the client as documents and drafts with their own honest rows.
   /^imported lab run: /i,
   /^ops import from /i,
+  // competitor-actions' staff import of a locally-produced intel report. The
+  // derived "Research report ready" row (activity-timeline's hasIntelLog
+  // dedupe) is the honest client-facing telling and renders in its place.
+  /^intel report imported$/i,
   // Retroactive only: the old schedule-change wording decomposed the batch
   // ("3 runs per week (12 drafts)"). New rows mint in pace vocabulary and
   // stay on the client's timeline.
