@@ -146,6 +146,20 @@ describe("buildBrandVoiceSection", () => {
     );
   });
 
+  /**
+   * This block is injected into a CLIENT-VISIBLE document, so the "edit it in
+   * the guidelines UI instead" note is addressed to the wrong reader. It lives
+   * in a comment, which every renderer drops, rather than as the italic line it
+   * used to be — the same line the client read verbatim next to the sentinel.
+   */
+  it("keeps its own housekeeping note inside a comment, not on the page", () => {
+    const result = buildBrandVoiceSection(fullGuidelines);
+    const visible = result.replace(/<!--[\s\S]*?-->/g, "");
+    expect(visible).not.toMatch(/auto-synced from the Branding Guidelines UI/i);
+    expect(visible).not.toContain("_");
+    expect(result).toMatch(/<!--[^>]*overwritten on the next sync/i);
+  });
+
   it("includes primary accent color", () => {
     const result = buildBrandVoiceSection(fullGuidelines);
     expect(result).toContain("**Primary Accent:** #ff0000");
