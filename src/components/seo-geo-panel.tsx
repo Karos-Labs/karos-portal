@@ -14,6 +14,7 @@ import {
   buildRosterChips,
   buildRosterDrift,
   buildScoreViews,
+  capturedNothing,
   formatPrompt,
   genericFlagPrefill,
   unwiredRequestPrefill,
@@ -376,6 +377,14 @@ export function SeoGeoPanel({
   const generic = genericFlagPrefill(insights);
   const citationLeaderboard = insights.citationLeaderboard ?? [];
 
+  // QA F23: the AI capture rejected and the pipeline substituted an empty probe
+  // set, empty prompt set and a one-name roster. Without this guard the panel
+  // renders its full scaffolding against those zeros — "0 real buyer questions",
+  // "excluding the 0 questions that name you directly", and a disclosure labelled
+  // "The 0 buyer questions we asked" that opens onto an empty box. That reads like
+  // the product is broken, when one leg of one run degraded.
+  const captureFailed = capturedNothing(insights);
+
   const measuredEngines = engines.filter((e) => e.status === "measured");
   const unmeasuredEngines = engines.filter((e) => e.status !== "measured");
   const unwiredNames = engines.filter((e) => e.status === "not-wired").map((e) => e.name);
@@ -493,7 +502,11 @@ export function SeoGeoPanel({
         )}
       </Card>
 
-      {/* 4 · Engine-by-engine proof: you vs the SAME competitors the sidebar tracks */}
+      {/* 4 · Engine-by-engine proof: you vs the SAME competitors the sidebar tracks.
+          Suppressed entirely on a degraded run (F23): its subtitle interpolates
+          three counts that are all zero, and the no-engines banner on the capture
+          strip above already explains what happened. */}
+      {!captureFailed && (
       <Card>
         <CardTitle className="mb-1">You vs competitors on each AI engine</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
@@ -527,6 +540,7 @@ export function SeoGeoPanel({
           </div>
         )}
       </Card>
+      )}
 
       {/* 4b · Brands the engines volunteered that we don't track yet */}
       {discovered.length > 0 && (
@@ -592,6 +606,8 @@ export function SeoGeoPanel({
           leaderboard, both named sections of this report, were children of a
           disclosure that didn't mention them and was closed by default. A client
           asking "who are you comparing me to?" could never find the answer. */}
+      {/* F23: no disclosure inviting a click that opens onto an empty box. */}
+      {!captureFailed && (
       <Card>
         <Disclosure summary={`The ${prompts.length} questions we asked`}>
           {answerGrid ? (
@@ -633,6 +649,7 @@ export function SeoGeoPanel({
           </p>
         </Disclosure>
       </Card>
+      )}
 
       <Card>
         <CardTitle className="mb-1">Who we compare you against</CardTitle>
@@ -664,7 +681,10 @@ export function SeoGeoPanel({
           never cited, and earning citations is what moves the score — was exactly
           the line that could not render when there were no citations at all. The
           zero state deleted its own explanation while the engine cards above kept
-          saying "cited as a source: 0 of 14" with nothing to explain it. */}
+          saying "cited as a source: 0 of 14" with nothing to explain it.
+          It IS suppressed on a degraded run (F23) — there were no answers to
+          count citations across, and the capture-strip banner says so. */}
+      {!captureFailed && (
       <Card>
         <CardTitle className="mb-1">Who the engines quote as sources</CardTitle>
         {quotedInstead.length > 0 ? (
@@ -700,6 +720,7 @@ export function SeoGeoPanel({
         )}
         <p className="mt-2 text-[11px] text-muted-2">{clientCitationLine}</p>
       </Card>
+      )}
 
       {/* 7 · Catch-all flag affordance */}
       <div className="flex justify-end">

@@ -190,7 +190,22 @@ export function formatCaptured(capturedAt: number): string {
   return new Date(capturedAt).toISOString().slice(0, 10);
 }
 
+/**
+ * True when the AI answer capture rejected and the pipeline substituted an empty
+ * probe set, empty prompt set and a one-name roster (QA F23). The panel renders the
+ * full scaffolding against those zeros otherwise — "0 real buyer questions",
+ * "excluding the 0 questions that name you directly", "The 0 buyer questions we
+ * asked" opening onto an empty box — which reads like the product is broken rather
+ * than like one leg of one run degrading.
+ */
+export function capturedNothing(insights: SeoGeoInsights): boolean {
+  return (insights.promptSet?.length ?? 0) === 0;
+}
+
 export function buildContextLine(insights: SeoGeoInsights): string {
+  if (capturedNothing(insights)) {
+    return `Snapshot from ${formatCaptured(insights.capturedAt)} · AI answer capture did not complete this run`;
+  }
   return [
     `Snapshot from ${formatCaptured(insights.capturedAt)}`,
     `${insights.promptSet.length} real buyer questions`,

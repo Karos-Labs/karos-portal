@@ -6,6 +6,7 @@ import {
   buildAnswerGridViews,
   buildContextLine,
   buildIntentPromptViews,
+  capturedNothing,
   formatPrompt,
   buildDiscoveredViews,
   buildRosterChips,
@@ -511,6 +512,21 @@ describe("score views + context line (fixes 2 + 3)", () => {
     expect(buildContextLine(insights())).toBe(
       "Snapshot from 2026-07-12 · 2 real buyer questions · 3 of 5 AI engines measured",
     );
+  });
+
+  /** QA F23: a rejected capture substitutes an empty prompt set, and the counts
+   *  were interpolated into three separate sentences with no guard. */
+  it("says the capture didn't complete instead of claiming zero questions", () => {
+    const degraded = insights({ promptSet: [], geoVisibilityEnginesScored: 0 });
+    expect(capturedNothing(degraded)).toBe(true);
+    expect(buildContextLine(degraded)).toBe(
+      "Snapshot from 2026-07-12 · AI answer capture did not complete this run",
+    );
+    expect(buildContextLine(degraded)).not.toContain("0 real buyer questions");
+  });
+
+  it("treats a normal run as captured", () => {
+    expect(capturedNothing(insights())).toBe(false);
   });
 
   it("labels every registry bucket without falling back to the generic", () => {
