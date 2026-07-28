@@ -56,10 +56,29 @@ export function looksLikeMarkdown(text: string | null | undefined): boolean {
  * `status:` / `job:` / `product:` key line, or any line carrying a database
  * hash or a lab product code. Agent deliverables open with exactly this kind of
  * header ("status: pending_review · product e13 · job e52ffe1e · draft-only").
+ *
+ * The key line tolerates the markdown the agent may have wrapped it in — a
+ * leading `#`, `-`, `>`, `|` or `**`, and `**Status:**`-style bold around the
+ * key itself — because the very same bookkeeping arrives as `- **Status:** …`,
+ * `> status: …`, `## status: …` and `| status | pending_review |` depending on
+ * which template wrote it. The separator set includes `·`, which is what a
+ * table row's pipes become once flattened.
  */
 const INTERNAL_KEY_LINE_RE =
-  /^\s*(status|state|product|job|run|task|id|uuid|hash|module|version|owner|source|slug|key|delivery_mode|mode)\s*[:=]/i;
-const INTERNAL_TOKEN_RE = /\b(?:[0-9a-f]{8,}|product\s+e\d+|job\s+[0-9a-f]{6,})\b/i;
+  /^[\s>#*_\-+|·]*(status|state|product|job|run|task|id|uuid|hash|module|version|owner|source|slug|key|delivery_mode|mode)[\s*_]*[:=|·]/i;
+/**
+ * Deliberately fail-closed: the 8-hex-digit branch also matches a plain 8-digit
+ * number, which blanks a line that merely contains one. Dropping a line we
+ * were unsure about is the safe direction on a client surface — do not narrow
+ * this to "must contain a letter" without re-verifying the leak cases.
+ */
+const INTERNAL_TOKEN_RE =
+  /\b(?:[0-9a-f]{8,}|product[\s:*_-]*e\d+|job[\s:*_-]*[0-9a-f]{6,})\b/i;
+
+/** Is this line the record's own bookkeeping rather than prose for the reader? */
+function isInternalLine(line: string): boolean {
+  return INTERNAL_KEY_LINE_RE.test(line) || INTERNAL_TOKEN_RE.test(line);
+}
 
 /**
  * Strip inline Markdown marks from a single line, leaving readable text.
@@ -101,20 +120,23 @@ export function toPlainSummary(text: string | null | undefined, maxChars = 240):
     if (!line) continue;
     if (/^[-*_]{3,}$/.test(line)) continue; // horizontal rule
     if (/^\|[-:\s|]+\|$/.test(line)) continue; // table separator
-    if (INTERNAL_KEY_LINE_RE.test(line)) continue;
-    if (INTERNAL_TOKEN_RE.test(line)) continue;
 
     const stripped = stripInlineMarkdown(
       line
-        .replace(/^#{1,6}\s+/, "") // heading marker
-        .replace(/^>\s?/, "") // blockquote arrow
-        .replace(/^[-*+]\s+/, "") // bullet
-        .replace(/^\d+[.)]\s+/, "") // ordered item
+        // Prefixes can nest ("- > status: …"), so run the set until it settles
+        // rather than once — a single pass leaves the inner marker in place and
+        // the internal-line test then misses the key behind it.
+        .replace(/^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)+/, "")
         .replace(/^\|/, "")
         .replace(/\|$/, "")
         .replace(/\s*\|\s*/g, " · "), // table row → readable run
     );
-    if (stripped) parts.push(stripped);
+    if (!stripped) continue;
+    // Tested on BOTH forms. The marks can hide the key from a raw-line test
+    // (`**Status:** pending_review`), and flattening can rearrange it (a table
+    // row's pipes become `·`), so neither test alone catches every shape.
+    if (isInternalLine(line) || isInternalLine(stripped)) continue;
+    parts.push(stripped);
     if (parts.join(" ").length >= maxChars) break;
   }
 

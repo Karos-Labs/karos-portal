@@ -147,6 +147,38 @@ describe("toPlainSummary", () => {
     expect(toPlainSummary(null)).toBe("");
     expect(toPlainSummary("status: queued")).toBe("");
   });
+
+  /**
+   * The same bookkeeping arrives wrapped in whatever markdown the template that
+   * wrote it used. Testing the raw line alone missed every one of these: the
+   * mark sits between the line start and the key.
+   */
+  describe("catches the bookkeeping line whatever markdown wraps it", () => {
+    const CASES: [string, string][] = [
+      ["bold key", "**Status:** pending_review"],
+      ["bulleted bold key", "- **Status:** pending_review"],
+      ["blockquote", "> status: pending_review"],
+      ["heading", "## status: pending_review"],
+      ["table row", "| status | pending_review |"],
+      ["ordered item", "1. status: pending_review"],
+      ["nested bullet + quote", "- > status: pending_review"],
+      ["bold product code", "**product:** e13"],
+      ["job hash behind a bullet", "- job: e52ffe1e"],
+    ];
+    for (const [name, line] of CASES) {
+      it(name, () => {
+        const out = toPlainSummary(`${line}\nThe real sentence.`);
+        expect(out).toBe("The real sentence.");
+      });
+    }
+  });
+
+  it("does not eat the prose that follows a wrapped bookkeeping line", () => {
+    const out = toPlainSummary(
+      "# Weekly batch\n\n- **Status:** pending_review\n- **Product:** e13\n\nThree posts, ready for a look.",
+    );
+    expect(out).toBe("Weekly batch Three posts, ready for a look.");
+  });
 });
 
 describe("stripInlineMarkdown", () => {
