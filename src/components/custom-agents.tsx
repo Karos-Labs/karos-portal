@@ -1043,10 +1043,13 @@ function RunCustomAgentModal({
           <Icon name="CheckCircle2" className="mx-auto h-8 w-8 text-success" />
           <p className="text-sm text-foreground">Run started</p>
           {/* Drafts no longer reach the client archive at all: F149 filters it
-              to approved, non-future items. Copy is phase3-design §3. */}
+              to approved, non-future items. phase3-design §3's sentence is for
+              run-FINISHED surfaces; this one fires the moment a run starts, so
+              it takes the future-tense "reviews it when it lands" form —
+              nobody is reviewing anything yet. */}
           <p className="text-xs text-muted">
-            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Your Karos team is
-            reviewing it — finished posts appear in your Workspace once approved.
+            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Your Karos team
+            reviews it when it lands — finished posts appear in your Workspace once approved.
           </p>
           <Button variant="subtle" onClick={onClose}>
             Done
