@@ -133,6 +133,19 @@ export async function GET(req: NextRequest) {
         .filter((f) => !inFlightProducts.has(FAMILY_PRODUCT[f]))
         .slice(0, maxJobsPerClient);
 
+      // Explain every short family this run does NOT dispatch for, so a
+      // deficit alongside "skipped" never reads as unexplained inaction: a
+      // family the autopilot never auto-fires (blog_article — needs a real
+      // topic) vs. one already generating from a prior run (idempotency).
+      const notAutoFired = runway.shortFamilies.filter((f) => !AUTOGEN_FAMILIES.includes(f));
+      const alreadyInFlight = runway.shortFamilies.filter(
+        (f) => AUTOGEN_FAMILIES.includes(f) && inFlightProducts.has(FAMILY_PRODUCT[f]),
+      );
+      const skipReasons = [
+        ...notAutoFired.map((f) => `${f}: needs manual input, not auto-generated`),
+        ...alreadyInFlight.map((f) => `${f}: already generating (job in flight)`),
+      ];
+
       const dispatched: ClientResult["dispatched"] = [];
       for (const family of candidates) {
         const product = FAMILY_PRODUCT[family];
@@ -161,15 +174,20 @@ export async function GET(req: NextRequest) {
       const succeeded = dispatched.some((d) => d.jobId && !d.error);
       const attemptedButFailed = !succeeded && dispatched.some((d) => d.error);
       if (succeeded) toppedUp++;
+
+      const detailParts: string[] = [];
+      if (!enabled) detailParts.push("RUNWAY_AUTOGEN_ENABLED not set — report only");
+      if (enabled && !serviceReady) detailParts.push("agent service not configured");
+      if (dryRun) detailParts.push("dryRun");
+      detailParts.push(...skipReasons);
+
       results.push({
         ...base,
         status: succeeded ? "topped_up" : attemptedButFailed ? "failed" : "skipped",
         coveredThroughMs: runway.coveredThroughMs,
         deficit,
         dispatched,
-        ...(!enabled ? { detail: "RUNWAY_AUTOGEN_ENABLED not set — report only" } : {}),
-        ...(enabled && !serviceReady ? { detail: "agent service not configured" } : {}),
-        ...(dryRun ? { detail: "dryRun" } : {}),
+        ...(detailParts.length > 0 ? { detail: detailParts.join("; ") } : {}),
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : "unknown";
