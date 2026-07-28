@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
+import { MAX_ACTIVE_TASKS } from "@/lib/constants";
 // Type-only import — the server-only swarm engine never reaches the client bundle.
 import type { SwarmEvent, SwarmAgentId } from "@/lib/agent-swarm";
 
@@ -43,6 +44,17 @@ export function StrategyWarRoom({
   const [lines, setLines] = useState<Line[]>([]);
   const [status, setStatus] = useState<Status>("running");
   const [created, setCreated] = useState<number | null>(null);
+  /**
+   * Why the save produced what it produced. Zero created is a routine outcome
+   * — every candidate that duplicates the board or overflows the active-task
+   * ceiling is dropped — and the only explanation used to be one grey console
+   * line under a green "Consensus reached" banner (QA F90).
+   */
+  const [outcome, setOutcome] = useState<{
+    note: string;
+    duplicatesSkipped: number;
+    capSkipped: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -66,6 +78,11 @@ export function StrategyWarRoom({
         case "persisted":
           setLines((p) => [...p, { kind: "persisted", note: ev.note }]);
           setCreated(ev.created);
+          setOutcome({
+            note: ev.note,
+            duplicatesSkipped: ev.duplicatesSkipped,
+            capSkipped: ev.capSkipped,
+          });
           break;
         case "done":
           setStatus("done");
@@ -192,12 +209,15 @@ export function StrategyWarRoom({
           </div>
         </div>
 
-        {/* Footer */}
-        {status === "done" && (
+        {/* Footer — a green tick over "0 tasks locked" was the last thing a
+            client saw after a minute of waiting, with no idea why nothing
+            happened (QA F90). Zero created gets its own neutral panel that
+            says what was dropped and what to do next. */}
+        {status === "done" && (created ?? 0) > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
             <p className="flex min-w-0 items-center gap-2">
               <Icon name="CircleCheck" className="h-4 w-4 shrink-0" />
-              Consensus reached — {created ?? 0} task{created === 1 ? "" : "s"} locked into your map.
+              Consensus reached — {created} task{created === 1 ? "" : "s"} locked into your map.
             </p>
             <Link
               href="/tasks"
@@ -206,6 +226,27 @@ export function StrategyWarRoom({
             >
               View task map →
             </Link>
+          </div>
+        )}
+        {status === "done" && (created ?? 0) === 0 && (
+          <div className="space-y-1.5 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+            <p className="flex items-center gap-2 font-medium">
+              <Icon name="Info" className="h-4 w-4 shrink-0" />
+              Nothing new to add — no tasks were created.
+            </p>
+            <p className="text-xs opacity-90">{zeroOutcomeExplanation(outcome)}</p>
+            <div className="flex flex-wrap items-center gap-3 pt-0.5">
+              <Link
+                href="/tasks"
+                onClick={onClose}
+                className="text-xs font-semibold underline underline-offset-2 hover:opacity-80"
+              >
+                Open your task map →
+              </Link>
+              <button type="button" onClick={onClose} className="text-xs underline underline-offset-2 hover:opacity-80">
+                Close
+              </button>
+            </div>
           </div>
         )}
         {status === "error" && (
@@ -222,6 +263,27 @@ export function StrategyWarRoom({
       </div>
     </Modal>
   );
+}
+
+/**
+ * Plain-English reason a finished run created nothing, plus the concrete next
+ * step. Falls back to the engine's own note when the counts don't explain it.
+ */
+function zeroOutcomeExplanation(
+  outcome: { note: string; duplicatesSkipped: number; capSkipped: number } | null,
+): string {
+  if (!outcome) return "The debate finished without a saved result. Try running it again.";
+  const { duplicatesSkipped, capSkipped } = outcome;
+  if (capSkipped > 0 && duplicatesSkipped > 0) {
+    return `Every proposal was either already on your board (${duplicatesSkipped}) or over the ${MAX_ACTIVE_TASKS}-active-task limit (${capSkipped}). Approve or complete some tasks, then run this again.`;
+  }
+  if (capSkipped > 0) {
+    return `Your board is already at the ${MAX_ACTIVE_TASKS}-active-task limit, so ${capSkipped} proposal${capSkipped === 1 ? "" : "s"} could not be added. Approve or complete some tasks, then run this again.`;
+  }
+  if (duplicatesSkipped > 0) {
+    return `All ${duplicatesSkipped} proposal${duplicatesSkipped === 1 ? "" : "s"} already exist on your board — your task map is up to date.`;
+  }
+  return outcome.note;
 }
 
 function ConsoleLine({ line }: { line: Line }) {
