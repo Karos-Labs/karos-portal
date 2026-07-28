@@ -141,6 +141,15 @@ export const LAUNCH_STAGE_SPLIT_MS = 12 * 60 * 1000;
 /** ~How long a setup run takes, in the client's words. */
 export const LAUNCH_ESTIMATE = "~20–40 min";
 
+/**
+ * Past this, a launch still sitting in `launching` is more likely stuck than
+ * slow — the webhook never arrived, the service dropped the job, a deploy ate
+ * the callback. Comfortably longer than the quoted window so a genuinely slow
+ * setup is never called stuck (W7: staff get a reset either way; this only
+ * decides whether the card says so out loud).
+ */
+export const LAUNCH_STUCK_MS = 60 * 60 * 1000;
+
 export const CLIENT_LAUNCH_PHASE_COPY: Record<
   Exclude<ClientLaunchPhase, "not_started" | "failed">,
   { title: string; detail: string }
@@ -338,10 +347,83 @@ export interface ClientAgentTemplateInput {
   status?: ClientAgentTemplate["status"];
 }
 
-/** The umbrella's slot mode. X-style umbrellas own no chain family. */
-export function isOptionsMode(agent: Pick<ClientAgent, "chainFamily">): boolean {
-  return agent.chainFamily == null;
+/**
+ * The umbrella's slot mode, read from the field the BIND set (W3).
+ *
+ * This used to answer `chainFamily == null`, which is true of the X agent AND
+ * of every agent the family classifier could not place — a research agent, an
+ * SEO agent, a freshly imported lab skill with an unfamiliar name. Those would
+ * have been handed the daily pick-of-3 product (a picker with no candidates, a
+ * "pick of 3" chip on every calendar day) purely because nobody could tell
+ * what family they wrote into. Mode is now a decision, not a leftover.
+ *
+ * Absent ⇒ "single", the safe answer: a single-mode umbrella with an empty
+ * rotation generates no slots at all, where a wrongly-inferred options mode
+ * generates days the agent cannot fill.
+ */
+export function isOptionsMode(agent: Pick<ClientAgent, "slotMode">): boolean {
+  return agent.slotMode === "options";
 }
 
 /** The stable template key an options slot carries, so chips still have a label. */
 export const OPTIONS_TEMPLATE_KEY = "daily-post";
+
+/* ─────────────────────── the roster card's status word ────────────────────── */
+
+export type RosterStatusTone = "live" | "attention" | "progress" | "idle";
+
+export interface RosterStatus {
+  tone: RosterStatusTone;
+  label: string;
+}
+
+/**
+ * The single status word a ROSTER card carries (CD-G1).
+ *
+ * The roster answers one question per agent — is this working for me right now?
+ * — and nothing else. Everything that explains a status (the launch CTA, the
+ * progress narration, the failure and its Contact-us row) lives on the agent's
+ * detail page, which is why the card can afford to be one word.
+ *
+ * PRECEDENCE. A schedule refusal outranks "Live", inheriting F24/F129: an agent
+ * whose every scheduled fire is being turned away is not live, whatever its
+ * umbrella says, and painting it green because a database field says `live`
+ * is the exact lie those two defects were about.
+ *
+ * "Live" is then either of the two things a client would call live: an umbrella
+ * that has gone live, or — for an agent with no umbrella at all — a weekly
+ * schedule that is actively producing. A granted agent that is neither is idle,
+ * not broken, and says so.
+ */
+export function rosterStatus(input: {
+  /** Null for a granted agent with no umbrella bound. */
+  launchState: ClientAgentLaunchState | null;
+  /** The agent's weekly schedule refusal, already client-redacted. */
+  scheduleRefusal?: string | null;
+  /** True when a weekly schedule exists and is not paused. */
+  scheduleActive?: boolean;
+}): RosterStatus {
+  if (input.scheduleRefusal?.trim()) return { tone: "attention", label: "Needs attention" };
+
+  if (input.launchState === null) {
+    // No umbrella and no schedule firing: nobody has set this agent up for this
+    // client yet, and its detail page says exactly that. The two must agree —
+    // a roster promising "Ready to start" that opens onto "Not set up yet" is
+    // a card that lied about the page behind it.
+    return input.scheduleActive
+      ? { tone: "live", label: "Live" }
+      : { tone: "idle", label: "Not set up yet" };
+  }
+
+  switch (input.launchState) {
+    case "live":
+      return { tone: "live", label: "Live" };
+    case "launching":
+    case "curating":
+      return { tone: "progress", label: "Setting up" };
+    case "launch_failed":
+      return { tone: "attention", label: "Setup needs attention" };
+    case "not_launched":
+      return { tone: "idle", label: "Not set up yet" };
+  }
+}

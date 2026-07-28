@@ -2,7 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 
-import { getClient, getClientCredits, getCustomAgent } from "@/lib/data";
+import {
+  getClient,
+  getClientCredits,
+  getCustomAgent,
+  listJobs,
+  listPlannedScheduledRuns,
+} from "@/lib/data";
 import {
   claimClientAgentLaunch,
   getClientAgent,
@@ -15,8 +21,10 @@ import {
   LAUNCH_BLOCK_REASON,
   canSubmitLaunch,
   evaluateLaunchGate,
+  isOptionsMode,
   type ClientAgentTemplateInput,
 } from "@/lib/client-agents";
+import { ensureSlotHorizon } from "@/lib/client-agent-slots";
 import { availableCredits, creditBlockReason, isBillableClientActor } from "@/lib/credits";
 import {
   clientSafeRunError,
@@ -70,18 +78,65 @@ function chainFamilyForAgent(agent: Pick<CustomAgent, "key" | "name">): ClientAg
 }
 
 /**
+ * Whether this agent is ALREADY working for this client — a successful custom
+ * run in its history, or a live weekly schedule row.
+ *
+ * Binding such an agent as `not_launched` is not a neutral act: the client's
+ * agents page hands a pre-launch umbrella its card, which removes the agent's
+ * Run button, its schedule row and its run history from the client's view and
+ * replaces the lot with "Not set up yet" — for an agent that is, visibly to
+ * them, producing. That is why the bind control asks before doing it (W6).
+ */
+async function isAgentProducingForClient(
+  clientId: string,
+  agent: Pick<CustomAgent, "id" | "name">,
+): Promise<boolean> {
+  const [jobs, schedules] = await Promise.all([
+    listJobs({ clientId }),
+    listPlannedScheduledRuns({ clientId }),
+  ]);
+  const successful = new Set(["review", "approved", "delivered"]);
+  const hasRun = jobs.some(
+    (job) =>
+      job.external?.taskType === "custom" &&
+      successful.has(job.status) &&
+      (job.customAgentId === agent.id || (!job.customAgentId && job.agentName === agent.name)),
+  );
+  if (hasRun) return true;
+  return schedules.some(
+    (run) => run.customAgentId === agent.id && run.status !== "completed",
+  );
+}
+
+/**
  * Create (or return) the umbrella binding a lab agent to a client. Staff-only:
  * a client never chooses which lab agent backs their Instagram Agent.
  *
  * Idempotent by construction — the doc id is derived from (clientId, agentKey),
  * so a second bind returns the existing umbrella with its launch state, its
  * templates and its rotation untouched.
+ *
+ * An agent that is ALREADY producing for this client is not bound silently: the
+ * call returns `alreadyProducing` and writes nothing, so the control can offer
+ * the two honest choices (W6). `bindAsLive` takes the grandfathered path —
+ * the same state §9's backfill gives an agent whose runs predate launches — and
+ * `bindAsNew` is the deliberate "yes, take it offline until it is set up".
  */
 export async function bindClientAgentAction(input: {
   clientId: string;
   customAgentId: string;
   displayName?: string;
-}): Promise<{ id?: string; created?: boolean; error?: string }> {
+  /** Bind an already-producing agent as live (keeps it producing). */
+  bindAsLive?: boolean;
+  /** Bind as not-set-up even though it is already producing (staff confirmed). */
+  bindAsNew?: boolean;
+}): Promise<{
+  id?: string;
+  created?: boolean;
+  /** Set when the bind needs a decision first — nothing was written. */
+  alreadyProducing?: boolean;
+  error?: string;
+}> {
   const user = await requireStaff();
   const [client, agent] = await Promise.all([
     getClient(input.clientId),
@@ -90,9 +145,16 @@ export async function bindClientAgentAction(input: {
   if (!client) return { error: "Client not found." };
   if (!agent || !agent.enabled) return { error: "Agent not found." };
 
+  if (!input.bindAsLive && !input.bindAsNew) {
+    if (await isAgentProducingForClient(input.clientId, agent)) {
+      return { alreadyProducing: true };
+    }
+  }
+
   const identity = `${agent.key} ${agent.name}`;
   const platform = socialPlatformsFor(identity)[0] ?? "";
   const chainFamily = chainFamilyForAgent(agent);
+  const now = Date.now();
   const { id, created } = await upsertClientAgent({
     clientId: input.clientId,
     agentKey: agent.key,
@@ -100,7 +162,15 @@ export async function bindClientAgentAction(input: {
     displayName: (input.displayName ?? agent.name).trim().slice(0, 120) || agent.name,
     platform,
     ...(chainFamily ? { chainFamily } : {}),
-    launchState: "not_launched",
+    // Explicit at bind time, never inferred from a missing chainFamily (W3).
+    slotMode: isXAgentIdentity(agent.key) ? "options" : "single",
+    // Grandfathered: an agent that is already producing keeps producing. Its
+    // template registry stays empty until someone fills it, which is exactly
+    // the state the backfill leaves — and the page keeps serving it today's
+    // card while it is empty, so nothing the client uses disappears.
+    ...(input.bindAsLive
+      ? { launchState: "live" as const, launchCompletedAt: now }
+      : { launchState: "not_launched" as const }),
     templates: [],
     rotation: [],
     createdBy: user.uid,
@@ -333,7 +403,7 @@ export async function saveClientAgentTemplatesAction(input: {
 export async function goLiveClientAgentAction(
   clientAgentId: string,
 ): Promise<{ error?: string }> {
-  await requireStaff();
+  const user = await requireStaff();
   const umbrella = await getClientAgent(clientAgentId);
   if (!umbrella) return { error: "Agent not found." };
   if (umbrella.launchState === "live") return {};
@@ -343,15 +413,24 @@ export async function goLiveClientAgentAction(
   const active = umbrella.templates.filter((t) => t.status === "active");
   // The options-mode umbrella (X) has no template streams by design — its
   // product is the daily pick, so an empty registry is the correct state.
-  if (active.length === 0 && umbrella.chainFamily) {
+  if (active.length === 0 && !isOptionsMode(umbrella)) {
     return { error: "Confirm at least one template before going live." };
   }
+  const rotation = active.map((t) => t.key);
   await updateClientAgent(umbrella.id, {
     launchState: "live",
     launchCompletedAt: Date.now(),
     launchError: null,
-    rotation: active.map((t) => t.key),
+    rotation,
   });
+  // Going live is the first moment the plan CAN be drawn: there is a confirmed
+  // rotation to cycle. Best-effort — a missing or paused schedule simply means
+  // no days to plan yet, and the umbrella is live either way.
+  await ensureSlotHorizon(
+    { ...umbrella, launchState: "live", rotation, templates: umbrella.templates },
+    user.uid,
+  ).catch(() => ({ created: 0 }));
   revalidatePath(`/clients/${umbrella.clientId}/agents`);
+  revalidatePath("/calendar");
   return {};
 }

@@ -23,6 +23,7 @@ import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { MANAGED_PRODUCTS, type ManagedProduct } from "@/lib/agent-service/products";
 import { CREDIT_COSTS, taskExecutionCost } from "@/lib/credits";
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { resolveTaskCustomAgentId } from "@/lib/task-agent-link";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { buildArtifactGenerationPrompt, type EmployeeAdvocacyProfile } from "@/lib/ai/prompts/proactive-assistant";
@@ -112,14 +113,12 @@ export async function plannedTaskExecutionCost(task: ClientTask): Promise<number
 }
 
 /**
- * The custom agent (git-imported, allowlisted per client) bound to this task,
- * or null. Only an explicit link counts — custom agents are never inferred
- * from title keywords the way managed products are.
+ * The custom agent bound to this task. Defined in task-agent-link.ts and
+ * re-exported here so existing callers are unchanged: the §2 guard rail has to
+ * resolve the identical agent this engine dispatches to, and it reads that
+ * module directly rather than importing the whole engine (see its header).
  */
-export function resolveTaskCustomAgentId(task: ClientTask): string | null {
-  const id = task.metadata?.customAgentId;
-  return typeof id === "string" && id.length > 0 ? id : null;
-}
+export { resolveTaskCustomAgentId };
 
 /**
  * Map a karos_managed task to the managed product (ecosystem agent) that

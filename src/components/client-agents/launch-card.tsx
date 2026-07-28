@@ -10,6 +10,7 @@ import { ContactUsButton } from "@/components/contact-us-modal";
 import {
   CLIENT_LAUNCH_PHASE_COPY,
   LAUNCH_ESTIMATE,
+  LAUNCH_STUCK_MS,
   clientLaunchPhase,
   type ClientLaunchPhase,
 } from "@/lib/client-agents";
@@ -119,6 +120,15 @@ export function ClientAgentLaunchCard({
         )}
       </div>
 
+      {/* W7: an umbrella whose setup job never reported back sits in
+          `launching` forever — the client sees perpetual progress and staff had
+          no control at all, because Reset only rendered on launch_failed. It is
+          the same action (it already accepts any non-live state); it just had
+          nowhere to be pressed. Confirmed, because the run may genuinely still
+          be going: resetting only clears the portal's side, and a later
+          delivery finds no umbrella claiming its job and lands harmlessly. */}
+      {!viewerIsClient && inFlight && <StuckLaunchEscape agent={agent} />}
+
       {agent.launchState !== "live" && !inFlight && (
         <div className="mt-auto pt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -171,6 +181,66 @@ export function ClientAgentLaunchCard({
           {error && <p className="mt-2 text-[11px] text-warning">{error}</p>}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The staff escape hatch for a launch that is not coming back (W7).
+ *
+ * Deliberately staff-only and deliberately quiet: while the setup is genuinely
+ * in flight this is a small line at the bottom of the card, and it only turns
+ * into a real suggestion once the launch has been running longer than any setup
+ * run plausibly takes. A prominent "Reset" beside a healthy 20-minute run is an
+ * invitation to kill it.
+ */
+function StuckLaunchEscape({ agent }: { agent: ClientAgentCardRow }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const runningFor = agent.launchStartedAt != null ? Date.now() - agent.launchStartedAt : 0;
+  const overdue = agent.launchState === "launching" && runningFor > LAUNCH_STUCK_MS;
+
+  function reset() {
+    setError(null);
+    startTransition(async () => {
+      const result = await resetClientAgentLaunchAction(agent.id);
+      if (result.error) setError(result.error);
+      else router.refresh();
+    });
+  }
+
+  return (
+    <div className="mt-3 border-t border-border/60 pt-2">
+      {overdue && (
+        <p className="mb-1 text-[11px] text-warning">
+          This setup has been running for over an hour — it may be stuck.
+        </p>
+      )}
+      {confirming ? (
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <span className="mr-auto text-[11px] text-muted-2">
+            Clears the portal state only. The run itself is not cancelled.
+          </span>
+          <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} disabled={pending}>
+            Keep waiting
+          </Button>
+          <Button size="sm" variant="subtle" onClick={reset} disabled={pending} loading={pending}>
+            Reset setup
+          </Button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="text-[11px] text-muted-2 hover:text-foreground"
+          onClick={() => setConfirming(true)}
+        >
+          Stuck? Reset this setup
+        </button>
+      )}
+      {error && <p className="mt-1 text-[11px] text-warning">{error}</p>}
     </div>
   );
 }

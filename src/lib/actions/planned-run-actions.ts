@@ -19,6 +19,7 @@ import {
   weeklyCadenceDays,
 } from "@/lib/scheduled-runs";
 import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
+import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import type { PlannedRunCadence } from "@/lib/types";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
 
@@ -197,13 +198,49 @@ export async function configureClientAgentScheduleAction(
     if (!activated) return { error: "Agent not found." };
   }
 
+  // §2 guard rail: setting a pace for an umbrella-bound agent is the client's
+  // to do once the agent is live, not before. A schedule written against a
+  // not-yet-launched umbrella would start firing paid runs of an agent whose
+  // template set nobody has confirmed — and it would do it from a card that is
+  // simultaneously telling the client the agent is still being set up.
+  const blocked = await clientAgentRunRefusal({
+    user,
+    clientId: input.clientId,
+    customAgentId: input.customAgentId,
+  });
+  if (blocked) return { error: blocked };
+
+  const schedules = await listPlannedScheduledRuns({ clientId: input.clientId });
+  const existing = schedules.find(
+    (run) => run.customAgentId === agent.id && run.cadence === "weekly" && run.status !== "completed",
+  );
+
   // Clamped to exactly what the dialog offers. outputsPerRun was capped at 10
   // here while the dialog offered 5, so a stale page or a direct call could
   // schedule twice the outputs the product sells — and the scheduler bills
   // chargeMultiplier = outputsPerRun on every fire.
   const postsPerWeek = clampInt(input.postsPerWeek, 1, MAX_RUNS_PER_WEEK);
-  const outputsPerRun = clampInt(input.outputsPerRun, 1, MAX_OUTPUTS_PER_RUN);
-  const prompt = input.prompt.trim();
+
+  // WHAT A CLIENT MAY CHANGE HERE: the posting days and the time of day. That
+  // is the whole of "pace". Two fields are deliberately NOT theirs, and the
+  // server preserves the stored values rather than trusting what was submitted:
+  //
+  //  · outputsPerRun — a staff setting. The client's dialog does not show it,
+  //    and a client save that carried a value would rewrite it. It did: the
+  //    pace dialog pinned it to 1, so one press cut a 3×5 schedule to 3×1 and
+  //    the client silently lost four fifths of what they were paying for.
+  //  · prompt — the operator's standing instruction to the agent, written for
+  //    the model. A client rewriting it changes what every future run receives.
+  //
+  // Enforced here rather than only in the dialog because a server action is a
+  // public HTTP surface: hiding a control is not the same as refusing a value.
+  const actorIsClient = user.role === "CLIENT_USER";
+  const outputsPerRun =
+    actorIsClient && existing
+      ? (existing.outputsPerRun ?? 1)
+      : clampInt(input.outputsPerRun, 1, MAX_OUTPUTS_PER_RUN);
+  const prompt =
+    actorIsClient && existing?.prompt?.trim() ? existing.prompt.trim() : input.prompt.trim();
   if (!prompt) return { error: "Describe what the agent should create each time." };
   if (prompt.length > MAX_PROMPT_CHARS) {
     return { error: `Prompt is too long (max ${MAX_PROMPT_CHARS.toLocaleString()} characters).` };
@@ -229,10 +266,6 @@ export async function configureClientAgentScheduleAction(
     outputsPerRun,
   );
 
-  const schedules = await listPlannedScheduledRuns({ clientId: input.clientId });
-  const existing = schedules.find(
-    (run) => run.customAgentId === agent.id && run.cadence === "weekly" && run.status !== "completed",
-  );
   const patch = {
     agentName: agent.name,
     agentIcon: agent.icon,
@@ -303,6 +336,21 @@ export async function setPlannedRunStatusAction(
   const user = await requireClientAccess(run.clientId);
   if (user.role === "CLIENT_USER" && status !== "paused" && status !== "active") {
     return { error: "Ask your Karos contact to retire this schedule." };
+  }
+
+  // §2 guard rail (D2). Pausing is always allowed — a client may always stop
+  // their agent, and refusing that would trap a schedule they want stopped. But
+  // RE-ARMING is the same act as setting a pace in the first place: it points
+  // paid, recurring fires at an agent whose template set nobody has confirmed.
+  // configureClientAgentScheduleAction already refuses that; without the same
+  // refusal here a client could simply pause and resume their way past it.
+  if (status === "active") {
+    const blocked = await clientAgentRunRefusal({
+      user,
+      clientId: run.clientId,
+      customAgentId: run.customAgentId,
+    });
+    if (blocked) return { error: blocked };
   }
 
   const patch: Record<string, unknown> = { status, updatedAt: Date.now() };

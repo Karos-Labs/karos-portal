@@ -26,6 +26,7 @@ import {
 } from "@/lib/actions/planned-run-actions";
 import { cancelClientAgentJobAction } from "@/lib/actions/external-job-actions";
 import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
+import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { MAX_OUTPUTS_PER_RUN, MAX_RUNS_PER_WEEK } from "@/lib/scheduled-runs";
 import {
   buildCustomAgentPrompt,
@@ -56,12 +57,24 @@ export type RunnableAgentSummary = Pick<
 /**
  * What a client is allowed to read about an agent. `description` is the lab
  * repo's own skill manifest — product codes, pipeline architecture, gate names
- * — so client surfaces render `clientBlurb` instead. Agents imported before the
- * field existed have none; those fall back to the manifest rather than showing
- * a blank card, and the staff library flags them for a rewrite.
+ * — so client surfaces render `clientBlurb` instead.
+ *
+ * Agents imported before that field existed used to fall back to the manifest.
+ * That is the defect Albert screenshotted (CD-G2): cards on his own client
+ * pages reading "Master content-social skill. Given a brand's guidelines + any
+ * past competitor research…". The fallback is now the keyed blurb map, which
+ * always has a sentence written for a buyer — so the manifest is no longer in
+ * the chain at all, and the staff library still flags agents with no curated
+ * blurb for a rewrite.
  */
-function agentBlurb(agent: Pick<RunnableAgentSummary, "description" | "clientBlurb">): string {
-  return agent.clientBlurb?.trim() || agent.description;
+function agentBlurb(
+  agent: Pick<RunnableAgentSummary, "key" | "name" | "description" | "clientBlurb">,
+): string {
+  return clientAgentBlurb({
+    key: agent.key,
+    name: agent.name,
+    clientBlurb: agent.clientBlurb ?? null,
+  });
 }
 
 /** One run-history row, pre-filtered and stripped server-side. */
@@ -89,7 +102,14 @@ export interface ClientAgentScheduleRow {
   postsPerWeek: number;
   outputsPerRun: number;
   nextRunAt: number;
-  prompt: string;
+  /**
+   * The ongoing direction handed to the agent on every fire — STAFF-AUTHORED,
+   * and absent for client viewers (toScheduleRows omits it). It used to ship
+   * unconditionally and be painted in an editable textarea inside the client's
+   * pace dialog, which both showed a client internal operator copy and let them
+   * rewrite the instruction every future run receives.
+   */
+  prompt?: string;
   hour: number;
   minute: number;
   /**
@@ -763,22 +783,50 @@ function CancelRunControl({ runId }: { runId: string }) {
   );
 }
 
-function AgentScheduleModal({
+/**
+ * Exported so the live client-agent card's "Adjust pace" reuses THIS dialog
+ * rather than growing a second schedule UI over the same action. One dialog,
+ * one `configureClientAgentScheduleAction`, one set of clamps.
+ *
+ * `paceOnly` is the CLIENT face of it, and it exists for the churn rule (D3,
+ * A3/A4). The staff dialog has two dials because the schedule really has two
+ * dimensions: how many days the agent fires, and how many items each fire
+ * produces. Shown to a client, that second dial states the batch shape outright
+ * — "3 runs × 5 outputs = 15 drafts a week" tells them their week is generated
+ * in lumps ahead of time, which is exactly what the week strip is careful never
+ * to reveal. A client may be told the PACE (how many posts a week, which days),
+ * never the batching that produces it.
+ *
+ * So the client form offers one number, posts per week, and pins outputs per
+ * run to 1 — a genuinely one-post-per-fire schedule, which is both what the
+ * product is and the only shape whose honest description contains no batch.
+ */
+export function AgentScheduleModal({
   agent,
   clientId,
   schedule,
   availableCredits,
+  paceOnly = false,
   onClose,
 }: {
   agent: RunnableAgentSummary;
   clientId: string;
   schedule?: ClientAgentScheduleRow;
   availableCredits?: number;
+  /** Client viewers: pace language only, no batch dial. */
+  paceOnly?: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [postsPerWeek, setPostsPerWeek] = useState(schedule?.postsPerWeek ?? 3);
+  // ALWAYS the stored value, in both faces of the dialog. Pinning this to 1 for
+  // paceOnly (as it briefly did) was two bugs in one: a schedule stored at 3×5
+  // quoted its weekly cost from 3×1 — five times under — and pressing "Save
+  // pace" then wrote that 1 back, silently cutting the client's output to a
+  // fifth of what they were paying for. A client adjusting pace changes which
+  // DAYS the agent fires, and nothing else; the server enforces the same rule
+  // rather than trusting this value (configureClientAgentScheduleAction).
   const [outputsPerRun, setOutputsPerRun] = useState(schedule?.outputsPerRun ?? 1);
   const [prompt, setPrompt] = useState(schedule?.prompt ?? "Create the next on-brand post for our audience.");
   const [time, setTime] = useState(
@@ -834,8 +882,12 @@ function AgentScheduleModal({
     <Modal
       open
       onClose={onClose}
-      title={`Keep ${agent.name} running`}
-      description="Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
+      title={paceOnly ? `${agent.name} pace` : `Keep ${agent.name} running`}
+      description={
+        paceOnly
+          ? "How often this agent posts for you. Change it whenever you like — it takes effect from the next post."
+          : "Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
+      }
       footer={
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -848,18 +900,34 @@ function AgentScheduleModal({
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
             <Button variant="accent" onClick={save} loading={pending} disabled={insufficient}>
-              {schedule ? "Update schedule" : "Start always-on agent"}
+              {paceOnly
+                ? schedule
+                  ? "Save pace"
+                  : "Start posting"
+                : schedule
+                  ? "Update schedule"
+                  : "Start always-on agent"}
             </Button>
           </div>
         </div>
       }
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
+        <div className={cn("grid gap-3", paceOnly ? "grid-cols-1" : "grid-cols-2")}>
           <div>
-            {/* Runs, not posts: this is the number of DAYS the agent fires, and
-                each fire produces "outputs per run" items. */}
-            <Label htmlFor={`schedule-posts-${agent.id}`}>Runs per week</Label>
+            {/* Staff see RUNS (days the agent fires) beside outputs-per-fire.
+                Clients see one dial. It is labelled "Posts per week" only when
+                that is literally true (one output per fire); when a staff member
+                has set more, the honest client-side name for the same dial is
+                the number of DAYS — which the ruling allows ("the modal may name
+                pace: posts per week, days") and which states no batch shape. */}
+            <Label htmlFor={`schedule-posts-${agent.id}`}>
+              {paceOnly
+                ? outputsPerRun === 1
+                  ? "Posts per week"
+                  : "Posting days a week"
+                : "Runs per week"}
+            </Label>
             <Select
               id={`schedule-posts-${agent.id}`}
               value={postsPerWeek}
@@ -870,22 +938,26 @@ function AgentScheduleModal({
               ))}
             </Select>
           </div>
-          <div>
-            <Label htmlFor={`schedule-outputs-${agent.id}`}>Outputs per run</Label>
-            <Select
-              id={`schedule-outputs-${agent.id}`}
-              value={outputsPerRun}
-              onChange={(event) => setOutputsPerRun(Number(event.target.value))}
-            >
-              {OUTPUTS_PER_RUN_OPTIONS.map((count) => (
-                <option key={count} value={count}>{count}</option>
-              ))}
-            </Select>
-          </div>
+          {!paceOnly && (
+            <div>
+              <Label htmlFor={`schedule-outputs-${agent.id}`}>Outputs per run</Label>
+              <Select
+                id={`schedule-outputs-${agent.id}`}
+                value={outputsPerRun}
+                onChange={(event) => setOutputsPerRun(Number(event.target.value))}
+              >
+                {OUTPUTS_PER_RUN_OPTIONS.map((count) => (
+                  <option key={count} value={count}>{count}</option>
+                ))}
+              </Select>
+            </div>
+          )}
         </div>
 
         <div>
-          <Label htmlFor={`schedule-time-${agent.id}`}>Production time</Label>
+          <Label htmlFor={`schedule-time-${agent.id}`}>
+            {paceOnly ? "Time of day" : "Production time"}
+          </Label>
           <Input
             id={`schedule-time-${agent.id}`}
             type="time"
@@ -894,31 +966,57 @@ function AgentScheduleModal({
           />
         </div>
 
-        <div>
-          <Label htmlFor={`schedule-prompt-${agent.id}`}>Ongoing direction</Label>
-          <Textarea
-            id={`schedule-prompt-${agent.id}`}
-            rows={3}
-            maxLength={4000}
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-          />
-        </div>
+        {/* STAFF ONLY. This is the operator's standing instruction to the agent
+            — internal copy, written for the model — and it was rendering in the
+            client's pace dialog as an editable textarea. That showed a client
+            text never written for them AND let them rewrite the direction every
+            future run receives. Clients steer their agent through feedback,
+            which is written for that purpose and is capped, scoped and
+            reviewable; this is not that. The server also refuses to take a
+            prompt from a client actor, so hiding it is the second lock. */}
+        {!paceOnly && (
+          <div>
+            <Label htmlFor={`schedule-prompt-${agent.id}`}>Ongoing direction</Label>
+            <Textarea
+              id={`schedule-prompt-${agent.id}`}
+              rows={3}
+              maxLength={4000}
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+            />
+          </div>
+        )}
 
         <div className="rounded-md border border-neon/20 bg-neon-soft/40 px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-foreground">Estimated weekly cost</span>
             <span className="font-mono text-sm text-neon">{weeklyCost} credits</span>
           </div>
-          <p className="mt-1 text-[11px] text-muted-2">
-            {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
-            {outputsPerRun === 1 ? "" : "s"} × {costPerOutput} credits.
-            Credits are charged when each scheduled run starts.
-          </p>
-          <p className="mt-1 text-[11px] text-foreground">
-            {postsPerWeek * outputsPerRun} new draft{postsPerWeek * outputsPerRun === 1 ? "" : "s"} a
-            week.
-          </p>
+          {paceOnly ? (
+            /* The weekly total above is computed from the STORED multiplier, so
+               it is the real number. What it must not do is decompose: no
+               "runs", no "outputs per run", no weekly draft total — each of
+               those describes the batch rather than the pace. When one post per
+               fire is stored there is no batch to hide and the friendlier
+               sentence is also the true one. */
+            <p className="mt-1 text-[11px] text-muted-2">
+              {outputsPerRun === 1
+                ? `${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} a week at ${costPerOutput} credits each. Credits are charged as each post is made.`
+                : `${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week. Credits are charged as each post is made.`}
+            </p>
+          ) : (
+            <>
+              <p className="mt-1 text-[11px] text-muted-2">
+                {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
+                {outputsPerRun === 1 ? "" : "s"} × {costPerOutput} credits.
+                Credits are charged when each scheduled run starts.
+              </p>
+              <p className="mt-1 text-[11px] text-foreground">
+                {postsPerWeek * outputsPerRun} new draft
+                {postsPerWeek * outputsPerRun === 1 ? "" : "s"} a week.
+              </p>
+            </>
+          )}
           {availableCredits !== undefined && (
             <p className={cn("mt-1 text-[11px]", insufficient ? "text-danger" : "text-muted-2")}>
               {availableCredits} credits currently available.

@@ -13,6 +13,7 @@ import { integrationIsUsable } from "@/lib/integration-status";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
+import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
@@ -152,13 +153,18 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   const agentByName = new Map(customAgents.map((a) => [a.name, a]));
   // `description` here is the internal lab manifest and this array is serialized
   // into the payload the browser receives, rendered or not — so client viewers
-  // get the written blurb (empty until one exists), never the manifest.
+  // get the written blurb, or the keyed fallback, never the manifest.
   const agentOptions: ScheduleAgentOption[] = customAgents
     .filter((a) => a.enabled)
     .map((a) => ({
       id: a.id,
       name: a.name,
-      description: isClient ? a.clientBlurb?.trim() ?? "" : a.description,
+      // Clients get the curated line, or the keyed fallback when none is
+      // written yet (CD-G2) — never the lab manifest, and no longer an empty
+      // string either, which is what they got before the fallback existed.
+      description: isClient
+        ? clientAgentBlurb({ key: a.key, name: a.name, clientBlurb: a.clientBlurb ?? null })
+        : a.description,
       icon: a.icon,
       color: a.color,
     }));
@@ -175,7 +181,17 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     .map((r) => {
       const agent = agentById.get(r.customAgentId);
       // Client-visible calendar: the lab manifest never ships here either.
-      const blurb = agent?.clientBlurb?.trim() || agent?.description;
+      // It did. `clientBlurb || description` falls straight through to the
+      // manifest for every agent whose blurb has not been written yet — which
+      // is all of them until the backfill runs — so "Master content-social
+      // skill…" was reaching clients on this surface today (CD-G2).
+      const blurb = isClient
+        ? clientAgentBlurb({
+            key: agent?.key ?? "",
+            name: agent?.name ?? r.agentName,
+            clientBlurb: agent?.clientBlurb ?? null,
+          })
+        : agent?.clientBlurb?.trim() || agent?.description;
       return {
         id: r.id,
         kind: "scheduled" as const,

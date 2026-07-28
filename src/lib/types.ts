@@ -1656,6 +1656,21 @@ export interface ClientAgent {
    * family — its slots present picks from batch assets and never re-date.
    */
   chainFamily?: "social" | "email" | "article";
+  /**
+   * How this umbrella fills its calendar days. Set EXPLICITLY at bind time —
+   * never derived from the absence of `chainFamily`.
+   *
+   * "single"  — one template stream per day (the default product).
+   * "options" — the X daily pick-of-3: the client chooses between candidate
+   *             drafts on the day, and the umbrella owns no chain family.
+   *
+   * Deriving this from `chainFamily == null` conflated the X agent with every
+   * agent the family classifier simply could not place (a research agent, an
+   * SEO agent, an unrecognised import), which would have handed those an
+   * options picker they have no candidates for. Absent ⇒ "single", which
+   * generates no slots at all while the rotation is empty.
+   */
+  slotMode?: "single" | "options";
 
   launchState: ClientAgentLaunchState;
   /** Platform job doc id of the setup run (jobs collection). */
@@ -1785,9 +1800,27 @@ export interface ClientAgentFeedback {
   templateKey?: string | null;
   /** ≤ 500 chars, plain text (server-clamped). */
   text: string;
-  /** active = injected into every future run; resolved = kept, not injected. */
-  status: "active" | "resolved";
+  /**
+   * active    = injected into every future run.
+   * resolved  = STAFF addressed it. Kept, not injected.
+   * withdrawn = the AUTHOR took it back. Kept, not injected.
+   *
+   * The last two are deliberately not one state (D7). "Resolved" is a claim
+   * about Karos having acted; a client who withdraws their own note has made no
+   * such claim, and collapsing the two told them their note had been handled
+   * when nobody had touched it. Only `active` is ever injected, so the run-side
+   * behaviour of the two is identical — the difference is entirely about who
+   * did it and what the list is therefore allowed to say.
+   */
+  status: "active" | "resolved" | "withdrawn";
   createdBy: string;
+  /**
+   * Display name of the author, denormalized at write time. Stored so the
+   * feedback list can name whoever wrote a row without handing a client viewer
+   * the internal uids of the staff who answered them — the same reason
+   * ActivityLog keeps `actor` rather than a uid.
+   */
+  createdByName?: string;
   creatorRole: "client" | "staff";
   createdAt: number;
   updatedAt: number;

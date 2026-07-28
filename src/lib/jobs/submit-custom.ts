@@ -23,6 +23,8 @@ import {
   hasLinkedInAgentIntake,
   isLinkedInAgent,
 } from "@/lib/agent-service/linkedin-agent-context";
+import { buildClientAgentFeedbackFiles } from "@/lib/agent-service/client-agent-feedback-context";
+import { getClientAgentByKey } from "@/lib/data-client-agents";
 import { LINKEDIN_SETUP_REQUIRED_PREFIX, X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
@@ -213,6 +215,27 @@ export async function submitCustomAgentJob(
       return {
         error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,
       };
+    }
+  }
+
+  // Client-agent feedback (§5): every run of a LIVE umbrella carries the
+  // client's standing direction — global first, then per-template. Launch runs
+  // are excluded by construction: a setup run is what CREATES the templates, so
+  // there is nothing shaped yet and nothing to shape it with.
+  //
+  // Resolved by the agent's stable KEY rather than its doc id, so an umbrella
+  // bound before a lab re-import keeps injecting afterwards. Best-effort: a
+  // storage hiccup must not turn a paid run into a refusal, so the run proceeds
+  // without the file rather than failing — unlike the X/LinkedIn intake above,
+  // which the agent cannot work at all without.
+  if (input.runType !== "launch") {
+    try {
+      const umbrella = await getClientAgentByKey(input.clientId, agent.key);
+      if (umbrella?.launchState === "live") {
+        contextFiles.push(...(await buildClientAgentFeedbackFiles(umbrella)));
+      }
+    } catch (e) {
+      console.error("[submit-custom] client-agent feedback attachment failed:", e);
     }
   }
 

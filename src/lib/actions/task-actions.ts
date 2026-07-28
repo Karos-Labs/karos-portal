@@ -33,6 +33,7 @@ import {
   buildTaskIngestionRoutingPrompt,
 } from "@/lib/ai/prompts/proactive-assistant";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
+import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import { logger } from "@/services/logger";
 import type { AppUser, TaskStatus, ClientTask, TaskComment, TaskOwner } from "@/lib/types";
 
@@ -131,6 +132,12 @@ export async function updateTaskStatusAction(
     status === "in_progress" && inferOwnerEngine(task) === "karos_managed";
 
   if (triggersExecution) {
+    // §2 guard rail, keyed on the BILLED actor (D1). Dragging a card to In
+    // Progress is the task board's run button: same agent, same charge, so the
+    // same refusal while its umbrella is not live. Evaluated before the claim.
+    const blocked = await clientTaskRunRefusal({ user, clientId, task });
+    if (blocked) return { ok: false, error: blocked };
+
     // Re-opening a completed task is a NET NEW active slot (pending/review_pending
     // are already counted in the cap) — enforce the same queue cap that task
     // creation does, or a client could re-run Done cards past MAX_ACTIVE_TASKS

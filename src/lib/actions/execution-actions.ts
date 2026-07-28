@@ -18,6 +18,7 @@ import {
   listClientIntegrations,
 } from "@/lib/data";
 import { CreditError, isBillableClientActor } from "@/lib/credits";
+import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
 import type { AppUser, Asset, AssetType, ClientTask, ManagedTaskType } from "@/lib/types";
@@ -82,6 +83,12 @@ export async function startTaskExecutionAction(
   if (task.metadata?.executing === true) {
     return { ok: true }; // already running — don't double-trigger
   }
+
+  // §2 guard rail, keyed on the BILLED actor (D1). The board is a second door
+  // into the same agent, and it must refuse on the same condition the agent's
+  // own card does — checked before the claim so a refusal costs nothing.
+  const blocked = await clientTaskRunRefusal({ user, clientId, task });
+  if (blocked) return { ok: false, error: blocked };
 
   // Atomically claim the task first (verifies ownership + pending status +
   // not already executing) so a double-fired drag or retry can't charge and
@@ -280,10 +287,15 @@ export async function requestAdjustmentsAction(
 ): Promise<{ ok: boolean; error?: string }> {
   const access = await requireTaskAccess(taskId, clientId);
   if (!access.ok) return { ok: false, error: access.error };
-  const { user } = access;
+  const { user, task } = access;
 
   const trimmed = feedback.trim();
   if (!trimmed) return { ok: false, error: "Feedback cannot be empty" };
+
+  // §2 guard rail, keyed on the BILLED actor (D1): a re-run is a run, and it
+  // charges again — so it refuses on the same condition as a first run.
+  const blocked = await clientTaskRunRefusal({ user, clientId, task });
+  if (blocked) return { ok: false, error: blocked };
 
   // Atomic claim: verifies ownership + review_pending + not already executing,
   // and flips to in_progress — two concurrent submits can't both charge.

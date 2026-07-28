@@ -11,215 +11,27 @@ import {
 import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import {
-  ClientCustomAgents,
-  type CustomAgentRunRow,
-  type RunnableAgentSummary,
-} from "@/components/custom-agents";
+import { ClientCustomAgents } from "@/components/custom-agents";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
-import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
-import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
-import { clientSafeRefusal, isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
-import type { AgentSetupState } from "@/components/custom-agents";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
-import type { ClientAgent, CustomAgent, Job } from "@/lib/types";
-import type { ClientAgentScheduleRow } from "@/components/custom-agents";
+import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { evaluateLaunchGate, isLaunchInFlight } from "@/lib/client-agents";
+import { isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
+import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { ClientAgentsSection } from "@/components/client-agents/client-agents-section";
-import type { ClientAgentCardRow } from "@/components/client-agents/types";
+import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
+import {
+  buildAgentSetup,
+  scheduleZonesByAgent,
+  toClientAgentRows,
+  toRunRows,
+  toScheduleRows,
+  toSummary,
+} from "@/lib/client-agent-rows";
 
-/** Strip an agent to the client-safe summary — never the instructions/skill paths. */
-function toSummary(agent: CustomAgent): RunnableAgentSummary {
-  return {
-    id: agent.id,
-    key: agent.key,
-    name: agent.name,
-    description: agent.description,
-    clientBlurb: agent.clientBlurb ?? null,
-    icon: agent.icon,
-    color: agent.color,
-    creditCost: agent.creditCost ?? null,
-  };
-}
-
-/**
- * Custom-agent runs as slim rows. `staff` adds the /jobs link target AND the
- * submitted prompt: the raw request is an operator's free text (typos, stray
- * capitals) and never belongs in a client's run history, so it is dropped here
- * at the RSC boundary rather than hidden at render.
- *
- * LAUNCH runs are not runs as far as a client is concerned — they are the
- * setup, and the launch card is already telling that story in three phases. A
- * generic row beside it would give the same event two identities (the F147
- * failure this architecture exists to kill), offer a Cancel the card doesn't,
- * and advertise "· 1 draft" for a deliverable that is staff-only by design.
- * Staff keep the rows: they link to /jobs and are the run's real history.
- */
-function toRunRows(jobs: Job[], staff: boolean): CustomAgentRunRow[] {
-  return jobs
-    .filter((j) => j.agentId === "agent-service" && j.external?.taskType === "custom")
-    .filter((j) => staff || j.runType !== "launch")
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 8)
-    .map((j) => ({
-      id: j.id,
-      agentName: j.agentName,
-      status: j.status,
-      createdAt: j.createdAt,
-      assetCount: j.assetIds.length,
-      ...(staff && j.input.prompt ? { prompt: j.input.prompt } : {}),
-      ...(staff ? { href: `/jobs/${j.id}` } : {}),
-    }));
-}
-
-/**
- * `viewerIsClient` decides what the refusal may say. The redaction happens HERE,
- * not at render: everything on a ClientAgentScheduleRow is serialized into the
- * RSC payload the browser receives, so a raw internal string handed to a client
- * component is readable whether or not it is ever painted.
- */
-function toScheduleRows(
-  runs: Awaited<ReturnType<typeof listPlannedScheduledRuns>>,
-  viewerIsClient: boolean,
-): ClientAgentScheduleRow[] {
-  return runs
-    .filter((run) => run.cadence === "weekly" && run.status !== "completed")
-    .map((run) => ({
-      id: run.id,
-      agentId: run.customAgentId,
-      status: run.status === "paused" ? "paused" : "active",
-      postsPerWeek: run.weekdays?.length ?? 1,
-      outputsPerRun: run.outputsPerRun ?? 1,
-      nextRunAt: run.nextRunAt,
-      prompt: run.prompt,
-      hour: run.hour,
-      minute: run.minute,
-      // The scheduler's refusal, so a schedule that can never fire stops
-      // rendering as a healthy "Live" agent.
-      lastError: run.lastError
-        ? viewerIsClient
-          ? clientSafeRefusal(run.lastError)
-          : run.lastError
-        : null,
-      lastErrorAt: run.lastErrorAt ?? null,
-    }));
-}
-
-/**
- * Intake readiness, resolved once per agent with the SAME call the submit core
- * makes (submitCustomAgentJob → hasXAgentIntake / hasLinkedInAgentIntake). The
- * LinkedIn check answers differently per agent key — the multi-seat agent runs
- * on any stored intake, the company-page agents need the company form — so a
- * single shared flag would block agents the server would run, and a card cannot
- * derive this from the key alone.
- */
-async function buildAgentSetup(
-  clientId: string,
-  agents: Array<{ id: string; key: string }>,
-): Promise<Record<string, AgentSetupState>> {
-  const resolved = await Promise.all(
-    agents.map(async (agent): Promise<[string, AgentSetupState] | null> => {
-      if (isXAgentIdentity(agent.key)) {
-        return [
-          agent.id,
-          {
-            ready: await hasXAgentIntake(clientId),
-            href: `/clients/${clientId}/x-agent`,
-            label: "X agent data",
-          },
-        ];
-      }
-      if (isLinkedInAgentIdentity(agent.key)) {
-        return [
-          agent.id,
-          {
-            ready: await hasLinkedInAgentIntake(clientId, agent.key),
-            href: `/clients/${clientId}/linkedin-agent`,
-            label: "LinkedIn agent data",
-          },
-        ];
-      }
-      return null;
-    }),
-  );
-  return Object.fromEntries(resolved.filter((entry): entry is [string, AgentSetupState] => entry !== null));
-}
-
-/**
- * Project each client-agent umbrella into the card row its surface may read.
- *
- * The launch GATE is evaluated here, server-side, with the same pure function
- * the action runs — so the card can only ever offer a press the server would
- * accept (F131), and every blocked state arrives with the exact line that
- * explains it (F25). `launchError` is redacted for client viewers HERE rather
- * than at render: everything on these rows is serialized into the RSC payload,
- * so an internal string handed to a client component is readable whether or
- * not it is ever painted.
- */
-function toClientAgentRows(args: {
-  umbrellas: ClientAgent[];
-  agentsById: Map<string, CustomAgent>;
-  viewerIsClient: boolean;
-  grantedAgentIds: Set<string> | null;
-  agentSetup: Record<string, AgentSetupState>;
-  spendable?: number;
-  creditBlockReasons: Record<string, string>;
-}): ClientAgentCardRow[] {
-  const rows: ClientAgentCardRow[] = [];
-  for (const umbrella of args.umbrellas) {
-    const agent = args.agentsById.get(umbrella.customAgentId);
-    // The bound lab agent was deleted or disabled: the umbrella has nothing to
-    // fire, so it renders nowhere rather than as a launchable card.
-    if (!agent || !agent.enabled) continue;
-    const setup = args.agentSetup[agent.id] ?? null;
-    const granted = args.grantedAgentIds ? args.grantedAgentIds.has(agent.id) : true;
-    const launchCost = agent.launchCreditCost ?? null;
-    const gate = evaluateLaunchGate({
-      launchState: umbrella.launchState,
-      granted,
-      intakeReady: setup ? setup.ready : true,
-      intakeLabel: setup?.label ?? null,
-      launchCreditCost: launchCost,
-      ...(args.spendable !== undefined ? { availableCredits: args.spendable } : {}),
-      creditBlockReason: args.creditBlockReasons[agent.id] ?? null,
-    });
-    rows.push({
-      id: umbrella.id,
-      clientId: umbrella.clientId,
-      identity: `${agent.key} ${agent.name}`,
-      icon: agent.icon,
-      displayName: umbrella.displayName,
-      blurb: agent.clientBlurb?.trim() || agent.description || null,
-      launchState: umbrella.launchState,
-      launchStartedAt: umbrella.launchStartedAt ?? null,
-      launchError: umbrella.launchError
-        ? args.viewerIsClient
-          ? clientSafeRefusal(umbrella.launchError)
-          : umbrella.launchError
-        : null,
-      launchRefunded: umbrella.launchRefunded === true,
-      // Staff never pay for a launch, so quoting them a price would be a lie.
-      launchCost: args.spendable !== undefined ? launchCost : null,
-      gate: {
-        allowed: gate.allowed,
-        ...(gate.allowed ? {} : { code: gate.code, reason: gate.reason }),
-      },
-      ...(setup ? { setupHref: setup.href, setupLabel: setup.label } : {}),
-      // Templates cross to a client viewer ONLY once the umbrella is live.
-      // While it is `curating` the registry holds what the setup run PROPOSED,
-      // which staff have not confirmed yet (the Q3 gate) — sending it and
-      // deciding not to paint it inside a client component would still put
-      // unconfirmed AI-written names and rationales in the RSC payload.
-      templates:
-        args.viewerIsClient && umbrella.launchState !== "live" ? [] : (umbrella.templates ?? []),
-    });
-  }
-  return rows;
-}
 
 /**
  * A client's AI Agents page. Clients can run only the custom agents that an
@@ -245,10 +57,13 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // delivered a successful run for this workspace.
   if (!isStaff) {
     const allowedIds = new Set(client.customAgentIds ?? []);
-    const [allAgents, jobs, contextItems, credits, scheduledRuns, umbrellas] = await Promise.all([
+    // No listContextItems here any more: it fed the generic run dialog's
+    // attachment picker, and a client's run gesture has moved to the detail
+    // page (CD-G1). The roster reads nothing from it, so the roster no longer
+    // pays for it.
+    const [allAgents, jobs, credits, scheduledRuns, umbrellas] = await Promise.all([
       listCustomAgents(),
       listJobs({ clientId: id }),
-      listContextItems({ clientId: id }),
       getClientCredits(id),
       listPlannedScheduledRuns({ clientId: id }),
       listClientAgents({ clientId: id }),
@@ -264,10 +79,6 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     const agents = allAgents
       .filter((agent) => agent.enabled && (allowedIds.has(agent.id) || completedAgentIds.has(agent.id)))
       .map(toSummary);
-    // Client viewers see only runs of agents they're allowed — not the
-    // history of staff-fired agents outside their allowlist.
-    const allowedNames = new Set(agents.map((a) => a.name));
-    const runs = toRunRows(jobs, false).filter((r) => allowedNames.has(r.agentName));
     // Impersonating admins see the client view but never spend real credits —
     // show the gate only to billable client actors. `now` rolls the spend
     // windows on read: a schedule doc read after a week rollover would otherwise
@@ -288,24 +99,44 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       }
     }
     const agentSetup = await buildAgentSetup(id, agents);
-    // Client-agent umbrellas. A launch is a bigger, slower thing than a run, so
-    // its card owns the agent while it is being set up: an agent that is not
-    // live yet is dropped from the run cards below rather than showing a client
-    // a Run button beside a "not set up yet" state. Live umbrellas keep today's
-    // card until WP-2 replaces it.
-    const clientAgentRows = toClientAgentRows({
-      umbrellas,
+    // ── Card selection: exactly one card per agent ──
+    // An umbrella owns its agent's card as soon as it is bound — the launch
+    // card while it is being set up, the live card once it is producing. The
+    // agent is dropped from the generic run cards below, so a client is never
+    // offered a Run button beside a "not set up yet" state, and never sees the
+    // same agent twice under two identities.
+    //
+    // The one exception is deliberate (`umbrellaOwnsClientCard`): a LIVE
+    // umbrella with no templates yet — the grandfathered bind of an
+    // already-producing agent — keeps today's card, because replacing a working
+    // Run button with a card that has no rows in it is the F131 failure with
+    // the roles reversed.
+    const ownedByUmbrella = umbrellas.filter((u) => umbrellaOwnsClientCard(u));
+    const ownedAgentIds = new Set(ownedByUmbrella.map((u) => u.customAgentId));
+    const runnableAgents = agents.filter((agent) => !ownedAgentIds.has(agent.id));
+    // Client viewers see only runs of agents they're allowed — not the history
+    // of staff-fired agents outside their allowlist, and (§4.1 item 3) not the
+    // batch rows of an umbrella-owned agent: "ran 2 hours ago · 7 drafts" beside
+    // a week of daily slots is the tell that the days are a presentation of a
+    // batch. Staff rows are unchanged.
+    const runnableNames = new Set(runnableAgents.map((a) => a.name));
+    const runs = toRunRows(jobs, false).filter((r) => runnableNames.has(r.agentName));
+    const clientScheduleRows = toScheduleRows(scheduledRuns, true);
+    const clientAgentRows = await toClientAgentRows({
+      umbrellas: ownedByUmbrella,
       agentsById: new Map(allAgents.map((a) => [a.id, a])),
       viewerIsClient: true,
       grantedAgentIds: new Set([...allowedIds, ...completedAgentIds]),
       agentSetup,
       ...(spendable !== undefined ? { spendable } : {}),
       creditBlockReasons,
+      scheduleRows: clientScheduleRows,
+      scheduleZones: scheduleZonesByAgent(scheduledRuns),
+      jobs,
+      viewerUid: user.uid,
+      viewerIsStaff: false,
+      now,
     });
-    const preLaunchAgentIds = new Set(
-      umbrellas.filter((u) => u.launchState !== "live").map((u) => u.customAgentId),
-    );
-    const runnableAgents = agents.filter((agent) => !preLaunchAgentIds.has(agent.id));
     // A client run takes 10–20 minutes and the client's rows carry no link, so
     // without this the page never moved again after "Start run". Mounted only
     // while something is actually in flight; it unmounts when the server
@@ -313,7 +144,46 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // the same way — it is the same medicine for a longer wait.
     const runInFlight =
       runs.some((run) => run.status === "queued" || run.status === "running") ||
-      umbrellas.some((u) => isLaunchInFlight(u.launchState));
+      umbrellas.some((u) => isLaunchInFlight(u.launchState)) ||
+      // An umbrella agent has no run row to watch any more, so its in-flight
+      // template run has to be what moves the page.
+      clientAgentRows.some((row) => row.activeRun !== null);
+    // ── The roster (CD-G1) ──
+    // One card per GRANTED agent, umbrella-bound or not, carrying a mark, a
+    // name, one line of what it gives you and one status word. No Run button
+    // anywhere: a client's run gesture lives only inside a detail page, beside
+    // the context that explains what it costs and produces.
+    //
+    // Built from the agent list rather than from the umbrellas, because a
+    // client's roster is "the agents I have", not "the agents someone has bound
+    // an umbrella for". An agent with no umbrella is not missing from the
+    // roster — it is simply not set up yet, and says so.
+    const umbrellaByAgentId = new Map(ownedByUmbrella.map((u) => [u.customAgentId, u]));
+    const scheduleByAgentId = new Map(clientScheduleRows.map((row) => [row.agentId, row]));
+    const rosterEntries: AgentRosterEntry[] = agents.map((agent) => {
+      const umbrella = umbrellaByAgentId.get(agent.id) ?? null;
+      const schedule = scheduleByAgentId.get(agent.id) ?? null;
+      return {
+        customAgentId: agent.id,
+        identity: `${agent.key} ${agent.name}`,
+        icon: agent.icon ?? null,
+        displayName: umbrella?.displayName ?? agent.name,
+        blurb: clientAgentBlurb({
+          key: agent.key,
+          name: agent.name,
+          clientBlurb: agent.clientBlurb ?? null,
+        }),
+        status: rosterStatus({
+          launchState: umbrella?.launchState ?? null,
+          // Already client-redacted by toScheduleRows. A refusal outranks
+          // "Live" (F24/F129) — an agent whose every fire is turned away is
+          // not live, whatever its umbrella says.
+          scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
+          scheduleActive: schedule?.status === "active",
+        }),
+      };
+    });
+
     return (
       <>
         {runInFlight && <AutoRefresh />}
@@ -322,7 +192,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             and one in sentence case. This is the surviving one. */}
         <PageHeader
           title="AI agents"
-          description="Your always-on AI team. Run an agent now, or set its weekly production pace."
+          description="Your always-on AI team. Open an agent to see what it makes and to start a post."
         />
         {/* Two different conditions used to share the never-set-up empty state,
             so an outage or a bad deploy told a client with three live agents
@@ -336,26 +206,9 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             Your Karos team has been notified. Everything below is unaffected.
           </p>
         )}
-        <ClientAgentsSection
-          clientId={id}
-          agents={clientAgentRows}
-          viewerIsClient
-          viewer={{ name: user.name, email: user.email }}
-        />
-        {runnableAgents.length > 0 || runs.length > 0 ? (
-          <ClientCustomAgents
-            clientId={id}
-            agents={runnableAgents}
-            runs={runs}
-            schedules={toScheduleRows(scheduledRuns, true)}
-            contextItems={contextItems}
-            viewerIsClient
-            agentSetup={agentSetup}
-            viewer={{ name: user.name, email: user.email }}
-            {...(spendable !== undefined ? { availableCredits: spendable } : {})}
-            creditBlockReasons={creditBlockReasons}
-          />
-        ) : clientAgentRows.length > 0 ? null : (
+        {rosterEntries.length > 0 ? (
+          <ClientAgentRoster clientId={id} entries={rosterEntries} />
+        ) : (
           <EmptyState
             icon={<Icon name="Bot" className="h-7 w-7" />}
             title="No active agents yet"
@@ -384,13 +237,20 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // Staff see every umbrella in every state (including live) — this is where
   // the launch is fired for a client who cannot yet self-serve, and where the
   // template set is curated before the client ever sees it.
-  const staffAgentRows = toClientAgentRows({
+  const staffScheduleRows = toScheduleRows(scheduledRuns, false);
+  const staffAgentRows = await toClientAgentRows({
     umbrellas,
     agentsById: new Map(customAgents.map((a) => [a.id, a])),
     viewerIsClient: false,
     grantedAgentIds: null,
     agentSetup,
     creditBlockReasons: {},
+    scheduleRows: staffScheduleRows,
+    scheduleZones: scheduleZonesByAgent(scheduledRuns),
+    jobs,
+    viewerUid: user.uid,
+    viewerIsStaff: true,
+    now: Date.now(),
   });
   const boundAgentIds = new Set(umbrellas.map((u) => u.customAgentId));
   const bindable = customAgents
@@ -468,7 +328,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             clientId={id}
             agents={staffAgents}
             runs={staffRuns}
-            schedules={toScheduleRows(scheduledRuns, false)}
+            schedules={staffScheduleRows}
             contextItems={contextItems}
             viewerIsClient={false}
             agentSetup={agentSetup}
