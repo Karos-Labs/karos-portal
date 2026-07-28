@@ -41,16 +41,74 @@ import {
   buildDailyFinderView,
   deliverableStamp,
 } from "@/lib/agent-detail-archetypes";
-import { buildRedditAgentIntakeView } from "@/lib/agent-intake-views";
-import { launchProfileFor } from "@/lib/custom-agent-launch";
+import {
+  buildLinkedInAgentIntakeView,
+  buildRedditAgentIntakeView,
+  buildXAgentIntakeView,
+} from "@/lib/agent-intake-views";
+import {
+  isLinkedInAgentIdentity,
+  isRedditAgentIdentity,
+  isXAgentIdentity,
+  launchProfileFor,
+} from "@/lib/custom-agent-launch";
+import { summarizeAgentEconomics } from "@/lib/credit-reporting";
+import { AgentRunHistory, StaffAgentControls } from "@/components/custom-agents";
+import { AgentEconomicsCard } from "@/components/client-agents/agent-economics";
+import { CurationPane } from "@/components/client-agents/client-agents-section";
 import {
   buildAgentSetup,
+  type AgentIntakePanes,
   scheduleZonesByAgent,
   toClientAgentRows,
+  toRunRows,
   toScheduleRows,
   toSummary,
 } from "@/lib/client-agent-rows";
 import { relativeTime } from "@/lib/utils";
+import type { Job } from "@/lib/types";
+
+/**
+ * The inline intake form for THIS agent, when it is one of the three that draft
+ * from stored intake (X e13, LinkedIn e10, Reddit e15).
+ *
+ * Moved here from the roster page with CD-I1's staff parity. Ruling 7 put the
+ * panes on whichever surface owns the run DIALOG, and that surface is now this
+ * one — so the roster stopped paying for them and this page builds exactly one,
+ * for the agent it is about, instead of three for every agent on a list.
+ *
+ * Only the FORMS are built here. `ready` is not re-derived alongside them:
+ * buildAgentSetup answers it with the very calls the submit cores gate on, and
+ * two independent answers to "is this set up" is the drift that lets a control
+ * offer a run the server refuses.
+ */
+async function agentIntakePane(
+  clientId: string,
+  agent: { key: string },
+  opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string },
+): Promise<AgentIntakePanes> {
+  if (isXAgentIdentity(agent.key)) {
+    return { x: await buildXAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) };
+  }
+  if (isLinkedInAgentIdentity(agent.key)) {
+    return {
+      linkedin: await buildLinkedInAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+        ...(opts.linkedinPageUrl ? { pageUrlSuggestion: opts.linkedinPageUrl } : {}),
+      }),
+    };
+  }
+  if (isRedditAgentIdentity(agent.key)) {
+    return {
+      reddit: await buildRedditAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+      }),
+    };
+  }
+  return {};
+}
 
 /**
  * One agent's home page (CD-G1).
@@ -134,7 +192,22 @@ export default async function ClientAgentDetailPage({
       ? { [agent.id]: creditBlockReason(credits, cost, now) }
       : {};
 
-  const agentSetup = await buildAgentSetup(id, [summary]);
+  // Ruling 7: the inline pane rides the setup state, keyed by agent. Staff get
+  // the form (their run dialog collects it in place); a client's own route
+  // reaches the same form through AgentSetupState.href, which is the CD-E1
+  // model and stays a full page.
+  const panes = isStaff
+    ? await agentIntakePane(
+        id,
+        agent,
+        {
+          isStaff,
+          jobs,
+          ...(client.socialLinks?.linkedin ? { linkedinPageUrl: client.socialLinks.linkedin } : {}),
+        },
+      )
+    : undefined;
+  const agentSetup = await buildAgentSetup(id, [summary], panes);
   const scheduleRows = toScheduleRows(scheduledRuns, viewerIsClient);
   const umbrella = umbrellas.find((u) => u.customAgentId === agent.id) ?? null;
   const rows = umbrella
@@ -241,6 +314,33 @@ export default async function ClientAgentDetailPage({
   ).slice(0, 8);
   const archiveHeading =
     archetype === "template_calendar" ? "What it has made for you" : "Documents it produced";
+
+  // ── STAFF PARITY (CD-I1) ──
+  // Everything the retired card grid could do, resolved for THIS agent. The
+  // directive is that nothing staff could do before becomes unreachable, so
+  // each of these maps to a capability that used to live on that card: the run
+  // dialog, the schedule dialog, the intake affordance, the review queue, the
+  // run history, the curation pane and the economics card.
+  const agentRuns = isStaff
+    ? toRunRows(jobs, true, umbrellas).filter((run) => run.agentName === agent.name)
+    : [];
+  const reviewCount = isStaff
+    ? jobs
+        .filter(
+          (job) =>
+            job.external?.taskType === "custom" &&
+            job.status === "review" &&
+            job.agentName === agent.name,
+        )
+        .reduce((total, job) => total + job.assetIds.length, 0)
+    : 0;
+  const lastStaffRun = agentRuns[0];
+  // §6.2(b). USD this client has spent on this agent, split by run type.
+  // Computed from the jobs already loaded — no extra read — and staff-only:
+  // this is cost data, and the client's side of the same question is credits.
+  const economics = isStaff
+    ? summarizeAgentEconomics(jobs.filter((job) => job.customAgentId === agent.id))
+    : null;
 
   const sourceFiles: SourceFile[] =
     archetype === "clip_maker"
@@ -452,6 +552,33 @@ export default async function ClientAgentDetailPage({
             />
           )}
 
+          {/* ── STAFF CONTROLS (CD-I1 staff parity) ──
+              The four gestures the retired card carried — run now, set/manage
+              the schedule, reach the agent's data, read why a schedule is
+              refusing — mounted for the ONE agent this page is about. Placed
+              under the client-facing band deliberately: staff read this page to
+              see what the client sees, then act. */}
+          {isStaff && (
+            <StaffAgentControls
+              clientId={id}
+              agent={summary}
+              {...(schedule ? { schedule } : {})}
+              {...(setup ? { setup } : {})}
+              contextItems={contextItems}
+              reviewCount={reviewCount}
+              reviewHref={agentRuns.find((run) => run.status === "review")?.href ?? `/clients/${id}/assets`}
+              {...(lastStaffRun ? { lastRunAt: lastStaffRun.createdAt } : {})}
+              viewer={{ name: user.name, email: user.email }}
+            />
+          )}
+
+          {/* Where staff confirm the template set before a client ever sees it
+              (the Q3 curation gate). Umbrella-only by nature — it edits the
+              umbrella's registry — and never shown for an unbound agent. */}
+          {isStaff && row && umbrella && umbrella.launchState !== "not_launched" && (
+            <CurationPane agent={row} />
+          )}
+
           {/* ── The per-agent archive (common chassis) ──
               WHAT is listed depends on the archetype, because two of the three
               already showed their product above and a second listing of the
@@ -497,6 +624,15 @@ export default async function ClientAgentDetailPage({
               Open your Workspace <Icon name="ArrowRight" className="h-3 w-3" />
             </Link>
           </section>
+
+          {/* This agent's own run history, with the /jobs links and the
+              submitted prompt — the staff slice of the same list the roster
+              page shows across every agent. Client viewers never mount it:
+              toRunRows only fills `prompt` and `href` for staff, and this page
+              only builds the rows at all when isStaff. */}
+          {isStaff && agentRuns.length > 0 && (
+            <AgentRunHistory runs={agentRuns} agents={[summary]} heading="This agent's runs" />
+          )}
         </div>
 
         <aside className="space-y-6">
@@ -592,6 +728,20 @@ export default async function ClientAgentDetailPage({
               Manage connections <Icon name="ArrowRight" className="h-3 w-3" />
             </Link>
           </section>
+
+          {/* §6.2(b), staff only: what this agent has actually cost in USD.
+              It rode the umbrella card before, so it was invisible for any
+              agent nobody had bound — which is most of them. Keyed off the
+              lab agent rather than the umbrella now, so it appears wherever
+              the runs did. */}
+          {isStaff && economics && (
+            <AgentEconomicsCard
+              customAgentId={agent.id}
+              agentName={umbrella?.displayName ?? agent.name}
+              economics={economics}
+              launchCreditCost={agent.launchCreditCost ?? null}
+            />
+          )}
         </aside>
       </div>
     </>

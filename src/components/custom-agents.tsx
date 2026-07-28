@@ -604,421 +604,327 @@ export function CustomAgentsHub({
   );
 }
 
-/* ═══════════════ client-page section (staff + clients) ═══════════════ */
+/* ═════════════════ staff controls (agent detail page) ═════════════════ */
 
 /**
- * Custom agents on a client's Agents page. Staff see every enabled agent;
- * client users see only their allowlist (the page passes the right list) and
- * are billed per run, so the run button gates on spendable credits. Both
- * `agents` and `runs` arrive pre-stripped to client-safe shapes.
+ * Does this refusal name a setup problem the reader can go and fix?
+ *
+ * All THREE intake prefixes, which is the point: the Reddit one was missing,
+ * so a staff member whose Reddit schedule was refused for want of intake got
+ * the "contact us" row — advice to email somebody about a form they were one
+ * click from filling in — while the identical X and LinkedIn refusals offered
+ * the link. The three agents are gated the same way by the submit cores, so
+ * they recover the same way here.
  */
-export function ClientCustomAgents({
+function refusalNamesSetup(refusal: string): boolean {
+  return (
+    refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
+    refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
+    refusal.startsWith(REDDIT_SETUP_REQUIRED_PREFIX)
+  );
+}
+
+/**
+ * Everything staff can DO to one agent for one client (CD-I1 staff parity).
+ *
+ * The staff all-in-one card grid is retired: staff now click an agent on the
+ * roster and open the same full page a client opens, which is the second half
+ * of Albert's directive. That move is only honest if nothing staff could do
+ * before becomes unreachable, so this band carries the four capabilities that
+ * lived on the retired card — run now, set/manage the schedule, reach the
+ * agent's data, and read why a schedule is refusing — and the detail page
+ * mounts the curation pane and the economics card beside it.
+ *
+ * STAFF ONLY, and simpler for it: staff runs are free (isBillableClientActor),
+ * so there is no credit rung here at all. The client's own run gesture lives in
+ * AgentDetailPanel / LegacyAgentPanel, where the price and the gate are, and
+ * this component is never mounted for a client viewer.
+ */
+export function StaffAgentControls({
   clientId,
-  agents,
-  runs,
-  schedules = [],
+  agent,
+  schedule,
+  setup,
   contextItems,
-  viewerIsClient,
-  availableCredits,
-  creditBlockReasons,
-  agentSetup,
+  reviewCount = 0,
+  reviewHref,
+  lastRunAt,
   viewer,
 }: {
   clientId: string;
-  agents: RunnableAgentSummary[];
-  runs: CustomAgentRunRow[];
-  schedules?: ClientAgentScheduleRow[];
+  agent: RunnableAgentSummary;
+  schedule?: ClientAgentScheduleRow;
+  setup?: AgentSetupState;
   contextItems: ContextItem[];
-  viewerIsClient: boolean;
-  /** Spendable credits right now (balance clipped by caps) — client viewers only. */
-  availableCredits?: number;
-  /**
-   * Per agent id: which limit clips `availableCredits` at THAT agent's price,
-   * phrased for the client and resolved server-side from the denial code (never
-   * a keyword guess at a message). Present only for agents a charge would block
-   * — the binding limit depends on the cost, so it cannot be one shared line.
-   */
-  creditBlockReasons?: Record<string, string>;
-  /** Prefills the support form offered when a schedule is stuck on a refusal. */
+  /** Deliverables sitting in review for this agent — the staff queue. */
+  reviewCount?: number;
+  reviewHref: string;
+  lastRunAt?: number;
   viewer?: { name: string; email: string };
-  /**
-   * Intake readiness per agent id, resolved server-side with the same call the
-   * submit core makes. Agents without an intake gate are simply absent.
-   */
-  agentSetup?: Record<string, AgentSetupState>;
 }) {
-  const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
+  const [runOpen, setRunOpen] = useState(false);
   const [runIntakeFirst, setRunIntakeFirst] = useState(false);
-  const [scheduleAgent, setScheduleAgent] = useState<RunnableAgentSummary | null>(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
-  const agentByName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
-  const scheduleByAgent = useMemo(
-    () => new Map(schedules.map((schedule) => [schedule.agentId, schedule])),
-    [schedules],
-  );
+  const intake = intakeFor(setup);
+  const blockedSetup = setup && !setup.ready ? setup : null;
+  // A refused schedule is never "Live". A PAUSED schedule reports paused: the
+  // person who paused it chose that, and a stale refusal from before the pause
+  // is not the current state.
+  const refusal = schedule?.status === "active" ? schedule.lastError?.trim() || null : null;
+  const refusalIsSetup = refusal !== null && refusalNamesSetup(refusal);
+  // A scheduled run fires unattended, so every fire would be refused while the
+  // company page is missing. An EXISTING schedule stays open to manage —
+  // pausing it must never be blocked.
+  const scheduleNeedsData = Boolean(intake) && !companyOnFile(intake) && !schedule;
 
-  function openRun(agent: RunnableAgentSummary, intakeFirst = false) {
+  function openRun(intakeFirst = false) {
     setRunIntakeFirst(intakeFirst);
-    setRunAgent(agent);
+    setRunOpen(true);
   }
 
-  if (agents.length === 0 && runs.length === 0) return null;
-
-  // The open schedule dialog's own copy of the card's gate: props refresh
-  // underneath it, so the agent data can go missing while it is open.
-  const scheduleIntake = scheduleAgent ? intakeFor(agentSetup?.[scheduleAgent.id]) : null;
-  const scheduleSetupNeeded =
-    scheduleAgent && scheduleIntake && !companyOnFile(scheduleIntake)
-      ? {
-          kind: scheduleIntake.kind,
-          onOpenData: () => {
-            setScheduleAgent(null);
-            openRun(scheduleAgent, true);
-          },
-        }
-      : null;
-
   return (
-    <section className="mt-10">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        {/* Clients already read this page's own header, which says the same
-            thing in slightly different words. Only staff get a section heading
-            here — their page header describes the whole page, not this section.
-            The credits badge stays either way; it is the row's only unique
-            content. */}
-        {viewerIsClient ? (
-          <span />
-        ) : (
-          <div>
-            <h2 className="text-xl text-foreground">Custom agents</h2>
-            <p className="mt-0.5 text-sm text-muted">
-              Prompt-driven agents from the custom library, run against this client.
-            </p>
-          </div>
+    <section className="rounded-[var(--radius)] border border-border bg-surface-2/40 p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h2 className="mr-auto font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+          Staff controls
+        </h2>
+        <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
+        {/* Two affordances, never both at once. Missing data is a CALL TO
+            ACTION and links the agent's own data page (CD-E1); data already on
+            file is an EDIT affordance and opens the dialog's inline pane, so a
+            staff member correcting one field does not lose the run they were
+            setting up. */}
+        {blockedSetup ? (
+          <a
+            href={blockedSetup.href}
+            className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
+            title={`Open ${blockedSetup.label} to finish setup`}
+          >
+            <Badge tone="warning">Setup needed</Badge>
+          </a>
+        ) : intake && intakeComplete(intake) ? (
+          <AgentDataButton kind={intake.kind} ready onOpen={() => openRun(true)} />
+        ) : null}
+      </div>
+
+      {/* The live-state slot. Precedence, highest first: a stored refusal (the
+          schedule fired and was turned away) → setup still missing → the
+          schedule's own next fire → drafts waiting → last run → never run. */}
+      <div className="rounded-md border border-border bg-surface-2/70 px-3 py-2">
+        {schedule && (
+          <p className="text-xs text-foreground">
+            {schedule.postsPerWeek} run{schedule.postsPerWeek === 1 ? "" : "s"}/week
+            {" · "}
+            {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
+          </p>
         )}
-        {viewerIsClient && availableCredits !== undefined && (
-          <Badge tone={availableCredits > 0 ? "neon" : "warning"}>
-            {availableCredits} credits available
-          </Badge>
+        {refusal ? (
+          <>
+            <p className="mt-0.5 text-[11px] text-warning">{refusal}</p>
+            {refusalIsSetup && setup ? (
+              <a
+                href={setup.href}
+                className="mt-1 inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+              >
+                Open {setup.label}
+                <Icon name="ArrowRight" className="h-3 w-3" />
+              </a>
+            ) : viewer ? (
+              <div className="-mx-3 mt-0.5">
+                <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
+              </div>
+            ) : null}
+            {schedule?.lastErrorAt ? (
+              <p className="mt-0.5 text-[10px] text-muted-2">
+                Last tried {relativeTime(schedule.lastErrorAt)}
+              </p>
+            ) : null}
+          </>
+        ) : blockedSetup ? (
+          <p className={cn("text-[11px] text-warning", !schedule && "text-xs")}>
+            Not running yet — your {blockedSetup.label} is still empty.
+          </p>
+        ) : schedule ? (
+          <p className="mt-0.5 text-[11px] text-muted-2">
+            {schedule.status === "active"
+              ? `Working toward ${formatDate(schedule.nextRunAt)}`
+              : "Schedule paused"}
+          </p>
+        ) : reviewCount > 0 ? (
+          <Link href={reviewHref} className="text-xs text-warning hover:underline">
+            {reviewCount} draft{reviewCount === 1 ? "" : "s"} waiting for review
+          </Link>
+        ) : lastRunAt ? (
+          <p className="text-xs text-muted-2">Last run {relativeTime(lastRunAt)}</p>
+        ) : (
+          <p className="text-xs text-muted-2">No runs yet.</p>
         )}
       </div>
 
-      {agents.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {agents.map((agent) => {
-            const cost = agentRunCost(agent);
-            const short = viewerIsClient && availableCredits !== undefined && availableCredits < cost;
-            const schedule = scheduleByAgent.get(agent.id);
-            const agentRuns = runs.filter((run) => run.agentName === agent.name);
-            const reviewRuns = agentRuns.filter(
-              (run) => run.status === "review" && run.assetCount > 0,
-            );
-            const readyAssetCount = reviewRuns.reduce((total, run) => total + run.assetCount, 0);
-            // `runs` arrives newest-first (the page sorts by createdAt desc).
-            const lastRun = agentRuns[0];
-            const setup = agentSetup?.[agent.id] ?? null;
-            // Readiness is computed once, next to the "Setup needed" chip, and
-            // gates the run button with it: the submit core refuses these runs
-            // server-side, so an enabled Run beside a blocked chip can only
-            // spend credits on a run that cannot succeed or fail unhelpfully.
-            const blockedSetup = setup && !setup.ready ? setup : null;
-            // A refused schedule is never "Live" — the badge and the status line
-            // both switch to the stored refusal until a fire succeeds. A paused
-            // schedule reports paused: the person who paused it chose that, and
-            // a stale refusal from before the pause is not the current state.
-            // Already redacted for client viewers on the server (toScheduleRows).
-            const refusal =
-              schedule?.status === "active" ? schedule.lastError?.trim() || null : null;
-            const refusalIsSetup =
-              refusal !== null &&
-              (refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
-                refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX));
-            const reviewHref = viewerIsClient
-              ? "/tasks"
-              : reviewRuns[0]?.href ?? `/clients/${clientId}/assets`;
-            const intake = intakeFor(setup);
-            // A scheduled run fires unattended, so every fire would be refused
-            // while the company page is missing. An existing schedule stays
-            // open to manage — pausing it must never be blocked.
-            const scheduleNeedsData = Boolean(intake) && !companyOnFile(intake) && !schedule;
-            return (
-              <div
-                key={agent.id}
-                className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
-              >
-                <span className="absolute inset-x-0 top-0 h-0.5 bg-foreground/40 opacity-45 transition-opacity group-hover:opacity-80" aria-hidden="true" />
-                <div className="flex items-start gap-3">
-                  <AgentChip agent={agent} />
-                  <div className="min-w-0 flex-1">
-                    <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">AI agent</p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-base font-medium">{agent.name}</p>
-                      {refusal ? (
-                        <Badge tone="warning">Needs attention</Badge>
-                      ) : schedule?.status === "active" ? (
-                        <Badge tone="success">
-                          <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse-neon" aria-hidden="true" />
-                          Live
-                        </Badge>
-                      ) : null}
-                    </div>
-                    <AgentBlurb text={agentBlurb(agent)} className="mt-0.5" />
-                  </div>
-                  {readyAssetCount > 0 && (
-                    <Link
-                      href={reviewHref}
-                      className="flex shrink-0 items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] font-medium text-warning transition-colors hover:border-warning/50 hover:bg-warning/15"
-                      aria-label={`${readyAssetCount} new ${readyAssetCount === 1 ? "asset" : "assets"} ready to review from ${agent.name}`}
-                    >
-                      <Icon name="Bell" className="h-3.5 w-3.5" />
-                      {readyAssetCount} ready
-                    </Link>
-                  )}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
-                  {/* Two affordances, never both at once. Missing data is a
-                      CALL TO ACTION and links to the agent's own data page
-                      (CD-E1) — the one place that form lives. Data already on
-                      file is an EDIT affordance and opens the dialog's inline
-                      pane, so a staff member correcting one field does not lose
-                      the run they were setting up. */}
-                  {blockedSetup ? (
-                    <a
-                      href={blockedSetup.href}
-                      className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
-                      title={`Open ${blockedSetup.label} to finish setup`}
-                    >
-                      <Badge tone="warning">Setup needed</Badge>
-                    </a>
-                  ) : intake && intakeComplete(intake) ? (
-                    <AgentDataButton
-                      kind={intake.kind}
-                      ready
-                      onOpen={() => openRun(agent, true)}
-                    />
-                  ) : null}
-                </div>
-                {/* The one slot on the card that carries live state. Precedence,
-                    highest first: a stored refusal (the schedule fired and was
-                    turned away) → setup still missing → the schedule's own next
-                    fire → drafts waiting → last run → never run. The chip above
-                    already links to setup, so no tier here adds a second one. */}
-                <div className="mt-3 rounded-md border border-border bg-surface-2/70 px-3 py-2">
-                  {schedule && (
-                    <p className="text-xs text-foreground">
-                      {schedule.postsPerWeek} run{schedule.postsPerWeek === 1 ? "" : "s"}/week
-                      {" · "}
-                      {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
-                    </p>
-                  )}
-                  {refusal ? (
-                    <>
-                      <p className="mt-0.5 text-[11px] text-warning">{refusal}</p>
-                      {refusalIsSetup && setup ? (
-                        <a
-                          href={setup.href}
-                          className="mt-1 inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
-                        >
-                          Open {setup.label}
-                          <Icon name="ArrowRight" className="h-3 w-3" />
-                        </a>
-                      ) : viewer ? (
-                        <div className="-mx-3 mt-0.5">
-                          <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
-                        </div>
-                      ) : null}
-                      {schedule?.lastErrorAt ? (
-                        <p className="mt-0.5 text-[10px] text-muted-2">
-                          Last tried {relativeTime(schedule.lastErrorAt)}
-                        </p>
-                      ) : null}
-                    </>
-                  ) : blockedSetup ? (
-                    <p className={cn("text-[11px] text-warning", !schedule && "text-xs")}>
-                      Not running yet — your {blockedSetup.label} is still empty.
-                    </p>
-                  ) : schedule ? (
-                    <p className="mt-0.5 text-[11px] text-muted-2">
-                      {schedule.status === "active"
-                        ? `Working toward ${formatDate(schedule.nextRunAt)}`
-                        : "Schedule paused"}
-                    </p>
-                  ) : readyAssetCount > 0 ? (
-                    <Link href={reviewHref} className="text-xs text-warning hover:underline">
-                      {readyAssetCount} draft{readyAssetCount === 1 ? "" : "s"} waiting for review
-                    </Link>
-                  ) : lastRun ? (
-                    <p className="text-xs text-muted-2">Last run {relativeTime(lastRun.createdAt)}</p>
-                  ) : (
-                    <p className="text-xs text-muted-2">No runs yet.</p>
-                  )}
-                </div>
-                <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
-                  {/* Per RUN — that is what CustomAgent.creditCost prices and
-                      what "Run now" charges once, whatever the brief asks for.
-                      Only a scheduled fire multiplies it by outputs per run,
-                      and the schedule dialog does that arithmetic itself. */}
-                  <p className="text-xs text-muted-2">{cost} credits per run</p>
-                  <div className="flex gap-1.5">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      // F131: a control the server would refuse is never left
-                      // enabled. Missing intake is exactly such a refusal, so
-                      // the chip above is the way in, not this button.
-                      disabled={short || Boolean(blockedSetup)}
-                      title={
-                        short
-                          ? "Not enough credits. Ask your Karos team for a top-up."
-                          : blockedSetup
-                            ? `Add the ${blockedSetup.label} first — the agent drafts from it.`
-                            : undefined
-                      }
-                      onClick={() => openRun(agent)}
-                    >
-                      <Icon name="Play" className="h-3.5 w-3.5" /> Run now
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="subtle"
-                      title={
-                        scheduleNeedsData && intake
-                          ? `Add the ${INTAKE_LABEL[intake.kind]} agent data first — every scheduled run drafts from it.`
-                          : undefined
-                      }
-                      onClick={() =>
-                        scheduleNeedsData ? openRun(agent, true) : setScheduleAgent(agent)
-                      }
-                    >
-                      <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" />
-                      {schedule ? "Manage" : "Set schedule"}
-                    </Button>
-                  </div>
-                </div>
-                {/* Why "Run now" is off, on the card itself. The Button primitive
-                    sets disabled:pointer-events-none, so a `title` on a disabled
-                    button can never be shown — the reason has to be painted.
-                    Both reasons render: they block for different lengths of time
-                    and are fixed by different people. */}
-                {(blockedSetup || short) && (
-                  <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
-                    {blockedSetup && (
-                      <p className="text-[11px] text-warning">
-                        Run now needs your {blockedSetup.label} — this agent drafts from it.
-                      </p>
-                    )}
-                    {short && (
-                      <p className="text-[11px] text-warning">
-                        {creditBlockReasons?.[agent.id] ?? "Not enough credits."}
-                      </p>
-                    )}
-                    {short && viewer && (
-                      <div className="-mx-3">
-                        <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <Button
+          size="sm"
+          variant="ghost"
+          // F131: a control the server would refuse is never left enabled.
+          // Missing intake is exactly such a refusal, so the chip above is the
+          // way in, not this button.
+          disabled={Boolean(blockedSetup)}
+          onClick={() => openRun()}
+        >
+          <Icon name="Play" className="h-3.5 w-3.5" /> Run now
+        </Button>
+        <Button
+          size="sm"
+          variant="subtle"
+          onClick={() => (scheduleNeedsData ? openRun(true) : setScheduleOpen(true))}
+        >
+          <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" />
+          {schedule ? "Manage schedule" : "Set schedule"}
+        </Button>
+        {reviewCount > 0 && (
+          <Link
+            href={reviewHref}
+            className="inline-flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] font-medium text-warning transition-colors hover:border-warning/50 hover:bg-warning/15"
+          >
+            <Icon name="Bell" className="h-3.5 w-3.5" />
+            {reviewCount} ready
+          </Link>
+        )}
+      </div>
+
+      {/* Why a control is off, PAINTED — the Button primitive sets
+          disabled:pointer-events-none, so a title on a disabled button can
+          never be shown. */}
+      {blockedSetup && (
+        <p className="mt-2 border-t border-border/60 pt-2 text-[11px] text-warning">
+          Run now needs the {blockedSetup.label} — this agent drafts from it.
+        </p>
+      )}
+      {scheduleNeedsData && intake && !blockedSetup && (
+        <p className="mt-2 text-[11px] text-muted-2">
+          Add the {INTAKE_LABEL[intake.kind]} agent data before setting a schedule — every
+          scheduled run drafts from it.
+        </p>
       )}
 
-      {runs.length > 0 && (
-        <div className="mt-6">
-          <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-            Recent agent runs
-          </p>
-          <div className="overflow-hidden rounded-[var(--radius)] border border-border">
-            {runs.map((run, i) => {
-              const agent = agentByName.get(run.agentName);
-              const row = (
-                <>
-                  {agent ? (
-                    <AgentIdentity
-                      identity={`${agent.key} ${agent.name}`}
-                      icon={agent.icon}
-                      size="sm"
-                    />
-                  ) : (
-                    <AgentIdentity identity={run.label} icon="Bot" size="sm" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    {/* The resolved identity, never the stored name — see
-                        CustomAgentRunRow.label (F147). */}
-                    <p className="truncate text-sm">{run.label}</p>
-                    {/* What the run produced — never what somebody typed to start
-                        it. `prompt` is present only for staff viewers; the page
-                        leaves it out of the client payload entirely. */}
-                    <p className="truncate text-xs text-muted-2">
-                      {relativeTime(run.createdAt)}
-                      {run.assetCount > 0
-                        ? ` · ${run.assetCount} draft${run.assetCount === 1 ? "" : "s"}`
-                        : ""}
-                      {run.prompt ? ` · "${run.prompt}"` : ""}
-                    </p>
-                  </div>
-                  <JobStatusBadge status={run.status} />
-                </>
-              );
-              const rowClass = cn(
-                "flex items-center gap-3 px-4 py-2.5",
-                i > 0 && "border-t border-border",
-              );
-              // Client rows carry no link, so an in-flight run had nowhere to go
-              // and watch: the three-step strip comes to the row instead. Ten to
-              // twenty minutes on a frozen "Queued" reads as a stuck run.
-              const inFlight = run.status === "queued" || run.status === "running";
-              return (
-                <div key={run.id}>
-                  {run.href ? (
-                    <Link href={run.href} className={cn(rowClass, "transition-colors hover:bg-surface-2")}>
-                      {row}
-                      <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
-                    </Link>
-                  ) : (
-                    <div className={rowClass}>{row}</div>
-                  )}
-                  {inFlight && (
-                    <div className="border-t border-border bg-surface-2/50">
-                      <ManagedJobProgress
-                        status={run.status}
-                        className="mb-0 rounded-none border-0 bg-transparent px-4 py-2"
-                      />
-                      <CancelRunControl runId={run.id} />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {runAgent && (
+      {runOpen && (
         <RunCustomAgentModal
-          agent={runAgent}
+          agent={agent}
           clientId={clientId}
           contextItems={contextItems}
-          viewerIsClient={viewerIsClient}
-          {...(agentSetup?.[runAgent.id] ? { setup: agentSetup[runAgent.id] } : {})}
+          viewerIsClient={false}
+          {...(setup ? { setup } : {})}
           {...(runIntakeFirst ? { initialPane: "data" as const } : {})}
-          onClose={() => setRunAgent(null)}
+          onClose={() => setRunOpen(false)}
         />
       )}
-      {scheduleAgent && (
+      {scheduleOpen && (
         <AgentScheduleModal
-          agent={scheduleAgent}
+          agent={agent}
           clientId={clientId}
-          schedule={scheduleByAgent.get(scheduleAgent.id)}
-          availableCredits={availableCredits}
-          {...(scheduleSetupNeeded ? { setupNeeded: scheduleSetupNeeded } : {})}
-          onClose={() => setScheduleAgent(null)}
+          {...(schedule ? { schedule } : {})}
+          {...(intake && !companyOnFile(intake)
+            ? {
+                setupNeeded: {
+                  kind: intake.kind,
+                  onOpenData: () => {
+                    setScheduleOpen(false);
+                    openRun(true);
+                  },
+                },
+              }
+            : {})}
+          onClose={() => setScheduleOpen(false)}
         />
       )}
     </section>
+  );
+}
+
+/**
+ * Recent agent runs — the staff history strip (CD-I1).
+ *
+ * Lifted out of the retired card grid rather than rewritten, and kept on BOTH
+ * staff surfaces: the roster page shows every agent's runs (the cross-agent
+ * view staff had before and would otherwise lose to per-agent pages), and the
+ * detail page shows one agent's. Client viewers never mount it — their run
+ * history is the archive, and a raw prompt or a /jobs link is staff-only.
+ */
+export function AgentRunHistory({
+  runs,
+  agents,
+  heading = "Recent agent runs",
+}: {
+  runs: CustomAgentRunRow[];
+  /** For the platform mark — matched on the stored name, as the rows are. */
+  agents: RunnableAgentSummary[];
+  heading?: string;
+}) {
+  const agentByName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
+  if (runs.length === 0) return null;
+  return (
+    <div>
+      <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{heading}</p>
+      <div className="overflow-hidden rounded-[var(--radius)] border border-border">
+        {runs.map((run, i) => {
+          const agent = agentByName.get(run.agentName);
+          const row = (
+            <>
+              {agent ? (
+                <AgentIdentity
+                  identity={`${agent.key} ${agent.name}`}
+                  icon={agent.icon}
+                  size="sm"
+                />
+              ) : (
+                <AgentIdentity identity={run.label} icon="Bot" size="sm" />
+              )}
+              <div className="min-w-0 flex-1">
+                {/* The resolved identity, never the stored name (F147). */}
+                <p className="truncate text-sm">{run.label}</p>
+                {/* What the run produced — never what somebody typed to start
+                    it, for a client. `prompt` is present only for staff. */}
+                <p className="truncate text-xs text-muted-2">
+                  {relativeTime(run.createdAt)}
+                  {run.assetCount > 0
+                    ? ` · ${run.assetCount} draft${run.assetCount === 1 ? "" : "s"}`
+                    : ""}
+                  {run.prompt ? ` · "${run.prompt}"` : ""}
+                </p>
+              </div>
+              <JobStatusBadge status={run.status} />
+            </>
+          );
+          const rowClass = cn(
+            "flex items-center gap-3 px-4 py-2.5",
+            i > 0 && "border-t border-border",
+          );
+          const inFlight = run.status === "queued" || run.status === "running";
+          return (
+            <div key={run.id}>
+              {run.href ? (
+                <Link href={run.href} className={cn(rowClass, "transition-colors hover:bg-surface-2")}>
+                  {row}
+                  <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
+                </Link>
+              ) : (
+                <div className={rowClass}>{row}</div>
+              )}
+              {inFlight && (
+                <div className="border-t border-border bg-surface-2/50">
+                  <ManagedJobProgress
+                    status={run.status}
+                    className="mb-0 rounded-none border-0 bg-transparent px-4 py-2"
+                  />
+                  <CancelRunControl runId={run.id} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
