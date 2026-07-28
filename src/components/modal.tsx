@@ -55,7 +55,11 @@ export function Modal({
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
       <div
         className={cn(
-          "relative z-10 flex max-h-[calc(100dvh-3rem)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius)] border border-border-strong bg-surface shadow-2xl animate-fade-up",
+          // Capped, not uncapped: the body scrolls, so a content-heavy dialog
+          // must not stretch to a tall monitor's full height. 1100px clears
+          // F32's "Start run scrolls out of sight" on normal displays while
+          // staying bounded on very tall ones.
+          "relative z-10 flex max-h-[min(calc(100dvh-3rem),1100px)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius)] border border-border-strong bg-surface shadow-2xl animate-fade-up",
           className,
         )}
         role="dialog"
