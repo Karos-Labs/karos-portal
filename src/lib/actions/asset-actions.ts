@@ -29,6 +29,7 @@ import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
 import { syncSlotPostedForAsset } from "@/lib/client-agent-slots";
+import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
 import type { Asset, PublishMode } from "@/lib/types";
 
 /** Load the asset and verify the caller may act on it. Shared guard for the actions below. */
@@ -303,6 +304,15 @@ export async function markAssetPostedAction(
     console.error("[assets] slot posted sync failed:", e),
   );
 
+  // §4.5c — the chosen option's own learning-log row. "Picked" and "actually
+  // posted" are different facts: the pick wrote the losers' rows immediately,
+  // but the winner only earns a `posted` row when the client says they posted
+  // it. Recording the pick as posted would teach the agent that everything it
+  // drafts goes out. Best-effort for the same reason as above.
+  await recordPostedOptionFeedback(asset).catch((e) =>
+    console.error("[assets] option feedback failed:", e),
+  );
+
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
   return { ok: true };
@@ -380,4 +390,34 @@ export async function publishAssetNowAction(
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
   return { ok: true, platform: target };
+}
+
+/**
+ * Record that a picked X option was actually posted (§4.5c).
+ *
+ * Only applies to assets materialized by `pickAgentSlotOptionAction` — they
+ * carry the option ref, the account and the batch they came from in `meta`, so
+ * no schema change to XDraftFeedback was needed. Anything else returns silently.
+ *
+ * `posted_with_edits` carries the final text, which is the most valuable row in
+ * the whole log: it is the client showing, not telling, exactly how the agent's
+ * draft fell short. Edit detection is the flag stamped at pick time rather than
+ * a re-comparison here — the original lives in the batch asset and could have
+ * been re-imported since.
+ */
+async function recordPostedOptionFeedback(asset: Asset): Promise<void> {
+  const meta = asset.meta ?? {};
+  const draftRef = typeof meta.optionRef === "string" ? meta.optionRef : null;
+  const accountTitle = typeof meta.xAccountTitle === "string" ? meta.xAccountTitle : null;
+  if (!draftRef || !accountTitle) return;
+
+  const edited = meta.edited === true;
+  await addXDraftFeedbackAction({
+    clientId: asset.clientId,
+    accountTitle,
+    ...(typeof meta.pickedFromAssetId === "string" ? { assetId: meta.pickedFromAssetId } : {}),
+    draftRef,
+    action: edited ? "posted_with_edits" : "posted",
+    ...(edited ? { finalText: asset.content } : {}),
+  });
 }

@@ -9,6 +9,7 @@ import { AgentScheduleModal } from "@/components/custom-agents";
 import { ClientAgentFeedbackModal } from "./feedback-modal";
 import { OptionsRow, TemplateRows, WeekStrip } from "./live-card";
 import { SlotNoteModal } from "./slot-note-modal";
+import { OptionPicked, OptionPicker } from "./option-picker";
 import { visibleTemplates } from "@/lib/client-agent-runs";
 import { runClientAgentTemplateAction } from "@/lib/actions/client-agent-run-actions";
 import type { ClientAgentCardRow } from "./types";
@@ -149,7 +150,24 @@ export function AgentDetailPanel({
           }
         />
         {agent.optionsMode ? (
-          <OptionsRow />
+          /* WP-9 retires D6's placeholder. That row existed to describe the
+             product without promising the picker, because the picker did not
+             exist; it does now, so today's three options ARE the row. The
+             placeholder survives only for a day whose options have not been
+             assigned yet — where it is still the honest thing to say. */
+          agent.today ? (
+            agent.today.pickedDirection ? (
+              <OptionPicked direction={agent.today.pickedDirection} />
+            ) : (
+              <OptionPicker
+                clientId={agent.clientId}
+                slotId={agent.today.slotId}
+                options={agent.today.options}
+              />
+            )
+          ) : (
+            <OptionsRow />
+          )
         ) : (
           <TemplateRows
             agent={agent}

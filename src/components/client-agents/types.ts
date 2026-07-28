@@ -1,6 +1,7 @@
 import type { ClientAgentLaunchState, ClientAgentTemplate } from "@/lib/types";
 import type { LaunchBlockCode } from "@/lib/client-agents";
 import type { TemplateRunBlockCode } from "@/lib/client-agent-runs";
+import type { XOption } from "@/lib/x-options";
 import type { ClientAgentScheduleRow, RunnableAgentSummary } from "@/components/custom-agents";
 
 /**
@@ -81,6 +82,21 @@ export interface ClientAgentCardRow {
     /** False once the day has passed: a note then could never be applied. */
     canNote: boolean;
   }>;
+  /**
+   * TODAY's three options, for an options-mode umbrella (§4.5, WP-9).
+   *
+   * Present ONLY for the current day, and only once its options are assigned.
+   * A future day's texts never enter this payload — their existence is the one
+   * fact the churn rule keeps indistinguishable, and redaction that happens at
+   * render time has already lost. Null once the client has chosen, with the
+   * direction they picked, so the day can show a receipt instead of re-offering
+   * options they already declined.
+   */
+  today: {
+    slotId: string;
+    options: XOption[];
+    pickedDirection: string | null;
+  } | null;
   /** Two-level feedback already on this umbrella (WP-3). */
   feedback: ClientAgentFeedbackRow[];
   /**

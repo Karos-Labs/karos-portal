@@ -1,6 +1,6 @@
 import "server-only";
 
-import { listPlannedScheduledRuns } from "@/lib/data";
+import { getAsset, listPlannedScheduledRuns } from "@/lib/data";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
@@ -10,6 +10,8 @@ import { listClientAgentFeedback } from "@/lib/data-client-agents";
 import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-agents";
 import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
 import { canNoteSlot } from "@/lib/slot-notes";
+import { parseXDrafts } from "@/lib/x-drafts";
+import { resolveOptions } from "@/lib/x-options";
 import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { AgentSetupState, ClientAgentScheduleRow, CustomAgentRunRow, RunnableAgentSummary } from "@/components/custom-agents";
@@ -271,6 +273,32 @@ export async function toClientAgentRows(args: {
       : [[], []];
     const templateNames = new Map(umbrella.templates.map((t) => [t.key, t.name]));
 
+    // §4.5 / WP-9. TODAY only — a future day's option texts must never enter
+    // the payload, because their existence is precisely what the slot model
+    // keeps indistinguishable. The batch asset is read here, on the server, and
+    // only the three texts for the current day cross the boundary.
+    let today: ClientAgentCardRow["today"] = null;
+    if (live && optionsMode) {
+      const todaySlot = slots.find((slot) => slot.dateKey === todayKey);
+      if (todaySlot && (todaySlot.optionRefs?.length ?? 0) > 0) {
+        if (todaySlot.optionPick) {
+          const picked = todaySlot.optionPick.optionRef;
+          today = {
+            slotId: todaySlot.id,
+            options: [],
+            pickedDirection: picked.split(" · ").slice(-1)[0] ?? "chosen",
+          };
+        } else if (todaySlot.assetId) {
+          const batchAsset = await getAsset(todaySlot.assetId);
+          const batch = batchAsset ? parseXDrafts(batchAsset.content ?? "") : null;
+          const options = batch ? resolveOptions(batch, todaySlot.optionRefs ?? []) : [];
+          if (options.length > 0) {
+            today = { slotId: todaySlot.id, options, pickedDirection: null };
+          }
+        }
+      }
+    }
+
     // The one run the card acknowledges: a "Run now" the viewer just pressed.
     // Scheduled fires are deliberately invisible here (see ClientAgentCardRow).
     const pending = live
@@ -358,6 +386,7 @@ export async function toClientAgentRows(args: {
           : null,
         canNote: canNoteSlot(slot, todayKey).ok,
       })),
+      today,
       feedback: feedbackRows.map((row) => ({
         id: row.id,
         scope: row.scope,
