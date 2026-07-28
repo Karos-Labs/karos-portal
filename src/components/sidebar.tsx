@@ -76,9 +76,11 @@ function ClientContextPicker({ clients, isAdmin }: { clients: Client[]; isAdmin:
     // picker renders for every staff member, so an EMPLOYEE who picked a client
     // got the admin-only Schedule and Regenerate controls in their rail for the
     // whole navigation, until ClientContextSync reconciled the flag from the
-    // server. The actions themselves always refused (requireAdmin), so this was
-    // a dead control rather than an escalation — but it contradicted CD-G5's
-    // "admin-only", so the flag now starts out honest.
+    // server. That was a REAL escalation window, not a dead control: at the
+    // time, generateIntelReportAction gated on requireStaff, so the employee's
+    // click would have fired a full pipeline run (the action is requireAdmin
+    // now — CD-G5 hardening — closing the server side too). The flag starting
+    // out honest closes the UI side.
     setActiveClient({ client, contextDocs: [], competitors: [], isAdmin });
     router.push(`/clients/${client.id}`);
   }
@@ -386,8 +388,12 @@ export function Sidebar({
   // restored through the two wrappers' own pt-4 instead.
   const clientSections = activeClient ? (
     <div className="mt-2 space-y-1.5">
-      {/* Client header */}
-      <div className="border-t border-border pt-4">
+      {/* Client header. pb-1.5 exists to BLOCK margin collapsing, not for its
+          own 6px: space-y compiles to a child margin on this wrapper, and the
+          inner row's mb-1 collapses into it — leaving 6px above DOCUMENTS vs
+          the baseline's 16px (shell2-lens measurement). Padding interrupts the
+          collapse, so mb-1(4) + pb-1.5(6) + space-y(6) = the baseline 16px. */}
+      <div className="border-t border-border pb-1.5 pt-4">
         <div className="mb-1 flex items-center gap-2 px-1">
           <BrandFavicon
             src={activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl}
