@@ -352,6 +352,11 @@ export function ClientCustomAgents({
             );
             const readyAssetCount = reviewRuns.reduce((total, run) => total + run.assetCount, 0);
             const setup = setupTargetFor(agent.key, xSetup, linkedinSetup);
+            // Readiness is computed once, next to the "Setup needed" chip, and
+            // gates the run button with it: the submit core refuses these runs
+            // server-side, so an enabled Run beside a blocked chip can only
+            // spend credits on a run that cannot succeed or fail unhelpfully.
+            const blockedSetup = setup && !setup.ready ? setup : null;
             // A refused schedule is never "Live" — the badge and the status line
             // both switch to the stored refusal until a fire succeeds.
             const refusal = schedule?.lastError?.trim() || null;
@@ -398,11 +403,14 @@ export function ClientCustomAgents({
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
-                  {xSetup && !xSetup.ready && isXAgentIdentity(agent.key) && (
-                    <Badge tone="warning">Setup needed</Badge>
-                  )}
-                  {linkedinSetup && !linkedinSetup.ready && isLinkedInAgentIdentity(agent.key) && (
-                    <Badge tone="warning">Setup needed</Badge>
+                  {blockedSetup && (
+                    <a
+                      href={blockedSetup.href}
+                      className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
+                      title={`Open ${blockedSetup.label} to finish setup`}
+                    >
+                      <Badge tone="warning">Setup needed</Badge>
+                    </a>
                   )}
                 </div>
                 <div className="mt-3 rounded-md border border-border bg-surface-2/70 px-3 py-2">
@@ -455,8 +463,14 @@ export function ClientCustomAgents({
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={short}
-                      title={short ? "Not enough credits. Ask your Karos team for a top-up." : undefined}
+                      disabled={short || Boolean(blockedSetup)}
+                      title={
+                        blockedSetup
+                          ? `Add your ${blockedSetup.label} first — this agent drafts from it and cannot run without it.`
+                          : short
+                            ? "Not enough credits. Ask your Karos team for a top-up."
+                            : undefined
+                      }
                       onClick={() => setRunAgent(agent)}
                     >
                       <Icon name="Play" className="h-3.5 w-3.5" /> Run now
