@@ -289,3 +289,27 @@ starting. Updated by the orchestrator after each verification gate.
   (unreachable — action boundary validates); past-day prefill forces
   cadence-once discoverable only on submit; ~30 extra tab stops on staff
   calendar empty cells.
+
+## DOCS verification rulings (drift lens complete; risk lens pending)
+- Bounced: F86's generateDocSummaryAction tier fallback (client could summarize
+  internal text via direct action call, uncharged) + same-shape check on
+  generateClientBriefAction.
+- **COPILOT cluster notes**: F89's cited client-documents.tsx:341 moved to
+  ~:552/:559 (re-locate by symbol); renderSectionBody now has ####, links with
+  isSafeHref scheme guard, indented bullets — F89 needs NO third renderer;
+  copilot answers will emit real target=_blank anchors (scheme-guarded).
+  F95's creditsAppendix shifted ~+6 (re-locate by symbol). F81's copilot half
+  (copilot-context.ts prefer-internal + dedupe) is now a NO-OP for CLIENT_USER
+  (F76 route filter) — still fix it (don't depend on a filter in another file),
+  but client-trust urgency gone.
+- **SHELL cluster notes**: F119 must ALSO cover the new DOCS-added instances
+  (client-documents.tsx:461-463 date+version subline; Rebuilding row
+  ~:1057-1061). F146 data.ts regions disjoint from DOCS edits.
+- Ledger notes: F138 — exported PDFs now omit placeholder-only sections (drawer
+  parity; unprescribed but consistent; client-visible change). F81 — sibling-tier
+  propagation runs in after(): seconds-long stale-copilot window accepted
+  (alternative = holding the modal on a second model call). F77 — prompt-injection
+  surface accepted by design (client corrections are ABSOLUTE GROUND TRUTH per
+  the existing applyDocCorrections framing; tier separation intact).
+- End-loop quality nits: DocOverlay unmemoized double render; parseDocSections
+  multi-line lead-in duplication (unreachable with shipped templates).
