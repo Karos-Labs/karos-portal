@@ -11,6 +11,7 @@
  * client components that consume these views stay free of domain imports and
  * vitest can test the mappings without a DOM.
  */
+import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { competitorBrandKeys } from "@/lib/competitor-input";
 import {
   ENGINE_LABELS,
@@ -26,10 +27,12 @@ import {
   engineVisibilityScore,
   normalizeBrandKey,
   type EngineId,
+  type Lever,
   type SeoGeoInsights,
   type SubMetrics,
   type VisibilityGap,
 } from "@/lib/seo-geo";
+import type { ManagedTaskType } from "@/lib/types";
 
 export type Tone = "success" | "warning" | "danger" | "info" | "neutral";
 
@@ -822,7 +825,15 @@ export interface GapView {
   goalLine: string | null;
   fixArea: { label: string; gloss: string } | null;
   fixRoute: string;
-  /** SCRUM-52 amendment: funnel into the executing agent. */
+  /**
+   * SCRUM-52 amendment: funnel into the executing agent. Always null now — every
+   * label this ever carried named a MANAGED PRODUCT, and no managed product has a
+   * card at `/clients/[id]/agents` (or anywhere else), so the chip's only
+   * destination was a dead end. The product is named in `fixRoute` instead.
+   * Kept rather than deleted so the invariant stays pinned: nothing renders it,
+   * and seo-geo-presenter.test.ts asserts every view's chip is null, so putting a
+   * href back fails a test instead of shipping another dead end.
+   */
   agentChip: { label: string; href: string } | null;
   qualifier: string | null;
 }
@@ -849,11 +860,31 @@ function severityRank(severity: string): number {
  * "Search results" rather than "Google search" because the checks behind this
  * channel cover Bing and Brave indexes too (GEO-24, GEO-23), so naming one engine
  * would be its own inaccuracy.
+ *
+ * `Record<Lever, …>`, so a lever added to the union is a compile error here rather
+ * than a raw "SEO"/"GEO"/"BOTH" code on a client screen — the F144/CD-B1 defect the
+ * client action plan was still shipping (it rendered `r.vertical` straight into a
+ * badge). Every lever-shaped surface reads these words: CHANNEL_VIEW below, and
+ * seo-geo-action-plan.tsx, whose own map is pinned to this one by
+ * seo-geo-presenter.test.ts so the two can't drift into different vocabulary.
+ */
+export const LEVER_LABELS: Record<Lever, string> = {
+  SEO: "search results",
+  GEO: "AI answers",
+  BOTH: "search + AI answers",
+};
+
+/**
+ * Lever → channel, on the SAME words. `Record<string, …>` deliberately (not
+ * `Record<Lever, …>`): persisted snapshots can carry a lever string from an older
+ * pipeline, and the `?? CHANNEL_VIEW.BOTH` fallback below is what stops that
+ * reaching a client. New levers are caught by LEVER_LABELS being closed over the
+ * union, which this map reads from.
  */
 const CHANNEL_VIEW: Record<string, { channel: GapChannel; label: string }> = {
-  SEO: { channel: "search", label: "search results" },
-  GEO: { channel: "ai", label: "AI answers" },
-  BOTH: { channel: "both", label: "search + AI answers" },
+  SEO: { channel: "search", label: LEVER_LABELS.SEO },
+  GEO: { channel: "ai", label: LEVER_LABELS.GEO },
+  BOTH: { channel: "both", label: LEVER_LABELS.BOTH },
 };
 
 const FIX_AREAS: Record<string, { label: string; gloss: string }> = {
@@ -889,14 +920,26 @@ const QUALIFIERS: Record<string, string | null> = {
 const QUALIFIER_DEFAULT = "Under review by the Karos team";
 
 /**
- * Rec id → executing agent (QA F7). CLOSED map: unknown ids fall back to the plain
- * fix-route sentence, never a broken link.
+ * Rec id → the MANAGED PRODUCT that produces the fix (QA F7). CLOSED map: unknown
+ * ids fall back to the plain fix-route sentence on its own.
+ *
+ * These are managed products (agent-service catalog), NOT agents with a card:
+ * `/clients/[id]/agents` renders the client's granted CUSTOM agents and their
+ * umbrellas, and nothing else — no MANAGED_PRODUCTS surface exists anywhere in the
+ * portal, for staff or for clients. So "Handled by your Blog agent" linking there
+ * was a dead end twice over: no agent by that name, and no card for the product
+ * doing the work. The label now names the catalog product and carries no link.
+ *
+ * Values are task types rather than prose so the name a human reads comes from the
+ * catalog itself (MANAGED_PRODUCTS) and can't drift from the product's real name.
  *
  * The original map keyed GEO-16 / GEO-31 / BOTH-08 — ids no producer in this repo
- * emits — and the chip was additionally gated on `delivery === "existing-product"`,
- * which only the four indexReach checks ever get (GEO-24/23/41/BOTH-09). Zero
- * overlap, so the chip was structurally unreachable. Keyed off the rec id now, and
- * only onto ids the registries actually emit (pinned in seo-geo-presenter.test.ts).
+ * emits — and was additionally gated on `delivery === "existing-product"`, which
+ * only the four indexReach checks ever get (GEO-24/23/41/BOTH-09). Zero overlap, so
+ * the chip was structurally unreachable. Keyed off the rec id now, and only onto ids
+ * a producer actually emits (pinned in seo-geo-presenter.test.ts against the
+ * producers themselves — that pin is what retired the last phantom key, BOTH-07,
+ * which has REC_COPY prose but sits in neither check registry).
  *
  * Deliberately NOT mapped: the off-site entity/review checks (GEO-04, GEO-14,
  * GEO-25) and the competitor-visibility gaps (GEO-11, GEO-27, GEO-35). Those are
@@ -905,45 +948,44 @@ const QUALIFIER_DEFAULT = "Under review by the Karos team";
  * which this panel does not receive — and a Reddit agent that does not exist in this
  * repo. Naming an agent a client doesn't have is the exact defect F7 reports.
  */
-const REC_AGENT_LABELS: Record<string, string> = {
+const REC_PRODUCTS: Record<string, ManagedTaskType> = {
   // Content-shaped checks → the blog_article product.
-  "GEO-02": "Blog agent",
-  "GEO-03": "Blog agent",
-  "GEO-09": "Blog agent",
-  "GEO-20": "Blog agent",
-  "GEO-22": "Blog agent",
-  "BOTH-13": "Blog agent",
-  "BOTH-16": "Blog agent",
-  // Page-level title / description / canonical work → the landing_page product.
-  "SEO-02": "Website agent",
-  "SEO-06": "Website agent",
-  "BOTH-07": "Website agent",
+  "GEO-02": "blog_article",
+  "GEO-03": "blog_article",
+  "GEO-09": "blog_article",
+  "GEO-20": "blog_article",
+  "GEO-22": "blog_article",
+  "BOTH-13": "blog_article",
+  "BOTH-16": "blog_article",
+  // Page-level title / description work → the landing_page product.
+  "SEO-02": "landing_page",
+  "SEO-06": "landing_page",
 };
 
 /** Exported for the regression pin: every key must be an id a producer emits (F7). */
-export const AGENT_MAPPED_IDS = Object.keys(REC_AGENT_LABELS);
+export const PRODUCT_MAPPED_IDS = Object.keys(REC_PRODUCTS);
 
-/** Managed-product task types (agent-service catalog) → agent label. */
-const PRODUCT_AGENT_LABELS: Record<string, string> = {
-  social_post: "Social agent",
-  newsletter_issue: "Newsletter agent",
-  blog_article: "Blog agent",
-  landing_page: "Website agent",
-};
+/** Task type → the catalog's own product name. Closed by construction. */
+const PRODUCT_NAMES: Record<string, string> = Object.fromEntries(
+  MANAGED_PRODUCTS.map((p) => [p.taskType, p.name] as const),
+);
 
 /**
  * A server-populated productRef wins over the static rec-id map (it will be
- * filled in by a follow-up ticket); only ever the humanized label, never the
- * raw ref id or folder.
+ * filled in by a follow-up ticket); only ever the catalog name, never the raw ref
+ * id or folder.
  */
-export function agentLabelFor(gap: VisibilityGap): string | null {
-  const fromProduct = gap.productRef?.id ? (PRODUCT_AGENT_LABELS[gap.productRef.id] ?? null) : null;
-  if (fromProduct) return fromProduct;
-  const recId = gap.id.split(":")[0];
-  return REC_AGENT_LABELS[recId] ?? null;
+export function productLabelFor(gap: VisibilityGap): string | null {
+  const fromRef = gap.productRef?.id ? (PRODUCT_NAMES[gap.productRef.id] ?? null) : null;
+  if (fromRef) return fromRef;
+  const taskType = REC_PRODUCTS[gap.id.split(":")[0]];
+  return taskType ? (PRODUCT_NAMES[taskType] ?? null) : null;
 }
 
-export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[] {
+/** `_clientId` is vestigial: it only ever built the funnel chip's href, and that
+ *  chip has no honest destination (see REC_PRODUCTS). Kept so the call sites in
+ *  seo-geo-panel.tsx and the suite don't have to change in this pass. */
+export function buildGapViews(gaps: VisibilityGap[], _clientId: string): GapView[] {
   // F11: the pipeline collapses registry duplicates at the source, but every
   // snapshot persisted before that still carries both copies — dedupe at render
   // too, so no UI consumer can show one defect as two contradictory cards.
@@ -957,8 +999,9 @@ export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[
       const channel = CHANNEL_VIEW[g.lever] ?? CHANNEL_VIEW.BOTH;
       // F7: keyed off the rec id, NOT `delivery` — the delivery gate made this
       // permanently null (only indexReach is "existing-product", and none of those
-      // ids are in the agent map).
-      const agentLabel = agentLabelFor(g);
+      // ids are in the product map).
+      const product = productLabelFor(g);
+      const route = FIX_ROUTES[g.delivery] ?? FIX_ROUTE_DEFAULT;
       // F3c: the registry/model label is never the headline. REC_COPY covers every
       // registry id (pinned in seo-geo.test.ts); the raw title is the last resort and
       // is demoted to a secondary technical line when the lookup succeeds.
@@ -978,10 +1021,11 @@ export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[
         // as the title — the existing evidence-vs-measured guard, applied here too.
         goalLine: g.benchmark && g.benchmark !== g.title && g.benchmark !== title ? g.benchmark : null,
         fixArea: FIX_AREAS[g.fixAction] ?? null,
-        fixRoute: FIX_ROUTES[g.delivery] ?? FIX_ROUTE_DEFAULT,
-        agentChip: agentLabel
-          ? { label: `Handled by your ${agentLabel}`, href: `/clients/${clientId}/agents` }
-          : null,
+        // The executing product is named in the route sentence — plain text that
+        // states a fact — instead of in a chip linking to /clients/[id]/agents,
+        // where the product has no card and never did (see REC_PRODUCTS).
+        fixRoute: product ? `${route} Produced by the ${product} managed product.` : route,
+        agentChip: null,
         qualifier: g.confidence in QUALIFIERS ? QUALIFIERS[g.confidence] : QUALIFIER_DEFAULT,
       };
     });

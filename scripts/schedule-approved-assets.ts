@@ -13,9 +13,11 @@
  *     auto-posts — staff push it live).
  *   - Leaves non-schedulable types (e.g. notes) approved and untouched.
  *
- * Run with:
- *   npx tsx scripts/schedule-approved-assets.ts          # apply
- *   npx tsx scripts/schedule-approved-assets.ts --dry     # preview only
+ *   npx tsx scripts/schedule-approved-assets.ts            # dry run — prints the plan
+ *   npx tsx scripts/schedule-approved-assets.ts --apply    # writes
+ *
+ * DRY RUN IS THE DEFAULT ON PURPOSE. The credentials in .env.local point at
+ * production Firestore. Read the printed plan first.
  *
  * Reads Firebase credentials from .env.local automatically.
  */
@@ -86,11 +88,6 @@ function initAdmin() {
   );
 }
 
-initAdmin();
-const db = getFirestore();
-db.settings({ ignoreUndefinedProperties: true });
-
-const DRY_RUN = process.argv.includes("--dry");
 const SCHEDULE_LEAD_MS = 3 * 60 * 60 * 1000; // mirror scheduling.ts MIN_LEAD_MS
 
 interface AssetRow {
@@ -107,7 +104,16 @@ interface AssetRow {
 }
 
 async function main() {
-  console.log(`🗓  Scheduling approved assets${DRY_RUN ? " (dry run)" : ""}…\n`);
+  const apply = process.argv.includes("--apply");
+  initAdmin();
+  const db = getFirestore();
+  db.settings({ ignoreUndefinedProperties: true });
+
+  console.log(
+    apply
+      ? "🗓  APPLYING — scheduling approved assets\n"
+      : "🗓  DRY RUN — nothing is written. Pass --apply to write.\n",
+  );
 
   const snap = await db.collection("assets").where("status", "==", "approved").get();
   const rows: AssetRow[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AssetRow, "id">) }));
@@ -152,7 +158,7 @@ async function main() {
           hour: "numeric",
           minute: "2-digit",
         });
-        if (DRY_RUN) {
+        if (!apply) {
           console.log(`${label} → ${when}`);
         } else {
           await db.collection("assets").doc(a.id).update({
@@ -174,14 +180,18 @@ async function main() {
   }
 
   console.log("\n── Summary ─────────────────────────────────────────────");
-  console.log(`   Scheduled: ${summary.scheduled}${DRY_RUN ? " (would)" : ""}`);
+  console.log(`   Scheduled: ${summary.scheduled}${apply ? "" : " (would)"}`);
   console.log(`   Skipped:   ${summary.skipped} (non-schedulable)`);
   console.log(`   Failed:    ${summary.failed}`);
   console.log("────────────────────────────────────────────────────────\n");
   process.exit(summary.failed > 0 ? 1 : 0);
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+// Only when invoked directly — importing this file must never open a Firestore
+// connection, let alone write to one.
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

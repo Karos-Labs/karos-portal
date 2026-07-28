@@ -120,8 +120,13 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
    * half-typed message and the restored transcript both survive an accidental
    * dismissal (QA F88).
    *
-   * The Strategy War Room renders inside ChatbotWidget with no portal, so its
-   * DOM is inside this ref and clicking it does not count as "outside".
+   * The Strategy War Room opens FROM the sheet but does not render inside it:
+   * it goes through Modal, which portals to document.body. Its DOM is therefore
+   * outside this ref, so every mousedown in the dialog — backdrop, "Keep
+   * running", the console — used to count as an outside click and close the
+   * sheet behind it. On a phone that made the copilot vanish the moment you
+   * touched the War Room. Overlays carry `data-overlay-root` for exactly this
+   * test (modal.tsx), so any portaled dialog counts as inside.
    */
   useEffect(() => {
     if (!sheetOpen) return;
@@ -130,7 +135,13 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
       // `isPainted` is the breakpoint test: above lg the shell sets the sheet's
       // wrapper to `display:none`, and a persisted sheetOpen would otherwise let
       // an lg+ page click rewrite state for a surface that is not even on screen.
-      if (isPainted(sheet) && !sheet.contains(e.target as Node)) setSheetOpen(false);
+      if (!isPainted(sheet)) return;
+      const target = e.target as Node | null;
+      if (!target || sheet.contains(target)) return;
+      // Text nodes have no closest(); walk up to the nearest element first.
+      const el = target instanceof Element ? target : target.parentElement;
+      if (el?.closest("[data-overlay-root]")) return;
+      setSheetOpen(false);
     }
     document.addEventListener("mousedown", handleOutside);
     return () => document.removeEventListener("mousedown", handleOutside);

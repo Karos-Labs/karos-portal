@@ -378,7 +378,7 @@ export function LiDraftsBatch({
               <p className="min-w-0 flex-1 truncate text-[15px] font-semibold text-foreground">{acc.title}</p>
               <Badge tone={isCompany ? "info" : "neon"}>{isCompany ? "Company page" : "Personal seat"}</Badge>
             </header>
-            {acc.note ? <p className="px-4 pt-3 text-xs text-muted">{acc.note}</p> : null}
+            {acc.note ? <p className="px-4 pt-3 text-xs text-muted">{stripInlineMarkdown(acc.note)}</p> : null}
             <div className="space-y-3 p-4">
               {acc.drafts.map((draft) => (
                 <DraftCard

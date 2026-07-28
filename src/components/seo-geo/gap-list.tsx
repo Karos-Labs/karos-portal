@@ -1,7 +1,6 @@
 "use client";
 
 import { useId, useState } from "react";
-import Link from "next/link";
 import { Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
@@ -86,19 +85,14 @@ function GapCard({ gap }: { gap: GapView }) {
                 <span className="text-muted-2"> · {gap.fixArea.gloss}</span>
               </p>
             )}
-            {/* The route sentence always renders; the agent chip is additive (F7) —
-                previously the chip REPLACED it, so a card either explained how the
-                fix ships or named its agent, never both. */}
+            {/* The route sentence carries the whole story now, product name
+                included. The linked agent chip that used to sit under it is gone:
+                every label it could carry named a MANAGED PRODUCT, and no managed
+                product has a card at /clients/[id]/agents — so the chip was a
+                dead-end link on a staff screen. `GapView.agentChip` is kept as a
+                pinned null (seo-geo-presenter.test.ts) rather than deleted, so
+                re-introducing a chip href fails a test instead of shipping. */}
             <p className="mt-0.5 text-xs text-muted">{gap.fixRoute}</p>
-            {gap.agentChip && (
-              <Link
-                href={gap.agentChip.href}
-                className="mt-1.5 inline-flex items-center gap-1 rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-1 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-neon transition-colors hover:bg-neon/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
-              >
-                {gap.agentChip.label}
-                <Icon name="ArrowRight" className="h-3 w-3" />
-              </Link>
-            )}
             {gap.qualifier && <p className="mt-1.5 text-[11px] text-muted-2">{gap.qualifier}</p>}
           </div>
         </div>

@@ -186,7 +186,7 @@ findAndLoadEnv();
 /* ── Firebase Admin SDK (backfill-branding.ts pattern) ─────────────────────────── */
 
 import { initializeApp, getApps, cert } from "firebase-admin/app";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getFirestore, FieldValue, type Firestore } from "firebase-admin/firestore";
 
 function initAdmin() {
   if (getApps().length) return;
@@ -208,9 +208,8 @@ function initAdmin() {
   );
 }
 
-initAdmin();
-const db = getFirestore();
-db.settings({ ignoreUndefinedProperties: true });
+/** Assigned by main() — never at module scope, so importing opens no connection. */
+let db: Firestore;
 
 /* ── Pure chain logic — single source of truth (server-only-free, tsx-safe) ────── */
 
@@ -713,6 +712,10 @@ function writeBackup(writes: PlannedWrite[]): string {
 /* ── main ──────────────────────────────────────────────────────────────────────── */
 
 async function main() {
+  initAdmin();
+  db = getFirestore();
+  db.settings({ ignoreUndefinedProperties: true });
+
   const now = Date.now();
   console.log(
     `Mode: ${APPLY ? "APPLY — writes will be executed" : "DRY RUN — no writes"} · start=${START_ARG} · family=${FAMILY}` +
@@ -824,7 +827,11 @@ async function main() {
   console.log(`Done: ${written} asset(s) updated. Backup: ${backupPath}`);
 }
 
-main().catch((err) => {
-  console.error("Migration failed:", err);
-  process.exit(1);
-});
+// Only when invoked directly — importing this file must never open a Firestore
+// connection, let alone write to one.
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

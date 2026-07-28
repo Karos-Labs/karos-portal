@@ -82,10 +82,6 @@ function initAdmin() {
   initializeApp({ credential: cert(JSON.parse(raw)) });
 }
 
-initAdmin();
-const db = getFirestore();
-const auth = getAuth();
-
 const ROLE_MAP: Record<string, string> = {
   admin: "KAROS_ADMIN",
   employee: "KAROS_EMPLOYEE",
@@ -93,9 +89,12 @@ const ROLE_MAP: Record<string, string> = {
 };
 const VALID_ROLES = new Set(["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"]);
 
-const APPLY = process.argv.includes("--apply");
-
 async function main() {
+  const APPLY = process.argv.includes("--apply");
+  initAdmin();
+  const db = getFirestore();
+  const auth = getAuth();
+
   console.log(`Mode: ${APPLY ? "APPLY — writes will be executed" : "DRY RUN — no writes"}\n`);
 
   const snap = await db.collection("users").get();
@@ -217,7 +216,11 @@ async function main() {
   console.log(`Done: ${roleUpdates.length} role update(s), ${merges.length} duplicate(s) removed.`);
 }
 
-main().catch((err) => {
-  console.error("Migration failed:", err);
-  process.exit(1);
-});
+// Only when invoked directly — importing this file must never open a Firestore
+// connection, let alone write to one.
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

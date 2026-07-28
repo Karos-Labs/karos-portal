@@ -33,6 +33,11 @@ import {
 } from "@/lib/credits";
 import type { ClientCredits } from "@/lib/types";
 import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
+import {
+  brandingToolRefusal,
+  copilotToolsFor,
+  isStaffCopilotActor,
+} from "@/lib/copilot-tool-access";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -118,7 +123,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // above rather than relying on the prompt builder's tier preference.
   const promptContextDocs =
     user.role === "CLIENT_USER" ? contextDocs.filter((d) => d.tier === "client") : contextDocs;
-  const baseSystemPrompt = buildCopilotSystemPrompt(client, report, competitors, jobs, promptAssets, promptContextDocs);
+  const baseSystemPrompt = buildCopilotSystemPrompt(
+    client,
+    report,
+    competitors,
+    jobs,
+    promptAssets,
+    promptContextDocs,
+    { canUpdateBranding: isStaffCopilotActor(user) },
+  );
 
   /* ── Shared Google integration lookup ────────────────────────────── */
   const googleIntegration = integrations.find(
@@ -262,6 +275,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       guidelines: z.string().optional().describe("Free-form written brand guidelines"),
     }),
     execute: async (args) => {
+      // Defence in depth: copilotToolsFor already keeps this tool out of a
+      // client session's registry, so reaching here means the filter was
+      // bypassed. Refuse rather than write.
+      const refusal = brandingToolRefusal(user);
+      if (refusal) return refusal;
+
       const current: Partial<BrandingGuidelines> = client.brandingGuidelines ?? {};
       const updated: BrandingGuidelines = { ...current, updatedAt: Date.now() };
       if (args.primaryAccent !== undefined) updated.primaryAccent = args.primaryAccent;
@@ -286,8 +305,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           createdAt: existingDoc?.createdAt ?? Date.now(),
           updatedAt: Date.now(),
         });
-      } catch {
-        // Non-fatal
+      } catch (e) {
+        // The structured field is saved but the context doc the AGENTS read is
+        // now a version behind, which is exactly the divergence that produces
+        // off-brand output later. Don't let the copilot report a clean success
+        // — same honesty rule as the support-email tool above.
+        console.error(
+          `[copilot] Branding context doc sync failed for client ${clientId}:`,
+          e,
+        );
+        return "Saved the branding guidelines, but the copy the content agents read didn't refresh - flag this to the Karos team so they can re-sync it.";
       }
       return "Branding guidelines updated successfully.";
     },
@@ -682,12 +709,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     system: systemPrompt,
     messages,
     stopWhen: STOP_WHEN,
-    tools: {
+    // Staff-only write tools are removed from a client session's registry
+    // entirely — an unlisted tool cannot be called. See copilot-tool-access.ts.
+    tools: copilotToolsFor(user, {
       update_branding_guidelines: updateBrandingTool,
       send_support_email: sendSupportEmailTool,
       fetch_gmail_context: fetchGmailContextTool,
       create_tasks: createTasksTool,
-    },
+    }),
     onFinish: ({ usage }) => logCopilotUsage(usage),
   });
 

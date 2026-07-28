@@ -404,7 +404,7 @@ ${gmailScanRule}
 ${gmailSilenceRule ? `- ${gmailSilenceRule}` : ""}
 - Never expose internal tool names, integration IDs, or platform credentials to the user
 - **Signal anchoring**: Every task you propose must be justified by a specific, observable signal — a concrete content gap, a missing integration, a silent calendar, a platform with no activity, or a business demand from a context document. If you cannot cite the specific signal for a task, omit it.
-- **Temporal consistency**: Before calling \`create_tasks\`, cross-reference your proposed tasks against the existing task board in context. Call \`create_tasks\` with an empty array ONLY when BOTH hold: (1) every line of the SCAN & REFRESH COVERAGE CONTRACT is already represented on the board, and (2) no new signals have surfaced (no new emails, content gaps, integration issues, or business demands) — then state: "Your task board is fully optimised — no new signals detected." An unchecked contract line always outranks this rule. Never invent arbitrary tasks beyond that to reach a numerical quota.`.trim();
+- **Temporal consistency**: Before calling \`create_tasks\`, cross-reference your proposed tasks against the existing task board in context. Call \`create_tasks\` with an empty array ONLY when BOTH hold: (1) every line of the SCAN & REFRESH COVERAGE CONTRACT is already represented on the board, and (2) no new signals have surfaced (no new emails, content gaps, integration issues, or business demands) — then state: "Your task board is fully optimized — no new signals detected." An unchecked contract line always outranks this rule. Never invent arbitrary tasks beyond that to reach a numerical quota.`.trim();
 }
 
 /* ── Gmail / operational signals extraction prompt (Claude Haiku) ── */
