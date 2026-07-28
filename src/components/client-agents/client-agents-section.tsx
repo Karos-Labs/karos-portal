@@ -12,6 +12,7 @@ import {
   saveClientAgentTemplatesAction,
 } from "@/lib/actions/client-agent-actions";
 import type { ClientAgentTemplateInput } from "@/lib/client-agents";
+import { cn } from "@/lib/utils";
 import type { ClientAgentCardRow } from "./types";
 
 /**
@@ -44,20 +45,30 @@ export function ClientAgentsSection({
   const visible = agents;
   if (visible.length === 0 && (!bindable || bindable.length === 0)) return null;
 
+  // CD-G8: a section holding nothing but staff plumbing must not reserve a
+  // viewport's worth of height. Albert's narrow-width screenshot showed the
+  // agents page stacking "AI Agents", a near-empty "Client agents" and "Custom
+  // agents" with mt-10 between them — a screen of dead air before any content.
+  // The top gutter follows what is actually below it, and is tight on a phone.
+  const bare = visible.length === 0;
+
   return (
-    <section className="mt-10">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
-        {viewerIsClient ? (
-          <span />
-        ) : (
-          <div>
-            <h2 className="text-xl text-foreground">Client agents</h2>
-            <p className="mt-0.5 text-sm text-muted">
-              One agent per platform this client buys: set it up once, then it produces to its own
-              template set and schedule.
-            </p>
-          </div>
+    <section className={bare ? "mt-5" : "mt-6 sm:mt-10"}>
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-between gap-2",
+          bare ? "mb-0" : "mb-3 sm:mb-4",
         )}
+      >
+        {/* CD-G3: "One agent per platform this client buys: set it up once,
+            then it produces to its own template set and schedule." is dead.
+            Albert read it as a rule about what a client is ALLOWED to have —
+            "They should be able to run every single agent if they want to" —
+            and it is not one: every current agent is granted to every client.
+            The binding is plumbing (it creates the umbrella that holds a
+            template set), so it is labelled as plumbing and nothing here
+            frames the client's roster at all. Clients simply see their agents. */}
+        {viewerIsClient ? <span /> : <h2 className="text-sm text-muted">Agent setup</h2>}
         {!viewerIsClient && bindable && bindable.length > 0 && (
           <BindAgentControl clientId={clientId} agents={bindable} />
         )}
@@ -145,10 +156,13 @@ function BindAgentControl({
             setConfirming(false);
             setError(null);
           }}
-          className="h-8 w-56 text-xs"
+          className="h-8 w-48 text-xs"
           aria-label="Lab agent to bind"
         >
-          <option value="">Add a client agent…</option>
+          {/* Honest about what this does: it binds a lab agent so it HAS a
+              template set and schedule to be set up. It is not a purchase, a
+              grant, or a statement about what this client may run. */}
+          <option value="">Bind a lab agent…</option>
           {agents.map((agent) => (
             <option key={agent.id} value={agent.id}>
               {agent.name}

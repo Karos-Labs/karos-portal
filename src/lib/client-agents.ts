@@ -367,3 +367,59 @@ export function isOptionsMode(agent: Pick<ClientAgent, "slotMode">): boolean {
 
 /** The stable template key an options slot carries, so chips still have a label. */
 export const OPTIONS_TEMPLATE_KEY = "daily-post";
+
+/* ─────────────────────── the roster card's status word ────────────────────── */
+
+export type RosterStatusTone = "live" | "attention" | "progress" | "idle";
+
+export interface RosterStatus {
+  tone: RosterStatusTone;
+  label: string;
+}
+
+/**
+ * The single status word a ROSTER card carries (CD-G1).
+ *
+ * The roster answers one question per agent — is this working for me right now?
+ * — and nothing else. Everything that explains a status (the launch CTA, the
+ * progress narration, the failure and its Contact-us row) lives on the agent's
+ * detail page, which is why the card can afford to be one word.
+ *
+ * PRECEDENCE. A schedule refusal outranks "Live", inheriting F24/F129: an agent
+ * whose every scheduled fire is being turned away is not live, whatever its
+ * umbrella says, and painting it green because a database field says `live`
+ * is the exact lie those two defects were about.
+ *
+ * "Live" is then either of the two things a client would call live: an umbrella
+ * that has gone live, or — for an agent with no umbrella at all — a weekly
+ * schedule that is actively producing. A granted agent that is neither is idle,
+ * not broken, and says so.
+ */
+export function rosterStatus(input: {
+  /** Null for a granted agent with no umbrella bound. */
+  launchState: ClientAgentLaunchState | null;
+  /** The agent's weekly schedule refusal, already client-redacted. */
+  scheduleRefusal?: string | null;
+  /** True when a weekly schedule exists and is not paused. */
+  scheduleActive?: boolean;
+}): RosterStatus {
+  if (input.scheduleRefusal?.trim()) return { tone: "attention", label: "Needs attention" };
+
+  if (input.launchState === null) {
+    return input.scheduleActive
+      ? { tone: "live", label: "Live" }
+      : { tone: "idle", label: "Ready to start" };
+  }
+
+  switch (input.launchState) {
+    case "live":
+      return { tone: "live", label: "Live" };
+    case "launching":
+    case "curating":
+      return { tone: "progress", label: "Setting up" };
+    case "launch_failed":
+      return { tone: "attention", label: "Setup needs attention" };
+    case "not_launched":
+      return { tone: "idle", label: "Not set up yet" };
+  }
+}

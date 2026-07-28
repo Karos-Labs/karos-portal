@@ -194,7 +194,7 @@ export function ClientAgentLiveCard({
 
 /* ───────────────────────────── template rows ────────────────────────────── */
 
-function TemplateRows({
+export function TemplateRows({
   agent,
   templates,
   viewer,
@@ -369,7 +369,7 @@ function TemplateRows({
  * about a future release, since a promise dated "soon" is the same defect one
  * release later.
  */
-function OptionsRow() {
+export function OptionsRow() {
   return (
     <div className="mt-4 rounded-md border border-border bg-surface-2/70 px-3 py-2">
       <p className="text-sm text-foreground">Today&rsquo;s post</p>
@@ -393,7 +393,7 @@ const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  * post and a day-of run project into an identical chip, and that
  * indistinguishability is the churn guard, not a copy choice (§4.1).
  */
-function WeekStrip({ week }: { week: Array<{ dateKey: string; label: string }> }) {
+export function WeekStrip({ week }: { week: Array<{ dateKey: string; label: string }> }) {
   if (week.length === 0) return null;
   return (
     <div className="mt-4">

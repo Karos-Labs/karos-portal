@@ -17,6 +17,7 @@ import {
   shiftDateKey,
   weekdayOfDateKey,
   activeTemplates,
+  rosterStatus,
 } from "@/lib/client-agents";
 import type { ClientAgentTemplate } from "@/lib/types";
 
@@ -239,5 +240,53 @@ describe("template registry", () => {
     // the safe answer: an empty rotation plans no days at all, where a wrongly
     // inferred options mode would plan days it has no candidates for.
     expect(isOptionsMode({ slotMode: undefined })).toBe(false);
+  });
+});
+
+/**
+ * CD-G1 — the one status word a roster card carries.
+ *
+ * The precedence is the load-bearing part: a schedule refusal outranks "Live",
+ * inheriting F24/F129. An agent whose every scheduled fire is being turned away
+ * is not live, whatever its umbrella's launchState says, and painting it green
+ * because a database field reads `live` is the exact lie those defects were about.
+ */
+describe("rosterStatus", () => {
+  it("lets a schedule refusal outrank Live (F24/F129 precedence)", () => {
+    expect(
+      rosterStatus({
+        launchState: "live",
+        scheduleRefusal: "This agent could not start on its last scheduled run.",
+        scheduleActive: true,
+      }),
+    ).toEqual({ tone: "attention", label: "Needs attention" });
+  });
+
+  it("ignores a blank refusal rather than treating it as one", () => {
+    expect(rosterStatus({ launchState: "live", scheduleRefusal: "   " })).toMatchObject({
+      tone: "live",
+    });
+  });
+
+  it("calls a live umbrella Live", () => {
+    expect(rosterStatus({ launchState: "live" })).toEqual({ tone: "live", label: "Live" });
+  });
+
+  it("maps each in-flight and failed launch state to its own word", () => {
+    expect(rosterStatus({ launchState: "launching" })).toMatchObject({ tone: "progress" });
+    expect(rosterStatus({ launchState: "curating" })).toMatchObject({ tone: "progress" });
+    expect(rosterStatus({ launchState: "launch_failed" })).toMatchObject({ tone: "attention" });
+    expect(rosterStatus({ launchState: "not_launched" })).toMatchObject({ tone: "idle" });
+  });
+
+  it("treats an agent with no umbrella as live only when a schedule is producing", () => {
+    expect(rosterStatus({ launchState: null, scheduleActive: true })).toEqual({
+      tone: "live",
+      label: "Live",
+    });
+    expect(rosterStatus({ launchState: null, scheduleActive: false })).toEqual({
+      tone: "idle",
+      label: "Ready to start",
+    });
   });
 });

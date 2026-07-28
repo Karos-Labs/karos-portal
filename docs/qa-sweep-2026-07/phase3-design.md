@@ -716,9 +716,43 @@ inside custom-agents.tsx, which the AGENTS cluster is actively editing
 (F129/F25/F128/F132/F44). custom-agents.tsx keeps serving non-umbrella agents
 and shrinks by delegation; the page decides which card renders per agent.
 
-### 7.1 Client `/clients/[id]/agents`
+### 7.1 Client `/clients/[id]/agents` — **rev 2026-07-28 per CD-G1**
 
-Per granted agent, exactly one card:
+**This section was rewritten after Albert reviewed the built surface on
+localhost.** The original design put every state, every control and the whole
+template set on ONE card per agent, in a grid. His ruling: "they can just click
+on it, and then it opens… over the whole page. That whole page should be like
+the Instagram Agent." The card states below are still the states — they moved
+to a different surface. Where this section and CD-G1 disagree, CD-G1 wins.
+
+**The split.**
+
+- **Roster** — `/clients/[id]/agents`. One card per granted agent (umbrella-bound
+  or not): platform mark, name, a one-line client blurb (§CD-G2, never the lab
+  manifest's `description`), and ONE status word. Live / Setting up / Not set up
+  yet / Setup needs attention / Ready to start, resolved by `rosterStatus()`
+  with the F24/F129 precedence intact — a refusal on the linked schedule
+  outranks Live. **No Run button anywhere on the roster**: a client's run
+  gesture lives only inside a detail page, beside the context that explains what
+  it costs and produces. The whole card is a `next/link` to the detail route
+  (never a modal — a modal cannot be middle-clicked, deep-linked or navigated
+  back from) with a lift + border + chevron hover affordance.
+- **Detail** — `/clients/[id]/agents/[agentId]`, where `[agentId]` is the
+  CustomAgent id (stable for umbrella-bound and non-umbrella agents alike).
+  Both viewer roles; client redaction at the RSC boundary via the shared
+  `client-agent-rows.ts` projection, so roster and detail cannot answer "what
+  may this viewer see" differently. Sections: hero (launch states 1–3 for a
+  non-live umbrella, the working agent once live) · **"Create new post"** as the
+  primary run gesture, priced, disabled-with-visible-reason per F25/F131,
+  resolving to the first format whose gate allows · the template set (the WP-2
+  rows: per-template run with cost, feedback, pause, reorder) · week strip ·
+  two-level feedback (agent + per-template, WP-3) · what it has made for you
+  (assets attributed through the §7.3 identity helper) · what it knows about you
+  (intake links — X / LinkedIn setup) · connected accounts (read-only chips) ·
+  Adjust pace (moved here from the card).
+
+Card states 1–5 below therefore describe **the detail page's hero**, not roster
+cards. The roster shows only the status word for each.
 
 1. **Umbrella, not_launched** — platform card with the primary **"Launch
    <name>" CTA** (Q2 ruling: client self-serve). Shows what launching does

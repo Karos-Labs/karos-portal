@@ -17,10 +17,12 @@ import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
+import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { isLaunchInFlight } from "@/lib/client-agents";
+import { isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
 import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { ClientAgentsSection } from "@/components/client-agents/client-agents-section";
+import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
 import {
   buildAgentSetup,
   scheduleZonesByAgent,
@@ -55,10 +57,13 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // delivered a successful run for this workspace.
   if (!isStaff) {
     const allowedIds = new Set(client.customAgentIds ?? []);
-    const [allAgents, jobs, contextItems, credits, scheduledRuns, umbrellas] = await Promise.all([
+    // No listContextItems here any more: it fed the generic run dialog's
+    // attachment picker, and a client's run gesture has moved to the detail
+    // page (CD-G1). The roster reads nothing from it, so the roster no longer
+    // pays for it.
+    const [allAgents, jobs, credits, scheduledRuns, umbrellas] = await Promise.all([
       listCustomAgents(),
       listJobs({ clientId: id }),
-      listContextItems({ clientId: id }),
       getClientCredits(id),
       listPlannedScheduledRuns({ clientId: id }),
       listClientAgents({ clientId: id }),
@@ -143,6 +148,42 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       // An umbrella agent has no run row to watch any more, so its in-flight
       // template run has to be what moves the page.
       clientAgentRows.some((row) => row.activeRun !== null);
+    // ── The roster (CD-G1) ──
+    // One card per GRANTED agent, umbrella-bound or not, carrying a mark, a
+    // name, one line of what it gives you and one status word. No Run button
+    // anywhere: a client's run gesture lives only inside a detail page, beside
+    // the context that explains what it costs and produces.
+    //
+    // Built from the agent list rather than from the umbrellas, because a
+    // client's roster is "the agents I have", not "the agents someone has bound
+    // an umbrella for". An agent with no umbrella is not missing from the
+    // roster — it is simply not set up yet, and says so.
+    const umbrellaByAgentId = new Map(ownedByUmbrella.map((u) => [u.customAgentId, u]));
+    const scheduleByAgentId = new Map(clientScheduleRows.map((row) => [row.agentId, row]));
+    const rosterEntries: AgentRosterEntry[] = agents.map((agent) => {
+      const umbrella = umbrellaByAgentId.get(agent.id) ?? null;
+      const schedule = scheduleByAgentId.get(agent.id) ?? null;
+      return {
+        customAgentId: agent.id,
+        identity: `${agent.key} ${agent.name}`,
+        icon: agent.icon ?? null,
+        displayName: umbrella?.displayName ?? agent.name,
+        blurb: clientAgentBlurb({
+          key: agent.key,
+          name: agent.name,
+          clientBlurb: agent.clientBlurb ?? null,
+        }),
+        status: rosterStatus({
+          launchState: umbrella?.launchState ?? null,
+          // Already client-redacted by toScheduleRows. A refusal outranks
+          // "Live" (F24/F129) — an agent whose every fire is turned away is
+          // not live, whatever its umbrella says.
+          scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
+          scheduleActive: schedule?.status === "active",
+        }),
+      };
+    });
+
     return (
       <>
         {runInFlight && <AutoRefresh />}
@@ -151,7 +192,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             and one in sentence case. This is the surviving one. */}
         <PageHeader
           title="AI agents"
-          description="Your always-on AI team. Run an agent now, or set its weekly production pace."
+          description="Your always-on AI team. Open an agent to see what it makes and to start a post."
         />
         {/* Two different conditions used to share the never-set-up empty state,
             so an outage or a bad deploy told a client with three live agents
@@ -165,26 +206,9 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             Your Karos team has been notified. Everything below is unaffected.
           </p>
         )}
-        <ClientAgentsSection
-          clientId={id}
-          agents={clientAgentRows}
-          viewerIsClient
-          viewer={{ name: user.name, email: user.email }}
-        />
-        {runnableAgents.length > 0 || runs.length > 0 ? (
-          <ClientCustomAgents
-            clientId={id}
-            agents={runnableAgents}
-            runs={runs}
-            schedules={clientScheduleRows}
-            contextItems={contextItems}
-            viewerIsClient
-            agentSetup={agentSetup}
-            viewer={{ name: user.name, email: user.email }}
-            {...(spendable !== undefined ? { availableCredits: spendable } : {})}
-            creditBlockReasons={creditBlockReasons}
-          />
-        ) : clientAgentRows.length > 0 ? null : (
+        {rosterEntries.length > 0 ? (
+          <ClientAgentRoster clientId={id} entries={rosterEntries} />
+        ) : (
           <EmptyState
             icon={<Icon name="Bot" className="h-7 w-7" />}
             title="No active agents yet"
