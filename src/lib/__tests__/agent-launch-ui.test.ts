@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ALL_LAUNCH_PROFILES,
   buildCustomAgentPrompt,
   initialAgentBrief,
   launchProfileFor,
@@ -67,6 +68,36 @@ describe("custom agent launch profiles", () => {
     expect(amazon.eyebrow).toBe("Marketplace brief");
     expect(reputation.eyebrow).toBe("Reputation brief");
     expect(intel.eyebrow).toBe("Market intelligence brief");
+  });
+
+  it("ships no unsubstituted template placeholder to a user", () => {
+    // A chip reading "Focus this batch on [person]'s seat." both advertises an
+    // unfinished feature and, when clicked, puts the literal "[person]" into
+    // the agent's prompt. Sweep every string a person can read on the run
+    // dialog, across every profile.
+    const PLACEHOLDER = /\[[a-z_]+\]/;
+    const offenders: string[] = [];
+    for (const profile of ALL_LAUNCH_PROFILES) {
+      const strings = [
+        profile.eyebrow,
+        profile.intro,
+        profile.estimate,
+        ...profile.quickStarts,
+        ...profile.deliverables,
+        profile.attachments.label,
+        profile.attachments.hint,
+        ...profile.fields.flatMap((field) => [
+          field.label,
+          field.placeholder,
+          field.helper,
+          ...(field.options ?? []).map((option) => option.label),
+        ]),
+      ];
+      for (const value of strings) {
+        if (value && PLACEHOLDER.test(value)) offenders.push(`${profile.eyebrow}: ${value}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
   it("serializes guided answers into the service prompt without losing labels", () => {
