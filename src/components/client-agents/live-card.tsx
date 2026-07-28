@@ -393,8 +393,18 @@ const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  * post and a day-of run project into an identical chip, and that
  * indistinguishability is the churn guard, not a copy choice (§4.1).
  */
-export function WeekStrip({ week }: { week: Array<{ dateKey: string; label: string }> }) {
+export function WeekStrip({
+  week,
+  clientId,
+  onNote,
+}: {
+  week: ClientAgentCardRow["week"];
+  clientId?: string;
+  /** Present ⇒ days are pressable and open the note editor (detail page only). */
+  onNote?: (day: ClientAgentCardRow["week"][number]) => void;
+}) {
   if (week.length === 0) return null;
+  const interactive = Boolean(onNote && clientId);
   return (
     <div className="mt-4">
       <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
@@ -404,19 +414,48 @@ export function WeekStrip({ week }: { week: Array<{ dateKey: string; label: stri
         {week.map((day) => {
           const [y, mo, d] = day.dateKey.split("-").map(Number);
           const at = new Date(Date.UTC(y, mo - 1, d));
-          return (
-            <li
-              key={day.dateKey}
-              className="rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px]"
-            >
+          const body = (
+            <>
               <span className="text-muted-2">
                 {WEEKDAY[at.getUTCDay()]} {at.getUTCDate()}
               </span>
               <span className="ml-1.5 text-foreground">{day.label}</span>
+              {/* A note marker, never a fulfilment marker. It says the CLIENT
+                  wrote something about this day — which they already know —
+                  and reveals nothing about whether the post exists yet. */}
+              {day.note && (
+                <Icon
+                  name="MessageSquare"
+                  className="ml-1.5 inline h-3 w-3 text-neon"
+                  aria-label="Has a note"
+                />
+              )}
+            </>
+          );
+          return (
+            <li key={day.dateKey}>
+              {interactive && day.canNote ? (
+                <button
+                  type="button"
+                  onClick={() => onNote?.(day)}
+                  className="rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px] transition-colors hover:border-neon/50"
+                >
+                  {body}
+                </button>
+              ) : (
+                <span className="inline-block rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px]">
+                  {body}
+                </span>
+              )}
             </li>
           );
         })}
       </ul>
+      {interactive && (
+        <p className="mt-1.5 text-[11px] text-muted-2">
+          Something specific in mind for a day? Tap it and leave a note.
+        </p>
+      )}
     </div>
   );
 }

@@ -67,7 +67,20 @@ export interface ClientAgentCardRow {
    * a future day's post already exists (§4.1, the A3 churn rule). Two producers
    * project into the same chip and the client cannot tell them apart.
    */
-  week: Array<{ dateKey: string; label: string }>;
+  week: Array<{
+    dateKey: string;
+    label: string;
+    /**
+     * The slot's own id, so a day can carry a note (§4.3). NOT a fulfilment
+     * tell: every planned day has one, whether or not anything exists for it,
+     * so it stays indistinguishable exactly as the label does.
+     */
+    slotId: string;
+    /** The note on this day, if any — echoed back to whoever can read it. */
+    note: { text: string; authorName: string; createdAt: number; applied: boolean } | null;
+    /** False once the day has passed: a note then could never be applied. */
+    canNote: boolean;
+  }>;
   /** Two-level feedback already on this umbrella (WP-3). */
   feedback: ClientAgentFeedbackRow[];
   /**

@@ -9,6 +9,7 @@ import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgentFeedback } from "@/lib/data-client-agents";
 import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-agents";
 import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
+import { canNoteSlot } from "@/lib/slot-notes";
 import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { AgentSetupState, ClientAgentScheduleRow, CustomAgentRunRow, RunnableAgentSummary } from "@/components/custom-agents";
@@ -259,9 +260,12 @@ export async function toClientAgentRows(args: {
     // day-of one, which is precisely the distinction the slot model exists to
     // erase (§4.1).
     const zone = args.scheduleZones.get(umbrella.customAgentId) ?? runtimeTimeZone();
+    // The day boundary in the SCHEDULE's zone (F108), not the container's —
+    // otherwise a client one timezone east is told today has passed.
+    const todayKey = dateKeyInZone(args.now, zone);
     const [slots, feedbackRows] = live
       ? await Promise.all([
-          upcomingSlots(umbrella.id, dateKeyInZone(args.now, zone), WEEK_STRIP_DAYS),
+          upcomingSlots(umbrella.id, todayKey, WEEK_STRIP_DAYS),
           listClientAgentFeedback({ clientAgentId: umbrella.id }),
         ])
       : [[], []];
@@ -339,6 +343,20 @@ export async function toClientAgentRows(args: {
         label: optionsMode
           ? "Daily post"
           : (templateNames.get(slot.templateKey) ?? slot.templateKey),
+        slotId: slot.id,
+        // The note crosses because its author wrote it and its reader needs it
+        // back. authorName, never the uid — the same rule the feedback list
+        // follows, so a client never receives the internal id of the staff
+        // member who answered them.
+        note: slot.note
+          ? {
+              text: slot.note.text,
+              authorName: slot.note.authorRole === "client" ? "You" : "Karos",
+              createdAt: slot.note.createdAt,
+              applied: slot.note.consumedAt != null,
+            }
+          : null,
+        canNote: canNoteSlot(slot, todayKey).ok,
       })),
       feedback: feedbackRows.map((row) => ({
         id: row.id,
