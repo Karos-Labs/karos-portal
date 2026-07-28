@@ -918,7 +918,16 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
   };
 
   // Phase 3: Condensation (5 public docs → client-tier)
-  const condensed = await condenseDocs(client, internalDocTypes, internalContents, rules);
+  // A blank condensation is not a document — condenseOne returns `content: ""`
+  // for an empty source, and storing that puts a row in the client's nav that
+  // opens onto an empty panel. Drop it here so the row is never written.
+  const condensed = (await condenseDocs(client, internalDocTypes, internalContents, rules)).filter(
+    (doc) => {
+      if (doc.content.trim()) return true;
+      console.warn(`[onboard] Skipping empty condensed doc: ${doc.docType}`);
+      return false;
+    },
+  );
 
   // Phase 4: Build full doc set and atomically replace
   const now = Date.now();

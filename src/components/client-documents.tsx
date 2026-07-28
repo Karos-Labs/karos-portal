@@ -50,13 +50,25 @@ type DocPick =
  * to a "being rebuilt" row — never to the internal document. Internal-only tier
  * is never surfaced on either path.
  */
+/**
+ * A document whose generation came back empty is not a document. The condense
+ * step returns `{ content: "" }` for an empty source and a failed model stream
+ * resolves with whatever partial text arrived, so a blank row could be written
+ * and then rendered as a nav item that opens onto nothing.
+ */
+function hasBody(doc: ClientContextDoc | undefined): doc is ClientContextDoc {
+  return !!doc && stripDocPreamble(doc.content).length > 40;
+}
+
 function pickDoc(
   docs: ClientContextDoc[],
   docType: ContextDocType,
   allowInternalFallback: boolean,
 ): DocPick {
-  const clientTier = docs.find((d) => d.docType === docType && d.tier === "client");
-  const internalTier = docs.find((d) => d.docType === docType && d.tier === "internal");
+  const clientTier = docs.filter((d) => d.docType === docType && d.tier === "client").find(hasBody);
+  const internalTier = docs
+    .filter((d) => d.docType === docType && d.tier === "internal")
+    .find(hasBody);
 
   if (!allowInternalFallback) {
     if (clientTier) return { kind: "doc", doc: clientTier };
@@ -309,6 +321,9 @@ function DocOverlay({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [correcting, setCorrecting] = useState(false);
+  // renderFullDoc("") returns "" — with no branch here the panel used to open
+  // onto a completely blank body with no message and no explanation.
+  const body = renderFullDoc(doc.content);
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -360,10 +375,16 @@ function DocOverlay({
           </div>
 
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
-            <div
-              className="mx-auto w-full max-w-2xl break-words [&_code]:break-all [&_table]:min-w-0"
-              dangerouslySetInnerHTML={{ __html: renderFullDoc(doc.content) }}
-            />
+            {body ? (
+              <div
+                className="mx-auto w-full max-w-2xl break-words [&_code]:break-all [&_table]:min-w-0"
+                dangerouslySetInnerHTML={{ __html: body }}
+              />
+            ) : (
+              <p className="mx-auto w-full max-w-2xl text-sm text-muted">
+                This document has not been generated yet — ask your Karos team to regenerate it.
+              </p>
+            )}
           </div>
         </div>
       </div>
