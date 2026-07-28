@@ -340,3 +340,20 @@ starting. Updated by the orchestrator after each verification gate.
   the brief renders to the client whoever triggers it). BEHAVIOR CHANGE to
   watch on mock-client walks: a client without client-tier docs now gets
   "No documents to summarize yet." instead of an internal-derived brief.
+
+## SEO cluster report highlights (pre-verification)
+- PRODUCT NOTE for Albert: SEO_GEO_PIPELINE_VERSION stamp means EVERY existing
+  snapshot is unstamped → shows the legacy/stale banner until regenerated
+  (surfaces the C2 credit-reload + regenerate ops step in-product). Honest —
+  this wave changed how scores are computed (category-only denominator) — but a
+  visible cluster-wide UI change. Pairs with CD-B3.
+- **F5 (WORKSPACE wave B) MUST re-locate by symbol**: seo-geo-panel.tsx grew
+  ~400 lines; cited :381 grid is now ~:583, FOUR grid sites (:460, :518, :583,
+  :590). Do not trust the PDF line number.
+- New defect (log): discoverAnswerBrands reads full answer corpus incl.
+  branded-question answers into a model prompt — counting was scoped (CD-B3),
+  extraction was not. Future prompt-scoping work: keep counting and extraction
+  separate. Not client-visible today.
+- CD-B2: fixer also removed now-dead not-wired tier / engineFlagPrefill /
+  unwiredRequestPrefill / unwired banner (shipping dead client copy = F7/F152
+  defect class) — pending drift ruling on the scope.
