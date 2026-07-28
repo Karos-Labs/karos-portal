@@ -14,6 +14,7 @@ import {
 import {
   PLATFORM_REGISTRY,
   OAUTH_SUPPORTED_PLATFORM_IDS,
+  PENDING_VERIFICATION_PLATFORM_IDS,
   READ_ONLY_PLATFORM_IDS,
   GOOGLE_READ_ONLY_SUB_PLATFORM_IDS,
   type PlatformConfig,
@@ -151,6 +152,9 @@ function PlatformCard({
   // Connect button regardless of whether the server env vars are wired up.
   const hasOAuthSupport = OAUTH_SUPPORTED_PLATFORM_IDS.has(platform.id);
   const isConnected = !!integration;
+  // The OAuth flow exists but the platform has not approved our developer
+  // account yet, so a Connect click can only end in a failed popup. Say so.
+  const pendingVerification = !isConnected && PENDING_VERIFICATION_PLATFORM_IDS.has(platform.id);
   // "Healthy" (fully connected, no reconnect needed) drives the subtle glow —
   // a reconnect-needed card should read as a warning, not a success state.
   const isHealthyConnected = isConnected && !integrationNeedsReconnect(integration!);
@@ -272,6 +276,11 @@ function PlatformCard({
                   Connected
                 </Badge>
               )
+            ) : pendingVerification ? (
+              <Badge tone="warning">
+                <Icon name="Clock" className="h-3 w-3" />
+                Pending verification
+              </Badge>
             ) : (
               <Badge tone="neutral">Not connected</Badge>
             )}
@@ -293,13 +302,22 @@ function PlatformCard({
           how much (or little) header content sits above it, so Connect /
           Reconnect / Disconnect line up across every card in the row. */}
       <div className="mt-auto px-4 pb-4 space-y-3">
-        {/* OAuth connect — available to all users when this platform supports OAuth */}
-        {!isConnected && hasOAuthSupport && (
+        {/* OAuth connect — available to all users when this platform supports
+            OAuth, EXCEPT while the platform still has to approve our developer
+            account: that button can only open a popup that fails. */}
+        {!isConnected && hasOAuthSupport && !pendingVerification && (
           <BrandedConnectButton
             platform={platform}
             loading={isConnecting}
             onClick={onOAuthConnect}
           />
+        )}
+
+        {pendingVerification && (
+          <p className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-[11px] leading-relaxed text-warning">
+            {platform.name} is reviewing our developer account. Connecting is not available yet —
+            your Karos team will turn it on the moment it is approved.
+          </p>
         )}
 
         {/* Admin-only hint when OAuth flow exists but env vars aren't configured yet */}
