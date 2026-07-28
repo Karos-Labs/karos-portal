@@ -73,6 +73,94 @@ export function assetImages(asset: Asset): AssetImage[] {
   return [];
 }
 
+/* ── Video deliverables ──────────────────────────────────────────────── */
+
+/** A playable clip attached to an asset. */
+export type AssetVideo = { url: string; name?: string };
+
+const VIDEO_EXT = /\.(mp4|webm|mov|m4v)(\?|$)/i;
+
+function isVideoFile(f: MetaFile): boolean {
+  if (f.contentType?.startsWith("video/")) return true;
+  return VIDEO_EXT.test(f.name ?? f.relPath ?? f.path ?? "");
+}
+
+/**
+ * Every clip in an asset, in file order — the portal-side half of the video
+ * deliverable path (QA F150 / call directive D1). Three sources, in priority:
+ *
+ *   • asset.videoUrl   — the storage-URL field; clips live in GCS block storage
+ *                        and the agent service fetches from there. Populating
+ *                        it is the infra half (Tomer); the portal only has to
+ *                        render whatever URL lands in it.
+ *   • meta.videos      — an ordered list of hosted clip URLs (lab imports).
+ *   • meta.files /
+ *     meta.artifacts   — video files from a webhook run, natural-sorted.
+ *
+ * Client-safe (no server-only imports), like assetImages.
+ */
+export function assetVideos(asset: Asset): AssetVideo[] {
+  const meta = asset.meta ?? {};
+  const out: AssetVideo[] = [];
+  const seen = new Set<string>();
+  const push = (url: string, name?: string) => {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    out.push(name ? { url, name } : { url });
+  };
+
+  if (asset.videoUrl) push(asset.videoUrl, asset.title);
+
+  for (const url of (meta.videos as unknown[] | undefined) ?? []) {
+    if (typeof url === "string") push(url);
+  }
+
+  const files = [
+    ...((meta.files as MetaFile[] | undefined) ?? []),
+    ...((meta.artifacts as MetaFile[] | undefined) ?? []),
+  ];
+  files
+    .filter((f) => f?.url && isVideoFile(f))
+    .sort((a, b) => fileKey(a).localeCompare(fileKey(b), undefined, { numeric: true }))
+    .forEach((f) => push(f.url as string, f.name ?? f.relPath ?? f.path));
+
+  return out;
+}
+
+/* ── LinkedIn reader media ───────────────────────────────────────────── */
+
+/** A media file offered to the LinkedIn per-draft reader. */
+export type AssetMediaFile = { name: string; url: string };
+
+const LI_MEDIA_EXT = /\.(png|jpe?g|gif|webp|pdf|mp4|mov|webm)$/i;
+
+/**
+ * The run's attachable media for the LinkedIn drafts reader. One definition
+ * shared by the asset card and the detail modal — it used to be copy-pasted
+ * into both (QA F150 rescope).
+ *
+ * Only durable re-hosted links qualify: a failed re-host leaves an auth-gated
+ * agent-service URL a browser can't open. The service may omit content_type,
+ * so extension sniffing is the fallback.
+ */
+export function assetLiMedia(meta: Record<string, unknown> | undefined): AssetMediaFile[] {
+  const artifacts = (meta?.artifacts as MetaFile[] | undefined) ?? [];
+  return artifacts
+    .filter((a): a is MetaFile & { name: string; url: string } => {
+      if (!a?.name || !a.url) return false;
+      if (!a.url.includes("firebasestorage.googleapis.com")) return false;
+      if (a.contentType) {
+        return (
+          a.contentType.startsWith("image/") ||
+          a.contentType === "application/pdf" ||
+          a.contentType.startsWith("video/")
+        );
+      }
+      return LI_MEDIA_EXT.test(a.name);
+    })
+    .map((a) => ({ name: a.name, url: a.url }));
+}
+
 /** Slugify an asset title into a safe download filename stem. */
 export function assetFileStem(title: string): string {
   return (

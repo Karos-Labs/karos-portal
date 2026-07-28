@@ -7,7 +7,7 @@ import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
-import { assetImages } from "@/lib/asset-images";
+import { assetImages, assetLiMedia } from "@/lib/asset-images";
 import {
   updateAssetAction,
   approveAssetAction,
@@ -444,30 +444,11 @@ export function AssetCard({
   const xDraftCount = xBatch ? xBatch.accounts.reduce((n, a) => n + a.drafts.length, 0) : 0;
   const liDraftCount = liBatch ? liBatch.accounts.reduce((n, a) => n + a.drafts.length, 0) : 0;
   // The run's attachable media (slides, PDFs, video) for the LinkedIn reader —
-  // the webhook stores the client-facing artifact list in meta.artifacts. The
-  // service may omit content_type, so fall back to extension sniffing; and a
-  // failed re-host leaves an auth-gated service URL a browser can't open, so
-  // only durable re-hosted links are offered.
-  const liMedia = useMemo<LiMediaFile[]>(() => {
-    if (!liBatch) return [];
-    const MEDIA_EXTENSIONS = /\.(png|jpe?g|gif|webp|pdf|mp4|mov|webm)$/i;
-    const artifacts =
-      (asset.meta?.artifacts as Array<{ name?: string; url?: string; contentType?: string }> | undefined) ?? [];
-    return artifacts
-      .filter((a): a is { name: string; url: string; contentType?: string } => {
-        if (!a.name || !a.url) return false;
-        if (!a.url.includes("firebasestorage.googleapis.com")) return false;
-        if (a.contentType) {
-          return (
-            a.contentType.startsWith("image/") ||
-            a.contentType === "application/pdf" ||
-            a.contentType.startsWith("video/")
-          );
-        }
-        return MEDIA_EXTENSIONS.test(a.name);
-      })
-      .map((a) => ({ name: a.name, url: a.url }));
-  }, [asset.meta, liBatch]);
+  // shared definition, see assetLiMedia.
+  const liMedia = useMemo<LiMediaFile[]>(
+    () => (liBatch ? assetLiMedia(asset.meta) : []),
+    [asset.meta, liBatch],
+  );
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
@@ -723,7 +704,7 @@ export function AssetCard({
             ) : (
               <p className="mt-1 text-sm text-muted">
                 {xDraftCount} drafts across {xBatch.accounts.length} accounts — about a week of posting.
-                Expand to read and pick favourites.
+                Expand to read and pick favorites.
               </p>
             )
           ) : (

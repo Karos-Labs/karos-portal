@@ -15,7 +15,7 @@ import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { publishAssetNowAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
-import { assetImages } from "@/lib/asset-images";
+import { assetImages, assetLiMedia, assetVideos } from "@/lib/asset-images";
 import { cn } from "@/lib/utils";
 import { templateForAsset } from "@/lib/post-chain";
 import type { Asset } from "@/lib/types";
@@ -122,30 +122,13 @@ export function AssetDetailModal({
     () => (!liBatch && content?.includes("# Account ") ? parseXDrafts(content) : null),
     [content, liBatch],
   );
-  // The run's attachable media for the LinkedIn reader — same filter as the
-  // asset card: only durable re-hosted links (a failed re-host leaves an
-  // auth-gated service URL a browser can't open).
+  // The run's attachable media for the LinkedIn reader (shared definition —
+  // the asset card renders the same list).
   const assetMeta = asset?.meta;
-  const liMedia = useMemo<LiMediaFile[]>(() => {
-    if (!liBatch) return [];
-    const MEDIA_EXTENSIONS = /\.(png|jpe?g|gif|webp|pdf|mp4|mov|webm)$/i;
-    const artifacts =
-      (assetMeta?.artifacts as Array<{ name?: string; url?: string; contentType?: string }> | undefined) ?? [];
-    return artifacts
-      .filter((a): a is { name: string; url: string; contentType?: string } => {
-        if (!a.name || !a.url) return false;
-        if (!a.url.includes("firebasestorage.googleapis.com")) return false;
-        if (a.contentType) {
-          return (
-            a.contentType.startsWith("image/") ||
-            a.contentType === "application/pdf" ||
-            a.contentType.startsWith("video/")
-          );
-        }
-        return MEDIA_EXTENSIONS.test(a.name);
-      })
-      .map((a) => ({ name: a.name, url: a.url }));
-  }, [assetMeta, liBatch]);
+  const liMedia = useMemo<LiMediaFile[]>(
+    () => (liBatch ? assetLiMedia(assetMeta) : []),
+    [assetMeta, liBatch],
+  );
 
   if (!asset) return null;
 
@@ -193,6 +176,7 @@ export function AssetDetailModal({
   // asset.imageUrl-only cover at least showed the first one. The rest stay
   // reachable via Download all below.
   const coverImageUrl = images.length > 0 ? images[0].url : null;
+  const videos = assetVideos(asset);
 
   return (
     <Modal
@@ -257,10 +241,24 @@ export function AssetDetailModal({
         {/* Cover image (non-carousel). Sourced from assetImages() rather than
             asset.imageUrl alone, which missed any import whose photos landed in
             meta.files — the same gap that rendered those assets' cards blank. */}
-        {slides.length === 0 && coverImageUrl && (
+        {slides.length === 0 && coverImageUrl && videos.length === 0 && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={coverImageUrl} alt={asset.title} className="w-full rounded-lg border border-border" />
         )}
+
+        {/* Video deliverables — podcast cuts, branded shorts, TikTok. Until
+            this existed the clips were emailed by hand (QA F150); the caption
+            copy button below is the other half of "post it yourself". */}
+        {videos.map((v) => (
+          <video
+            key={v.url}
+            src={v.url}
+            controls
+            preload="metadata"
+            {...(coverImageUrl ? { poster: coverImageUrl } : {})}
+            className="max-h-96 w-full rounded-lg border border-border bg-black object-contain"
+          />
+        ))}
 
         {/* Content — a parsed drafts batch gets the per-draft reader (pick,
             edit, skip, each choice feeding the agent's next run); anything

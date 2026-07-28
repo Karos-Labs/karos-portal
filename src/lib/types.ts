@@ -397,6 +397,15 @@ export interface Asset {
   /** Public URL of the generated visual (Vercel Blob), when one exists. */
   imageUrl?: string | null;
   /**
+   * Public URL of the deliverable's video clip (podcast cuts, branded shorts,
+   * TikTok). Video deliverables live in GCS block storage — the agent service
+   * fetches from there and writes the resulting URL here; the portal only
+   * renders it (QA F150 / call directive D1, GCP wiring is infra-side). Clips
+   * discovered in meta.videos / meta.artifacts are picked up too — see
+   * assetVideos() in lib/asset-images.
+   */
+  videoUrl?: string | null;
+  /**
    * MIME type of the primary downloadable payload, when the asset is a binary file
    * (e.g. "image/jpeg", "video/mp4"). Drives the native download action's format +
    * extension. Absent ⇒ derive from type/imageUrl (image) or fall back to text.

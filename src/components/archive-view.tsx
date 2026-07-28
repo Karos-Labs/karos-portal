@@ -5,7 +5,7 @@ import { AgentIdentity } from "@/components/agent-identity";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { assetImages } from "@/lib/asset-images";
+import { assetImages, assetVideos } from "@/lib/asset-images";
 import { agentLabelForAsset } from "@/lib/post-chain";
 import { relativeTime } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
@@ -114,6 +114,9 @@ export function ArchiveView({
 
 function ArchiveTile({ asset, onOpen }: { asset: Asset; onOpen: () => void }) {
   const thumb = assetImages(asset)[0];
+  // Clips get their own tile treatment so a video deliverable reads as one
+  // before it is opened (QA F150).
+  const hasVideo = assetVideos(asset).length > 0;
   return (
     <button
       type="button"
@@ -121,13 +124,18 @@ function ArchiveTile({ asset, onOpen }: { asset: Asset; onOpen: () => void }) {
       className="group flex flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
     >
       {thumb ? (
-        <div className="aspect-[4/3] w-full overflow-hidden border-b border-border bg-surface-2">
+        <div className="relative aspect-[4/3] w-full overflow-hidden border-b border-border bg-surface-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={thumb.url} alt="" className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]" />
+          {hasVideo && (
+            <span className="absolute inset-0 flex items-center justify-center bg-black/25 text-white">
+              <Icon name="Play" className="h-8 w-8" />
+            </span>
+          )}
         </div>
       ) : (
         <div className="flex h-24 w-full items-center justify-center border-b border-border bg-surface-2 text-muted-2">
-          <Icon name="FileText" className="h-6 w-6" />
+          <Icon name={hasVideo ? "Play" : "FileText"} className="h-6 w-6" />
         </div>
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-1 p-3">
