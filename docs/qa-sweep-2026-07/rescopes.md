@@ -772,3 +772,10 @@ completion refresh lands. Scope (two consecutive clean passes required):
 - **Dead code found:** the non-docked floating ChatbotWidget branch
   (floatingPosition, fixed 380px panel) is unreachable — end-loop sweep item,
   not fixed mid-wave.
+
+### End-loop sweep additions (post-CD-G9 build)
+- `src/components/theme-toggle.tsx` becomes unreferenced once shell3 merges
+  (relocations use the labeled ThemeSwitch rows) — delete in the end loop.
+- shell3 applied CD-G9c staff-wide (AppHeader was one mount serving both
+  context modes) — accepted; staff no-context narrow keeps hamburger but
+  gains the unread dot + drawer rows so nothing went 3 taps deep.
