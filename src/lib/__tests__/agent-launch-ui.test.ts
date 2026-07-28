@@ -243,3 +243,56 @@ describe("the hub applies that rule to the controls it paints", () => {
     expect(hub).not.toMatch(/clients=\{clients\}/);
   });
 });
+
+
+/**
+ * Ruling 7. One keyed map carries BOTH routes to an agent's intake: `href` (the
+ * agent's own data page — always present, and what the client's detail route
+ * offers) and `kind`/`data` (the prefetched form the run dialog collects in
+ * place). The alternative that was on the table — three per-platform props
+ * beside the map — made every consumer re-derive which agent is which, which is
+ * a second place for "is this the LinkedIn agent" to disagree with the server.
+ */
+describe("AgentSetupState carries the href card and the inline pane", () => {
+  const rows = readFileSync(join(process.cwd(), "src/lib/client-agent-rows.ts"), "utf8");
+  const ui = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
+
+  it("always resolves an href, pane or no pane", () => {
+    // Three agents, three hrefs, and none of them conditional on a payload.
+    for (const route of ["x-agent", "linkedin-agent", "reddit-agent"]) {
+      expect(rows).toContain(`/clients/\${clientId}/${route}`);
+    }
+    expect(rows).toContain("{ ready, href, label }");
+  });
+
+  it("attaches a prefetched form to the agent it belongs to", () => {
+    for (const kind of ["x", "linkedin", "reddit"]) {
+      expect(rows).toContain(`kind: "${kind}", data: panes.${kind}`);
+    }
+  });
+
+  it("keeps ready answered by the submit cores' own predicates", () => {
+    // The page builds the FORMS; readiness stays with the calls the cores gate
+    // on. Two independent answers to "is this set up" is how a card starts
+    // offering a run the server refuses.
+    expect(rows).toContain("hasXAgentIntake(clientId)");
+    expect(rows).toContain("hasLinkedInAgentIntake(clientId, agent.key)");
+    expect(rows).toContain("hasRedditAgentIntake(clientId)");
+  });
+
+  it("leaves the components asking one map, not three payloads", () => {
+    expect(ui).toContain("function intakeFor(setup: AgentSetupState | null | undefined)");
+    // The per-platform props are gone from the two components' surfaces.
+    expect(ui).not.toContain("xSetup?: XAgentSetup;");
+    expect(ui).not.toContain("linkedinSetup?: LinkedInAgentSetup;");
+    expect(ui).not.toContain("redditSetup?: RedditAgentSetup;");
+  });
+
+  it("keeps the href gate for a setup with no prefetched form", () => {
+    // The client detail route ships href-only states, so the dialog must still
+    // have its way out — and it must not offer an empty pane instead.
+    expect(ui).toContain("if (setup && !setup.ready && !intake)");
+    expect(ui).toContain("Set up {setup.label}");
+    expect(ui).toContain("href={setup.href}");
+  });
+});

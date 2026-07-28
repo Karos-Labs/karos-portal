@@ -420,7 +420,9 @@ describe("Reddit is registered as an intake-driven agent", () => {
     expect(fn).toContain("isRedditAgentIdentity(agent.key)");
     expect(fn).toContain("hasRedditAgentIntake(clientId)");
     expect(fn).toContain("reddit-agent");
-    expect(fn).toContain('label: "Reddit agent data"');
+    expect(fn).toContain('"Reddit agent data"');
+    // And the pane, so the staff dialog can collect the account form in place.
+    expect(fn).toContain('kind: "reddit", data: panes.reddit');
   });
 
   it("keeps the blurb table and its backfill twin byte-identical", () => {

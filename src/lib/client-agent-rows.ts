@@ -22,6 +22,10 @@ import { resolveOptions } from "@/lib/x-options";
 import { laneLabel } from "@/lib/draft-lane-label";
 import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
+import type { ComponentProps } from "react";
+import type { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
+import type { RedditAgentIntake } from "@/components/reddit-agent-intake";
+import type { XAgentIntake } from "@/components/x-agent-intake";
 import type { AgentSetupState, ClientAgentScheduleRow, CustomAgentRunRow, RunnableAgentSummary } from "@/components/custom-agents";
 import type { ClientAgentCardRow } from "@/components/client-agents/types";
 import type { ClientAgent, CustomAgent, Job } from "@/lib/types";
@@ -171,49 +175,67 @@ export function scheduleZonesByAgent(
 
 /**
  * Intake readiness, resolved once per agent with the SAME call the submit core
- * makes (submitCustomAgentJob → hasXAgentIntake / hasLinkedInAgentIntake). The
- * LinkedIn check answers differently per agent key — the multi-seat agent runs
- * on any stored intake, the company-page agents need the company form — so a
- * single shared flag would block agents the server would run, and a card cannot
- * derive this from the key alone.
+ * makes (submitCustomAgentJob → hasXAgentIntake / hasLinkedInAgentIntake /
+ * hasRedditAgentIntake). The LinkedIn check answers differently per agent key —
+ * the multi-seat agent runs on any stored intake, the company-page agents need
+ * the company form — so a single shared flag would block agents the server
+ * would run, and a card cannot derive this from the key alone.
+ *
+ * `panes` is optional and additive: a caller that has already built the intake
+ * VIEWS (the staff branch of the agents page does, for its run dialog) hands
+ * them in, and the matching agent's state gains the payload its dialog renders
+ * inline. Callers that have not — the client's detail route — get the same
+ * states with `href` alone, which is the CD-E1 model and stays a full page.
+ * One keyed map either way, so no surface has to be handed a second set of
+ * per-platform props and asked to re-derive which agent is which.
  */
+export interface AgentIntakePanes {
+  x?: ComponentProps<typeof XAgentIntake>;
+  linkedin?: ComponentProps<typeof LinkedInAgentIntake>;
+  reddit?: ComponentProps<typeof RedditAgentIntake>;
+}
+
 export async function buildAgentSetup(
   clientId: string,
   agents: Array<{ id: string; key: string }>,
+  panes?: AgentIntakePanes,
 ): Promise<Record<string, AgentSetupState>> {
   const resolved = await Promise.all(
     agents.map(async (agent): Promise<[string, AgentSetupState] | null> => {
       if (isXAgentIdentity(agent.key)) {
+        const ready = await hasXAgentIntake(clientId);
+        const href = `/clients/${clientId}/x-agent`;
+        const label = "X agent data";
         return [
           agent.id,
-          {
-            ready: await hasXAgentIntake(clientId),
-            href: `/clients/${clientId}/x-agent`,
-            label: "X agent data",
-          },
+          panes?.x
+            ? { ready, href, label, kind: "x", data: panes.x }
+            : { ready, href, label },
         ];
       }
       if (isLinkedInAgentIdentity(agent.key)) {
+        const ready = await hasLinkedInAgentIntake(clientId, agent.key);
+        const href = `/clients/${clientId}/linkedin-agent`;
+        const label = "LinkedIn agent data";
         return [
           agent.id,
-          {
-            ready: await hasLinkedInAgentIntake(clientId, agent.key),
-            href: `/clients/${clientId}/linkedin-agent`,
-            label: "LinkedIn agent data",
-          },
+          panes?.linkedin
+            ? { ready, href, label, kind: "linkedin", data: panes.linkedin }
+            : { ready, href, label },
         ];
       }
       if (isRedditAgentIdentity(agent.key)) {
         // e15 is intake-driven exactly like the other two. Without this entry
         // its card computes `ready: true` by omission, which is the one answer
         // that cannot be right for an agent the submit core hard-gates.
+        const ready = await hasRedditAgentIntake(clientId);
+        const href = `/clients/${clientId}/reddit-agent`;
+        const label = "Reddit agent data";
         return [
           agent.id,
-          {
-            ready: await hasRedditAgentIntake(clientId),
-            href: `/clients/${clientId}/reddit-agent`,
-            label: "Reddit agent data",
-          },
+          panes?.reddit
+            ? { ready, href, label, kind: "reddit", data: panes.reddit }
+            : { ready, href, label },
         ];
       }
       return null;

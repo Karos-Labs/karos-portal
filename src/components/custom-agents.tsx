@@ -41,7 +41,6 @@ import {
   buildCustomAgentPrompt,
   initialAgentBrief,
   isLinkedInAgentIdentity,
-  isRedditAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
   perClientAgentSlug,
@@ -226,12 +225,31 @@ function AgentBlurb({ text, className }: { text: string; className?: string }) {
  * form), and the submit core passes that key. A single shared answer would block
  * an agent the server would happily run.
  */
-export interface AgentSetupState {
+/**
+ * One agent's intake state, resolved server-side.
+ *
+ * It carries BOTH routes to the same form, because the two surfaces that need
+ * it can reach it differently. `href` is the agent's own data page and always
+ * exists — that is what the client's detail route offers (CD-E1/CD-G1), and it
+ * is the only option when the page did not prefetch the form. `kind`/`data`
+ * appear when it DID: the run dialog then collects the intake in place, so a
+ * staff member setting up a run does not lose the brief they were writing to a
+ * navigation.
+ *
+ * kind and data move together — a kind with no payload would render an empty
+ * pane, and a payload with no kind has no form to render it in.
+ */
+export type AgentSetupState = {
   ready: boolean;
   href: string;
   /** e.g. "X agent data" — names the intake page in copy and link labels. */
   label: string;
-}
+} & (
+  | { kind?: undefined; data?: undefined }
+  | { kind: "x"; data: ComponentProps<typeof XAgentIntake> }
+  | { kind: "linkedin"; data: ComponentProps<typeof LinkedInAgentIntake> }
+  | { kind: "reddit"; data: ComponentProps<typeof RedditAgentIntake> }
+);
 
 function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon">; className?: string }) {
   return (
@@ -303,19 +321,23 @@ const INTAKE_FIRST_STEP: Record<IntakeKind, string> = {
   reddit: "Save your Reddit account below to continue.",
 };
 
-/** Which intake surface governs this agent, given what the page shipped. */
-function intakeFor(
-  agentKey: string,
-  xSetup?: XAgentSetup,
-  linkedinSetup?: LinkedInAgentSetup,
-  redditSetup?: RedditAgentSetup,
-): AgentIntakeContext | null {
-  if (xSetup && isXAgentIdentity(agentKey)) return { kind: "x", setup: xSetup };
-  if (linkedinSetup && isLinkedInAgentIdentity(agentKey)) {
-    return { kind: "linkedin", setup: linkedinSetup };
+/**
+ * Which intake surface governs this agent — read off the agent's own setup
+ * state rather than re-derived from its key.
+ *
+ * Resolving it from the key meant every caller had to be handed all three
+ * payloads and asked the identity question again, which is a second place for
+ * "is this the LinkedIn agent" to drift from the server's answer. Now the page
+ * says it once, per agent, and a state with no prefetched form yields null —
+ * the href card serves that case.
+ */
+function intakeFor(setup: AgentSetupState | null | undefined): AgentIntakeContext | null {
+  if (!setup?.kind) return null;
+  if (setup.kind === "x") return { kind: "x", setup: { ready: setup.ready, data: setup.data } };
+  if (setup.kind === "linkedin") {
+    return { kind: "linkedin", setup: { ready: setup.ready, data: setup.data } };
   }
-  if (redditSetup && isRedditAgentIdentity(agentKey)) return { kind: "reddit", setup: redditSetup };
-  return null;
+  return { kind: "reddit", setup: { ready: setup.ready, data: setup.data } };
 }
 
 function IntakeGlyph({ kind, className }: { kind: IntakeKind; className?: string }) {
@@ -601,9 +623,6 @@ export function ClientCustomAgents({
   creditBlockReasons,
   agentSetup,
   viewer,
-  xSetup,
-  linkedinSetup,
-  redditSetup,
 }: {
   clientId: string;
   agents: RunnableAgentSummary[];
@@ -627,11 +646,6 @@ export function ClientCustomAgents({
    * submit core makes. Agents without an intake gate are simply absent.
    */
   agentSetup?: Record<string, AgentSetupState>;
-  /** X agent intake state and, when the page could prefetch it, its data form. */
-  xSetup?: XAgentSetup;
-  /** LinkedIn agent intake state — same shape for the e10 agents. */
-  linkedinSetup?: LinkedInAgentSetup;
-  redditSetup?: RedditAgentSetup;
 }) {
   const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
   const [runIntakeFirst, setRunIntakeFirst] = useState(false);
@@ -652,7 +666,7 @@ export function ClientCustomAgents({
 
   // The open schedule dialog's own copy of the card's gate: props refresh
   // underneath it, so the agent data can go missing while it is open.
-  const scheduleIntake = scheduleAgent ? intakeFor(scheduleAgent.key, xSetup, linkedinSetup, redditSetup) : null;
+  const scheduleIntake = scheduleAgent ? intakeFor(agentSetup?.[scheduleAgent.id]) : null;
   const scheduleSetupNeeded =
     scheduleAgent && scheduleIntake && !companyOnFile(scheduleIntake)
       ? {
@@ -722,7 +736,7 @@ export function ClientCustomAgents({
             const reviewHref = viewerIsClient
               ? "/tasks"
               : reviewRuns[0]?.href ?? `/clients/${clientId}/assets`;
-            const intake = intakeFor(agent.key, xSetup, linkedinSetup, redditSetup);
+            const intake = intakeFor(setup);
             // A scheduled run fires unattended, so every fire would be refused
             // while the company page is missing. An existing schedule stays
             // open to manage — pausing it must never be blocked.
@@ -990,9 +1004,6 @@ export function ClientCustomAgents({
           contextItems={contextItems}
           viewerIsClient={viewerIsClient}
           {...(agentSetup?.[runAgent.id] ? { setup: agentSetup[runAgent.id] } : {})}
-          {...(xSetup ? { xSetup } : {})}
-          {...(linkedinSetup ? { linkedinSetup } : {})}
-          {...(redditSetup ? { redditSetup } : {})}
           {...(runIntakeFirst ? { initialPane: "data" as const } : {})}
           onClose={() => setRunAgent(null)}
         />
@@ -1401,9 +1412,6 @@ export function RunCustomAgentModal({
   contextItems,
   viewerIsClient,
   setup,
-  xSetup,
-  linkedinSetup,
-  redditSetup,
   initialPane,
   onClose,
 }: {
@@ -1416,14 +1424,11 @@ export function RunCustomAgentModal({
   viewerIsClient: boolean;
   /**
    * This agent's intake readiness, resolved server-side for this exact agent.
-   * When not ready the modal routes to setup instead of running.
+   * Carries the data form when the page prefetched it (collected inline), and
+   * always carries the href to the agent's own data page (the way out when it
+   * did not).
    */
   setup?: AgentSetupState;
-  /** X agent intake state and, when prefetched, the data form rendered inline. */
-  xSetup?: XAgentSetup;
-  /** LinkedIn agent intake state — same shape for the e10 agents. */
-  linkedinSetup?: LinkedInAgentSetup;
-  redditSetup?: RedditAgentSetup;
   /** "data" opens straight on the agent's data; so does a missing company page. */
   initialPane?: RunPane;
   onClose: () => void;
@@ -1438,7 +1443,7 @@ export function RunCustomAgentModal({
   const [briefTouched, setBriefTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
-  const intake = intakeFor(agent.key, xSetup, linkedinSetup, redditSetup);
+  const intake = intakeFor(setup);
   const intakeReady = intake?.setup.ready ?? true;
   // The data opens on the company page being missing, not on the server gate:
   // `ready` is satisfied by a shared seat, so an X run would otherwise skip

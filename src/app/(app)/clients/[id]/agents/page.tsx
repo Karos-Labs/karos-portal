@@ -11,14 +11,7 @@ import {
 import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import {
-  ClientCustomAgents,
-  type CustomAgentRunRow,
-  type LinkedInAgentSetup,
-  type RedditAgentSetup,
-  type RunnableAgentSummary,
-  type XAgentSetup,
-} from "@/components/custom-agents";
+import { ClientCustomAgents, type RunnableAgentSummary } from "@/components/custom-agents";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
@@ -44,6 +37,7 @@ import { ClientAgentsSection } from "@/components/client-agents/client-agents-se
 import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
 import {
   buildAgentSetup,
+  type AgentIntakePanes,
   scheduleZonesByAgent,
   toClientAgentRows,
   toRunRows,
@@ -54,21 +48,22 @@ import type { Job } from "@/lib/types";
 
 
 /**
- * Setup props for the intake-driven agents (X e13, LinkedIn e10): their data
- * forms live in the run dialog, so the payload ships with the ready flag.
+ * The intake forms for the intake-driven agents (X e13, LinkedIn e10, Reddit
+ * e15), prefetched so the run dialog can collect them in place.
+ *
  * Building one costs a full read of seats, intake, drops and run history, so it
  * only happens when that agent is actually on this page's list, and it reuses
- * the caller's `jobs` scan rather than repeating it per agent.
+ * the caller's `jobs` scan rather than repeating it per agent. The result is
+ * handed to buildAgentSetup, which attaches each pane to its own agent's setup
+ * state — so the components downstream ask one keyed map for everything about
+ * an agent instead of being passed three per-platform payloads and asked to
+ * work out which is which (ruling 7).
  */
-async function intakeSetups(
+async function intakePanes(
   clientId: string,
   agents: RunnableAgentSummary[],
   opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string },
-): Promise<{
-  xSetup?: XAgentSetup;
-  linkedinSetup?: LinkedInAgentSetup;
-  redditSetup?: RedditAgentSetup;
-}> {
+): Promise<AgentIntakePanes> {
   const hasX = agents.some((agent) => isXAgentIdentity(agent.key));
   const hasLinkedIn = agents.some((agent) => isLinkedInAgentIdentity(agent.key));
   const hasReddit = agents.some((agent) => isRedditAgentIdentity(agent.key));
@@ -83,29 +78,15 @@ async function intakeSetups(
       : null,
     hasReddit ? buildRedditAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) : null,
   ]);
-  // `ready` must agree with the run gates the submit cores apply, so it is read
-  // off the same row those gates read instead of asking them again:
-  // hasXAgentIntake(), hasLinkedInAgentIntake() and hasRedditAgentIntake() all
-  // mean "the company-level form is saved" — respectively
-  // agentIntake(clientId, "x"|"linkedin"|"reddit", null) — for every one of
-  // their agents' keys. Reddit's company-level form is the account form, and
-  // like the other two a shared ClientSeat never satisfies it.
+  // Only the FORMS are built here. `ready` is not re-derived alongside them:
+  // buildAgentSetup answers it with the very calls the submit cores gate on
+  // (hasXAgentIntake / hasLinkedInAgentIntake / hasRedditAgentIntake), and two
+  // independent answers to "is this set up" is exactly the drift that lets a
+  // card offer a run the server refuses.
   return {
-    ...(xData
-      ? {
-          xSetup: { ready: xData.company !== null, data: xData },
-        }
-      : {}),
-    ...(linkedinData
-      ? {
-          linkedinSetup: { ready: linkedinData.company !== null, data: linkedinData },
-        }
-      : {}),
-    ...(redditData
-      ? {
-          redditSetup: { ready: redditData.company !== null, data: redditData },
-        }
-      : {}),
+    ...(xData ? { x: xData } : {}),
+    ...(linkedinData ? { linkedin: linkedinData } : {}),
+    ...(redditData ? { reddit: redditData } : {}),
   };
 }
 
@@ -317,6 +298,10 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     listPlannedScheduledRuns({ clientId: id }),
     listClientAgents({ clientId: id }),
   ]);
+  // The staff list, and the only one. It carries the SAME binding filter as the
+  // client branch above: a per-client instance runs an entry skill baked under
+  // one client's lab folder, so offering it here would build a run both submit
+  // cores refuse. A second unfiltered list was exactly how that regressed.
   const enabledAgents = customAgents
     .filter((a) => a.enabled && agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug))
     .map(toSummary);
@@ -331,14 +316,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // Ruling 7: the inline intake panes serve the STAFF dialog. The client's own
   // route reaches the same forms through AgentSetupState.href, so this read
   // happens on the staff branch only.
-  const setups = await intakeSetups(id, enabledAgents, {
+  const panes = await intakePanes(id, enabledAgents, {
     isStaff,
     jobs,
     ...(linkedinPageUrl ? { linkedinPageUrl } : {}),
   });
-
-  const staffAgents = customAgents.filter((a) => a.enabled).map(toSummary);
-  const agentSetup = await buildAgentSetup(id, staffAgents);
+  const agentSetup = await buildAgentSetup(id, enabledAgents, panes);
   const staffRuns = toRunRows(jobs, true, umbrellas);
   // Staff see every umbrella in every state (including live) — this is where
   // the launch is fired for a client who cannot yet self-serve, and where the
@@ -391,7 +374,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // ClientCustomAgents renders nothing at all with no agents and no history, so
   // a brand-new client showed staff a header and then white space to the bottom
   // of the viewport — no cards, no empty state, no next action.
-  const nothingToShow = staffAgents.length === 0 && staffRuns.length === 0;
+  const nothingToShow = enabledAgents.length === 0 && staffRuns.length === 0;
 
   return (
     <>
@@ -458,13 +441,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           />
           <ClientCustomAgents
             clientId={id}
-            agents={staffAgents}
+            agents={enabledAgents}
             runs={staffRuns}
             schedules={staffScheduleRows}
             contextItems={contextItems}
             viewerIsClient={false}
             agentSetup={agentSetup}
-            {...setups}
             viewer={{ name: user.name, email: user.email }}
           />
         </>
