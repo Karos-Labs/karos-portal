@@ -24,7 +24,13 @@ import {
   getClientCredits,
 } from "@/lib/data";
 import { findDuplicateReason } from "@/lib/task-dedup";
-import { CREDIT_COSTS, TASK_EXECUTION_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
+import {
+  CREDIT_COSTS,
+  TASK_EXECUTION_COSTS,
+  CreditError,
+  isBillableClientActor,
+  availableCredits,
+} from "@/lib/credits";
 import type { ClientCredits } from "@/lib/types";
 import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
@@ -159,17 +165,52 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // Make the copilot credits-aware for client users: it can quote run costs,
   // warn on a low balance, and explain why an action was declined.
+  //
+  // Custom agent runs are the dominant client spend and the only thing the
+  // Agents page charges, yet neither they nor the employee seat appeared in
+  // the price list the model is told never to go beyond — so it either
+  // declined or quoted the 5-credit task baseline against a real 25 (QA F95).
+  const agentPriceLines = customAgents
+    .map((a) => `  - ${a.name}: ${a.creditCost ?? CREDIT_COSTS.customAgentRun} credits per run`)
+    .join("\n");
   const creditsAppendix = credits
     ? `\n\n## Usage credits\n` +
-      `This client pays for AI actions with credits. Current balance: ${credits.balance} credits. ` +
+      // The headline number is what the client can actually spend — balance
+      // clipped by the weekly/monthly caps. Quoting the raw balance is the
+      // same mistake F102 fixed on the rail, the panel and the agents page:
+      // a capped client would be told a number they cannot spend.
+      `This client pays for AI actions with credits. Spendable right now: ${availableCredits(credits)} credits — ` +
+      `quote THIS figure when asked what they have; it is the balance already clipped by their spend caps. ` +
       `Used ${credits.weekSpent}${credits.weeklyLimit != null ? ` of ${credits.weeklyLimit}` : ""} this week, ` +
       `${credits.monthSpent}${credits.monthlyLimit != null ? ` of ${credits.monthlyLimit}` : ""} this month.\n` +
       `Costs: chat message ${CREDIT_COSTS.chatMessage}; task execution ${CREDIT_COSTS.taskExecution} baseline, or by product — ` +
       `blog article ${TASK_EXECUTION_COSTS.blog_article}, newsletter ${TASK_EXECUTION_COSTS.newsletter_issue}, ` +
       `social posts ${TASK_EXECUTION_COSTS.social_post}, landing page ${TASK_EXECUTION_COSTS.landing_page}; ` +
       `doc correction ${CREDIT_COSTS.targetedCorrection} (global ${CREDIT_COSTS.globalCorrection}).\n` +
-      `If the balance is under 20, proactively mention it and suggest asking the Karos team for a top-up. Never invent credit figures beyond these.`
+      `AI agent runs (the Agents page) cost ${CREDIT_COSTS.customAgentRun} credits per run by default; some agents are priced individually. ` +
+      (agentPriceLines
+        ? `This client's agents and their exact prices:\n${agentPriceLines}\n`
+        : `This client has no AI agents assigned yet.\n`) +
+      `An extra LinkedIn employee-advocacy seat beyond the plan's limit costs ${CREDIT_COSTS.employeeSeat} credits, charged once — it is not a monthly subscription.\n` +
+      `If spendable credits are under 20, proactively mention it and suggest asking the Karos team for a top-up. Never invent credit figures beyond these.`
     : "";
+
+  // Provenance boundary, same shape as the asset and context-doc filters
+  // above: mock analytics rows must never reach a prompt a CLIENT is talking
+  // to. The benchmark block presents them as "measured results from this
+  // client's published content", so the copilot will narrate invented figures
+  // as fact — F125's blocker, on a surface the client is charged for. Staff
+  // keep the full set; the demo data is theirs to see.
+  // sampleSize is recomputed from the rows that survive (top and bottom can
+  // overlap on a small set), so the "N tracked assets" claim can only
+  // understate, never overstate.
+  const promptBenchmarks = (() => {
+    if (user.role !== "CLIENT_USER") return benchmarks;
+    const top = benchmarks.top.filter((r) => r.source === "live");
+    const bottom = benchmarks.bottom.filter((r) => r.source === "live");
+    const distinct = new Set([...top, ...bottom].map((r) => r.id));
+    return { top, bottom, sampleSize: distinct.size };
+  })();
 
   // Flatten measured analytics into the prompt's benchmark shape (Firestore
   // types stay out of the pure prompt builder).
@@ -195,9 +236,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       activeTaskCount: boardCapacity.activeCount,
       maxActiveTasks: MAX_ACTIVE_TASKS,
       historicalBenchmarks: {
-        top: benchmarks.top.map(toBenchmarkEntry),
-        bottom: benchmarks.bottom.map(toBenchmarkEntry),
-        sampleSize: benchmarks.sampleSize,
+        top: promptBenchmarks.top.map(toBenchmarkEntry),
+        bottom: promptBenchmarks.bottom.map(toBenchmarkEntry),
+        sampleSize: promptBenchmarks.sampleSize,
       },
     }) +
     creditsAppendix;

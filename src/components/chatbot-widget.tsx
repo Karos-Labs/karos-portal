@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
+import { renderSectionBody } from "@/lib/doc-render";
 import { StrategyWarRoom } from "@/components/strategy-war-room";
 import type { Client, ClientReport } from "@/lib/types";
 
@@ -15,6 +16,36 @@ interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /**
+   * What the transcript shows in place of `content`. An action chip's hidden
+   * instruction used to be rendered in the user bubble, so the client was
+   * shown words they never wrote — including an order aimed at the model
+   * ("Start by asking me…") and internal product vocabulary (QA F15).
+   * `content` is still what goes to the API.
+   */
+  display?: string;
+}
+
+/* ── Transcript persistence ──────────────────────────────────────────── */
+
+/**
+ * Per-client sessionStorage key for the copilot transcript. Every message is
+ * charged to the client, so a hard reload must not silently destroy a paid
+ * conversation (QA F88). sessionStorage (not local) keeps it to the tab.
+ */
+const THREAD_KEY_PREFIX = "karos.copilot.thread.";
+/** Cap what we write back — a long thread is not worth a quota error. */
+const MAX_PERSISTED_MESSAGES = 40;
+
+function isPersistedMessage(v: unknown): v is Message {
+  if (!v || typeof v !== "object") return false;
+  const m = v as Record<string, unknown>;
+  return (
+    typeof m.id === "string" &&
+    (m.role === "user" || m.role === "assistant") &&
+    typeof m.content === "string" &&
+    (m.display === undefined || typeof m.display === "string")
+  );
 }
 
 /* ── Proactive action chip definitions ───────────────────────────────── */
@@ -43,12 +74,16 @@ function buildProactiveActions(): ProactiveAction[] {
       color: "#FF6B2C",
     },
     {
+      // The copilot has no web search and no page fetch — the only competitor
+      // intelligence it holds is the tracked competitor list already stored on
+      // the account. Asking for a URL promised a page visit that never happens
+      // (QA F87), so both the sublabel and the trigger name the real source.
       id: "competitor_research",
       icon: "TrendingUp",
       label: "Competitor Deep-Dive",
-      sublabel: "Generate intel brief + counter-strategy tasks",
+      sublabel: "Brief on a tracked competitor + counter-strategy tasks",
       trigger:
-        "Help me research a competitor. I'll give you their URL or company name. Start by asking me which competitor to focus on.",
+        "Give me an intel brief on one of the competitors in our tracker, built from the tracked competitor data you already hold. Start by asking me which tracked competitor to focus on.",
       color: "#6b9fd4",
     },
     {
@@ -61,12 +96,15 @@ function buildProactiveActions(): ProactiveAction[] {
       color: "#d9a13d",
     },
     {
+      // "Queue" claimed an execution step this path never performs: the only
+      // write is pending task cards, and a run starts when a human later moves
+      // a card into In Progress (QA F91).
       id: "content_dispatch",
       icon: "Zap",
       label: "AI Content Dispatch",
-      sublabel: "Propose & queue managed content runs for this week",
+      sublabel: "Propose this week's content plan as ready-to-run tasks",
       trigger:
-        "Propose which Karos managed products (social posts, newsletter, blog article, landing page) to dispatch for content creation this week, and suggest a concrete content plan.",
+        "Propose which Karos managed products (social posts, newsletter, blog article, landing page) to plan for content creation this week, and suggest a concrete content plan I can turn into tasks.",
       color: "#e5484d",
     },
   ];
@@ -85,6 +123,40 @@ function useCopilot(
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const storageKey = `${THREAD_KEY_PREFIX}${clientId}`;
+  /** Blocks the write-back below until the restore pass has run. */
+  const hydratedRef = useRef(false);
+
+  // Restore the transcript for this client. Runs after mount rather than in a
+  // lazy initializer so the server-rendered (empty) markup and the first client
+  // render still agree.
+  useEffect(() => {
+    hydratedRef.current = false;
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(parsed)) {
+        const restored = parsed.filter(isPersistedMessage);
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring persisted state on mount is the point
+        if (restored.length > 0) setMessages(restored);
+      }
+    } catch {
+      /* unreadable / disabled storage — start clean */
+    }
+    hydratedRef.current = true;
+  }, [storageKey]);
+
+  // Write back once a turn settles. Skipped mid-stream so a long answer isn't
+  // serialized on every chunk.
+  useEffect(() => {
+    if (!hydratedRef.current || streaming) return;
+    try {
+      if (messages.length === 0) sessionStorage.removeItem(storageKey);
+      else sessionStorage.setItem(storageKey, JSON.stringify(messages.slice(-MAX_PERSISTED_MESSAGES)));
+    } catch {
+      /* quota or private mode — the in-memory thread still works */
+    }
+  }, [messages, streaming, storageKey]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -92,14 +164,29 @@ function useCopilot(
     setInput("");
     setError(null);
     setStreaming(false);
-  }, []);
+    try {
+      sessionStorage.removeItem(storageKey);
+    } catch {
+      /* nothing to clear */
+    }
+  }, [storageKey]);
 
   const send = useCallback(
-    async (text: string) => {
+    /**
+     * @param display Shown in the user bubble instead of `text` — used by the
+     * action chips, whose trigger is an instruction to the model, not a
+     * sentence the client typed (QA F15). `text` is what the API receives.
+     */
+    async (text: string, display?: string) => {
       const trimmed = text.trim();
       if (!trimmed || streaming) return;
 
-      const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: trimmed };
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: trimmed,
+        ...(display ? { display } : {}),
+      };
       const assistantId = crypto.randomUUID();
 
       setMessages((prev) => [...prev, userMsg, { id: assistantId, role: "assistant", content: "" }]);
@@ -181,36 +268,20 @@ function TypingDots() {
   );
 }
 
-/* ── Proactive welcome (CLIENT_USER initial view) ────────────────────── */
+/* ── Quick task ingestion form ───────────────────────────────────────── */
 
-function ProactiveWelcome({
+/**
+ * Extracted from the welcome column so it can also render in the actions strip
+ * above the input bar — the whole action surface used to exist only while the
+ * transcript was empty (QA F88).
+ */
+function QuickTaskForm({
   clientId,
-  clientName,
-  userName,
-  hasGoogleIntegration,
-  send,
   onTasksCreated,
-  onRefreshTaskMap,
-  isAiProcessing,
 }: {
   clientId: string;
-  clientName: string;
-  userName?: string;
-  hasGoogleIntegration: boolean;
-  send: (t: string) => void;
   onTasksCreated: () => void;
-  /** Launches the multi-agent Strategy War Room instead of a single-shot chat scan. */
-  onRefreshTaskMap: () => void;
-  /** True while a background AI generation cycle is running — locks the Refresh Task Map chip. */
-  isAiProcessing?: boolean;
 }) {
-  const actions = buildProactiveActions();
-  // Kept on the prop chain (layout → dock → widget) but no longer decorates the
-  // Refresh Task Map chip: a Google connection changed the icon to a globe while
-  // nothing in the run ever looked outside the account (QA F50).
-  void hasGoogleIntegration;
-  const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
-
   const [taskText, setTaskText] = useState("");
   const [isPending, startTransition] = useTransition();
   // "info" is the duplicate case: nothing failed, the work is already on the
@@ -255,82 +326,173 @@ function ProactiveWelcome({
   }
 
   return (
+    <form onSubmit={handleTaskSubmit} className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-2 transition-colors focus-within:border-foreground/25">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon-soft text-neon">
+          <Icon name="Plus" className="h-3 w-3" />
+        </span>
+        <input
+          value={taskText}
+          onChange={(e) => setTaskText(e.target.value)}
+          placeholder="Describe a task you need done…"
+          disabled={isPending}
+          maxLength={1000}
+          className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-2 outline-none disabled:opacity-50"
+        />
+        <button
+          type="submit"
+          disabled={!taskText.trim() || isPending}
+          className="flex h-6 items-center gap-1 rounded-md bg-primary px-2 text-[10px] font-semibold text-primary-foreground transition-opacity disabled:opacity-40"
+        >
+          {isPending ? (
+            <Icon name="Loader" className="h-3 w-3 animate-spin" />
+          ) : (
+            <>
+              <Icon name="Sparkles" className="h-2.5 w-2.5" />
+              Add
+            </>
+          )}
+        </button>
+      </div>
+      {taskFeedback && (
+        <div
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px]",
+            taskFeedback.type === "success"
+              ? "border border-success/25 bg-success/10 text-success"
+              : taskFeedback.type === "info"
+                ? "border border-border bg-surface-2 text-muted"
+                : "border border-danger/20 bg-danger/5 text-danger",
+          )}
+        >
+          <Icon
+            name={
+              taskFeedback.type === "success"
+                ? "CircleCheck"
+                : taskFeedback.type === "info"
+                  ? "Info"
+                  : "TriangleAlert"
+            }
+            className="h-3 w-3 shrink-0"
+          />
+          <span className="min-w-0 flex-1 truncate">{taskFeedback.message}</span>
+          {taskFeedback.href && (
+            <Link
+              href={taskFeedback.href}
+              className="shrink-0 font-semibold underline underline-offset-2 hover:opacity-80"
+            >
+              View
+            </Link>
+          )}
+        </div>
+      )}
+    </form>
+  );
+}
+
+/* ── Action chips ────────────────────────────────────────────────────── */
+
+/**
+ * The four AI actions. Extracted from the welcome column so the same list can
+ * render in the strip above the input bar once a transcript exists (QA F88).
+ */
+function ActionChips({
+  onRun,
+  onRefreshTaskMap,
+  isAiProcessing,
+}: {
+  /** Sends the action's chat trigger; `display` is what the transcript shows (QA F15). */
+  onRun: (trigger: string, display: string) => void;
+  onRefreshTaskMap: () => void;
+  isAiProcessing?: boolean;
+}) {
+  return (
+    // Two-by-two below lg so all four land above the fold in the mobile sheet;
+    // one column in the desktop rail, which is only 380px wide (QA F94).
+    <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-col">
+      {buildProactiveActions().map((action) => {
+        const locked = action.id === "scan_inbox" && isAiProcessing;
+        return (
+          <button
+            key={action.id}
+            disabled={locked}
+            onClick={() =>
+              action.trigger ? onRun(action.trigger, action.label) : onRefreshTaskMap()
+            }
+            title={locked ? "Karos Agents are already building your workspace strategy" : undefined}
+            className={cn(
+              "group flex flex-col items-start gap-2 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150 lg:flex-row lg:items-center lg:gap-3",
+              locked
+                ? "cursor-not-allowed opacity-50"
+                : "hover:border-border-strong hover:bg-surface-3 active:scale-[0.98]",
+            )}
+          >
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70 transition-all duration-150">
+              <Icon name={locked ? "Loader" : action.icon} className={cn("h-4 w-4", locked && "animate-spin")} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-foreground">{action.label}</p>
+              {/* Two lines, not `truncate`: the longest sublabels clipped
+                  mid-phrase on a single line (QA F88). */}
+              <p className="line-clamp-2 text-[11px] text-muted">
+                {locked ? "Locked — a workspace build is already running" : action.sublabel}
+              </p>
+            </div>
+            <Icon
+              name="ArrowRight"
+              className="hidden h-3.5 w-3.5 shrink-0 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100 lg:block"
+            />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── Proactive welcome (CLIENT_USER initial view) ────────────────────── */
+
+function ProactiveWelcome({
+  clientId,
+  clientName,
+  userName,
+  hasGoogleIntegration,
+  send,
+  onTasksCreated,
+  onRefreshTaskMap,
+  isAiProcessing,
+}: {
+  clientId: string;
+  clientName: string;
+  userName?: string;
+  hasGoogleIntegration: boolean;
+  send: (t: string, display?: string) => void;
+  onTasksCreated: () => void;
+  /** Launches the multi-agent Strategy War Room instead of a single-shot chat scan. */
+  onRefreshTaskMap: () => void;
+  /** True while a background AI generation cycle is running — locks the Refresh Task Map chip. */
+  isAiProcessing?: boolean;
+}) {
+  // Kept on the prop chain (layout → dock → widget) but no longer decorates the
+  // Refresh Task Map chip: a Google connection changed the icon to a globe while
+  // nothing in the run ever looked outside the account (QA F50).
+  void hasGoogleIntegration;
+  const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
+
+  return (
     <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
       {/* Greeting */}
       <div className="flex items-start gap-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
           <Icon name="Sparkles" className="h-4 w-4" />
         </div>
+        {/* One line: the greeting used to run to two paragraphs, which on a
+            phone filled the sheet on its own (QA F94). */}
         <div className="rounded-md border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
           <p className="font-medium">{greeting} I&apos;m your AI Copilot for <strong>{clientName}</strong>.</p>
-          <p className="mt-1 text-xs text-muted">
-            Choose an action below or describe a task to add it directly.
-          </p>
         </div>
       </div>
 
-      {/* Quick task ingestion */}
-      <form onSubmit={handleTaskSubmit} className="flex flex-col gap-1.5">
-        <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-2 transition-colors focus-within:border-foreground/25">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon-soft text-neon">
-            <Icon name="Plus" className="h-3 w-3" />
-          </span>
-          <input
-            value={taskText}
-            onChange={(e) => setTaskText(e.target.value)}
-            placeholder="Describe a task you need done…"
-            disabled={isPending}
-            maxLength={1000}
-            className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-2 outline-none disabled:opacity-50"
-          />
-          <button
-            type="submit"
-            disabled={!taskText.trim() || isPending}
-            className="flex h-6 items-center gap-1 rounded-md bg-primary px-2 text-[10px] font-semibold text-primary-foreground transition-opacity disabled:opacity-40"
-          >
-            {isPending ? (
-              <Icon name="Loader" className="h-3 w-3 animate-spin" />
-            ) : (
-              <>
-                <Icon name="Sparkles" className="h-2.5 w-2.5" />
-                Add
-              </>
-            )}
-          </button>
-        </div>
-        {taskFeedback && (
-          <div
-            className={cn(
-              "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px]",
-              taskFeedback.type === "success"
-                ? "border border-success/25 bg-success/10 text-success"
-                : taskFeedback.type === "info"
-                  ? "border border-border bg-surface-2 text-muted"
-                  : "border border-danger/20 bg-danger/5 text-danger",
-            )}
-          >
-            <Icon
-              name={
-                taskFeedback.type === "success"
-                  ? "CircleCheck"
-                  : taskFeedback.type === "info"
-                    ? "Info"
-                    : "TriangleAlert"
-              }
-              className="h-3 w-3 shrink-0"
-            />
-            <span className="min-w-0 flex-1 truncate">{taskFeedback.message}</span>
-            {taskFeedback.href && (
-              <Link
-                href={taskFeedback.href}
-                className="shrink-0 font-semibold underline underline-offset-2 hover:opacity-80"
-              >
-                View
-              </Link>
-            )}
-          </div>
-        )}
-      </form>
+      <QuickTaskForm clientId={clientId} onTasksCreated={onTasksCreated} />
 
       {/* Divider */}
       <div className="flex items-center gap-2 px-1">
@@ -339,40 +501,11 @@ function ProactiveWelcome({
         <div className="h-px flex-1 bg-border" />
       </div>
 
-      {/* Action chips */}
-      <div className="flex flex-col gap-2">
-        {actions.map((action) => {
-          const locked = action.id === "scan_inbox" && isAiProcessing;
-          return (
-            <button
-              key={action.id}
-              disabled={locked}
-              onClick={() => (action.trigger ? send(action.trigger) : onRefreshTaskMap())}
-              title={locked ? "Karos Agents are already building your workspace strategy" : undefined}
-              className={cn(
-                "group flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150",
-                locked
-                  ? "cursor-not-allowed opacity-50"
-                  : "hover:border-border-strong hover:bg-surface-3 active:scale-[0.98]",
-              )}
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70 transition-all duration-150">
-                <Icon name={locked ? "Loader" : action.icon} className={cn("h-4 w-4", locked && "animate-spin")} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-foreground">{action.label}</p>
-                <p className="text-[11px] text-muted truncate">
-                  {locked ? "Locked — a workspace build is already running" : action.sublabel}
-                </p>
-              </div>
-              <Icon
-                name="ArrowRight"
-                className="h-3.5 w-3.5 shrink-0 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100"
-              />
-            </button>
-          );
-        })}
-      </div>
+      <ActionChips
+        onRun={send}
+        onRefreshTaskMap={onRefreshTaskMap}
+        isAiProcessing={isAiProcessing}
+      />
 
       {/* Quick text suggestions */}
       <div className="flex items-center gap-2 px-1">
@@ -475,6 +608,9 @@ export function ChatbotWidget({
   const router = useRouter();
   const [open, setOpen] = useState(defaultOpen);
   const [warRoomOpen, setWarRoomOpen] = useState(false);
+  // The AI actions strip above the input bar, once a transcript exists. Starts
+  // collapsed so it never crowds the answers (QA F88).
+  const [actionsOpen, setActionsOpen] = useState(false);
   // Docked mode is permanently open and never shows the floating bubble.
   const panelOpen = docked || open;
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -625,7 +761,20 @@ export function ChatbotWidget({
                     )}
                   >
                     {msg.content ? (
-                      <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
+                      msg.role === "assistant" ? (
+                        // The model writes markdown — the system prompt is itself
+                        // authored in it and the flagship actions ask for
+                        // multi-section deliverables — so a pre-wrapped span put
+                        // asterisks, hash marks and table pipes on screen (QA F89).
+                        // renderSectionBody escapes before formatting, so model
+                        // output cannot inject markup; it is the same renderer the
+                        // documents view uses.
+                        <div dangerouslySetInnerHTML={{ __html: renderSectionBody(msg.content) }} />
+                      ) : (
+                        // `display` is the action's own label when the chip's
+                        // hidden trigger is what was actually sent (QA F15).
+                        <span style={{ whiteSpace: "pre-wrap" }}>{msg.display ?? msg.content}</span>
+                      )
                     ) : (
                       <TypingDots />
                     )}
@@ -633,6 +782,40 @@ export function ChatbotWidget({
                 </div>
               ))}
               <div ref={messagesEndRef} />
+            </div>
+          )}
+
+          {/* AI actions strip — the four actions and the quick-add form used to
+              exist only while the transcript was empty, so the panel's whole
+              action surface was a zero-state and the only way back to it was
+              the header's reset, which destroys a paid thread (QA F88). */}
+          {defaultOpen && messages.length > 0 && (
+            <div className="shrink-0 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setActionsOpen((v) => !v)}
+                aria-expanded={actionsOpen}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2"
+              >
+                <Icon name="Sparkles" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                <span className="flex-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-2">
+                  AI actions
+                </span>
+                <Icon
+                  name={actionsOpen ? "ChevronDown" : "ChevronUp"}
+                  className="h-3.5 w-3.5 shrink-0 text-muted-2"
+                />
+              </button>
+              {actionsOpen && (
+                <div className="flex max-h-[45dvh] flex-col gap-3 overflow-y-auto border-t border-border px-3 py-3">
+                  <QuickTaskForm clientId={clientId} onTasksCreated={onTasksCreated} />
+                  <ActionChips
+                    onRun={send}
+                    onRefreshTaskMap={openWarRoom}
+                    isAiProcessing={client?.isAiProcessing}
+                  />
+                </div>
+              )}
             </div>
           )}
 

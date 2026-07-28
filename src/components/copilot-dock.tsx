@@ -1,10 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChatbotWidget } from "@/components/chatbot-widget";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import type { Client, ClientReport } from "@/lib/types";
+
+/**
+ * Rail + sheet open/closed state, remembered across reloads. In-app navigation
+ * already preserves it (the dock lives in the (app) layout); a hard reload used
+ * to re-expand a rail the user had deliberately collapsed (QA F88).
+ */
+const DOCK_STATE_KEY = "karos.copilot.dock";
 
 interface Props {
   clientId: string;
@@ -24,6 +31,35 @@ interface Props {
 export function CopilotDock({ clientId, clientName, userName, hasGoogleIntegration, client, report }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  /** Blocks the write-back below until the restore pass has run. */
+  const hydratedRef = useRef(false);
+
+  useEffect(() => {
+    hydratedRef.current = false;
+    try {
+      const raw = localStorage.getItem(DOCK_STATE_KEY);
+      const saved: unknown = raw ? JSON.parse(raw) : null;
+      if (saved && typeof saved === "object") {
+        const s = saved as Record<string, unknown>;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring persisted state on mount is the point
+        if (typeof s.collapsed === "boolean") setCollapsed(s.collapsed);
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring persisted state on mount is the point
+        if (typeof s.sheetOpen === "boolean") setSheetOpen(s.sheetOpen);
+      }
+    } catch {
+      /* unreadable / disabled storage — keep the defaults */
+    }
+    hydratedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    try {
+      localStorage.setItem(DOCK_STATE_KEY, JSON.stringify({ collapsed, sheetOpen }));
+    } catch {
+      /* quota or private mode — state stays in memory */
+    }
+  }, [collapsed, sheetOpen]);
 
   const widgetProps = {
     clientId,
@@ -36,11 +72,13 @@ export function CopilotDock({ clientId, clientName, userName, hasGoogleIntegrati
 
   return (
     <>
-      {/* Below lg: docked bottom sheet — a tab that expands to the bottom ~35% and
-          stays pinned (sits above the mobile bottom tab bar on phones). */}
+      {/* Below lg: docked bottom sheet — a tab that expands to the bottom ~70%
+          and stays pinned (sits above the mobile bottom tab bar on phones).
+          At 35vh the header and the greeting filled the whole sheet and the
+          four AI actions sat below the fold on first open (QA F94). */}
       <div className="lg:hidden">
         {sheetOpen ? (
-          <div className="fixed left-0 right-0 bottom-[54px] z-40 h-[35vh] border-t border-border bg-background shadow-[0_-8px_30px_rgba(0,0,0,0.5)] md:bottom-0 md:left-72">
+          <div className="fixed left-0 right-0 bottom-[54px] z-40 h-[70dvh] border-t border-border bg-background shadow-[0_-8px_30px_rgba(0,0,0,0.5)] md:bottom-0 md:left-72">
             <ChatbotWidget docked defaultOpen onCollapse={() => setSheetOpen(false)} {...widgetProps} />
           </div>
         ) : (

@@ -53,7 +53,11 @@ afterEach(() => vi.clearAllMocks());
 describe("getClientCustomAgents", () => {
   it("returns only granted AND enabled agents, as client-safe summaries", async () => {
     const result = await getClientCustomAgents("c1");
-    expect(result).toEqual([{ id: "ca_1", name: "Video Agent", description: "does things" }]);
+    // creditCost rides along so the copilot can quote the agent card's own
+    // price rather than the task-execution baseline (QA F95).
+    expect(result).toEqual([
+      { id: "ca_1", name: "Video Agent", description: "does things", creditCost: null },
+    ]);
     // Never leaks instructions/skill paths.
     expect(JSON.stringify(result)).not.toContain("secret instructions");
   });
