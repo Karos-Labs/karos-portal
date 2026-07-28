@@ -223,16 +223,30 @@ via `assetTitleFromJobTitle` (`webhook/route.ts:388`, shared definition in
 `src/lib/job-title.ts`). The old code looked for an em dash while every builder
 wrote a hyphen, so it had never once fired.
 
-### 2.3 Everything in `scripts/` at HEAD (13 files, same convention)
+### 2.3 Everything in `scripts/` at HEAD (14 files, same convention)
 
 Sweep-relevant: `backfill-agent-blurbs.ts` (§2.1), `backfill-asset-titles.ts`
 (§2.2), `refresh-export.ts` + `refresh-apply.ts` (§2.9), `grant-all-agents.ts`
 (§2.11), `clear-ai-processing-lock.ts` (§2.4).
 
-Pre-sweep maintenance, unchanged: `backfill-branding.ts`,
+Pre-sweep maintenance: `backfill-branding.ts`, `backfill-client-agents.ts`,
 `dedupe-competitors.ts`, `import-lab-client.ts`, `migrate-legacy-roles.ts`,
 `purge-orphaned-client-docs.ts`, `redate-content-calendar.ts`,
 `schedule-approved-assets.ts`.
+
+**The convention is now enforced across all 14, not just the sweep-era ones.**
+Every script that can write to Firestore takes `--apply` and does nothing
+without it, prints a one-line banner naming the mode, and is wrapped in
+`if (require.main === module)`. Three of them used to write on a bare
+`npx tsx` run — `backfill-branding.ts` had no argument parsing at all and
+rewrote branding for EVERY client, `clear-ai-processing-lock.ts` cleared the
+lock unconditionally, and `schedule-approved-assets.ts` applied by default
+behind an inverted `--dry`. **The old spellings `--execute`, `--dry` and
+`--dry-run` no longer exist**; if you have a runbook or shell history using
+them, the run is now a harmless dry run and the banner will say so. Firestore
+init also moved inside `main()` in the four scripts that opened a connection
+merely by being imported. `refresh-export.ts` is read-only and takes no mode
+flag.
 
 **Written but never run: `scripts/backfill-client-agents.ts` (§2.8).** The code
 is merged; the migration is an ops step Albert performs per client.
@@ -904,46 +918,50 @@ Built by WP-6; here is what the data looks like so you can read it.
 
 ### 4.13 Pipeline bugs found by the CD-G7 refresh — code fixes still owed
 
-The fleet refresh (§2.9) fixes **data**. Three defects live in **code** and will
-re-corrupt on the next Regenerate. Whoever runs the next intel pass needs these.
+The fleet refresh (§2.9) fixes **data**. Of the three code defects v2 listed
+here, **one is fixed on this branch** and two remain. Whoever runs the next
+intel pass needs the two below, plus the narrower residual left behind by the
+first.
 
-1. **Every client-tier doc loses its first `##` section — fleet-wide.**
-   Symptom: `target-audience@client` opens mid-document on "### Secondary ICP",
-   observed on 2 of 2 clients examined.
-   **The cause is not an index off-by-one** (the rescopes note calls it one; the
-   note is a good bug report and an inexact diagnosis). It is a frontmatter-fence
-   misdetection in **`stripPreamble`, `src/lib/text-utils.ts:31-36`**, called from
-   `src/lib/intel/condense.ts:88` and :114:
+1. **`stripPreamble` document corruption — FIXED, do not re-report.**
+   v2 described this as live: a frontmatter-fence misdetection in
+   `stripPreamble` that made `^---` match any line start, so the first Markdown
+   horizontal rule in the leading 400 characters was taken for an opening fence
+   and every section above it — the H1 *and* the first `##` — was sliced away on
+   every Regenerate.
 
-   ```
-   32    const fmStart = fmSearchWindow.search(/^---\r?\n/m);
-   33    if (fmStart > 0) s = s.slice(fmStart);
-   ```
+   It is closed. `src/lib/text-utils.ts` now anchors **every** step to the start
+   of the document, and admits a `---` pair as frontmatter only when the lines
+   between the fences actually read as YAML (`looksLikeYamlBlock`, which rejects
+   headings, table rows, blockquotes and bare prose). The whole-document code
+   fence is only unwrapped when it demonstrably wraps the document, and the H1
+   strip no longer deletes a `# ` line found anywhere in the body. The function
+   is **idempotent** — running it on its own output is a no-op — which is what
+   makes the condenser's retry path safe to re-run.
+   `src/lib/__tests__/text-utils.test.ts` pins this: **39 tests**, 20 of which
+   were red before the fix.
 
-   The `m` flag makes `^---` match **any** line start, not the document start. If
-   the condensed output has no leading YAML frontmatter, the first Markdown
-   horizontal rule inside the leading 400 characters is taken for an opening
-   fence: line 33 discards everything before it (the H1 *and* the first `##`
-   section), then :34/:36 discard everything through the next `---`. The 400-char
-   window is exactly why the damage is always confined to the first section.
-   It hits client-tier docs specifically because internal docs are themselves
-   stored post-`stripPreamble` (`intel/pipeline.ts:595`), so the condenser is fed
-   frontmatter-less input while being told to "update the frontmatter"
-   (`condense.ts:64-68`) — a no-op — and its output arrives bare.
-   **The existing guard fires and cannot save it:** `condense.ts:84-93` computes
-   `missingFirst` and retries (:96-108), but the retry's output goes through the
-   same `stripPreamble` at :114 and is returned at :116 **with no
-   re-validation**. Deterministic re-corruption, every Regenerate.
-   Same function, same bug class, worth fixing together: `text-utils.ts:42`
-   deletes the first `# ` line found *anywhere* in the document, not just a
-   leading H1. There are no tests for `stripPreamble` — add some.
-2. **Leaked LLM meta-commentary in stored docs, and no scrubber exists.** The
-   only defenses are prompt instructions (`intel/brain.ts:184`,
+   **What is still owed here is narrow.** The trailing meta-commentary scrubber
+   `stripTrailingMetaCommentary` (`src/lib/text-utils.ts:167`) is wired at the
+   **condensation** boundary only — `intel/condense.ts:90` and :117, i.e. the
+   client-tier path. The **pipeline** side has no scrubber at all: all four
+   `stripPreamble` calls in `src/lib/intel/pipeline.ts` (:592, :595, :701, :708)
+   store the model's output unscrubbed, and :595 is where **internal-tier docs**
+   are written. So a doc that ends in "If you intended a different template…"
+   is cleaned on the client tier and kept on the internal one. Wrapping those
+   four sites the way condense.ts already does is the fix; mind that
+   `stripPreamble` is idempotent but `stripTrailingMetaCommentary` should still
+   be applied once, at the same boundary, not sprinkled through callers.
+2. **Leaked LLM meta-commentary reaches the RENDERER unscrubbed.** Note the
+   scope change from v2: a scrubber now exists (see the residual in 1 above),
+   but it runs at write time on one path only, and nothing filters at render.
+   The other defenses are prompt instructions (`intel/brain.ts:184`,
    `intel/pipeline.ts:518`), which are not enforcement. The nearest thing to a
-   scrubber, `isInternalLine` (`src/lib/doc-render.ts:157`), is invoked **only**
-   from the one-line teaser `toPlainSummary` (:216) — `renderFullDoc` (:452) and
-   `parseDocSections` (:229) never call it, so meta-commentary in a stored body
-   renders verbatim to the client.
+   render-time scrubber, `isInternalLine` (`src/lib/doc-render.ts:157`), is
+   invoked **only** from the one-line teaser `toPlainSummary` (:216) —
+   `renderFullDoc` (:452) and `parseDocSections` (:229) never call it, so
+   meta-commentary already sitting in a stored body still renders verbatim to
+   the client.
 3. **The palette extractor is unreliable and unvalidated.** Stored palettes
    matched no live-site hex for the clients examined. `gatherSiteIntelligence`
    (`src/lib/branding.ts:326`) asks a model to *report* nav/hero/CTA colors as
@@ -1094,6 +1112,15 @@ Small but easy to misread, because it moved during the build.
 - **F81 propagation window:** sibling-tier doc propagation runs in `after()`
   — a seconds-long stale-copilot window (minutes-to-never on Cloud Run until
   §3.1 is fixed).
+- **F37 — RESOLVED except the `/clients` server-side scan.** The rescope
+  recorded this residual and v2 lost it. The employee-visibility LEAK is
+  closed: `src/app/(app)/clients/page.tsx` now fences its `counts` map to the
+  visible-client set before it crosses to `ClientsGrid`, the same skip `/jobs`
+  uses, so an employee's RSC payload no longer carries the ids, volumes or
+  `lastRunAt` of clients outside their assignment. What remains is
+  PERFORMANCE, not exposure: the page still runs unfiltered `listAssets()` and
+  `listJobs()` and reduces in memory to print two numbers per card. Replacing
+  both with a server-side `count()` per visible client is the open work.
 - **F86 behavior change:** a client with no client-tier docs now gets "No
   documents to summarize yet." instead of an internal-derived brief —
   correct, but visible on mock-client walks.
@@ -1315,6 +1342,36 @@ Cloud Run container a Tel Aviv client's "today" starts hours earlier, and readin
 it in the wrong zone silently skips the day they are actually living in — no
 error, no log, just a missing post.
 
+### 6.10 The browser floor: regex lookbehind (F126)
+
+The portal's inline-markdown renderers use **regex lookbehind** — `(?<!\w)` /
+`(?<=…)` — to keep `_snake_case_` identifiers from turning into italics:
+
+- `src/components/ai-insights.tsx:201` (module-scope literal, the F126 fix)
+- `src/lib/doc-render.ts:300`, `:303`
+- `src/components/client-documents.tsx:149`, `:152`
+
+Lookbehind is a **parse-time** feature. An engine that does not support it
+throws a SyntaxError while parsing the module, not when the regex runs — so
+there is no graceful degradation and no try/catch that helps: the chunk fails
+to load and the user gets a **blank page**, not a mis-rendered italic.
+
+**The floor this sets: Safari 16.4 (March 2023).** Chrome/Edge 62+ and Firefox
+78+ have had it for years; Safari was the laggard. iOS is the case that matters,
+since iOS Safari's version is tied to the OS.
+
+This was accepted deliberately for this portal (staff and a small set of client
+users, all on current browsers) — it is documented here as the explicit floor,
+not as a defect. Two consequences worth knowing:
+
+1. **Do not add lookbehind to a NEW module without checking this line first.**
+   The blast radius is whatever route that module is in, and the failure looks
+   like a broken deploy rather than a browser-support problem.
+2. If the floor ever has to drop, the fix is a capture-and-check rewrite (match
+   the preceding character into a group and test it in the replace callback),
+   not a polyfill — lookbehind cannot be polyfilled, because the failure is in
+   the parser.
+
 ---
 
 *Refresh protocol: when a wave merges, update §1.4/§1.6, re-tag §4 items whose
@@ -1343,4 +1400,4 @@ condensation · 4.7 global correction action · **4.8 T1–T7** ·
 learning-log ruling** · 5.2 accepted residuals · 5.3 end-loop gaps) ·
 §6 Conventions (6.1 CLAUDE.md · 6.2 NUL grep · 6.3 worktree fork · 6.4 timezone ·
 6.5 JOB_STATUS_META · 6.6 sanitize at the boundary · 6.7 working style ·
-**6.8 webhook ordering** · **6.9 zones**).
+**6.8 webhook ordering** · **6.9 zones** · **6.10 browser floor (lookbehind)**).
