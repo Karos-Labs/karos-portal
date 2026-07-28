@@ -242,7 +242,16 @@ describe("the hub applies that rule to the controls it paints", () => {
     const src = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
     const start = src.indexOf("export function CustomAgentsHub");
     expect(start).toBeGreaterThan(-1);
-    const hub = src.slice(start, src.indexOf("client-page section", start));
+    // The next top-level declaration. The marker this used to slice on
+    // ("client-page section") is not in the file at all, so the slice ran to
+    // EOF and every assertion below was free to be answered by any component in
+    // it — including ones this test says nothing about.
+    const end = src.indexOf("\nfunction refusalNamesSetup", start);
+    // An end marker that has moved silently widens the slice to the rest of the
+    // file, and every assertion below would then be answered by code this test
+    // is not about.
+    expect(end, "custom-agents.tsx no longer has the slice end marker").toBeGreaterThan(start);
+    const hub = src.slice(start, end);
 
     // The eligible set is computed per agent card...
     expect(hub).toContain("agentKeyMatchesClientSlug(agent.key, c.agentsRepoSlug)");
@@ -305,6 +314,11 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
       "src/lib/jobs/submit-custom.ts",
       "src/lib/agent-service/run-custom-agent.ts",
       "src/lib/jobs/schedule-gate.ts",
+      // The launch path. It answers the same question one rung earlier — may
+      // this umbrella be stood up at all — so an unkeyed call here refuses a
+      // Path-B master's LAUNCH while the card, the cores and the gate all agree
+      // it is ready.
+      "src/lib/actions/client-agent-actions.ts",
     ]) {
       const src = readFileSync(join(process.cwd(), file), "utf8");
       const calls = [...src.matchAll(/hasLinkedInAgentIntake\(([^)]*)\)/g)].map((m) => m[1]);

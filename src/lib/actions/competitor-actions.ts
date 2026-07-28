@@ -20,6 +20,7 @@ import { requireStaff, requireClientAccess, logActivity } from "./_shared";
 import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
 
+import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
 /**
  * Create-or-promote a manual competitor from quick-add input — not exported.
  *
@@ -363,7 +364,7 @@ export async function addCompetitorAndAnalyzeAction(
       type: "COMPETITOR_ANALYZED",
       title: "Competitor intelligence updated",
       description: "AI analyzed all tracked competitors and refreshed profiles",
-      actor: "System AI",
+      actor: SYSTEM_AI_ACTOR_NAME,
       actorRole: "system",
     });
   } catch {
@@ -456,7 +457,7 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
     type: "COMPETITOR_ANALYZED",
     title: "Competitors discovered & analyzed",
     description: `AI identified and profiled ${object.competitors.length} competitors`,
-    actor: "System AI",
+    actor: SYSTEM_AI_ACTOR_NAME,
     actorRole: "system",
   });
 
@@ -498,7 +499,7 @@ export async function addCompetitorByNameAction(
         type: "COMPETITOR_ANALYZED",
         title: "Competitor intelligence updated",
         description: "AI analyzed all tracked competitors and refreshed profiles",
-        actor: "System AI",
+        actor: SYSTEM_AI_ACTOR_NAME,
         actorRole: "system",
       });
     } catch {

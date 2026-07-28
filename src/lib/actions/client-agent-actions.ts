@@ -39,6 +39,7 @@ import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-conte
 import { hasRedditAgentIntake } from "@/lib/agent-service/reddit-agent-context";
 import { socialPlatformsFor } from "@/components/agent-identity";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
+import { agentSetupStartedTitle } from "@/lib/activity-titles";
 import type { ClientAgent, ClientAgentTemplate, CustomAgent } from "@/lib/types";
 
 /**
@@ -348,7 +349,7 @@ export async function submitClientAgentLaunchAction(input: {
     clientId: input.clientId,
     timestamp: Date.now(),
     type: "CAMPAIGN_CREATED",
-    title: `Agent setup started: ${umbrella.displayName}`,
+    title: agentSetupStartedTitle(umbrella.displayName),
     actor: user.name,
     actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
     metadata: { jobId: result.jobId, clientAgentId: umbrella.id, runType: "launch" },

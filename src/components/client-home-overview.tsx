@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Card, CardTitle, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
-import { isInClientArchive } from "@/lib/asset-visibility";
+import { clientDeliveryStamp, isInClientArchive } from "@/lib/asset-visibility";
 import type { Asset, ClientTask } from "@/lib/types";
 
 const ASSET_TYPE_LABEL: Record<Asset["type"], string> = {
@@ -34,9 +34,12 @@ const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info">
 export function ClientHomeOverview({
   tasks,
   assets,
+  viewerIsClient = false,
 }: {
   tasks: ClientTask[];
   assets: Asset[];
+  /** Whose "Recent activity" this is — see the list below (A3/A4). */
+  viewerIsClient?: boolean;
 }) {
   // Counted off the deliverables themselves, not off agent runs in `review` —
   // the row links into the deliverable archive, so the number has to describe
@@ -47,15 +50,41 @@ export function ClientHomeOverview({
   const attentionCount =
     deliverablesInReview.length + reviewPendingTasks.length + pendingTasks.length;
 
-  const recentAssets = [...assets]
-    .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))
-    .slice(0, 5);
-
-  // eslint-disable-next-line react-hooks/purity -- Date.now() intentional: the
-  // archive is a time-windowed view (30 days) and a future-dated post is not in
-  // it yet, so "does this row have a destination" can only be answered against
-  // the current moment. Read once per render.
+  // Date.now() intentional: the archive is a time-windowed view (30 days) and a
+  // future-dated post is not in it yet, so "does this row have a destination"
+  // can only be answered against the current moment. Read once per render.
+  //
+  // The directive has to be the LAST line before the statement — it applies to
+  // the next SOURCE line, so with the explanation underneath it was suppressing
+  // a comment and the rule fired anyway (an error in the tree since this
+  // comment was written, and the "unused directive" warning beside it).
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
+
+  // A3/A4, the treatment its siblings already carry (archive-view, the agent
+  // detail page). Two things were wrong with this list for a client.
+  //
+  // The set: it listed DRAFTS. A draft has not reached the client — approval is
+  // staff-only (approveAssetAction calls requireStaff) — and the drafts of one
+  // fire are minted in one second, so five rows read "Untitled · 3 hours ago"
+  // and published the shape of the generation run on the client's home screen.
+  // Their own row above already reports them, in the one honest way: a count,
+  // and who is holding them. Stamping alone could not have fixed this: a
+  // draft's delivery stamp IS the fire, because nothing has moved it since.
+  //
+  // The stamp: `updatedAt ?? createdAt` on the rows that remain. Delivered work
+  // carries its posting time, or the moment it was approved — the same
+  // clientDeliveryStamp the archive sorts, ages and prints by, so a row here
+  // and the same row one screen over cannot disagree about when it arrived.
+  //
+  // Membership is the archive's own predicate, which is also what decides
+  // whether the row links (below) — so a client's rows are now exactly the rows
+  // with somewhere to go. Staff keep every asset, stamped at generation.
+  const stampOf = (a: Asset) => (viewerIsClient ? clientDeliveryStamp(a) : a.updatedAt ?? a.createdAt);
+  const recentAssets = [...assets]
+    .filter((a) => !viewerIsClient || isInClientArchive(a, now))
+    .sort((a, b) => stampOf(b) - stampOf(a))
+    .slice(0, 5);
 
   return (
     /* CD-H4: `min-w-0` on the cards, not decoration. A grid item's automatic
@@ -167,7 +196,7 @@ export function ClientHomeOverview({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-foreground">{a.title}</p>
                     <p className="mt-0.5 text-xs text-muted-2">
-                      {ASSET_TYPE_LABEL[a.type] ?? a.type} · {relativeTime(a.updatedAt ?? a.createdAt)}
+                      {ASSET_TYPE_LABEL[a.type] ?? a.type} · {relativeTime(stampOf(a))}
                     </p>
                   </div>
                   <Badge tone={ASSET_STATUS_TONE[a.status] ?? "neutral"} className="capitalize">

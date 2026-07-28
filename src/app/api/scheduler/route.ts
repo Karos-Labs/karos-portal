@@ -10,6 +10,7 @@ import { submitCustomAgentRun } from "@/lib/agent-service/run-custom-agent";
 import { computeNextRunAt } from "@/lib/run-cadence";
 import { requireCronSecret } from "@/lib/cron-auth";
 
+import { SCHEDULER_ACTOR_NAME } from "@/lib/activity-actors";
 export const maxDuration = 120;
 
 /** A stored refusal is one readable sentence on the schedule row, not a log. */
@@ -73,7 +74,7 @@ export async function GET(req: NextRequest) {
         agent,
         client,
         prompt: run.prompt,
-        actor: { uid: "scheduler", name: "Scheduler", role: "staff" },
+        actor: { uid: "scheduler", name: SCHEDULER_ACTOR_NAME, role: "staff" },
         extraMetadata: {
           asset_type: run.assetType,
           ...(run.platform ? { platform: run.platform } : {}),

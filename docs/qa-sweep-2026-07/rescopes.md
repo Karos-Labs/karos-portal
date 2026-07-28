@@ -1157,3 +1157,39 @@ test. Details in the commit messages.
 **Not in this round:** the lens's `custom-agents.tsx` `refusalIsSetup`
 Reddit-prefix item. That file belongs to the archetype builder for the duration
 of its rework, so the finding went there rather than being fixed twice.
+
+---
+
+## Staleness sweep — pass 3 (2026-07-28, final round)
+
+This file is a log of rulings, so nothing above is rewritten. What follows is
+the ONE place a reader learns which of those lines the tree has since overtaken.
+
+- **F53 split (line ~419): both halves are in.** The line says "Ledger F53 flips
+  only when BOTH halves merge" — the credits half landed with the WORKSPACE
+  half, and `LEDGER.md` carries F53 as RESOLVED. Nothing outstanding.
+- **Pass-2 residual "notification-bell.tsx:236 sends clients from job
+  notifications into the draft-free archive" (line ~907): fixed.** It was item 1
+  of the pass-2 fix round; the bell now renders a client's review rows as status
+  lines with no destination, the same ruling `client-home-overview.tsx` applies
+  to the identical fact. The `:236` citation no longer resolves to that code —
+  the rule and its reasoning live in the comment above the `visibleJobs` map.
+- **CD-E3 (line ~411): the sidebar inventory still describes HEAD**, with one
+  addition worth naming — the four nav rows (Dashboard · AI Agents · Calendar ·
+  Workspace) are the wide-viewport rail; Settings is in the footer account menu,
+  not a row, and below `md` the same set is the five-tab bottom bar whose last
+  tab is Company (CD-G9a). The unresolved half of CD-E3 is the 1280×800
+  overflow, which is Albert's call and is stated on the CD-E3 ledger row.
+- **CD-E3 follow-up (line ~468) "verify the AI Agents nav item is a sufficient
+  agents affordance, else add a link": settled by CD-G1/CD-I1.** The nav row
+  opens the agent roster, and every roster card opens that agent's own page.
+- **CD-D1 (ledger row): the video render surfaces are four, not three.** CD-I1's
+  clip-maker archetype added the clip gallery and its projection to the detail
+  modal player and the archive card badge. Ledger note updated.
+- **CD-I1 landed** (`380d317` archetypes 2 and 3, `bdc4719` projection and
+  staff-parity pins, merged in `41453dc`) — its section above ends at "sequenced
+  AFTER the Tomer reconciliation merge", which is now history rather than a
+  plan.
+- **LEDGER legend** gained the five status values the tables actually use
+  (STRUCK-BY-ALBERT, RESOLVED-PARTIAL, RESOLVED-PORTAL / TOMER-INFRA,
+  RESHAPED→CD-x, OPEN-ALBERT).

@@ -40,6 +40,7 @@ import {
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
+import { customRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
 import type { AppUser, Client, CreditOperation, CustomAgent, JobRunType } from "@/lib/types";
 
@@ -424,7 +425,7 @@ export async function submitCustomAgentJob(
     clientId: input.clientId,
     timestamp: Date.now(),
     type: "CAMPAIGN_CREATED",
-    title: `Agent run started: ${agent.name}`,
+    title: customRunStartedTitle(agent.name),
     actor: user.name,
     actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
     metadata: { jobId, taskType: "custom", agentKey: agent.key },

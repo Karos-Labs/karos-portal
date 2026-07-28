@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { createActivityLog, getClientTask } from "@/lib/data";
 import type { ActivityLog, AppUser, ClientTask } from "@/lib/types";
 
+import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
 export async function requireStaff(): Promise<AppUser> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
@@ -94,7 +95,7 @@ export async function logGenerationFailure(clientId: string, failure?: string): 
     // comment was written: the projection opted the raw string into the client
     // portal view, where both readers merely tested it for truthiness.)
     description: "Your Karos team can see the details and is on it.",
-    actor: "System AI",
+    actor: SYSTEM_AI_ACTOR_NAME,
     actorRole: "system",
   });
 }

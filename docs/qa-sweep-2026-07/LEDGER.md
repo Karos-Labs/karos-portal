@@ -4,6 +4,14 @@ Status values: OPEN · IN-PROGRESS · RESOLVED · RESOLVED-in-merge (struck on t
 sweep branch as a phantom, made real by Tomer's branch and fixed while merging
 it) · OPS-PENDING (code merged, human ops step required — see notes) ·
 DEFERRED-TOMER · STRUCK.
+Five more are in use in the tables below and belong in this legend:
+STRUCK-BY-ALBERT (struck on his call, not ours — the finding is real, the fix
+is not wanted) · RESOLVED-PARTIAL (the part that was ours is done; the
+remainder needs a decision, named in the note) · RESOLVED-PORTAL /
+TOMER-INFRA (portal half complete, infrastructure half is Tomer's seam) ·
+RESHAPED→CD-x (superseded by a later directive, which now owns it) ·
+OPEN-ALBERT (blocked on Albert, not on work). IN-PROGRESS currently appears
+nowhere: a row is OPEN until its gate passes.
 Phase 1 notes: F24/F131 verified by code lenses post-bounce; live trigger states
 not constructible locally (agent service env unset). F127 OPS-PENDING on
 `npx tsx scripts/backfill-agent-blurbs.ts` (dry-run first, then --apply; needs
@@ -171,11 +179,11 @@ are tracked in the CD table at the bottom.
 | CD-B3 | SEO | 2 | RESOLVED | Category-queries-only measurement; branded queries never feed client-vs-competitor score |
 | CD-B4 | SEO | 2 | RESOLVED | Mark pre-2026-07-23 snapshots stale/legacy in UI |
 | CD-C1 | — | loop | OPEN | Mock-client pass sanity-checks competitor/citation data vs stored snapshots |
-| CD-D1 | ARCH | 3/4 | RESOLVED-PORTAL / TOMER-INFRA | Video: portal half complete (videoUrl type, resolver, 3 render surfaces); bucket/upload/access = Tomer T5 |
+| CD-D1 | ARCH | 3/4 | RESOLVED-PORTAL / TOMER-INFRA | Video: portal half complete — Asset.videoUrl, the assetVideos resolver, and FOUR client-reachable surfaces since CD-I1: the detail modal player, the archive card badge, the clip gallery and the clip-maker archetype projection; bucket/upload/access = Tomer T5 |
 | CD-D2 | AGENTS | 2 | RESOLVED | TikTok connector state shown as pending verification, not pretending |
 | CD-E1 | SHELL | 2 | RESOLVED | Remove "Agent-specific documents" section from the client rail (setup lives on AI Agents cards) |
 | CD-E2 | SHELL | 2 | RESOLVED | Brand colors: 3-4 swatches + internal usage-percentage catalog (staff-visible %, client sees swatches) |
-| CD-E3 | SHELL | 2 | RESOLVED-PARTIAL | No-scroll contract holds at ≥1440×900 after CD-H2's inline Brand Colors; at 1280×800 rails are 56px (staff) / 80px (client) over — Albert decision pending: accept scroll there or name a section to compress |
+| CD-E3 | SHELL | 2 | RESOLVED-PARTIAL | No-scroll contract holds at ≥1440×900 after CD-H2's inline Brand Colors; at 1280×800 rails are 56px (staff) / 80px (client) over — Albert decision pending: accept scroll there or name a section to compress. Rail inventory at HEAD (client-rail.tsx): 4 nav rows (Dashboard · AI Agents · Calendar · Workspace — Settings is in the footer account menu, not a row), client chip, Documents, Competitor Track, Brand Colors, footer; below md the same set becomes the 5-tab bottom bar whose last tab is Company (CD-G9a) |
 | CD-F1 | — | end-loop | RESHAPED→CD-G7 | Fleet regenerate: superseded by CD-G7 completion-pass design (internal agents, no API key top-up) |
 | CD-F2 | SHELL | 2 | RESOLVED | Competitor Track favicons: every row shows the real favicon (fix resolution/fallback for rows showing the generic building icon) |
 | CD-G1 | AGENTS/P3 | 3 | RESOLVED | Agents roster → full-page per-agent detail route; no Run Now on cards; click opens page (rescopes.md third batch) |
@@ -196,7 +204,7 @@ are tracked in the CD table at the bottom.
 | CD-H6 | SHELL | audit | RESOLVED | Company sheet closes on md crossing; no orphan click catchers |
 | CD-H7 | WORKSPACE/SHELL | audit | RESOLVED | a) container-query toolbar (deviation flagged) b) one badgeLabel c) one-clock calendar d) Landing Builder blurb |
 | CD-H8 | AGENTS | audit | RESOLVED | Legacy live-schedule detail page: run gesture, pace, deliverables |
-| CD-I1 | AGENTS | 5 | RESOLVED | Per-archetype agent detail pages (template-calendar / clip-maker / daily-finder) + staff parity; after Tomer merge |
+| CD-I1 | AGENTS | 5 | RESOLVED | Per-archetype agent detail pages (template-calendar / clip-maker / daily-finder) + staff parity. Landed after the Tomer merge: archetypes 2 and 3 in 380d317, projection+parity pins in bdc4719, roster/detail parity merged in 41453dc |
 | CD-G7 | — | end-loop | OPEN | Fleet COMPLETION refresh: one team per client, keep existing data, internal Claude agents, --apply-gated Firestore writes; runs after CD-G1..G6 |
 
 ## Guard zones (all phases)
