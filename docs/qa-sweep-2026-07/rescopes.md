@@ -592,3 +592,17 @@ excludes completed (benign).
   independently rejected the duplicate nav button; both removals converged.
 - F119 blocked clause + CD-F2 panel props closed by orchestrator (0a518dd).
 - Dead but harmless: NotificationBell variant="row" branch now has no call site.
+
+## Phase 3 WP-0/WP-1 MERGED (717 tests)
+All 5 lens defects + W2/W5 fixed. D1 regression test verified by temporarily
+restoring the old predicate (it failed, as required) — the bug window was wider
+than the lens described: ANY draft dated later than 11:00 local today stayed a
+candidate while already unlocked for the client since local midnight.
+Remaining WP-2..WP-9 obligations carried forward:
+- WP-2 must land the §2 guard rail (refuse client runs while not live) WITH
+  the paired disabled control.
+- W1 batch.create for slots; W3 isOptionsMode conflation; W4 agentKeySlug lossy;
+  W6 bind-time warning for already-producing agents; W7 reset for stuck
+  launching; W8 option label from optionRefs.length.
+- D3 note: error redaction is broader than launch-only (all client-visible job
+  errors now go through clientSafeRefusal) — accepted, same leak same door.
