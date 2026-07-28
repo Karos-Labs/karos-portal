@@ -318,6 +318,21 @@ export async function setPlannedRunStatusAction(
     return { error: "Ask your Karos contact to retire this schedule." };
   }
 
+  // §2 guard rail (D2). Pausing is always allowed — a client may always stop
+  // their agent, and refusing that would trap a schedule they want stopped. But
+  // RE-ARMING is the same act as setting a pace in the first place: it points
+  // paid, recurring fires at an agent whose template set nobody has confirmed.
+  // configureClientAgentScheduleAction already refuses that; without the same
+  // refusal here a client could simply pause and resume their way past it.
+  if (status === "active") {
+    const blocked = await clientAgentRunRefusal({
+      user,
+      clientId: run.clientId,
+      customAgentId: run.customAgentId,
+    });
+    if (blocked) return { error: blocked };
+  }
+
   const patch: Record<string, unknown> = { status, updatedAt: Date.now() };
   // Resuming a recurring run: re-anchor its next fire to the future so a stale
   // cursor doesn't fire immediately.
