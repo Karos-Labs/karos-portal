@@ -1008,7 +1008,7 @@ export function ClientDocuments({
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between gap-1">
+      <div className="mb-1 flex items-center justify-between gap-1">
         <p className="px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
           Documents
         </p>
@@ -1062,25 +1062,26 @@ export function ClientDocuments({
                       label: item.label,
                     })
                   }
-                  className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
+                  /* Compact rows: the rail is a no-scroll fixed layout (CD-E3),
+                     and seven of these were its single tallest block. */
+                  className="group flex w-full items-center gap-2 rounded-md px-2 py-0.5 text-left transition-colors hover:bg-surface-2"
                 >
-                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
-                  <span className="flex-1 truncate text-sm text-muted group-hover:text-foreground">
+                  <Icon name="FileText" className="h-3.5 w-3.5 shrink-0 text-muted-2 group-hover:text-foreground" />
+                  <span className="flex-1 truncate text-[13px] leading-5 text-muted group-hover:text-foreground">
                     {item.label}
                   </span>
-                  <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
                 </button>
               </li>
             ) : (
               <li key={item.docType}>
-                <div className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left">
-                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2/60" />
-                  <span className="flex-1 truncate text-sm text-muted-2">{item.label}</span>
+                <div
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-0.5 text-left"
+                  title="This document is being rebuilt — check back shortly."
+                >
+                  <Icon name="FileText" className="h-3.5 w-3.5 shrink-0 text-muted-2/60" />
+                  <span className="flex-1 truncate text-[13px] leading-5 text-muted-2">{item.label}</span>
                   <span className="shrink-0 text-[11px] text-muted-2">Rebuilding</span>
                 </div>
-                <p className="px-2 pb-1.5 text-[11px] text-muted-2">
-                  This document is being rebuilt — check back shortly.
-                </p>
               </li>
             ),
           )}
