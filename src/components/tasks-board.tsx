@@ -21,7 +21,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Icon } from "@/components/icon";
 import { Badge, EmptyState } from "@/components/ui";
 import { cn, relativeTime } from "@/lib/utils";
-import { deleteTaskAction, updateAutopilotAction, updateTaskStatusAction } from "@/lib/actions";
+import { deleteTaskAction, runPendingTasksBatchAction, updateTaskStatusAction } from "@/lib/actions";
 import { TaskTicketModal } from "@/components/task-ticket-modal";
 import type { ClientTask, Role, TaskOwner, TaskSource, TaskStatus } from "@/lib/types";
 
@@ -95,55 +95,46 @@ function findStatusFromOver(overId: string | null, tasks: BoardTask[]): BoardSta
   return overTask?.status === "archived" ? null : (overTask?.status as BoardStatus | undefined) ?? null;
 }
 
-function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boolean }) {
-  const [isOn, setIsOn] = useState(enabled);
+/**
+ * One-shot batch runner. This used to be an "Autopilot" switch that stayed on
+ * forever while nothing in the product ever ran a second batch (QA F48), so it
+ * is now labelled as what it does: run the next few pending automated tasks.
+ */
+function RunPendingTasksButton({ clientId }: { clientId: string }) {
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
+  const [started, setStarted] = useState<number | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Store-previous-prop pattern (avoids the cascading-render setState-in-effect anti-pattern).
-  const [prevEnabled, setPrevEnabled] = useState(enabled);
-  if (prevEnabled !== enabled) {
-    setPrevEnabled(enabled);
-    setIsOn(enabled);
-  }
-
-  function toggle() {
-    const next = !isOn;
-    setIsOn(next);
+  function run() {
     setError(null);
+    setStarted(null);
     startTransition(async () => {
-      const res = await updateAutopilotAction(clientId, next);
+      const res = await runPendingTasksBatchAction(clientId);
       if (!res.ok) {
-        setIsOn(!next);
-        setError(res.error ?? "Could not update Autopilot");
+        setError(res.error ?? "Could not start the run");
+        return;
       }
+      setStarted(res.started ?? 0);
+      router.refresh();
     });
   }
 
   return (
     <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
       <button
-        onClick={toggle}
+        onClick={run}
         disabled={isPending}
-        aria-checked={isOn}
-        role="switch"
-        className="flex items-center gap-2 text-xs text-muted disabled:opacity-50"
+        className="flex items-center gap-2 text-xs font-medium text-foreground disabled:opacity-50"
       >
-        <span
-          className={cn(
-            "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
-            isOn ? "bg-success" : "bg-surface-3",
-          )}
-        >
-          <span
-            className={cn(
-              "inline-block h-4 w-4 rounded-full bg-primary shadow-sm transition-transform",
-              isOn ? "translate-x-4" : "translate-x-0.5",
-            )}
-          />
-        </span>
-        <span className="font-medium text-foreground">{isOn ? "Autopilot on" : "Autopilot off"}</span>
+        <Icon name={isPending ? "Loader" : "Play"} className={cn("h-3.5 w-3.5 text-neon", isPending && "animate-spin")} />
+        Run up to 5 pending tasks now
       </button>
+      {started !== null && !error && (
+        <p className="mt-1 text-[11px] text-muted">
+          {started === 0 ? "No pending automated tasks to run." : `Started ${started} task${started === 1 ? "" : "s"}.`}
+        </p>
+      )}
       {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
     </div>
   );
@@ -424,16 +415,9 @@ interface Props {
   currentUserRole: Role;
   showClientName?: boolean;
   clientId?: string;
-  autopilotEnabled?: boolean;
 }
 
-export function TasksBoard({
-  tasks,
-  currentUserRole,
-  showClientName = false,
-  clientId,
-  autopilotEnabled = false,
-}: Props) {
+export function TasksBoard({ tasks, currentUserRole, showClientName = false, clientId }: Props) {
   const router = useRouter();
   const [localTasks, setLocalTasks] = useState<BoardTask[]>(tasks);
   const [activeTab, setActiveTab] = useState<OwnerTab>("karos");
@@ -696,9 +680,7 @@ export function TasksBoard({
                 ))}
               </select>
             )}
-            {activeTab === "karos" && clientId && (
-              <AutopilotToggle clientId={clientId} enabled={autopilotEnabled} />
-            )}
+            {activeTab === "karos" && clientId && <RunPendingTasksButton clientId={clientId} />}
           </div>
         </div>
 

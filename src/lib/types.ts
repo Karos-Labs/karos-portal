@@ -1263,10 +1263,16 @@ export interface TaskComment {
   createdAt: number;
 }
 
-/** Per-client operational settings (e.g. Autopilot mode). Stored in `clientSettings` collection. */
+/** Per-client operational settings. Stored in `clientSettings` collection. */
 export interface ClientSettings {
   clientId: string;
-  autopilot: boolean;
+  /**
+   * @deprecated Legacy "Autopilot mode" flag. Nothing reads or writes it any
+   * more — no scheduled job ever honoured it, so the persistent "on" state was
+   * a promise the product never kept (QA F48). Batch runs are one-shot now.
+   * Retained on the type only because existing documents still carry the field.
+   */
+  autopilot?: boolean;
   /** Whether the client has opted into auto-scheduling (approve → auto when integrations exist). */
   autoScheduleEnabled?: boolean;
   updatedAt: number;

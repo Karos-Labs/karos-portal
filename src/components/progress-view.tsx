@@ -31,7 +31,6 @@ export function ProgressView({
   tasks,
   currentUserRole,
   clientId,
-  autopilotEnabled,
   activityLogs,
   jobs,
   report,
@@ -40,7 +39,6 @@ export function ProgressView({
   tasks: ClientTask[];
   currentUserRole: Role;
   clientId: string;
-  autopilotEnabled: boolean;
   activityLogs: ActivityLog[];
   jobs: Job[];
   report: ClientReport | null;
@@ -98,12 +96,7 @@ export function ProgressView({
           <div className="mb-4">
             <QuickAddTaskBar clientId={clientId} />
           </div>
-          <TasksBoard
-            tasks={tasks}
-            currentUserRole={currentUserRole}
-            clientId={clientId}
-            autopilotEnabled={autopilotEnabled}
-          />
+          <TasksBoard tasks={tasks} currentUserRole={currentUserRole} clientId={clientId} />
         </>
       ) : view === "activity" ? (
         <ActivityTimeline

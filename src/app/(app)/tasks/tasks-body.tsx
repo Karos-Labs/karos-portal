@@ -2,7 +2,6 @@ import {
   listClientTasks,
   listClients,
   getClient,
-  getClientSettings,
   listClientActivityLogs,
   listJobs,
   listAssets,
@@ -50,9 +49,8 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
   // Archiving is handled at query level (listClientTasks hides tasks Done ≥7d)
   // plus a physical sweep in the /api/credits/reconcile cron — no page-load work.
   if (scopedClientId) {
-    const [tasks, settings, activityLogs, jobs, report, rawAssets] = await Promise.all([
+    const [tasks, activityLogs, jobs, report, rawAssets] = await Promise.all([
       listClientTasks({ clientId: scopedClientId }),
-      getClientSettings(scopedClientId),
       listClientActivityLogs(scopedClientId),
       listJobs({ clientId: scopedClientId }),
       getClientReport(scopedClientId),
@@ -74,7 +72,6 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
           tasks={tasks}
           currentUserRole={user.role}
           clientId={scopedClientId}
-          autopilotEnabled={settings?.autopilot ?? false}
           activityLogs={activityLogs}
           jobs={jobs}
           report={report}
