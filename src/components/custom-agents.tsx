@@ -1374,6 +1374,9 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
   const [includeClientSkills, setIncludeClientSkills] = useState(agent?.includeClientSkills ?? true);
   const [instructions, setInstructions] = useState(agent?.instructions ?? "");
   const [creditCost, setCreditCost] = useState(agent?.creditCost != null ? String(agent.creditCost) : "");
+  const [launchCreditCost, setLaunchCreditCost] = useState(
+    agent?.launchCreditCost != null ? String(agent.launchCreditCost) : "",
+  );
   const [enabled, setEnabled] = useState(agent?.enabled ?? true);
 
   function save() {
@@ -1390,6 +1393,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       includeClientSkills,
       instructions,
       creditCost: creditCost.trim() === "" ? null : Number(creditCost),
+      launchCreditCost: launchCreditCost.trim() === "" ? null : Number(launchCreditCost),
       enabled,
     };
     startTransition(async () => {
@@ -1541,6 +1545,29 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
               empty every agent prices the same, and a video edit costs what a single post does.
             </p>
           </div>
+        </div>
+        {/* §6.3. Until this is set the client's self-serve Launch button stays
+            disabled with a visible "pricing is being finalized" reason — gated
+            rather than provisional, because billing an invented number that
+            later changes is the F130 placeholder-pricing failure at the most
+            expensive SKU. Staff launches stay free and ARE the measurement runs;
+            the economics card on the client's agents page surfaces the measured
+            ratio and a suggested price to type in here. */}
+        <div className="sm:max-w-xs">
+          <Label htmlFor="ae-launch-cost">Credits for setup (one time)</Label>
+          <Input
+            id="ae-launch-cost"
+            type="number"
+            min={0}
+            value={launchCreditCost}
+            onChange={(e) => setLaunchCreditCost(e.target.value)}
+            placeholder="not priced yet"
+          />
+          <p className="mt-1 text-xs text-muted-2">
+            The one-off setup run that researches the brand and designs the template set. Must be
+            higher than the per-run price. Left empty, clients cannot launch this agent themselves
+            and staff run the setup for them.
+          </p>
         </div>
         <div className="flex items-center gap-4">
           <label className="flex cursor-pointer items-center gap-2 text-xs">

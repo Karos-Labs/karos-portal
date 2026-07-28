@@ -1,3 +1,8 @@
+import {
+  CREDIT_OPERATION_LABEL,
+  creditBucketFor,
+} from "@/lib/credits";
+import type { CreditOperation } from "@/lib/types";
 import { describe, expect, it } from "vitest";
 import {
   CREDIT_BLOCK_REASON,
@@ -249,5 +254,52 @@ describe("isBillableClientActor", () => {
 
   it("never bills admin View-as-Client sessions", () => {
     expect(isBillableClientActor({ role: "CLIENT_USER", impersonatedBy: "admin-1" })).toBe(false);
+  });
+});
+
+/**
+ * §6.2 — the ledger's grouping keys.
+ *
+ * Rows have always rendered their free-text `reason`, composed per charge site.
+ * That cannot be grouped without re-parsing English, which is why the KIND has
+ * a stable label and a bucket.
+ */
+describe("credit ledger presentation", () => {
+  it("labels every operation in the union", () => {
+    const operations: CreditOperation[] = [
+      "agent_run",
+      "chat_message",
+      "task_execution",
+      "doc_correction",
+      "custom_agent_run",
+      "agent_launch",
+      "seat_purchase",
+      "manual",
+    ];
+    for (const op of operations) {
+      expect(CREDIT_OPERATION_LABEL[op]).toBeTruthy();
+    }
+  });
+
+  it("buckets a launch as setup regardless of run type", () => {
+    expect(creditBucketFor("agent_launch")).toBe("setup");
+    expect(creditBucketFor("agent_launch", "launch")).toBe("setup");
+  });
+
+  it("splits agent runs by the job's run type", () => {
+    expect(creditBucketFor("custom_agent_run", "scheduled")).toBe("scheduled");
+    expect(creditBucketFor("custom_agent_run", "manual_template")).toBe("manual");
+    expect(creditBucketFor("custom_agent_run", "manual")).toBe("manual");
+  });
+
+  it("falls back honestly when the job is gone or predates run-type stamping", () => {
+    // Not a guess at which kind it was — an undifferentiated bucket.
+    expect(creditBucketFor("custom_agent_run", null)).toBe("other");
+    expect(creditBucketFor("custom_agent_run")).toBe("other");
+  });
+
+  it("leaves non-agent operations out of the agent buckets", () => {
+    expect(creditBucketFor("chat_message")).toBe("other");
+    expect(creditBucketFor("task_execution", "scheduled")).toBe("other");
   });
 });
