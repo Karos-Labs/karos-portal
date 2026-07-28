@@ -26,7 +26,6 @@ export const MAX_SLOT_NOTE_CHARS = 500;
 export function clampSlotNote(raw: string): string {
   return raw
     .replace(/\r\n?/g, "\n")
-    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim()
