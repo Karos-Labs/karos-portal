@@ -265,10 +265,12 @@ function FeedbackBox({
   clientId,
   runs,
   recent,
+  isStaff,
 }: {
   clientId: string;
   runs: RedditRunRowView[];
   recent: RedditFeedbackRowView[];
+  isStaff: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -305,7 +307,7 @@ function FeedbackBox({
           the archive rather than describing where it might be. */}
       <p className="mt-1 text-sm text-muted">
         Tell us what is working and what is not, in your own words. It goes straight into the
-        agent&apos;s next run. Once your Karos team approves a batch, saying whether you posted a
+        agent&apos;s next run. Once your Karos team has approved the replies, saying whether you posted a
         reply happens on the reply itself, in{" "}
         <a href="/tasks?tab=archive" className="underline hover:text-foreground">
           your archive
@@ -319,18 +321,31 @@ function FeedbackBox({
            client-facing copy — the same rows the X and LinkedIn intakes render
            properly. */
         <ul className="mt-3 space-y-1.5">
-          {runs.slice(0, 4).map((r) => (
-            <li key={r.id} className="flex items-center gap-2 text-xs text-muted">
-              {r.href ? (
-                <a href={r.href} className="underline hover:text-foreground">
-                  Run {formatDate(r.createdAt)}
-                </a>
-              ) : (
-                <span>Run {formatDate(r.createdAt)}</span>
-              )}
-              <JobStatusBadge status={r.status} />
-            </li>
-          ))}
+          {runs.slice(0, 4).map((r) => {
+            /* A3/A4, the pass-2 stamp treatment. `Run <date>` is the generation
+               instant, and one fire produces a week of drafts — so four rows
+               printed the same date and said outright that the week came out of
+               one minute. A client's rows are already collapsed to one per day
+               server-side (toRunRowViews); here they lose the machinery noun and
+               the exact instant for the relative language every other
+               client-facing stamp uses. Staff keep the date and the /jobs link:
+               that instant is what they debug with. */
+            const label = isStaff
+              ? `Run ${formatDate(r.createdAt)}`
+              : `Worked on your content · ${relativeTime(r.createdAt)}`;
+            return (
+              <li key={r.id} className="flex items-center gap-2 text-xs text-muted">
+                {r.href ? (
+                  <a href={r.href} className="underline hover:text-foreground">
+                    {label}
+                  </a>
+                ) : (
+                  <span>{label}</span>
+                )}
+                <JobStatusBadge status={r.status} />
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       <div className="mt-4 space-y-3">
@@ -375,16 +390,19 @@ export function RedditAgentIntake({
   company,
   feedback,
   runs,
+  isStaff,
 }: {
   clientId: string;
   company: RedditIntakeView | null;
   feedback: RedditFeedbackRowView[];
   runs: RedditRunRowView[];
+  /** Whose vocabulary the run rows are written in — see FeedbackBox. */
+  isStaff: boolean;
 }) {
   return (
     <div className="space-y-6">
       <AccountForm clientId={clientId} intake={company} />
-      <FeedbackBox clientId={clientId} runs={runs} recent={feedback} />
+      <FeedbackBox clientId={clientId} runs={runs} recent={feedback} isStaff={isStaff} />
     </div>
   );
 }

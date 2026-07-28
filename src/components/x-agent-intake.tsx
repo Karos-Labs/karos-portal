@@ -646,11 +646,13 @@ function FeedbackBox({
   seats,
   runs,
   recent,
+  isStaff,
 }: {
   clientId: string;
   seats: XSeatView[];
   runs: XRunRowView[];
   recent: XFeedbackRowView[];
+  isStaff: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -682,7 +684,7 @@ function FeedbackBox({
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
         Tell us what is working and what is not — in your own words, as much detail as you like.
-        It goes straight into the agent&apos;s next run. Once your Karos team approves a batch,
+        It goes straight into the agent&apos;s next run. Once your Karos team has approved the drafts,
         picking, editing and skipping happens on the drafts themselves, in{" "}
         <a href="/tasks?tab=archive" className="underline hover:text-foreground">
           your archive
@@ -694,18 +696,31 @@ function FeedbackBox({
            raw database word ("review", "queued", "failed") into client-facing
            copy, beside a machine date, on a line with nothing to click. */
         <ul className="mt-3 space-y-1.5">
-          {runs.slice(0, 4).map((r) => (
-            <li key={r.id} className="flex items-center gap-2 text-xs text-muted">
-              {r.href ? (
-                <a href={r.href} className="underline hover:text-foreground">
-                  Run {formatDate(r.createdAt)}
-                </a>
-              ) : (
-                <span>Run {formatDate(r.createdAt)}</span>
-              )}
-              <JobStatusBadge status={r.status} />
-            </li>
-          ))}
+          {runs.slice(0, 4).map((r) => {
+            /* A3/A4, the pass-2 stamp treatment. `Run <date>` is the generation
+               instant, and one fire produces a week of drafts — so four rows
+               printed the same date and said outright that the week came out of
+               one minute. A client's rows are already collapsed to one per day
+               server-side (toRunRowViews); here they lose the machinery noun and
+               the exact instant for the relative language every other
+               client-facing stamp uses. Staff keep the date and the /jobs link:
+               that instant is what they debug with. */
+            const label = isStaff
+              ? `Run ${formatDate(r.createdAt)}`
+              : `Worked on your content · ${relativeTime(r.createdAt)}`;
+            return (
+              <li key={r.id} className="flex items-center gap-2 text-xs text-muted">
+                {r.href ? (
+                  <a href={r.href} className="underline hover:text-foreground">
+                    {label}
+                  </a>
+                ) : (
+                  <span>{label}</span>
+                )}
+                <JobStatusBadge status={r.status} />
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       <div className="mt-4 space-y-3">
@@ -759,6 +774,7 @@ export function XAgentIntake({
   news,
   feedback,
   runs,
+  isStaff,
 }: {
   clientId: string;
   company: XIntakeView | null;
@@ -766,6 +782,8 @@ export function XAgentIntake({
   news: XNewsRowView[];
   feedback: XFeedbackRowView[];
   runs: XRunRowView[];
+  /** Whose vocabulary the run rows are written in — see FeedbackBox. */
+  isStaff: boolean;
 }) {
   return (
     <div className="space-y-6">
@@ -777,7 +795,13 @@ export function XAgentIntake({
         <AddSeatForm clientId={clientId} />
       </div>
       <CompanyNewsBox clientId={clientId} rows={news} />
-      <FeedbackBox clientId={clientId} seats={seats} runs={runs} recent={feedback} />
+      <FeedbackBox
+        clientId={clientId}
+        seats={seats}
+        runs={runs}
+        recent={feedback}
+        isStaff={isStaff}
+      />
     </div>
   );
 }

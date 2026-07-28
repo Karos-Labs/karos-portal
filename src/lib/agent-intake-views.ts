@@ -45,11 +45,43 @@ import type {
   XRunRowView,
   XSeatView,
 } from "@/components/x-agent-intake";
+import { collapseRunsPerDay } from "@/lib/client-run-rows";
 import type { AgentIntake, Job } from "@/lib/types";
 
 export type XAgentIntakeProps = ComponentProps<typeof XAgentIntake>;
 export type LinkedInAgentIntakeProps = ComponentProps<typeof LinkedInAgentIntake>;
 export type RedditAgentIntakeProps = ComponentProps<typeof RedditAgentIntake>;
+
+/**
+ * The run rows a viewer may see — the same treatment on all three surfaces.
+ *
+ * Staff get the runs themselves, newest first, each linking to /jobs/<id>: the
+ * generation instant and the per-run granularity are the facts they debug with.
+ *
+ * A client gets what the Workspace timeline already gives them (A3/A4): ONE row
+ * per calendar day, stamped at that day's last fire, because a fire produces a
+ * week of drafts and four rows carrying the same date state outright that the
+ * week came out of one minute. Failures stay one row each — a run that could
+ * not finish is a distinct event, and its badge is the only place this card
+ * says so — which is exactly how clientEventsFromJobs splits them.
+ *
+ * The row shape is identical across X, LinkedIn and Reddit, so it is built
+ * once; each surface's own RunRowView type is structurally this.
+ *
+ * @param jobs newest-first, already filtered to this agent's runs.
+ */
+function toRunRowViews(
+  jobs: Job[],
+  isStaff: boolean,
+): Array<{ id: string; status: Job["status"]; createdAt: number; href?: string }> {
+  const rows = isStaff ? jobs : collapseRunsPerDay(jobs);
+  return rows.slice(0, 8).map((j) => ({
+    id: j.id,
+    status: j.status,
+    createdAt: j.createdAt,
+    ...(isStaff ? { href: `/jobs/${j.id}` } : {}),
+  }));
+}
 
 /** Strip an intake doc to the client-safe X view. */
 function toXIntakeView(intake: AgentIntake | null): XIntakeView | null {
@@ -113,12 +145,7 @@ export async function buildXAgentIntakeView(
     )
     .sort((a, b) => b.createdAt - a.createdAt);
 
-  const runs: XRunRowView[] = xJobs.slice(0, 8).map((j) => ({
-    id: j.id,
-    status: j.status,
-    createdAt: j.createdAt,
-    ...(opts.isStaff ? { href: `/jobs/${j.id}` } : {}),
-  }));
+  const runs: XRunRowView[] = toRunRowViews(xJobs, opts.isStaff);
 
   return {
     clientId,
@@ -138,6 +165,7 @@ export async function buildXAgentIntakeView(
       createdAt: f.createdAt,
     })),
     runs,
+    isStaff: opts.isStaff,
   };
 }
 
@@ -173,12 +201,7 @@ export async function buildLinkedInAgentIntakeView(
     )
     .sort((a, b) => b.createdAt - a.createdAt);
 
-  const runs: LiRunRowView[] = liJobs.slice(0, 8).map((j) => ({
-    id: j.id,
-    status: j.status,
-    createdAt: j.createdAt,
-    ...(opts.isStaff ? { href: `/jobs/${j.id}` } : {}),
-  }));
+  const runs: LiRunRowView[] = toRunRowViews(liJobs, opts.isStaff);
 
   return {
     clientId,
@@ -199,6 +222,7 @@ export async function buildLinkedInAgentIntakeView(
       createdAt: f.createdAt,
     })),
     runs,
+    isStaff: opts.isStaff,
   };
 }
 
@@ -240,12 +264,7 @@ export async function buildRedditAgentIntakeView(
     )
     .sort((a, b) => b.createdAt - a.createdAt);
 
-  const runs: RedditRunRowView[] = redditJobs.slice(0, 8).map((j) => ({
-    id: j.id,
-    status: j.status,
-    createdAt: j.createdAt,
-    ...(opts.isStaff ? { href: `/jobs/${j.id}` } : {}),
-  }));
+  const runs: RedditRunRowView[] = toRunRowViews(redditJobs, opts.isStaff);
 
   return {
     clientId,
@@ -260,5 +279,6 @@ export async function buildRedditAgentIntakeView(
       createdAt: f.createdAt,
     })),
     runs,
+    isStaff: opts.isStaff,
   };
 }
