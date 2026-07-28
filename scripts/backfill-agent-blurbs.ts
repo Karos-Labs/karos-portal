@@ -10,6 +10,19 @@
  * Blurbs are hand-written below, one per agent, matched on the agent KEY (see
  * the ordering note on BLURBS). `description` is never touched.
  *
+ * TWIN OF src/lib/agent-blurbs.ts. That module is the RUNTIME fallback: it
+ * renders these same lines for any agent whose clientBlurb is still empty, so
+ * the roster reads correctly whether or not this script has ever run. The two
+ * lists carry identical copy on purpose and must be changed together — if they
+ * drift, a client sees one line before the backfill and a different one after,
+ * for no reason they could ever observe. Scripts cannot import from `@/`
+ * (nothing under scripts/ resolves the path alias), which is why this is a
+ * documented twin rather than a shared import.
+ *
+ * The copy rule both follow (CD-G2, Albert): benefit first, concrete nouns for
+ * what arrives, one sentence, no buzzwords and no internal vocabulary — never
+ * the lab manifest's own "Master content-social skill…" phrasing.
+ *
  *   npx tsx scripts/backfill-agent-blurbs.ts            # dry run — prints the plan
  *   npx tsx scripts/backfill-agent-blurbs.ts --apply    # writes
  *
@@ -88,43 +101,46 @@ const BLURBS: Array<{ key: RegExp; blurb: string }> = [
     // The combined content engine — must come before /tiktok/ and /instagram/.
     key: /^karos-instagram-tiktok-content-agent$/,
     blurb:
-      "Runs your Instagram and TikTok content together: studies your market, then produces on-brand posts for both on a continuous schedule.",
+      "Improve your Instagram reach with a daily post, different templates, and an agent that scans what is working in your niche.",
   },
   {
     key: /^karos-x-agent$/,
     blurb:
-      "Drafts your X posts from your company page, your team's profiles, and the updates you save on the X agent data page. Every post arrives as a draft for you to approve.",
+      "Grow your following on X with a post a day, written in your voice from what your industry is talking about right now.",
   },
   {
-    // karos-linkedin-agent and every karos-linkedin-company-<slug>.
+    // Company pages first: karos-linkedin-company-<slug> is one page, one voice.
+    key: /^karos-linkedin-company-/,
+    blurb:
+      "Keep your LinkedIn company page active with posts that sound like your business instead of a press release.",
+  },
+  {
     key: /^karos-linkedin/,
     blurb:
-      "Drafts LinkedIn posts for your company page and your team from the profiles and updates you save on the LinkedIn agent data page. Nothing publishes without your approval.",
+      "Build your team's presence on LinkedIn with a steady run of posts for each person you put forward, each in their own voice.",
   },
   {
     key: /reddit/,
     blurb:
-      "Finds the Reddit conversations worth joining and drafts one reply at a time in your voice. You post each reply yourself.",
+      "Find the Reddit threads worth joining and get a reply drafted in your voice, one at a time.",
   },
   {
     key: /interview/,
-    blurb:
-      "Cuts your interviews and long recordings into short captioned clips, ready to post.",
+    blurb: "Turn your interviews and long recordings into short captioned clips, ready to post.",
   },
   {
     key: /branded.?short|shorts.?editor/,
-    blurb:
-      "Turns a video you upload into short branded cuts with captions, sized for social.",
+    blurb: "Turn one of your videos into short branded cuts with captions, sized for social.",
   },
   {
     key: /tiktok/,
     blurb:
-      "Turns your brand guidelines and what is trending in your industry into a steady run of TikTok-ready ideas and scripts.",
+      "Reach more people on TikTok with a steady run of ideas and scripts built around what is trending in your industry.",
   },
   {
     key: /instagram/,
     blurb:
-      "Produces a continuous stream of on-brand Instagram posts, drawn from your brand guidelines and what is happening in your industry.",
+      "Improve your Instagram reach with a daily post, different templates, and an agent that scans what is working in your niche.",
   },
 ];
 

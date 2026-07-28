@@ -23,6 +23,7 @@ import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
 import { clientSafeRefusal, isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
+import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import type { AgentSetupState } from "@/components/custom-agents";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import type { ClientAgent, CustomAgent, Job } from "@/lib/types";
@@ -287,7 +288,16 @@ async function toClientAgentRows(args: {
       identity: `${agent.key} ${agent.name}`,
       icon: agent.icon,
       displayName: umbrella.displayName,
-      blurb: agent.clientBlurb?.trim() || agent.description || null,
+      // NEVER `agent.description` (CD-G2): that is the lab manifest's own line,
+      // written for the people who build agents. Clients were reading "Master
+      // content-social skill. Given a brand's guidelines + any past competitor
+      // research…" on their own roster. Curated clientBlurb first, then the
+      // keyed fallback, and no third rung back to the manifest.
+      blurb: clientAgentBlurb({
+        key: agent.key,
+        name: agent.name,
+        clientBlurb: agent.clientBlurb ?? null,
+      }),
       launchState: umbrella.launchState,
       launchStartedAt: umbrella.launchStartedAt ?? null,
       launchError: umbrella.launchError

@@ -26,6 +26,7 @@ import {
 } from "@/lib/actions/planned-run-actions";
 import { cancelClientAgentJobAction } from "@/lib/actions/external-job-actions";
 import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
+import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { MAX_OUTPUTS_PER_RUN, MAX_RUNS_PER_WEEK } from "@/lib/scheduled-runs";
 import {
   buildCustomAgentPrompt,
@@ -56,12 +57,24 @@ export type RunnableAgentSummary = Pick<
 /**
  * What a client is allowed to read about an agent. `description` is the lab
  * repo's own skill manifest — product codes, pipeline architecture, gate names
- * — so client surfaces render `clientBlurb` instead. Agents imported before the
- * field existed have none; those fall back to the manifest rather than showing
- * a blank card, and the staff library flags them for a rewrite.
+ * — so client surfaces render `clientBlurb` instead.
+ *
+ * Agents imported before that field existed used to fall back to the manifest.
+ * That is the defect Albert screenshotted (CD-G2): cards on his own client
+ * pages reading "Master content-social skill. Given a brand's guidelines + any
+ * past competitor research…". The fallback is now the keyed blurb map, which
+ * always has a sentence written for a buyer — so the manifest is no longer in
+ * the chain at all, and the staff library still flags agents with no curated
+ * blurb for a rewrite.
  */
-function agentBlurb(agent: Pick<RunnableAgentSummary, "description" | "clientBlurb">): string {
-  return agent.clientBlurb?.trim() || agent.description;
+function agentBlurb(
+  agent: Pick<RunnableAgentSummary, "key" | "name" | "description" | "clientBlurb">,
+): string {
+  return clientAgentBlurb({
+    key: agent.key,
+    name: agent.name,
+    clientBlurb: agent.clientBlurb ?? null,
+  });
 }
 
 /** One run-history row, pre-filtered and stripped server-side. */
