@@ -254,15 +254,100 @@ describe("competitor fences", () => {
     )).toContain("never blanks a field");
   });
 
-  it("refuses a create that duplicates an existing row by name or by domain", () => {
-    expect(refuse(
-      proposal({ competitors: { create: [{ company: "Rival Inc", url: "elsewhere.com" }] } }),
-      current({ competitors: roster }),
-    )).toContain("duplicates the existing row");
-    expect(refuse(
-      proposal({ competitors: { create: [{ company: "Different Name", url: "https://www.rival.com/about" }] } }),
-      current({ competitors: roster }),
-    )).toContain("duplicates the existing row");
+  /* A proposal is written against an export taken days earlier, so a "create"
+     for a row that has since landed is a stale export — not an error. Refusing
+     the whole bundle over it turned a routine refresh into a hand-editing job
+     (Albert hit this on Geektime). These pin the reconciliation. */
+  describe("reconciling a create onto a row that already exists", () => {
+    it("folds a name match onto the existing row instead of refusing", () => {
+      const plan = accept(
+        proposal({ competitors: { create: [{ company: "Rival Inc", url: "elsewhere.com", positioning: "budget tier" }] } }),
+        current({ competitors: roster }),
+      );
+      expect(plan.competitors[0]).toMatchObject({
+        action: "update",
+        id: "c1",
+        reconciled: { matchedBy: "name", matchedCompany: "Rival Inc" },
+      });
+      // No new row: the roster count is unchanged.
+      expect(plan.competitors.filter((c) => c.action === "create")).toHaveLength(0);
+    });
+
+    it("folds a domain match on too, even when the name differs", () => {
+      const plan = accept(
+        proposal({
+          competitors: {
+            create: [{ company: "Rival (rebranded)", url: "https://www.rival.com/about", scale: "200 staff" }],
+          },
+        }),
+        current({ competitors: roster }),
+      );
+      expect(plan.competitors[0]).toMatchObject({ action: "update", id: "c1", reconciled: { matchedBy: "url" } });
+      expect(plan.competitors[0].changes).toEqual([{ field: "scale", from: undefined, to: "200 staff" }]);
+    });
+
+    // Renaming a roster row on the strength of a URL match is not this pass's
+    // call, and on a name match the company is what matched — either way it is
+    // the join key, not a field to write.
+    it("never writes company through a reconciled create", () => {
+      const plan = accept(
+        proposal({ competitors: { create: [{ company: "Rival (rebranded)", url: "rival.com" }] } }),
+        current({ competitors: roster }),
+      );
+      expect(plan.competitors[0].data).not.toHaveProperty("company");
+      expect(plan.competitors[0].changes.map((c) => c.field)).not.toContain("company");
+    });
+
+    it("still applies the never-blank-a-list rule once the row is known", () => {
+      expect(refuse(
+        proposal({ competitors: { create: [{ company: "Rival Inc", url: "rival.com", keyStrengths: [] }] } }),
+        current({ competitors: roster }),
+      )).toContain("never blanks data");
+    });
+
+    it("reports no change when the reconciled row already says the same thing", () => {
+      const plan = accept(
+        proposal({ competitors: { create: [{ company: "Rival Inc", url: "rival.com" }] } }),
+        current({ competitors: roster }),
+      );
+      expect(plan.competitors[0].action).toBe("unchanged");
+      expect(plan.counts.compWrites).toBe(0);
+    });
+
+    // Reconciliation is for the unambiguous case. Two candidates is a genuine
+    // question about intent, and guessing would silently merge the wrong row.
+    it("refuses when the create matches two different rows", () => {
+      const twoWay: Row[] = [
+        { id: "c1", company: "Rival Inc", url: "rival.com" },
+        { id: "c2", company: "Other Co", url: "elsewhere.com" },
+      ];
+      expect(refuse(
+        proposal({ competitors: { create: [{ company: "Rival Inc", url: "elsewhere.com" }] } }),
+        current({ competitors: twoWay }),
+      )).toContain("ambiguous");
+    });
+
+    it("refuses when the create resolves onto a row the same proposal updates", () => {
+      expect(refuse(
+        proposal({
+          competitors: {
+            update: [{ id: "c1", positioning: "one thing" }],
+            create: [{ company: "Rival Inc", url: "rival.com", positioning: "another thing" }],
+          },
+        }),
+        current({ competitors: roster }),
+      )).toContain("already updates");
+    });
+
+    it("writes a reconciled create as a merge on the stored id, never as a new row", () => {
+      const plan = accept(
+        proposal({ competitors: { create: [{ company: "Rival Inc", url: "rival.com", scale: "200 staff" }] } }),
+        current({ competitors: roster }),
+      );
+      const ops = buildWriteOps(plan, 42);
+      expect(ops).toHaveLength(1);
+      expect(ops[0]).toMatchObject({ kind: "merge", collection: "clientCompetitors", id: "c1" });
+    });
   });
 
   it("refuses a new row without a working domain", () => {

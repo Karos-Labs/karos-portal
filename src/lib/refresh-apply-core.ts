@@ -155,6 +155,16 @@ export interface CompetitorPlan {
   company: string;
   changes: Array<{ field: string; from: unknown; to: unknown }>;
   data: Row;
+  /**
+   * Set when the proposal asked to CREATE this row but the roster already had
+   * it, so the plan folded the create onto the existing row instead of
+   * refusing. A proposal is written against an export taken days earlier; the
+   * roster moves underneath it. Refusing the whole bundle for a row that merely
+   * arrived early made a stale export a hand-editing job (Albert hit exactly
+   * this on Geektime). Reconciling at plan time is the fix — and it is visible
+   * in the diff, never silent.
+   */
+  reconciled?: { matchedBy: "name" | "url"; matchedCompany: string };
 }
 
 export interface ClientPlan {
@@ -557,23 +567,66 @@ function buildCompetitorPlans(ctx: Ctx, raw: unknown, stored: Row[]): Competitor
         if (typeof data.company !== "string" || typeof data.url !== "string") return;
 
         const nameKey = data.company.trim().toLowerCase();
-        const clash = stored.find(
-          (c) =>
-            String(c.company ?? "").trim().toLowerCase() === nameKey ||
-            (typeof c.url === "string" && c.url.toLowerCase().replace(/^www\./, "") === data.url),
-        );
-        if (clash) {
+        const sameName = (c: Row) => String(c.company ?? "").trim().toLowerCase() === nameKey;
+        const sameUrl = (c: Row) =>
+          typeof c.url === "string" && c.url.toLowerCase().replace(/^www\./, "") === data.url;
+        const matches = stored.filter((c) => sameName(c) || sameUrl(c));
+        // Name is the stronger signal: it is what a human recognises the row by.
+        const matchedByName = matches.length === 1 && sameName(matches[0]!);
+        const dupeInBatch = plans.find((p) => String(p.data.url) === data.url);
+        if (dupeInBatch) return fail(ctx, where, `duplicates ${String(dupeInBatch.data.url)} earlier in this proposal`);
+
+        // The roster moves under a proposal written days earlier, so a "create"
+        // for a row that has since arrived is a stale export, not an error.
+        // Fold it onto the existing row rather than refusing the whole bundle.
+        if (matches.length > 1) {
           return fail(
             ctx,
             where,
-            `duplicates the existing row "${String(clash.company)}" (${String(clash.url ?? "no url")}) — ` +
-              "put it in `update` with that row's id instead",
+            `matches ${matches.length} existing rows (${matches.map((m) => `"${String(m.company)}"`).join(", ")}) — ` +
+              "which one it means is ambiguous, so put it in `update` with the right row's id",
           );
         }
-        const dupeInBatch = plans.find(
-          (p) => p.action === "create" && String(p.data.url) === data.url,
-        );
-        if (dupeInBatch) return fail(ctx, where, `duplicates ${String(dupeInBatch.data.url)} earlier in this proposal`);
+        if (matches.length === 1) {
+          const match = matches[0]!;
+          const id = String(match.id);
+          if (plans.some((p) => p.id === id)) {
+            return fail(
+              ctx,
+              where,
+              `resolves to the existing row "${String(match.company)}", which this proposal already updates — ` +
+                "merge the two entries",
+            );
+          }
+
+          // readFields ran with no `existing`, so the never-blank-a-list rule
+          // was not applied. Now that we know which row this is, apply it.
+          const merged: Row = { ...data };
+          for (const f of ["keyStrengths", "keyWeaknesses"] as const) {
+            const next = merged[f];
+            const prev = match[f];
+            if (Array.isArray(next) && next.length === 0 && Array.isArray(prev) && prev.length > 0) {
+              fail(ctx, `${where}.${f}`, `would empty a list that currently holds ${prev.length} entries — a refresh never blanks data`);
+            }
+          }
+          // `company` was the join key when it matched by name, and renaming a
+          // roster row on the strength of a URL match is not this pass's call.
+          delete merged.company;
+
+          const changes = Object.entries(merged)
+            .filter(([k, v]) => JSON.stringify(match[k]) !== JSON.stringify(v))
+            .map(([field, to]) => ({ field, from: match[field], to }));
+
+          plans.push({
+            action: changes.length ? "update" : "unchanged",
+            id,
+            company: String(match.company ?? id),
+            changes,
+            data: merged,
+            reconciled: { matchedBy: matchedByName ? "name" : "url", matchedCompany: String(match.company ?? id) },
+          });
+          return;
+        }
 
         plans.push({
           action: "create",
