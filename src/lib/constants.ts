@@ -123,26 +123,3 @@ export const ACTION_ITEM_STATUSES = ["open", "in_progress", "in_review", "done"]
  */
 export const LOW_CREDIT_THRESHOLD = 20;
 
-/* ── Narrow-viewport shell chrome (CD-G9) ──────────────────────────────── */
-
-/**
- * Height in px of the mobile bottom tab bar rendered below `md` by every shell
- * that shows the client 4-tab nav — `client-rail.tsx` today, the staff shell in
- * client context once CD-G9a lands. Derived from that bar's own box:
- * `py-2` (8+8) + `h-5` icon (20) + `gap-1` (4) + `text-[10px]` label (~13) +
- * `border-t` (1) = 54.
- *
- * Anything else pinned to the bottom at narrow width must sit directly ABOVE
- * the bar, so the bar and its dependants have to move together.
- */
-export const MOBILE_TAB_BAR_H = 54;
-
-/**
- * Tailwind offset that parks a `fixed` element directly above that bar.
- *
- * Spelled out as a literal rather than interpolated from `MOBILE_TAB_BAR_H`
- * because Tailwind extracts class names by scanning source text — a computed
- * `bottom-[${n}px]` produces no CSS at all. Keep the two in sync by hand; the
- * number above is the single source of truth for the bar's own height.
- */
-export const MOBILE_TAB_BAR_OFFSET_CLASS = "bottom-[54px]";
