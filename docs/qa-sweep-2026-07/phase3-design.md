@@ -8,6 +8,12 @@ Author: Phase-3 architect (Fable), 2026-07-28, against integration HEAD `5015a10
 specs, rescopes.md rulings, and the live code surfaces cited inline.
 
 Changelog:
+- **v2.1 (2026-07-28, orchestrator)** — §3 copy rule clarified: the "team is
+  reviewing it" sentence is for run-FINISHED surfaces; run-STARTED surfaces say
+  "Your Karos team reviews it when it lands — finished posts appear in your
+  Workspace once approved" (landed in custom-agents.tsx with a call-site
+  comment). F149's merged Phase-2 interim (non-draft/non-future/30-day view) is
+  the named starting state for WP-5's migration to posted-only.
 - **v2 (2026-07-28, same day)** — Albert answered Q1/Q2/Q6/Q9 (relayed by the
   orchestrator). Amended: launch is **client-billed and client-triggerable**
   (§2, §6, §7.1, WP-1); launch pricing is **measured-ratio per agent** with a
