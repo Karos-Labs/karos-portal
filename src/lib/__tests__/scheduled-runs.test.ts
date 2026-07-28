@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeNextRun, describeCadence, weeklyCadenceDays } from "@/lib/scheduled-runs";
+import { computeNextRun, describeCadence, projectRunOccurrences, weeklyCadenceDays } from "@/lib/scheduled-runs";
 
 /** Local-time constructor keeps assertions timezone-independent. */
 function local(y: number, m: number, d: number, h = 0, min = 0): number {
@@ -79,6 +79,49 @@ describe("describeCadence", () => {
       minute: 0,
       nextRunAt: MON_8AM,
     })).toBe("3× weekly · Mon, Wed, Fri 09:00");
+  });
+});
+
+describe("projectRunOccurrences", () => {
+  it("projects a 5x/week schedule to one occurrence per weekday, not just the next fire", () => {
+    const run = {
+      cadence: "weekly" as const,
+      weekdays: [1, 2, 3, 4, 5],
+      hour: 9,
+      minute: 0,
+      nextRunAt: computeNextRun({ cadence: "weekly", weekdays: [1, 2, 3, 4, 5], hour: 9, minute: 0, from: MON_8AM }),
+    };
+    const occurrences = projectRunOccurrences(run, { from: MON_8AM, horizonDays: 14 });
+    // Two full Mon-Fri weeks within a 14-day horizon.
+    expect(occurrences).toHaveLength(10);
+    expect(occurrences[0]).toBe(local(2026, 6, 6, 9)); // Mon
+    expect(occurrences[4]).toBe(local(2026, 6, 10, 9)); // Fri
+    expect(occurrences[5]).toBe(local(2026, 6, 13, 9)); // next Mon
+    // Strictly increasing, one per calendar day.
+    for (let i = 1; i < occurrences.length; i++) expect(occurrences[i]).toBeGreaterThan(occurrences[i - 1]);
+  });
+
+  it("a one-off ('once') run yields exactly its single stored nextRunAt", () => {
+    const at = local(2026, 6, 10, 9);
+    expect(projectRunOccurrences({ cadence: "once", hour: 9, minute: 0, nextRunAt: at }, { from: MON_8AM })).toEqual([at]);
+  });
+
+  it("a one-off run outside the horizon yields nothing", () => {
+    const farAway = local(2027, 0, 1, 9);
+    expect(
+      projectRunOccurrences({ cadence: "once", hour: 9, minute: 0, nextRunAt: farAway }, { from: MON_8AM, horizonDays: 14 }),
+    ).toEqual([]);
+  });
+
+  it("respects a custom horizon and stops including that boundary", () => {
+    const run = { cadence: "daily" as const, hour: 9, minute: 0, nextRunAt: local(2026, 6, 6, 9) };
+    const occurrences = projectRunOccurrences(run, { from: MON_8AM, horizonDays: 4 });
+    expect(occurrences).toEqual([
+      local(2026, 6, 6, 9),
+      local(2026, 6, 7, 9),
+      local(2026, 6, 8, 9),
+      local(2026, 6, 9, 9),
+    ]);
   });
 });
 
