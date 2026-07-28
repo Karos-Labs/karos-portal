@@ -270,9 +270,12 @@ export function CreditsPanel({
           <Icon name="Lock" className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <div className="min-w-0 flex-1 space-y-1">
             <p className="text-xs font-medium text-foreground">{blockReason}</p>
+            {/* "until then" only parses when the reason named a reset day. A
+                balance shortfall has no date attached — it lifts on a top-up,
+                not on a Monday — so that sentence has to end differently. */}
             <p className="text-xs text-muted">
-              Agent runs, copilot messages, task executions and doc corrections are paused until
-              then.
+              Agent runs, copilot messages, task executions and doc corrections are paused
+              {bindingLimit === "insufficient_balance" ? " until credits are added." : " until then."}
             </p>
             {viewer && (
               <div className="pt-1">
