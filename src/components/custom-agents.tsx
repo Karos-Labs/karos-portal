@@ -485,7 +485,7 @@ export function ClientCustomAgents({
                 <div className="mt-3 rounded-md border border-border bg-surface-2/70 px-3 py-2">
                   {schedule && (
                     <p className="text-xs text-foreground">
-                      {schedule.postsPerWeek} post{schedule.postsPerWeek === 1 ? "" : "s"}/week
+                      {schedule.postsPerWeek} run{schedule.postsPerWeek === 1 ? "" : "s"}/week
                       {" · "}
                       {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
                     </p>
@@ -738,7 +738,9 @@ function AgentScheduleModal({
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label htmlFor={`schedule-posts-${agent.id}`}>Posts per week</Label>
+            {/* Runs, not posts: this is the number of DAYS the agent fires, and
+                each fire produces "outputs per run" items. */}
+            <Label htmlFor={`schedule-posts-${agent.id}`}>Runs per week</Label>
             <Select
               id={`schedule-posts-${agent.id}`}
               value={postsPerWeek}
@@ -793,6 +795,10 @@ function AgentScheduleModal({
             {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
             {outputsPerRun === 1 ? "" : "s"} × {costPerOutput} credits.
             Credits are charged when each scheduled run starts.
+          </p>
+          <p className="mt-1 text-[11px] text-foreground">
+            {postsPerWeek * outputsPerRun} new draft{postsPerWeek * outputsPerRun === 1 ? "" : "s"} a
+            week.
           </p>
           {availableCredits !== undefined && (
             <p className={cn("mt-1 text-[11px]", insufficient ? "text-danger" : "text-muted-2")}>

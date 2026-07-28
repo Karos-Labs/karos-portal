@@ -232,7 +232,12 @@ export async function configureClientAgentScheduleAction(
     clientId: input.clientId,
     timestamp: now,
     type: "CAMPAIGN_CREATED",
-    title: `Set ${agent.name} to ${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} per week`,
+    // Runs, not posts: postsPerWeek counts the days the agent fires, and each
+    // fire produces outputsPerRun items. The field name is persisted and read
+    // in several places, so only the wording moves.
+    title:
+      `Set ${agent.name} to ${postsPerWeek} run${postsPerWeek === 1 ? "" : "s"} per week ` +
+      `(${postsPerWeek * outputsPerRun} draft${postsPerWeek * outputsPerRun === 1 ? "" : "s"})`,
     actor: user.name,
     actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
     metadata: { scheduledRunId: id, customAgentId: agent.id, postsPerWeek, outputsPerRun },
