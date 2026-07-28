@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CREDIT_BLOCK_REASON,
   CREDIT_DEFAULTS,
+  CREDIT_WINDOW_RESET,
   applyCredit,
   assessCharge,
   availableCredits,
@@ -175,6 +176,16 @@ describe("bindingCreditLimit", () => {
   it("creditBlockReason maps the binding code to its client line", () => {
     const c = credits({ balance: 100, weeklyLimit: 5, weekSpent: 0 });
     expect(creditBlockReason(c, 10, NOW)).toBe(CREDIT_BLOCK_REASON.weekly_limit);
+  });
+
+  // The credits card prints the reset clause under each usage meter so a client
+  // can plan BEFORE the wall; the denial prints it after. One source, so the
+  // meter and the refusal can never name different reset days.
+  it("block reasons are composed from the shared window-reset clauses", () => {
+    expect(CREDIT_BLOCK_REASON.weekly_limit).toContain(CREDIT_WINDOW_RESET.weekly_limit);
+    expect(CREDIT_BLOCK_REASON.monthly_limit).toContain(CREDIT_WINDOW_RESET.monthly_limit);
+    // Balance shortfalls are not a window and must not claim a reset day.
+    expect(CREDIT_BLOCK_REASON.insufficient_balance).not.toMatch(/resets/i);
   });
 });
 

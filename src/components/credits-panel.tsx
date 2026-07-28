@@ -5,12 +5,34 @@ import { useRouter } from "next/navigation";
 import { Card, CardTitle, Button, Badge, Label, Input } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { adjustCreditsAction, setCreditLimitsAction } from "@/lib/actions";
-import { availableCredits } from "@/lib/credits";
-import { relativeTime } from "@/lib/utils";
+import { ContactUsButton } from "@/components/contact-us-modal";
+import {
+  CREDIT_BLOCK_REASON,
+  CREDIT_COSTS,
+  CREDIT_WINDOW_RESET,
+  availableCredits,
+  bindingCreditLimit,
+} from "@/lib/credits";
+import { cn, relativeTime } from "@/lib/utils";
 import type { ClientCredits, CreditLedgerEntry, Role } from "@/lib/types";
 
 /** Compact "N / cap" usage line with a progress bar; cap-less shows plain spend. */
-function UsageMeter({ label, spent, limit }: { label: string; spent: number; limit: number | null }) {
+function UsageMeter({
+  label,
+  spent,
+  limit,
+  resetNote,
+}: {
+  label: string;
+  spent: number;
+  limit: number | null;
+  /**
+   * When this window's cap lifts — the clause from CREDIT_WINDOW_RESET, so it is
+   * the same sentence the denial cites. A client could previously only learn
+   * this by hitting the wall, since it lived inside assessCharge's messages.
+   */
+  resetNote?: string;
+}) {
   // A cap of 0 means "no spending allowed" — show it as fully used.
   const pct =
     limit == null ? 0 : limit === 0 ? 100 : Math.min(100, Math.round((spent / limit) * 100));
@@ -31,6 +53,12 @@ function UsageMeter({ label, spent, limit }: { label: string; spent: number; lim
           />
         </div>
       )}
+      {limit != null && resetNote && (
+        <p className={cn("mt-1 text-[11px]", pct >= 100 ? "text-warning" : "text-muted-2")}>
+          {/* Capitalised clause — the denial renders it mid-sentence. */}
+          {resetNote.charAt(0).toUpperCase() + resetNote.slice(1)}
+        </p>
+      )}
     </div>
   );
 }
@@ -45,11 +73,18 @@ export function CreditsPanel({
   credits,
   ledger,
   role,
+  viewer,
 }: {
   clientId: string;
   credits: ClientCredits;
   ledger: CreditLedgerEntry[];
   role: Role;
+  /**
+   * Signed-in viewer, for the support control offered when spending is blocked.
+   * ContactUsButton needs a name and email; omit to render the explanation
+   * without the contact route.
+   */
+  viewer?: { name: string; email: string };
 }) {
   const router = useRouter();
   const isAdmin = role === "KAROS_ADMIN";
@@ -59,6 +94,14 @@ export function CreditsPanel({
   // rolled its windows, and calling Date.now() during a client render would
   // make the value differ between the server and hydration passes.
   const spendable = availableCredits(credits);
+  // Spending is walled when not even the cheapest billable action fits. Which
+  // limit did it — balance, weekly cap or monthly cap — comes from the same
+  // ladder assessCharge uses, so this card names exactly what the server would
+  // refuse on rather than guessing from whichever meter looks fullest.
+  const probeCost = CREDIT_COSTS.chatMessage;
+  const blocked = spendable < probeCost;
+  const bindingLimit = bindingCreditLimit(credits, probeCost);
+  const blockReason = CREDIT_BLOCK_REASON[bindingLimit];
 
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -138,9 +181,53 @@ export function CreditsPanel({
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <UsageMeter label="Used this week" spent={credits.weekSpent} limit={credits.weeklyLimit} />
-        <UsageMeter label="Used this month" spent={credits.monthSpent} limit={credits.monthlyLimit} />
+        <UsageMeter
+          label="Used this week"
+          spent={credits.weekSpent}
+          limit={credits.weeklyLimit}
+          resetNote={CREDIT_WINDOW_RESET.weekly_limit}
+        />
+        <UsageMeter
+          label="Used this month"
+          spent={credits.monthSpent}
+          limit={credits.monthlyLimit}
+          resetNote={CREDIT_WINDOW_RESET.monthly_limit}
+        />
       </div>
+
+      {/* Hitting a cap used to be silent: two meters, one of them red, and no
+          sentence anywhere. The wording already existed but only ever appeared
+          AFTER an action failed, inside assessCharge's denial. `blocked` is the
+          real condition — availableCredits clips the balance by both caps, so a
+          maxed weekly window and an empty balance both land here — and the line
+          is creditBlockReason at the cheapest billable action, i.e. the limit
+          the server would cite for their very next spend. */}
+      {blocked && (
+        <div className="mt-4 flex flex-wrap items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3">
+          <Icon name="Lock" className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <div className="min-w-0 flex-1 space-y-1">
+            <p className="text-xs font-medium text-foreground">{blockReason}</p>
+            <p className="text-xs text-muted">
+              Agent runs, copilot messages, task executions and doc corrections are paused until
+              then.
+            </p>
+            {viewer && (
+              <div className="pt-1">
+                <ContactUsButton
+                  variant="row"
+                  userName={viewer.name}
+                  userEmail={viewer.email}
+                  label={
+                    bindingLimit === "insufficient_balance"
+                      ? "Request more credits"
+                      : "Ask about your limit"
+                  }
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {isAdmin && (
         <div className="mt-5 grid gap-4 border-t border-border pt-4 lg:grid-cols-2">

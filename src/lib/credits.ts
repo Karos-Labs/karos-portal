@@ -243,10 +243,22 @@ export function isCreditDenialMessage(message: string): boolean {
  * unblocks it: a weekly or monthly cap is not fixed by a top-up, so telling a
  * capped client to ask for more credits is worse than saying nothing.
  */
+/**
+ * When each capped window unblocks itself, as a clause. CREDIT_BLOCK_REASON is
+ * composed from these so a meter's reset note and the denial line beside a dead
+ * Run button cannot drift apart: there is one sentence about when a cap lifts,
+ * and both surfaces render it. Windows roll at 00:00 UTC (creditWeekKey is an
+ * ISO week, creditMonthKey a calendar month), so the day is fixed, not computed.
+ */
+export const CREDIT_WINDOW_RESET = {
+  weekly_limit: "resets Monday",
+  monthly_limit: "resets on the 1st",
+} as const;
+
 export const CREDIT_BLOCK_REASON: Record<CreditDenialCode, string> = {
   insufficient_balance: "Not enough credits — ask your Karos team for a top-up.",
-  weekly_limit: "Weekly limit reached — resets Monday.",
-  monthly_limit: "Monthly limit reached — resets on the 1st.",
+  weekly_limit: `Weekly limit reached — ${CREDIT_WINDOW_RESET.weekly_limit}.`,
+  monthly_limit: `Monthly limit reached — ${CREDIT_WINDOW_RESET.monthly_limit}.`,
 };
 
 /**

@@ -97,7 +97,13 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
 
       {/* Credits & usage */}
       <div className="mb-8">
-        <CreditsPanel clientId={client.id} credits={credits} ledger={creditLedger} role={user.role} />
+        <CreditsPanel
+          clientId={client.id}
+          credits={credits}
+          ledger={creditLedger}
+          role={user.role}
+          viewer={{ name: user.name, email: user.email }}
+        />
       </div>
 
       {/* Agent access (admin) — which custom agents this client may fire themselves */}
