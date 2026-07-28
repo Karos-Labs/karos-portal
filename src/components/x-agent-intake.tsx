@@ -9,6 +9,9 @@
  */
 
 import { useState, useTransition } from "react";
+import { JobStatusBadge } from "@/components/job-status";
+import type { JobStatus } from "@/lib/types";
+import { formatDate, relativeTime } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -54,7 +57,8 @@ export interface XFeedbackRowView {
 
 export interface XRunRowView {
   id: string;
-  status: string;
+  /** Typed so the row renders through JobStatusBadge, never the raw word. */
+  status: JobStatus;
   createdAt: number;
   href?: string;
 }
@@ -578,17 +582,20 @@ function FeedbackBox({
         — each of those choices reaches the agent too.
       </p>
       {runs.length > 0 ? (
-        <ul className="mt-3 space-y-1">
+        /* The run's state through the app's own mapper — these used to print the
+           raw database word ("review", "queued", "failed") into client-facing
+           copy, beside a machine date, on a line with nothing to click. */
+        <ul className="mt-3 space-y-1.5">
           {runs.slice(0, 4).map((r) => (
-            <li key={r.id} className="text-xs text-muted">
+            <li key={r.id} className="flex items-center gap-2 text-xs text-muted">
               {r.href ? (
                 <a href={r.href} className="underline hover:text-foreground">
-                  Run {new Date(r.createdAt).toISOString().slice(0, 10)}
+                  Run {formatDate(r.createdAt)}
                 </a>
               ) : (
-                <span>Run {new Date(r.createdAt).toISOString().slice(0, 10)}</span>
-              )}{" "}
-              · {r.status}
+                <span>Run {formatDate(r.createdAt)}</span>
+              )}
+              <JobStatusBadge status={r.status} />
             </li>
           ))}
         </ul>
@@ -626,8 +633,7 @@ function FeedbackBox({
             <li key={f.id} className="text-xs text-muted">
               <span className="text-foreground">{accountName(f.account)}</span> ·{" "}
               {f.action === "note" ? "feedback" : f.action.replace(/_/g, " ")}
-              {f.draftRef ? ` · ${f.draftRef}` : ""} ·{" "}
-              {new Date(f.createdAt).toISOString().slice(0, 10)}
+              {f.draftRef ? ` · ${f.draftRef}` : ""} · {relativeTime(f.createdAt)}
             </li>
           ))}
         </ul>
