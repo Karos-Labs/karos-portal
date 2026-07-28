@@ -271,8 +271,12 @@ export function ClientRail({
         />
 
         <div className="space-y-0.5 border-t border-border pt-4">
+          {/* Explicit close: the sheet's on-navigation effect never fires when
+              the link's route is already current (same-route trap — twin of the
+              staff sheet's CD-G9c bounce-3). */}
           <Link
             href={settingsItem.href}
+            onClick={() => setCompanyOpen(false)}
             className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             <Icon name="Settings" className="h-4 w-4 text-muted-2" />
@@ -281,6 +285,7 @@ export function ClientRail({
           {user.isGroupAdmin && (
             <Link
               href="/team"
+              onClick={() => setCompanyOpen(false)}
               className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
             >
               <Icon name="Users" className="h-4 w-4 text-muted-2" />
