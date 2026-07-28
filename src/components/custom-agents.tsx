@@ -352,10 +352,13 @@ export function ClientCustomAgents({
             const cost = agentRunCost(agent);
             const short = viewerIsClient && availableCredits !== undefined && availableCredits < cost;
             const schedule = scheduleByAgent.get(agent.id);
-            const reviewRuns = runs.filter(
-              (run) => run.agentName === agent.name && run.status === "review" && run.assetCount > 0,
+            const agentRuns = runs.filter((run) => run.agentName === agent.name);
+            const reviewRuns = agentRuns.filter(
+              (run) => run.status === "review" && run.assetCount > 0,
             );
             const readyAssetCount = reviewRuns.reduce((total, run) => total + run.assetCount, 0);
+            // `runs` arrives newest-first (the page sorts by createdAt desc).
+            const lastRun = agentRuns[0];
             const setup = agentSetup?.[agent.id] ?? null;
             // Readiness is computed once, next to the "Setup needed" chip, and
             // gates the run button with it: the submit core refuses these runs
@@ -422,46 +425,59 @@ export function ClientCustomAgents({
                     </a>
                   )}
                 </div>
+                {/* The one slot on the card that carries live state. Precedence,
+                    highest first: a stored refusal (the schedule fired and was
+                    turned away) → setup still missing → the schedule's own next
+                    fire → drafts waiting → last run → never run. The chip above
+                    already links to setup, so no tier here adds a second one. */}
                 <div className="mt-3 rounded-md border border-border bg-surface-2/70 px-3 py-2">
-                  {schedule ? (
+                  {schedule && (
+                    <p className="text-xs text-foreground">
+                      {schedule.postsPerWeek} post{schedule.postsPerWeek === 1 ? "" : "s"}/week
+                      {" · "}
+                      {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
+                    </p>
+                  )}
+                  {refusal ? (
                     <>
-                      <p className="text-xs text-foreground">
-                        {schedule.postsPerWeek} post{schedule.postsPerWeek === 1 ? "" : "s"}/week
-                        {" · "}
-                        {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
-                      </p>
-                      {refusal ? (
-                        <>
-                          <p className="mt-0.5 text-[11px] text-warning">{refusal}</p>
-                          {refusalIsSetup && setup ? (
-                            <a
-                              href={setup.href}
-                              className="mt-1 inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
-                            >
-                              Open {setup.label}
-                              <Icon name="ArrowRight" className="h-3 w-3" />
-                            </a>
-                          ) : viewer ? (
-                            <div className="-mx-3 mt-0.5">
-                              <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
-                            </div>
-                          ) : null}
-                          {schedule.lastErrorAt ? (
-                            <p className="mt-0.5 text-[10px] text-muted-2">
-                              Last tried {relativeTime(schedule.lastErrorAt)}
-                            </p>
-                          ) : null}
-                        </>
-                      ) : (
-                        <p className="mt-0.5 text-[11px] text-muted-2">
-                          {schedule.status === "active"
-                            ? `Working toward ${formatDate(schedule.nextRunAt)}`
-                            : "Schedule paused"}
+                      <p className="mt-0.5 text-[11px] text-warning">{refusal}</p>
+                      {refusalIsSetup && setup ? (
+                        <a
+                          href={setup.href}
+                          className="mt-1 inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+                        >
+                          Open {setup.label}
+                          <Icon name="ArrowRight" className="h-3 w-3" />
+                        </a>
+                      ) : viewer ? (
+                        <div className="-mx-3 mt-0.5">
+                          <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
+                        </div>
+                      ) : null}
+                      {schedule?.lastErrorAt ? (
+                        <p className="mt-0.5 text-[10px] text-muted-2">
+                          Last tried {relativeTime(schedule.lastErrorAt)}
                         </p>
-                      )}
+                      ) : null}
                     </>
+                  ) : blockedSetup ? (
+                    <p className={cn("text-[11px] text-warning", !schedule && "text-xs")}>
+                      Not running yet — your {blockedSetup.label} is still empty.
+                    </p>
+                  ) : schedule ? (
+                    <p className="mt-0.5 text-[11px] text-muted-2">
+                      {schedule.status === "active"
+                        ? `Working toward ${formatDate(schedule.nextRunAt)}`
+                        : "Schedule paused"}
+                    </p>
+                  ) : readyAssetCount > 0 ? (
+                    <Link href={reviewHref} className="text-xs text-warning hover:underline">
+                      {readyAssetCount} draft{readyAssetCount === 1 ? "" : "s"} waiting for review
+                    </Link>
+                  ) : lastRun ? (
+                    <p className="text-xs text-muted-2">Last run {relativeTime(lastRun.createdAt)}</p>
                   ) : (
-                    <p className="text-xs text-muted-2">Ready to build your weekly content queue.</p>
+                    <p className="text-xs text-muted-2">No runs yet.</p>
                   )}
                 </div>
                 <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
