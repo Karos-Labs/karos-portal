@@ -1,6 +1,6 @@
 import "server-only";
 
-import { listPlannedScheduledRuns, updatePlannedScheduledRun } from "@/lib/data";
+import { listAssets, listPlannedScheduledRuns, updatePlannedScheduledRun } from "@/lib/data";
 import {
   createAgentSlots,
   listAgentSlots,
@@ -8,12 +8,20 @@ import {
   updateClientAgent,
 } from "@/lib/data-client-agents";
 import {
+  dateKeyInZone,
   effectiveRotation,
   isOptionsMode,
   OPTIONS_TEMPLATE_KEY,
   shiftDateKey,
 } from "@/lib/client-agents";
-import { generateSlotHorizon, slotScheduleFor, type SlotSchedule } from "@/lib/slot-plan";
+import {
+  assignOptionRefs,
+  generateSlotHorizon,
+  slotScheduleFor,
+  type SlotSchedule,
+} from "@/lib/slot-plan";
+import { optionCandidatesFromBatch } from "@/lib/x-options";
+import { parseXDrafts, type XParsedBatch } from "@/lib/x-drafts";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { AgentSlot, ClientAgent, PlannedScheduledRun } from "@/lib/types";
 
@@ -69,6 +77,8 @@ export async function resolveUmbrellaSchedule(
 export interface HorizonResult {
   /** Slot docs created by this call. */
   created: number;
+  /** Options-mode only: days given their candidate drafts by this call. */
+  assigned?: number;
   /** Why nothing was created, when nothing was. */
   skipped?: "not_live" | "no_schedule" | "schedule_paused" | "no_templates";
 }
@@ -109,7 +119,83 @@ export async function ensureSlotHorizon(
     ...(options ? { optionsTemplateKey: OPTIONS_TEMPLATE_KEY } : {}),
   });
   const created = await createAgentSlots(drafts, actorUid);
-  return { created };
+  const assigned = options
+    ? await assignOptionsToSlots(umbrella, now)
+    : 0;
+  return { created, ...(assigned > 0 ? { assigned } : {}) };
+}
+
+/**
+ * Give each unassigned options day its three candidate drafts (§4.5b, B1).
+ *
+ * THE INTERIM MODE, and the one that actually ships. The X engine produces a
+ * weekly BATCH; the client is shown three options a DAY. Until Tomer's seam T7
+ * teaches the engine to produce three-a-day directly, the gap is closed here by
+ * slicing the batch across the plan — and §8.3 is explicit that the batch-sliced
+ * version is the shipping degraded mode, not a placeholder. Without this the
+ * picker, the pick action and the whole telemetry loop are unreachable code:
+ * nothing else in the system ever writes `optionRefs`.
+ *
+ * Runs opportunistically beside horizon generation, for the same reason and
+ * with the same guarantees: never reassigns a day that already has options (a
+ * client may have picked from it), never uses one draft twice, and leaves a day
+ * empty rather than offering it as a "pick of 3" with one card in it.
+ *
+ * CHURN-SAFE. Assignment is not presentation: a future day's refs live on the
+ * slot doc, and only the CURRENT day's option texts ever cross the RSC boundary
+ * (client-agent-rows). Writing tomorrow's refs today reveals nothing, because
+ * nothing reads them until tomorrow.
+ */
+async function assignOptionsToSlots(umbrella: ClientAgent, now: number): Promise<number> {
+  const batch = await latestXBatchAsset(umbrella.clientId);
+  if (!batch) return 0;
+
+  const candidates = optionCandidatesFromBatch(batch.parsed);
+  if (candidates.length === 0) return 0;
+
+  const todayKey = dateKeyInZone(now, runtimeTimeZone());
+  const slots = (await listAgentSlots({ clientAgentId: umbrella.id }))
+    // Today and forward only. A past day cannot be picked (the action refuses
+    // it), so assigning to one would burn drafts on a day nobody can act on.
+    .filter((slot) => slot.dateKey >= todayKey && slot.status !== "skipped");
+
+  const assignments = assignOptionRefs(candidates, slots);
+  if (assignments.length === 0) return 0;
+
+  await Promise.all(
+    assignments.map((assignment) =>
+      updateAgentSlot(assignment.slotId, {
+        optionRefs: assignment.optionRefs,
+        // The slot points at the BATCH until a pick materializes a per-day
+        // asset over it. That is what lets the picker resolve refs to text.
+        assetId: batch.assetId,
+      }),
+    ),
+  );
+  return assignments.length;
+}
+
+/**
+ * The newest asset for this client whose content is an X drafts batch.
+ *
+ * Identified by PARSING rather than by a flag: DRAFTS.md batches arrive through
+ * the ordinary custom-agent webhook path with no marker distinguishing them, and
+ * `parseXDrafts` already returns null for anything that is not one — so the
+ * parse IS the test, and it is the same test every other X surface applies.
+ */
+async function latestXBatchAsset(
+  clientId: string,
+): Promise<{ assetId: string; parsed: XParsedBatch } | null> {
+  const assets = await listAssets({ clientId });
+  const byNewest = [...assets].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  for (const asset of byNewest) {
+    const content = asset.content ?? "";
+    // Cheap prefilter before the line-by-line parse — most assets are posts.
+    if (!content.includes("# Account ")) continue;
+    const parsed = parseXDrafts(content);
+    if (parsed) return { assetId: asset.id, parsed };
+  }
+  return null;
 }
 
 /**
