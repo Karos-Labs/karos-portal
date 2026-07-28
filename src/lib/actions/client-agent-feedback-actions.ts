@@ -211,6 +211,14 @@ export async function setClientAgentFeedbackStatusAction(input: {
   status: Extract<ClientAgentFeedback["status"], "active" | "resolved">;
 }): Promise<{ error?: string }> {
   await requireStaff();
+  // The type above narrows callers we compile; this narrows callers we do not.
+  // A server action is a public HTTP endpoint — the parameter types are erased
+  // at runtime, so "withdrawn" (or anything else) posted directly would have
+  // been written straight through to the document. Validated as an allowlist so
+  // a status added later has to be opted in here deliberately.
+  if (input.status !== "active" && input.status !== "resolved") {
+    return { error: "A note can only be re-opened or marked resolved." };
+  }
   const row = await getClientAgentFeedback(input.feedbackId);
   if (!row) return { error: "Feedback not found." };
   if (row.status === "withdrawn") {

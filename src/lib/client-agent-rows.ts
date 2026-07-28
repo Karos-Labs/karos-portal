@@ -95,9 +95,17 @@ export function toScheduleRows(
       agentId: run.customAgentId,
       status: run.status === "paused" ? "paused" : "active",
       postsPerWeek: run.weekdays?.length ?? 1,
+      // The multiplier stays: the client's pace dialog has to quote the REAL
+      // weekly cost of a schedule someone set at more than one output per fire,
+      // and it cannot do that without this number. No client-visible copy
+      // decomposes it — see the paceOnly branch of AgentScheduleModal.
       outputsPerRun: run.outputsPerRun ?? 1,
       nextRunAt: run.nextRunAt,
-      prompt: run.prompt,
+      // The standing instruction is STAFF-AUTHORED operator copy, and this
+      // module's own doctrine is that anything on these rows is readable by the
+      // browser whether or not it is painted. It shipped unconditionally and
+      // was rendered editable in the client's pace dialog.
+      ...(viewerIsClient ? {} : { prompt: run.prompt }),
       hour: run.hour,
       minute: run.minute,
       // The scheduler's refusal, so a schedule that can never fire stops
@@ -321,8 +329,15 @@ export async function toClientAgentRows(args: {
         // slot's assigned optionRefs would paint a future day differently
         // depending on whether its candidates had been picked out yet — a
         // difference the client can see and the churn rule forbids.
+        // "Daily post · pick of 3" said two things it must not. It stated the
+        // BATCH SHAPE — three of tomorrow's posts already exist to be picked
+        // from — which is the one fact the whole slot model exists to keep
+        // indistinguishable (A3/A4). And it promised a picker that ships with
+        // WP-9, on the same page where the options row now correctly says the
+        // agent writes one post a day. A day carries a day and a label; the
+        // label is the product, not its machinery.
         label: optionsMode
-          ? `Daily post · pick of ${OPTIONS_PER_SLOT}`
+          ? "Daily post"
           : (templateNames.get(slot.templateKey) ?? slot.templateKey),
       })),
       feedback: feedbackRows.map((row) => ({

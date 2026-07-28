@@ -143,7 +143,7 @@ export function AgentDetailPanel({
           hint={
             agent.optionsMode
               ? undefined
-              : "Each format is a different kind of post. Pause the ones you do not want, and drag the order to change which comes first."
+              : "Each format is a different kind of post. Pause the ones you do not want, and use the arrows to change which comes first."
           }
         />
         {agent.optionsMode ? (

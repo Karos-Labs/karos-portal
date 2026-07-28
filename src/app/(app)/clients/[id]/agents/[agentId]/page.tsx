@@ -23,7 +23,7 @@ import { resolveContentIdentity } from "@/lib/agent-identity-map";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
-import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import { getClientArchiveAssets } from "@/lib/asset-visibility";
 import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
 import {
@@ -151,11 +151,19 @@ export default async function ClientAgentDetailPage({
   // Attribution runs through resolveContentIdentity, the one helper that knows
   // how an asset, its job and an umbrella relate — Asset has no clientAgentId
   // of its own, so a hand-rolled join here would be a second, subtly different
-  // answer to "who made this". Client viewers see only the library-visible set.
+  // answer to "who made this".
   const jobById = new Map(jobs.map((job) => [job.id, job]));
-  const visibleAssets = viewerIsClient
-    ? getClientLibraryAssets(assets, { forClient: true, now })
-    : assets;
+  // DELIVERED WORK ONLY for a client (A3/A4). getClientLibraryAssets was the
+  // wrong helper here: it MAPS a future-dated asset through redactLockedAsset
+  // rather than dropping it, and the placeholder keeps createdAt and
+  // templateName. Under a heading reading "What it has made for you" that
+  // rendered seven batch-generated posts as "Upcoming post · 3 hours ago" —
+  // the batch tell in its purest form, since the timestamps show a week of
+  // "daily" posts all created within the same minute.
+  //
+  // getClientArchiveAssets is the set that is actually true to the heading: no
+  // launch deliverables, no drafts, nothing still locked. Staff keep everything.
+  const visibleAssets = viewerIsClient ? getClientArchiveAssets(assets, { now }) : assets;
   const produced = visibleAssets
     .filter((asset) => {
       const job = asset.jobId ? (jobById.get(asset.jobId) ?? null) : null;
@@ -224,6 +232,21 @@ export default async function ClientAgentDetailPage({
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
             />
+          ) : status.tone === "live" ? (
+            /* The legacy shape: no umbrella was ever bound, but a weekly
+               schedule is firing — so this agent genuinely IS producing, and
+               rosterStatus badges it Live on the roster and in the header above.
+               Falling through to "Not set up yet" here made the page contradict
+               its own badge. There are no templates or gates to show without an
+               umbrella, so this says exactly what is true and no more. */
+            <div className="rounded-[var(--radius)] border border-border bg-surface-2/50 p-4">
+              <p className="text-sm text-foreground">Producing on a weekly schedule</p>
+              <p className="mt-1 text-xs text-muted-2">
+                This agent is already writing for you. Your Karos team is still finishing its setup
+                here — its formats and the controls to steer them will appear on this page once that
+                is done. Finished posts reach your Workspace as usual in the meantime.
+              </p>
+            </div>
           ) : (
             <EmptyState
               icon={<Icon name="Bot" className="h-7 w-7" />}

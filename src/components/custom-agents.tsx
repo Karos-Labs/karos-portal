@@ -102,7 +102,14 @@ export interface ClientAgentScheduleRow {
   postsPerWeek: number;
   outputsPerRun: number;
   nextRunAt: number;
-  prompt: string;
+  /**
+   * The ongoing direction handed to the agent on every fire — STAFF-AUTHORED,
+   * and absent for client viewers (toScheduleRows omits it). It used to ship
+   * unconditionally and be painted in an editable textarea inside the client's
+   * pace dialog, which both showed a client internal operator copy and let them
+   * rewrite the instruction every future run receives.
+   */
+  prompt?: string;
   hour: number;
   minute: number;
   /**
@@ -813,9 +820,14 @@ export function AgentScheduleModal({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [postsPerWeek, setPostsPerWeek] = useState(schedule?.postsPerWeek ?? 3);
-  const [outputsPerRun, setOutputsPerRun] = useState(
-    paceOnly ? 1 : (schedule?.outputsPerRun ?? 1),
-  );
+  // ALWAYS the stored value, in both faces of the dialog. Pinning this to 1 for
+  // paceOnly (as it briefly did) was two bugs in one: a schedule stored at 3×5
+  // quoted its weekly cost from 3×1 — five times under — and pressing "Save
+  // pace" then wrote that 1 back, silently cutting the client's output to a
+  // fifth of what they were paying for. A client adjusting pace changes which
+  // DAYS the agent fires, and nothing else; the server enforces the same rule
+  // rather than trusting this value (configureClientAgentScheduleAction).
+  const [outputsPerRun, setOutputsPerRun] = useState(schedule?.outputsPerRun ?? 1);
   const [prompt, setPrompt] = useState(schedule?.prompt ?? "Create the next on-brand post for our audience.");
   const [time, setTime] = useState(
     `${String(schedule?.hour ?? 9).padStart(2, "0")}:${String(schedule?.minute ?? 0).padStart(2, "0")}`,
@@ -904,9 +916,17 @@ export function AgentScheduleModal({
         <div className={cn("grid gap-3", paceOnly ? "grid-cols-1" : "grid-cols-2")}>
           <div>
             {/* Staff see RUNS (days the agent fires) beside outputs-per-fire.
-                Clients see POSTS A WEEK and nothing else — see paceOnly above. */}
+                Clients see one dial. It is labelled "Posts per week" only when
+                that is literally true (one output per fire); when a staff member
+                has set more, the honest client-side name for the same dial is
+                the number of DAYS — which the ruling allows ("the modal may name
+                pace: posts per week, days") and which states no batch shape. */}
             <Label htmlFor={`schedule-posts-${agent.id}`}>
-              {paceOnly ? "Posts per week" : "Runs per week"}
+              {paceOnly
+                ? outputsPerRun === 1
+                  ? "Posts per week"
+                  : "Posting days a week"
+                : "Runs per week"}
             </Label>
             <Select
               id={`schedule-posts-${agent.id}`}
@@ -946,16 +966,26 @@ export function AgentScheduleModal({
           />
         </div>
 
-        <div>
-          <Label htmlFor={`schedule-prompt-${agent.id}`}>Ongoing direction</Label>
-          <Textarea
-            id={`schedule-prompt-${agent.id}`}
-            rows={3}
-            maxLength={4000}
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-          />
-        </div>
+        {/* STAFF ONLY. This is the operator's standing instruction to the agent
+            — internal copy, written for the model — and it was rendering in the
+            client's pace dialog as an editable textarea. That showed a client
+            text never written for them AND let them rewrite the direction every
+            future run receives. Clients steer their agent through feedback,
+            which is written for that purpose and is capped, scoped and
+            reviewable; this is not that. The server also refuses to take a
+            prompt from a client actor, so hiding it is the second lock. */}
+        {!paceOnly && (
+          <div>
+            <Label htmlFor={`schedule-prompt-${agent.id}`}>Ongoing direction</Label>
+            <Textarea
+              id={`schedule-prompt-${agent.id}`}
+              rows={3}
+              maxLength={4000}
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+            />
+          </div>
+        )}
 
         <div className="rounded-md border border-neon/20 bg-neon-soft/40 px-4 py-3">
           <div className="flex items-center justify-between gap-3">
@@ -963,11 +993,16 @@ export function AgentScheduleModal({
             <span className="font-mono text-sm text-neon">{weeklyCost} credits</span>
           </div>
           {paceOnly ? (
-            /* Pace × price. No "runs", no "outputs per run", no weekly draft
-               total — every one of those describes the batch, not the pace. */
+            /* The weekly total above is computed from the STORED multiplier, so
+               it is the real number. What it must not do is decompose: no
+               "runs", no "outputs per run", no weekly draft total — each of
+               those describes the batch rather than the pace. When one post per
+               fire is stored there is no batch to hide and the friendlier
+               sentence is also the true one. */
             <p className="mt-1 text-[11px] text-muted-2">
-              {postsPerWeek} post{postsPerWeek === 1 ? "" : "s"} a week at {costPerOutput} credits
-              each. Credits are charged as each post is made.
+              {outputsPerRun === 1
+                ? `${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} a week at ${costPerOutput} credits each. Credits are charged as each post is made.`
+                : `${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week. Credits are charged as each post is made.`}
             </p>
           ) : (
             <>
