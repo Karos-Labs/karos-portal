@@ -1036,7 +1036,13 @@ export function AgentScheduleModal({
 
 /* ═══════════════════════ run dialog ═══════════════════════ */
 
-function RunCustomAgentModal({
+/**
+ * Exported so the agent DETAIL page can offer the same run gesture for an
+ * agent that has a live schedule but no umbrella (CD-H8). One dialog, one
+ * launch profile, one charge path — a second run form for the legacy shape
+ * would be a second place for the priced gesture to drift.
+ */
+export function RunCustomAgentModal({
   agent,
   clientId,
   clients,
