@@ -13,6 +13,7 @@ import { ManagedJobProgress } from "@/components/managed-job-progress";
 import { JobDeleteButton } from "@/components/job-delete";
 import { JobTranscript, TranscriptCount } from "@/components/job-transcript";
 import { fetchJobTranscript } from "@/lib/agent-service/transcript";
+import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import type { Job } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
@@ -25,8 +26,15 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
     getClient(job.clientId),
     ...job.assetIds.map((aid) => getAsset(aid)),
   ]);
-  const realAssets = assets.filter(Boolean);
+  const realAssets = assets.filter((a) => !!a);
   const inProgress = job.status === "running" || job.status === "queued";
+
+  // F107 — without this the deliverables here rendered with no connectedPlatforms,
+  // so Publish Now never appeared on the job page even for an approved post whose
+  // client has a usable integration. Same helper /assets uses, so the "pushable"
+  // predicate cannot drift; this page is already staff-only, and what crosses to
+  // the client component is platform ids, never integration records.
+  const connectedPlatforms = (await pushablePlatformsByClient(realAssets))?.[job.clientId];
 
   return (
     <>
@@ -58,7 +66,14 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
             <div>
               <CardTitle className="mb-3">Deliverables</CardTitle>
               <div className="space-y-3">
-                {realAssets.map((a) => a && <AssetCard key={a.id} asset={a} canApprove />)}
+                {realAssets.map((a) => (
+                  <AssetCard
+                    key={a.id}
+                    asset={a}
+                    canApprove
+                    {...(connectedPlatforms ? { connectedPlatforms } : {})}
+                  />
+                ))}
               </div>
             </div>
           )}

@@ -1,43 +1,12 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listAssets, listClients, listClientIntegrations } from "@/lib/data";
+import { listAssets, listClients } from "@/lib/data";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetsView } from "@/components/assets-view";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
-import { integrationIsUsable } from "@/lib/integration-status";
-import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import type { Asset } from "@/lib/types";
-
-/**
- * F107 part 1 — the approve panel's "Manual push" tier tells staff they push the
- * post live themselves, so every surface that shows an approved post needs the
- * control. Same shape as the calendar's builder: staff only (publishAssetNowAction
- * is requireStaff), read only for clients that actually own a pushable post, and
- * platform ids only — never integration records, which carry decrypted tokens.
- */
-async function pushablePlatformsByClient(assets: Asset[]): Promise<Record<string, string[]> | undefined> {
-  const pushableClientIds = [
-    ...new Set(
-      assets
-        .filter(
-          (a) =>
-            (a.status === "approved" || a.status === "scheduled") &&
-            a.publishMode !== "placeholder" &&
-            (PUBLISHABLE_PLATFORMS[a.type] ?? []).length > 0,
-        )
-        .map((a) => a.clientId),
-    ),
-  ];
-  if (pushableClientIds.length === 0) return undefined;
-  const perClient = await Promise.all(
-    pushableClientIds.map(async (id) => {
-      const integrations = await listClientIntegrations(id);
-      return [id, integrations.filter(integrationIsUsable).map((i) => i.platform)] as const;
-    }),
-  );
-  return Object.fromEntries(perClient);
-}
 
 export default async function AssetsPage({
   searchParams,
