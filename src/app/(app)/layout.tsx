@@ -96,8 +96,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       // balance clipped by the weekly/monthly caps. This is the same call the
       // Agents page makes, so the rail and that page can no longer print two
       // different "available" numbers for the same second.
-      const now = Date.now();
-      const spendableCredits = availableCredits(credits, now);
+      // `now` is omitted on purpose: getClientCredits rolls the spend windows on
+      // read, and it just ran in this same request, so the doc is already
+      // current. Calling Date.now() here would only add an impure call in render
+      // (react-hooks/purity) for no behavioural gain.
+      const spendableCredits = availableCredits(credits);
 
       // Price + refusal for a targeted doc correction, resolved HERE rather than
       // in the modal — same shape as the Agents page's creditBlockReasons map:
@@ -108,7 +111,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         ? {
             cost: CREDIT_COSTS.targetedCorrection,
             ...(spendableCredits < CREDIT_COSTS.targetedCorrection
-              ? { blockReason: creditBlockReason(credits, CREDIT_COSTS.targetedCorrection, now) }
+              ? { blockReason: creditBlockReason(credits, CREDIT_COSTS.targetedCorrection) }
               : {}),
           }
         : undefined;
