@@ -152,7 +152,7 @@ are tracked in the CD table at the bottom.
 | F146 | MEDIUM | A | SHELL | 2 | OPEN | yes | The Meetings list is not in date order — synced meetings land wherever the sync ran | findings-p161-199.md |
 | F121 | LOW | B | SHELL | 2 | OPEN | yes | Dismissing a "new content ready" notification only hides it until the next page load | findings-p161-199.md |
 | F122 | LOW | A | SHELL | 2 | OPEN | yes | Platform names are title-cased from their ids: "Linkedin", "Youtube" | findings-p161-199.md |
-| F123 | LOW | A | SHELL | 2 | OPEN | yes | "20 agent runs · last 9h ago." | findings-p161-199.md |
+| F123 | LOW | A | SHELL | 2 | RESOLVED | yes | "20 agent runs · last 9h ago." | findings-p161-199.md |
 
 **Cluster reassignments (2026-07-28, file-ownership rule):** F110→AGENTS
 (custom-agents.tsx), F135→CALENDAR (schedule-run-modal), F15→COPILOT
