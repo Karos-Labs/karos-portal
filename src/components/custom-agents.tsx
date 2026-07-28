@@ -46,30 +46,34 @@ import { cn, formatDate, relativeTime } from "@/lib/utils";
  * The slice of a CustomAgent that may be serialized to client-user browsers.
  * Deliberately excludes instructions (the system prompt), skill paths, and
  * repo provenance — pages map full docs down to this before passing them.
+ *
+ * `description` is NOT on it (F127). It is the lab repo's own skill manifest,
+ * no surface that receives this summary reads it, and this module's whole
+ * doctrine is that a field which crosses the boundary is readable from
+ * view-source whether or not anything paints it. The staff agent LIBRARY still
+ * shows it — that surface takes the full CustomAgent, which is the honest place
+ * for manifest text to live.
  */
 export type RunnableAgentSummary = Pick<
   CustomAgent,
-  "id" | "key" | "name" | "description" | "clientBlurb" | "icon" | "color"
+  "id" | "key" | "name" | "clientBlurb" | "icon" | "color"
 > & {
   creditCost?: number | null;
 };
 
 /**
- * What a client is allowed to read about an agent. `description` is the lab
- * repo's own skill manifest — product codes, pipeline architecture, gate names
- * — so client surfaces render `clientBlurb` instead.
+ * What a client is allowed to read about an agent: the curated `clientBlurb`,
+ * then the keyed fallback.
  *
- * Agents imported before that field existed used to fall back to the manifest.
- * That is the defect Albert screenshotted (CD-G2): cards on his own client
- * pages reading "Master content-social skill. Given a brand's guidelines + any
- * past competitor research…". The fallback is now the keyed blurb map, which
- * always has a sentence written for a buyer — so the manifest is no longer in
- * the chain at all, and the staff library still flags agents with no curated
- * blurb for a rewrite.
+ * Agents imported before that field existed used to fall back to the manifest
+ * `description`. That is the defect Albert screenshotted (CD-G2): cards on his
+ * own client pages reading "Master content-social skill. Given a brand's
+ * guidelines + any past competitor research…". The fallback is now the keyed
+ * blurb map, which always has a sentence written for a buyer — so the manifest
+ * is no longer in the chain at all, nor in the payload, and the staff library
+ * still flags agents with no curated blurb for a rewrite.
  */
-function agentBlurb(
-  agent: Pick<RunnableAgentSummary, "key" | "name" | "description" | "clientBlurb">,
-): string {
+function agentBlurb(agent: Pick<RunnableAgentSummary, "key" | "name" | "clientBlurb">): string {
   return clientAgentBlurb({
     key: agent.key,
     name: agent.name,
