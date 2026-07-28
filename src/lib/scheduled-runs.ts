@@ -169,6 +169,67 @@ export function describeCadence(run: {
   }
 }
 
+/**
+ * The CLIENT face of describeCadence — pace, never batch mechanics.
+ *
+ * The rule (churn D3, A3/A4, and the vocabulary AgentScheduleModal's `paceOnly`
+ * branch already settled): a client may be told how often work arrives — posts
+ * a week, which days, what time — and never the shape of the fires that produce
+ * it. describeCadence is written for staff and states the mechanics twice over:
+ * "3× weekly" names RUNS, and a run is not a post. On a schedule storing five
+ * outputs per fire that line is also simply wrong as a client reads it — they
+ * get fifteen posts a week, not three.
+ *
+ * So the same two-case split the pace dialog uses: when one output per fire is
+ * stored there is no batch to hide and "3 posts a week" is both friendlier and
+ * true; when staff have set more, the honest name for the same number is the
+ * DAYS. Neither spelling ever multiplies the two out.
+ */
+export function clientCadenceLabel(run: {
+  cadence: PlannedRunCadence;
+  hour: number;
+  minute: number;
+  weekday?: number;
+  weekdays?: number[];
+  dayOfMonth?: number;
+  nextRunAt: number;
+  timeZone?: string;
+  outputsPerRun?: number;
+}): string {
+  const zone = isValidTimeZone(run.timeZone) ? ` ${shortZoneLabel(run.timeZone, run.nextRunAt)}` : "";
+  const time = `${String(run.hour).padStart(2, "0")}:${String(run.minute).padStart(2, "0")}${zone}`;
+  const batched = (run.outputsPerRun ?? 1) > 1;
+  switch (run.cadence) {
+    case "once":
+      return `One-off · ${new Date(run.nextRunAt).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        ...(isValidTimeZone(run.timeZone) ? { timeZone: run.timeZone } : {}),
+      })} ${time}`;
+    case "daily":
+      return `Every day · ${time}`;
+    case "weekly": {
+      const days =
+        run.weekdays && run.weekdays.length > 0
+          ? [...run.weekdays]
+              .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7))
+              .map((day) => WEEKDAY_LABEL[day])
+              .join(", ")
+          : WEEKDAY_LABEL[run.weekday ?? 1];
+      const count = run.weekdays?.length ?? 1;
+      const pace = batched
+        ? `${count} posting day${count === 1 ? "" : "s"} a week`
+        : `${count} post${count === 1 ? "" : "s"} a week`;
+      return `${pace} · ${days} ${time}`;
+    }
+    case "monthly": {
+      const dom = run.dayOfMonth ?? 1;
+      const suffix = dom === 1 || dom === 21 || dom === 31 ? "st" : dom === 2 || dom === 22 ? "nd" : dom === 3 || dom === 23 ? "rd" : "th";
+      return `Every month · ${dom}${suffix} ${time}`;
+    }
+  }
+}
+
 /** Balanced publishing days for a requested 1–7 posts per week. */
 export function weeklyCadenceDays(postsPerWeek: number): number[] {
   const count = Math.max(1, Math.min(7, Math.round(postsPerWeek)));

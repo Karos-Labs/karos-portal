@@ -67,11 +67,23 @@ export function getClientArchiveAssets(assets: Asset[], opts?: { now?: number })
   const now = opts?.now ?? Date.now();
   return assets
     .filter((a) => isInClientArchive(a, now))
-    .sort((a, b) => archiveStampOf(b) - archiveStampOf(a));
+    .sort((a, b) => clientDeliveryStamp(b) - clientDeliveryStamp(a));
 }
 
-/** The moment the archive sorts and ages a row by: when the client got it. */
-function archiveStampOf(a: Pick<Asset, "publishedAt" | "updatedAt" | "createdAt">): number {
+/**
+ * The moment the archive sorts and ages a row by: when the client got it.
+ *
+ * Also THE timestamp client-facing deliverable rows print. `createdAt` is the
+ * generation instant, and a week of "daily" posts shares one of those — so
+ * stamping a client's rows with it publishes the batch shape on every surface
+ * that lists deliverables (A3/A4). Published work carries its posting time;
+ * everything else carries the last time it moved, which for an approved
+ * deliverable is the approval. Staff surfaces keep `createdAt`: for them the
+ * generation instant is the fact worth knowing.
+ */
+export function clientDeliveryStamp(
+  a: Pick<Asset, "publishedAt" | "updatedAt" | "createdAt">,
+): number {
   return a.publishedAt ?? a.updatedAt ?? a.createdAt;
 }
 
@@ -93,7 +105,7 @@ export function isInClientArchive(
   if (isLaunchDeliverable(a)) return false;
   if (a.status === "draft") return false;
   if (!isAssetUnlockedForClient(a, now)) return false;
-  if (a.status === "published") return archiveStampOf(a) >= now - CLIENT_ARCHIVE_WINDOW_MS;
+  if (a.status === "published") return clientDeliveryStamp(a) >= now - CLIENT_ARCHIVE_WINDOW_MS;
   return true;
 }
 

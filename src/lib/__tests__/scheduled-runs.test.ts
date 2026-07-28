@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { computeNextRun, describeCadence, weeklyCadenceDays } from "@/lib/scheduled-runs";
+import {
+  clientCadenceLabel,
+  computeNextRun,
+  describeCadence,
+  weeklyCadenceDays,
+} from "@/lib/scheduled-runs";
 
 /** Local-time constructor keeps assertions timezone-independent. */
 function local(y: number, m: number, d: number, h = 0, min = 0): number {
@@ -147,6 +152,77 @@ describe("describeCadence", () => {
       nextRunAt: Date.UTC(2026, 6, 6, 12),
       timeZone: "America/Sao_Paulo",
     })).toBe("Weekly · Mon 09:00 GMT-3");
+  });
+});
+
+describe("clientCadenceLabel", () => {
+  it("states pace, not runs, for a multi-day weekly cadence", () => {
+    expect(
+      clientCadenceLabel({
+        cadence: "weekly",
+        weekdays: [1, 3, 5],
+        hour: 9,
+        minute: 0,
+        nextRunAt: MON_8AM,
+      }),
+    ).toBe("3 posts a week · Mon, Wed, Fri 09:00");
+  });
+
+  it("switches to DAYS when the schedule batches several outputs per fire", () => {
+    // 3 fires × 5 outputs is 15 posts a week. Calling that "3 posts a week"
+    // would be false, and naming the runs would state the batch shape — so the
+    // honest client-side name for the same dial is the posting days.
+    expect(
+      clientCadenceLabel({
+        cadence: "weekly",
+        weekdays: [1, 3, 5],
+        hour: 9,
+        minute: 0,
+        nextRunAt: MON_8AM,
+        outputsPerRun: 5,
+      }),
+    ).toBe("3 posting days a week · Mon, Wed, Fri 09:00");
+  });
+
+  it("never prints the run mechanics the staff label carries", () => {
+    const staff = describeCadence({
+      cadence: "weekly",
+      weekdays: [1, 3, 5],
+      hour: 9,
+      minute: 0,
+      nextRunAt: MON_8AM,
+    });
+    const client = clientCadenceLabel({
+      cadence: "weekly",
+      weekdays: [1, 3, 5],
+      hour: 9,
+      minute: 0,
+      nextRunAt: MON_8AM,
+    });
+    expect(staff).toContain("×");
+    expect(client).not.toContain("×");
+    expect(client.toLowerCase()).not.toContain("run");
+  });
+
+  it("keeps the wall clock and its zone — time of day is pace, not mechanics", () => {
+    expect(
+      clientCadenceLabel({
+        cadence: "daily",
+        hour: 9,
+        minute: 0,
+        nextRunAt: Date.UTC(2026, 6, 6, 12),
+        timeZone: "America/Sao_Paulo",
+      }),
+    ).toBe("Every day · 09:00 GMT-3");
+  });
+
+  it("covers the single-weekday and monthly cadences", () => {
+    expect(
+      clientCadenceLabel({ cadence: "weekly", weekday: 1, hour: 9, minute: 0, nextRunAt: MON_8AM }),
+    ).toBe("1 post a week · Mon 09:00");
+    expect(
+      clientCadenceLabel({ cadence: "monthly", dayOfMonth: 3, hour: 9, minute: 0, nextRunAt: MON_8AM }),
+    ).toBe("Every month · 3rd 09:00");
   });
 });
 

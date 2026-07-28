@@ -7,6 +7,7 @@ import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { assetImages, assetVideos } from "@/lib/asset-images";
+import { clientDeliveryStamp } from "@/lib/asset-visibility";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { cn, relativeTime } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
@@ -144,15 +145,20 @@ export function ArchiveView({
       if (agent !== "all" && name !== agent) continue;
       (byAgent.get(name) ?? byAgent.set(name, []).get(name)!).push(asset);
     }
+    // A3/A4: a client's rows are ordered — and stamped — by when the work
+    // reached them, not by when it was generated. Ordering by `createdAt` while
+    // printing the delivery time would also leave the tiles visibly out of
+    // sequence with their own timestamps.
+    const stampOf = (a: Asset) => (viewerIsClient ? clientDeliveryStamp(a) : a.createdAt);
     return [...byAgent.entries()]
       .map(([name, list]) => ({
         name,
-        assets: [...list].sort((a, b) => b.createdAt - a.createdAt),
-        latestAt: Math.max(...list.map((a) => a.createdAt)),
+        assets: [...list].sort((a, b) => stampOf(b) - stampOf(a)),
+        latestAt: Math.max(...list.map(stampOf)),
         templates: templatesOf(list),
       }))
       .sort((a, b) => b.latestAt - a.latestAt);
-  }, [agent, agentNameFor, assets, search, status]);
+  }, [agent, agentNameFor, assets, search, status, viewerIsClient]);
 
   function toggleGroup(name: string) {
     setCollapsed((prev) => {
@@ -283,7 +289,12 @@ export function ArchiveView({
                 <>
                   <div className="grid gap-3 @xl:grid-cols-2 @4xl:grid-cols-3">
                     {visible.map((asset) => (
-                      <ArchiveTile key={asset.id} asset={asset} onOpen={() => setOpenAssetId(asset.id)} />
+                      <ArchiveTile
+                        key={asset.id}
+                        asset={asset}
+                        viewerIsClient={viewerIsClient}
+                        onOpen={() => setOpenAssetId(asset.id)}
+                      />
                     ))}
                   </div>
                   {hidden > 0 && (
@@ -308,7 +319,16 @@ export function ArchiveView({
   );
 }
 
-function ArchiveTile({ asset, onOpen }: { asset: Asset; onOpen: () => void }) {
+function ArchiveTile({
+  asset,
+  viewerIsClient,
+  onOpen,
+}: {
+  asset: Asset;
+  /** Drives which moment the tile's timestamp names. */
+  viewerIsClient: boolean;
+  onOpen: () => void;
+}) {
   const thumb = assetImages(asset)[0];
   // Clips get their own tile treatment so a video deliverable reads as one
   // before it is opened (QA F150).
@@ -337,7 +357,15 @@ function ArchiveTile({ asset, onOpen }: { asset: Asset; onOpen: () => void }) {
       <div className="flex min-w-0 flex-1 flex-col gap-1 p-3">
         <p className="truncate text-sm font-medium text-foreground">{asset.title}</p>
         <div className="mt-auto flex items-center justify-between gap-2">
-          <span className="text-[11px] text-muted-2">{relativeTime(asset.createdAt)}</span>
+          {/* `createdAt` is the GENERATION instant, and a whole week of
+              "daily" posts shares one — so a client's archive printed five
+              tiles reading "3 hours ago", which states the batch outright
+              (A3/A4). Posted work carries its posting time and everything else
+              the moment it was approved; staff keep the generation stamp,
+              which for them is the fact worth knowing. */}
+          <span className="text-[11px] text-muted-2">
+            {relativeTime(viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt)}
+          </span>
           <Badge tone={STATUS_TONE[asset.status]}>{STATUS_LABEL[asset.status] ?? asset.status}</Badge>
         </div>
       </div>

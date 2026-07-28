@@ -24,7 +24,7 @@ import { resolveContentIdentity } from "@/lib/agent-identity-map";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
-import { getClientArchiveAssets } from "@/lib/asset-visibility";
+import { clientDeliveryStamp, getClientArchiveAssets } from "@/lib/asset-visibility";
 import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
 import { LegacyAgentPanel } from "@/components/client-agents/legacy-agent-panel";
@@ -338,8 +338,16 @@ export default async function ClientAgentDetailPage({
                       {asset.title || "Untitled"}
                     </span>
                     {asset.templateName && <Badge tone="neutral">{asset.templateName}</Badge>}
+                    {/* The set above is already delivered-work-only for a
+                        client; the STAMP has to match. `createdAt` is the
+                        generation instant a whole batch shares, so eight rows
+                        under "What it has made for you" all read "3 hours ago"
+                        — the same batch tell the asset filter three screens up
+                        was added to close. Staff keep the generation time. */}
                     <span className="shrink-0 text-[11px] text-muted-2">
-                      {relativeTime(asset.createdAt)}
+                      {relativeTime(
+                        viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt,
+                      )}
                     </span>
                   </li>
                 ))}

@@ -18,7 +18,7 @@ import {
 import { integrationIsUsable } from "@/lib/integration-status";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
-import { describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
+import { clientCadenceLabel, describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
 import { isValidTimeZone } from "@/lib/run-cadence";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { PageHeader, EmptyState } from "@/components/ui";
@@ -244,7 +244,13 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         productColor: r.agentColor,
         productIcon: r.agentIcon,
         cadence: r.cadence,
-        cadenceLabel: describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
+        // Pace for a client, mechanics for staff. describeCadence prints "3×
+        // weekly", which names RUNS — and on a schedule storing several outputs
+        // per fire that number is not the client's post count at all. Same
+        // vocabulary AgentScheduleModal's paceOnly branch settled on.
+        cadenceLabel: isClient
+          ? clientCadenceLabel({ ...r, timeZone: runZone(r.timeZone) })
+          : describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
         // The zone the schedule's wall clock was set in. Sent to the browser so
         // the chip's day bucket and printed time are computed there exactly as
         // they were on the server — and so the card's cadence label and its
@@ -269,7 +275,17 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       // content shipped the run record's own bookkeeping — markdown syntax, the
       // internal status word, the lab product code and the job hash — into the
       // payload of the panel a client opens to see what ran.
-      const views: RunAssetView[] = (assetsByJob.get(j.id) ?? []).map((a) => ({
+      // A3/A4. `assets` carries a client's future-dated posts as redacted
+      // placeholders, and they were being counted into this card's summary: a
+      // run that produced a week of slots printed "7 posts · Ran 3:14 PM",
+      // which states outright that the whole week came out of one fire at one
+      // minute — the batch tell in its purest form. A past run card may only
+      // speak of what the client has actually been given; the rest of that run
+      // is upcoming work, and upcoming work lives on the calendar as slots.
+      // Staff keep the full run (invariant A10.6).
+      const runAssets = assetsByJob.get(j.id) ?? [];
+      const deliveredAssets = isClient ? runAssets.filter((a) => !a.locked) : runAssets;
+      const views: RunAssetView[] = deliveredAssets.map((a) => ({
         id: a.id,
         type: a.type,
         title: cleanTitle(a.title),
