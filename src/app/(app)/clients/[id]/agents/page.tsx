@@ -8,7 +8,7 @@ import {
   listJobs,
   listPlannedScheduledRuns,
 } from "@/lib/data";
-import { availableCredits, creditBlockReason, isBillableClientActor } from "@/lib/credits";
+import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
@@ -184,13 +184,24 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     const allowedNames = new Set(agents.map((a) => a.name));
     const runs = toRunRows(jobs, false).filter((r) => allowedNames.has(r.agentName));
     // Impersonating admins see the client view but never spend real credits —
-    // show the gate only to billable client actors.
-    const spendable = isBillableClientActor(user) ? availableCredits(credits) : undefined;
-    // Which of the three limits clips that number. The card shows it beside a
-    // blocked Run button: "ask for a top-up" is wrong advice for a client who
-    // is capped for the week, and the correct wording existed only in the
-    // denial text that appears after a run has already been refused.
-    const creditBlock = spendable !== undefined ? creditBlockReason(credits) : undefined;
+    // show the gate only to billable client actors. `now` rolls the spend
+    // windows on read: a schedule doc read after a week rollover would otherwise
+    // still count last week's spend and mis-name the limit.
+    const now = Date.now();
+    const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
+    // Which limit clips that number — computed PER AGENT, because the binding
+    // limit depends on the agent's price (F130 gives agents distinct costs): a
+    // cheap agent may be blocked by the weekly cap while a pricey one is blocked
+    // by the balance, and each must name the limit its own denial would. The
+    // card shows it beside a blocked Run button, where "ask for a top-up" is
+    // wrong advice for a client who is capped for the week.
+    const creditBlockReasons: Record<string, string> = {};
+    if (spendable !== undefined) {
+      for (const agent of agents) {
+        const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+        if (spendable < cost) creditBlockReasons[agent.id] = creditBlockReason(credits, cost, now);
+      }
+    }
     const agentSetup = await buildAgentSetup(id, agents);
     // A client run takes 10–20 minutes and the client's rows carry no link, so
     // without this the page never moved again after "Start run". Mounted only
@@ -230,7 +241,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             agentSetup={agentSetup}
             viewer={{ name: user.name, email: user.email }}
             {...(spendable !== undefined ? { availableCredits: spendable } : {})}
-            {...(creditBlock !== undefined ? { creditBlockReason: creditBlock } : {})}
+            creditBlockReasons={creditBlockReasons}
           />
         ) : (
           <EmptyState

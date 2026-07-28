@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  CREDIT_BLOCK_REASON,
   CREDIT_DEFAULTS,
   applyCredit,
   assessCharge,
   availableCredits,
+  bindingCreditLimit,
+  creditBlockReason,
   creditMonthKey,
   creditWeekKey,
   defaultClientCredits,
@@ -117,6 +120,61 @@ describe("assessCharge", () => {
     const res = assessCharge(credits({ balance: 0 }), 0, NOW);
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.next.balance).toBe(0);
+  });
+});
+
+describe("bindingCreditLimit", () => {
+  // The pre-flight reason must name the SAME limit the server denial would, so
+  // the contract is simply: whenever assessCharge denies, bindingCreditLimit
+  // returns its code. A cost-ordered ladder, not an argmin over the balances.
+  const cases: Array<{ name: string; patch: Partial<ClientCredits>; cost: number; code: string }> = [
+    // Repro A from the risk lens: balance 5, weekLeft 2, monthLeft 400, cost 10.
+    // Argmin would pick weekly (2 is smallest) and tell the client to wait till
+    // Monday; the server refuses on the balance, which a top-up fixes.
+    {
+      name: "balance binds before a tighter weekly window",
+      patch: { balance: 5, weeklyLimit: 2, weekSpent: 0, monthlyLimit: 400, monthSpent: 0 },
+      cost: 10,
+      code: "insufficient_balance",
+    },
+    // Repro B: balance 100, weekLeft 5, monthLeft 1, cost 10. Argmin would pick
+    // monthly (1 is smallest); the server checks weekly first, so it is weekly.
+    {
+      name: "weekly binds before a tighter monthly window",
+      patch: { balance: 100, weeklyLimit: 5, weekSpent: 0, monthlyLimit: 1, monthSpent: 0 },
+      cost: 10,
+      code: "weekly_limit",
+    },
+    {
+      name: "monthly binds when balance and weekly both clear",
+      patch: { balance: 100, weeklyLimit: 50, weekSpent: 0, monthlyLimit: 1, monthSpent: 0 },
+      cost: 10,
+      code: "monthly_limit",
+    },
+  ];
+
+  for (const { name, patch, cost, code } of cases) {
+    it(name, () => {
+      const c = credits(patch);
+      expect(bindingCreditLimit(c, cost, NOW)).toBe(code);
+      // The load-bearing invariant: it agrees with the server for that cost.
+      const denial = assessCharge(c, cost, NOW);
+      expect(denial.ok).toBe(false);
+      if (!denial.ok) expect(bindingCreditLimit(c, cost, NOW)).toBe(denial.code);
+    });
+  }
+
+  it("rolls the spend windows when given `now`, so a new week reads fresh", () => {
+    // Capped this week, but `now` is next Monday — the window has rolled, so the
+    // weekly cap no longer binds and a plain top-up gate is wrong.
+    const c = credits({ balance: 5, weeklyLimit: 150, weekSpent: 150 });
+    const nextMonday = Date.UTC(2026, 6, 13);
+    expect(bindingCreditLimit(c, 10, nextMonday)).toBe("insufficient_balance");
+  });
+
+  it("creditBlockReason maps the binding code to its client line", () => {
+    const c = credits({ balance: 100, weeklyLimit: 5, weekSpent: 0 });
+    expect(creditBlockReason(c, 10, NOW)).toBe(CREDIT_BLOCK_REASON.weekly_limit);
   });
 });
 

@@ -247,25 +247,39 @@ export const CREDIT_BLOCK_REASON: Record<CreditDenialCode, string> = {
 };
 
 /**
- * Which of the three terms in `availableCredits` is currently the smallest —
- * i.e. the limit a client would hit next. Independent of the price of any one
- * action: the binding term is the minimum, and a cost only decides *whether*
- * it binds, never *which*. Ties resolve in assessCharge's own order (balance,
- * then weekly, then monthly) so the pre-flight reason names the same limit the
- * server denial would.
+ * Which limit the server would cite when refusing a charge of `cost` — so the
+ * pre-flight line names the SAME limit the eventual denial does.
+ *
+ * This mirrors assessCharge's ladder EXACTLY: it is not an argmin over the
+ * three remaining balances but the first of them, in the server's own order,
+ * that `cost` does not fit under. Order matters — with balance=5, weekLeft=2,
+ * monthLeft=400 and cost=10 the argmin (weekLeft) says "weekly", but the server
+ * refuses on the balance first, so a "resets Monday" line would send the client
+ * to wait a week for a block a top-up fixes. `cost` is required for the same
+ * reason: whether the weekly cap binds before the balance depends on it.
  */
-export function bindingCreditLimit(credits: ClientCredits, now?: number): CreditDenialCode {
+export function bindingCreditLimit(
+  credits: ClientCredits,
+  cost: number,
+  now?: number,
+): CreditDenialCode {
   const rolled = now != null ? rollCreditWindows(credits, now) : credits;
-  const weekLeft = rolled.weeklyLimit != null ? rolled.weeklyLimit - rolled.weekSpent : Infinity;
-  const monthLeft = rolled.monthlyLimit != null ? rolled.monthlyLimit - rolled.monthSpent : Infinity;
-  if (rolled.balance <= weekLeft && rolled.balance <= monthLeft) return "insufficient_balance";
-  if (weekLeft <= monthLeft) return "weekly_limit";
-  return "monthly_limit";
+  // Same predicates as assessCharge, same sequence (balance → weekly → monthly).
+  if (rolled.balance < cost) return "insufficient_balance";
+  if (rolled.weeklyLimit != null && rolled.weekSpent + cost > rolled.weeklyLimit) {
+    return "weekly_limit";
+  }
+  if (rolled.monthlyLimit != null && rolled.monthSpent + cost > rolled.monthlyLimit) {
+    return "monthly_limit";
+  }
+  // Nothing binds at this cost — callers only surface a reason once spend is
+  // already blocked, so this is a safe default rather than a reachable state.
+  return "insufficient_balance";
 }
 
-/** The line to show beside a run control that spendable credits have blocked. */
-export function creditBlockReason(credits: ClientCredits, now?: number): string {
-  return CREDIT_BLOCK_REASON[bindingCreditLimit(credits, now)];
+/** The line to show beside a run control that a charge of `cost` has blocked. */
+export function creditBlockReason(credits: ClientCredits, cost: number, now?: number): string {
+  return CREDIT_BLOCK_REASON[bindingCreditLimit(credits, cost, now)];
 }
 
 /**

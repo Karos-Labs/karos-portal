@@ -371,7 +371,7 @@ export function ClientCustomAgents({
   contextItems,
   viewerIsClient,
   availableCredits,
-  creditBlockReason,
+  creditBlockReasons,
   agentSetup,
   viewer,
 }: {
@@ -384,11 +384,12 @@ export function ClientCustomAgents({
   /** Spendable credits right now (balance clipped by caps) — client viewers only. */
   availableCredits?: number;
   /**
-   * Which limit clips `availableCredits`, phrased for the client and resolved
-   * server-side from the denial code (never a keyword guess at a message).
-   * Shown beside a Run button that spendable credits have blocked.
+   * Per agent id: which limit clips `availableCredits` at THAT agent's price,
+   * phrased for the client and resolved server-side from the denial code (never
+   * a keyword guess at a message). Present only for agents a charge would block
+   * — the binding limit depends on the cost, so it cannot be one shared line.
    */
-  creditBlockReason?: string;
+  creditBlockReasons?: Record<string, string>;
   /** Prefills the support form offered when a schedule is stuck on a refusal. */
   viewer?: { name: string; email: string };
   /**
@@ -602,7 +603,7 @@ export function ClientCustomAgents({
                     )}
                     {short && (
                       <p className="text-[11px] text-warning">
-                        {creditBlockReason ?? "Not enough credits."}
+                        {creditBlockReasons?.[agent.id] ?? "Not enough credits."}
                       </p>
                     )}
                     {short && viewer && (
