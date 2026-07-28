@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { CompanyNewsBox, type CompanyNewsRowView } from "@/components/company-news-box";
+import { SavedFormCard } from "@/components/saved-form-card";
 import {
   addXDraftFeedbackAction,
   addXSeatAction,
@@ -78,7 +79,9 @@ function today(): string {
 /**
  * The marker for a field the server refuses to save empty. The seat forms
  * rejected a blank "must never post" answer while marking nothing required, so
- * the only way to learn the rule was to fail the save.
+ * the only way to learn the rule was to fail the save. The company page is the
+ * same story: saveXCompanyIntakeAction refuses without the voice and off-limits
+ * answers, and a saved company page is what lets a run start.
  */
 function RequiredMark() {
   return <span className="ml-1 text-danger">*</span>;
@@ -89,6 +92,25 @@ function fieldError(error: string | null) {
 }
 
 const premiumValue = (p?: boolean) => (p === true ? "yes" : p === false ? "no" : "auto");
+
+const premiumSummary = (v: string) => (v === "yes" ? "Yes" : v === "no" ? "No" : "Auto-detect");
+
+/** The roster lives in state as the comma list the field shows. */
+function rosterSummary(roster: string): string {
+  const count = roster.split(",").filter((h) => h.trim()).length;
+  return count === 0 ? "" : `${count} account${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * Reads the take drop back in the collapsed seat summary. Takes arrive newest
+ * first, and each carries the date it was dropped. No takes stays empty for the
+ * summary card's own empty-value treatment.
+ */
+function takesSummary(takes: XSeatView["takes"]): string {
+  const latest = takes[0];
+  if (!latest) return "";
+  return `${takes.length} take${takes.length === 1 ? "" : "s"} · latest ${latest.date}`;
+}
 
 /** X Premium tri-state: auto-detect by default, pin it when the client knows. */
 function PremiumField({
@@ -190,7 +212,7 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [editing, setEditing] = useState(!intake);
   const [handle, setHandle] = useState(intake?.handle ?? "");
   const [comeAcross, setComeAcross] = useState(intake?.comeAcross ?? "");
   const [offLimits, setOffLimits] = useState(intake?.offLimits ?? "");
@@ -200,24 +222,44 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
 
   function save() {
     setError(null);
-    setSaved(false);
     start(async () => {
       const result = await saveXCompanyIntakeAction({ clientId, handle, comeAcross, offLimits, roster, premium, announcements });
       if (result.error) {
         setError(result.error);
         return;
       }
-      setSaved(true);
+      // One-shot drop: clearing it keeps a second save from posting it twice.
+      setAnnouncements("");
+      setEditing(false);
       router.refresh();
     });
   }
 
+  function cancel() {
+    setError(null);
+    setHandle(intake?.handle ?? "");
+    setComeAcross(intake?.comeAcross ?? "");
+    setOffLimits(intake?.offLimits ?? "");
+    setRoster(intake?.roster.join(", ") ?? "");
+    setPremium(premiumValue(intake?.premium));
+    setAnnouncements("");
+    setEditing(false);
+  }
+
   return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between">
-        <CardTitle>Company page</CardTitle>
-        {intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not set up</Badge>}
-      </div>
+    <SavedFormCard
+      title="Company page"
+      badge={intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not set up</Badge>}
+      summary={[
+        { label: "Company X handle", value: handle },
+        { label: "How you come across on X", value: comeAcross },
+        { label: "Anything we must never post", value: offLimits },
+        { label: "Accounts to engage", value: rosterSummary(roster) },
+        { label: "X Premium", value: premiumSummary(premium) },
+      ]}
+      open={editing}
+      onEdit={() => setEditing(true)}
+    >
       <p className="mt-1 text-sm text-muted">
         One per business. Voice, pillars and cadence are built from your profile and your posts; we
         only ask what we cannot find ourselves.
@@ -233,7 +275,10 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
           />
         </div>
         <div>
-          <Label htmlFor="xc-voice">How do you want to come across on X?</Label>
+          <Label htmlFor="xc-voice">
+            How do you want to come across on X?
+            <RequiredMark />
+          </Label>
           <Textarea
             id="xc-voice"
             rows={2}
@@ -280,40 +325,31 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
           <Button onClick={save} disabled={pending}>
             {pending ? "Saving…" : "Save company page"}
           </Button>
-          {saved ? <span className="text-xs text-muted">Saved.</span> : null}
+          {intake ? (
+            <Button variant="ghost" onClick={cancel} disabled={pending}>
+              Cancel
+            </Button>
+          ) : null}
         </div>
       </div>
-    </Card>
+    </SavedFormCard>
   );
 }
 
 /* ────────────────────────── seat cards ─────────────────────────── */
 
-function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
+/**
+ * The take drop is an ongoing input, not setup, so it sits outside the seat
+ * form's collapse and stays usable whatever state the form is in.
+ */
+function SeatTakes({ clientId, seat }: { clientId: string; seat: XSeatView }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [handle, setHandle] = useState(seat.intake?.handle ?? "");
-  const [offLimits, setOffLimits] = useState(seat.intake?.offLimits ?? "");
-  const [roster, setRoster] = useState(seat.intake?.roster.join(", ") ?? "");
-  const [premium, setPremium] = useState(premiumValue(seat.intake?.premium));
   const [take, setTake] = useState("");
   const [topic, setTopic] = useState("");
   const [takeUrl, setTakeUrl] = useState("");
   const [takeError, setTakeError] = useState<string | null>(null);
   const promptIndex = seat.takes.length % TAKE_PROMPTS.length;
-
-  function saveSeat() {
-    setError(null);
-    start(async () => {
-      const result = await saveXSeatIntakeAction({ clientId, seatId: seat.id, handle, offLimits, roster, premium });
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-      router.refresh();
-    });
-  }
 
   function submitTake() {
     setTakeError(null);
@@ -338,15 +374,102 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
   }
 
   return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between">
-        <CardTitle>{seat.name}</CardTitle>
-        {seat.intake?.handle ? (
+    <div className="mt-4 border-t border-border pt-4">
+      <p className="text-sm font-medium">Your takes and topics</p>
+      <p className="mt-1 text-xs text-muted">
+        One honest sentence on something in your space. We turn it into a post in your voice.
+      </p>
+      <div className="mt-3 space-y-3">
+        <Textarea
+          rows={2}
+          value={take}
+          onChange={(e) => setTake(e.target.value)}
+          placeholder={TAKE_PROMPTS[promptIndex]}
+        />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Input
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder="Topic (optional): GTM, hiring, AI…"
+          />
+          <Input
+            value={takeUrl}
+            onChange={(e) => setTakeUrl(e.target.value)}
+            placeholder="Source link - only if your take contains a number"
+          />
+        </div>
+        {fieldError(takeError)}
+        <Button onClick={submitTake} disabled={pending} variant="subtle">
+          Drop the take
+        </Button>
+      </div>
+      {seat.takes.length > 0 ? (
+        <ul className="mt-4 space-y-2">
+          {seat.takes.slice(0, 5).map((t) => (
+            <li key={t.id} className="text-xs text-muted">
+              <span className="text-foreground">{t.date}</span>
+              {t.topic ? ` · ${t.topic}` : ""} - {t.take}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(!seat.intake);
+  const [handle, setHandle] = useState(seat.intake?.handle ?? "");
+  const [offLimits, setOffLimits] = useState(seat.intake?.offLimits ?? "");
+  const [roster, setRoster] = useState(seat.intake?.roster.join(", ") ?? "");
+  const [premium, setPremium] = useState(premiumValue(seat.intake?.premium));
+
+  function saveSeat() {
+    setError(null);
+    start(async () => {
+      const result = await saveXSeatIntakeAction({ clientId, seatId: seat.id, handle, offLimits, roster, premium });
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setEditing(false);
+      router.refresh();
+    });
+  }
+
+  function cancelSeat() {
+    setError(null);
+    setHandle(seat.intake?.handle ?? "");
+    setOffLimits(seat.intake?.offLimits ?? "");
+    setRoster(seat.intake?.roster.join(", ") ?? "");
+    setPremium(premiumValue(seat.intake?.premium));
+    setEditing(false);
+  }
+
+  return (
+    <SavedFormCard
+      title={seat.name}
+      badge={
+        seat.intake?.handle ? (
           <Badge tone="success">{seat.intake.handle}</Badge>
         ) : (
           <Badge tone="warning">Handle pending, drafts only</Badge>
-        )}
-      </div>
+        )
+      }
+      summary={[
+        { label: "Your X handle", value: handle },
+        { label: "Anything we must never post", value: offLimits },
+        { label: "Accounts you want to be near", value: rosterSummary(roster) },
+        { label: "X Premium", value: premiumSummary(premium) },
+        { label: "Your takes and topics", value: takesSummary(seat.takes) },
+      ]}
+      open={editing}
+      onEdit={() => setEditing(true)}
+      footer={<SeatTakes clientId={clientId} seat={seat} />}
+    >
       <div className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
@@ -390,52 +513,19 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
           otherwise we build it from your profile and sharpen it from your real posts and edits.
         </p>
         {fieldError(error)}
-        <Button onClick={saveSeat} disabled={pending} variant="subtle">
-          {pending ? "Saving…" : "Save seat"}
-        </Button>
-
-        <div className="border-t border-border pt-4">
-          <p className="text-sm font-medium">Your takes and topics</p>
-          <p className="mt-1 text-xs text-muted">
-            One honest sentence on something in your space. We turn it into a post in your voice.
-          </p>
-          <div className="mt-3 space-y-3">
-            <Textarea
-              rows={2}
-              value={take}
-              onChange={(e) => setTake(e.target.value)}
-              placeholder={TAKE_PROMPTS[promptIndex]}
-            />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                placeholder="Topic (optional): GTM, hiring, AI…"
-              />
-              <Input
-                value={takeUrl}
-                onChange={(e) => setTakeUrl(e.target.value)}
-                placeholder="Source link — only if your take contains a number"
-              />
-            </div>
-            {fieldError(takeError)}
-            <Button onClick={submitTake} disabled={pending} variant="subtle">
-              Drop the take
+        <div className="flex items-center gap-3">
+          <Button onClick={saveSeat} disabled={pending} variant="subtle">
+            {pending ? "Saving…" : "Save seat"}
+          </Button>
+          {seat.intake ? (
+            <Button variant="ghost" onClick={cancelSeat} disabled={pending}>
+              Cancel
             </Button>
-          </div>
-          {seat.takes.length > 0 ? (
-            <ul className="mt-4 space-y-2">
-              {seat.takes.slice(0, 5).map((t) => (
-                <li key={t.id} className="text-xs text-muted">
-                  <span className="text-foreground">{t.date}</span>
-                  {t.topic ? ` · ${t.topic}` : ""} — {t.take}
-                </li>
-              ))}
-            </ul>
           ) : null}
         </div>
+
       </div>
-    </Card>
+    </SavedFormCard>
   );
 }
 

@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { CompanyNewsBox, type CompanyNewsRowView } from "@/components/company-news-box";
+import { SavedFormCard } from "@/components/saved-form-card";
 import {
   addLiDraftFeedbackAction,
   addLinkedInSeatAction,
@@ -75,6 +76,14 @@ function fieldError(error: string | null) {
   return error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null;
 }
 
+/**
+ * Reads the fallback field back in the seat summary — see FallbackField. No
+ * kind means no sample was captured, so it stays empty for the summary card's
+ * own empty-value treatment.
+ */
+const voiceSampleSummary = (kind: string) =>
+  kind === "writing" ? "Their own writing" : kind === "about" ? "Who they are" : "";
+
 /* ─────────────────────── company page form ─────────────────────── */
 
 function CompanyForm({
@@ -90,31 +99,47 @@ function CompanyForm({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [editing, setEditing] = useState(!intake);
   const [pageUrl, setPageUrl] = useState(intake?.handle ?? pageUrlSuggestion ?? "");
   const [comeAcross, setComeAcross] = useState(intake?.comeAcross ?? "");
   const [offLimits, setOffLimits] = useState(intake?.offLimits ?? "");
 
   function save() {
     setError(null);
-    setSaved(false);
     start(async () => {
       const result = await saveLinkedInCompanyIntakeAction({ clientId, pageUrl, comeAcross, offLimits });
       if (result.error) {
         setError(result.error);
         return;
       }
-      setSaved(true);
+      setEditing(false);
       router.refresh();
     });
   }
 
+  function cancel() {
+    setError(null);
+    setPageUrl(intake?.handle ?? pageUrlSuggestion ?? "");
+    setComeAcross(intake?.comeAcross ?? "");
+    setOffLimits(intake?.offLimits ?? "");
+    setEditing(false);
+  }
+
+  // The field starts from the profile suggestion, which is not a URL on file.
+  const urlOnFile = intake && !intake.handle ? "" : pageUrl;
+
   return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between">
-        <CardTitle>Company page</CardTitle>
-        {intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not set up</Badge>}
-      </div>
+    <SavedFormCard
+      title="Company page"
+      badge={intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not set up</Badge>}
+      summary={[
+        { label: "Company page URL", value: urlOnFile },
+        { label: "How the page should sound", value: comeAcross },
+        { label: "Anything we must never post", value: offLimits },
+      ]}
+      open={editing}
+      onEdit={() => setEditing(true)}
+    >
       <p className="mt-1 text-sm text-muted">
         One per business. The page runs on your brand voice and your own first-party material; we
         only ask what we cannot find ourselves. Drafts only — a person always posts.
@@ -158,10 +183,14 @@ function CompanyForm({
           <Button onClick={save} disabled={pending}>
             {pending ? "Saving…" : "Save company page"}
           </Button>
-          {saved ? <span className="text-xs text-muted">Saved.</span> : null}
+          {intake ? (
+            <Button variant="ghost" onClick={cancel} disabled={pending}>
+              Cancel
+            </Button>
+          ) : null}
         </div>
       </div>
-    </Card>
+    </SavedFormCard>
   );
 }
 
@@ -216,7 +245,12 @@ function FallbackField({
 
 /* ──────────────────── the private CV upload ─────────────────── */
 
-function CvUpload({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
+/**
+ * The upload targets a seat that already exists, so the CV is an after-the-fact
+ * input rather than setup: it sits outside the seat form's collapse and stays
+ * usable whatever state the form is in.
+ */
+function SeatCv({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -240,31 +274,34 @@ function CvUpload({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
   }
 
   return (
-    <div>
-      <Label htmlFor={`ls-cv-${seat.id}`}>Resume / CV (pdf, docx, or txt)</Label>
-      <div className="mt-1 flex items-center gap-3">
-        <input
-          ref={inputRef}
-          id={`ls-cv-${seat.id}`}
-          type="file"
-          accept=".pdf,.docx,.txt"
-          className="block w-full max-w-sm text-xs text-muted file:mr-3 file:rounded-md file:border file:border-border file:bg-surface-2 file:px-3 file:py-1.5 file:text-xs file:text-foreground"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) upload(file);
-          }}
-          disabled={pending}
-        />
-        {pending ? <span className="text-xs text-muted">Uploading…</span> : null}
-        {seat.intake?.cvName && !pending ? (
-          <Badge tone="success">{seat.intake.cvName}</Badge>
-        ) : null}
-      </div>
+    <div className="mt-4 border-t border-border pt-4">
+      <p className="text-sm font-medium">Resume / CV</p>
       <p className="mt-1 text-xs text-muted">
         Private — only our team and the agent read it, and it is never posted. The CV is for
-        substance (their real experience), not voice. Not strictly required: real posts or the
-        voice sample below also work, but it is the strongest single source.
+        substance (their real experience), not voice. Not strictly required: their real posts or
+        the voice sample also work, but it is the strongest single source.
       </p>
+      <div className="mt-3">
+        <Label htmlFor={`ls-cv-${seat.id}`}>Attach a PDF, DOCX, or TXT</Label>
+        <div className="flex items-center gap-3">
+          <input
+            ref={inputRef}
+            id={`ls-cv-${seat.id}`}
+            type="file"
+            accept=".pdf,.docx,.txt"
+            className="block w-full max-w-sm text-xs text-muted file:mr-3 file:rounded-md file:border file:border-border file:bg-surface-2 file:px-3 file:py-1.5 file:text-xs file:text-foreground"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) upload(file);
+            }}
+            disabled={pending}
+          />
+          {pending ? <span className="text-xs text-muted">Uploading…</span> : null}
+          {seat.intake?.cvName && !pending ? (
+            <Badge tone="success">{seat.intake.cvName}</Badge>
+          ) : null}
+        </div>
+      </div>
       {fieldError(error)}
     </div>
   );
@@ -276,6 +313,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(!seat.intake);
   const [profileUrl, setProfileUrl] = useState(seat.intake?.handle ?? "");
   const [role, setRole] = useState(seat.intake?.role ?? "");
   const [focus, setFocus] = useState(seat.intake?.focus ?? "");
@@ -300,8 +338,20 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
         setError(result.error);
         return;
       }
+      setEditing(false);
       router.refresh();
     });
+  }
+
+  function cancelSeat() {
+    setError(null);
+    setProfileUrl(seat.intake?.handle ?? "");
+    setRole(seat.intake?.role ?? "");
+    setFocus(seat.intake?.focus ?? "");
+    setOffLimits(seat.intake?.offLimits ?? "");
+    setFallbackKind(seat.intake?.fallbackKind ?? "");
+    setFallbackText(seat.intake?.fallbackText ?? "");
+    setEditing(false);
   }
 
   // The input-contract minimum: ONE genuine source of substance and voice —
@@ -309,23 +359,41 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
   // the CV can only be attached after the seat exists.
   const belowMinimum =
     seat.intake && !seat.intake.handle && !seat.intake.cvName && !seat.intake.fallbackKind;
+  // The warning shows in both states, so it has to point at the right place.
+  // The CV sits below the form in both, so only the other two move behind "Edit".
+  const noVoiceSource = editing
+    ? "This seat has no voice source yet. Add their profile URL or the voice sample below, or attach a CV — drafts need at least one genuine source of who they are."
+    : 'This seat has no voice source yet. Attach a CV below, or press "Edit" to add their profile URL or the voice sample — drafts need at least one genuine source of who they are.';
 
   return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between">
-        <CardTitle>{seat.name}</CardTitle>
-        {seat.intake?.handle ? (
+    <SavedFormCard
+      title={seat.name}
+      badge={
+        seat.intake?.handle ? (
           <Badge tone="success">Profile linked</Badge>
         ) : (
           <Badge tone="warning">Profile pending, drafts only</Badge>
-        )}
-      </div>
-      {belowMinimum ? (
-        <p className="mt-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
-          This seat has no voice source yet. Add their profile URL, a CV, or the voice sample
-          below — drafts need at least one genuine source of who they are.
-        </p>
-      ) : null}
+        )
+      }
+      notice={
+        belowMinimum ? (
+          <p className="mt-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
+            {noVoiceSource}
+          </p>
+        ) : null
+      }
+      summary={[
+        { label: "LinkedIn profile URL", value: profileUrl },
+        { label: "Company role", value: role },
+        { label: "Profile focus", value: focus },
+        { label: "Anything we must never post", value: offLimits },
+        { label: "Resume / CV", value: seat.intake?.cvName ?? "" },
+        { label: "Voice sample", value: voiceSampleSummary(fallbackKind) },
+      ]}
+      open={editing}
+      onEdit={() => setEditing(true)}
+      footer={<SeatCv clientId={clientId} seat={seat} />}
+    >
       <div className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
@@ -377,7 +445,6 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
             placeholder='Topics, names, numbers. Write "nothing" if everything is fair game.'
           />
         </div>
-        <CvUpload clientId={clientId} seat={seat} />
         <FallbackField
           idPrefix={`ls-${seat.id}`}
           kind={fallbackKind}
@@ -390,11 +457,18 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
           edits — and if they already have a seat for another agent, we reuse what we already know.
         </p>
         {fieldError(error)}
-        <Button onClick={saveSeat} disabled={pending} variant="subtle">
-          {pending ? "Saving…" : "Save seat"}
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button onClick={saveSeat} disabled={pending} variant="subtle">
+            {pending ? "Saving…" : "Save seat"}
+          </Button>
+          {seat.intake ? (
+            <Button variant="ghost" onClick={cancelSeat} disabled={pending}>
+              Cancel
+            </Button>
+          ) : null}
+        </div>
       </div>
-    </Card>
+    </SavedFormCard>
   );
 }
 

@@ -11,11 +11,29 @@ import {
 import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { ClientCustomAgents } from "@/components/custom-agents";
+import {
+  ClientCustomAgents,
+  type CustomAgentRunRow,
+  type LinkedInAgentSetup,
+  type RedditAgentSetup,
+  type RunnableAgentSummary,
+  type XAgentSetup,
+} from "@/components/custom-agents";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
+import {
+  buildLinkedInAgentIntakeView,
+  buildRedditAgentIntakeView,
+  buildXAgentIntakeView,
+} from "@/lib/agent-intake-views";
+import {
+  agentKeyMatchesClientSlug,
+  isLinkedInAgentIdentity,
+  isRedditAgentIdentity,
+  isXAgentIdentity,
+} from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { summarizeAgentEconomics } from "@/lib/credit-reporting";
@@ -32,11 +50,72 @@ import {
   toScheduleRows,
   toSummary,
 } from "@/lib/client-agent-rows";
+import type { Job } from "@/lib/types";
 
 
 /**
+ * Setup props for the intake-driven agents (X e13, LinkedIn e10): their data
+ * forms live in the run dialog, so the payload ships with the ready flag.
+ * Building one costs a full read of seats, intake, drops and run history, so it
+ * only happens when that agent is actually on this page's list, and it reuses
+ * the caller's `jobs` scan rather than repeating it per agent.
+ */
+async function intakeSetups(
+  clientId: string,
+  agents: RunnableAgentSummary[],
+  opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string },
+): Promise<{
+  xSetup?: XAgentSetup;
+  linkedinSetup?: LinkedInAgentSetup;
+  redditSetup?: RedditAgentSetup;
+}> {
+  const hasX = agents.some((agent) => isXAgentIdentity(agent.key));
+  const hasLinkedIn = agents.some((agent) => isLinkedInAgentIdentity(agent.key));
+  const hasReddit = agents.some((agent) => isRedditAgentIdentity(agent.key));
+  const [xData, linkedinData, redditData] = await Promise.all([
+    hasX ? buildXAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) : null,
+    hasLinkedIn
+      ? buildLinkedInAgentIntakeView(clientId, {
+          isStaff: opts.isStaff,
+          jobs: opts.jobs,
+          ...(opts.linkedinPageUrl ? { pageUrlSuggestion: opts.linkedinPageUrl } : {}),
+        })
+      : null,
+    hasReddit ? buildRedditAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) : null,
+  ]);
+  // `ready` must agree with the run gates the submit cores apply, so it is read
+  // off the same row those gates read instead of asking them again:
+  // hasXAgentIntake(), hasLinkedInAgentIntake() and hasRedditAgentIntake() all
+  // mean "the company-level form is saved" — respectively
+  // agentIntake(clientId, "x"|"linkedin"|"reddit", null) — for every one of
+  // their agents' keys. Reddit's company-level form is the account form, and
+  // like the other two a shared ClientSeat never satisfies it.
+  return {
+    ...(xData
+      ? {
+          xSetup: { ready: xData.company !== null, data: xData },
+        }
+      : {}),
+    ...(linkedinData
+      ? {
+          linkedinSetup: { ready: linkedinData.company !== null, data: linkedinData },
+        }
+      : {}),
+    ...(redditData
+      ? {
+          redditSetup: { ready: redditData.company !== null, data: redditData },
+        }
+      : {}),
+  };
+}
+
+/**
  * A client's AI Agents page. Clients can run only the custom agents that an
- * admin granted them; staff can run every enabled custom agent.
+ * admin granted them; staff can run every enabled custom agent. Neither list
+ * may include a per-client agent instance belonging to a different client —
+ * its skill is baked under that client's lab folder, so a run here would draft
+ * the wrong company. Both branches filter on agentKeyMatchesClientSlug, and
+ * the submit core refuses a mismatched pair regardless of how it was launched.
  */
 export default async function ClientAgentsPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -53,6 +132,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   const agentServiceConfigured = isAgentServiceConfigured();
+  const linkedinPageUrl = client.socialLinks?.linkedin;
 
   // Client users: explicitly granted agents plus any agent that has already
   // delivered a successful run for this workspace.
@@ -78,7 +158,14 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         .filter((agentId): agentId is string => Boolean(agentId)),
     );
     const agents = allAgents
-      .filter((agent) => agent.enabled && (allowedIds.has(agent.id) || completedAgentIds.has(agent.id)))
+      .filter(
+        (agent) =>
+          agent.enabled &&
+          (allowedIds.has(agent.id) || completedAgentIds.has(agent.id)) &&
+          // The binding wins over both routes in: a grant and an inherited
+          // delivered run are equally unable to move an instance off its client.
+          agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
+      )
       .map(toSummary);
     // Impersonating admins see the client view but never spend real credits —
     // show the gate only to billable client actors. `now` rolls the spend
@@ -229,10 +316,25 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     listPlannedScheduledRuns({ clientId: id }),
     listClientAgents({ clientId: id }),
   ]);
+  const enabledAgents = customAgents
+    .filter((a) => a.enabled && agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug))
+    .map(toSummary);
 
   // (The jobPreviews block that used to live here fed <ManagedProducts />,
   // which nothing imported — it read every managed asset for this client on
-  // every page load and handed the result to no one. Removed with F39/F45.)
+  // every page load and handed the result to no one. Removed with F39/F45.
+  // origin/main rebuilt it in the same shape and likewise passes it to nobody,
+  // so it stays removed: it is one getAsset per managed deliverable per page
+  // load, for a value with no reader.)
+
+  // Ruling 7: the inline intake panes serve the STAFF dialog. The client's own
+  // route reaches the same forms through AgentSetupState.href, so this read
+  // happens on the staff branch only.
+  const setups = await intakeSetups(id, enabledAgents, {
+    isStaff,
+    jobs,
+    ...(linkedinPageUrl ? { linkedinPageUrl } : {}),
+  });
 
   const staffAgents = customAgents.filter((a) => a.enabled).map(toSummary);
   const agentSetup = await buildAgentSetup(id, staffAgents);
@@ -360,6 +462,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             contextItems={contextItems}
             viewerIsClient={false}
             agentSetup={agentSetup}
+            {...setups}
             viewer={{ name: user.name, email: user.email }}
           />
         </>

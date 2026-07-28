@@ -40,12 +40,22 @@ export function isLinkedInAgent(agentKey: string): boolean {
 
 /**
  * Whether the client's LinkedIn intake is set up enough to run `agentKey`.
- * Company-page instances gate on the company form being SAVED (a deliberate
- * portal policy — the lab contract would allow zero-input Path A runs, but
- * this portal wants the data page visited first). The Path B master gates on
- * ANY LinkedIn intake (company or a seat) since it has no company form to
- * fill. Bare shared seats never satisfy the gate — they may belong to
- * another agent.
+ *
+ * Company-page instances gate on the company form being SAVED. Saving it with
+ * empty answers counts, which is the deliberate portal policy: the lab contract
+ * would allow a zero-input Path A run, but this portal wants the data page
+ * visited first.
+ *
+ * The Path B master (karos-linkedin-agent) gates on ANY LinkedIn intake —
+ * company page OR a seat — because it has no company form of its own to fill.
+ * Collapsing the two into one company-only check (as origin/main did) locks the
+ * master out of a workspace that is fully set up on the seat side, so the key
+ * argument stays.
+ *
+ * A bare SHARED seat with no LinkedIn intake never satisfies either form: one
+ * person has one seat across every agent, so a seat alone says nothing about
+ * LinkedIn. The `ready` flag on the agents page is derived from the same intake
+ * docs; a drift un-gates a run.
  */
 export async function hasLinkedInAgentIntake(clientId: string, agentKey?: string): Promise<boolean> {
   if (agentKey === "karos-linkedin-agent") {

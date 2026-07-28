@@ -45,6 +45,11 @@ before building; adapt in place, never build parallel surfaces.
   pillars, cadence) or already stores; setup-gate the modal via an
   `xSetup`-style prop threaded from the server page (`hasXAgentIntake`
   pattern) plus the shared error-prefix constant (`X_SETUP_REQUIRED_PREFIX`).
+  Gate on the company-page intake doc (`agentIntake` with `seatId: null`),
+  NEVER on `clientSeats` — seats are shared across agents, so a seat added
+  for one platform reads as "set up" on every other and the intake form the
+  gate exists to raise never appears. Any `ready` flag derived on a page must
+  read the same row as the server gate; state the equivalence in a comment.
 - **Per-agent client data**: flat collections keyed by clientId/seatId.
   `clientSeats` is PLATFORM-AGNOSTIC (one person = one seat, shared across
   agents). `agentIntake` is keyed `(clientId, agent, seatId|null)` — widen
@@ -64,13 +69,31 @@ before building; adapt in place, never build parallel surfaces.
   embedded by `AssetCard` for the Library/archive AND the job page). Per
   draft: pick / pick-with-edits / skip-with-reason → `addXDraftFeedbackAction`
   (account resolved server-side from the section title). Picking is the
-  posting hand-off: copy text + open the platform's compose deep link
-  (popup-safe: `window.open` synchronously inside the click handler, before
-  the server action; guard retries so a failed feedback write never re-opens
-  compose; only claim "copied" when the clipboard promise resolved).
-- **Findability**: sidebar "Agent-specific documents" section in
-  `src/components/client-documents.tsx` → `/clients/[id]/<agent>` data page
-  (forms + ongoing boxes + free-form feedback box; outputs do NOT live here).
+  posting hand-off: copy text + open the platform's compose deep link. The
+  order is load-bearing, and it is the rule for the next integration: `await`
+  the clipboard write, THEN `window.open`, THEN the server action. Chrome
+  refuses a clipboard write once the new tab takes focus, so opening first
+  loses the copy silently — and the copy is what carries thread posts 2..N and
+  what saves the pick if an undocumented deep link stops prefilling. The await
+  stays inside the click gesture's transient activation, so the open still
+  counts as user-initiated. Accepted trade-off: the draft is flagged
+  handed-off before the open, so if a popup blocker rejects it the pick is
+  recorded anyway and the "Reopen on X →" link on the card is the recovery.
+  Also: guard retries so a failed feedback write never re-opens compose, and
+  only claim "copied" when the clipboard promise resolved.
+- **Findability**: the agent data lives in the agent, not in a sidebar — the
+  "Agent-specific documents" sidebar section is gone, and nothing may send a
+  person out of the dialog to fill a form. The client Agents page builds the
+  intake props with `src/lib/agent-intake-views.ts` and hands them to the run
+  dialog, which renders the form INLINE: the data pane opens in place of the
+  brief while the intake is unset (so pressing Run the first time IS the form),
+  and afterwards the form collapses behind the "<platform> agent data" button,
+  which sits both on the agent card and at the top of the run brief. The dialog
+  carries forms + ongoing boxes + free-form feedback box; outputs do NOT live
+  there. `/clients/[id]/<agent>` still mounts the same component with the same
+  props as a full-page deep link and is the fallback when a caller ships the
+  setup flag without the inline payload, but nothing in the navigation points
+  at it.
 - **Deploys**: portal auto-deploys from main. The agent service is manual:
   `gcloud builds submit --config agent-service/cloudbuild.yaml --substitutions
   _REGION=europe-west1,_REPO=karos,_AGENTS_REF=main,_VPC_CONNECTOR=agent-vpc,
@@ -94,8 +117,9 @@ before building; adapt in place, never build parallel surfaces.
    Firestore read — prior runs, launch profile, scheduler wiring). Deliver a
    state report + KEEP/MODIFY/ADD/REMOVE table. STOP for approval.
 2. **Adapt in place** on one branch: types → data CRUD → server actions →
-   intake page → launch profile + setup gate → run-time injection in BOTH
-   submit cores → reader/pick-to-post deltas → canonical instructions doc.
+   intake component (mounted in the run dialog, plus the deep-link page) →
+   launch profile + setup gate → run-time injection in BOTH submit cores →
+   reader/pick-to-post deltas → canonical instructions doc.
    Typecheck, full vitest, production build. Update any existing tests that
    pin old behavior (don't delete them — repoint them at the new contract).
 3. **Data + acceptance.** Seed the pilot client's values (snapshots +
@@ -109,8 +133,8 @@ before building; adapt in place, never build parallel surfaces.
    instructions as hard gates.
 5. **Polish rounds** with Daniel's review: presentation, copy (sentence
    case, no em dashes in client-facing strings, no jargon, each field says
-   what we do with the answer), placement (inputs on the data page, outputs
-   where deliverables live).
+   what we do with the answer), placement (inputs inside the agent's run
+   dialog, outputs where deliverables live).
 
 ## X-specific vs generalizable
 

@@ -23,9 +23,20 @@ import {
   hasLinkedInAgentIntake,
   isLinkedInAgent,
 } from "@/lib/agent-service/linkedin-agent-context";
+import {
+  buildRedditAgentContextFiles,
+  hasRedditAgentIntake,
+  isRedditAgent,
+} from "@/lib/agent-service/reddit-agent-context";
 import { buildClientAgentFeedbackFiles } from "@/lib/agent-service/client-agent-feedback-context";
 import { getClientAgentByKey } from "@/lib/data-client-agents";
-import { LINKEDIN_SETUP_REQUIRED_PREFIX, X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
+import {
+  LINKEDIN_SETUP_REQUIRED_PREFIX,
+  REDDIT_SETUP_REQUIRED_PREFIX,
+  X_SETUP_REQUIRED_PREFIX,
+  agentKeyMatchesClientSlug,
+  perClientAgentSlug,
+} from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
@@ -146,6 +157,17 @@ export async function submitCustomAgentJob(
     return { error: "Agent not found." };
   }
 
+  // A per-client agent instance runs an entry skill baked under the one client
+  // folder its key names, so pairing it with another client would draft that
+  // client's data against another company's playbook. The agents page keeps
+  // mismatched cards off the list; this refuses the pair however it arrives —
+  // a stale page, a saved link, an MCP call, or a scheduled run.
+  if (!agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) {
+    return {
+      error: `${agent.name} runs only for the client whose lab repo slug is "${perClientAgentSlug(agent.key)}", and ${client.name}'s slug is ${client.agentsRepoSlug ? `"${client.agentsRepoSlug}"` : "not set"}. Nothing has run — use this client's own agent.`,
+    };
+  }
+
   const prompt = input.prompt.trim();
   if (!prompt) return { error: "Describe what you want the agent to produce." };
   if (prompt.length > MAX_PROMPT_CHARS) {
@@ -184,7 +206,9 @@ export async function submitCustomAgentJob(
   // per-account learning logs as context files (see x-agent-context.ts). Lives
   // in this shared core so manual, scheduled, and MCP-fired X runs all inject.
   // Other agents skip it. The agent runs ON this data, so hard-gate: no intake,
-  // no run — with a message pointing to the setup page.
+  // no run — with a message naming where that data lives. It has to read
+  // correctly both in the run dialog and in a scheduled run's error row, so it
+  // names the destination rather than a click the reader may have just made.
   if (isXAgent(agent.key)) {
     if (!(await hasXAgentIntake(input.clientId))) {
       return {
@@ -207,7 +231,7 @@ export async function submitCustomAgentJob(
   // drop as company-updates.md, CVs, learning logs, and prior batches (see
   // linkedin-agent-context.ts). Hard-gated the same way.
   if (isLinkedInAgent(agent.key)) {
-    if (!(await hasLinkedInAgentIntake(input.clientId, agent.key))) {
+    if (!(await hasLinkedInAgentIntake(input.clientId))) {
       return {
         error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
@@ -217,6 +241,25 @@ export async function submitCustomAgentJob(
     } catch (e) {
       return {
         error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
+  // Reddit agent (e15): the same contract — the account we draft as, its
+  // history, off-limits subreddits, the disclosure wording, the per-subreddit
+  // verdicts earned from the client's own outcomes, and prior drafts for
+  // anti-duplication (see reddit-agent-context.ts). Hard-gated the same way.
+  if (isRedditAgent(agent.key)) {
+    if (!(await hasRedditAgentIntake(input.clientId))) {
+      return {
+        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first: save the account form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildRedditAgentContextFiles(input.clientId, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's Reddit intake data: ${e instanceof Error ? e.message : "unknown error"}`,
       };
     }
   }

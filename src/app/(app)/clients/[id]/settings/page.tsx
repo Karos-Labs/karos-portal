@@ -32,6 +32,7 @@ import { ClientAgentAccessCard } from "@/components/custom-agents";
 import { ScheduledRunsCard } from "@/components/scheduled-runs";
 import { ClientEditor } from "@/components/client-editor";
 import { SettingsTabs, type SettingsTab } from "@/components/settings-tabs";
+import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { relativeTime } from "@/lib/utils";
 import type { ClientIntegration, Transcript, ClientCredits, CreditLedgerEntry, CustomAgent, ClientSettings, EmployeeSeat, JobRunType, ScheduledRun } from "@/lib/types";
 
@@ -92,6 +93,14 @@ export default async function ClientSettingsPage({
   });
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
+  // Both agent controls below act on THIS client, so neither may offer a
+  // per-client agent instance belonging to another one: granting it would be
+  // inert (both submit cores refuse the pair) and scheduling it would build a
+  // row that refuses on every fire.
+  const clientAgents = customAgents.filter((a) =>
+    agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
+  );
+
   // Sanitized LinkedIn seats for the multi-seat workspace — strip tokens; the UI
   // never needs (and must never receive) the credentials, encrypted or not.
   const linkedIntegration = integrations.find((i) => i.platform === "linkedin") as ClientIntegration | undefined;
@@ -145,7 +154,7 @@ export default async function ClientSettingsPage({
           </p>
           <ClientAgentAccessCard
             clientId={client.id}
-            agents={customAgents}
+            agents={clientAgents}
             allowedIds={client.customAgentIds ?? []}
           />
         </Card>
@@ -162,7 +171,7 @@ export default async function ClientSettingsPage({
           <ScheduledRunsCard
             clientId={client.id}
             runs={scheduledRuns}
-            agents={customAgents
+            agents={clientAgents
               .filter((a) => a.enabled)
               .map((a) => ({ id: a.id, name: a.name, entrySkillDir: a.entrySkillDir }))}
           />

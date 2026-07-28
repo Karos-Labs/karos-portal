@@ -338,6 +338,10 @@ export interface ScheduledRun {
   nextRunAt: number;
   lastRunAt?: number | null;
   lastJobId?: string | null;
+  /** Why the most recent fire produced no job; null ⇒ the last fire was clean. */
+  lastError?: string | null;
+  /** Epoch millis of `lastError`. */
+  lastErrorAt?: number | null;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -544,10 +548,12 @@ export type PlannedRunCadence = "once" | "daily" | "weekly" | "monthly";
 
 /**
  * A planned agent run: a managed (catalog) product queued to fire at a future
- * time, optionally on a repeating cadence. Staff-created; the /api/run-scheduled
- * cron submits the actual job via submitCustomAgentJob() when `nextRunAt` passes,
- * then advances (recurring) or completes (once) the schedule. Clients only view
- * their own upcoming runs — they never create or edit them.
+ * time, optionally on a repeating cadence. Created by staff (any cadence) or by
+ * a client switching an agent on weekly from its card, in which case
+ * `billClientCredits` makes every fire spend that client's credits. The
+ * /api/run-scheduled cron submits the actual job via submitCustomAgentJob()
+ * when `nextRunAt` passes, then advances (recurring) or completes (once) the
+ * schedule.
  */
 export interface PlannedScheduledRun {
   id: string;
@@ -597,12 +603,15 @@ export interface PlannedScheduledRun {
   lastJobId?: string;
   /**
    * Human-readable refusal from the most recent fire that produced nothing
-   * (out of credits, cap reached, missing intake, service down). Cleared on the
-   * next successful fire. Rendered on the agent card so a schedule that can
-   * never fire is visible instead of silently green.
+   * (out of credits, cap reached, missing intake, service down). A submit
+   * refused before a job row exists leaves no job, no failed status and no
+   * charge, so this is the only trace it left. Rendered on the agent card so a
+   * schedule that can never fire is visible instead of silently green.
+   * `null` ⇒ the last fire was clean — undefined does not clear a Firestore
+   * field, so cleared must be written as an explicit null.
    */
   lastError?: string | null;
-  /** Epoch millis of that refusal. */
+  /** Epoch millis of `lastError`. */
   lastErrorAt?: number | null;
   createdBy: string;
   createdAt: number;
@@ -1450,12 +1459,13 @@ export interface AgentIntake {
   id: string;
   clientId: string;
   /** Agent family. Widen the union as more agents get intake. */
-  agent: "x" | "linkedin";
+  agent: "x" | "linkedin" | "reddit";
   /** null = company-page intake; otherwise the ClientSeat id. */
   seatId: string | null;
   /**
    * Account identity on the platform: X = @handle, LinkedIn = profile/page
-   * URL. Null = none yet (company) / pending (seat drafts, cannot post).
+   * URL, Reddit = u/username. Null = none yet (company) / pending (seat
+   * drafts, cannot post).
    */
   handle: string | null;
   /** Company form only: how the brand wants to come across (the one asked voice input). */
@@ -1495,6 +1505,39 @@ export interface AgentIntake {
   cvUrl?: string;
   cvName?: string;
   cvUploadedAt?: number;
+  /**
+   * Reddit only — an honest read of the account's Reddit history (karma, age,
+   * prior participation). The lab input contract makes this REQUIRED
+   * alongside the username: a brand-new or all-promo account cannot safely
+   * carry a product mention, so it runs warming mode until it has genuine
+   * history. Auto-fillable from the read-only Reddit connector
+   * (fetchRedditAccountHealth) when the client connects their account.
+   */
+  accountHistory?: string;
+  /**
+   * Reddit only — subreddits the client already participates in, as a
+   * research STARTING POINT. The roster proper is derived by the agent from
+   * the audience and category; this never replaces it.
+   */
+  subreddits?: string[];
+  /**
+   * Reddit only — subreddits that are off-limits (the client was burned or
+   * banned there). Binding: the agent never drafts for these.
+   */
+  offLimitsSubreddits?: string[];
+  /**
+   * Reddit only — the disclosure posture the client is comfortable with, in
+   * their own words. Used verbatim as the disclosure line on any draft that
+   * carries a product mention.
+   */
+  disclosurePosture?: string;
+  /**
+   * Reddit only — program mode. "warming" = pure-value answers, zero product
+   * mentions, until the account earns history. Undefined = let the agent
+   * decide from the account history above (it defaults to warming, the safe
+   * direction).
+   */
+  mode?: "warming" | "established";
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -1853,4 +1896,47 @@ export interface ClientAgentFeedback {
   creatorRole: "client" | "staff";
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * Reddit per-draft feedback — the same contract as LiDraftFeedback, in its own
+ * collection so per-platform Learning Logs never mix, plus the two fields the
+ * Reddit contract turns on:
+ *
+ * - `reasonCode` is a CLOSED set the weekly manager acts on mechanically: two
+ *   "too_promotional" rows against one subreddit downgrade that subreddit to
+ *   value-only or drop it the same run. Free text alone cannot drive that, and
+ *   an unrecognized code silently degrading to prose would corrupt the signal.
+ * - `subreddit` is what makes the aggregation possible without a second
+ *   collection: the rule is per-subreddit, not per-account.
+ *
+ * "removed" is Reddit's strongest negative signal — an answer taken down by
+ * automod or mods. That pattern is never repeated in that subreddit.
+ */
+export interface RedditDraftFeedback {
+  id: string;
+  clientId: string;
+  /** "company", "program" (applies to every account), or a ClientSeat id. */
+  account: string;
+  jobId?: string;
+  assetId?: string;
+  /** Which draft, e.g. "Karos Labs — company account · Draft 1 · Thorough value answer". */
+  draftRef?: string;
+  /**
+   * "note" = free-form client feedback, not tied to one draft.
+   * "edit_request" = asks for a change to this draft (no posting hand-off).
+   */
+  action: "posted" | "posted_with_edits" | "not_posted" | "note" | "edit_request";
+  /** posted_with_edits: the final text the client actually used. */
+  finalText?: string;
+  /** not_posted: why it was killed. edit_request: what to change. */
+  reason?: string;
+  /** not_posted: the closed-set reason the manager aggregates per subreddit. */
+  reasonCode?: "too_promotional" | "wrong_subreddit" | "thread_died" | "rules" | "removed" | "other";
+  /** The subreddit the draft targeted — the key the promo-verdict rule aggregates on. */
+  subreddit?: string;
+  /** The thread the draft answered, for the audit trail. */
+  threadUrl?: string;
+  createdBy: string;
+  createdAt: number;
 }

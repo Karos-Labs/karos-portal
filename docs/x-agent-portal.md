@@ -7,7 +7,7 @@ How the X agent runs through this portal. Spec of record: the lab repo's
 
 | Surface | Where |
 |---|---|
-| Company-page form, seats ("add a seat"), what's-new box, per-seat takes box, per-draft feedback | `/clients/<id>/x-agent` (`src/app/(app)/clients/[id]/x-agent/page.tsx`) |
+| Company-page form, seats ("add a seat"), what's-new box, per-seat takes box, per-draft feedback | `src/components/x-agent-intake.tsx`, rendered inside the run dialog on `/clients/<id>/agents` — inline on a first run, then collapsed behind the "X agent data" button on the agent card and at the top of the run brief — and by the `/clients/<id>/x-agent` deep link, which no navigation points at. Both get their props from `buildXAgentIntakeView` in `src/lib/agent-intake-views.ts` — one mapping, two mounts |
 | Agent registration | `customAgents` doc, key `karos-x-agent` → `products/live/x-agent` (imported from the lab manifest) |
 | Run launcher | `/clients/<id>/agents` (custom agents hub; X launch prompts in `src/components/custom-agents.tsx`) |
 | Stored data | Firestore: `clientSeats`, `agentIntake` (agent="x"), `xNewsUpdates`, `xTakes`, `xDraftFeedback` — flat collections keyed by clientId/seatId |

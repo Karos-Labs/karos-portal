@@ -27,6 +27,7 @@ import { addLiDraftFeedbackAction } from "@/lib/actions/linkedin-agent-actions";
 import { laneLabel } from "@/lib/draft-lane-label";
 import { stripInlineMarkdown } from "@/lib/doc-render";
 import type { LiParsedAccount, LiParsedDraft } from "@/lib/li-drafts";
+import { splitMetaLinks } from "@/lib/draft-meta";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
 
@@ -206,8 +207,26 @@ function DraftCard({
       {draft.meta.length > 0 ? (
         <ul className="mt-2 space-y-0.5">
           {draft.meta.map((m, i) => (
-            <li key={i} className="text-xs text-muted">
-              {stripInlineMarkdown(m)}
+            <li key={i} className="break-words text-xs text-muted">
+              {/* Linkified AND de-marked: the lab writes these bullets in
+                  markdown, so the prose runs are stripped (F70 — raw ** must
+                  never reach a client), while a link run is a bare URL and is
+                  rendered verbatim; stripping inside an href would corrupt it. */}
+              {splitMetaLinks(m).map((seg, j) =>
+                seg.href ? (
+                  <a
+                    key={j}
+                    href={seg.href}
+                    target="_blank"
+                    rel="noopener"
+                    className="underline hover:text-foreground"
+                  >
+                    {seg.text}
+                  </a>
+                ) : (
+                  <span key={j}>{stripInlineMarkdown(seg.text)}</span>
+                ),
+              )}
             </li>
           ))}
         </ul>

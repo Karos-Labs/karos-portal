@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { recommendPublishTime, recommendedScheduleFields } from "@/lib/scheduling";
+import { chainAllowsDay, recommendPublishTime, recommendedScheduleFields } from "@/lib/scheduling";
 
 /** Local-time constructor keeps assertions timezone-independent. */
 function local(y: number, m: number, d: number, h = 0, min = 0): number {
@@ -9,6 +9,32 @@ function local(y: number, m: number, d: number, h = 0, min = 0): number {
 // 2026-07-06 is a Monday.
 const MONDAY_8AM = local(2026, 6, 6, 8);
 const FRIDAY_9AM = local(2026, 6, 10, 9);
+
+describe("chainAllowsDay — smart weekend policy", () => {
+  // weekday numbers: 0=Sun … 6=Sat
+  it("allows every weekday for any platform", () => {
+    for (let d = 1; d <= 5; d++) {
+      expect(chainAllowsDay("instagram_post", "instagram", d)).toBe(true);
+      expect(chainAllowsDay("email", undefined, d)).toBe(true);
+    }
+  });
+
+  it("blocks weekends for weekday-only platforms and email", () => {
+    expect(chainAllowsDay("instagram_post", "instagram", 6)).toBe(false); // Sat
+    expect(chainAllowsDay("instagram_post", "instagram", 0)).toBe(false); // Sun
+    expect(chainAllowsDay("social_post", "linkedin", 6)).toBe(false);
+    expect(chainAllowsDay("email", undefined, 6)).toBe(false);
+  });
+
+  it("allows Saturday for YouTube (its engagement window includes it) but not Sunday", () => {
+    expect(chainAllowsDay("social_post", "youtube", 6)).toBe(true); // Sat
+    expect(chainAllowsDay("social_post", "youtube", 0)).toBe(false); // Sun
+  });
+
+  it("fails open for an unclassified type/platform", () => {
+    expect(chainAllowsDay("note", undefined, 6)).toBe(true);
+  });
+});
 
 describe("recommendPublishTime", () => {
   it("returns null for types with no scheduling dimension", () => {

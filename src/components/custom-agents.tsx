@@ -1,12 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { type ComponentProps, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Label, Select, Textarea } from "@/components/ui";
-import { Icon } from "@/components/icon";
-import { AgentIdentity, AgentMark, AgentPlatformBadges } from "@/components/agent-identity";
+import { Icon, LinkedInLogo, XLogo } from "@/components/icon";
+import {
+  AgentIdentity,
+  AgentMark,
+  AgentPlatformBadges,
+  SocialPlatformMark,
+} from "@/components/agent-identity";
 import { AgentInputFiles } from "@/components/agent-input-files";
+import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
+import { RedditAgentIntake } from "@/components/reddit-agent-intake";
+import { XAgentIntake } from "@/components/x-agent-intake";
 import { Modal } from "@/components/modal";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { JobStatusBadge } from "@/components/job-status";
@@ -32,9 +40,11 @@ import {
   buildCustomAgentPrompt,
   initialAgentBrief,
   isLinkedInAgentIdentity,
+  isRedditAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
+  REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
 import type { ContextItem, CustomAgent, JobStatus } from "@/lib/types";
@@ -223,6 +233,147 @@ function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "ke
   );
 }
 
+/* ═══════ intake-driven agents (X e13, LinkedIn e10, Reddit e15) ═══════ */
+
+/**
+ * The X, LinkedIn and Reddit agents draft from stored intake, so their data
+ * forms live inside the run dialog: inline on a first run, behind the
+ * "<platform> agent data" button once the data exists. `ready` is the server run
+ * gate; `data` is the payload rendered inline.
+ */
+export interface XAgentSetup {
+  ready: boolean;
+  data: ComponentProps<typeof XAgentIntake>;
+}
+
+/** The e10 twin of XAgentSetup. */
+export interface LinkedInAgentSetup {
+  ready: boolean;
+  data: ComponentProps<typeof LinkedInAgentIntake>;
+}
+
+/** The e15 twin of XAgentSetup. */
+export interface RedditAgentSetup {
+  ready: boolean;
+  data: ComponentProps<typeof RedditAgentIntake>;
+}
+
+type IntakeKind = "x" | "linkedin" | "reddit";
+
+type AgentIntakeContext =
+  | { kind: "x"; setup: XAgentSetup }
+  | { kind: "linkedin"; setup: LinkedInAgentSetup }
+  | { kind: "reddit"; setup: RedditAgentSetup };
+
+const INTAKE_LABEL: Record<IntakeKind, string> = { x: "X", linkedin: "LinkedIn", reddit: "Reddit" };
+
+/** Route segment of the full agent data page, for callers with no inline payload. */
+const INTAKE_ROUTE: Record<IntakeKind, string> = {
+  x: "x-agent",
+  linkedin: "linkedin-agent",
+  reddit: "reddit-agent",
+};
+
+/**
+ * What the agent drafts from, in the client's words — the run dialog says this
+ * when the data is still missing. Per kind, because the three agents hold
+ * genuinely different data: X and LinkedIn have a company page and seats,
+ * Reddit has one account plus the subreddits it may answer in.
+ */
+const INTAKE_ASKS: Record<IntakeKind, string> = {
+  x: "the company page, a seat for each person, and your ongoing drops",
+  linkedin: "the company page, a seat for each person, and your ongoing drops",
+  reddit: "the account we draft as, and how you want mentions handled",
+};
+
+/** The first thing to do in the data pane, per kind. */
+const INTAKE_FIRST_STEP: Record<IntakeKind, string> = {
+  x: "Save the company page below to continue.",
+  linkedin: "Save the company page below to continue.",
+  reddit: "Save your Reddit account below to continue.",
+};
+
+/** Which intake surface governs this agent, given what the page shipped. */
+function intakeFor(
+  agentKey: string,
+  xSetup?: XAgentSetup,
+  linkedinSetup?: LinkedInAgentSetup,
+  redditSetup?: RedditAgentSetup,
+): AgentIntakeContext | null {
+  if (xSetup && isXAgentIdentity(agentKey)) return { kind: "x", setup: xSetup };
+  if (linkedinSetup && isLinkedInAgentIdentity(agentKey)) {
+    return { kind: "linkedin", setup: linkedinSetup };
+  }
+  if (redditSetup && isRedditAgentIdentity(agentKey)) return { kind: "reddit", setup: redditSetup };
+  return null;
+}
+
+function IntakeGlyph({ kind, className }: { kind: IntakeKind; className?: string }) {
+  if (kind === "x") return <XLogo className={className} />;
+  if (kind === "linkedin") return <LinkedInLogo className={className} />;
+  return <SocialPlatformMark platform="reddit" className={className} />;
+}
+
+/**
+ * Is the company page saved? `ready` is a looser server predicate — for X, any
+ * seat satisfies it, and seats are shared across agents — so it cannot decide
+ * on its own whether the setup a person came here to do is finished.
+ */
+function companyOnFile(intake: AgentIntakeContext | null): boolean {
+  return Boolean(intake?.setup.data.company);
+}
+
+/**
+ * Does this agent hold everything it drafts from? Both checks read the company
+ * page today, from the server predicate and from the payload respectively;
+ * requiring both keeps the affordance honest if a caller's flag ever drifts
+ * from the rows it ships.
+ */
+function intakeComplete(intake: AgentIntakeContext): boolean {
+  return intake.setup.ready && companyOnFile(intake);
+}
+
+function IntakeForm({ intake }: { intake: AgentIntakeContext }) {
+  // One explicit branch per kind on purpose: a trailing fallback would silently
+  // render another platform's form for a kind added later.
+  if (intake.kind === "x") return <XAgentIntake {...intake.setup.data} />;
+  if (intake.kind === "linkedin") return <LinkedInAgentIntake {...intake.setup.data} />;
+  return <RedditAgentIntake {...intake.setup.data} />;
+}
+
+/**
+ * The way into an agent's data: warning-toned while the data is still missing,
+ * quiet once it is on file. Opens the run dialog's data pane rather than
+ * navigating — the data belongs with the agent.
+ */
+function AgentDataButton({
+  kind,
+  ready,
+  onOpen,
+}: {
+  kind: IntakeKind;
+  ready: boolean;
+  onOpen: () => void;
+}) {
+  const className = cn(
+    "inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
+    ready
+      ? "border-border bg-surface-2 text-muted hover:border-border-strong hover:text-foreground"
+      : "border-warning/30 bg-warning/10 text-warning hover:border-warning/50 hover:bg-warning/15",
+  );
+  const label = `${INTAKE_LABEL[kind]} agent data`;
+  // The short visible text needs the platform back for anyone who cannot see
+  // the glyph, and it stays inside the accessible name so voice control can
+  // still say what it reads.
+  const name = ready ? label : `${label}: setup needed`;
+  return (
+    <button type="button" onClick={onOpen} className={className} aria-label={name}>
+      <IntakeGlyph kind={kind} className="h-3 w-3" />
+      {ready ? label : "Setup needed"}
+    </button>
+  );
+}
+
 /* ═══════════════════ staff hub (/agents) ═══════════════════ */
 
 /**
@@ -405,6 +556,9 @@ export function ClientCustomAgents({
   creditBlockReasons,
   agentSetup,
   viewer,
+  xSetup,
+  linkedinSetup,
+  redditSetup,
 }: {
   clientId: string;
   agents: RunnableAgentSummary[];
@@ -428,8 +582,14 @@ export function ClientCustomAgents({
    * submit core makes. Agents without an intake gate are simply absent.
    */
   agentSetup?: Record<string, AgentSetupState>;
+  /** X agent intake state and, when the page could prefetch it, its data form. */
+  xSetup?: XAgentSetup;
+  /** LinkedIn agent intake state — same shape for the e10 agents. */
+  linkedinSetup?: LinkedInAgentSetup;
+  redditSetup?: RedditAgentSetup;
 }) {
   const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
+  const [runIntakeFirst, setRunIntakeFirst] = useState(false);
   const [scheduleAgent, setScheduleAgent] = useState<RunnableAgentSummary | null>(null);
 
   const agentByName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
@@ -438,7 +598,26 @@ export function ClientCustomAgents({
     [schedules],
   );
 
+  function openRun(agent: RunnableAgentSummary, intakeFirst = false) {
+    setRunIntakeFirst(intakeFirst);
+    setRunAgent(agent);
+  }
+
   if (agents.length === 0 && runs.length === 0) return null;
+
+  // The open schedule dialog's own copy of the card's gate: props refresh
+  // underneath it, so the agent data can go missing while it is open.
+  const scheduleIntake = scheduleAgent ? intakeFor(scheduleAgent.key, xSetup, linkedinSetup, redditSetup) : null;
+  const scheduleSetupNeeded =
+    scheduleAgent && scheduleIntake && !companyOnFile(scheduleIntake)
+      ? {
+          kind: scheduleIntake.kind,
+          onOpenData: () => {
+            setScheduleAgent(null);
+            openRun(scheduleAgent, true);
+          },
+        }
+      : null;
 
   return (
     <section className="mt-10">
@@ -498,6 +677,11 @@ export function ClientCustomAgents({
             const reviewHref = viewerIsClient
               ? "/tasks"
               : reviewRuns[0]?.href ?? `/clients/${clientId}/assets`;
+            const intake = intakeFor(agent.key, xSetup, linkedinSetup, redditSetup);
+            // A scheduled run fires unattended, so every fire would be refused
+            // while the company page is missing. An existing schedule stays
+            // open to manage — pausing it must never be blocked.
+            const scheduleNeedsData = Boolean(intake) && !companyOnFile(intake) && !schedule;
             return (
               <div
                 key={agent.id}
@@ -532,9 +716,15 @@ export function ClientCustomAgents({
                     </Link>
                   )}
                 </div>
-                <div className="mt-3 flex items-center gap-2">
+                <div className="mt-3 flex flex-wrap items-center gap-2">
                   <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
-                  {blockedSetup && (
+                  {/* Two affordances, never both at once. Missing data is a
+                      CALL TO ACTION and links to the agent's own data page
+                      (CD-E1) — the one place that form lives. Data already on
+                      file is an EDIT affordance and opens the dialog's inline
+                      pane, so a staff member correcting one field does not lose
+                      the run they were setting up. */}
+                  {blockedSetup ? (
                     <a
                       href={blockedSetup.href}
                       className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
@@ -542,7 +732,13 @@ export function ClientCustomAgents({
                     >
                       <Badge tone="warning">Setup needed</Badge>
                     </a>
-                  )}
+                  ) : intake && intakeComplete(intake) ? (
+                    <AgentDataButton
+                      kind={intake.kind}
+                      ready
+                      onOpen={() => openRun(agent, true)}
+                    />
+                  ) : null}
                 </div>
                 {/* The one slot on the card that carries live state. Precedence,
                     highest first: a stored refusal (the schedule fired and was
@@ -609,12 +805,33 @@ export function ClientCustomAgents({
                     <Button
                       size="sm"
                       variant="ghost"
+                      // F131: a control the server would refuse is never left
+                      // enabled. Missing intake is exactly such a refusal, so
+                      // the chip above is the way in, not this button.
                       disabled={short || Boolean(blockedSetup)}
-                      onClick={() => setRunAgent(agent)}
+                      title={
+                        short
+                          ? "Not enough credits. Ask your Karos team for a top-up."
+                          : blockedSetup
+                            ? `Add the ${blockedSetup.label} first — the agent drafts from it.`
+                            : undefined
+                      }
+                      onClick={() => openRun(agent)}
                     >
                       <Icon name="Play" className="h-3.5 w-3.5" /> Run now
                     </Button>
-                    <Button size="sm" variant="subtle" onClick={() => setScheduleAgent(agent)}>
+                    <Button
+                      size="sm"
+                      variant="subtle"
+                      title={
+                        scheduleNeedsData && intake
+                          ? `Add the ${INTAKE_LABEL[intake.kind]} agent data first — every scheduled run drafts from it.`
+                          : undefined
+                      }
+                      onClick={() =>
+                        scheduleNeedsData ? openRun(agent, true) : setScheduleAgent(agent)
+                      }
+                    >
                       <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" />
                       {schedule ? "Manage" : "Set schedule"}
                     </Button>
@@ -728,6 +945,10 @@ export function ClientCustomAgents({
           contextItems={contextItems}
           viewerIsClient={viewerIsClient}
           {...(agentSetup?.[runAgent.id] ? { setup: agentSetup[runAgent.id] } : {})}
+          {...(xSetup ? { xSetup } : {})}
+          {...(linkedinSetup ? { linkedinSetup } : {})}
+          {...(redditSetup ? { redditSetup } : {})}
+          {...(runIntakeFirst ? { initialPane: "data" as const } : {})}
           onClose={() => setRunAgent(null)}
         />
       )}
@@ -737,6 +958,7 @@ export function ClientCustomAgents({
           clientId={clientId}
           schedule={scheduleByAgent.get(scheduleAgent.id)}
           availableCredits={availableCredits}
+          {...(scheduleSetupNeeded ? { setupNeeded: scheduleSetupNeeded } : {})}
           onClose={() => setScheduleAgent(null)}
         />
       )}
@@ -858,6 +1080,7 @@ export function AgentScheduleModal({
   schedule,
   availableCredits,
   paceOnly = false,
+  setupNeeded,
   onClose,
 }: {
   agent: RunnableAgentSummary;
@@ -866,6 +1089,8 @@ export function AgentScheduleModal({
   availableCredits?: number;
   /** Client viewers: pace language only, no batch dial. */
   paceOnly?: boolean;
+  /** Set when this agent drafts from intake and its company page is missing. */
+  setupNeeded?: { kind: IntakeKind; onOpenData: () => void };
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -887,6 +1112,9 @@ export function AgentScheduleModal({
   const costPerOutput = agentRunCost(agent);
   const weeklyCost = scheduledAgentWeeklyCost(costPerOutput, postsPerWeek, outputsPerRun);
   const insufficient = availableCredits !== undefined && availableCredits < costPerOutput * outputsPerRun;
+  // Nothing unattended can start before the agent has what it drafts from.
+  // A schedule that already exists stays editable, so it can still be paused.
+  const blockedBySetup = Boolean(setupNeeded) && !schedule;
 
   function save() {
     setError(null);
@@ -950,7 +1178,14 @@ export function AgentScheduleModal({
           </div>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
-            <Button variant="accent" onClick={save} loading={pending} disabled={insufficient}>
+            <Button
+              variant="accent"
+              onClick={save}
+              loading={pending}
+              // Setup missing ⇒ every fire this schedule writes would be
+              // refused, so the control that writes it is not left enabled.
+              disabled={insufficient || blockedBySetup}
+            >
               {paceOnly
                 ? schedule
                   ? "Save pace"
@@ -1075,6 +1310,20 @@ export function AgentScheduleModal({
           )}
         </div>
 
+        {blockedBySetup && setupNeeded && (
+          <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            Add the {INTAKE_LABEL[setupNeeded.kind]} agent data first. Every scheduled run drafts
+            from it, so none can start until it is saved.{" "}
+            <button
+              type="button"
+              onClick={setupNeeded.onOpenData}
+              className="cursor-pointer underline"
+            >
+              Open {INTAKE_LABEL[setupNeeded.kind]} agent data →
+            </button>
+          </p>
+        )}
+
         {error && <p className="text-xs text-danger" role="alert">{error}</p>}
       </div>
     </Modal>
@@ -1082,6 +1331,9 @@ export function AgentScheduleModal({
 }
 
 /* ═══════════════════════ run dialog ═══════════════════════ */
+
+/** The brief, or the agent's own data form — the intake-driven agents own both. */
+type RunPane = "run" | "data";
 
 /**
  * Exported so the agent DETAIL page can offer the same run gesture for an
@@ -1096,6 +1348,10 @@ export function RunCustomAgentModal({
   contextItems,
   viewerIsClient,
   setup,
+  xSetup,
+  linkedinSetup,
+  redditSetup,
+  initialPane,
   onClose,
 }: {
   agent: RunnableAgentSummary;
@@ -1110,6 +1366,13 @@ export function RunCustomAgentModal({
    * When not ready the modal routes to setup instead of running.
    */
   setup?: AgentSetupState;
+  /** X agent intake state and, when prefetched, the data form rendered inline. */
+  xSetup?: XAgentSetup;
+  /** LinkedIn agent intake state — same shape for the e10 agents. */
+  linkedinSetup?: LinkedInAgentSetup;
+  redditSetup?: RedditAgentSetup;
+  /** "data" opens straight on the agent's data; so does a missing company page. */
+  initialPane?: RunPane;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -1118,15 +1381,65 @@ export function RunCustomAgentModal({
   const profile = launchProfileFor(agent);
   const [fields, setFields] = useState<Record<string, string>>(() => initialAgentBrief(profile));
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  // Has anyone put work into the brief that a stray click would throw away?
+  const [briefTouched, setBriefTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
+  const intake = intakeFor(agent.key, xSetup, linkedinSetup, redditSetup);
+  const intakeReady = intake?.setup.ready ?? true;
+  // The data opens on the company page being missing, not on the server gate:
+  // `ready` is satisfied by a shared seat, so an X run would otherwise skip
+  // straight to the brief for a client who set LinkedIn up first. This only
+  // chooses the pane — `ready` alone still decides what a run does.
+  const openOnData = Boolean(intake) && (!companyOnFile(intake) || initialPane === "data");
+  const [pane, setPane] = useState<RunPane>(openOnData ? "data" : "run");
+  // Did the data open because the run wanted it, rather than because someone
+  // asked for it from the card? Held in state so it survives the props refresh
+  // that saving the company page triggers underneath this dialog.
+  const [openedForSetup] = useState(() => openOnData && initialPane !== "data");
+  // Only someone who has seen the brief can go "back" to it. A dialog that
+  // opened on the data has not shown it yet, so its way out reads forward.
+  const [seenRun, setSeenRun] = useState(!openOnData);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const dataPaneRef = useRef<HTMLDivElement>(null);
+  const runPaneRef = useRef<HTMLDivElement>(null);
+  const shownPane = useRef<RunPane>(pane);
   const primaryField =
     profile.fields.find((field) => field.key === "request") ??
     profile.fields.find((field) => field.required) ??
     profile.fields[0];
+  // A server-side setup gate can still fire when this dialog's `ready` was
+  // stale, so the message needs its own way back to the data.
+  const setupErrorKind: IntakeKind | null = !error
+    ? null
+    : error.startsWith(X_SETUP_REQUIRED_PREFIX)
+      ? "x"
+      : error.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX)
+        ? "linkedin"
+        : error.startsWith(REDDIT_SETUP_REQUIRED_PREFIX)
+          ? "reddit"
+          : null;
+
+  // Both panes share the dialog's single scroll box, which also holds the title
+  // and the sentence explaining the swap, so a switch has to go back to the top
+  // of that box rather than to the top of the pane. The control that did the
+  // switching lived in the pane it hid, so focus has to move too. Neither is
+  // wanted on first mount — the dialog already opens at the top.
+  useEffect(() => {
+    if (shownPane.current === pane) return;
+    shownPane.current = pane;
+    (pane === "data" ? dataPaneRef : runPaneRef).current?.focus({ preventScroll: true });
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [pane]);
 
   function setField(key: string, value: string) {
+    setBriefTouched(true);
     setFields((current) => ({ ...current, [key]: value }));
+  }
+
+  function showRun() {
+    setSeenRun(true);
+    setPane("run");
   }
 
   function submit() {
@@ -1214,9 +1527,12 @@ export function RunCustomAgentModal({
     );
   }
 
-  // One gate for every intake-driven agent. `setup` is already this agent's own
-  // answer, so the modal never re-derives readiness from the agent key.
-  if (setup && !setup.ready) {
+  // One gate for every intake-driven agent whose form this dialog does NOT
+  // carry. `setup` is already this agent's own answer, so the modal never
+  // re-derives readiness from the agent key. When the page DID prefetch the
+  // form (`intake`), the pane below collects it in place instead — a link out
+  // would throw away the run the reader was setting up (ruling 7).
+  if (setup && !setup.ready && !intake) {
     return (
       <Modal open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
@@ -1243,32 +1559,122 @@ export function RunCustomAgentModal({
     );
   }
 
+  const showData = Boolean(intake) && pane === "data";
+  // Lead the eye on once the setup that held up a run is done; anyone who came
+  // to read or edit data they already have gets the quiet version.
+  const continueToRun = openedForSetup && companyOnFile(intake);
+
   return (
     // The blurb goes in the body, not Modal's `description`: that slot is an
     // unclamped <p>, so a long fallback manifest pushed the whole brief below
-    // the fold. Same clamp + "More" as the card. The estimate + Start run row
-    // is the pinned footer: on the long agent briefs it used to scroll out of
-    // sight in the same box as the title.
+    // the fold. Same clamp + "More" as the card. It is also never
+    // `agent.description` — that is the lab manifest, written for the people
+    // who build agents, and this dialog is a client surface (CD-G2). The
+    // estimate + Start run row is the pinned footer: on the long agent briefs
+    // it used to scroll out of sight in the same box as the title.
     <Modal
       open
       onClose={onClose}
-      title={agent.name}
-      className="max-w-2xl"
-      footer={
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-muted-2">
-            <Icon name="Clock" className="mr-1 inline h-3 w-3" />
-            {profile.estimate}. You can leave this page; the run continues.
-            {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
-          </p>
-          <Button variant="accent" onClick={submit} loading={pending}>
-            {pending ? "Starting…" : "Start run"}
-          </Button>
-        </div>
-      }
+      title={showData && intake ? `${INTAKE_LABEL[intake.kind]} agent data` : agent.name}
+      {...(showData
+        ? {
+            description: companyOnFile(intake)
+              ? "This is what the agent drafts from. Change or add anything; it applies to the next run."
+              : `We draft from this, so we ask for it before the first run: ${intake ? INTAKE_ASKS[intake.kind] : ""}.`,
+          }
+        : {})}
+      className={showData ? "max-w-3xl" : "max-w-2xl"}
+      // Both panes hold work a mis-click must not throw away: the intake form
+      // in one, the brief in the other. Escape, the close button and the pane's
+      // own dismiss stay the deliberate ways out.
+      closeOnBackdrop={!intake && !briefTouched}
+      scrollRef={scrollRef}
+      // The data pane carries its own dismiss row; pinning "Start run" under it
+      // would offer the run from the form that has to be saved first.
+      {...(showData
+        ? {}
+        : {
+            footer: (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-muted-2">
+                  <Icon name="Clock" className="mr-1 inline h-3 w-3" />
+                  {profile.estimate}. You can leave this page; the run continues.
+                  {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
+                </p>
+                <Button variant="accent" onClick={submit} loading={pending}>
+                  {pending ? "Starting…" : "Start run"}
+                </Button>
+              </div>
+            ),
+          })}
     >
-      <div className="space-y-5">
+      {intake && (
+        // Both panes stay mounted. Every field in the intake cards is local
+        // state, so unmounting the form to show the brief would discard typed
+        // text; `hidden` keeps the idle pane out of the tab order and the
+        // accessibility tree too. Each pane takes focus when it is shown, so it
+        // needs to be focusable without drawing a ring of its own.
+        <div
+          ref={dataPaneRef}
+          tabIndex={-1}
+          className="space-y-5 focus:outline-none"
+          hidden={!showData}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            {/* The way on stays in place while the setup is unfinished so that
+                saving the company page changes only its tone, never the layout
+                under the reader's hands. */}
+            <Button
+              size="sm"
+              variant={continueToRun ? "accent" : "subtle"}
+              disabled={!intakeReady}
+              onClick={showRun}
+            >
+              {seenRun ? (
+                <>
+                  <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> Back to the run
+                </>
+              ) : (
+                <>
+                  Continue to the run
+                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
+                </>
+              )}
+            </Button>
+            {!intakeReady && intake && (
+              <p className="text-xs text-muted">{INTAKE_FIRST_STEP[intake.kind]}</p>
+            )}
+          </div>
+          <IntakeForm intake={intake} />
+          <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
+            <Button variant="ghost" onClick={onClose}>
+              {openedForSetup ? "Cancel run" : "Close"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div
+        ref={runPaneRef}
+        tabIndex={-1}
+        className="space-y-5 focus:outline-none"
+        hidden={showData}
+      >
         <AgentBlurb text={agentBlurb(agent)} />
+        {intake && (
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Reaching the brief at all means the company page is on file, so
+                in practice this reads quiet. It still asks, because the flag it
+                asks about belongs to the caller and the tone must not lie if
+                that flag ever parts company with the rows shipped beside it. */}
+            <AgentDataButton
+              kind={intake.kind}
+              ready={intakeComplete(intake)}
+              onOpen={() => setPane("data")}
+            />
+          </div>
+        )}
+
         <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="max-w-lg">
@@ -1382,7 +1788,10 @@ export function RunCustomAgentModal({
           agentName={agent.name}
           items={contextItems}
           selectedIds={selectedFiles}
-          onChange={setSelectedFiles}
+          onChange={(ids) => {
+            setBriefTouched(true);
+            setSelectedFiles(ids);
+          }}
           profile={profile.attachments}
           canUpload={!viewerIsClient}
         />
@@ -1390,16 +1799,25 @@ export function RunCustomAgentModal({
         {error && (
           <p className="text-xs text-danger" role="alert">
             {error}
-            {error.startsWith(X_SETUP_REQUIRED_PREFIX) && selectedClientId && (
-              <a href={`/clients/${selectedClientId}/x-agent`} className="ml-1.5 underline">
-                Open X agent data →
-              </a>
-            )}
-            {error.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) && selectedClientId && (
-              <a href={`/clients/${selectedClientId}/linkedin-agent`} className="ml-1.5 underline">
-                Open LinkedIn agent data →
-              </a>
-            )}
+            {setupErrorKind &&
+              (intake ? (
+                <button
+                  type="button"
+                  onClick={() => setPane("data")}
+                  className="ml-1.5 cursor-pointer underline"
+                >
+                  Open {INTAKE_LABEL[setupErrorKind]} agent data →
+                </button>
+              ) : (
+                selectedClientId && (
+                  <a
+                    href={`/clients/${selectedClientId}/${INTAKE_ROUTE[setupErrorKind]}`}
+                    className="ml-1.5 underline"
+                  >
+                    Open {INTAKE_LABEL[setupErrorKind]} agent data →
+                  </a>
+                )
+              ))}
           </p>
         )}
 

@@ -104,6 +104,51 @@ export function computeNextRun(opts: {
   return from + DAY_MS;
 }
 
+/** How far ahead the calendar projects a recurring run's future fire days. */
+export const SCHEDULE_PROJECTION_DAYS = 90;
+
+/**
+ * Every upcoming fire time for a recurring run within `horizonDays` of
+ * `opts.from` — bounded, since a calendar can't render an infinite recurrence.
+ * "once" always yields just its single stored `nextRunAt` (nothing recurs).
+ * Otherwise walks forward from the run's already-computed next fire using
+ * computeNextRun, each step starting strictly after the last, so a "weekly ·
+ * Mon–Fri" run yields one timestamp per weekday rather than the single next
+ * occurrence a calendar would otherwise show.
+ */
+export function projectRunOccurrences(
+  run: {
+    cadence: PlannedRunCadence;
+    hour: number;
+    minute: number;
+    weekday?: number;
+    weekdays?: number[];
+    dayOfMonth?: number;
+    nextRunAt: number;
+  },
+  opts: { from: number; horizonDays?: number },
+): number[] {
+  const horizon = opts.from + (opts.horizonDays ?? SCHEDULE_PROJECTION_DAYS) * DAY_MS;
+  if (run.cadence === "once") {
+    return run.nextRunAt <= horizon ? [run.nextRunAt] : [];
+  }
+  const occurrences: number[] = [];
+  let cursor = run.nextRunAt;
+  while (cursor <= horizon) {
+    occurrences.push(cursor);
+    cursor = computeNextRun({
+      cadence: run.cadence,
+      hour: run.hour,
+      minute: run.minute,
+      weekday: run.weekday,
+      weekdays: run.weekdays,
+      dayOfMonth: run.dayOfMonth,
+      from: cursor,
+    });
+  }
+  return occurrences;
+}
+
 const CADENCE_LABEL: Record<PlannedRunCadence, string> = {
   once: "One-off",
   daily: "Daily",

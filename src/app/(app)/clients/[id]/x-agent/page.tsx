@@ -1,36 +1,9 @@
 import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import {
-  getAgentIntake,
-  getClient,
-  getCustomAgentByKey,
-  listAgentIntake,
-  listClientSeats,
-  listJobs,
-  listXDraftFeedback,
-  listXNewsUpdates,
-  listXTakes,
-} from "@/lib/data";
+import { getClient } from "@/lib/data";
+import { buildXAgentIntakeView } from "@/lib/agent-intake-views";
 import { PageHeader } from "@/components/ui";
-import {
-  XAgentIntake,
-  type XIntakeView,
-  type XRunRowView,
-  type XSeatView,
-} from "@/components/x-agent-intake";
-import type { AgentIntake, Job } from "@/lib/types";
-
-/** Strip an intake doc to the client-safe view. */
-function toIntakeView(intake: AgentIntake | null): XIntakeView | null {
-  if (!intake) return null;
-  return {
-    handle: intake.handle,
-    ...(intake.comeAcross ? { comeAcross: intake.comeAcross } : {}),
-    offLimits: intake.offLimits,
-    roster: intake.roster,
-    ...(intake.premium !== undefined ? { premium: intake.premium } : {}),
-  };
-}
+import { XAgentIntake } from "@/components/x-agent-intake";
 
 /**
  * The client's X agent page: the company-page form, seats, the two ongoing
@@ -50,44 +23,7 @@ export default async function XAgentPage({ params }: { params: Promise<{ id: str
   const client = await getClient(id);
   if (!client) notFound();
 
-  const [seats, companyIntake, allIntake, news, takes, feedback, jobs, xAgent] = await Promise.all([
-    listClientSeats(id),
-    getAgentIntake(id, "x", null),
-    listAgentIntake(id, "x"),
-    listXNewsUpdates(id),
-    listXTakes(id),
-    listXDraftFeedback(id),
-    listJobs({ clientId: id }),
-    getCustomAgentByKey("karos-x-agent"),
-  ]);
-
-  const intakeBySeat = new Map(allIntake.filter((i) => i.seatId).map((i) => [i.seatId as string, i]));
-  const seatViews: XSeatView[] = seats.map((seat) => ({
-    id: seat.id,
-    name: seat.name,
-    slug: seat.slug,
-    intake: toIntakeView(intakeBySeat.get(seat.id) ?? null),
-    takes: takes
-      .filter((t) => t.seatId === seat.id)
-      .map((t) => ({ id: t.id, take: t.take, date: t.date, ...(t.topic ? { topic: t.topic } : {}) })),
-  }));
-
-  const xJobs: Job[] = jobs
-    .filter(
-      (j) =>
-        j.agentId === "agent-service" &&
-        j.external?.taskType === "custom" &&
-        (xAgent ? j.agentName === xAgent.name : /\bX Agent\b/i.test(j.agentName)),
-    )
-    .sort((a, b) => b.createdAt - a.createdAt);
-
-  const runs: XRunRowView[] = xJobs.slice(0, 8).map((j) => ({
-    id: j.id,
-    status: j.status,
-    createdAt: j.createdAt,
-    ...(isStaff ? { href: `/jobs/${j.id}` } : {}),
-  }));
-
+  const view = await buildXAgentIntakeView(id, { isStaff });
 
   return (
     <>
@@ -103,25 +39,7 @@ export default async function XAgentPage({ params }: { params: Promise<{ id: str
           </a>
         }
       />
-      <XAgentIntake
-        clientId={id}
-        company={toIntakeView(companyIntake)}
-        seats={seatViews}
-        news={news.map((n) => ({
-          id: n.id,
-          title: n.title,
-          date: n.date,
-          ...(n.type ? { type: n.type } : {}),
-        }))}
-        feedback={feedback.slice(0, 12).map((f) => ({
-          id: f.id,
-          account: f.account,
-          action: f.action,
-          ...(f.draftRef ? { draftRef: f.draftRef } : {}),
-          createdAt: f.createdAt,
-        }))}
-        runs={runs}
-      />
+      <XAgentIntake {...view} />
     </>
   );
 }

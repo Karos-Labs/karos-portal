@@ -9,6 +9,7 @@
  */
 
 import { isCreditDenialMessage } from "@/lib/credits";
+import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 
 export type AgentBriefFieldType = "text" | "textarea" | "number" | "select";
 
@@ -239,7 +240,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "LinkedIn drafts",
       intro:
-        "Drafts the next company-page post from the LinkedIn agent data page (the company page, seats, and ongoing drops). Voice, topics, and cadence are built from that data - this form only scopes the run. Draft-only; a person always posts.",
+        "Drafts the next company-page post from your LinkedIn agent data: the company page, seats, and ongoing drops. Voice, topics, and cadence are built from that data - this form only scopes the run. Draft-only; a person always posts.",
       fields: [
         {
           key: "request",
@@ -261,7 +262,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       estimate: "~10–20 min",
       attachments: {
         label: "Extra material for this run (optional)",
-        hint: "One-off references for this post. The page URL, off-limits, seats, and news live on the LinkedIn agent data page, not here.",
+        hint: "One-off references for this post. The page URL, off-limits, seats, and news live in your LinkedIn agent data, not here.",
         accept: DOCUMENTS_AND_IMAGES,
       },
     },
@@ -332,7 +333,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "X drafts",
       intro:
-        "Drafts a week of posts from the X agent data page (the company page, seats, and ongoing drops). Voice, audience, and cadence are built from that data - this form only scopes the run. Draft-only; nothing posts without a human.",
+        "Drafts a week of posts from your X agent data: the company page, seats, and ongoing drops. Voice, audience, and cadence are built from that data - this form only scopes the run. Draft-only; nothing posts without a human.",
       fields: [
         {
           key: "run_scope",
@@ -361,7 +362,44 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       estimate: "~15–25 min",
       attachments: {
         label: "Extra material for this run (optional)",
-        hint: "One-off references for this batch. Handles, off-limits, rosters, takes, and news live on the X agent data page, not here.",
+        hint: "One-off references for this batch. Handles, off-limits, rosters, takes, and news live in your X agent data, not here.",
+        accept: DOCUMENTS_AND_IMAGES,
+      },
+    },
+  },
+  {
+    // Exact key on purpose, the same rule as e13 and e10: only the intake-driven
+    // Reddit agent gets this brief and its setup gate. A regex on /reddit/ would
+    // be fine today (no other agent mentions Reddit) but a match on words like
+    // monitor, listen or research would hijack the reputation and intelligence
+    // agents below, so the key is the safer test.
+    matches: (identity) => identity.startsWith("karos-reddit-agent "),
+    profile: {
+      eyebrow: "Reddit reply",
+      intro:
+        "Finds a live thread worth answering and drafts one genuinely helpful reply, from your Reddit agent data. The subreddits, the questions worth answering and the voice are built from that data - this form only scopes the run. We never post to Reddit; you post the reply yourself.",
+      fields: [
+        {
+          key: "request",
+          label: "Anything to steer this run?",
+          type: "textarea",
+          helper: "Optional. The agent picks the thread from the stored Reddit agent data either way.",
+          placeholder: "A subreddit to prioritise, a question type to look for.",
+        },
+      ],
+      quickStarts: [
+        "Find the freshest question you can answer well.",
+        "Prioritise the subreddits where we have the most standing.",
+        "Look for a question our product genuinely answers, value first.",
+      ],
+      deliverables: [
+        "One reply drafted against a live thread, with the thread link and the subreddit's promo verdict",
+        "A why-this-is-safe note and the gate results, so you can post it with confidence",
+      ],
+      estimate: "~10–20 min",
+      attachments: {
+        label: "Extra material for this run (optional)",
+        hint: "One-off references for this reply. The account, its history, off-limits subreddits and your disclosure wording live in your Reddit agent data, not here.",
         accept: DOCUMENTS_AND_IMAGES,
       },
     },
@@ -726,8 +764,8 @@ export function isXAgentIdentity(key: string): boolean {
 
 /**
  * The submit cores refuse un-set-up X runs with a message starting with this
- * prefix; the run modal detects it to render the setup link. One constant so
- * copy edits cannot silently break the link.
+ * prefix; the run dialog detects it to offer a way into the agent data. One
+ * constant so copy edits cannot silently break that affordance.
  */
 export const X_SETUP_REQUIRED_PREFIX = "Set up the X agent data";
 
@@ -744,9 +782,25 @@ export function isLinkedInAgentIdentity(key: string): boolean {
 export const LINKEDIN_SETUP_REQUIRED_PREFIX = "Set up the LinkedIn agent data";
 
 /**
+ * The Reddit agent (e15) runs on stored intake the same way. Client-safe twin
+ * of the server-side isRedditAgent in agent-service/reddit-agent-context.ts.
+ */
+export function isRedditAgentIdentity(key: string): boolean {
+  return key === "karos-reddit-agent";
+}
+
+/**
+ * The e15 twin of X_SETUP_REQUIRED_PREFIX. Keep these three as literal string
+ * constants: agent-intake-gate.test.ts regex-matches them out of the submit
+ * cores' source, so folding them into a shared helper makes that matcher find
+ * nothing and throw.
+ */
+export const REDDIT_SETUP_REQUIRED_PREFIX = "Set up the Reddit agent data";
+
+/**
  * What a client is allowed to read of a scheduler refusal. The scheduler stores
  * whatever the submit core refused with, which includes internal strings —
- * service URLs, env var names, upstream provider errors. Only the two setup
+ * service URLs, env var names, upstream provider errors. Only the three setup
  * refusals and the three credit denials are written for a client to read; every
  * other message collapses to one plain sentence.
  *
@@ -757,6 +811,7 @@ function isClientReadableRefusal(message: string): boolean {
   return (
     message.startsWith(X_SETUP_REQUIRED_PREFIX) ||
     message.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
+    message.startsWith(REDDIT_SETUP_REQUIRED_PREFIX) ||
     isCreditDenialMessage(message)
   );
 }
@@ -780,6 +835,44 @@ export function clientSafeRunError(error: string): string {
   return isClientReadableRefusal(error)
     ? error
     : "This run could not be started right now. Your Karos team has been notified.";
+}
+
+/**
+ * Key prefixes of the per-client agent instances: one imported customAgents doc
+ * per client, named after that client's lab-repo folder
+ * (karos-linkedin-company-<agentsRepoSlug>). The instance's entry skill is
+ * baked under that folder, so the pair is fixed — the instance can only draft
+ * for the client its key names.
+ */
+const PER_CLIENT_AGENT_KEY_PREFIXES = ["karos-linkedin-company-"];
+
+/**
+ * The lab-repo client slug a per-client agent instance is bound to, or null
+ * when the key names no single client: every agent that is not an instance
+ * (karos-x-agent, the LinkedIn master, reddit, tiktok, instagram,
+ * branded-shorts, landing-builder…) plus a bare prefix with no slug after it.
+ */
+export function perClientAgentSlug(key: string): string | null {
+  for (const prefix of PER_CLIENT_AGENT_KEY_PREFIXES) {
+    if (!key.startsWith(prefix)) continue;
+    return normalizeLabSlug(key.slice(prefix.length)) || null;
+  }
+  return null;
+}
+
+/**
+ * Whether `agentKey` may run for the client whose lab-repo slug is
+ * `clientSlug`. Agents bound to no client run for every client; an instance
+ * runs only for its own, so a client with no slug set matches no instance.
+ * Both the agent list on the agents page and the submit core's refusal read
+ * this one predicate, so a card is never offered that the server would reject.
+ */
+export function agentKeyMatchesClientSlug(
+  agentKey: string,
+  clientSlug: string | null | undefined,
+): boolean {
+  const boundTo = perClientAgentSlug(agentKey);
+  return boundTo === null || boundTo === normalizeLabSlug(clientSlug);
 }
 
 /**

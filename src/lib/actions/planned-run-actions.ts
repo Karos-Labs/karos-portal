@@ -20,6 +20,7 @@ import {
 } from "@/lib/scheduled-runs";
 import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
+import { unfireableScheduleReason } from "@/lib/jobs/schedule-gate";
 import type { PlannedRunCadence } from "@/lib/types";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
 
@@ -87,6 +88,8 @@ export async function createPlannedRunAction(
 
   const agent = await getCustomAgent(input.customAgentId);
   if (!agent || !agent.enabled) return { error: "Agent not found." };
+  const blocked = await unfireableScheduleReason(auth.client, agent);
+  if (blocked) return { error: blocked };
 
   const prompt = input.prompt.trim();
   if (!prompt) return { error: "Describe what you want the agent to produce." };
@@ -210,6 +213,14 @@ export async function configureClientAgentScheduleAction(
   });
   if (blocked) return { error: blocked };
 
+  // The other half of the pair (his layer): a schedule whose agent cannot fire
+  // at all — missing intake, an instance bound to another client's slug — must
+  // not be written as live either. Complementary, not redundant: the umbrella
+  // gate above is about launch state, this one about whether a fire could ever
+  // produce anything.
+  const unfireable = await unfireableScheduleReason(client, agent);
+  if (unfireable) return { error: unfireable };
+
   const schedules = await listPlannedScheduledRuns({ clientId: input.clientId });
   const existing = schedules.find(
     (run) => run.customAgentId === agent.id && run.cadence === "weekly" && run.status !== "completed",
@@ -281,6 +292,10 @@ export async function configureClientAgentScheduleAction(
     billClientCredits,
     nextRunAt,
     status: "active" as const,
+    // The schedule just cleared the setup gate, so a refusal recorded by an
+    // earlier fire no longer describes it.
+    lastError: null,
+    lastErrorAt: null,
     updatedAt: now,
   };
 
@@ -353,7 +368,27 @@ export async function setPlannedRunStatusAction(
     if (blocked) return { error: blocked };
   }
 
+  // Resuming is an enable, so it clears the same gates a create does — a
+  // schedule paused while its agent data was emptied, or while its agent moved
+  // to another client's folder, must not go back to reading as live. Pausing and
+  // cancelling are always allowed. A deleted agent or client has nothing left to
+  // test, and that schedule cannot fire anyway.
+  if (status === "active") {
+    const [agent, client] = await Promise.all([
+      getCustomAgent(run.customAgentId),
+      getClient(run.clientId),
+    ]);
+    if (agent && client) {
+      const blocked = await unfireableScheduleReason(client, agent);
+      if (blocked) return { error: blocked };
+    }
+  }
+
   const patch: Record<string, unknown> = { status, updatedAt: Date.now() };
+  if (status === "active") {
+    patch.lastError = null;
+    patch.lastErrorAt = null;
+  }
   // Resuming a recurring run: re-anchor its next fire to the future so a stale
   // cursor doesn't fire immediately.
   if (status === "active" && run.cadence !== "once") {

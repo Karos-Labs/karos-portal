@@ -12,6 +12,9 @@ import { requireCronSecret } from "@/lib/cron-auth";
 
 export const maxDuration = 120;
 
+/** A stored refusal is one readable sentence on the schedule row, not a log. */
+const MAX_ERROR_CHARS = 400;
+
 /**
  * Recurring-generator cron. Every tick it fires the ScheduledRuns whose
  * nextRunAt has passed — each one submits a `custom` agent-service job (the
@@ -56,12 +59,14 @@ export async function GET(req: NextRequest) {
       if (!agent || !agent.enabled || !client) {
         // The agent was deleted/disabled or the client vanished — disable the
         // row so it stops churning every tick until an admin fixes it.
-        await updateScheduledRun(run.id, { enabled: false, updatedAt: Date.now() });
-        return {
-          scheduledRunId: run.id,
-          status: "disabled",
-          error: !client ? "Client not found" : "Agent missing or disabled",
-        };
+        const error = !client ? "Client not found" : "Agent missing or disabled";
+        await updateScheduledRun(run.id, {
+          enabled: false,
+          lastError: error,
+          lastErrorAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        return { scheduledRunId: run.id, status: "disabled", error };
       }
 
       const result = await submitCustomAgentRun({
@@ -77,9 +82,24 @@ export async function GET(req: NextRequest) {
       });
 
       if (result.error) {
+        // A refusal that lands before the job row exists leaves no other trace,
+        // and the claim already advanced the cursor, so the reason is recorded on
+        // the row itself. Nothing else about the claim changes.
+        await updateScheduledRun(run.id, {
+          lastError: result.error.slice(0, MAX_ERROR_CHARS),
+          lastErrorAt: Date.now(),
+          updatedAt: Date.now(),
+        });
         return { scheduledRunId: run.id, status: "failed", jobId: result.jobId, error: result.error };
       }
-      await updateScheduledRun(run.id, { lastJobId: result.jobId ?? null, updatedAt: Date.now() });
+      await updateScheduledRun(run.id, {
+        lastJobId: result.jobId ?? null,
+        // Null rather than omitted: Firestore ignores undefined, so an omitted
+        // key would keep an old refusal on a row that is firing cleanly.
+        lastError: null,
+        lastErrorAt: null,
+        updatedAt: Date.now(),
+      });
       return { scheduledRunId: run.id, status: "fired", jobId: result.jobId };
     }),
   );

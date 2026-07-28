@@ -5,6 +5,12 @@
  * the two ongoing drop boxes (what's new, takes and topics), and per-draft
  * feedback. ASK-only fields per the input contract — voice, pillars, cadence,
  * language and launch-vs-ongoing are built by the agent, never asked here.
+ *
+ * Seats are platform-agnostic (ClientSeat): adding an X seat for a person who
+ * already has a LinkedIn seat attaches X intake to the SAME seat.
+ *
+ * Every surface renders both on the dedicated /x-agent page and inline in the
+ * run dialog on /agents, so both paths revalidate on every write.
  */
 
 import { revalidatePath } from "next/cache";
@@ -15,7 +21,9 @@ import {
   addXDraftFeedback,
   addXNewsUpdate,
   addXTake,
+  clearAgentIntakeFields,
   createClientSeat,
+  getAgentIntake,
   getClient,
   getClientContextDoc,
   getClientSeat,
@@ -54,20 +62,54 @@ function parseRoster(raw: string): string[] {
   return out;
 }
 
-/** Normalizes an @handle; empty/none stays null (company "none yet", seat "pending"). */
-function parseHandle(raw: string): string | null {
-  const trimmed = raw.trim().replace(/^@+/, "");
+/**
+ * Normalizes an @handle. Empty/none stays null — a legitimate state (company
+ * "none yet", seat "pending": we draft, nothing can post). A handle that was
+ * actually typed but cannot exist on X is an error, never a silent null: the
+ * form would show it back while every run's context said "none yet".
+ *
+ * A pasted profile link resolves to the handle inside it — that is the shape
+ * people have on their clipboard, and refusing it would be a dead end in a form
+ * whose only other option is leaving the field empty. Everything the X rules
+ * cannot allow (spaces, dots, hyphens, over 15 characters) still errors.
+ */
+function parseHandle(raw: string): string | null | { error: string } {
+  const typed = raw.trim();
+  // Only a real profile link gives up its path — a slash anywhere else is not a
+  // handle and has to keep failing the check below rather than being truncated.
+  const link = typed.match(/^(?:https?:\/\/)?(?:www\.)?(?:x|twitter)\.com\/([^/?#]+)/i);
+  const trimmed = (link ? link[1] : typed).replace(/^@+/, "");
   if (!trimmed || /^(none|none yet|pending)$/i.test(trimmed)) return null;
-  if (!/^[A-Za-z0-9_]{1,15}$/.test(trimmed)) return null;
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(trimmed)) {
+    return {
+      error:
+        "That is not a valid X handle - letters, numbers and underscores only, up to 15 characters. Leave it empty if you do not have one yet.",
+    };
+  }
   return `@${trimmed}`;
 }
-
 
 /** "auto" omits the field (agent auto-detects); "yes"/"no" pin it. */
 function parsePremium(raw: string | undefined): { premium?: boolean } {
   if (raw === "yes") return { premium: true };
   if (raw === "no") return { premium: false };
   return {};
+}
+
+/**
+ * Going back to "auto-detect" must actually DELETE a stored premium answer —
+ * the upsert merges, so an omitted key would keep pinning long-form posts on
+ * every future run.
+ */
+async function clearDroppedPremium(
+  clientId: string,
+  seatId: string | null,
+  premium: { premium?: boolean },
+): Promise<void> {
+  if (premium.premium !== undefined) return;
+  const intake = await getAgentIntake(clientId, "x", seatId);
+  if (!intake || intake.premium === undefined) return;
+  await clearAgentIntakeFields(intake.id, ["premium"]);
 }
 
 /* ─────────────────────────── the forms ─────────────────────────── */
@@ -99,15 +141,19 @@ export async function saveXCompanyIntakeAction(input: {
   if (input.comeAcross.length > MAX_TEXT || input.offLimits.length > MAX_TEXT) {
     return { error: "Please keep each answer under 2,000 characters." };
   }
+  const handle = parseHandle(input.handle);
+  if (handle !== null && typeof handle === "object") return handle;
+  const premium = parsePremium(input.premium);
+  await clearDroppedPremium(input.clientId, null, premium);
   await upsertAgentIntake({
     clientId: input.clientId,
     agent: "x",
     seatId: null,
-    handle: parseHandle(input.handle),
+    handle,
     comeAcross: input.comeAcross.trim(),
     offLimits: input.offLimits.trim(),
     roster: parseRoster(input.roster),
-    ...parsePremium(input.premium),
+    ...premium,
     createdBy: user.uid,
   });
   const now = Date.now();
@@ -118,6 +164,7 @@ export async function saveXCompanyIntakeAction(input: {
   }
   revalidatePath(`/clients/${input.clientId}/x-agent`);
   revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
   return {};
 }
 
@@ -138,26 +185,34 @@ export async function addXSeatAction(input: {
   if (!name) return { error: "Name is required." };
   if (name.length > MAX_NAME) return { error: `Name is too long (max ${MAX_NAME} characters).` };
   if (!input.offLimits.trim()) return { error: "Tell us what we must never post (or write \"nothing\")." };
+  const handle = parseHandle(input.handle);
+  if (handle !== null && typeof handle === "object") return handle;
   const slug = kebab(name);
   if (!slug) return { error: "Name must contain letters or numbers." };
-  const existing = await listClientSeats(input.clientId);
-  if (existing.some((s) => s.slug === slug)) {
-    return { error: `A seat for "${name}" already exists - edit it instead.` };
+
+  // Seats are shared across agents: reuse the person's existing seat (e.g.
+  // from the LinkedIn agent) and only refuse when X intake already exists.
+  const existing = (await listClientSeats(input.clientId)).find((s) => s.slug === slug);
+  let seatId = existing?.id;
+  if (seatId && (await getAgentIntake(input.clientId, "x", seatId))) {
+    return { error: `An X seat for "${name}" already exists - edit it instead.` };
   }
   const now = Date.now();
-  const seatId = await createClientSeat({
-    clientId: input.clientId,
-    name,
-    slug,
-    createdBy: user.uid,
-    createdAt: now,
-    updatedAt: now,
-  });
+  if (!seatId) {
+    seatId = await createClientSeat({
+      clientId: input.clientId,
+      name,
+      slug,
+      createdBy: user.uid,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
   await upsertAgentIntake({
     clientId: input.clientId,
     agent: "x",
     seatId,
-    handle: parseHandle(input.handle),
+    handle,
     offLimits: input.offLimits.trim(),
     roster: parseRoster(input.roster),
     ...parsePremium(input.premium),
@@ -169,6 +224,7 @@ export async function addXSeatAction(input: {
     await addXTake({ clientId: input.clientId, seatId, take, date, createdBy: user.uid, createdAt: now });
   }
   revalidatePath(`/clients/${input.clientId}/x-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
   return { seatId };
 }
 
@@ -250,17 +306,22 @@ export async function saveXSeatIntakeAction(input: {
   const seat = await getClientSeat(input.seatId);
   if (!seat || seat.clientId !== input.clientId) return { error: "Seat not found." };
   if (!input.offLimits.trim()) return { error: "Tell us what we must never post (or write \"nothing\")." };
+  const handle = parseHandle(input.handle);
+  if (handle !== null && typeof handle === "object") return handle;
+  const premium = parsePremium(input.premium);
+  await clearDroppedPremium(input.clientId, input.seatId, premium);
   await upsertAgentIntake({
     clientId: input.clientId,
     agent: "x",
     seatId: input.seatId,
-    handle: parseHandle(input.handle),
+    handle,
     offLimits: input.offLimits.trim(),
     roster: parseRoster(input.roster),
-    ...parsePremium(input.premium),
+    ...premium,
     createdBy: user.uid,
   });
   revalidatePath(`/clients/${input.clientId}/x-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
   return {};
 }
 
@@ -300,6 +361,7 @@ export async function addXNewsUpdateAction(input: {
   // feeds both agents, so both data pages must refresh.
   revalidatePath(`/clients/${input.clientId}/x-agent`);
   revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
   return {};
 }
 
@@ -328,6 +390,7 @@ export async function addXTakeAction(input: {
     createdAt: Date.now(),
   });
   revalidatePath(`/clients/${input.clientId}/x-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
   return {};
 }
 
@@ -390,5 +453,6 @@ export async function addXDraftFeedbackAction(input: {
     createdAt: Date.now(),
   });
   revalidatePath(`/clients/${input.clientId}/x-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
   return {};
 }
