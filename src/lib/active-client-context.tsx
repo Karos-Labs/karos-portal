@@ -55,11 +55,18 @@ export function ClientContextSync({
   // The sidebar also reads the processing lock off this same snapshot to grey
   // out Regenerate, so the fields that lock depends on belong in the signature.
   const processingSignature = `${client.isAiProcessing ? 1 : 0}:${client.aiProcessingStartedAt ?? 0}`;
+  // Same reasoning for competitors: a count-only dependency missed every change
+  // that leaves the total alone — a report→manual promotion, a rename, a
+  // simultaneous add+remove — so the rail kept serving the stale roster
+  // (QA F62).
+  const competitorSignature = competitors
+    .map((c) => `${c.id}:${c.source}:${c.company}`)
+    .join("|");
 
   useEffect(() => {
     setActiveClient({ client, contextDocs, competitors, isAdmin });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client.id, docSignature, competitors.length, isAdmin, processingSignature]);
+  }, [client.id, docSignature, competitorSignature, isAdmin, processingSignature]);
 
   return null;
 }

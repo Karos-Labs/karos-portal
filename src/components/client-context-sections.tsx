@@ -41,10 +41,18 @@ export function CompetitorTrack({
   // Strict top-5 view: manually added competitors always take priority, remaining
   // slots backfill from the highest-priority auto-seeded rivals. Recomputed from
   // whatever's left after a removal so the next-best rival fills the freed slot.
-  const active = useMemo(
-    () => competitors.filter((c) => !removedIds.has(c.id)),
-    [competitors, removedIds],
-  );
+  // Rows added from this rail since the last server render. The sidebar's list
+  // is route-scoped context that only the client-page layout refills, so on any
+  // other route a refresh can't bring a new row back (QA F62) — we hold it here
+  // until the server list catches up.
+  const [addedRows, setAddedRows] = useState<ClientCompetitor[]>([]);
+
+  const active = useMemo(() => {
+    const serverIds = new Set(competitors.map((c) => c.id));
+    return [...competitors, ...addedRows.filter((c) => !serverIds.has(c.id))].filter(
+      (c) => !removedIds.has(c.id),
+    );
+  }, [addedRows, competitors, removedIds]);
   const displayed = useMemo(() => computeTrackedCompetitors(active), [active]);
 
   function handleRemove(competitor: ClientCompetitor) {
@@ -86,9 +94,31 @@ export function CompetitorTrack({
     setAddError(null);
     startAdd(async () => {
       try {
-        await addCompetitorByNameAction(clientId, trimmed);
+        const row = await addCompetitorByNameAction(clientId, trimmed);
+        const now = Date.now();
+        setAddedRows((prev) => [
+          ...prev.filter((c) => c.id !== row.id),
+          {
+            id: row.id,
+            clientId,
+            company: row.company,
+            ...(row.url ? { url: row.url } : {}),
+            marketTier: "Challenger",
+            overlap: "Medium",
+            deepDive: false,
+            keyStrengths: [],
+            keyWeaknesses: [],
+            source: "manual",
+            createdAt: now,
+            updatedAt: now,
+          },
+        ]);
+        // A row that was already tracked (or promoted from "report" to
+        // "manual") leaves the count unchanged — say so rather than looking
+        // like nothing happened.
+        if (!row.created) setAddError(`${row.company} is already tracked.`);
         setAddName("");
-        setAddOpen(false);
+        setAddOpen(row.created ? false : true);
         router.refresh();
       } catch (e) {
         setAddError(e instanceof Error ? e.message : "Failed to add competitor");
