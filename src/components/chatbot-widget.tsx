@@ -43,12 +43,16 @@ function buildProactiveActions(): ProactiveAction[] {
       color: "#FF6B2C",
     },
     {
+      // The copilot has no web search and no page fetch — the only competitor
+      // intelligence it holds is the tracked competitor list already stored on
+      // the account. Asking for a URL promised a page visit that never happens
+      // (QA F87), so both the sublabel and the trigger name the real source.
       id: "competitor_research",
       icon: "TrendingUp",
       label: "Competitor Deep-Dive",
-      sublabel: "Generate intel brief + counter-strategy tasks",
+      sublabel: "Brief on a tracked competitor + counter-strategy tasks",
       trigger:
-        "Help me research a competitor. I'll give you their URL or company name. Start by asking me which competitor to focus on.",
+        "Give me an intel brief on one of the competitors in our tracker, built from the tracked competitor data you already hold. Start by asking me which tracked competitor to focus on.",
       color: "#6b9fd4",
     },
     {

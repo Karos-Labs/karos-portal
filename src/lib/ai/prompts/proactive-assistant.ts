@@ -379,8 +379,9 @@ ${gmailScanRule}
 → A thin result (≤4 tasks) is only correct when the contract shows no unchecked boxes AND the calendar is genuinely covered — say so explicitly if that's the case
 
 **Action 2 — Competitor Deep-Dive** (user: "competitor", "research", "deep-dive")
-→ Request competitor name/URL if not already provided
-→ Deliver a concise 3-section intel brief: Positioning · Key Strengths · Counter-Strategy
+→ You have NO web search and NO page fetch. The ONLY competitor intelligence you hold is the COMPETITOR TRACKER section of your context. Never ask for a web address, never claim to have opened one, and never write a brief from your own recollection of a brand.
+→ Ask which of the tracked competitors to focus on, naming them. If the tracker is empty, or the client names a company that is not on it, say so plainly and offer to have the Karos team add it to the tracker — do not brief on it.
+→ Deliver a concise 3-section intel brief grounded ONLY in that competitor's tracked row: Positioning · Key Strengths · Counter-Strategy. Where the tracker is thin, say what is missing rather than filling the gap.
 → Call \`create_tasks\` with 3–5 counter-strategy tasks (karos_managed, agent-named)
 
 **Action 3 — Brand Visibility Audit** (user: "brand audit", "visibility", "brand presence")
@@ -476,101 +477,6 @@ CLIENT REQUEST:
 "${userText}"
 
 Extract and route this request. Be specific and action-oriented in the title. Do not add generic filler.`.trim();
-}
-
-/* ── Competitor research brief prompt ────────────────────────────── */
-
-export function buildCompetitorResearchPrompt(
-  competitorName: string,
-  competitorUrl: string,
-  clientName: string,
-  existingCompetitorContext: string,
-): string {
-  return `You are a senior strategic analyst briefing the CMO of ${clientName}.
-
-COMPETITOR UNDER REVIEW: ${competitorName}
-URL: ${competitorUrl}
-EXISTING INTELLIGENCE: ${existingCompetitorContext || "None on file — analyse based on public positioning and name."}
-
-Deliver a concise competitive intelligence brief across THREE sections:
-
-**1. Market Positioning**
-How they position themselves and what customer segment they target. (2–3 sentences, specific.)
-
-**2. Key Competitive Advantages**
-Their top 2–3 genuine strengths — be concrete, not generic.
-
-**3. Counter-Strategy Action Items**
-3–5 specific moves ${clientName} can execute to differentiate and capture market share.
-Format as numbered action items that can directly become tasks.
-
-Constraints: Under 400 words. Dense and tactical — no filler. No generic marketing advice.`.trim();
-}
-
-/* ── Brand visibility audit prompt ───────────────────────────────── */
-
-export function buildBrandAuditPrompt(
-  clientName: string,
-  brandVoiceSummary: string,
-  positioningSummary: string,
-): string {
-  return `You are a senior brand strategist conducting a visibility audit for ${clientName}.
-
-BRAND VOICE SNAPSHOT:
-${brandVoiceSummary || "Not yet documented — audit will flag this as a gap."}
-
-POSITIONING SNAPSHOT:
-${positioningSummary || "Not yet documented — audit will flag this as a gap."}
-
-Conduct a structured five-dimension brand visibility audit:
-
-**1. Core Messaging Clarity**
-Is the primary value proposition clearly articulated and consistently applied across touchpoints?
-
-**2. Visual Identity Cohesion**
-Are brand colors, typography, and visual language well-defined and systematically applied?
-
-**3. Channel Presence & Coverage**
-Which channels are active, under-leveraged, or absent? Where is share of voice being lost?
-
-**4. Content Cadence & Authority**
-Is there a consistent publishing rhythm? Where are the topic authority gaps versus competitors?
-
-**5. Organic Discoverability & SEO**
-What are the most obvious gaps in organic search coverage and local/digital discoverability?
-
-For each dimension: one specific finding + one concrete optimization action item.
-End with a numbered list of all 5 action items for easy extraction as tasks.`.trim();
-}
-
-/* ── Content dispatch plan prompt ────────────────────────────────── */
-
-export function buildContentDispatchPrompt(
-  clientName: string,
-  activeAgents: Array<{ name: string; outputKind: string }>,
-  recentJobSummary: string,
-): string {
-  const agentList = activeAgents.length
-    ? activeAgents.map((a) => `• ${a.name} — ${a.outputKind}`).join("\n")
-    : "• No AI agents configured yet — recommend onboarding an agent as first action.";
-
-  return `You are the AI Content Director for ${clientName}.
-
-ACTIVE AI CONTENT AGENTS:
-${agentList}
-
-RECENT PUBLISHING ACTIVITY:
-${recentJobSummary || "No recent runs — content pipeline is cold."}
-
-Design a focused 7-day content dispatch plan:
-
-1. **Recommended Agents** — Which agents to activate this week and why (grounded in current market positioning and timing).
-2. **Content Angles** — 1–2 specific, differentiated content angles per activated agent (concrete topics, not generic themes).
-3. **Publishing Sequence** — Which output to publish first and the recommended cadence.
-4. **Expected Outcomes** — One-line impact per agent run.
-
-Close with a single confirmation line: "Confirm dispatch →" so the client can approve.
-Under 300 words. Punchy and strategic — built for execution, not discussion.`.trim();
 }
 
 /* ── Artifact Generation prompt (called from execution-actions.ts) ────── */
