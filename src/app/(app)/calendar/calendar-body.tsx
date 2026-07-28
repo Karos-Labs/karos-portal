@@ -2,7 +2,8 @@ import { listAssets, listClients, listCustomAgents, listJobs, listPlannedSchedul
 import { assetImages } from "@/lib/asset-images";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import { describeCadence } from "@/lib/scheduled-runs";
-import { PageHeader, EmptyState } from "@/components/ui";
+import { computeRunway } from "@/lib/runway";
+import { PageHeader, EmptyState, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
   RunCalendar,
@@ -12,6 +13,7 @@ import {
   type RunAssetView,
   type ScheduleAgentOption,
 } from "@/components/run-calendar";
+import type { ReactNode } from "react";
 import type { Asset, AppUser } from "@/lib/types";
 
 // Jobs that have actually run (produced or attempted output).
@@ -191,9 +193,29 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     })
     .filter((p): p is CalendarPost => p != null);
 
+  // Runway indicator (staff single-client scope only — the client's own view
+  // hides internal drafts, which would understate the backlog). Reuses the same
+  // pure calculator the top-up cron runs, so the badge and the autopilot agree.
+  let runwayBadge: ReactNode = null;
+  if (single && !isClient) {
+    // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+    const now = Date.now();
+    const runway = computeRunway(assets, [], now);
+    if (runway.activeFamilies.length > 0) {
+      const fmt = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      if (runway.coveredThroughMs == null) {
+        runwayBadge = <Badge tone="danger">No runway — calendar is empty ahead</Badge>;
+      } else if (runway.coveredThroughMs < runway.horizonThroughMs) {
+        runwayBadge = <Badge tone="warning">Short runway — filled through {fmt(runway.coveredThroughMs)}</Badge>;
+      } else {
+        runwayBadge = <Badge tone="success">Runway: filled through {fmt(runway.coveredThroughMs)}</Badge>;
+      }
+    }
+  }
+
   return (
     <>
-      <PageHeader title={title} description={description} />
+      <PageHeader title={title} description={description} action={runwayBadge} />
       <RunCalendar
         runs={runs}
         posts={posts}

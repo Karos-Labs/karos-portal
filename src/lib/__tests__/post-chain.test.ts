@@ -196,24 +196,28 @@ function karosFixture(): { assets: Asset[]; skipIds: string[] } {
 }
 
 describe("planClientChain — migrate mode (Karos oracle)", () => {
-  it("re-dates all 11 posting candidates one-per-day from 2026-07-14 in internal order", () => {
+  it("re-dates all 11 posting candidates one-per-weekday from 2026-07-14, skipping weekends", () => {
     const { assets, skipIds } = karosFixture();
     const plan = planClientChain(assets, { now: NOW, mode: "migrate", startDayMs: START, skipIds });
 
+    // Instagram is a weekday-only platform, so the chain skips Sat/Sun
+    // (07-18/19 and 07-25/26) rather than posting into a dead weekend.
     const expected: Array<[string, number]> = [
-      ["tl-01", slot(2026, 7, 14)],
-      ["tl-02", slot(2026, 7, 15)],
-      ["tl-03", slot(2026, 7, 16)],
-      ["tl-04", slot(2026, 7, 17)],
-      ["tl-05", slot(2026, 7, 18)],
-      ["w23-03", slot(2026, 7, 19)],
-      ["w23-04", slot(2026, 7, 20)],
-      ["w23-05", slot(2026, 7, 21)],
-      ["w23-06", slot(2026, 7, 22)],
-      ["w23-07", slot(2026, 7, 23)],
-      ["w23-08", slot(2026, 7, 24)],
+      ["tl-01", slot(2026, 7, 14)], // Tue
+      ["tl-02", slot(2026, 7, 15)], // Wed
+      ["tl-03", slot(2026, 7, 16)], // Thu
+      ["tl-04", slot(2026, 7, 17)], // Fri
+      ["tl-05", slot(2026, 7, 20)], // Mon (skip 18/19)
+      ["w23-03", slot(2026, 7, 21)], // Tue
+      ["w23-04", slot(2026, 7, 22)], // Wed
+      ["w23-05", slot(2026, 7, 23)], // Thu
+      ["w23-06", slot(2026, 7, 24)], // Fri
+      ["w23-07", slot(2026, 7, 27)], // Mon (skip 25/26)
+      ["w23-08", slot(2026, 7, 28)], // Tue
     ];
     expect(plan.map((p) => [p.id, p.scheduledAt])).toEqual(expected);
+    // No candidate lands on a weekend.
+    for (const p of plan) expect([0, 6]).not.toContain(new Date(p.scheduledAt).getDay());
     // Pinned/skipped items never appear — nor does the template-ideas
     // reference doc (an overview/explainer, not a posting template).
     for (const frozen of ["w23-01", "w23-02", "launch", "tl-06"]) {
@@ -243,11 +247,11 @@ describe("planClientChain — migrate mode (Karos oracle)", () => {
     expect(plan.map((p) => p.id).sort()).toEqual(
       ["tl-01", "tl-02", "tl-03", "tl-04", "tl-05", "w23-07"].sort(),
     );
-    // Occupied days (14, 15, 16 hold scheduled items) are skipped.
+    // Occupied days (14, 15, 16 hold scheduled items) AND weekends are skipped.
     const byId = new Map(plan.map((p) => [p.id, p.scheduledAt]));
-    expect(byId.get("tl-01")).toBe(slot(2026, 7, 17));
-    expect(byId.get("tl-02")).toBe(slot(2026, 7, 18));
-    expect(byId.get("w23-07")).toBe(slot(2026, 7, 22));
+    expect(byId.get("tl-01")).toBe(slot(2026, 7, 17)); // Fri
+    expect(byId.get("tl-02")).toBe(slot(2026, 7, 20)); // Mon (skip 18/19)
+    expect(byId.get("w23-07")).toBe(slot(2026, 7, 24)); // Fri
   });
 });
 
@@ -314,12 +318,34 @@ describe("planClientChain — migrate mode (XO oracle)", () => {
     });
 
     expect(plan.map((p) => [p.id, p.scheduledAt])).toEqual([
-      ["tr-01", slot(2026, 7, 15)],
-      ["tr-02", slot(2026, 7, 16)],
-      ["tr-03", slot(2026, 7, 17)],
-      ["tr-04", slot(2026, 7, 18)],
-      ["voce-renda", slot(2026, 7, 19)],
+      ["tr-01", slot(2026, 7, 15)], // Wed
+      ["tr-02", slot(2026, 7, 16)], // Thu
+      ["tr-03", slot(2026, 7, 17)], // Fri
+      ["tr-04", slot(2026, 7, 20)], // Mon (skip 18/19 weekend)
+      ["voce-renda", slot(2026, 7, 21)], // Tue
     ]);
+  });
+});
+
+/* ───────────────── per-platform weekend policy ─────────────────── */
+
+describe("planClientChain — smart weekend placement", () => {
+  const SAT = at(2026, 7, 18); // 2026-07-18 is a Saturday
+
+  it("rolls a weekday-only platform (Instagram) off the weekend to the next Monday", () => {
+    const post = labAsset("instagram-agent/2026-07-06-run#01-campaign-story", { id: "ig-1" });
+    const plan = planClientChain([post], { now: SAT, mode: "migrate", startDayMs: SAT });
+    expect(plan[0].scheduledAt).toBe(slot(2026, 7, 20)); // Mon, skipping Sat/Sun
+  });
+
+  it("keeps a Saturday for a platform whose engagement window includes it (YouTube)", () => {
+    const post = labAsset("social-agent/2026-07-06-run#01-clip", {
+      id: "yt-1",
+      type: "social_post",
+      scheduledPlatform: "youtube",
+    });
+    const plan = planClientChain([post], { now: SAT, mode: "migrate", startDayMs: SAT });
+    expect(plan[0].scheduledAt).toBe(slot(2026, 7, 18)); // Sat is allowed for YouTube
   });
 });
 

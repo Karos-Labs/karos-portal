@@ -101,6 +101,28 @@ function scheduleFor(assetType: AssetType, platform?: string): PlatformSchedule 
 }
 
 /**
+ * Per-platform "smart weekend" policy for content-chain day placement. Weekdays
+ * (Mon–Fri) are always postable; a weekend day (Sun=0 / Sat=6) is allowed ONLY
+ * when the asset's platform actually has an engagement window on it — today only
+ * YouTube (Sat). Email and weekday-only platforms (Instagram, LinkedIn, X, …)
+ * are therefore never placed on a weekend.
+ *
+ * Derived from the same PLATFORM_SCHEDULES / EMAIL_SCHEDULE windows the
+ * recommendation engine uses, so the chain planner (post-chain.ts) and the
+ * runway calculator (runway.ts) can't disagree about which days count. When the
+ * type/platform maps to no known schedule the policy fails OPEN (every day
+ * allowed) — an unclassified asset keeps the pre-weekend behaviour.
+ *
+ * @param weekday 0=Sun … 6=Sat (server-local, matching Date#getDay()).
+ */
+export function chainAllowsDay(assetType: AssetType, platform: string | undefined, weekday: number): boolean {
+  if (weekday >= 1 && weekday <= 5) return true; // weekdays: always postable
+  const schedule = scheduleFor(assetType, platform);
+  if (!schedule) return true; // unknown mapping ⇒ don't restrict
+  return schedule.windows.some((w) => w.days.includes(weekday));
+}
+
+/**
  * Next optimal publish slot for an asset.
  *
  * @param index  0-based position within a batch (e.g. 5 Instagram posts from one

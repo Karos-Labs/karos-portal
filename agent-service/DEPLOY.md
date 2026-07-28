@@ -99,15 +99,35 @@ the Managed products UI appears once it's present.
 ## 6. Schedule the crons (Cloud Scheduler)
 
 ```bash
-for path in publish cleanup-logs scheduler "agent-service/reconcile" "credits/reconcile" intel-report-schedule; do
+for path in publish cleanup-logs scheduler "agent-service/reconcile" "credits/reconcile" intel-report-schedule analytics/sync; do
   gcloud scheduler jobs create http ${path//\//-} \
     --schedule="*/10 * * * *" --uri="<platform-url>/api/$path" \
     --http-method=GET --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)"
 done
+
+# Runway autopilot — weekly all-clients top-up so every active client keeps a
+# rolling 14-day runway of posts. Deficit-based + idempotent, so a weekly
+# cadence is enough (running it more often is harmless).
+gcloud scheduler jobs create http runway \
+  --schedule="0 8 * * 1" --uri="<platform-url>/api/runway" \
+  --http-method=GET --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)"
 ```
 
 (`publish` every 5 min, `cleanup-logs` daily, `scheduler` every ~15 min, both
-`reconcile`s every ~10 min — adjust schedules to taste.)
+`reconcile`s every ~10 min, `analytics/sync` daily, `runway` weekly (Mon 08:00)
+— adjust schedules to taste.)
+
+**Runway autopilot env flags** (set on the platform Cloud Run service):
+- `RUNWAY_AUTOGEN_ENABLED=1` — master switch. Unset ⇒ the cron only *measures*
+  and reports deficits (no jobs fired). Deploy it off first, hit
+  `GET /api/runway?dryRun=1` to review the plan, then flip it on.
+- `RUNWAY_MAX_JOBS_PER_CLIENT` — hard cap on top-up jobs dispatched per client
+  per run (default 2). Bounds agency-side agent-service spend; runway top-ups go
+  through the staff/agency path and never charge client credits.
+
+Only `active`, onboarded clients are topped up; `social` and `newsletter_issue`
+families auto-fire (no required brief), while `blog_article` deficits are
+reported but left to the Task Map / manual flow (a blog needs a real topic).
 
 `intel-report-schedule` drives the admin-configurable recurring Intel Report +
 SEO/GEO regeneration (Schedule button on each client's dashboard). Ticking
