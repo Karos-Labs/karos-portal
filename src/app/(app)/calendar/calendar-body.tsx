@@ -17,10 +17,16 @@ import {
 } from "@/lib/agent-identity-map";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
-import { clientCadenceLabel, describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
+import {
+  clientCadenceLabel,
+  describeCadence,
+  projectRunOccurrences,
+  shortZoneLabel,
+} from "@/lib/scheduled-runs";
+import { computeRunway } from "@/lib/runway";
 import { isValidTimeZone } from "@/lib/run-cadence";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
-import { PageHeader, EmptyState } from "@/components/ui";
+import { PageHeader, EmptyState, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
   RunCalendar,
@@ -30,6 +36,7 @@ import {
   type RunAssetView,
   type ScheduleAgentOption,
 } from "@/components/run-calendar";
+import type { ReactNode } from "react";
 import type { Asset, AppUser, AssetType } from "@/lib/types";
 
 // Jobs that have actually run (produced or attempted output). "cancelled" is a
@@ -130,7 +137,6 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   } else {
     const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
     const clients = await listClients(employeeFilter);
-    clientOptions = clients.map((c) => ({ id: c.id, name: c.name }));
     const names = new Map(clients.map((c) => [c.id, c.name]));
     nameOf = (id) => names.get(id);
     canSchedule = true;
@@ -142,11 +148,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       single = true;
       defaultClientId = viewClient.id;
       title = `${viewClient.name} — Calendar`;
+      // "View as client" is scoped to this one client — the schedule-run
+      // picker must not offer every other client staff can see.
+      clientOptions = [{ id: viewClient.id, name: viewClient.name }];
     } else {
       // Scope to the staff member's visible clients — for employees that's their
       // assigned set, for admins every existing client. Never null: an unfenced
       // overview also rendered orphaned runs/assets of DELETED clients.
       idSet = new Set(clients.map((c) => c.id));
+      clientOptions = clients.map((c) => ({ id: c.id, name: c.name }));
     }
   }
 
@@ -217,9 +227,11 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   }
 
   // ── Scheduled (future) runs ─────────────────────────────────────────
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const scheduleNow = Date.now();
   const scheduledEntries: CalendarRun[] = scheduledRuns
     .filter((r) => r.status === "active")
-    .map((r) => {
+    .flatMap((r) => {
       const agent = agentById.get(r.customAgentId);
       // Client-visible calendar: the lab manifest never ships here either.
       // It did. `clientBlurb || description` falls straight through to the
@@ -233,12 +245,26 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
             clientBlurb: agent?.clientBlurb ?? null,
           })
         : agent?.clientBlurb?.trim() || agent?.description;
-      return {
+      // A recurring cadence (e.g. "weekly · Mon-Fri") fires many times — project
+      // every upcoming occurrence within the horizon instead of only the single
+      // next fire, so a 5x/week schedule shows 5 chips a week, not 1. Projected
+      // in the SCHEDULE's zone, not the container's: only the first occurrence
+      // comes from the stored cursor, so on a UTC server every later chip of a
+      // Sao Paulo 09:00 run would slide to 06:00, and a Tokyo 22:00 run would
+      // land on the previous day — putting a weekday-only run on a weekend
+      // (F108).
+      return projectRunOccurrences(r, {
+        from: scheduleNow,
+        timeZone: runZone(r.timeZone),
+      }).map((at) => ({
         id: r.id,
         kind: "scheduled" as const,
         clientId: r.clientId,
         clientName: single ? undefined : nameOf(r.clientId),
-        at: r.nextRunAt,
+        at,
+        // F147: the chip is named by the umbrella the client actually knows
+        // ("Instagram Agent"), not the lab agent's own row name. One identity
+        // for the same thing across calendar, agents page and dashboard.
         productName: scheduleRowLabel(r, umbrellasFor(r.clientId)),
         productColor: r.agentColor,
         productIcon: r.agentIcon,
@@ -255,13 +281,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         // they were on the server — and so the card's cadence label and its
         // "next" time are read off ONE clock (CD-H7c).
         timeZone: runZone(r.timeZone),
-        zoneLabel: shortZoneLabel(runZone(r.timeZone), r.nextRunAt),
+        // Per OCCURRENCE, not per row: a projection that crosses a DST boundary
+        // prints the offset in force on that day.
+        zoneLabel: shortZoneLabel(runZone(r.timeZone), at),
         // The schedule's standing instruction is staff-authored direction —
         // run-calendar paints it under "Will run", so a client would read the
         // internal brief verbatim. Same shape as staffRef below (delta-lens).
         ...(isClient ? {} : { prompt: r.prompt }),
         ...(blurb ? { agentDescription: blurb } : {}),
-      };
+      }));
     });
 
   // ── Past (completed) runs ───────────────────────────────────────────
@@ -365,9 +393,29 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   const scopedClientId = singleFilter?.clientId;
   const isEmpty = runs.length + posts.length === 0;
 
+  // Runway indicator (staff single-client scope only — the client's own view
+  // hides internal drafts, which would understate the backlog). Reuses the same
+  // pure calculator the top-up cron runs, so the badge and the autopilot agree.
+  let runwayBadge: ReactNode = null;
+  if (single && !isClient) {
+    // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+    const now = Date.now();
+    const runway = computeRunway(assets, [], now);
+    if (runway.activeFamilies.length > 0) {
+      const fmt = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      if (runway.coveredThroughMs == null) {
+        runwayBadge = <Badge tone="danger">No runway — calendar is empty ahead</Badge>;
+      } else if (runway.coveredThroughMs < runway.horizonThroughMs) {
+        runwayBadge = <Badge tone="warning">Short runway — filled through {fmt(runway.coveredThroughMs)}</Badge>;
+      } else {
+        runwayBadge = <Badge tone="success">Runway: filled through {fmt(runway.coveredThroughMs)}</Badge>;
+      }
+    }
+  }
+
   return (
     <>
-      <PageHeader title={title} description={description} />
+      <PageHeader title={title} description={description} action={runwayBadge} />
       {isEmpty && scopedClientId && (
         <div className="mb-4">
           <EmptyState

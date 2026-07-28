@@ -15,6 +15,7 @@
 
 import type { ClientAgent, ClientAgentLaunchState, ClientAgentTemplate } from "@/lib/types";
 import { localYMD } from "@/lib/run-cadence";
+import { agentKeyMatchesClientSlug, perClientAgentSlug } from "@/lib/custom-agent-launch";
 
 /* ─────────────────────────── deterministic ids ─────────────────────────── */
 
@@ -182,7 +183,13 @@ export type LaunchBlockCode =
   | "launch_in_flight"
   /** Already launched — there is nothing left to launch. */
   | "already_live"
-  /** An intake-driven agent (X / LinkedIn) has no stored intake yet. */
+  /**
+   * The bound agent is a per-client instance belonging to a DIFFERENT client.
+   * Both submit cores refuse this pair before any job row exists, so a launch
+   * offered past it is an enabled button with a guaranteed server refusal.
+   */
+  | "wrong_client_binding"
+  /** An intake-driven agent (X / LinkedIn / Reddit) has no stored intake yet. */
   | "intake_required"
   /** launchCreditCost is null — the price has not been calibrated (§6.3, Q10). */
   | "pricing_uncalibrated"
@@ -190,7 +197,7 @@ export type LaunchBlockCode =
   | "credits_short";
 
 export const LAUNCH_BLOCK_REASON: Record<
-  Exclude<LaunchBlockCode, "intake_required" | "credits_short">,
+  Exclude<LaunchBlockCode, "intake_required" | "credits_short" | "wrong_client_binding">,
   string
 > = {
   // Same wording the submit core uses for an agent outside the allowlist —
@@ -206,10 +213,27 @@ export function intakeBlockReason(intakeLabel: string): string {
   return `Setup needs your ${intakeLabel} — this agent is built from it.`;
 }
 
+/**
+ * The binding rung's line. Names the workspace the instance belongs to rather
+ * than the reader's own slug: whoever sees this is looking at another client's
+ * agent, and the fix is to use this client's own instance.
+ */
+export function bindingBlockReason(agentKey: string): string {
+  return `This agent belongs to the "${perClientAgentSlug(agentKey)}" workspace — its playbook is baked under that client's folder, so it would draft the wrong company. Use this client's own agent.`;
+}
+
 export interface LaunchGateInput {
   launchState: ClientAgentLaunchState;
   /** Whether this client may run the bound agent at all (allowlist / activation). */
   granted: boolean;
+  /**
+   * customAgents.key of the bound lab agent, and this client's lab-repo slug.
+   * Required, not optional: the binding rung is only load-bearing if every
+   * caller supplies the pair, and a caller that could omit them would silently
+   * skip the rung and paint an enabled button the server refuses.
+   */
+  agentKey: string;
+  clientSlug?: string | null;
   /** False only for an intake-driven agent whose intake is missing. */
   intakeReady: boolean;
   /** Names the intake page, e.g. "X agent data". Required when intakeReady is false. */
@@ -237,14 +261,17 @@ export type LaunchGateResult =
 /**
  * The §2 gate ladder, evaluated in the server's own order:
  *   1. granted + a launchable state (one launch in flight per umbrella)
- *   2. intake gate (X / LinkedIn — the existing hard gate)
- *   3. pricing gate  (billable client actors only)
- *   4. credits       (billable client actors only; the charge itself is the
+ *   2. binding   (a per-client instance runs only for its own client)
+ *   3. intake gate (X / LinkedIn / Reddit — the existing hard gate)
+ *   4. pricing gate  (billable client actors only)
+ *   5. credits       (billable client actors only; the charge itself is the
  *                     server's business, this is the pre-flight twin)
  *
  * Order matters as much as the predicates: a client with no intake AND no
  * credits must be told about the intake first, because that is what the server
- * refuses on and it is the one they can fix themselves.
+ * refuses on and it is the one they can fix themselves. The binding rung sits
+ * above intake for the same reason in reverse — no amount of intake unblocks a
+ * pair the submit core refuses on identity.
  */
 export function evaluateLaunchGate(input: LaunchGateInput): LaunchGateResult {
   if (!input.granted) {
@@ -259,6 +286,17 @@ export function evaluateLaunchGate(input: LaunchGateInput): LaunchGateResult {
   }
   if (!canSubmitLaunch(input.launchState)) {
     return { allowed: false, code: "already_live", reason: LAUNCH_BLOCK_REASON.already_live };
+  }
+  // Ahead of the intake rung on purpose. A per-client instance paired with the
+  // wrong client is refused by both submit cores before a job row exists, so
+  // filling in intake would not unblock it — telling that reader to go and fill
+  // a form first sends them to do work that changes nothing.
+  if (!agentKeyMatchesClientSlug(input.agentKey, input.clientSlug)) {
+    return {
+      allowed: false,
+      code: "wrong_client_binding",
+      reason: bindingBlockReason(input.agentKey),
+    };
   }
   if (!input.intakeReady) {
     return {

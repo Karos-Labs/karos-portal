@@ -14,12 +14,12 @@ import {
 import { CREDIT_COSTS, isBillableClientActor, scheduledAgentWeeklyCost } from "@/lib/credits";
 import {
   computeNextRun,
-  MAX_OUTPUTS_PER_RUN,
-  MAX_RUNS_PER_WEEK,
+  scheduleLimitsFor,
   weeklyCadenceDays,
 } from "@/lib/scheduled-runs";
 import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
+import { unfireableScheduleReason } from "@/lib/jobs/schedule-gate";
 import type { PlannedRunCadence } from "@/lib/types";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
 
@@ -87,6 +87,8 @@ export async function createPlannedRunAction(
 
   const agent = await getCustomAgent(input.customAgentId);
   if (!agent || !agent.enabled) return { error: "Agent not found." };
+  const blocked = await unfireableScheduleReason(auth.client, agent);
+  if (blocked) return { error: blocked };
 
   const prompt = input.prompt.trim();
   if (!prompt) return { error: "Describe what you want the agent to produce." };
@@ -210,6 +212,14 @@ export async function configureClientAgentScheduleAction(
   });
   if (blocked) return { error: blocked };
 
+  // The other half of the pair (his layer): a schedule whose agent cannot fire
+  // at all — missing intake, an instance bound to another client's slug — must
+  // not be written as live either. Complementary, not redundant: the umbrella
+  // gate above is about launch state, this one about whether a fire could ever
+  // produce anything.
+  const unfireable = await unfireableScheduleReason(client, agent);
+  if (unfireable) return { error: unfireable };
+
   const schedules = await listPlannedScheduledRuns({ clientId: input.clientId });
   const existing = schedules.find(
     (run) => run.customAgentId === agent.id && run.cadence === "weekly" && run.status !== "completed",
@@ -219,7 +229,14 @@ export async function configureClientAgentScheduleAction(
   // here while the dialog offered 5, so a stale page or a direct call could
   // schedule twice the outputs the product sells — and the scheduler bills
   // chargeMultiplier = outputsPerRun on every fire.
-  const postsPerWeek = clampInt(input.postsPerWeek, 1, MAX_RUNS_PER_WEEK);
+  //
+  // F27: the Reddit agent's ceiling is lower than the generic one and is
+  // enforced HERE, not only in the dialog. A reply is a post into someone
+  // else's community; the product is one a day, five a week, and the generic
+  // 7x5 would both bill for 35 and get the client's account treated as spam by
+  // the subreddits the agent is building standing in.
+  const limits = scheduleLimitsFor(agent.key);
+  const postsPerWeek = clampInt(input.postsPerWeek, 1, limits.maxRunsPerWeek);
 
   // WHAT A CLIENT MAY CHANGE HERE: the posting days and the time of day. That
   // is the whole of "pace". Two fields are deliberately NOT theirs, and the
@@ -234,11 +251,18 @@ export async function configureClientAgentScheduleAction(
   //
   // Enforced here rather than only in the dialog because a server action is a
   // public HTTP surface: hiding a control is not the same as refusing a value.
+  //
+  // The Reddit ceiling overrides even the preserve-the-stored-value rule: a row
+  // written before the cap existed (or by a staff member with an older page)
+  // holds a number the product does not sell, and re-saving it would re-commit
+  // to billing it. Pinned, not clamped — five answers written in one sitting is
+  // a different product from one a day, and it is the one automod removes.
   const actorIsClient = user.role === "CLIENT_USER";
-  const outputsPerRun =
-    actorIsClient && existing
-      ? (existing.outputsPerRun ?? 1)
-      : clampInt(input.outputsPerRun, 1, MAX_OUTPUTS_PER_RUN);
+  const outputsPerRun = clampInt(
+    actorIsClient && existing ? (existing.outputsPerRun ?? 1) : input.outputsPerRun,
+    1,
+    limits.maxOutputsPerRun,
+  );
   const prompt =
     actorIsClient && existing?.prompt?.trim() ? existing.prompt.trim() : input.prompt.trim();
   if (!prompt) return { error: "Describe what the agent should create each time." };
@@ -281,6 +305,10 @@ export async function configureClientAgentScheduleAction(
     billClientCredits,
     nextRunAt,
     status: "active" as const,
+    // The schedule just cleared the setup gate, so a refusal recorded by an
+    // earlier fire no longer describes it.
+    lastError: null,
+    lastErrorAt: null,
     updatedAt: now,
   };
 
@@ -353,7 +381,27 @@ export async function setPlannedRunStatusAction(
     if (blocked) return { error: blocked };
   }
 
+  // Resuming is an enable, so it clears the same gates a create does — a
+  // schedule paused while its agent data was emptied, or while its agent moved
+  // to another client's folder, must not go back to reading as live. Pausing and
+  // cancelling are always allowed. A deleted agent or client has nothing left to
+  // test, and that schedule cannot fire anyway.
+  if (status === "active") {
+    const [agent, client] = await Promise.all([
+      getCustomAgent(run.customAgentId),
+      getClient(run.clientId),
+    ]);
+    if (agent && client) {
+      const blocked = await unfireableScheduleReason(client, agent);
+      if (blocked) return { error: blocked };
+    }
+  }
+
   const patch: Record<string, unknown> = { status, updatedAt: Date.now() };
+  if (status === "active") {
+    patch.lastError = null;
+    patch.lastErrorAt = null;
+  }
   // Resuming a recurring run: re-anchor its next fire to the future so a stale
   // cursor doesn't fire immediately.
   if (status === "active" && run.cadence !== "once") {

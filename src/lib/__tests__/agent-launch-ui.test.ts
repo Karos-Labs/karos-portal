@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ALL_LAUNCH_PROFILES,
+  agentKeyMatchesClientSlug,
   buildCustomAgentPrompt,
   clientSafeRunError,
   initialAgentBrief,
@@ -26,7 +29,7 @@ describe("custom agent launch profiles", () => {
     );
     expect(shorts.attachments.required).toBe(true);
     expect(shorts.attachments.satisfyWithFieldKey).toBe("source_url");
-    // The X agent is intake-driven (its data page holds handles, off-limits,
+    // The X agent is intake-driven (its agent data holds handles, off-limits,
     // rosters, takes) — the launch brief only scopes the run. It must never
     // ask for things the agent BUILDS (audience, themes, cadence) or already
     // stores (account handles).
@@ -41,7 +44,7 @@ describe("custom agent launch profiles", () => {
     // The per-client company-page instance and the lab master are both
     // intake-driven (setup gate + injected LinkedIn agent data): the brief
     // only scopes the run, exactly like the X agent — never asking for what
-    // the data page already stores (executive material, voice, proof).
+    // the agent data already stores (executive material, voice, proof).
     const instance = launchProfileFor({
       key: "karos-linkedin-company-karoslabs",
       name: "LinkedIn Company Page — Karos Labs",
@@ -54,6 +57,30 @@ describe("custom agent launch profiles", () => {
         expect.arrayContaining(["executive", "proof", "voice_constraints"]),
       );
     }
+  });
+
+  it("routes the e15 Reddit agent to its own intake-driven brief", () => {
+    const reddit = launchProfileFor({ key: "karos-reddit-agent", name: "Reddit Agent" });
+    expect(reddit.eyebrow).toBe("Reddit reply");
+    // Intake-driven, so the brief only scopes the run. It must never ask for
+    // what the agent BUILDS (the subreddit roster, the questions worth
+    // answering, the voice) or already stores (the account and its history).
+    expect(reddit.fields.map((field) => field.key)).toEqual(["request"]);
+    expect(reddit.fields.map((field) => field.key)).not.toEqual(
+      expect.arrayContaining(["account", "subreddits", "voice", "thread_url"]),
+    );
+    // The reply is a hand-off, never a publish: the brief must promise that.
+    expect(reddit.intro).toMatch(/never post to Reddit|you post the reply yourself/i);
+
+    // Exact-key matching keeps a lookalike import on the generic brief, and
+    // keeps the Reddit brief from hijacking agents whose descriptions mention
+    // monitoring, listening or research.
+    expect(launchProfileFor({ key: "acme-reddit-ghostwriter", name: "Reddit Ghostwriter" }).eyebrow).toBe(
+      "Reddit Ghostwriter work order",
+    );
+    expect(
+      launchProfileFor({ key: "karos-reputation", name: "Brand Reputation Monitoring" }).eyebrow,
+    ).toBe("Reputation brief");
   });
 
   it("keeps unknown imported agents runnable with a complete fallback brief", () => {
@@ -160,5 +187,112 @@ describe("managed product launch profiles", () => {
     expect(landing?.briefFields.find((field) => field.key === "reference_urls")?.valueKind).toBe(
       "stringList",
     );
+  });
+});
+
+
+/**
+ * F38. The staff hub is the one surface that pairs an ARBITRARY agent with an
+ * arbitrary client, so it is the one that can assemble a pair both submit cores
+ * refuse. Until now that refusal arrived only after the whole brief had been
+ * written and submitted. The eligibility rule the hub filters on is asserted
+ * here; the source test below pins that the hub actually applies it.
+ */
+describe("staff hub client eligibility", () => {
+  const CLIENTS = [
+    { id: "c1", name: "Geektime", agentsRepoSlug: "geektime" },
+    { id: "c2", name: "Karos Labs", agentsRepoSlug: "karoslabs" },
+    { id: "c3", name: "New Client", agentsRepoSlug: null },
+  ];
+  const eligibleFor = (agentKey: string) =>
+    CLIENTS.filter((c) => agentKeyMatchesClientSlug(agentKey, c.agentsRepoSlug)).map((c) => c.name);
+
+  it("narrows a per-client instance to exactly its own client", () => {
+    expect(eligibleFor("karos-linkedin-company-karoslabs")).toEqual(["Karos Labs"]);
+  });
+
+  it("leaves an unbound agent runnable for every client, slug or not", () => {
+    for (const key of ["karos-x-agent", "karos-reddit-agent", "branded-shorts"]) {
+      expect(eligibleFor(key)).toEqual(["Geektime", "Karos Labs", "New Client"]);
+    }
+  });
+
+  it("yields nobody for an instance whose client is not in the visible set", () => {
+    // An employee sees only their assigned clients, so this is reachable
+    // without anything being wrong in the data — the Run button is disabled
+    // rather than offering a pair that cannot run.
+    expect(eligibleFor("karos-linkedin-company-sitti")).toEqual([]);
+  });
+});
+
+describe("the hub applies that rule to the controls it paints", () => {
+  it("filters the picker, states the binding, and disables an unrunnable Run", () => {
+    const src = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
+    const start = src.indexOf("export function CustomAgentsHub");
+    expect(start).toBeGreaterThan(-1);
+    const hub = src.slice(start, src.indexOf("client-page section", start));
+
+    // The eligible set is computed per agent card...
+    expect(hub).toContain("agentKeyMatchesClientSlug(agent.key, c.agentsRepoSlug)");
+    // ...gates the Run control...
+    expect(hub).toContain("eligible.length === 0");
+    // ...names the binding on the card (F35)...
+    expect(hub).toContain("perClientAgentSlug(agent.key)");
+    // ...and the dialog receives the filtered list, never the raw one.
+    expect(hub).toContain("agentKeyMatchesClientSlug(runAgent.key, c.agentsRepoSlug)");
+    expect(hub).not.toMatch(/clients=\{clients\}/);
+  });
+});
+
+
+/**
+ * Ruling 7. One keyed map carries BOTH routes to an agent's intake: `href` (the
+ * agent's own data page — always present, and what the client's detail route
+ * offers) and `kind`/`data` (the prefetched form the run dialog collects in
+ * place). The alternative that was on the table — three per-platform props
+ * beside the map — made every consumer re-derive which agent is which, which is
+ * a second place for "is this the LinkedIn agent" to disagree with the server.
+ */
+describe("AgentSetupState carries the href card and the inline pane", () => {
+  const rows = readFileSync(join(process.cwd(), "src/lib/client-agent-rows.ts"), "utf8");
+  const ui = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
+
+  it("always resolves an href, pane or no pane", () => {
+    // Three agents, three hrefs, and none of them conditional on a payload.
+    for (const route of ["x-agent", "linkedin-agent", "reddit-agent"]) {
+      expect(rows).toContain(`/clients/\${clientId}/${route}`);
+    }
+    expect(rows).toContain("{ ready, href, label }");
+  });
+
+  it("attaches a prefetched form to the agent it belongs to", () => {
+    for (const kind of ["x", "linkedin", "reddit"]) {
+      expect(rows).toContain(`kind: "${kind}", data: panes.${kind}`);
+    }
+  });
+
+  it("keeps ready answered by the submit cores' own predicates", () => {
+    // The page builds the FORMS; readiness stays with the calls the cores gate
+    // on. Two independent answers to "is this set up" is how a card starts
+    // offering a run the server refuses.
+    expect(rows).toContain("hasXAgentIntake(clientId)");
+    expect(rows).toContain("hasLinkedInAgentIntake(clientId, agent.key)");
+    expect(rows).toContain("hasRedditAgentIntake(clientId)");
+  });
+
+  it("leaves the components asking one map, not three payloads", () => {
+    expect(ui).toContain("function intakeFor(setup: AgentSetupState | null | undefined)");
+    // The per-platform props are gone from the two components' surfaces.
+    expect(ui).not.toContain("xSetup?: XAgentSetup;");
+    expect(ui).not.toContain("linkedinSetup?: LinkedInAgentSetup;");
+    expect(ui).not.toContain("redditSetup?: RedditAgentSetup;");
+  });
+
+  it("keeps the href gate for a setup with no prefetched form", () => {
+    // The client detail route ships href-only states, so the dialog must still
+    // have its way out — and it must not offer an empty pane instead.
+    expect(ui).toContain("if (setup && !setup.ready && !intake)");
+    expect(ui).toContain("Set up {setup.label}");
+    expect(ui).toContain("href={setup.href}");
   });
 });

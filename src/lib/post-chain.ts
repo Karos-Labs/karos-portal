@@ -18,6 +18,7 @@
 
 import type { Asset, AssetType, ManagedTaskType } from "@/lib/types";
 import { MANAGED_PRODUCTS, getManagedProduct } from "@/lib/agent-service/products";
+import { chainAllowsDay } from "@/lib/scheduling";
 
 /* ────────────────────────── day / slot math ────────────────────────── */
 
@@ -253,7 +254,12 @@ export function planClientChain(
 
     let cursor = startDay;
     for (const a of candidates) {
-      while (occupied.has(cursor)) cursor = nextDayStart(cursor);
+      // Skip days already booked in this family AND weekend days this asset's
+      // platform doesn't post on (chainAllowsDay) — a weekday-only platform
+      // rolls forward to the next weekday instead of landing on a dead weekend.
+      while (occupied.has(cursor) || !chainAllowsDay(a.type, a.scheduledPlatform, new Date(cursor).getDay())) {
+        cursor = nextDayStart(cursor);
+      }
       const slot = chainSlotForDay(cursor);
       occupied.add(cursor);
       cursor = nextDayStart(cursor);

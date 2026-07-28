@@ -19,6 +19,7 @@
  */
 
 import { localYMD, isValidTimeZone, weekdayOf, zonedWallToUtc } from "@/lib/run-cadence";
+import { isRedditAgentIdentity } from "@/lib/custom-agent-launch";
 import type { PlannedRunCadence } from "@/lib/types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -33,6 +34,39 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 export const MAX_RUNS_PER_WEEK = 7;
 export const MAX_OUTPUTS_PER_RUN = 5;
+
+/**
+ * The Reddit agent (e15) is capped harder than the rest, and not for a
+ * technical reason: a Reddit reply is a post into someone else's community, and
+ * the product is at most one reply a day, five a week. The generic dial offers
+ * 7 runs x 5 outputs — 35 replies a week — and BILLS for them
+ * (chargeMultiplier = outputsPerRun on every fire), which is both an invoice
+ * nobody agreed to and the fastest way to get a client's account banned from
+ * the subreddits the agent is meant to build standing in (F27).
+ *
+ * outputsPerRun is pinned rather than clamped: "5 replies in one run" is not a
+ * smaller version of the product, it is a different one — five answers written
+ * in a single sitting, to whatever threads happened to be open, which is what
+ * automod treats as spam.
+ */
+export const REDDIT_MAX_RUNS_PER_WEEK = 5;
+export const REDDIT_OUTPUTS_PER_RUN = 1;
+
+/**
+ * The scheduling ceilings for one agent. Pure and shared so the dialog's
+ * dropdowns and the server clamp cannot drift — the server one is the
+ * load-bearing half, since hiding an option is not the same as refusing a
+ * value.
+ */
+export function scheduleLimitsFor(agentKey: string): {
+  maxRunsPerWeek: number;
+  maxOutputsPerRun: number;
+} {
+  if (isRedditAgentIdentity(agentKey)) {
+    return { maxRunsPerWeek: REDDIT_MAX_RUNS_PER_WEEK, maxOutputsPerRun: REDDIT_OUTPUTS_PER_RUN };
+  }
+  return { maxRunsPerWeek: MAX_RUNS_PER_WEEK, maxOutputsPerRun: MAX_OUTPUTS_PER_RUN };
+}
 
 /**
  * Next fire time (epoch millis) strictly after `from` for a recurring cadence.
@@ -102,6 +136,64 @@ export function computeNextRun(opts: {
   }
   // Unreachable in practice (400-day horizon covers every cadence).
   return from + DAY_MS;
+}
+
+/** How far ahead the calendar projects a recurring run's future fire days. */
+export const SCHEDULE_PROJECTION_DAYS = 90;
+
+/**
+ * Every upcoming fire time for a recurring run within `horizonDays` of
+ * `opts.from` — bounded, since a calendar can't render an infinite recurrence.
+ * "once" always yields just its single stored `nextRunAt` (nothing recurs).
+ * Otherwise walks forward from the run's already-computed next fire using
+ * computeNextRun, each step starting strictly after the last, so a "weekly ·
+ * Mon–Fri" run yields one timestamp per weekday rather than the single next
+ * occurrence a calendar would otherwise show.
+ *
+ * `timeZone` is the zone the run's wall clock was SET in, and it is not
+ * optional in practice: only the FIRST occurrence comes from the stored
+ * nextRunAt, which the scheduler computed in that zone. Every later one is
+ * recomputed here, so without the zone the projection silently falls back to
+ * the runtime's calendar — UTC in production. A Sao Paulo 09:00 schedule then
+ * projects 06:00 from its second chip onward, and a Tokyo 22:00 schedule
+ * projects onto the previous day, which puts a weekday-only run on a weekend.
+ * The stored first fire stays correct throughout, so the calendar disagrees
+ * with itself rather than being uniformly wrong (F108).
+ */
+export function projectRunOccurrences(
+  run: {
+    cadence: PlannedRunCadence;
+    hour: number;
+    minute: number;
+    weekday?: number;
+    weekdays?: number[];
+    dayOfMonth?: number;
+    nextRunAt: number;
+  },
+  opts: { from: number; horizonDays?: number; timeZone?: string },
+): number[] {
+  const horizon = opts.from + (opts.horizonDays ?? SCHEDULE_PROJECTION_DAYS) * DAY_MS;
+  if (run.cadence === "once") {
+    return run.nextRunAt <= horizon ? [run.nextRunAt] : [];
+  }
+  const occurrences: number[] = [];
+  let cursor = run.nextRunAt;
+  while (cursor <= horizon) {
+    occurrences.push(cursor);
+    cursor = computeNextRun({
+      cadence: run.cadence,
+      hour: run.hour,
+      minute: run.minute,
+      weekday: run.weekday,
+      weekdays: run.weekdays,
+      dayOfMonth: run.dayOfMonth,
+      from: cursor,
+      // Same clock the stored nextRunAt was computed on, so occurrence 2
+      // onwards lands on the same wall time as occurrence 1.
+      ...(opts.timeZone ? { timeZone: opts.timeZone } : {}),
+    });
+  }
+  return occurrences;
 }
 
 const CADENCE_LABEL: Record<PlannedRunCadence, string> = {

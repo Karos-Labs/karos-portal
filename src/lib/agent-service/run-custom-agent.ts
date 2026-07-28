@@ -15,7 +15,18 @@ import {
   hasLinkedInAgentIntake,
   isLinkedInAgent,
 } from "./linkedin-agent-context";
-import { LINKEDIN_SETUP_REQUIRED_PREFIX, X_SETUP_REQUIRED_PREFIX } from "@/lib/custom-agent-launch";
+import {
+  buildRedditAgentContextFiles,
+  hasRedditAgentIntake,
+  isRedditAgent,
+} from "./reddit-agent-context";
+import {
+  LINKEDIN_SETUP_REQUIRED_PREFIX,
+  REDDIT_SETUP_REQUIRED_PREFIX,
+  X_SETUP_REQUIRED_PREFIX,
+  agentKeyMatchesClientSlug,
+  perClientAgentSlug,
+} from "@/lib/custom-agent-launch";
 import type { Client, CustomAgent } from "@/lib/types";
 
 /* limits — mirror agent-service/src/schemas/task-types/custom.json */
@@ -48,6 +59,19 @@ export async function submitCustomAgentRun(args: {
   const { agent, client, actor } = args;
   if (!isAgentServiceConfigured()) {
     return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
+  }
+
+  // The twin of the guard in lib/jobs/submit-custom.ts, for the other submit
+  // core: a per-client agent instance runs an entry skill baked under the one
+  // client folder its key names, so pairing it with another client would draft
+  // that client's data against another company's playbook. This core is reached
+  // from a stored (agentId, clientId) pair on a scheduledRuns row, which may
+  // have been created while a mismatched card was still on offer, so the pair is
+  // re-checked on every fire rather than trusted.
+  if (!agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) {
+    return {
+      error: `${agent.name} runs only for the client whose lab repo slug is "${perClientAgentSlug(agent.key)}", and ${client.name}'s slug is ${client.agentsRepoSlug ? `"${client.agentsRepoSlug}"` : "not set"}. Nothing has run — use this client's own agent.`,
+    };
   }
 
   const prompt = args.prompt.trim();
@@ -90,7 +114,7 @@ export async function submitCustomAgentRun(args: {
   // linkedin-agent-context.ts) — so scheduler-fired LinkedIn runs read the
   // same live client data as manual ones. Hard-gated the same way.
   if (isLinkedInAgent(agent.key)) {
-    if (!(await hasLinkedInAgentIntake(client.id, agent.key))) {
+    if (!(await hasLinkedInAgentIntake(client.id))) {
       return {
         error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
@@ -100,6 +124,28 @@ export async function submitCustomAgentRun(args: {
     } catch (e) {
       return {
         error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
+  // Reddit agent (e15): the same contract — the account, its history,
+  // off-limits subreddits, the disclosure wording, the per-subreddit verdicts
+  // earned from the client's outcomes, and prior drafts (see
+  // reddit-agent-context.ts) — so scheduler-fired Reddit runs read the same
+  // live client data as manual ones. Hard-gated the same way. This matters more
+  // for Reddit than for the others: the daily cadence means most runs arrive
+  // through here, not through the run dialog.
+  if (isRedditAgent(agent.key)) {
+    if (!(await hasRedditAgentIntake(client.id))) {
+      return {
+        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the account form there. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildRedditAgentContextFiles(client.id, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's Reddit intake data: ${e instanceof Error ? e.message : "unknown error"}`,
       };
     }
   }

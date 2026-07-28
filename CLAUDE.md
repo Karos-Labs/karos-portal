@@ -20,8 +20,13 @@ AI marketing-agency OS. Next.js 16 (App Router, Turbopack) · Firebase Auth · F
   task_type `"custom"`), all executed by the external agent service (`agent-service/`).
   Catalog: `src/lib/agent-service/products.ts`; submit/cancel:
   `src/lib/actions/external-job-actions.ts` / `custom-agent-actions.ts`; results arrive via
-  `/api/agent-service/webhook` and mirror into `jobs` (agentId `"agent-service"`). The X
-  agent (e13) is a custom agent with portal intake surfaces — see `docs/x-agent-portal.md`.
+  `/api/agent-service/webhook` and mirror into `jobs` (agentId `"agent-service"`). Three
+  agents are custom agents with portal intake surfaces, each with a canonical contract doc
+  that pins its deliverable structure: X e13 (`docs/x-agent-portal.md`), LinkedIn e10
+  (`docs/linkedin-agent-portal.md`), Reddit e15 (`docs/reddit-agent-portal.md`). All three
+  are draft-only; **Reddit is draft-only as a hard product rule** (a human always posts a
+  reply from their own account — no posting code path exists or may be added), and one run
+  drafts ONE reply.
   The old in-app agent systems (builder agents + `lib/agents` engine, intel system agent,
   Claude-platform launcher, content-engine e12, newsletter e11) were removed 2026-07 —
   don't reintroduce them.

@@ -94,3 +94,42 @@ sameAs set. Undo for the whole seed = delete the listed docs.
 
 CVs were NOT seeded (gitignored in the lab repo — never on GitHub); Daniel/Lola
 upload them on the data page.
+
+---
+
+## Reddit agent (e15) portal hookup — code, branch `dh/reddit-hookup`
+
+Additive throughout: new files, one new collection, and guarded blocks keyed on
+`isRedditAgent(agent.key)` so no other agent's path changes. No Firestore data
+was written by this branch — the Phase 3 seed + instructions rows are listed
+below as NOT YET APPLIED.
+
+| # | What | Where | Undo |
+|---|---|---|---|
+| R1 | `AgentIntake.agent` union widened to include `"reddit"`, plus Reddit-only optional fields (`accountHistory`, `subreddits`, `offLimitsSubreddits`, `disclosurePosture`, `mode`) | `src/lib/types.ts` | drop `"reddit"` from the union and delete the optional fields; no existing doc carries them |
+| R2 | `RedditDraftFeedback` interface | `src/lib/types.ts` | delete the interface |
+| R3 | `redditDraftFeedback` collection registered in `col`, in `CLIENT_SCOPED_COLLECTIONS`, and in the purge script's mirror list | `src/lib/data.ts`, `scripts/purge-orphaned-client-docs.ts` | remove the three entries; delete the collection in Firestore if any rows exist |
+| R4 | `addRedditDraftFeedback` / `listRedditDraftFeedback` | `src/lib/data.ts` | delete both functions |
+| R5 | Server actions (account form + per-draft feedback) | `src/lib/actions/reddit-agent-actions.ts` (new) | delete file |
+| R6 | Run-time injection, `isRedditAgent`, `hasRedditAgentIntake` | `src/lib/agent-service/reddit-agent-context.ts` (new) | delete file |
+| R7 | Guarded gate + injection block in **both** submit cores | `src/lib/jobs/submit-custom.ts`, `src/lib/agent-service/run-custom-agent.ts` | delete the `if (isRedditAgent(...))` block and the import in each |
+| R8 | Reddit clause in the shared schedule gate | `src/lib/jobs/schedule-gate.ts` | delete the clause and the import |
+| R9 | Exact-key launch profile + `isRedditAgentIdentity` + `REDDIT_SETUP_REQUIRED_PREFIX` | `src/lib/custom-agent-launch.ts` | delete the profile entry, the predicate and the constant |
+| R10 | Parser + reader | `src/lib/reddit-drafts.ts`, `src/components/reddit-drafts-review.tsx` (new) | delete both files |
+| R11 | Intake form | `src/components/reddit-agent-intake.tsx` (new) | delete file |
+| R12 | `buildRedditAgentIntakeView` + `toRedditIntakeView` | `src/lib/agent-intake-views.ts` | delete both functions and the imports |
+| R13 | `IntakeKind` widened to `"reddit"`; `redditSetup` threaded through the agents hub and run dialog; per-kind copy maps (`INTAKE_ASKS`, `INTAKE_FIRST_STEP`) replacing two hard-coded X/LinkedIn strings | `src/components/custom-agents.tsx` | revert the union and the threading; the two copy maps can stay (they render identical text for x and linkedin) |
+| R14 | `redditSetup` leg in `intakeSetups` | `src/app/(app)/clients/[id]/agents/page.tsx` | delete the `hasReddit` const, the third `Promise.all` leg and the `redditSetup` spread |
+| R15 | Deep-link page | `src/app/(app)/clients/[id]/reddit-agent/page.tsx` (new) | delete file (nothing links to it) |
+| R16 | `guessAssetType` maps a Reddit folder to `note` instead of `social_post` | `src/lib/lab-outputs-shared.ts` | restore `f.includes("reddit")` to the social bucket — **but note this re-opens the cross-post leak**: `social_post` publishes to twitter/linkedin/facebook/tiktok, so a Reddit reply would be offered for publishing to those |
+| R17 | Tests: new `reddit-drafts.test.ts`, new `platforms-publishable.test.ts`, Reddit cases added to `agent-intake-gate.test.ts`, `agent-launch-ui.test.ts`, `lab-outputs.test.ts` | `src/lib/__tests__/` | delete the two new files; revert the added cases (no existing assertion was weakened or removed) |
+| R18 | Canonical contract doc | `docs/reddit-agent-portal.md` (new), `CLAUDE.md` reference | delete the doc; revert the CLAUDE.md paragraph |
+| R19 | Storage prefix used by injection | `clients/<clientId>/reddit-agent/portal-context/<runKey>/` in the assets bucket | delete the prefix; nothing else reads it |
+
+### NOT YET APPLIED (Phase 3 — needs Daniel)
+
+| # | What | Undo when done |
+|---|---|---|
+| R20 | Reddit agent instructions v1 (the canonical block in `docs/reddit-agent-portal.md`) → `customAgents/pwUIj4jayaJ3S8yuUaQ7` | snapshot the doc to `_backup/<date>/customAgents-pwUIj4jayaJ3S8yuUaQ7-v1-pre.json` FIRST; undo = restore `instructions` from it |
+| R21 | Karos Labs pilot Reddit intake seed (`agentIntake`, agent="reddit", seatId=null) | delete the doc; record its id here when written |
+| R22 | `SCRAPECREATORS_API_KEY` secret + runner wiring, if Daniel provisions it | remove the secret reference from `cloudbuild.yaml` and the two config lines; the domain is already allowlisted |

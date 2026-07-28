@@ -9,6 +9,8 @@ import { AudienceSimulation } from "@/components/audience-simulation";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
+import { parseRedditDrafts } from "@/lib/reddit-drafts";
+import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
@@ -110,17 +112,28 @@ export function AssetDetailModal({
   // modal is the ONLY deliverable viewer a client can reach (the asset card
   // lives on staff-only routes), so the pick / edit / skip reader has to mount
   // here too — otherwise the loop the intake forms promise doesn't exist for
-  // the person it was written for. LinkedIn is sniffed FIRST: its "## Account"
-  // headings contain the X sniff's "# Account " substring, so order matters
-  // (same order as asset-card.tsx).
+  // the person it was written for. LinkedIn and Reddit are sniffed FIRST: both
+  // write "## Account N · …" headings, which contain the X sniff's "# Account "
+  // substring, so both must be tested before X or the X reader claims their
+  // batches. Each of the two carries a distinct h1 marker, so they cannot claim
+  // each other. Same order as asset-card.tsx — the two viewers of the same
+  // deliverable must not disagree about what it is.
   const content = asset?.content;
   const liBatch = useMemo(
     () => (content?.includes("# LinkedIn drafts") ? parseLiDrafts(content) : null),
     [content],
   );
-  const xBatch = useMemo(
-    () => (!liBatch && content?.includes("# Account ") ? parseXDrafts(content) : null),
+  const redditBatch = useMemo(
+    () =>
+      !liBatch && content?.includes("# Reddit answer drafts") ? parseRedditDrafts(content) : null,
     [content, liBatch],
+  );
+  const xBatch = useMemo(
+    () =>
+      !liBatch && !redditBatch && content?.includes("# Account ")
+        ? parseXDrafts(content)
+        : null,
+    [content, liBatch, redditBatch],
   );
   // The run's attachable media for the LinkedIn reader (shared definition —
   // the asset card renders the same list).
@@ -278,6 +291,16 @@ export function AssetDetailModal({
               assetId={asset.id}
               accounts={liBatch.accounts}
               media={liMedia}
+            />
+          </div>
+        ) : redditBatch ? (
+          <div>
+            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
+            <RedditDraftsBatch
+              clientId={asset.clientId}
+              {...(asset.jobId ? { jobId: asset.jobId } : {})}
+              assetId={asset.id}
+              accounts={redditBatch.accounts}
             />
           </div>
         ) : xBatch ? (

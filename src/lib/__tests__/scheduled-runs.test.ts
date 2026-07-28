@@ -1,8 +1,14 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   clientCadenceLabel,
   computeNextRun,
   describeCadence,
+  MAX_OUTPUTS_PER_RUN,
+  MAX_RUNS_PER_WEEK,
+  projectRunOccurrences,
+  scheduleLimitsFor,
   weeklyCadenceDays,
 } from "@/lib/scheduled-runs";
 
@@ -226,10 +232,197 @@ describe("clientCadenceLabel", () => {
   });
 });
 
+describe("projectRunOccurrences", () => {
+  it("projects a 5x/week schedule to one occurrence per weekday, not just the next fire", () => {
+    const run = {
+      cadence: "weekly" as const,
+      weekdays: [1, 2, 3, 4, 5],
+      hour: 9,
+      minute: 0,
+      nextRunAt: computeNextRun({ cadence: "weekly", weekdays: [1, 2, 3, 4, 5], hour: 9, minute: 0, from: MON_8AM }),
+    };
+    const occurrences = projectRunOccurrences(run, { from: MON_8AM, horizonDays: 14 });
+    // Two full Mon-Fri weeks within a 14-day horizon.
+    expect(occurrences).toHaveLength(10);
+    expect(occurrences[0]).toBe(local(2026, 6, 6, 9)); // Mon
+    expect(occurrences[4]).toBe(local(2026, 6, 10, 9)); // Fri
+    expect(occurrences[5]).toBe(local(2026, 6, 13, 9)); // next Mon
+    // Strictly increasing, one per calendar day.
+    for (let i = 1; i < occurrences.length; i++) expect(occurrences[i]).toBeGreaterThan(occurrences[i - 1]);
+  });
+
+  it("a one-off ('once') run yields exactly its single stored nextRunAt", () => {
+    const at = local(2026, 6, 10, 9);
+    expect(projectRunOccurrences({ cadence: "once", hour: 9, minute: 0, nextRunAt: at }, { from: MON_8AM })).toEqual([at]);
+  });
+
+  it("a one-off run outside the horizon yields nothing", () => {
+    const farAway = local(2027, 0, 1, 9);
+    expect(
+      projectRunOccurrences({ cadence: "once", hour: 9, minute: 0, nextRunAt: farAway }, { from: MON_8AM, horizonDays: 14 }),
+    ).toEqual([]);
+  });
+
+  it("respects a custom horizon and stops including that boundary", () => {
+    const run = { cadence: "daily" as const, hour: 9, minute: 0, nextRunAt: local(2026, 6, 6, 9) };
+    const occurrences = projectRunOccurrences(run, { from: MON_8AM, horizonDays: 4 });
+    expect(occurrences).toEqual([
+      local(2026, 6, 6, 9),
+      local(2026, 6, 7, 9),
+      local(2026, 6, 8, 9),
+      local(2026, 6, 9, 9),
+    ]);
+  });
+
+  /**
+   * F108. Only the FIRST occurrence comes from the stored nextRunAt, which the
+   * scheduler computed in the schedule's own zone. Every later one is
+   * recomputed by this function, so an unthreaded zone makes the calendar
+   * disagree with itself: chip 1 right, chips 2..n on the runtime's clock (UTC
+   * in production). Asserted in the schedule's zone rather than the test
+   * runner's, so these hold wherever the suite runs.
+   */
+  describe("zone-pinned projection", () => {
+    /** The wall clock the given zone reads at an instant. */
+    function wall(zone: string, at: number): { hour: number; weekday: string } {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+        hour: "2-digit",
+        hour12: false,
+        weekday: "short",
+      }).formatToParts(new Date(at));
+      return {
+        hour: Number(parts.find((p) => p.type === "hour")!.value),
+        weekday: parts.find((p) => p.type === "weekday")!.value,
+      };
+    }
+
+    it("keeps every Sao Paulo occurrence at 09:00 local, not the runtime's 06:00", () => {
+      const zone = "America/Sao_Paulo";
+      const base = {
+        cadence: "daily" as const,
+        hour: 9,
+        minute: 0,
+      };
+      const nextRunAt = computeNextRun({ ...base, from: MON_8AM, timeZone: zone });
+      const occurrences = projectRunOccurrences(
+        { ...base, nextRunAt },
+        { from: MON_8AM, horizonDays: 14, timeZone: zone },
+      );
+      expect(occurrences.length).toBeGreaterThan(10);
+      // The whole projection, not just the stored first fire.
+      for (const at of occurrences) expect(wall(zone, at).hour).toBe(9);
+    });
+
+    it("keeps a Tokyo 22:00 weekday run on weekdays — no weekend chip", () => {
+      const zone = "Asia/Tokyo";
+      const base = {
+        cadence: "weekly" as const,
+        weekdays: [1, 2, 3, 4, 5],
+        hour: 22,
+        minute: 0,
+      };
+      const nextRunAt = computeNextRun({ ...base, from: MON_8AM, timeZone: zone });
+      const occurrences = projectRunOccurrences(
+        { ...base, nextRunAt },
+        { from: MON_8AM, horizonDays: 21, timeZone: zone },
+      );
+      expect(occurrences.length).toBeGreaterThan(5);
+      for (const at of occurrences) {
+        const { hour, weekday } = wall(zone, at);
+        expect(hour).toBe(22);
+        // 22:00 in Tokyo is 13:00 UTC the same day, but 09:00 the NEXT day in
+        // Auckland and the previous evening in New York — a projection on any
+        // clock but Tokyo's drifts across the date line into Sat/Sun.
+        expect(["Sat", "Sun"]).not.toContain(weekday);
+      }
+    });
+
+    it("without a zone the walk falls back to the runtime clock (legacy rows)", () => {
+      // Not an endorsement — the documented legacy behaviour, pinned so that
+      // dropping the argument at a call site shows up as a diff here.
+      const run = { cadence: "daily" as const, hour: 9, minute: 0, nextRunAt: local(2026, 6, 6, 9) };
+      expect(projectRunOccurrences(run, { from: MON_8AM, horizonDays: 2 })).toEqual([
+        local(2026, 6, 6, 9),
+        local(2026, 6, 7, 9),
+      ]);
+    });
+  });
+});
+
 describe("weeklyCadenceDays", () => {
   it("spreads the requested post count over balanced days", () => {
     expect(weeklyCadenceDays(1)).toEqual([2]);
     expect(weeklyCadenceDays(3)).toEqual([1, 3, 5]);
     expect(weeklyCadenceDays(7)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+});
+
+
+/**
+ * F27. A Reddit reply is a post into someone else's community, and the product
+ * is one a day at most. The generic dial offers 7 runs x 5 outputs and the
+ * scheduler BILLS chargeMultiplier = outputsPerRun on every fire, so the
+ * un-capped dialog both invoiced 35 replies a week and drove the client's
+ * account into the behaviour subreddits remove and ban for.
+ */
+describe("scheduleLimitsFor", () => {
+  it("caps the Reddit agent at five runs a week, one reply each", () => {
+    expect(scheduleLimitsFor("karos-reddit-agent")).toEqual({
+      maxRunsPerWeek: 5,
+      maxOutputsPerRun: 1,
+    });
+  });
+
+  it("leaves every other agent on the generic ceiling", () => {
+    for (const key of [
+      "karos-x-agent",
+      "karos-linkedin-agent",
+      "karos-linkedin-company-karoslabs",
+      "karos-instagram-agent",
+      // A lookalike import is not the portal's Reddit agent and is not capped
+      // by its product rule.
+      "acme-reddit-ghostwriter",
+    ]) {
+      expect(scheduleLimitsFor(key)).toEqual({
+        maxRunsPerWeek: MAX_RUNS_PER_WEEK,
+        maxOutputsPerRun: MAX_OUTPUTS_PER_RUN,
+      });
+    }
+  });
+
+  it("holds the weekly reply ceiling at 5, not 35", () => {
+    const reddit = scheduleLimitsFor("karos-reddit-agent");
+    expect(reddit.maxRunsPerWeek * reddit.maxOutputsPerRun).toBe(5);
+    const generic = scheduleLimitsFor("karos-instagram-agent");
+    expect(generic.maxRunsPerWeek * generic.maxOutputsPerRun).toBe(35);
+  });
+});
+
+describe("the server clamps to those limits, not only the dialog", () => {
+  it("applies the per-agent ceiling to both stored fields", () => {
+    // A server action is a public HTTP surface: hiding an option is not the
+    // same as refusing a value, and a stale page or a direct call is exactly
+    // how the 35-a-week schedule got written.
+    const src = readFileSync(
+      join(process.cwd(), "src/lib/actions/planned-run-actions.ts"),
+      "utf8",
+    );
+    const start = src.indexOf("export async function configureClientAgentScheduleAction");
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf("\nexport async function ", start + 1));
+    expect(body).toContain("scheduleLimitsFor(agent.key)");
+    expect(body).toContain("clampInt(input.postsPerWeek, 1, limits.maxRunsPerWeek)");
+    expect(body).toContain("limits.maxOutputsPerRun");
+    // The clamp wraps the preserve-the-stored-value branch too, so re-saving a
+    // row written before the cap cannot re-commit to billing it.
+    expect(body).not.toMatch(/const outputsPerRun =\s*\n?\s*actorIsClient/);
+  });
+
+  it("keeps the dialog's dropdowns on the same source of truth", () => {
+    const ui = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
+    expect(ui).toContain("scheduleLimitsFor(agent.key)");
+    expect(ui).toContain("countOptions(limits.maxRunsPerWeek)");
+    expect(ui).toContain("countOptions(limits.maxOutputsPerRun)");
   });
 });

@@ -6,16 +6,23 @@ import type { AppUser, PlannedScheduledRun } from "@/lib/types";
 
 export const maxDuration = 120;
 
+/** A stored refusal is one readable sentence on the schedule row, not a log. */
+const MAX_ERROR_CHARS = 400;
+
 /**
  * Scheduled-run cron. Every tick it drains active ScheduledRuns whose nextRunAt
  * has passed and fires the custom agent via the same core the web action uses
  * (submitCustomAgentJob) — so a scheduled run is indistinguishable from a manual
  * one once it fires. One-off runs complete; recurring runs advance to their next
- * slot. The actor is the staff creator, so runs never charge client credits.
+ * slot. The actor is the run's creator: a staff-created schedule fires free,
+ * while a schedule a client switched on (billClientCredits) charges that
+ * client's credits on every fire, outputsPerRun included.
  *
  * Every fire that produces nothing — a credit refusal, a spend cap, missing
- * intake, the agent service being unreachable — is recorded on the schedule row
- * as lastError/lastErrorAt, and a fire that succeeds clears them. The agent card
+ * intake, the agent service being unreachable — is refused by the submit core
+ * before a job row exists, leaving no job, no failed status and no charge
+ * behind. Every such refusal is recorded on the schedule row as
+ * lastError/lastErrorAt, and a fire that succeeds clears them. The agent card
  * reads those fields, so a schedule that can never fire is visible instead of
  * silently green.
  */
@@ -85,8 +92,11 @@ export async function GET(req: NextRequest) {
         lastRunAt: now,
         ...(jobId ? { lastJobId: jobId } : {}),
         // Refusals are surfaced on the client's agent card; a clean fire clears
-        // the previous one so the card stops nagging once it recovers.
-        lastError: error ?? null,
+        // the previous one so the card stops nagging once it recovers. Written
+        // as null rather than omitted: Firestore is configured to ignore
+        // undefined values, so an omitted key would leave the previous refusal
+        // in place forever.
+        lastError: error ? error.slice(0, MAX_ERROR_CHARS) : null,
         lastErrorAt: error ? Date.now() : null,
         updatedAt: Date.now(),
       };
@@ -110,18 +120,19 @@ export async function GET(req: NextRequest) {
 
       results.push(error ? { runId: run.id, status: "failed", error, jobId } : { runId: run.id, status: "submitted", jobId });
     } catch (e) {
-      // Leave the run active so the next tick retries, but record the refusal so
-      // the card can show it — a throw is exactly the case that would otherwise
-      // stay silently green forever.
+      // Leave the run active so the next tick retries, and leave the cursor
+      // alone, but record the refusal so the card can show it — a throw is
+      // exactly the case that would otherwise stay silently green forever.
       const message = e instanceof Error ? e.message : "Unknown error";
       try {
         await updatePlannedScheduledRun(run.id, {
-          lastError: message,
+          lastError: message.slice(0, MAX_ERROR_CHARS),
           lastErrorAt: Date.now(),
           updatedAt: Date.now(),
         });
       } catch {
-        // the schedule row may be gone — nothing left to annotate
+        // The row may be gone — nothing left to annotate; the response below
+        // still reports it.
       }
       results.push({ runId: run.id, status: "failed", error: message });
     }

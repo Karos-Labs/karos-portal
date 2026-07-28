@@ -23,6 +23,8 @@ export function Modal({
   children,
   footer,
   className,
+  closeOnBackdrop = true,
+  scrollRef,
 }: {
   open: boolean;
   onClose: () => void;
@@ -32,7 +34,22 @@ export function Modal({
   /** Pinned action bar. Stays put while the body scrolls. */
   footer?: React.ReactNode;
   className?: string;
+  /**
+   * Set false when a stray click outside would discard typed input. Escape and
+   * the ✕ still close — those are deliberate gestures.
+   */
+  closeOnBackdrop?: boolean;
+  /**
+   * The one element that scrolls, handed to callers that swap their content in
+   * place: only the caller knows when a swap has left the reader mid-document.
+   * The title and description sit in the sticky header ABOVE this element
+   * (F32's split body), so scrolling it to 0 restores the top of the content
+   * without moving the heading.
+   */
+  scrollRef?: React.RefObject<HTMLDivElement | null>;
 }) {
+  const panelRef = React.useRef<HTMLDivElement>(null);
+
   React.useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -48,6 +65,21 @@ export function Modal({
     }
   }, [open, onClose]);
 
+  // No caller focuses a field of its own, so without this the control that
+  // opened the dialog keeps focus behind the backdrop and the next Tab walks
+  // the page underneath. The panel is the target because it is the one element
+  // every caller has, and focus returns to the opener on the way out.
+  React.useEffect(() => {
+    if (!open) return;
+    const panel = panelRef.current;
+    const opener = document.activeElement as HTMLElement | null;
+    if (panel && !panel.contains(opener)) panel.focus({ preventScroll: true });
+    return () => {
+      // An opener that unmounted with the dialog simply gets no focus back.
+      opener?.focus({ preventScroll: true });
+    };
+  }, [open]);
+
   if (!open) return null;
 
   return createPortal(
@@ -62,14 +94,22 @@ export function Modal({
       data-overlay-root=""
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
       <div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        {...(closeOnBackdrop ? { onClick: onClose } : {})}
+      />
+      <div
+        ref={panelRef}
+        // Focus target only — a container draws no ring of its own.
+        tabIndex={-1}
         className={cn(
           // Capped, not uncapped: the body scrolls, so a content-heavy dialog
           // must not stretch to a tall monitor's full height. 1100px clears
           // F32's "Start run scrolls out of sight" on normal displays while
-          // staying bounded on very tall ones.
-          "relative z-10 flex max-h-[min(calc(100dvh-3rem),1100px)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius)] border border-border-strong bg-surface shadow-2xl animate-fade-up",
+          // staying bounded on very tall ones. focus:outline-none because the
+          // panel is only a focus TARGET (tabIndex -1) — a container drawing a
+          // ring of its own would ring the whole dialog on open.
+          "relative z-10 flex max-h-[min(calc(100dvh-3rem),1100px)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius)] border border-border-strong bg-surface shadow-2xl animate-fade-up focus:outline-none",
           className,
         )}
         role="dialog"
@@ -91,7 +131,10 @@ export function Modal({
         {/* Spacing is kept identical to the single-box version on purpose: the
             inner wrapper carries the same mt-4 / pt-6 the old body applied, so
             no existing dialog shifts by a pixel from the restructure. */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+        <div
+          className="min-h-0 flex-1 overflow-y-auto px-6 pb-6"
+          {...(scrollRef ? { ref: scrollRef } : {})}
+        >
           <div className={title || description ? "mt-4" : "pt-6"}>{children}</div>
         </div>
         {footer && <div className="shrink-0 border-t border-border px-6 py-4">{footer}</div>}

@@ -959,3 +959,120 @@ Common chassis everywhere: status, per-agent archive, documents, data,
 connectors, feedback. STAFF PARITY: staff agent clicks open the same full
 page (retire the staff all-in-one cards deferral). Sequenced AFTER the Tomer
 reconciliation merge (same files; Reddit arrives with it).
+
+---
+
+## Tomer reconciliation executed (2026-07-28)
+
+Merge of `origin/main` (Tomer's Reddit e15 / runway autopilot / per-client agent
+binding branch) into `claude/karos-portal-qa-feedback-7efbdf`, against
+`docs/qa-sweep-2026-07/tomer-reconciliation-map.md`. Merge base `bdb5f23`.
+19 files conflicted (44 hunks) plus one modify/delete; two files that merged
+clean were resolved by hand because taking them as-is was semantically wrong
+(scheduled-runs zone bypass, calendar-body identity revert).
+
+Commits: merge `10b5f09`, then one per fix — `8f4975a` (g), `fef7ec0` (a),
+`d52ab50` (b), `4757ffd` (c), `b949563` (d), `77df660` (e), `196e2a6` (f),
+`792c28a` (i), `25d77e9` (h).
+
+### Rulings applied
+
+1. **Binding vs umbrella — complementary layers** (`d52ab50`). Binding rung
+   added to `evaluateLaunchGate` as `wrong_client_binding`, ABOVE
+   `intake_required` (no form fills a binding in) and below `not_granted`
+   (which agents exist beyond an allowlist is not a client's to learn).
+   `bindClientAgentAction` refuses the pair outright, ahead of
+   `upsertClientAgent`, so a mismatched umbrella never reaches disk. `agentKey`
+   is REQUIRED on `LaunchGateInput` — an optional field would let a caller skip
+   the rung, which is the defect. Compiler found all four call sites.
+2. **F38 un-struck → RESOLVED-in-merge** (`4757ffd`). The strike called
+   `perClientAgentSlug` / `agentKeyMatchesClientSlug` phantoms; Tomer's branch
+   creates exactly those symbols, so the premise holds and the defect is live.
+   Hub `clients` carry `agentsRepoSlug`; the picker is filtered; one eligible
+   client renders as a fixed chip rather than a one-option dropdown; Run is
+   disabled with a reason when none qualify. **F35** binding-display half built
+   in the same commit ("`<slug>` only" on the card). **F27** re-applied for the
+   merged e15 (`b949563`).
+3. **Reddit rule application** (`77df660`). `stripInlineMarkdown` at the eight
+   lab-commentary sites; `laneLabel` on the lane fallback; third sniff slot in
+   `asset-detail-modal` in the card's li → reddit → x order;
+   `JobStatusBadge` + `formatDate` in the intake (and `RedditRunRowView.status`
+   typed `JobStatus`, which is what allowed the raw word);
+   `REDDIT_SETUP_REQUIRED_PREFIX` allowlisted in `isClientReadableRefusal` (in
+   the merge commit, per the map's per-file resolution); F28 sentence rewritten
+   to name the approval step and link the archive; `chainFamilyForAgent` returns
+   undefined for Reddit; `buildAgentSetup` registers e15.
+4. **Runway** merged as-is, `RUNWAY_AUTOGEN_ENABLED` stays unset. Actor leak
+   fixed at the projection (`196e2a6`) and the brief made content-safe. Fill
+   policy per Albert's mid-merge ruling (`792c28a`).
+5. **Refusal copy** (`8f4975a`). Ours applied byte-identically to both cores and
+   to the schedule gate (which keeps its own closing clause — it answers "why is
+   the schedule off", not "why did nothing run").
+6. **`hasLinkedInAgentIntake` stays 2-arg** (merge + `8f4975a`). The one-arg
+   collapse judged the Path-B master by the company-page instances' rule, locking
+   it out of a workspace set up entirely on the seat side. `schedule-gate` now
+   passes the key too.
+7. **`AgentSetupState` carries href AND data** (`25d77e9`). One keyed map; the
+   three per-platform props are gone from both components' surfaces.
+
+### Albert's mid-merge ruling (fix i, `792c28a`)
+
+Runway fills the FULL 14-day buffer on the first sweep and tops back up weekly
+(~7 after a week), instead of one job per client per sweep. One managed run
+yields one asset, so a deficit of 10 is 10 dispatches, sharing one per-client
+budget across short families. `RUNWAY_MAX_JOBS_PER_CLIENT` default raised to 14
+and the `=0 silently becomes 2` footgun removed (explicit undefined check; 0
+means zero). No batch brief invented — the managed schemas take no count field.
+Email/article targets unchanged; flag stays off. Confirmed alongside it: credits
+stay client-actions-only (system runs charge none), and the F38 hub fix is what
+Albert asked for ("let's use our fixes").
+
+### Divergences from the map, and why
+
+- **F71 re-applied to merged copy.** origin/main reintroduced spaced hyphens in
+  client-facing strings (`linkedin-agent-intake` seat copy, the Reddit "Sent -
+  it feeds the next run"). F71 is a RESOLVED ledger item, so the em dashes were
+  restored on the merged text. Not listed in the map; it is the map's intent
+  (our resolved items survive) applied to copy the map did not enumerate.
+- **The eight Reddit strip sites exclude the reply body and the disclosure.**
+  Both are what the client POSTS, and Reddit renders markdown natively —
+  stripping them would change the comment that goes up. The eight are the
+  commentary sites; the X and LinkedIn readers draw the same line.
+- **Reddit blurb entry was already present** in `agent-blurbs.ts` AND in the
+  `backfill-agent-blurbs.ts` twin, byte-identical, matched by the broad
+  `/reddit/` rule rather than a key-specific one. Verified rather than added; a
+  test now keeps the two in step.
+- **origin/main's `jobPreviews` block not reinstated.** F39/F45 removed it as
+  dead; his branch rebuilt it in the same shape and likewise passes it to
+  nobody, at the cost of one `getAsset` per managed deliverable per page load.
+- **Client branch keeps our roster, not his `ClientCustomAgents`.** Ruling 7
+  assigns the inline pane to the staff dialog; CD-G1 says a client's run gesture
+  lives on the detail page. His prefetched views are therefore built on the
+  staff branch only.
+- **Second unfiltered staff agent list found and removed** (`25d77e9`). Our
+  branch had grown `staffAgents = customAgents.filter(a => a.enabled)` with no
+  binding filter, so the staff card list could offer another client's instance —
+  contradicting the file's own doc comment. Both branches are back on one
+  filtered list. Not in the map; found by the compiler during ruling 7.
+- **`createPlannedRunAction` is NOT Reddit-capped.** It writes a cadence
+  (daily/weekly/monthly) with no `outputsPerRun`, so a "daily" Reddit row is 7
+  replies a week, above the 5 the product sells. Refusing a daily cadence for
+  e15 there is a product call, not a merge resolution — logged, not done.
+- **F27 stored rows are not retro-clamped.** Existing schedules above the cap
+  keep their numbers until someone saves them (the save clamps). A migration
+  that silently rewrites what a client is paying for is Albert's call.
+
+### Known-red inherited, then fixed
+
+The merge commit itself left 3 reds — his `agent-intake-gate.test.ts` assertions
+encoding the copy (ruling 5) and the arity (ruling 6) the rulings overrode. They
+are updated in `8f4975a`, the commit immediately after, with the reasoning in its
+message. No other test of his required changing.
+
+### Gates
+
+`npx tsc --noEmit` clean · `npm run build` clean · `npx vitest run` 1202/1202
+across 85 files (our 1089 + his new files + 113 added here). The two
+`react-hooks/purity` eslint errors in `clients/[id]/agents/page.tsx` are
+pre-existing on the sweep branch (verified by linting the stashed tree) and were
+not introduced or touched by this merge.

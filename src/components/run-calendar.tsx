@@ -620,7 +620,9 @@ export function RunCalendar({
   const totalCells = Math.ceil((firstDayOfWeek + totalDays) / 7) * 7;
   const isCurrentMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth();
 
-  const upcomingCount = runs.filter((r) => r.kind === "scheduled").length;
+  // Distinct scheduled runs, not chip count — a recurring run now projects one
+  // chip per future occurrence, which would otherwise inflate this summary.
+  const upcomingCount = new Set(runs.filter((r) => r.kind === "scheduled").map((r) => r.id)).size;
   const pastCount = runs.filter((r) => r.kind === "past").length;
 
   // Phone agenda: seven columns across ~340px gives each day about 48px, so

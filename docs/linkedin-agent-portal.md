@@ -10,12 +10,13 @@ a person always posts).
 
 | Surface | Where |
 |---|---|
-| Company-page form, seats ("add a seat", shared `clientSeats` — one person, one seat across agents), the shared what-happened-this-week box, per-draft feedback | `/clients/<id>/linkedin-agent` (`src/app/(app)/clients/[id]/linkedin-agent/page.tsx`) |
+| Company-page form, seats ("add a seat", shared `clientSeats` — one person, one seat across agents), the shared what-happened-this-week box, per-draft feedback | `src/components/linkedin-agent-intake.tsx`, rendered inside the run dialog on `/clients/<id>/agents` — inline on a first run, then collapsed behind the "LinkedIn agent data" button on the agent card and at the top of the run brief — and by the `/clients/<id>/linkedin-agent` deep link, which no navigation points at. Both get their props from `buildLinkedInAgentIntakeView` in `src/lib/agent-intake-views.ts` — one mapping, two mounts |
 | Agent registration | `customAgents` doc, key `karos-linkedin-company-karoslabs` → `clients/karoslabs/skills/linkedin-agent/company-page` (per-client instance; future clients get their own `karos-linkedin-company-<slug>` doc) |
+| Per-client binding | The `<slug>` suffix IS the client's `agentsRepoSlug`, and that pair is enforced, not conventional: `agentKeyMatchesClientSlug` in `src/lib/custom-agent-launch.ts` keeps an instance off every other client's agents page, settings page and copilot roster, and both submit cores plus the schedule gate (`src/lib/jobs/schedule-gate.ts`) refuse a mismatched pair before any job row or charge exists. Import a new instance with the suffix spelled exactly as that client's slug — a mismatch reads as a missing card, not a wrong-company run |
 | Run launcher | `/clients/<id>/agents` (custom agents hub; exact-key e10 profile in `src/lib/custom-agent-launch.ts`, placed before the generic founder-LinkedIn brief) |
 | Stored data | Firestore: `clientSeats` (shared), `agentIntake` (agent="linkedin"; seat docs carry role/focus/fallback/CV), `xNewsUpdates` (the SHARED news drop — SCRUM-51), `liDraftFeedback` |
 | Run-time injection | `src/lib/agent-service/linkedin-agent-context.ts` serializes the stored data to context files on every e10 run (both submit cores); they override any older repo copies. Prior batches (across ALL of the client's e10 agents — one shared memory, like the lab's shared ledger) ride along for anti-duplication — the runner workspace is ephemeral, so a run's own ledger/catalog writes are discarded |
-| Run gate | A deliberate portal policy, stricter than the lab contract: company-page runs refuse to start until the company form on the data page is SAVED (the form's answers are optional — the lab's Path A can run on onboarding alone, which is why saving an empty form satisfies the gate). The Path B master gates on any LinkedIn intake instead |
+| Run gate | A deliberate portal policy, stricter than the lab contract: company-page runs refuse to start until the company form in the agent data is SAVED (the form's answers are optional — the lab's Path A can run on onboarding alone, which is why saving an empty form satisfies the gate). The Path B master gates identically: the company page is the floor for every e10 key, and a bare seat never satisfies it, because seats are shared across agents and may have been created for another one |
 | Seat voice collection | Apify (`harvestapi~linkedin-profile-posts`) via `APIFY_TOKEN`, already wired end to end (cloudbuild → worker `buildRunnerEnv` → runner `sdkEnv`); degrades to CV/fallback when unset. A LinkedIn profile URL cannot be fetched directly (HTTP 999) |
 | Review | Webhook → job status `review` + one library asset (type `note`, unpublishable). `client/DRAFTS.md` becomes the asset content; the reader (`src/components/li-drafts-review.tsx`) renders per-account cards with Pick & post on LinkedIn / Pick with edits / Skip |
 | Pick-to-post | `linkedin.com/feed/?shareActive=true&text=<urlencoded>` — verified live 2026-07-24 (full prefill incl. newlines/emoji/links to the 3,000-char cap; the auth wall carries the link through login via `session_redirect`). Undocumented, so the pick copies the text to the clipboard FIRST; media (slides/PDFs) cannot ride a URL and are listed for download + manual attach |
@@ -29,8 +30,8 @@ and serialized back into future runs as that account's learning log.
 client, stored in `xNewsUpdates` (historical name kept — no migration) and
 fanned out at run time: `whats-new.json` for the X agent,
 `company-updates.md` Section A for this agent. The box component is
-`src/components/company-news-box.tsx`, mounted on both agent data pages. Do
-not build a per-platform copy.
+`src/components/company-news-box.tsx`, mounted inside both agent intake
+surfaces. Do not build a per-platform copy.
 
 ## Canonical instructions for the `karos-linkedin-company-karoslabs` customAgents doc
 

@@ -75,6 +75,10 @@ substitutions:
   # Set after the agent service is deployed (empty ⇒ managed products stay hidden):
   _AGENT_SERVICE_URL: ""
   _APP_URL: ""
+  # Runway autopilot (src/app/api/runway) — off by default. Flip to "1" at the
+  # trigger level once a dryRun=1 sweep looks right in production.
+  _RUNWAY_AUTOGEN_ENABLED: ""
+  _RUNWAY_MAX_JOBS_PER_CLIENT: "2"
   # Override at trigger level: --substitutions _REGION=europe-west1,...
 
 options:
@@ -134,7 +138,7 @@ steps:
       # (both empty until the agent service is deployed; the managed-products UI
       # stays hidden until AGENT_SERVICE_URL is set). NEXT_PUBLIC_APP_URL is the
       # webhook callback base.
-      - --set-env-vars=EMAIL_FROM=Karos CMO <donotreply@karoslabs.com>,ADMIN_EMAIL=hello@karoslabs.com,NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},NEXT_PUBLIC_APP_URL=${_APP_URL}
+      - --set-env-vars=EMAIL_FROM=Karos CMO <donotreply@karoslabs.com>,ADMIN_EMAIL=hello@karoslabs.com,NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},NEXT_PUBLIC_APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT}
     waitFor: [docker-push]
 
 images:
