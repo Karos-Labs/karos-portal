@@ -212,8 +212,10 @@ function ProactiveWelcome({
 
   const [taskText, setTaskText] = useState("");
   const [isPending, startTransition] = useTransition();
+  // "info" is the duplicate case: nothing failed, the work is already on the
+  // board — it used to render in the red danger style (QA F61).
   const [taskFeedback, setTaskFeedback] = useState<{
-    type: "success" | "error";
+    type: "success" | "info" | "error";
     message: string;
   } | null>(null);
 
@@ -232,7 +234,10 @@ function ProactiveWelcome({
         onTasksCreated();
         setTimeout(() => setTaskFeedback(null), 3000);
       } else {
-        setTaskFeedback({ type: "error", message: result.error ?? "Failed to add task" });
+        setTaskFeedback({
+          type: result.duplicate ? "info" : "error",
+          message: result.error ?? "Failed to add task",
+        });
       }
     });
   }
@@ -287,11 +292,19 @@ function ProactiveWelcome({
               "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px]",
               taskFeedback.type === "success"
                 ? "border border-success/25 bg-success/10 text-success"
-                : "border border-danger/20 bg-danger/5 text-danger",
+                : taskFeedback.type === "info"
+                  ? "border border-border bg-surface-2 text-muted"
+                  : "border border-danger/20 bg-danger/5 text-danger",
             )}
           >
             <Icon
-              name={taskFeedback.type === "success" ? "CircleCheck" : "TriangleAlert"}
+              name={
+                taskFeedback.type === "success"
+                  ? "CircleCheck"
+                  : taskFeedback.type === "info"
+                    ? "Info"
+                    : "TriangleAlert"
+              }
               className="h-3 w-3 shrink-0"
             />
             {taskFeedback.message}
