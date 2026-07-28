@@ -175,37 +175,80 @@ export function AiInsights({ clientId }: { clientId: string }) {
    no markdown dependency) rather than leaving raw syntax on the page. */
 
 /**
- * The inline spans a briefing can carry: **bold**, *emphasis*, _emphasis_.
+ * The inline spans a briefing can carry, in match order: ***both***, **bold**
+ * (which may wrap *emphasis* inside it), *emphasis*, __bold__, _emphasis_.
  *
  * QA F126: this used to match only the double-asterisk form, so whenever the
  * model reached for italics the delimiters landed on the page verbatim ("Top
  * performers: *Playbook* (4.2 score) and *Special Edition*"). Latent rather
  * than always visible — it depends on what the model emits that week — which is
- * how it survived review. Bold is listed first so it wins the alternation.
+ * how it survived review.
+ *
+ * The shapes below are the follow-up pass. Each one left a literal delimiter on
+ * the page under the first fix — the very symptom F126 is about:
+ * - `**bold with *nested* inside**`: `[^*]+` can't cross the inner star, so the
+ *   outer span never matched and the inner one matched across the wrong
+ *   boundary. `(?:[^*]|\*(?!\*))+?` accepts single stars but stops at the
+ *   closing pair; the content is then re-rendered, so nesting works.
+ * - `***triple***` and `__bold__`: matched one delimiter in from the edge and
+ *   spat the outermost one onto the page. Both now have their own alternative.
+ * - `client_id_value`: the underscore branch ate the middle of ordinary tokens
+ *   (reachable — asset labels are quoted verbatim into briefings). Word-boundary
+ *   guards mean an underscore only opens emphasis at a non-word boundary.
  */
-export const INLINE_EMPHASIS_RE = /(\*\*[^*]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g;
+export const INLINE_EMPHASIS_RE =
+  /(\*\*\*[^*\n]+\*\*\*|\*\*(?:[^*]|\*(?!\*))+?\*\*|\*[^*\n]+\*|(?<!\w)__[^_\n]+__(?!\w)|(?<!\w)_[^_\n]+_(?!\w))/g;
 
-export function renderInline(line: string, keyPrefix: string): React.ReactNode[] {
-  // Split on emphasis spans, keeping the delimited groups.
+/**
+ * The inside of a delimited span, or null when `part` isn't one. Split() hands
+ * back the text between matches as well as the matches themselves, so this
+ * re-checks the shape rather than trusting a startsWith: a lone "****" or "___"
+ * in prose is text, not an empty emphasis to swallow.
+ */
+function unwrap(part: string, delim: string): string | null {
+  if (part.length <= delim.length * 2) return null;
+  if (!part.startsWith(delim) || !part.endsWith(delim)) return null;
+  const inner = part.slice(delim.length, -delim.length);
+  // A leftover delimiter char at either edge means we're one level off (e.g.
+  // reading "***x***" as bold) — let the correct alternative claim it.
+  return inner.startsWith(delim[0]) || inner.endsWith(delim[0]) ? null : inner;
+}
+
+export function renderInline(line: string, keyPrefix: string, depth = 0): React.ReactNode[] {
+  // Bold may carry emphasis inside it; nothing deeper is worth another pass.
+  if (depth > 2) return [<span key={`${keyPrefix}-flat`}>{line}</span>];
+
   return line.split(INLINE_EMPHASIS_RE).filter(Boolean).map((part, i) => {
-    if (part.startsWith("**") && part.endsWith("**")) {
+    const key = `${keyPrefix}-${i}`;
+
+    const both = unwrap(part, "***");
+    if (both !== null) {
       return (
-        <strong key={`${keyPrefix}-${i}`} className="font-semibold text-foreground">
-          {part.slice(2, -2)}
+        <strong key={key} className="font-semibold text-foreground">
+          <em className="italic">{renderInline(both, key, depth + 1)}</em>
         </strong>
       );
     }
-    if (
-      (part.startsWith("*") && part.endsWith("*")) ||
-      (part.startsWith("_") && part.endsWith("_"))
-    ) {
+
+    const bold = unwrap(part, "**") ?? unwrap(part, "__");
+    if (bold !== null) {
       return (
-        <em key={`${keyPrefix}-${i}`} className="italic text-foreground/90">
-          {part.slice(1, -1)}
+        <strong key={key} className="font-semibold text-foreground">
+          {renderInline(bold, key, depth + 1)}
+        </strong>
+      );
+    }
+
+    const emphasis = unwrap(part, "*") ?? unwrap(part, "_");
+    if (emphasis !== null) {
+      return (
+        <em key={key} className="italic text-foreground/90">
+          {emphasis}
         </em>
       );
     }
-    return <span key={`${keyPrefix}-${i}`}>{part}</span>;
+
+    return <span key={key}>{part}</span>;
   });
 }
 

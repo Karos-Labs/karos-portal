@@ -34,6 +34,11 @@ const CORPUS = [
   "### Deeper header\n• A bullet with **bold** and *emphasis* together\n",
   "###### Sixth-level header\n- _underscored emphasis_ mid-sentence works too\n",
   "Plain paragraph with no syntax at all.\n",
+  // The follow-up shapes: each one used to leave a delimiter on the page.
+  "**Reach is up 40% on *Playbook*, down on the rest**\n",
+  "***Special Edition*** carried the week.\n",
+  "__Week over week__ the numbers held.\n",
+  "- **Winner:** *Playbook* · **Loser:** _Special Edition_\n",
 ];
 
 describe("AI Insights briefing renderer", () => {
@@ -76,5 +81,53 @@ describe("AI Insights briefing renderer", () => {
 
   it("leaves an unpaired asterisk alone rather than eating text", () => {
     expect(textOf("Reach 4 * 3 posts")).toBe("Reach 4 * 3 posts");
+  });
+
+  /* ── Verifier follow-up: shapes that still leaked a delimiter ───────── */
+
+  it("renders emphasis nested inside bold without leaking a star", () => {
+    const out = html("**Reach is up 40% on *Playbook*, down on the rest**");
+    expect(out).toContain("<strong");
+    expect(out).toContain("<em");
+    expect(textOf("**Reach is up 40% on *Playbook*, down on the rest**")).toBe(
+      "Reach is up 40% on Playbook, down on the rest",
+    );
+  });
+
+  it("renders ***triple*** as bold emphasis, not a stray asterisk", () => {
+    const out = html("***Special Edition*** carried the week.");
+    expect(out).toContain("<strong");
+    expect(out).toContain("<em");
+    expect(textOf("***Special Edition*** carried the week.")).toBe(
+      "Special Edition carried the week.",
+    );
+  });
+
+  it("renders __bold__ as bold, not _really bold_", () => {
+    const out = html("__Week over week__ the numbers held.");
+    expect(out).toContain("<strong");
+    expect(textOf("__Week over week__ the numbers held.")).toBe("Week over week the numbers held.");
+  });
+
+  it("leaves underscores inside ordinary tokens alone (asset labels)", () => {
+    // Asset labels are quoted verbatim into briefings, so a snake_case title is
+    // reachable prose — the underscore branch used to eat its middle.
+    expect(textOf("Top performer: client_id_value (4.2)")).toBe(
+      "Top performer: client_id_value (4.2)",
+    );
+    expect(textOf("ig_post_2026_07 and li_article_04 both landed")).toBe(
+      "ig_post_2026_07 and li_article_04 both landed",
+    );
+  });
+
+  it("still opens underscore emphasis at a word boundary", () => {
+    expect(html("Double down on _Playbook_ this week")).toContain("<em");
+    expect(textOf("_Playbook_ led")).toBe("Playbook led");
+  });
+
+  it("does not swallow runs of bare delimiters", () => {
+    expect(textOf("****")).toBe("****");
+    expect(textOf("___")).toBe("___");
+    expect(textOf("**")).toBe("**");
   });
 });
