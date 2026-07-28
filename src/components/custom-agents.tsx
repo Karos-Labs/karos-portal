@@ -1042,9 +1042,11 @@ function RunCustomAgentModal({
         <div className="mt-4 space-y-3 text-center">
           <Icon name="CheckCircle2" className="mx-auto h-8 w-8 text-success" />
           <p className="text-sm text-foreground">Run started</p>
+          {/* Drafts no longer reach the client archive at all: F149 filters it
+              to approved, non-future items. Copy is phase3-design §3. */}
           <p className="text-xs text-muted">
-            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Deliverables land in your
-            Workspace archive as soon as the run finishes, marked as drafts until your Karos team approves them.
+            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Your Karos team is
+            reviewing it — finished posts appear in your Workspace once approved.
           </p>
           <Button variant="subtle" onClick={onClose}>
             Done
