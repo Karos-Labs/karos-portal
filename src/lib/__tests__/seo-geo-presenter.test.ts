@@ -203,7 +203,7 @@ describe("leak guard (SCRUM-52 fix 1)", () => {
     expect(view.fixArea).toBeNull();
     expect(view.fixRoute).toBe("The Karos team will handle this.");
     expect(view.qualifier).toBe("Under review by the Karos team");
-    expect(view.channelLabel).toBe("search + AI");
+    expect(view.channelLabel).toBe("search + AI answers");
     expect(view.severityLabel).toBe("minor");
   });
 

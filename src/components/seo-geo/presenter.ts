@@ -797,10 +797,18 @@ function severityRank(severity: string): number {
   return SEVERITY_RANK[severity] ?? SEVERITY_RANK_DEFAULT;
 }
 
+/**
+ * QA F144 / call directive B1. "Search engines" was the word the whole report
+ * hinges on and the team itself paused on it — "search engines also sounds like
+ * AI". One word set everywhere: classic ranked results vs assistant answers.
+ * "Search results" rather than "Google search" because the checks behind this
+ * channel cover Bing and Brave indexes too (GEO-24, GEO-23), so naming one engine
+ * would be its own inaccuracy.
+ */
 const CHANNEL_VIEW: Record<string, { channel: GapChannel; label: string }> = {
-  SEO: { channel: "search", label: "search engines" },
+  SEO: { channel: "search", label: "search results" },
   GEO: { channel: "ai", label: "AI answers" },
-  BOTH: { channel: "both", label: "search + AI" },
+  BOTH: { channel: "both", label: "search + AI answers" },
 };
 
 const FIX_AREAS: Record<string, { label: string; gloss: string }> = {

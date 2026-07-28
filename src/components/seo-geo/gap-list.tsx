@@ -15,9 +15,11 @@ import type { GapChannel, GapView } from "./presenter";
  * agents page (SCRUM-52 amendment).
  */
 
+/** QA F144: same word set as the presenter's channel chips — "search engines"
+ *  read as AI search to the team that built it, so it reads that way to a client. */
 const FILTERS: Array<{ id: "all" | GapChannel; label: string }> = [
   { id: "all", label: "All" },
-  { id: "search", label: "Search engines" },
+  { id: "search", label: "Search results" },
   { id: "ai", label: "AI answers" },
 ];
 
