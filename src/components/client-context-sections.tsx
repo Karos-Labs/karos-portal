@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { BrandFavicon } from "@/components/brand-favicon";
@@ -295,6 +295,29 @@ export function BrandColorsSection({
   isStaff?: boolean;
 }) {
   const [brandingOpen, setBrandingOpen] = useState(false);
+  /** Index of the swatch flashing "Copied", or null (CD-G11). */
+  const [copied, setCopied] = useState<number | null>(null);
+
+  // Let the confirmation fade by itself, and drop the timer if the rail
+  // unmounts mid-flash (switching client context remounts this whole section).
+  useEffect(() => {
+    if (copied == null) return;
+    const t = setTimeout(() => setCopied(null), 1200);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  async function copyHex(hex: string, index: number) {
+    // Insecure origin, an older browser, or a denied permission — say nothing
+    // and leave the tooltip showing the hex, which is still readable and
+    // selectable. Claiming a copy that never happened is the worse failure.
+    if (!navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(hex);
+      setCopied(index);
+    } catch {
+      // Same reasoning — no false confirmation.
+    }
+  }
 
   const colors: BrandColor[] = guidelines?.dominantColors?.slice(0, 4) ?? [];
   const effective: { hex: string; role?: string; usagePct?: number }[] =
@@ -331,10 +354,16 @@ export function BrandColorsSection({
         <div className="flex items-start gap-2.5 px-1 pb-0.5">
           {effective.map((color, i) => (
             <div key={i} className="group relative">
-              <div
-                className="h-7 w-7 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110"
+              {/* A button, not a div: the hex is the thing people actually want
+                  off this panel, and copying it has to be reachable by keyboard
+                  too (CD-G11). */}
+              <button
+                type="button"
+                onClick={() => copyHex(color.hex, i)}
+                className="block h-7 w-7 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon"
                 style={{ backgroundColor: color.hex }}
                 title={color.role ? `${color.role} · ${color.hex}` : color.hex}
+                aria-label={`Copy ${color.role ? `${color.role} ` : ""}${color.hex}`}
               />
               {/* Internal mix share — staff only; a client's payload never
                   carries the number (CD-E2). */}
@@ -348,17 +377,31 @@ export function BrandColorsSection({
                   midpoint flip to the right edge for the same reason. */}
               <div
                 className={cn(
-                  "pointer-events-none absolute bottom-full z-20 mb-2 w-max opacity-0 transition-opacity group-hover:opacity-100",
+                  "pointer-events-none absolute bottom-full z-20 mb-2 w-max transition-opacity",
                   // Widest that still clears the rail from the last swatch's
                   // left edge; the label wraps rather than running off-screen.
                   "max-w-[9.5rem]",
                   i >= 2 ? "right-0" : "left-0",
+                  // The confirmation has to hold on its own: a tap has no hover
+                  // to keep the tooltip up, and a keyboard user never had one.
+                  copied === i
+                    ? "opacity-100"
+                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
                 )}
               >
                 <div className="rounded-md border border-border bg-surface-3 px-2 py-1 font-mono text-[11px] leading-snug text-foreground shadow-lg">
-                  {color.hex}
-                  {color.role && (
-                    <span className="ml-1 font-sans text-muted-2">· {color.role}</span>
+                  {copied === i ? (
+                    <span className="flex items-center gap-1">
+                      <Icon name="Check" className="h-3 w-3 text-neon" />
+                      Copied
+                    </span>
+                  ) : (
+                    <>
+                      {color.hex}
+                      {color.role && (
+                        <span className="ml-1 font-sans text-muted-2">· {color.role}</span>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

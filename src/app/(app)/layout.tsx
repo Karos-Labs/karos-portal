@@ -30,7 +30,6 @@ import { ClientRail } from "@/components/client-rail";
 import { CopilotDock } from "@/components/copilot-dock";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
-import { AppHeader } from "@/components/app-header";
 import { ClientContextBar } from "@/components/client-context-bar";
 import { StaffCopilotDock } from "@/components/staff-chatbot-widget";
 import type { ActionItemNotification, AgentReviewNotification, Client, ClientTask } from "@/lib/types";
@@ -215,11 +214,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <ActiveClientProvider>
       <div className="flex min-h-screen flex-col md:flex-row">
+        {/* Support, light/dark and the bell used to float in an AppHeader strip
+            at the top right of every staff page. CD-G9c retired that strip —
+            the rail's account menu carries them now, and the Company sheet
+            carries them at narrow width in client context. */}
         <Sidebar
           user={user}
           pendingCount={pendingCount}
           realAdmin={realAdmin}
           clients={clients}
+          actionItems={actionItems as ActionItemNotification[]}
+          reviewJobs={scopedReviewJobs}
+          taskAlerts={scopedTaskAlerts}
         />
         <div className="flex min-w-0 flex-1 flex-col">
           {isImpersonating && realAdmin && (
@@ -227,14 +233,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           )}
           {/* Client-context mode gets its own persistent bar — see F60. */}
           <ClientContextBar />
-          <AppHeader
-            actionItems={actionItems as ActionItemNotification[]}
-            reviewJobs={scopedReviewJobs}
-            taskAlerts={scopedTaskAlerts}
-            userName={user.name}
-            userEmail={user.email}
-          />
-          <main className="flex-1 overflow-x-clip px-4 py-6 md:px-8 md:py-8">
+          {/* Scroll reserve, same ladder as the client shell. The staff main had
+              none, so the last rows of a fully-scrolled page sat behind the
+              copilot strip. Below md the reserve covers the STACK — copilot
+              strip on top of the 54px bottom tab bar (MOBILE_TAB_BAR_H, client
+              context); at md+ the bar is gone and only the strip needs clearing. */}
+          <main className="flex-1 overflow-x-clip px-4 pb-28 pt-6 md:px-8 md:pb-16 md:pt-8 lg:pb-8">
             <div className="@container mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
           </main>
         </div>

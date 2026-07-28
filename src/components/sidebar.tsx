@@ -13,8 +13,32 @@ import { ClientDocuments } from "@/components/client-documents";
 import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { BrandFavicon } from "@/components/brand-favicon";
+import { ClientProfilePanel } from "@/components/client-profile-panel";
+import { NotificationBell } from "@/components/notification-bell";
+import { ThemeSwitch } from "@/components/theme-switch";
+import { ContactUsButton } from "@/components/contact-us-modal";
+import { LogoutButton } from "@/components/logout-button";
+import { MobileCompanySheet, MobileTabBar, useCompanySheet } from "@/components/mobile-shell";
 import { isAiProcessingLockActive } from "@/lib/constants";
-import type { AppUser, Client, Role } from "@/lib/types";
+import type {
+  ActionItemNotification,
+  AgentReviewNotification,
+  AppUser,
+  Client,
+  ClientTask,
+  Role,
+} from "@/lib/types";
+
+/** The three feeds the bell renders — threaded down from the app layout. */
+interface NotificationFeeds {
+  actionItems: ActionItemNotification[];
+  reviewJobs: AgentReviewNotification[];
+  taskAlerts: (ClientTask & { _clientName?: string })[];
+}
+
+function unreadTotal({ actionItems, reviewJobs, taskAlerts }: NotificationFeeds): number {
+  return actionItems.length + reviewJobs.length + taskAlerts.length;
+}
 
 interface NavItem {
   href: string;
@@ -192,10 +216,34 @@ function ClientContextPicker({ clients, isAdmin }: { clients: Client[]; isAdmin:
 
 /* ── User menu ───────────────────────────────────────────────────────── */
 
-function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
+/**
+ * The staff account zone. CD-G9c moved the floating top-right cluster —
+ * support, light/dark, notifications — in here, so the workspace no longer
+ * carries a header bar whose only job was three icons. That consciously
+ * overrules F116's "a badge behind a dropdown is not a badge": the trigger
+ * keeps an unread DOT so the signal survives the move, and the full panel is
+ * two clicks away (open menu → Notifications).
+ */
+function UserMenu({
+  user,
+  realAdmin,
+  feeds,
+  showChrome = true,
+}: {
+  user: AppUser;
+  realAdmin?: AppUser;
+  feeds: NotificationFeeds;
+  /**
+   * False inside the mobile drawer, which already surfaces the three rows one
+   * level up — the menu is itself a tap deep there, so nesting them would put
+   * support and the bell three taps from a page.
+   */
+  showChrome?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const unread = showChrome ? unreadTotal(feeds) : 0;
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -218,20 +266,29 @@ function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
           open ? "bg-surface-2" : "hover:bg-surface-2",
         )}
       >
-        {user.photoURL ? (
-          <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={user.photoURL}
-              alt=""
-              className="h-8 w-8 shrink-0 rounded-full object-cover"
+        <span className="relative shrink-0">
+          {user.photoURL ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={user.photoURL}
+                alt=""
+                className="h-8 w-8 shrink-0 rounded-full object-cover"
+              />
+            </>
+          ) : (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-neon">
+              {initials(user.name)}
+            </div>
+          )}
+          {unread > 0 && (
+            <span
+              className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-neon ring-2 ring-background"
+              aria-hidden="true"
             />
-          </>
-        ) : (
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-neon">
-            {initials(user.name)}
-          </div>
-        )}
+          )}
+        </span>
+        {unread > 0 && <span className="sr-only">{unread} unread notifications</span>}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{user.name}</p>
           <p className="truncate text-[11px] text-muted-2">
@@ -250,8 +307,30 @@ function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 overflow-hidden rounded-[12px] border border-border bg-surface shadow-xl">
+          {/* NOT overflow-hidden: the notification panel below is `absolute
+              bottom-full`, i.e. entirely outside this box, so an ancestor clip
+              erased it — the row opened onto nothing. The rounding needs no
+              clip of its own, every child row is rounded-[8px] inside p-1 and
+              nothing reaches the corners. */}
+          <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 rounded-[12px] border border-border bg-surface shadow-xl">
             <div className="p-1">
+              {/* Panel opens UPWARD out of the menu: the menu itself already
+                  hangs off the foot of the rail, and "right" would push a
+                  320px panel off-screen at narrow width. */}
+              {showChrome && (
+                <NotificationBell
+                  actionItems={feeds.actionItems}
+                  reviewJobs={feeds.reviewJobs}
+                  taskAlerts={feeds.taskAlerts}
+                  variant="row"
+                  panelPlacement="up"
+                  /* The anchor sits ~300px off the bottom of the rail, so a
+                     full-height panel (header + 480px feed + footer = 561px)
+                     ran off the TOP of the viewport at 1280x800 — measured
+                     -21px. 45vh keeps it clear down to ~600px of viewport. */
+                  panelClassName="max-h-[45vh]"
+                />
+              )}
               <Link
                 href="/settings"
                 onClick={() => setOpen(false)}
@@ -260,6 +339,12 @@ function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
                 <Icon name="Settings" className="h-4 w-4" />
                 Settings
               </Link>
+              {showChrome && (
+                <>
+                  <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
+                  <ThemeSwitch />
+                </>
+              )}
               <div className="my-1 h-px bg-border" />
               <button
                 onClick={handleLogout}
@@ -284,15 +369,31 @@ export function Sidebar({
   pendingCount = 0,
   realAdmin,
   clients = [],
+  actionItems = [],
+  reviewJobs = [],
+  taskAlerts = [],
 }: {
   user: AppUser;
   pendingCount?: number;
   realAdmin?: AppUser;
   clients?: Client[];
+  /**
+   * Bell feeds. They used to be handed to AppHeader, the floating top-right
+   * strip; CD-G9c retired that strip and the bell now lives in the account
+   * menu (and, at narrow width in client context, in the Company sheet).
+   */
+  actionItems?: ActionItemNotification[];
+  reviewJobs?: AgentReviewNotification[];
+  taskAlerts?: (ClientTask & { _clientName?: string })[];
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
-  const { activeClient } = useActiveClient();
+  const { activeClient, setActiveClient } = useActiveClient();
+  const [companyOpen, setCompanyOpen] = useCompanySheet();
+
+  const feeds: NotificationFeeds = { actionItems, reviewJobs, taskAlerts };
+  const unread = unreadTotal(feeds);
 
   const clientHomePath =
     user.role === "CLIENT_USER" && user.clientId ? `/clients/${user.clientId}` : null;
@@ -321,6 +422,13 @@ export function Sidebar({
   // In Client View mode show the 4 client-facing tabs; otherwise show the full admin nav.
   // Using (isStaff && activeClient) so TS narrows activeClient to non-null in the truthy branch.
   const items: NavItem[] = (isStaff && activeClient) ? clientViewNav(activeClient.client.id) : adminItems;
+
+  // Narrow-width contract (CD-G9a): with a client context active the staff
+  // shell drops the top bar + hamburger and renders the SAME bottom tab bar and
+  // full-screen Company sheet the client shell uses. Staff WITHOUT a context
+  // keep the drawer — the full admin nav is more tabs than a bar can hold
+  // (flagged, not ruled). Bound once so TS narrows it inside the JSX below.
+  const clientCtx = isStaff && activeClient ? activeClient : null;
 
   // QA F113 (staff stranded in client view) is answered by the ClientContextPicker
   // at the foot of the rail: its ✕ clears the context AND routes to /clients, and
@@ -464,7 +572,10 @@ export function Sidebar({
     </div>
   ) : null;
 
-  const content = (
+  // `inDrawer` — the same tree serves the desktop rail and the narrow-width
+  // drawer, but the drawer is itself one tap deep, so the chrome CD-G9c moved
+  // into the account menu is surfaced a level higher there (see the footer).
+  const shellContent = (inDrawer: boolean) => (
     <div className="flex h-full flex-col">
       {/* Logo — fixed top */}
       <div className="shrink-0 px-4 pb-2 pt-4">
@@ -504,52 +615,180 @@ export function Sidebar({
         {isStaff && (
           <ClientContextPicker clients={clients} isAdmin={user.role === "KAROS_ADMIN"} />
         )}
-        <UserMenu user={user} realAdmin={realAdmin} />
+        {/* Notifications / support / theme inline rather than inside the menu:
+            opening the drawer is already one tap, so nesting them would leave
+            them three taps from a page and break CD-G9c's ≤2-click floor. */}
+        {inDrawer && (
+          <div className="space-y-0.5">
+            {/* w-full, not the default w-80: the drawer is w-64 with
+                overflow-y-auto, which forces overflow-x to auto — a 320px
+                panel would be clipped and drag in a horizontal scrollbar. */}
+            <NotificationBell
+              actionItems={actionItems}
+              reviewJobs={reviewJobs}
+              taskAlerts={taskAlerts}
+              variant="row"
+              panelPlacement="up"
+              panelClassName="w-full max-h-[45vh]"
+            />
+            <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
+            <ThemeSwitch />
+          </div>
+        )}
+        <UserMenu
+          user={user}
+          realAdmin={realAdmin}
+          feeds={feeds}
+          showChrome={!inDrawer}
+        />
       </div>
     </div>
   );
 
   return (
     <>
-      {/* Mobile top bar */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
-        <Link href="/dashboard" className="flex items-center gap-2.5">
-          <Image
-            src="/brand/kairos-head-disc-dark.svg"
-            alt=""
-            width={26}
-            height={26}
-            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
-            unoptimized
+      {clientCtx ? (
+        /* ── Narrow width, client context: bottom tab bar + Company sheet.
+             Twin of the client shell's own mount (components/client-rail.tsx)
+             — same bar, same sheet frame, staff-flavoured contents. ── */
+        <>
+          <MobileTabBar
+            items={items}
+            companyOpen={companyOpen}
+            onOpenCompany={() => setCompanyOpen(true)}
+            companyUnread={unread}
           />
-          <span className="font-serif text-xl font-normal leading-none text-foreground">Karos Labs</span>
-        </Link>
-        <button
-          onClick={() => setOpen((o) => !o)}
-          className="text-muted transition-colors hover:text-foreground"
-          aria-label={open ? "Close menu" : "Open menu"}
-          aria-expanded={open}
-        >
-          <Icon name={open ? "X" : "Menu"} className="h-5 w-5" />
-        </button>
-      </div>
 
-      {/* Mobile drawer */}
-      {open && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setOpen(false)}
-          />
-          <div className="absolute left-0 top-0 h-full w-64 overflow-y-auto border-r border-border bg-surface">
-            {content}
+          <MobileCompanySheet open={companyOpen} onClose={() => setCompanyOpen(false)}>
+            <ClientProfilePanel client={clientCtx.client} />
+
+            <div className="border-t border-border pt-4">
+              <ClientDocuments
+                contextDocs={clientCtx.contextDocs}
+                isAdmin={clientCtx.isAdmin}
+                clientId={clientCtx.client.id}
+                isAiProcessing={isAiProcessingLockActive(clientCtx.client)}
+                aiProcessingError={clientCtx.client.aiProcessingError ?? null}
+                intelSchedule={clientIntelSchedule(clientCtx.client)}
+                /* Staff-only shell: internal-tier documents are readable here. */
+                allowInternalFallback
+              />
+            </div>
+
+            {/* key: see the desktop mount — switching client must reset the
+                panel's optimistic rows (QA F62). */}
+            <CompetitorTrack
+              key={clientCtx.client.id}
+              competitors={clientCtx.competitors}
+              clientId={clientCtx.client.id}
+              isStaff={true}
+            />
+
+            <BrandColorsSection
+              guidelines={clientCtx.client.brandingGuidelines}
+              clientId={clientCtx.client.id}
+              hasWebsite={!!clientCtx.client.website}
+              /* Staff shell — internal usage percentages are visible here. */
+              isStaff
+            />
+
+            {/* Tail mirrors the client sheet's, plus the chrome CD-G9c moved off
+                the retired top bar and the sign-out the drawer used to carry. */}
+            <div className="space-y-0.5 border-t border-border pt-4">
+              {/* Explicit close: the sheet otherwise closes on navigation, and
+                  tapping Settings while already ON /settings routes nowhere —
+                  the sheet just sat there over the page it had reached. */}
+              <Link
+                href="/settings"
+                onClick={() => setCompanyOpen(false)}
+                className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+              >
+                <Icon name="Settings" className="h-4 w-4 text-muted-2" />
+                Settings
+              </Link>
+              <NotificationBell
+                actionItems={actionItems}
+                reviewJobs={reviewJobs}
+                taskAlerts={taskAlerts}
+                variant="row"
+                panelPlacement="up"
+                panelClassName="max-h-[45vh]"
+              />
+              <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
+              <ThemeSwitch />
+              {/* The staff escape hatch, and STAFF-ONLY — this branch never
+                  renders for a client. At phone width in client context the
+                  nav is five client tabs and nothing else, so the only way
+                  back to the agency workspace was the F60 strip at the top of
+                  the page, which scrolls away. The bar always reaches this.
+                  Same body as the strip's exit: clear the context, then leave
+                  so ClientContextSync cannot re-set it on refresh. */}
+              <button
+                onClick={() => {
+                  setCompanyOpen(false);
+                  setActiveClient(null);
+                  router.push("/clients");
+                }}
+                className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+              >
+                <Icon name="LogOut" className="h-4 w-4 text-muted-2" />
+                Exit client view
+              </button>
+              <LogoutButton compact />
+            </div>
+          </MobileCompanySheet>
+        </>
+      ) : (
+        <>
+          {/* Mobile top bar */}
+          <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
+            <Link href="/dashboard" className="flex items-center gap-2.5">
+              <Image
+                src="/brand/kairos-head-disc-dark.svg"
+                alt=""
+                width={26}
+                height={26}
+                className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+                unoptimized
+              />
+              <span className="font-serif text-xl font-normal leading-none text-foreground">Karos Labs</span>
+            </Link>
+            <button
+              onClick={() => setOpen((o) => !o)}
+              className="relative text-muted transition-colors hover:text-foreground"
+              aria-label={open ? "Close menu" : "Open menu"}
+              aria-expanded={open}
+            >
+              <Icon name={open ? "X" : "Menu"} className="h-5 w-5" />
+              {/* The bell moved into the drawer's account menu (CD-G9c), so the
+                  only thing left on screen has to carry its dot. */}
+              {!open && unread > 0 && (
+                <span
+                  className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-neon ring-2 ring-background"
+                  aria-hidden="true"
+                />
+              )}
+            </button>
           </div>
-        </div>
+
+          {/* Mobile drawer */}
+          {open && (
+            <div className="fixed inset-0 z-40 md:hidden">
+              <div
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                onClick={() => setOpen(false)}
+              />
+              <div className="absolute left-0 top-0 h-full w-64 overflow-y-auto border-r border-border bg-surface">
+                {shellContent(true)}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Desktop sidebar */}
       <aside className="hidden w-64 shrink-0 border-r border-border bg-background md:block">
-        <div className="sticky top-0 h-screen">{content}</div>
+        <div className="sticky top-0 h-screen">{shellContent(false)}</div>
       </aside>
     </>
   );
