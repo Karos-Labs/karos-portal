@@ -6,6 +6,7 @@ import type { Client, ContextDocType } from "@/lib/types";
 import {
   getClient,
   replaceClientContextDocs,
+  listClientContextDocs,
   listClientCompetitors,
   listClientDocCorrections,
   listTranscripts,
@@ -14,6 +15,7 @@ import {
 import { RESEARCH_ENGINE_RULES, METRICS_RULES } from "./brain";
 import { TEMPLATES } from "./templates";
 import { condenseDocs } from "./condense";
+import { carryChangeLog } from "./changelog";
 import { runSeoGeoResearch, type SeoGeoResearch } from "./seo-geo";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
@@ -929,7 +931,30 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
     },
   );
 
-  // Phase 4: Build full doc set and atomically replace
+  // Phase 4: Build full doc set and atomically replace.
+  //
+  // Change Log carry-forward. The generator is forbidden to write a change log
+  // (it would be fabricated provenance) but the lab-imported documents carry a
+  // real one, and this run deletes every stored row. Read the outgoing documents
+  // and re-attach each one's section to its own replacement, matched on
+  // docType + tier so a client-tier log never lands on an internal document and
+  // vice versa. carryChangeLog strips before it attaches, so a model-invented
+  // log still dies and the section can never be duplicated.
+  //
+  // Non-fatal: a read failure must not throw away a full research + generation
+  // run. It degrades to the previous behaviour (no carry) and says so.
+  const priorContent = new Map<string, string>();
+  try {
+    for (const doc of await listClientContextDocs(clientId)) {
+      priorContent.set(`${doc.docType}::${doc.tier}`, doc.content);
+    }
+  } catch (err) {
+    console.error("[onboard] Could not read prior documents for Change Log carry-forward (non-fatal):", err);
+  }
+  const runDate = todayISO();
+  const withCarriedChangeLog = (content: string, docType: string, tier: string): string =>
+    carryChangeLog(content, priorContent.get(`${docType}::${tier}`), runDate);
+
   const now = Date.now();
   const allDocs = [
     // Internal tier (5 public docs)
@@ -937,7 +962,7 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
       clientId,
       docType: dt,
       tier: "internal" as const,
-      content: internalContents[dt],
+      content: withCarriedChangeLog(internalContents[dt], dt, "internal"),
       version: 1,
       createdAt: now,
       updatedAt: now,
@@ -947,7 +972,7 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
       clientId,
       docType: dt,
       tier: "internal-only" as const,
-      content: internalContents[dt],
+      content: withCarriedChangeLog(internalContents[dt], dt, "internal-only"),
       version: 1,
       createdAt: now,
       updatedAt: now,
@@ -957,7 +982,7 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
       clientId,
       docType: doc.docType,
       tier: "client" as const,
-      content: doc.content,
+      content: withCarriedChangeLog(doc.content, doc.docType, "client"),
       version: 1,
       createdAt: now,
       updatedAt: now,
