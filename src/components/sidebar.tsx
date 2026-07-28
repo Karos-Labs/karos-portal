@@ -61,6 +61,7 @@ const NAV: NavItem[] = [
   { href: "/team", label: "Team", icon: "Users", roles: ["KAROS_ADMIN"] },
   { href: "/connect", label: "Connect", icon: "Plug", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/admin/analytics", label: "Analytics", icon: "TrendingUp", roles: ["KAROS_ADMIN"] },
+  { href: "/admin/ops", label: "Ops Import", icon: "Inbox", roles: ["KAROS_ADMIN"] },
 ];
 
 // The client-facing tabs shown to staff when in Client View mode. The Library

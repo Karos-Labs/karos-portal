@@ -1600,4 +1600,33 @@ export interface SeoGeoInsights {
   /** Roster used for share-of-voice (client first). */
   roster: string[];
   updatedAt: number;
+  /**
+   * Set ONLY when this snapshot was hand-imported through the admin Ops Import
+   * page instead of being measured by a portal pipeline run. Absent means the
+   * portal measured it itself — which is why this is an optional field and not
+   * a defaulted one: every snapshot written before Ops Import existed is a
+   * genuine machine capture, and must keep reading as one.
+   *
+   * Deliberately NOT named `source`: `PerEngineVisibility.source` already means
+   * `ProviderSource` ("OpenAI" | "Gemini" | "Anthropic") one level down, and a
+   * top-level field of the same name reading "local-import" would be a trap.
+   *
+   * This does NOT participate in the trust/legacy verdict. `buildSnapshotTrust`
+   * keys off `pipelineVersion` alone, and an import carries through whatever
+   * version the capture actually declared — it never restamps. So the legacy
+   * banner keeps meaning "measured under superseded rules", and provenance
+   * answers the separate question of where the run happened.
+   *
+   * The next real pipeline capture overwrites the doc and drops this field.
+   * That is correct: a machine capture must not inherit an import's provenance.
+   */
+  importedFrom?: {
+    source: "local-import";
+    /** Epoch millis the import landed — NOT `capturedAt`, which stays the measurement time. */
+    importedAt: number;
+    /** Display name of the admin who clicked Import. */
+    importedBy?: string;
+    /** Bundle filename the snapshot came from, for the audit trail. */
+    file?: string;
+  };
 }
