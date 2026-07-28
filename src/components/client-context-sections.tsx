@@ -228,7 +228,7 @@ export function CompetitorTrack({
             return (
               <li
                 key={c.id}
-                className="group flex items-center gap-1 rounded-md px-2 py-[5px] transition-colors hover:bg-surface-2"
+                className="group flex items-center gap-1 rounded-md px-2 py-1 transition-colors hover:bg-surface-2"
               >
                 {href ? (
                   <a

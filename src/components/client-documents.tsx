@@ -339,7 +339,7 @@ function ExportMenu({
             }}
             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
-            <Icon name="FileText" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+            <Icon name="File" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
             <div>
               <p className="font-medium text-foreground">Export PDF</p>
               <p className="text-[11px] text-muted-2">Opens print dialog</p>
@@ -1064,9 +1064,9 @@ export function ClientDocuments({
                   }
                   /* Compact rows: the rail is a no-scroll fixed layout (CD-E3),
                      and seven of these were its single tallest block. */
-                  className="group flex w-full items-center gap-2.5 rounded-md px-2 py-[5px] text-left transition-colors hover:bg-surface-2"
+                  className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
                 >
-                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
+                  <Icon name="File" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
                   <span className="flex-1 truncate text-[13px] leading-5 text-muted group-hover:text-foreground">
                     {item.label}
                   </span>
@@ -1075,10 +1075,10 @@ export function ClientDocuments({
             ) : (
               <li key={item.docType}>
                 <div
-                  className="flex w-full items-center gap-2.5 rounded-md px-2 py-[5px] text-left"
+                  className="flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left"
                   title="This document is being rebuilt — check back shortly."
                 >
-                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2/60" />
+                  <Icon name="File" className="h-4 w-4 shrink-0 text-muted-2/60" />
                   <span className="flex-1 truncate text-[13px] leading-5 text-muted-2">{item.label}</span>
                   <span className="shrink-0 text-[11px] text-muted-2">Rebuilding</span>
                 </div>

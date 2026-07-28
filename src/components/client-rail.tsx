@@ -100,7 +100,7 @@ export function ClientRail({
       <aside className="relative z-30 hidden w-72 shrink-0 border-r border-border bg-background md:block">
         <div className="sticky top-0 flex h-screen flex-col">
           {/* Logo */}
-          <div className="shrink-0 px-4 pt-2.5">
+          <div className="shrink-0 px-4 pb-2 pt-3">
             <Link href={home} className="flex items-center gap-2.5 px-2 py-0.5">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
