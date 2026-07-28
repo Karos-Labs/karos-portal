@@ -133,13 +133,26 @@ function timeStr(at: number, timeZone?: string): string {
 
 /* ── Chips ───────────────────────────────────────────────────────────── */
 
-function RunChip({ run }: { run: CalendarRun }) {
+/**
+ * Chip metrics. `cell` is the month grid; `row` is the mobile agenda, where a
+ * chip is the full-width control you tap to open a post. Both clear the 24px
+ * minimum for a touch target — the grid chips were about 17px tall.
+ */
+const CHIP_SIZE = {
+  cell: "px-1 py-1 text-[11px] min-h-[24px]",
+  row: "px-2 py-2 text-xs min-h-[36px]",
+} as const;
+
+type ChipSize = keyof typeof CHIP_SIZE;
+
+function RunChip({ run, size = "cell" }: { run: CalendarRun; size?: ChipSize }) {
   const scheduled = run.kind === "scheduled";
   const failed = run.jobStatus === "failed";
   return (
     <div
       className={cn(
-        "flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate",
+        "flex items-center gap-1 rounded leading-tight truncate",
+        CHIP_SIZE[size],
         scheduled
           ? "border border-dashed border-foreground/30 bg-foreground/[0.03] text-foreground/70"
           : failed
@@ -165,9 +178,11 @@ const POST_CHIP_CLASS: Record<CalendarPost["kind"], string> = {
 function PostChip({
   post,
   onOpen,
+  size = "cell",
 }: {
   post: CalendarPost;
   onOpen: (assetId: string) => void;
+  size?: ChipSize;
 }) {
   return (
     <button
@@ -177,7 +192,8 @@ function PostChip({
         onOpen(post.assetId);
       }}
       className={cn(
-        "flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate text-left transition-opacity hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-neon/50",
+        "flex w-full items-center gap-1 rounded leading-tight truncate text-left transition-opacity hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-neon/50",
+        CHIP_SIZE[size],
         POST_CHIP_CLASS[post.kind],
       )}
       title={`${post.kind === "published" ? "Published" : post.kind === "scheduled" ? "Scheduled post" : "Placeholder"} · ${post.title} · ${timeStr(post.at)}`}
@@ -494,6 +510,21 @@ export function RunCalendar({
   const upcomingCount = runs.filter((r) => r.kind === "scheduled").length;
   const pastCount = runs.filter((r) => r.kind === "past").length;
 
+  // Phone agenda: seven columns across ~340px gives each day about 48px, so
+  // every chip truncates to nothing and the month reads as coloured slivers.
+  // Below `sm` the grid is replaced by this list of days that actually have
+  // something on them.
+  const agendaDays = useMemo(() => {
+    const out: { key: string; day: number; runs: CalendarRun[]; posts: CalendarPost[] }[] = [];
+    for (let day = 1; day <= totalDays; day++) {
+      const key = `${viewYear}-${viewMonth}-${day}`;
+      const dayRuns = runsByDay.get(key) ?? [];
+      const dayPosts = postsByDay.get(key) ?? [];
+      if (dayRuns.length + dayPosts.length > 0) out.push({ key, day, runs: dayRuns, posts: dayPosts });
+    }
+    return out;
+  }, [totalDays, viewYear, viewMonth, runsByDay, postsByDay]);
+
   function prevMonth() {
     setSelectedKey(null);
     if (viewMonth === 0) { setViewYear((y) => y - 1); setViewMonth(11); } else setViewMonth((m) => m - 1);
@@ -558,15 +589,15 @@ export function RunCalendar({
           </div>
         </div>
 
-        {/* Day-of-week header */}
-        <div className="grid grid-cols-7 border-b border-border">
+        {/* Day-of-week header — seven columns need width to mean anything */}
+        <div className="hidden grid-cols-7 border-b border-border sm:grid">
           {DAY_LABELS.map((d) => (
             <div key={d} className="py-1.5 text-center text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">{d}</div>
           ))}
         </div>
 
         {/* Grid */}
-        <div className="grid grid-cols-7">
+        <div className="hidden grid-cols-7 sm:grid">
           {Array.from({ length: totalCells }, (_, i) => {
             const day = i - firstDayOfWeek + 1;
             const isValid = day >= 1 && day <= totalDays;
@@ -619,7 +650,7 @@ export function RunCalendar({
                         .map((p) => (
                           <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} />
                         ))}
-                    {chipCount > 3 && <p className="pl-1 text-[9px] text-muted-2">+{chipCount - 3} more</p>}
+                    {chipCount > 3 && <p className="pl-1 text-[11px] text-muted-2">+{chipCount - 3} more</p>}
                   </div>
                 </>
               )}
@@ -627,6 +658,43 @@ export function RunCalendar({
             );
           })}
         </div>
+
+        {/* Phone agenda — only the days with something on them */}
+        <ul className="divide-y divide-border sm:hidden">
+          {agendaDays.length === 0 ? (
+            <li className="px-4 py-6 text-center text-xs text-muted-2">
+              Nothing scheduled in {MONTH_NAMES[viewMonth]}.
+            </li>
+          ) : (
+            agendaDays.map(({ key, day, runs: dayRuns, posts: dayPosts }) => {
+              const isToday = isCurrentMonth && day === today.getDate();
+              return (
+                <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedKey(key)}
+                    className="mb-1.5 flex min-h-[24px] w-full items-center gap-2 text-left"
+                  >
+                    <span className="text-xs font-semibold">
+                      {DAY_LABELS[new Date(viewYear, viewMonth, day).getDay()]} {day}
+                    </span>
+                    <span className="text-[11px] text-muted-2">
+                      {dayRuns.length + dayPosts.length} item
+                      {dayRuns.length + dayPosts.length === 1 ? "" : "s"}
+                    </span>
+                    <Icon name="ChevronRight" className="ml-auto h-3.5 w-3.5 text-muted-2" />
+                  </button>
+                  <div className="space-y-1.5">
+                    {dayRuns.map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
+                    {dayPosts.map((p) => (
+                      <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} size="row" />
+                    ))}
+                  </div>
+                </li>
+              );
+            })
+          )}
+        </ul>
 
         {/* Legend */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
