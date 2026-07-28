@@ -1,7 +1,9 @@
 # QA Sweep 2026-07 — Findings ledger (single source of truth)
 
-Status values: OPEN · IN-PROGRESS · RESOLVED · OPS-PENDING (code merged, human
-ops step required — see notes) · DEFERRED-TOMER · STRUCK.
+Status values: OPEN · IN-PROGRESS · RESOLVED · RESOLVED-in-merge (struck on the
+sweep branch as a phantom, made real by Tomer's branch and fixed while merging
+it) · OPS-PENDING (code merged, human ops step required — see notes) ·
+DEFERRED-TOMER · STRUCK.
 Phase 1 notes: F24/F131 verified by code lenses post-bounce; live trigger states
 not constructible locally (agent service env unset). F127 OPS-PENDING on
 `npx tsx scripts/backfill-agent-blurbs.ts` (dry-run first, then --apply; needs
@@ -40,7 +42,7 @@ are tracked in the CD table at the bottom.
 | F127 | BLOCKER | B | AGENTS | 1 | OPS-PENDING | yes | Agent descriptions are raw lab-repo skill manifests, shipped to clients unedited | findings-p009-046.md |
 | F131 | BLOCKER | A | AGENTS | 1 | RESOLVED | yes | "Run now" is fully enabled on an agent whose own card says "Setup needed" | findings-p047-084.md |
 | F25 | HIGH | A | AGENTS | 2 | RESOLVED | yes | A client who hits their spend cap gets a greyed-out Run button, no explanation, and advice that | findings-p047-084.md |
-| F27 | HIGH | B | AGENTS | 2 | RESOLVED | yes | The Reddit agent's schedule dialog offers up to 35 replies a week and bills for them — the prod | findings-p047-084.md |
+| F27 | HIGH | B | AGENTS | 2 | RESOLVED | yes | The Reddit agent's schedule dialog offers up to 35 replies a week and bills for them — the prod — 07-28 RE-APPLIED for the merged e15 (b949563): scheduleLimitsFor pins outputsPerRun=1 and caps 5 runs/week for Reddit, clamped SERVER-side and mirrored in the dialog. Stored rows above 5 still not retro-clamped (migration = product call) | findings-p047-084.md |
 | F28 | HIGH | B | AGENTS | 2 | RESOLVED | — | The agent intake pages tell clients to pick, edit and skip drafts "in your Workspace archive" — | findings-p047-084.md |
 | F29 | HIGH | B | AGENTS | 2 | RESOLVED | yes | The amber "3 ready" badge on an agent card never goes away, no matter how many times you review | findings-p047-084.md |
 | F128 | HIGH | A | AGENTS | 2 | RESOLVED | yes | Agent descriptions are cut off mid-word, with no ellipsis and no way to read the rest | findings-p047-084.md |
@@ -52,10 +54,10 @@ are tracked in the CD table at the bottom.
 | F32 | MEDIUM | A | AGENTS | 2 | RESOLVED | yes | Dialogs cap at 720 pixels tall with one scroll box and no fixed action bar, so Start run scroll | findings-p047-084.md |
 | F33 | MEDIUM | A | AGENTS | 2 | OPS-PENDING | — | Every agent deliverable is titled "<Agent name> - <Client name>" — the client sees their own co | findings-p047-084.md |
 | F34 | MEDIUM | A | AGENTS | 2 | RESOLVED | — | If the agent service is unconfigured, a client's agents silently vanish behind "No active agent | findings-p047-084.md |
-| F35 | MEDIUM | A | AGENTS | 2 | RESOLVED | — | On the staff Agents page you can only discover an agent's client binding and its missing setup  | findings-p047-084.md |
+| F35 | MEDIUM | A | AGENTS | 2 | RESOLVED | — | On the staff Agents page you can only discover an agent's client binding and its missing setup  — 07-28: the binding-display half, previously N/A because it depended on struck F38, is now BUILT (4757ffd): the card states "<slug> only" | findings-p047-084.md |
 | F36 | MEDIUM | A | AGENTS | 2 | RESOLVED | yes | Pressing "Start run" on the LinkedIn or Reddit agent without typing anything is refused — even  | findings-p047-084.md |
 | F37 | MEDIUM | A | AGENTS | 2 | RESOLVED | yes | Staff cross-client lists render every row in the database with no search, filter, sort or pagin | findings-p047-084.md |
-| F38 | MEDIUM | B | AGENTS | 2 | STRUCK | — | The Agents hub offers agent-and-client pairings the server is guaranteed to refuse, after the w | findings-p047-084.md |
+| F38 | MEDIUM | B | AGENTS | 2 | RESOLVED-in-merge | — | The Agents hub offers agent-and-client pairings the server is guaranteed to refuse, after the w — UN-STRUCK 07-28: the strike said perClientAgentSlug/agentKeyMatchesClientSlug were phantoms; Tomer's branch created exactly those symbols, so the premise is now true. Fixed in the merge (4757ffd): hub clients carry agentsRepoSlug, picker filtered, fixed chip at one eligible, Run disabled at none | findings-p047-084.md |
 | F39 | MEDIUM | B | AGENTS | 2 | RESOLVED | — | The four managed lab products (Social, Newsletter, Blog, Landing page) cannot be run from anywh | findings-p047-084.md |
 | F40 | MEDIUM | A | AGENTS | 2 | RESOLVED | yes | The schedule dialog's "Posts per week" is actually runs per week — the cost line one paragraph  | findings-p047-084.md |
 | F130 | MEDIUM | A | AGENTS | 2 | OPS-PENDING | yes | Every agent is priced identically at "25 credits per output" | findings-p047-084.md |

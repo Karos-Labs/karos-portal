@@ -395,7 +395,7 @@ function SeatTakes({ clientId, seat }: { clientId: string; seat: XSeatView }) {
           <Input
             value={takeUrl}
             onChange={(e) => setTakeUrl(e.target.value)}
-            placeholder="Source link - only if your take contains a number"
+            placeholder="Source link — only if your take contains a number"
           />
         </div>
         {fieldError(takeError)}
