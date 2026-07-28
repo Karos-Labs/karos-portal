@@ -19,7 +19,7 @@ are tracked in the CD table at the bottom.
 | F1 | BLOCKER | A | SEO | 1 | RESOLVED | yes | A finished client-facing action plan with a working Approve button is rendered on no page, whil | findings-p009-046.md |
 | F3 | HIGH | B | SEO | 2 | RESOLVED | yes | Card bodies are raw audit-model prose, and "What good looks like" just repeats the card title | findings-p009-046.md |
 | F4 | HIGH | A | SEO | 2 | RESOLVED | yes | Cards promise Karos will apply the fix "automatically" — no such code path exists and there is  | findings-p009-046.md |
-| F5 | HIGH | A | WORKSPACE | 2 | OPEN | — | Grids split into multiple columns at window widths where the side rail and copilot dock have al | findings-p009-046.md |
+| F5 | HIGH | A | WORKSPACE | 2 | RESOLVED | — | Grids split into multiple columns at window widths where the side rail and copilot dock have al | findings-p009-046.md |
 | F7 | HIGH | B | SEO | 2 | RESOLVED | yes | No "What we're fixing" card can hand off to an agent — the one link built for it can never rend | findings-p009-046.md |
 | F9 | HIGH | B | SEO | 2 | RESOLVED | yes | The "What we're fixing" cards show clients raw engineering check labels — the plain-English rew | findings-p009-046.md |
 | F10 | HIGH | B | SEO | 2 | RESOLVED | yes | The headline AI-visibility score uses a different question set from every number below it, and  | findings-p009-046.md |
@@ -69,32 +69,32 @@ are tracked in the CD table at the bottom.
 | F148 | HIGH | B | ARCH | 3 | OPEN | — | The portal has no launch-vs-runs model — the architecture the team decided on has nowhere to li | findings-p047-084.md |
 | F46 | BLOCKER | B | WORKSPACE | 1 | RESOLVED | — | A client can never act on a draft — the pick/post/skip loop the intake copy promises does not e | findings-p047-084.md |
 | F47 | BLOCKER | B | WORKSPACE | 1 | RESOLVED | — | The client's Archive shows the agent deliverable as raw text with all its formatting symbols on | findings-p085-122.md |
-| F48 | HIGH | B | WORKSPACE | 2 | OPEN | — | "Autopilot on" stays on forever but only ever runs one batch | findings-p085-122.md |
-| F50 | HIGH | B | WORKSPACE | 2 | OPEN | — | "Refresh Task Map" promises a market-footprint scan; the run never looks outside the account | findings-p085-122.md |
-| F51 | HIGH | B | WORKSPACE | 2 | OPEN | — | A client clicking "New content ready" in their notification bell gets silently bounced to their | findings-p085-122.md |
-| F53 | HIGH | A | WORKSPACE | 2 | OPEN | yes | A one-time 100-credit charge is sold to the client as "≈ $29/mo" | findings-p085-122.md |
-| F54 | HIGH | A | WORKSPACE | 2 | OPEN | yes | A task moved to "Review Pending" from the ticket vanishes from the board with no way back | findings-p085-122.md |
-| F55 | HIGH | B | WORKSPACE | 2 | OPEN | yes | Branded "Connect with Instagram" buttons open a popup showing a bare error sentence, and only a | findings-p085-122.md |
-| F56 | HIGH | B | WORKSPACE | 2 | OPEN | — | Every client user can hand out permanent workspace access, and the key can never be rotated fro | findings-p085-122.md |
+| F48 | HIGH | B | WORKSPACE | 2 | RESOLVED | — | "Autopilot on" stays on forever but only ever runs one batch | findings-p085-122.md |
+| F50 | HIGH | B | WORKSPACE | 2 | RESOLVED | — | "Refresh Task Map" promises a market-footprint scan; the run never looks outside the account | findings-p085-122.md |
+| F51 | HIGH | B | WORKSPACE | 2 | RESOLVED | — | A client clicking "New content ready" in their notification bell gets silently bounced to their | findings-p085-122.md |
+| F53 | HIGH | A | WORKSPACE | 2 | RESOLVED | yes | A one-time 100-credit charge is sold to the client as "≈ $29/mo" | findings-p085-122.md |
+| F54 | HIGH | A | WORKSPACE | 2 | RESOLVED | yes | A task moved to "Review Pending" from the ticket vanishes from the board with no way back | findings-p085-122.md |
+| F55 | HIGH | B | WORKSPACE | 2 | RESOLVED | yes | Branded "Connect with Instagram" buttons open a popup showing a bare error sentence, and only a | findings-p085-122.md |
+| F56 | HIGH | B | WORKSPACE | 2 | RESOLVED | — | Every client user can hand out permanent workspace access, and the key can never be rotated fro | findings-p085-122.md |
 | F57 | HIGH | A | DOCS | 2 | RESOLVED | — | The AI Execution Guide shows clients raw markup — "## Overview", "**Task**" and all | findings-p085-122.md |
-| F58 | HIGH | B | WORKSPACE | 2 | OPEN | — | The Autopilot switch spends the client's credits and fires five agent runs with no label, no pr | findings-p085-122.md |
-| F149 | HIGH | B | WORKSPACE | 2 | OPEN | — | Nothing marks a post as posted, so the archive shows everything the moment it is generated | findings-p085-122.md |
-| F150 | HIGH | B | WORKSPACE | 2 | OPEN | — | Video deliverables have no path into the portal — clips are hand-delivered by email | findings-p085-122.md |
-| F60 | MEDIUM | A | WORKSPACE | 2 | OPEN | yes | "View as client" mode is invisible — real impersonation gets a banner, the client switcher gets | findings-p085-122.md |
-| F61 | MEDIUM | B | WORKSPACE | 2 | OPEN | — | A task the platform then refuses still costs the client a credit | findings-p085-122.md |
-| F62 | MEDIUM | B | WORKSPACE | 2 | OPEN | yes | Adding a competitor from the sidebar does nothing visible when you are not on a client page | findings-p085-122.md |
-| F63 | MEDIUM | A | WORKSPACE | 2 | OPEN | yes | Broken icon names render a sparkle glyph across 24 files — including beside the red error messa | findings-p085-122.md |
-| F64 | MEDIUM | A | WORKSPACE | 2 | OPEN | yes | Clicking a task notification drops you on a board tab that does not contain that task | findings-p085-122.md |
-| F65 | MEDIUM | A | WORKSPACE | 2 | OPEN | yes | Task-creating actions never hand you off to the board where the tasks landed | findings-p085-122.md |
-| F66 | MEDIUM | A | WORKSPACE | 2 | OPEN | — | The client's Archive is every deliverable they have ever received in one wall, with no filter,  | findings-p085-122.md |
-| F67 | MEDIUM | B | WORKSPACE | 2 | OPEN | — | The resume a client uploads is never read — but the UI says it powers their voice | findings-p085-122.md |
-| F68 | MEDIUM | B | WORKSPACE | 2 | OPEN | yes | The staff notification bell can never show a review or a task | findings-p085-122.md |
-| F69 | MEDIUM | A | WORKSPACE | 2 | OPEN | — | When generation is running or has failed, the Documents group tells the client the wrong story  | findings-p085-122.md |
-| F70 | MEDIUM | A | WORKSPACE | 2 | OPEN | — | X drafts are titled with lab-internal vocabulary — clients read "Avenue 3 · News-reaction (live | findings-p085-122.md |
-| F136 | MEDIUM | A | WORKSPACE | 2 | OPEN | yes | Task cards are a single column of tall blocks — roughly two fit on screen | findings-p085-122.md |
-| F71 | LOW | A | WORKSPACE | 2 | OPEN | — | Client-facing strings use a spaced hyphen where the rest of the UI uses an em dash — including  | findings-p085-122.md |
-| F72 | LOW | A | WORKSPACE | 2 | OPEN | yes | One page, three different names: the staff sidebar says "Tasks", the client rail says "Workspac | findings-p085-122.md |
-| F73 | LOW | A | WORKSPACE | 2 | OPEN | — | The Activity tab's empty state promises clients "notes" that are filtered out of their view, an | findings-p085-122.md |
+| F58 | HIGH | B | WORKSPACE | 2 | RESOLVED | — | The Autopilot switch spends the client's credits and fires five agent runs with no label, no pr | findings-p085-122.md |
+| F149 | HIGH | B | WORKSPACE | 2 | RESOLVED | — | Nothing marks a post as posted, so the archive shows everything the moment it is generated | findings-p085-122.md |
+| F150 | HIGH | B | WORKSPACE | 2 | RESOLVED | — | Video deliverables have no path into the portal — clips are hand-delivered by email | findings-p085-122.md |
+| F60 | MEDIUM | A | WORKSPACE | 2 | RESOLVED | yes | "View as client" mode is invisible — real impersonation gets a banner, the client switcher gets | findings-p085-122.md |
+| F61 | MEDIUM | B | WORKSPACE | 2 | RESOLVED | — | A task the platform then refuses still costs the client a credit | findings-p085-122.md |
+| F62 | MEDIUM | B | WORKSPACE | 2 | RESOLVED | yes | Adding a competitor from the sidebar does nothing visible when you are not on a client page | findings-p085-122.md |
+| F63 | MEDIUM | A | WORKSPACE | 2 | RESOLVED | yes | Broken icon names render a sparkle glyph across 24 files — including beside the red error messa | findings-p085-122.md |
+| F64 | MEDIUM | A | WORKSPACE | 2 | RESOLVED | yes | Clicking a task notification drops you on a board tab that does not contain that task | findings-p085-122.md |
+| F65 | MEDIUM | A | WORKSPACE | 2 | RESOLVED | yes | Task-creating actions never hand you off to the board where the tasks landed | findings-p085-122.md |
+| F66 | MEDIUM | A | WORKSPACE | 2 | RESOLVED | — | The client's Archive is every deliverable they have ever received in one wall, with no filter,  | findings-p085-122.md |
+| F67 | MEDIUM | B | WORKSPACE | 2 | RESOLVED | — | The resume a client uploads is never read — but the UI says it powers their voice | findings-p085-122.md |
+| F68 | MEDIUM | B | WORKSPACE | 2 | RESOLVED | yes | The staff notification bell can never show a review or a task | findings-p085-122.md |
+| F69 | MEDIUM | A | WORKSPACE | 2 | RESOLVED | — | When generation is running or has failed, the Documents group tells the client the wrong story  | findings-p085-122.md |
+| F70 | MEDIUM | A | WORKSPACE | 2 | RESOLVED | — | X drafts are titled with lab-internal vocabulary — clients read "Avenue 3 · News-reaction (live | findings-p085-122.md |
+| F136 | MEDIUM | A | WORKSPACE | 2 | RESOLVED | yes | Task cards are a single column of tall blocks — roughly two fit on screen | findings-p085-122.md |
+| F71 | LOW | A | WORKSPACE | 2 | RESOLVED | — | Client-facing strings use a spaced hyphen where the rest of the UI uses an em dash — including  | findings-p085-122.md |
+| F72 | LOW | A | WORKSPACE | 2 | RESOLVED | yes | One page, three different names: the staff sidebar says "Tasks", the client rail says "Workspac | findings-p085-122.md |
+| F73 | LOW | A | WORKSPACE | 2 | RESOLVED | — | The Activity tab's empty state promises clients "notes" that are filtered out of their view, an | findings-p085-122.md |
 | F74 | HIGH | B | DOCS | 2 | RESOLVED | yes | "Correct Info" charges the client 2 credits and reports success even when the correction was th | findings-p085-122.md |
 | F75 | HIGH | B | DOCS | 2 | RESOLVED | — | After Regenerate or a correction, the staff sidebar keeps serving the OLD document — the button | findings-p085-122.md |
 | F76 | HIGH | B | DOCS | 2 | RESOLVED | yes | Internal, staff-only analyst documents are shipped to the client's browser — and the client nav | findings-p085-122.md |
@@ -126,7 +126,7 @@ are tracked in the CD table at the bottom.
 | F124 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | The dashboard opens with four counters that the two cards beneath them restate | findings-p123-160.md |
 | F126 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | Single-asterisk emphasis renders as literal asterisks in AI Insights | findings-p123-160.md |
 | F145 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | A channel whose token dies silently vanishes from "Connected channels" instead of asking to be  | findings-p123-160.md |
-| F100 | LOW | A | DASHBOARD | 2 | OPEN | — | British and American spellings sit side by side — "Analysing" on one screen, "Analyzing" on ano | findings-p161-199.md |
+| F100 | LOW | A | DASHBOARD | 2 | RESOLVED | — | British and American spellings sit side by side — "Analysing" on one screen, "Analyzing" on ano | findings-p161-199.md |
 | F101 | HIGH | A | CREDITS | 2 | RESOLVED | — | One misclick on a trash icon destroys a LinkedIn seat — no confirm, no undo, no feedback if it  | findings-p161-199.md |
 | F102 | HIGH | B | CREDITS | 2 | RESOLVED | yes | The client's headline credit number is labelled "credits available" but is not what they can sp | findings-p161-199.md |
 | F103 | MEDIUM | A | CREDITS | 2 | RESOLVED | yes | Client Settings is a nine-section single-column stack ending in a panel whose only content is a | findings-p161-199.md |

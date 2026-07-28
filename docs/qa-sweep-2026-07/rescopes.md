@@ -507,3 +507,19 @@ starting. Updated by the orchestrator after each verification gate.
 - Logged for end-loop/handover: listReviewJobsForClients unbounded scan; staff
   task feed limit-200 fetch-then-filter (employee under-report); F66 impossible
   status options; F51 notification vs F149 archive (Phase 3).
+
+## WORKSPACE merge (567305a) — 7-file conflict resolution, hand-verified
+Both sides preserved in every case:
+- credits.ts / x-agent-intake / linkedin-agent-intake: HEAD copy (newer,
+  approval-gated) + F71 em dashes re-applied on top.
+- seo-geo-panel: DASHBOARD SeoGeoScores extraction KEPT + F5 container queries
+  re-applied (4 sites) — both fixes live.
+- settings/page: CREDITS F103 tabs KEPT + F56 gate (isStaff||isGroupAdmin) and
+  canRotate re-applied to teamSection.
+- layout: UNION — CREDITS spendable/correctionPricing AND WORKSPACE
+  toClientPortalView; projection verified reaching BOTH ClientRail and
+  AiProcessingBanner.
+- integrations-tab: CD-D2 pending-verification KEPT + F55 ungated hint applied +
+  CREDITS three-bucket ChannelSection KEPT + F5 grid restored.
+Gates after: tsc clean, build clean, 634 tests / 53 files.
+PHASE 2 FIXING COMPLETE — 9/9 clusters merged.
