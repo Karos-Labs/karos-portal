@@ -110,6 +110,9 @@ export async function createClientAction(input: {
  * remediation path on screen at all). Ordinary client users may do neither.
  */
 export async function regenerateClientKeyAction(clientId: string): Promise<{ clientKeyId: string }> {
+  // Guard the id first: without it a group admin whose clientId is null would
+  // satisfy `null === null` against an empty argument.
+  if (!clientId) throw new Error("clientId required");
   const user = await requireUser();
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   const isOwnGroupAdmin =

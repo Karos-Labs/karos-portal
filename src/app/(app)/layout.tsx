@@ -15,6 +15,7 @@ import {
   listClientCompetitors,
 } from "@/lib/data";
 import { ActiveClientProvider } from "@/lib/active-client-context";
+import { toClientPortalView } from "@/lib/client-visibility";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldBlockForOnboarding } from "@/lib/onboarding";
@@ -117,12 +118,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         getClientCredits(user.clientId),
       ]);
 
+      // Same rule as the docs above, applied to the client record itself: the
+      // rail is a "use client" component, so the WHOLE document would be
+      // serialized into every client-portal RSC payload — including
+      // clientKeyId, the join token that auto-approves any signup into this
+      // workspace (QA F56). Whitelist-projected before it crosses.
+      const clientView = toClientPortalView(client);
+
       return (
         <ActiveClientProvider>
           <div className="flex min-h-screen flex-col md:flex-row">
             <ClientRail
               user={user}
-              client={client}
+              client={clientView}
               contextDocs={contextDocs}
               competitors={competitors}
               isAdmin={false}
@@ -142,7 +150,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 <div className="@container mx-auto w-full max-w-6xl animate-fade-up">
                   {/* The client shell — this banner's audience is a CLIENT_USER,
                       who has neither Regenerate nor Refresh Task Map (F20). */}
-                  <AiProcessingBanner client={client} isClientViewer />
+                  <AiProcessingBanner client={clientView} isClientViewer />
                   {children}
                 </div>
               </main>
