@@ -107,7 +107,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               <main className="flex-1 overflow-x-clip px-4 pb-28 pt-6 md:px-8 md:pt-8 md:pb-16 lg:pb-8">
                 {/* Same cap as the staff shell — the two shells must render pages
                     at identical widths or tabs appear to change size. */}
-                <div className="mx-auto w-full max-w-6xl animate-fade-up">
+                <div className="@container mx-auto w-full max-w-6xl animate-fade-up">
                   {/* The client shell — this banner's audience is a CLIENT_USER,
                       who has neither Regenerate nor Refresh Task Map (F20). */}
                   <AiProcessingBanner client={client} isClientViewer />
@@ -161,7 +161,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             userEmail={user.email}
           />
           <main className="flex-1 overflow-x-clip px-4 py-6 md:px-8 md:py-8">
-            <div className="mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
+            <div className="@container mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
           </main>
         </div>
         {/* Docked copilot right-rail — visible when admin selects a client via "View as Client" */}

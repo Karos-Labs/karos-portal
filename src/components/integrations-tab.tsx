@@ -884,7 +884,7 @@ export function IntegrationsTab({
           <h3 className="text-sm font-semibold text-foreground">Social Publishing & Engagement</h3>
           <p className="text-xs text-muted-2">Channels your agents post and schedule content to.</p>
         </div>
-        <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 items-start gap-6 @2xl:grid-cols-2 @4xl:grid-cols-3">
           {publishingPlatforms.map(renderPlatformCard)}
         </div>
       </section>
@@ -901,7 +901,7 @@ export function IntegrationsTab({
             Read-only sources agents pull performance data and content ideas from.
           </p>
         </div>
-        <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 items-start gap-6 @2xl:grid-cols-2 @4xl:grid-cols-3">
           {analyticsStandalonePlatforms.map(renderPlatformCard)}
           <GoogleUnifiedCard
             integrations={integrations.filter((i) => googleMergedIds.has(i.platform))}

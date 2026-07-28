@@ -99,7 +99,7 @@ export function ArchiveView({
             <h3 className="min-w-0 truncate text-base font-medium text-foreground">{group.name}</h3>
             <Badge tone="neutral">{group.assets.length}</Badge>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 @xl:grid-cols-2 @4xl:grid-cols-3">
             {group.assets.map((asset) => (
               <ArchiveTile key={asset.id} asset={asset} onOpen={() => setOpenAssetId(asset.id)} />
             ))}

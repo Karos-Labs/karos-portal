@@ -457,7 +457,7 @@ export function SeoGeoPanel({
       )}
 
       {/* 1 · Headline scores, coverage shown separately from the grade */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 @xl:grid-cols-2 @4xl:grid-cols-3">
         {scores.map((view) => (
           <ScoreTile key={view.key} view={view} />
         ))}
@@ -515,7 +515,7 @@ export function SeoGeoPanel({
           Whether AI engines name you when buyers ask by name versus when they ask open category
           questions.
         </p>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 @xl:grid-cols-2">
           {[presence.brand, presence.category].map((tile) => (
             <div key={tile.heading} className="rounded-md border border-border bg-surface-2 p-3">
               <div className="flex items-center gap-1.5">
@@ -580,14 +580,14 @@ export function SeoGeoPanel({
           </p>
         )}
         {measuredEngines.length > 0 && (
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-3">
             {measuredEngines.map((view) => (
               <EngineCard key={view.engine} view={view} />
             ))}
           </div>
         )}
         {unmeasuredEngines.length > 0 && (
-          <div className={`grid gap-4 sm:grid-cols-2 ${measuredEngines.length > 0 ? "mt-4" : ""}`}>
+          <div className={`grid gap-4 @xl:grid-cols-2 ${measuredEngines.length > 0 ? "mt-4" : ""}`}>
             {unmeasuredEngines.map((view) => (
               <UnmeasuredEngineCard key={view.engine} view={view} />
             ))}

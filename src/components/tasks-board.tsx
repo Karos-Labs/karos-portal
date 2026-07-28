@@ -777,7 +777,12 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
         onDragCancel={handleDragCancel}
         onDragEnd={handleDragEnd}
       >
-        <div className={cn("grid grid-cols-1 gap-3", visibleColumns.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-4")}>
+        <div
+          className={cn(
+            "grid grid-cols-1 gap-3 @3xl:grid-cols-2",
+            visibleColumns.length === 3 ? "@5xl:grid-cols-3" : "@5xl:grid-cols-4",
+          )}
+        >
           {visibleColumns.map((column) => (
             <BoardColumn
               key={column.status}
