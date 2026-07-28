@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { cn } from "@/lib/utils";
+import { domainFromName } from "@/lib/favicon";
 import { BrandingModal } from "@/components/branding-modal";
 import { addCompetitorByNameAction, removeCompetitorAction } from "@/lib/actions";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
@@ -206,11 +207,20 @@ export function CompetitorTrack({
       {displayed.length > 0 && (
         <ul>
           {displayed.map((c) => {
-            const href = c.url
+            // CD-H3: a stored url wins, but a row that has none and whose NAME
+            // is a domain ("Okara.ai", "ploy.ai") is just as linkable — and the
+            // favicon beside it already resolves through exactly this fallback,
+            // so the row showed the brand's real icon and then refused to open
+            // it. Same derivation, one source (lib/favicon). Neither present
+            // still means no anchor rather than a dead one.
+            const derived = c.url?.trim() ? null : domainFromName(c.company);
+            const href = c.url?.trim()
               ? c.url.startsWith("http")
                 ? c.url
                 : `https://${c.url}`
-              : null;
+              : derived
+                ? `https://${derived}`
+                : null;
             const isRemoving = removingId === c.id;
             const linkContent = (
               <>
