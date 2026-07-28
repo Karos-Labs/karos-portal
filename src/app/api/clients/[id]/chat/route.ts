@@ -195,6 +195,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `If spendable credits are under 20, proactively mention it and suggest asking the Karos team for a top-up. Never invent credit figures beyond these.`
     : "";
 
+  // Provenance boundary, same shape as the asset and context-doc filters
+  // above: mock analytics rows must never reach a prompt a CLIENT is talking
+  // to. The benchmark block presents them as "measured results from this
+  // client's published content", so the copilot will narrate invented figures
+  // as fact — F125's blocker, on a surface the client is charged for. Staff
+  // keep the full set; the demo data is theirs to see.
+  // sampleSize is recomputed from the rows that survive (top and bottom can
+  // overlap on a small set), so the "N tracked assets" claim can only
+  // understate, never overstate.
+  const promptBenchmarks = (() => {
+    if (user.role !== "CLIENT_USER") return benchmarks;
+    const top = benchmarks.top.filter((r) => r.source === "live");
+    const bottom = benchmarks.bottom.filter((r) => r.source === "live");
+    const distinct = new Set([...top, ...bottom].map((r) => r.id));
+    return { top, bottom, sampleSize: distinct.size };
+  })();
+
   // Flatten measured analytics into the prompt's benchmark shape (Firestore
   // types stay out of the pure prompt builder).
   const toBenchmarkEntry = (r: (typeof benchmarks.top)[number]) => ({
@@ -219,9 +236,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       activeTaskCount: boardCapacity.activeCount,
       maxActiveTasks: MAX_ACTIVE_TASKS,
       historicalBenchmarks: {
-        top: benchmarks.top.map(toBenchmarkEntry),
-        bottom: benchmarks.bottom.map(toBenchmarkEntry),
-        sampleSize: benchmarks.sampleSize,
+        top: promptBenchmarks.top.map(toBenchmarkEntry),
+        bottom: promptBenchmarks.bottom.map(toBenchmarkEntry),
+        sampleSize: promptBenchmarks.sampleSize,
       },
     }) +
     creditsAppendix;
