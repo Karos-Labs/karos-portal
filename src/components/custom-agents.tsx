@@ -66,6 +66,11 @@ export interface CustomAgentRunRow {
   status: JobStatus;
   createdAt: number;
   assetCount: number;
+  /**
+   * The operator's raw request. STAFF VIEWERS ONLY — a client's permanent run
+   * history must not be somebody's typing, misspellings and all, so the page
+   * omits it from the client payload rather than hiding it at render.
+   */
   prompt?: string;
   /** Link target (staff viewers get /jobs/<id>); absent for client viewers. */
   href?: string;
@@ -590,8 +595,14 @@ export function ClientCustomAgents({
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{run.agentName}</p>
+                    {/* What the run produced — never what somebody typed to start
+                        it. `prompt` is present only for staff viewers; the page
+                        leaves it out of the client payload entirely. */}
                     <p className="truncate text-xs text-muted-2">
                       {relativeTime(run.createdAt)}
+                      {run.assetCount > 0
+                        ? ` · ${run.assetCount} draft${run.assetCount === 1 ? "" : "s"}`
+                        : ""}
                       {run.prompt ? ` · "${run.prompt}"` : ""}
                     </p>
                   </div>

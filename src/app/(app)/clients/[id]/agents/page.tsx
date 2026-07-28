@@ -44,8 +44,13 @@ function toSummary(agent: CustomAgent): RunnableAgentSummary {
   };
 }
 
-/** Custom-agent runs as slim rows; `withLinks` adds staff-only /jobs targets. */
-function toRunRows(jobs: Job[], withLinks: boolean): CustomAgentRunRow[] {
+/**
+ * Custom-agent runs as slim rows. `staff` adds the /jobs link target AND the
+ * submitted prompt: the raw request is an operator's free text (typos, stray
+ * capitals) and never belongs in a client's run history, so it is dropped here
+ * at the RSC boundary rather than hidden at render.
+ */
+function toRunRows(jobs: Job[], staff: boolean): CustomAgentRunRow[] {
   return jobs
     .filter((j) => j.agentId === "agent-service" && j.external?.taskType === "custom")
     .sort((a, b) => b.createdAt - a.createdAt)
@@ -56,8 +61,8 @@ function toRunRows(jobs: Job[], withLinks: boolean): CustomAgentRunRow[] {
       status: j.status,
       createdAt: j.createdAt,
       assetCount: j.assetIds.length,
-      ...(j.input.prompt ? { prompt: j.input.prompt } : {}),
-      ...(withLinks ? { href: `/jobs/${j.id}` } : {}),
+      ...(staff && j.input.prompt ? { prompt: j.input.prompt } : {}),
+      ...(staff ? { href: `/jobs/${j.id}` } : {}),
     }));
 }
 
