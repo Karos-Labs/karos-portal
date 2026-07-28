@@ -7,7 +7,7 @@ import { Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AgentMark } from "@/components/agent-identity";
 import { createPlannedRunAction } from "@/lib/actions/planned-run-actions";
-import { computeNextRun, describeCadence } from "@/lib/scheduled-runs";
+import { computeNextRun, describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
 import type { CalendarClientOption, ScheduleAgentOption } from "@/components/run-calendar";
 import type { PlannedRunCadence } from "@/lib/types";
 
@@ -42,18 +42,25 @@ export function ScheduleRunModal({
 
   const agent = useMemo(() => agents.find((a) => a.id === agentId), [agents, agentId]);
   const [hour, minute] = time.split(":").map((n) => parseInt(n, 10));
+  // The zone this preview is computed in. It travels with the schedule so the
+  // server stores the same clock the person just read, instead of recomputing
+  // the wall time in the container's zone (UTC in production).
+  const timeZone = useMemo(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    [],
+  );
 
   const preview = useMemo(() => {
     if (cadence === "once") {
       if (!runAt) return null;
       const at = new Date(runAt).getTime();
       if (Number.isNaN(at)) return null;
-      return `Fires ${new Date(at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
+      return `Fires ${new Date(at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} ${shortZoneLabel(timeZone, at)}`;
     }
-    const nextRunAt = computeNextRun({ cadence, hour: hour || 0, minute: minute || 0, weekday, dayOfMonth });
-    const label = describeCadence({ cadence, hour: hour || 0, minute: minute || 0, weekday, dayOfMonth, nextRunAt });
+    const nextRunAt = computeNextRun({ cadence, hour: hour || 0, minute: minute || 0, weekday, dayOfMonth, timeZone });
+    const label = describeCadence({ cadence, hour: hour || 0, minute: minute || 0, weekday, dayOfMonth, nextRunAt, timeZone });
     return `${label} · next ${new Date(nextRunAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
-  }, [cadence, hour, minute, weekday, dayOfMonth, runAt]);
+  }, [cadence, hour, minute, weekday, dayOfMonth, runAt, timeZone]);
 
   async function submit() {
     setError(null);
@@ -65,6 +72,7 @@ export function ScheduleRunModal({
       customAgentId: agentId,
       prompt,
       cadence,
+      timeZone,
       ...(cadence === "once"
         ? { runAt: runAt ? new Date(runAt).getTime() : undefined }
         : { hour: hour || 0, minute: minute || 0, weekday, dayOfMonth }),

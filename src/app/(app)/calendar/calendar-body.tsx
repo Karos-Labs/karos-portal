@@ -10,7 +10,7 @@ import { assetImages } from "@/lib/asset-images";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
-import { describeCadence } from "@/lib/scheduled-runs";
+import { describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
@@ -157,6 +157,11 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         productIcon: r.agentIcon,
         cadence: r.cadence,
         cadenceLabel: describeCadence(r),
+        // The zone the schedule's wall clock was set in. Sent to the browser so
+        // the chip's day bucket and printed time are computed there exactly as
+        // they were on the server — a schedule with no stored zone (written
+        // before the field existed) keeps the old runtime-local behaviour.
+        ...(r.timeZone ? { timeZone: r.timeZone, zoneLabel: shortZoneLabel(r.timeZone, r.nextRunAt) } : {}),
         prompt: r.prompt,
         ...(blurb ? { agentDescription: blurb } : {}),
       };

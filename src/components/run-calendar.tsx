@@ -44,6 +44,14 @@ export interface CalendarRun {
   // scheduled
   cadence?: PlannedRunCadence;
   cadenceLabel?: string;
+  /**
+   * IANA zone this schedule's wall clock was set in. Present on scheduled runs
+   * only: a past run is an instant, a schedule is an intent, and the intent is
+   * what has to be printed and bucketed consistently on server and browser.
+   */
+  timeZone?: string;
+  /** Short zone label ("GMT-3") printed next to a schedule's wall clock. */
+  zoneLabel?: string;
   /** The free-text request this run fires each time. */
   prompt?: string;
   agentDescription?: string;
@@ -82,15 +90,39 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-function dayKey(at: number): string {
+/**
+ * Which day cell an entry belongs in.
+ *
+ * With `timeZone` the day is resolved in that zone — the same answer on the
+ * server render and in the browser, whatever either runtime's own zone is. A
+ * scheduled run passes its stored zone (the day the person actually picked);
+ * past runs and published posts are instants and stay in the viewer's day.
+ */
+function dayKey(at: number, timeZone?: string): string {
+  if (timeZone) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+    }).formatToParts(new Date(at));
+    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+    // Month is zero-based here to match the grid's `${year}-${month}-${day}` key.
+    return `${get("year")}-${get("month") - 1}-${get("day")}`;
+  }
   const d = new Date(at);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
-function timeStr(at: number): string {
+function timeStr(at: number, timeZone?: string): string {
   // Pinned locale: SSR (Node) and the browser must format identically or the
-  // chip title attributes trigger hydration mismatches.
-  return new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  // chip title attributes trigger hydration mismatches. Pinning the zone too
+  // (for schedules) closes the other half of that gap.
+  return new Date(at).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    ...(timeZone ? { timeZone } : {}),
+  });
 }
 
 /* ── Chips ───────────────────────────────────────────────────────────── */
@@ -108,7 +140,9 @@ function RunChip({ run }: { run: CalendarRun }) {
             ? "bg-danger/15 text-danger"
             : "bg-foreground/[0.07] text-foreground/85",
       )}
-      title={`${scheduled ? "Scheduled" : "Ran"} · ${run.productName} · ${timeStr(run.at)}${run.clientName ? ` — ${run.clientName}` : ""}`}
+      title={`${scheduled ? "Scheduled" : "Ran"} · ${run.productName} · ${timeStr(run.at, run.timeZone)}${
+        scheduled && run.zoneLabel ? ` ${run.zoneLabel}` : ""
+      }${run.clientName ? ` — ${run.clientName}` : ""}`}
     >
       <AgentMark identity={run.productName} icon={run.productIcon} className="h-2.5 w-2.5 shrink-0" />
       <span className="truncate">{run.productName}</span>
@@ -185,7 +219,13 @@ function ScheduledRunCard({
             <Badge tone="info">Upcoming</Badge>
             {run.clientName && <Badge tone="neutral">{run.clientName}</Badge>}
           </div>
-          <p className="mt-0.5 text-xs text-muted-2">{run.cadenceLabel} · fires {timeStr(run.at)}</p>
+          {/* One clock, stated once. The cadence label already carries the
+              wall-clock time and its zone, so printing a second, differently
+              derived time here is what made the two contradict each other. */}
+          <p className="mt-0.5 text-xs text-muted-2">
+            {run.cadenceLabel} · next {timeStr(run.at, run.timeZone)}
+            {run.zoneLabel ? ` ${run.zoneLabel}` : ""}
+          </p>
           {run.agentDescription && <p className="mt-1.5 text-xs text-muted-2">{run.agentDescription}</p>}
           <div className="mt-2.5 border-t border-border pt-2">
             <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-2">Will run</p>
@@ -364,7 +404,7 @@ export function RunCalendar({
   const runsByDay = useMemo(() => {
     const m = new Map<string, CalendarRun[]>();
     for (const r of runs) {
-      const k = dayKey(r.at);
+      const k = dayKey(r.at, r.timeZone);
       (m.get(k) ?? m.set(k, []).get(k)!).push(r);
     }
     return m;
