@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  ALL_LAUNCH_PROFILES,
   buildCustomAgentPrompt,
+  clientSafeRunError,
   initialAgentBrief,
   launchProfileFor,
+  X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
+import { CREDIT_DENIAL_PREFIX } from "@/lib/credits";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 
 describe("custom agent launch profiles", () => {
@@ -69,6 +73,36 @@ describe("custom agent launch profiles", () => {
     expect(intel.eyebrow).toBe("Market intelligence brief");
   });
 
+  it("ships no unsubstituted template placeholder to a user", () => {
+    // A chip reading "Focus this batch on [person]'s seat." both advertises an
+    // unfinished feature and, when clicked, puts the literal "[person]" into
+    // the agent's prompt. Sweep every string a person can read on the run
+    // dialog, across every profile.
+    const PLACEHOLDER = /\[[a-z_]+\]/;
+    const offenders: string[] = [];
+    for (const profile of ALL_LAUNCH_PROFILES) {
+      const strings = [
+        profile.eyebrow,
+        profile.intro,
+        profile.estimate,
+        ...profile.quickStarts,
+        ...profile.deliverables,
+        profile.attachments.label,
+        profile.attachments.hint,
+        ...profile.fields.flatMap((field) => [
+          field.label,
+          field.placeholder,
+          field.helper,
+          ...(field.options ?? []).map((option) => option.label),
+        ]),
+      ];
+      for (const value of strings) {
+        if (value && PLACEHOLDER.test(value)) offenders.push(`${profile.eyebrow}: ${value}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("serializes guided answers into the service prompt without losing labels", () => {
     const profile = launchProfileFor({ key: "acme-linkedin-ghostwriter", name: "LinkedIn Ghostwriter" });
     const values = {
@@ -82,6 +116,25 @@ describe("custom agent launch profiles", () => {
     expect(prompt).toContain("Executive or account\nMaya Chen, CEO");
     expect(prompt).toContain("Point of view or outcome\nExplain the lesson");
     expect(prompt).toContain("Audience\nOperations leaders");
+  });
+});
+
+describe("clientSafeRunError", () => {
+  it("hides the submit core's config strings from a client run dialog", () => {
+    const raw = "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN).";
+    const safe = clientSafeRunError(raw);
+    expect(safe).not.toContain("AGENT_SERVICE_URL");
+    expect(safe).not.toBe(raw);
+    expect(clientSafeRunError("AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks.")).toBe(
+      safe,
+    );
+  });
+
+  it("passes setup refusals and credit denials through verbatim", () => {
+    const setup = `${X_SETUP_REQUIRED_PREFIX} first. Open the "X agent data" page.`;
+    expect(clientSafeRunError(setup)).toBe(setup);
+    const denial = `${CREDIT_DENIAL_PREFIX.insufficient_balance} 25 credits and 3 are left.`;
+    expect(clientSafeRunError(denial)).toBe(denial);
   });
 });
 

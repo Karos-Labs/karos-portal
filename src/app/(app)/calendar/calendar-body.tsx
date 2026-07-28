@@ -25,8 +25,10 @@ import {
 } from "@/components/run-calendar";
 import type { Asset, AppUser, AssetType } from "@/lib/types";
 
-// Jobs that have actually run (produced or attempted output).
-const PAST_JOB_STATUSES = new Set(["review", "approved", "delivered", "failed"]);
+// Jobs that have actually run (produced or attempted output). "cancelled" is a
+// terminal outcome of its own since F30 — without it here a stopped run would
+// simply vanish from the calendar instead of showing what happened that day.
+const PAST_JOB_STATUSES = new Set(["review", "approved", "delivered", "failed", "cancelled"]);
 
 /** Plain-English noun for what a run actually produced. */
 const OUTPUT_NOUN: Record<AssetType, [string, string]> = {

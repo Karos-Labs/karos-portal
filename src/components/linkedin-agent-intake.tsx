@@ -11,6 +11,9 @@
  */
 
 import { useRef, useState, useTransition } from "react";
+import { JobStatusBadge } from "@/components/job-status";
+import type { JobStatus } from "@/lib/types";
+import { formatDate, relativeTime } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -53,9 +56,19 @@ export interface LiFeedbackRowView {
 
 export interface LiRunRowView {
   id: string;
-  status: string;
+  /** Typed so the row renders through JobStatusBadge, never the raw word. */
+  status: JobStatus;
   createdAt: number;
   href?: string;
+}
+
+/**
+ * The marker for a field the server refuses to save empty. The seat forms
+ * rejected a blank "must never post" answer while marking nothing required, so
+ * the only way to learn the rule was to fail the save.
+ */
+function RequiredMark() {
+  return <span className="ml-1 text-danger">*</span>;
 }
 
 function fieldError(error: string | null) {
@@ -352,7 +365,10 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
           </p>
         </div>
         <div>
-          <Label htmlFor={`ls-offlimits-${seat.id}`}>Anything we must never post</Label>
+          <Label htmlFor={`ls-offlimits-${seat.id}`}>
+            Anything we must never post
+            <RequiredMark />
+          </Label>
           <Textarea
             id={`ls-offlimits-${seat.id}`}
             rows={2}
@@ -474,7 +490,10 @@ function AddSeatForm({ clientId }: { clientId: string }) {
           </p>
         </div>
         <div>
-          <Label htmlFor="la-offlimits">Anything we must never post</Label>
+          <Label htmlFor="la-offlimits">
+            Anything we must never post
+            <RequiredMark />
+          </Label>
           <Textarea
             id="la-offlimits"
             rows={2}
@@ -547,21 +566,28 @@ function FeedbackBox({
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
         Tell us what is working and what is not - in your own words, as much detail as you like.
-        It goes straight into the agent&apos;s next run. Picking, editing, or skipping individual
-        drafts happens on the drafts themselves, in your Workspace archive.
+        It goes straight into the agent&apos;s next run. To pick, edit or skip an individual
+        draft, open it from{" "}
+        <a href="/tasks?tab=archive" className="underline hover:text-foreground">
+          your archive
+        </a>{" "}
+        — each of those choices reaches the agent too.
       </p>
       {runs.length > 0 ? (
-        <ul className="mt-3 space-y-1">
+        /* The run's state through the app's own mapper — these used to print the
+           raw database word ("review", "queued", "failed") into client-facing
+           copy, beside a machine date, on a line with nothing to click. */
+        <ul className="mt-3 space-y-1.5">
           {runs.slice(0, 4).map((r) => (
-            <li key={r.id} className="text-xs text-muted">
+            <li key={r.id} className="flex items-center gap-2 text-xs text-muted">
               {r.href ? (
                 <a href={r.href} className="underline hover:text-foreground">
-                  Run {new Date(r.createdAt).toISOString().slice(0, 10)}
+                  Run {formatDate(r.createdAt)}
                 </a>
               ) : (
-                <span>Run {new Date(r.createdAt).toISOString().slice(0, 10)}</span>
-              )}{" "}
-              · {r.status}
+                <span>Run {formatDate(r.createdAt)}</span>
+              )}
+              <JobStatusBadge status={r.status} />
             </li>
           ))}
         </ul>
@@ -599,8 +625,7 @@ function FeedbackBox({
             <li key={f.id} className="text-xs text-muted">
               <span className="text-foreground">{accountName(f.account)}</span> ·{" "}
               {f.action === "note" ? "feedback" : f.action.replace(/_/g, " ")}
-              {f.draftRef ? ` · ${f.draftRef}` : ""} ·{" "}
-              {new Date(f.createdAt).toISOString().slice(0, 10)}
+              {f.draftRef ? ` · ${f.draftRef}` : ""} · {relativeTime(f.createdAt)}
             </li>
           ))}
         </ul>

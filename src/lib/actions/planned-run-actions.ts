@@ -12,7 +12,12 @@ import {
   updatePlannedScheduledRun,
 } from "@/lib/data";
 import { CREDIT_COSTS, isBillableClientActor, scheduledAgentWeeklyCost } from "@/lib/credits";
-import { computeNextRun, weeklyCadenceDays } from "@/lib/scheduled-runs";
+import {
+  computeNextRun,
+  MAX_OUTPUTS_PER_RUN,
+  MAX_RUNS_PER_WEEK,
+  weeklyCadenceDays,
+} from "@/lib/scheduled-runs";
 import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
 import type { PlannedRunCadence } from "@/lib/types";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
@@ -192,8 +197,12 @@ export async function configureClientAgentScheduleAction(
     if (!activated) return { error: "Agent not found." };
   }
 
-  const postsPerWeek = clampInt(input.postsPerWeek, 1, 7);
-  const outputsPerRun = clampInt(input.outputsPerRun, 1, 10);
+  // Clamped to exactly what the dialog offers. outputsPerRun was capped at 10
+  // here while the dialog offered 5, so a stale page or a direct call could
+  // schedule twice the outputs the product sells — and the scheduler bills
+  // chargeMultiplier = outputsPerRun on every fire.
+  const postsPerWeek = clampInt(input.postsPerWeek, 1, MAX_RUNS_PER_WEEK);
+  const outputsPerRun = clampInt(input.outputsPerRun, 1, MAX_OUTPUTS_PER_RUN);
   const prompt = input.prompt.trim();
   if (!prompt) return { error: "Describe what the agent should create each time." };
   if (prompt.length > MAX_PROMPT_CHARS) {
@@ -260,7 +269,12 @@ export async function configureClientAgentScheduleAction(
     clientId: input.clientId,
     timestamp: now,
     type: "CAMPAIGN_CREATED",
-    title: `Set ${agent.name} to ${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} per week`,
+    // Runs, not posts: postsPerWeek counts the days the agent fires, and each
+    // fire produces outputsPerRun items. The field name is persisted and read
+    // in several places, so only the wording moves.
+    title:
+      `Set ${agent.name} to ${postsPerWeek} run${postsPerWeek === 1 ? "" : "s"} per week ` +
+      `(${postsPerWeek * outputsPerRun} draft${postsPerWeek * outputsPerRun === 1 ? "" : "s"})`,
     actor: user.name,
     actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
     metadata: { scheduledRunId: id, customAgentId: agent.id, postsPerWeek, outputsPerRun },

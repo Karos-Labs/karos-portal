@@ -83,6 +83,18 @@ export const GOOGLE_UNIFIED_SUB_PLATFORM_IDS = ["youtube", "google_search_consol
 export const GOOGLE_READ_ONLY_SUB_PLATFORM_IDS = ["google_search_console", "google_analytics", "google_business_profile"] as const;
 
 /**
+ * Platforms whose OAuth flow is fully built here but cannot yet be completed
+ * because the PLATFORM has not approved the Karos Labs developer account.
+ *
+ * TikTok is blocked on TikTok verifying that account (call directive D2,
+ * 27 Jul 2026). Offering a "Connect with TikTok" button in that state sends the
+ * client into a popup that can only fail, so the card says pending verification
+ * instead of pretending. DELETE THE ENTRY the day verification lands — nothing
+ * else needs changing, the OAuth config is already complete.
+ */
+export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>(["tiktok"]);
+
+/**
  * Which platforms each asset type can be pushed to (auto cron or Publish Now).
  * Single source of truth — the publish cron, the asset card, and the schedule
  * form all read this map. Order matters: first connected match wins when a

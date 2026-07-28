@@ -295,7 +295,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           label: "Point of view or outcome",
           type: "textarea",
           required: true,
-          placeholder: "Explain what we learned while solving [problem] and why it changes our approach.",
+          placeholder: "Explain what we learned while solving a hard customer problem and why it changes our approach.",
         },
         { key: "audience", label: "Audience", type: "text", placeholder: "Who should care about this and why?" },
         {
@@ -354,7 +354,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       ],
       quickStarts: [
         "Lean into this week's announcement.",
-        "Focus this batch on [person]'s seat.",
+        "Focus this batch on one person's seat.",
         "React to what happened in the industry this week.",
       ],
       deliverables: ["A week of post drafts across the avenues", "A linked source on every news, quote, and reply post"],
@@ -372,7 +372,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       eyebrow: "Newsletter brief",
       intro: "Give the issue one editorial job, a reader, and the source material it must cover.",
       fields: [
-        { key: "request", label: "Issue theme and goal", type: "textarea", required: true, placeholder: "A monthly issue that helps [reader] understand [theme] and drives [action]." },
+        { key: "request", label: "Issue theme and goal", type: "textarea", required: true, placeholder: "A monthly issue that helps our readers understand one theme and drives one action." },
         { key: "audience", label: "Reader segment", type: "text", placeholder: "Who opens this issue?" },
         { key: "must_include", label: "Stories, links, or dates to include", type: "textarea", placeholder: "One item per line" },
         { key: "cta", label: "Primary call to action", type: "text", placeholder: "The one action the issue should earn" },
@@ -409,7 +409,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
             { value: "refresh", label: "Refresh topics and formats" },
           ],
         },
-        { key: "request", label: "Topic or reader question", type: "textarea", required: true, placeholder: "Answer the question [audience] asks before choosing [solution]." },
+        { key: "request", label: "Topic or reader question", type: "textarea", required: true, placeholder: "Answer the question our buyers ask before choosing a solution like ours." },
         { key: "audience", label: "Audience and intent", type: "text", placeholder: "Who is searching, and what decision are they making?" },
         { key: "keywords", label: "Keyword or answer territory", type: "text", placeholder: "Optional; the agent can research it" },
         { key: "point_of_view", label: "Brand point of view and proof", type: "textarea", placeholder: "What can this client credibly say that ranking pages cannot?" },
@@ -597,7 +597,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
             { value: "voice", label: "Voice and messaging system" },
           ],
         },
-        { key: "request", label: "Business problem or desired shift", type: "textarea", required: true, placeholder: "Move perception from a tactical vendor to a strategic partner for [audience]." },
+        { key: "request", label: "Business problem or desired shift", type: "textarea", required: true, placeholder: "Move perception from a tactical vendor to a strategic partner for our buyers." },
         { key: "audience", label: "Priority audience", type: "text", placeholder: "Buyer, user, market, and maturity" },
         { key: "current_perception", label: "Current vs desired perception", type: "textarea", placeholder: "Today they think… We need them to believe…" },
         { key: "competitors", label: "Competitive set and references", type: "textarea", placeholder: "Brands to differentiate from or learn from" },
@@ -698,7 +698,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       intro: "Set the company, market boundary, and decision to avoid a broad report that cannot change the next move.",
       fields: [
         { key: "company", label: "Company and website", type: "text", required: true, placeholder: "Company name + https://…" },
-        { key: "request", label: "Decision or research question", type: "textarea", required: true, placeholder: "Find the positioning gap we can own with [audience] in [market]." },
+        { key: "request", label: "Decision or research question", type: "textarea", required: true, placeholder: "Find the positioning gap we can own with our buyers in this market." },
         { key: "market", label: "Market and geography", type: "text", placeholder: "Category, countries, language, business model" },
         { key: "audience", label: "Target customer", type: "text", placeholder: "Buyer and use case" },
         { key: "competitors", label: "Known competitors", type: "textarea", placeholder: "One company or URL per line; the agent can discover more" },
@@ -753,16 +753,45 @@ export const LINKEDIN_SETUP_REQUIRED_PREFIX = "Set up the LinkedIn agent data";
  * Applied server-side, before the row is serialized: a string that never leaves
  * the server cannot be read out of the RSC payload.
  */
-export function clientSafeRefusal(refusal: string): string {
-  if (
-    refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
-    refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
-    isCreditDenialMessage(refusal)
-  ) {
-    return refusal;
-  }
-  return "This agent could not start on its last scheduled run. Your Karos team can unblock it.";
+function isClientReadableRefusal(message: string): boolean {
+  return (
+    message.startsWith(X_SETUP_REQUIRED_PREFIX) ||
+    message.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
+    isCreditDenialMessage(message)
+  );
 }
+
+export function clientSafeRefusal(refusal: string): string {
+  return isClientReadableRefusal(refusal)
+    ? refusal
+    : "This agent could not start on its last scheduled run. Your Karos team can unblock it.";
+}
+
+/**
+ * The manual-run twin of clientSafeRefusal: a client who fires a run must never
+ * receive the submit core's internal strings — service URLs, env var names
+ * ("AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN"), upstream provider errors — which
+ * now reach the client's own run dialog. F34 mounts the run controls during an
+ * outage, so the honest failure is a client-safe line, not a raw config error.
+ * The same allowlist passes setup refusals and credit denials through verbatim
+ * (both are written for the client and the dialog links off the setup ones).
+ */
+export function clientSafeRunError(error: string): string {
+  return isClientReadableRefusal(error)
+    ? error
+    : "This run could not be started right now. Your Karos team has been notified.";
+}
+
+/**
+ * Every launch profile, generic fallback included. Exported so guard tests can
+ * sweep the whole set — a square-bracket placeholder that reaches a client
+ * ("Focus this batch on [person]'s seat.") reads as an unfinished feature, and
+ * a quick-start chip carrying one puts the literal token into the agent prompt.
+ */
+export const ALL_LAUNCH_PROFILES: readonly AgentLaunchProfile[] = [
+  ...profiles.map((entry) => entry.profile),
+  genericProfile,
+];
 
 export function launchProfileFor(agent: AgentIdentity): AgentLaunchProfile {
   const identity = `${agent.key} ${agent.name}`.toLowerCase();

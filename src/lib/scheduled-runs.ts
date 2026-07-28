@@ -24,6 +24,17 @@ import type { PlannedRunCadence } from "@/lib/types";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * The weekly cadence a client may buy from the schedule dialog. Both bounds are
+ * shared by the dialog's dropdowns and the server clamp in
+ * configureClientAgentScheduleAction, so a stale page or a direct call cannot
+ * schedule — and bill — more outputs per fire than the product offers. The
+ * scheduler multiplies the credit charge by outputsPerRun, so the server clamp
+ * is the load-bearing one.
+ */
+export const MAX_RUNS_PER_WEEK = 7;
+export const MAX_OUTPUTS_PER_RUN = 5;
+
+/**
  * Next fire time (epoch millis) strictly after `from` for a recurring cadence.
  *
  * Not used for "once" — a one-off run stores its explicit target time directly.

@@ -16,6 +16,7 @@ export const JOB_STATUS_META: Record<
   approved: { tone: "neon", label: "Approved" },
   delivered: { tone: "neon", label: "Delivered" },
   failed: { tone: "danger", label: "Failed" },
+  cancelled: { tone: "neutral", label: "Cancelled" },
 };
 
 export function JobStatusBadge({ status }: { status: JobStatus }) {

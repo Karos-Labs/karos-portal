@@ -235,6 +235,54 @@ export function isCreditDenialMessage(message: string): boolean {
 }
 
 /**
+ * One short line per denial code, for PRE-flight UI (a disabled Run button)
+ * rather than the post-failure denial above. Each names the reset that actually
+ * unblocks it: a weekly or monthly cap is not fixed by a top-up, so telling a
+ * capped client to ask for more credits is worse than saying nothing.
+ */
+export const CREDIT_BLOCK_REASON: Record<CreditDenialCode, string> = {
+  insufficient_balance: "Not enough credits — ask your Karos team for a top-up.",
+  weekly_limit: "Weekly limit reached — resets Monday.",
+  monthly_limit: "Monthly limit reached — resets on the 1st.",
+};
+
+/**
+ * Which limit the server would cite when refusing a charge of `cost` — so the
+ * pre-flight line names the SAME limit the eventual denial does.
+ *
+ * This mirrors assessCharge's ladder EXACTLY: it is not an argmin over the
+ * three remaining balances but the first of them, in the server's own order,
+ * that `cost` does not fit under. Order matters — with balance=5, weekLeft=2,
+ * monthLeft=400 and cost=10 the argmin (weekLeft) says "weekly", but the server
+ * refuses on the balance first, so a "resets Monday" line would send the client
+ * to wait a week for a block a top-up fixes. `cost` is required for the same
+ * reason: whether the weekly cap binds before the balance depends on it.
+ */
+export function bindingCreditLimit(
+  credits: ClientCredits,
+  cost: number,
+  now?: number,
+): CreditDenialCode {
+  const rolled = now != null ? rollCreditWindows(credits, now) : credits;
+  // Same predicates as assessCharge, same sequence (balance → weekly → monthly).
+  if (rolled.balance < cost) return "insufficient_balance";
+  if (rolled.weeklyLimit != null && rolled.weekSpent + cost > rolled.weeklyLimit) {
+    return "weekly_limit";
+  }
+  if (rolled.monthlyLimit != null && rolled.monthSpent + cost > rolled.monthlyLimit) {
+    return "monthly_limit";
+  }
+  // Nothing binds at this cost — callers only surface a reason once spend is
+  // already blocked, so this is a safe default rather than a reachable state.
+  return "insufficient_balance";
+}
+
+/** The line to show beside a run control that a charge of `cost` has blocked. */
+export function creditBlockReason(credits: ClientCredits, cost: number, now?: number): string {
+  return CREDIT_BLOCK_REASON[bindingCreditLimit(credits, cost, now)];
+}
+
+/**
  * Thrown by the data layer when a charge is denied. `message` is written for
  * the client user; callers surface it verbatim (job error, 402 body, {error}).
  */

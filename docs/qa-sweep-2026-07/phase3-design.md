@@ -7,6 +7,17 @@ Author: Phase-3 architect (Fable), 2026-07-28, against integration HEAD `5015a10
 (wave-1 + CALENDAR merged). Inputs: call-directives §A1–A5, F147/F148/F149/F130
 specs, rescopes.md rulings, and the live code surfaces cited inline.
 
+Changelog:
+- **v2 (2026-07-28, same day)** — Albert answered Q1/Q2/Q6/Q9 (relayed by the
+  orchestrator). Amended: launch is **client-billed and client-triggerable**
+  (§2, §6, §7.1, WP-1); launch pricing is **measured-ratio per agent** with a
+  gated-until-priced default (§6.1–6.3, new ops step); Q6 confirmed per-agent
+  flat run pricing (no design change); the **X agent adopts a daily 3-option
+  slot** with pick/edit/post telemetry feeding generation (§1.2 slot `kind`,
+  new §4.5, seam T7, WP-9 added — additive package, WP-0..8 unchanged in
+  order). §12 restructured into answered rulings vs still-open defaults.
+- v1 — initial design.
+
 Covers: data model · state machines · calendar slots + notes · two-level feedback ·
 posted/archive · credit split · UI states with churn-rule audit · agent-service
 contract (today vs Tomer) · migration · ordered build plan.
@@ -93,8 +104,11 @@ export interface ClientAgent {
   platform: string;
   /** Which chain family this umbrella's slots own ("social" | "email" | "article").
    *  While a clientAgent is live, the slot planner (§4) owns this family for this
-   *  client and plain reflowClientChain must not re-date its assets. */
-  chainFamily: "social" | "email" | "article";
+   *  client and plain reflowClientChain must not re-date its assets.
+   *  OPTIONAL: an options-mode umbrella (X, §4.5) owns no chain family — its
+   *  slots present picks from batch assets (type "note", chainFamilyFor = null)
+   *  and never re-date chain assets. */
+  chainFamily?: "social" | "email" | "article";
 
   launchState: ClientAgentLaunchState;
   /** Platform job doc id of the setup run (jobs collection). */
@@ -142,6 +156,19 @@ export interface AgentSlotNote {
   consumedByJobId?: string | null;
 }
 
+/** Recorded when the client picks one of an options slot's choices (§4.5). The
+ *  learning-log source of truth stays XDraftFeedback; this is the slot-level
+ *  render state. */
+export interface AgentSlotOptionPick {
+  /** Which option was chosen — its ref within the linked asset's parsed batch
+   *  (interim mode) or its option key (day-of mode). */
+  optionRef: string;
+  pickedAt: number;
+  pickedBy: string;
+  /** True when the client edited the text before confirming. */
+  edited: boolean;
+}
+
 export interface AgentSlot {
   id: string;
   clientId: string;
@@ -151,16 +178,29 @@ export interface AgentSlot {
    *  derived instants are computed via run-cadence helpers. NOT a timestamp —
    *  the epoch-millis rule applies to instants, and a slot is a day. */
   dateKey: string;
+  /** "single" = one template, one post (default). "options" = the daily
+   *  3-option pick model (§4.5, X agent) — the client chooses between
+   *  optionRefs on the day. Absent ⇒ "single". */
+  kind?: "single" | "options";
+  /** single: the stream this day produces. options: a fixed key ("daily-post")
+   *  so calendar chips still render a stable label. */
   templateKey: string;
   status:
     | "planned"     // future intent — nothing client-visible exists
     | "generated"   // content exists and the day has arrived (client can act)
     | "posted"      // its asset reached status published
     | "skipped";    // client/staff removed the day (kept for history)
-  /** The fulfilling asset once one is matched/created. */
+  /** The fulfilling asset once one is matched/created. For an options slot:
+   *  before the pick, the (staff-side) batch asset the options are drawn from;
+   *  after the pick, the materialized per-day asset (§4.5). */
   assetId?: string | null;
   /** The generation job for day-of runs. */
   jobId?: string | null;
+  /** options slots only: the 3 candidate refs assigned to this day (draft refs
+   *  within the batch asset, or option keys once day-of generation lands). */
+  optionRefs?: string[];
+  /** options slots only: set once the client picks. */
+  optionPick?: AgentSlotOptionPick | null;
   note?: AgentSlotNote | null;
   createdBy: string;
   createdAt: number;
@@ -225,8 +265,12 @@ templateKey?: string | null;
 `CustomAgent` (types.ts:221) gains:
 
 ```ts
-/** Credits a client-billed LAUNCH costs; null ⇒ launches are staff-fired /
- *  not client-billable (current default — see open question Q1). */
+/** Credits a client-fired LAUNCH costs (Q1 ruling: client-billed, priced from
+ *  the MEASURED setup-vs-run USD ratio — see §6.3). Admin-set per agent after
+ *  measurement, like creditCost (F130). null ⇒ price not yet calibrated: the
+ *  client's self-serve Launch is gated with a visible reason; staff launches
+ *  (free, and the measurement source) remain available. Must price above the
+ *  agent's per-run creditCost — the setter action validates that. */
 launchCreditCost?: number | null;
 ```
 
@@ -265,13 +309,29 @@ collections are Admin-SDK-only like everything else).
                                                                        live
 ```
 
-- **not_launched** — umbrella exists (bound by staff, §7.2). Client card shows
-  "Your Karos team is preparing this agent" (no client CTA; Q2).
-- **launching** — `submitClientAgentLaunchAction` (staff) submitted the setup
-  job through `submitCustomAgentJob` with `runType: "launch"` metadata (§8.1).
-  `launchJobId` + `launchStartedAt` set. Intake-gated agents (X/LinkedIn) keep
-  their existing hard gate — the submit core already refuses without intake, so
-  the launch action surfaces the same `AgentSetupState` block first.
+- **not_launched** — umbrella exists (bound by staff, §7.2). **Q2 ruling: the
+  launch is triggerable by BOTH the client and staff.** The client card shows a
+  primary "Launch <name>" CTA ("I want to launch my Instagram agent" → press →
+  visible process). The CTA is enabled only when every gate below passes; when
+  a gate blocks, the button is disabled with the reason as a visible line, F25
+  pattern — never an enabled button the server will refuse (F131 rule).
+- **launching** — `submitClientAgentLaunchAction` submitted the setup job
+  through `submitCustomAgentJob` with `runType: "launch"` metadata (§8.1).
+  Authorization: `requireClientAccess` (client on own workspace, or staff).
+  Server-side gates, in order, each with a client-readable refusal:
+  1. agent granted + umbrella `not_launched`/`launch_failed` (one launch in
+     flight per umbrella);
+  2. intake-gated agents (X/LinkedIn): the existing hard gate — the launch
+     modal surfaces the same `AgentSetupState` setup block first;
+  3. **pricing gate (client-fired only)**: `launchCreditCost` set for this
+     agent, else refuse "Launch pricing for this agent is being finalized —
+     ask your Karos team" (§6.3 justification);
+  4. **charge (client-fired only)**: `isBillableClientActor` ⇒
+     `chargeClientCredits` with operation `agent_launch` at `launchCreditCost`,
+     jobId-paired exactly like run charges (submit-custom.ts:179-196 pattern)
+     so webhook/reconcile refunds work unchanged. Staff- and impersonation-
+     fired launches never charge (existing rule).
+  `launchJobId` + `launchStartedAt` set on success.
 - **curating** — the launch job delivered. Its deliverables land as
   staff-only assets (§8.2). Staff confirm the template registry on the
   curation pane (§7.2): auto-seeded from a structured `templates.json`
@@ -285,8 +345,11 @@ collections are Admin-SDK-only like everything else).
 - **launch_failed** — webhook reported failed/dead_letter/cancelled (note:
   AGENTS cluster's F30 adds a distinct "cancelled" JobStatus — the launch
   branch must treat cancelled as launch_failed with neutral copy, not red).
-  Credits (if client-billed) were already auto-refunded by the existing
-  webhook refund path. Staff "Reset" returns to not_launched.
+  A client-billed launch charge is auto-refunded by the existing webhook
+  refund path (route.ts:195-205 — jobId pairing makes this free), and the
+  client-facing failure copy states it: "Setup needs another pass — your
+  credits were returned." Staff "Reset" returns to not_launched; a client may
+  simply press Launch again (new charge, new job).
 
 Client-visible presentation collapses the five internal states to three
 phases (A1's script): **"Researching your brand"** (launching, first half),
@@ -451,6 +514,86 @@ calendar). Under the slot model: pausing the parent schedule freezes horizon
 extension; existing future slots render greyed "paused" on staff calendar; the
 client parent card carries the paused state (existing behavior). Slots are NOT
 deleted (resume keeps the plan). Folded into Q7 for Albert.
+
+### 4.5 Options slots — the X agent's daily 3-option pick (Q9 ruling)
+
+Q9 ruling: X keeps its batch generation model AND syncs to the calendar as a
+**daily 3-option slot**: each day the client gets three post options (three
+slightly different directions), picks a favorite, may edit it, posts it by
+hand, and the system records pick + edits + posted so future generation
+converges on demonstrated preferences ("it improves and improves").
+
+**(a) The slot type.** `AgentSlot.kind: "options"` (§1.2): `templateKey`
+fixed to `"daily-post"` (stable chip label), `optionRefs` = the day's three
+candidate refs. Calendar chip: "Daily post · pick of 3". One options slot per
+day per the existing id scheme. The X umbrella has no `chainFamily` — options
+slots never re-date chain assets; they present choices.
+
+**(b) Where the options come from — churn-honest in both modes.**
+- *Interim (today's engine, weekly batch):* the recurring X run keeps
+  producing its batch asset (DRAFTS.md → `parseXDrafts`, unchanged webhook
+  path). A deterministic selector in `slot-plan.ts`
+  (`assignOptionRefs(batch, slots)`) walks the parsed batch and assigns three
+  not-yet-assigned drafts per future slot, diversifying by avenue/account
+  (three different directions, per the ruling). Assignment is stored on the
+  slot (`optionRefs` + `assetId` = batch asset) — but the OPTION TEXTS cross
+  the RSC boundary only for slots whose day has arrived. The batch asset
+  itself is staff-side (drafts are already client-invisible on the calendar
+  path; the archive hole closes per §8.2/WP-5). The orchestrator's churn rule
+  is satisfied by **presentation day-of**: the client sees "pick of 3" chips
+  for future days and gets the three texts only on the day.
+- *Target (Tomer seam T7):* the X engine gains a daily mode — "produce
+  exactly 3 option drafts, distinct directions, for <date>, consuming the
+  pick history" — fired by the run-scheduled cron per slot with
+  `karos_slot_id`. The portal surfaces are identical; only the producer
+  changes. Until T7, generation cadence (weekly) ≠ presentation cadence
+  (daily), invisibly to the client.
+
+**(c) The pick flow + telemetry.** Reuses existing machinery; one new action.
+1. Day arrives → the day card / Today surface renders the **option picker**
+   (new component, sibling of x-drafts-review): three cards, each with text +
+   direction label, an inline edit affordance, and "Use this one".
+2. `pickAgentSlotOptionAction(slotId, optionRef, finalText?)`
+   (requireClientAccess):
+   - **materializes the chosen option as its own asset** — `createAsset` with
+     content = finalText ?? original, type per platform hint, `templateKey:
+     "daily-post"`, `status: "approved"`, `publishMode: "manual"`,
+     `scheduledAt` = the slot's day. The slot's `assetId` re-points to it.
+     Materialization is what makes the rest of the system work unchanged:
+     `MarkPostedRow` (per-asset), the posted archive (shows the text the
+     client actually used), and analytics all operate on the per-day asset.
+     The batch asset stays staff-side history.
+   - stamps `slot.optionPick` ({ optionRef, edited: finalText != null … }).
+   - **writes the negative signals immediately**: for each unchosen ref, an
+     `XDraftFeedback` row `{ account, draftRef, action: "not_posted", reason:
+     "Not picked — client chose <ref>" }` via the existing feedback actions
+     (x-agent-actions) — final at pick time, no client effort.
+3. Client posts by hand → **Mark as posted** on the materialized asset (the
+   §3 flow, unchanged) → the action wrapper also writes the chosen option's
+   `XDraftFeedback` row: `action: "posted"` or `"posted_with_edits"` +
+   `finalText` (edit detection = materialized content ≠ original; the
+   original stays recoverable from the batch asset, so no schema change to
+   XDraftFeedback). Slot → `posted`.
+4. A pick never followed by Mark-as-posted keeps its `optionPick` (render
+   state) — the learning log simply never gets the posted row, which is
+   itself signal.
+
+**(d) The learning loop closes with zero new plumbing.**
+`buildXAgentContextFiles` (x-agent-context.ts) already serializes
+`XDraftFeedback` into per-account Learning Logs attached to every X run — the
+pick/skip/edit/posted rows land there automatically. T7 additionally teaches
+the engine to *optimize for* pick-rate patterns (directions the client keeps
+choosing, edits they keep making); the portal's only job is honest recording,
+which is complete at steps 2–3.
+
+**(e) Migration from the weekly pick-a-batch contract** (details §9): the X
+umbrella backfills as `live` (runs exist); the staff-facing x-drafts-review
+batch pane REMAINS (staff QA + history); the client's daily entry point
+becomes the option picker. The existing weekly schedule row keeps firing
+(generation); the slot horizon generates daily options slots forward-only —
+no retroactive slots, no existing asset touched. The intake Feedback card
+copy (F28's surfaces) updates to name the daily pick as the fastest signal —
+which becomes TRUE, closing F28's overpromise class for X.
 
 ---
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Label, Select, Textarea } from "@/components/ui";
@@ -10,6 +10,7 @@ import { AgentInputFiles } from "@/components/agent-input-files";
 import { Modal } from "@/components/modal";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { JobStatusBadge } from "@/components/job-status";
+import { ManagedJobProgress } from "@/components/managed-job-progress";
 import {
   createCustomAgentAction,
   deleteCustomAgentAction,
@@ -23,10 +24,14 @@ import {
   configureClientAgentScheduleAction,
   setPlannedRunStatusAction,
 } from "@/lib/actions/planned-run-actions";
+import { cancelClientAgentJobAction } from "@/lib/actions/external-job-actions";
 import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
+import { MAX_OUTPUTS_PER_RUN, MAX_RUNS_PER_WEEK } from "@/lib/scheduled-runs";
 import {
   buildCustomAgentPrompt,
   initialAgentBrief,
+  isLinkedInAgentIdentity,
+  isXAgentIdentity,
   launchProfileFor,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
@@ -66,6 +71,11 @@ export interface CustomAgentRunRow {
   status: JobStatus;
   createdAt: number;
   assetCount: number;
+  /**
+   * The operator's raw request. STAFF VIEWERS ONLY — a client's permanent run
+   * history must not be somebody's typing, misspellings and all, so the page
+   * omits it from the client payload rather than hiding it at render.
+   */
   prompt?: string;
   /** Link target (staff viewers get /jobs/<id>); absent for client viewers. */
   href?: string;
@@ -92,8 +102,67 @@ export interface ClientAgentScheduleRow {
   lastErrorAt?: number | null;
 }
 
+/**
+ * The intake page an agent refuses to run without, by agent key — or null for
+ * agents with no such gate. Used on the STAFF hub, where the client is chosen
+ * inside the run dialog and per-agent readiness therefore cannot be resolved
+ * before the card is drawn (the client page passes a resolved `agentSetup` map
+ * instead). Names the gate; does not claim to know whether it is satisfied.
+ */
+function intakeDrivenLabel(key: string): string | null {
+  if (isXAgentIdentity(key)) return "X agent data";
+  if (isLinkedInAgentIdentity(key)) return "LinkedIn agent data";
+  return null;
+}
+
+/** The dialog's dropdowns, built from the same bounds the server clamps to. */
+const RUNS_PER_WEEK_OPTIONS = Array.from({ length: MAX_RUNS_PER_WEEK }, (_, i) => i + 1);
+const OUTPUTS_PER_RUN_OPTIONS = Array.from({ length: MAX_OUTPUTS_PER_RUN }, (_, i) => i + 1);
+
 function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
   return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+}
+
+/**
+ * An agent's blurb wherever a client reads it. Clamped to three lines so the
+ * cut always lands on a line boundary — never mid-word — with a "More" control
+ * that expands it in place. Whether the text overflows is MEASURED rather than
+ * guessed from a character count: a length threshold is the same class of bug,
+ * and the same prose wraps to a different number of lines per card width.
+ */
+function AgentBlurb({ text, className }: { text: string; className?: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    // While expanded there is nothing to measure (the clamp is off) — keep the
+    // last answer so the control that opened it does not vanish under the cursor.
+    if (!el || expanded) return;
+    const measure = () => setOverflows(el.scrollHeight - el.clientHeight > 1);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [text, expanded]);
+
+  return (
+    <div className={className}>
+      <p ref={ref} className={cn("text-xs leading-relaxed text-muted", !expanded && "line-clamp-3")}>
+        {text}
+      </p>
+      {overflows && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+          className="mt-0.5 text-[11px] text-muted-2 underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+        >
+          {expanded ? "Less" : "More"}
+        </button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -204,6 +273,17 @@ export function CustomAgentsHub({
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
+                  {/* Intake-driven agents refuse a run whose client has not filled
+                      in their data page — and that gate could only be discovered
+                      by writing the whole brief and reading the refusal. The
+                      readiness itself depends on the client picked inside the
+                      dialog, so the hub names the gate rather than pretending to
+                      resolve it. */}
+                  {intakeDrivenLabel(agent.key) && (
+                    <Badge tone="neutral">
+                      Needs {intakeDrivenLabel(agent.key)}
+                    </Badge>
+                  )}
                   {/* No client blurb ⇒ the client's card is still falling back to
                       the lab manifest below. Flagged here, fixed in the editor. */}
                   {!agent.clientBlurb?.trim() && <Badge tone="warning">No client blurb</Badge>}
@@ -291,6 +371,7 @@ export function ClientCustomAgents({
   contextItems,
   viewerIsClient,
   availableCredits,
+  creditBlockReasons,
   agentSetup,
   viewer,
 }: {
@@ -302,6 +383,13 @@ export function ClientCustomAgents({
   viewerIsClient: boolean;
   /** Spendable credits right now (balance clipped by caps) — client viewers only. */
   availableCredits?: number;
+  /**
+   * Per agent id: which limit clips `availableCredits` at THAT agent's price,
+   * phrased for the client and resolved server-side from the denial code (never
+   * a keyword guess at a message). Present only for agents a charge would block
+   * — the binding limit depends on the cost, so it cannot be one shared line.
+   */
+  creditBlockReasons?: Record<string, string>;
   /** Prefills the support form offered when a schedule is stuck on a refusal. */
   viewer?: { name: string; email: string };
   /**
@@ -324,14 +412,21 @@ export function ClientCustomAgents({
   return (
     <section className="mt-10">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-xl text-foreground">{viewerIsClient ? "Your AI agents" : "Custom agents"}</h2>
-          <p className="mt-0.5 text-sm text-muted">
-            {viewerIsClient
-              ? "Your always-on AI team. Run an agent now or choose its weekly production pace."
-              : "Prompt-driven agents from the custom library, run against this client."}
-          </p>
-        </div>
+        {/* Clients already read this page's own header, which says the same
+            thing in slightly different words. Only staff get a section heading
+            here — their page header describes the whole page, not this section.
+            The credits badge stays either way; it is the row's only unique
+            content. */}
+        {viewerIsClient ? (
+          <span />
+        ) : (
+          <div>
+            <h2 className="text-xl text-foreground">Custom agents</h2>
+            <p className="mt-0.5 text-sm text-muted">
+              Prompt-driven agents from the custom library, run against this client.
+            </p>
+          </div>
+        )}
         {viewerIsClient && availableCredits !== undefined && (
           <Badge tone={availableCredits > 0 ? "neon" : "warning"}>
             {availableCredits} credits available
@@ -345,10 +440,13 @@ export function ClientCustomAgents({
             const cost = agentRunCost(agent);
             const short = viewerIsClient && availableCredits !== undefined && availableCredits < cost;
             const schedule = scheduleByAgent.get(agent.id);
-            const reviewRuns = runs.filter(
-              (run) => run.agentName === agent.name && run.status === "review" && run.assetCount > 0,
+            const agentRuns = runs.filter((run) => run.agentName === agent.name);
+            const reviewRuns = agentRuns.filter(
+              (run) => run.status === "review" && run.assetCount > 0,
             );
             const readyAssetCount = reviewRuns.reduce((total, run) => total + run.assetCount, 0);
+            // `runs` arrives newest-first (the page sorts by createdAt desc).
+            const lastRun = agentRuns[0];
             const setup = agentSetup?.[agent.id] ?? null;
             // Readiness is computed once, next to the "Setup needed" chip, and
             // gates the run button with it: the submit core refuses these runs
@@ -390,7 +488,7 @@ export function ClientCustomAgents({
                         </Badge>
                       ) : null}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agentBlurb(agent)}</p>
+                    <AgentBlurb text={agentBlurb(agent)} className="mt-0.5" />
                   </div>
                   {readyAssetCount > 0 && (
                     <Link
@@ -415,62 +513,72 @@ export function ClientCustomAgents({
                     </a>
                   )}
                 </div>
+                {/* The one slot on the card that carries live state. Precedence,
+                    highest first: a stored refusal (the schedule fired and was
+                    turned away) → setup still missing → the schedule's own next
+                    fire → drafts waiting → last run → never run. The chip above
+                    already links to setup, so no tier here adds a second one. */}
                 <div className="mt-3 rounded-md border border-border bg-surface-2/70 px-3 py-2">
-                  {schedule ? (
+                  {schedule && (
+                    <p className="text-xs text-foreground">
+                      {schedule.postsPerWeek} run{schedule.postsPerWeek === 1 ? "" : "s"}/week
+                      {" · "}
+                      {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
+                    </p>
+                  )}
+                  {refusal ? (
                     <>
-                      <p className="text-xs text-foreground">
-                        {schedule.postsPerWeek} post{schedule.postsPerWeek === 1 ? "" : "s"}/week
-                        {" · "}
-                        {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
-                      </p>
-                      {refusal ? (
-                        <>
-                          <p className="mt-0.5 text-[11px] text-warning">{refusal}</p>
-                          {refusalIsSetup && setup ? (
-                            <a
-                              href={setup.href}
-                              className="mt-1 inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
-                            >
-                              Open {setup.label}
-                              <Icon name="ArrowRight" className="h-3 w-3" />
-                            </a>
-                          ) : viewer ? (
-                            <div className="-mx-3 mt-0.5">
-                              <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
-                            </div>
-                          ) : null}
-                          {schedule.lastErrorAt ? (
-                            <p className="mt-0.5 text-[10px] text-muted-2">
-                              Last tried {relativeTime(schedule.lastErrorAt)}
-                            </p>
-                          ) : null}
-                        </>
-                      ) : (
-                        <p className="mt-0.5 text-[11px] text-muted-2">
-                          {schedule.status === "active"
-                            ? `Working toward ${formatDate(schedule.nextRunAt)}`
-                            : "Schedule paused"}
+                      <p className="mt-0.5 text-[11px] text-warning">{refusal}</p>
+                      {refusalIsSetup && setup ? (
+                        <a
+                          href={setup.href}
+                          className="mt-1 inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+                        >
+                          Open {setup.label}
+                          <Icon name="ArrowRight" className="h-3 w-3" />
+                        </a>
+                      ) : viewer ? (
+                        <div className="-mx-3 mt-0.5">
+                          <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
+                        </div>
+                      ) : null}
+                      {schedule?.lastErrorAt ? (
+                        <p className="mt-0.5 text-[10px] text-muted-2">
+                          Last tried {relativeTime(schedule.lastErrorAt)}
                         </p>
-                      )}
+                      ) : null}
                     </>
+                  ) : blockedSetup ? (
+                    <p className={cn("text-[11px] text-warning", !schedule && "text-xs")}>
+                      Not running yet — your {blockedSetup.label} is still empty.
+                    </p>
+                  ) : schedule ? (
+                    <p className="mt-0.5 text-[11px] text-muted-2">
+                      {schedule.status === "active"
+                        ? `Working toward ${formatDate(schedule.nextRunAt)}`
+                        : "Schedule paused"}
+                    </p>
+                  ) : readyAssetCount > 0 ? (
+                    <Link href={reviewHref} className="text-xs text-warning hover:underline">
+                      {readyAssetCount} draft{readyAssetCount === 1 ? "" : "s"} waiting for review
+                    </Link>
+                  ) : lastRun ? (
+                    <p className="text-xs text-muted-2">Last run {relativeTime(lastRun.createdAt)}</p>
                   ) : (
-                    <p className="text-xs text-muted-2">Ready to build your weekly content queue.</p>
+                    <p className="text-xs text-muted-2">No runs yet.</p>
                   )}
                 </div>
                 <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
-                  <p className="text-xs text-muted-2">{cost} credits per output</p>
+                  {/* Per RUN — that is what CustomAgent.creditCost prices and
+                      what "Run now" charges once, whatever the brief asks for.
+                      Only a scheduled fire multiplies it by outputs per run,
+                      and the schedule dialog does that arithmetic itself. */}
+                  <p className="text-xs text-muted-2">{cost} credits per run</p>
                   <div className="flex gap-1.5">
                     <Button
                       size="sm"
                       variant="ghost"
                       disabled={short || Boolean(blockedSetup)}
-                      title={
-                        blockedSetup
-                          ? `Add your ${blockedSetup.label} first — this agent drafts from it and cannot run without it.`
-                          : short
-                            ? "Not enough credits. Ask your Karos team for a top-up."
-                            : undefined
-                      }
                       onClick={() => setRunAgent(agent)}
                     >
                       <Icon name="Play" className="h-3.5 w-3.5" /> Run now
@@ -481,6 +589,30 @@ export function ClientCustomAgents({
                     </Button>
                   </div>
                 </div>
+                {/* Why "Run now" is off, on the card itself. The Button primitive
+                    sets disabled:pointer-events-none, so a `title` on a disabled
+                    button can never be shown — the reason has to be painted.
+                    Both reasons render: they block for different lengths of time
+                    and are fixed by different people. */}
+                {(blockedSetup || short) && (
+                  <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
+                    {blockedSetup && (
+                      <p className="text-[11px] text-warning">
+                        Run now needs your {blockedSetup.label} — this agent drafts from it.
+                      </p>
+                    )}
+                    {short && (
+                      <p className="text-[11px] text-warning">
+                        {creditBlockReasons?.[agent.id] ?? "Not enough credits."}
+                      </p>
+                    )}
+                    {short && viewer && (
+                      <div className="-mx-3">
+                        <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -508,8 +640,14 @@ export function ClientCustomAgents({
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm">{run.agentName}</p>
+                    {/* What the run produced — never what somebody typed to start
+                        it. `prompt` is present only for staff viewers; the page
+                        leaves it out of the client payload entirely. */}
                     <p className="truncate text-xs text-muted-2">
                       {relativeTime(run.createdAt)}
+                      {run.assetCount > 0
+                        ? ` · ${run.assetCount} draft${run.assetCount === 1 ? "" : "s"}`
+                        : ""}
                       {run.prompt ? ` · "${run.prompt}"` : ""}
                     </p>
                   </div>
@@ -520,18 +658,29 @@ export function ClientCustomAgents({
                 "flex items-center gap-3 px-4 py-2.5",
                 i > 0 && "border-t border-border",
               );
-              return run.href ? (
-                <Link
-                  key={run.id}
-                  href={run.href}
-                  className={cn(rowClass, "transition-colors hover:bg-surface-2")}
-                >
-                  {row}
-                  <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
-                </Link>
-              ) : (
-                <div key={run.id} className={rowClass}>
-                  {row}
+              // Client rows carry no link, so an in-flight run had nowhere to go
+              // and watch: the three-step strip comes to the row instead. Ten to
+              // twenty minutes on a frozen "Queued" reads as a stuck run.
+              const inFlight = run.status === "queued" || run.status === "running";
+              return (
+                <div key={run.id}>
+                  {run.href ? (
+                    <Link href={run.href} className={cn(rowClass, "transition-colors hover:bg-surface-2")}>
+                      {row}
+                      <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
+                    </Link>
+                  ) : (
+                    <div className={rowClass}>{row}</div>
+                  )}
+                  {inFlight && (
+                    <div className="border-t border-border bg-surface-2/50">
+                      <ManagedJobProgress
+                        status={run.status}
+                        className="mb-0 rounded-none border-0 bg-transparent px-4 py-2"
+                      />
+                      <CancelRunControl runId={run.id} />
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -559,6 +708,58 @@ export function ClientCustomAgents({
         />
       )}
     </section>
+  );
+}
+
+/**
+ * Stop an in-flight run from the run row. The only cancel control used to live
+ * on the staff run-detail page, so a client who mis-fired a twenty-five-minute
+ * billable run could not stop it and could not reach the page that could. The
+ * confirm step is deliberate: cancelling costs the run, and the row sits one
+ * pixel from rows that are merely history.
+ */
+function CancelRunControl({ runId }: { runId: string }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function cancel() {
+    setError(null);
+    startTransition(async () => {
+      const result = await cancelClientAgentJobAction(runId);
+      if (result.error) {
+        setError(result.error);
+        setConfirming(false);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
+      {confirming ? (
+        <>
+          <span className="text-[11px] text-muted">Stop this run? Credits for it are returned.</span>
+          <Button size="sm" variant="danger" onClick={cancel} loading={pending}>
+            Stop run
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} disabled={pending}>
+            Keep going
+          </Button>
+        </>
+      ) : (
+        <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+          <Icon name="CircleSlash" className="h-3.5 w-3.5" /> Cancel run
+        </Button>
+      )}
+      {error && (
+        <span className="text-[11px] text-danger" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -600,6 +801,9 @@ function AgentScheduleModal({
         prompt,
         hour,
         minute,
+        // The time above is a wall clock the client typed in THEIR zone; without
+        // this the schedule silently anchors to the server's.
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       if (result.error) {
         setError(result.error);
@@ -632,17 +836,36 @@ function AgentScheduleModal({
       onClose={onClose}
       title={`Keep ${agent.name} running`}
       description="Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
+      footer={
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            {schedule && (
+              <Button variant="ghost" onClick={togglePause} loading={pending}>
+                {schedule.status === "active" ? "Pause agent" : "Resume agent"}
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
+            <Button variant="accent" onClick={save} loading={pending} disabled={insufficient}>
+              {schedule ? "Update schedule" : "Start always-on agent"}
+            </Button>
+          </div>
+        </div>
+      }
     >
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label htmlFor={`schedule-posts-${agent.id}`}>Posts per week</Label>
+            {/* Runs, not posts: this is the number of DAYS the agent fires, and
+                each fire produces "outputs per run" items. */}
+            <Label htmlFor={`schedule-posts-${agent.id}`}>Runs per week</Label>
             <Select
               id={`schedule-posts-${agent.id}`}
               value={postsPerWeek}
               onChange={(event) => setPostsPerWeek(Number(event.target.value))}
             >
-              {[1, 2, 3, 4, 5, 6, 7].map((count) => (
+              {RUNS_PER_WEEK_OPTIONS.map((count) => (
                 <option key={count} value={count}>{count}</option>
               ))}
             </Select>
@@ -654,7 +877,7 @@ function AgentScheduleModal({
               value={outputsPerRun}
               onChange={(event) => setOutputsPerRun(Number(event.target.value))}
             >
-              {[1, 2, 3, 4, 5].map((count) => (
+              {OUTPUTS_PER_RUN_OPTIONS.map((count) => (
                 <option key={count} value={count}>{count}</option>
               ))}
             </Select>
@@ -688,8 +911,13 @@ function AgentScheduleModal({
             <span className="font-mono text-sm text-neon">{weeklyCost} credits</span>
           </div>
           <p className="mt-1 text-[11px] text-muted-2">
-            {postsPerWeek} runs × {outputsPerRun} outputs × {costPerOutput} credits.
+            {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
+            {outputsPerRun === 1 ? "" : "s"} × {costPerOutput} credits.
             Credits are charged when each scheduled run starts.
+          </p>
+          <p className="mt-1 text-[11px] text-foreground">
+            {postsPerWeek * outputsPerRun} new draft{postsPerWeek * outputsPerRun === 1 ? "" : "s"} a
+            week.
           </p>
           {availableCredits !== undefined && (
             <p className={cn("mt-1 text-[11px]", insufficient ? "text-danger" : "text-muted-2")}>
@@ -699,22 +927,6 @@ function AgentScheduleModal({
         </div>
 
         {error && <p className="text-xs text-danger" role="alert">{error}</p>}
-
-        <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
-          <div>
-            {schedule && (
-              <Button variant="ghost" onClick={togglePause} loading={pending}>
-                {schedule.status === "active" ? "Pause agent" : "Resume agent"}
-              </Button>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
-            <Button variant="accent" onClick={save} loading={pending} disabled={insufficient}>
-              {schedule ? "Update schedule" : "Start always-on agent"}
-            </Button>
-          </div>
-        </div>
       </div>
     </Modal>
   );
@@ -782,9 +994,22 @@ function RunCustomAgentModal({
       setError(`Add ${profile.attachments.label.toLowerCase()} or provide the source link above.`);
       return;
     }
-    const prompt = buildCustomAgentPrompt(profile, fields);
+    // An agent whose only field is labelled "Optional" must be runnable with the
+    // form left exactly as instructed — that is the run the intake-driven
+    // agents are documented to support, and they draft from their stored data
+    // either way. The brief joins non-empty fields only, so an untouched form
+    // produced an empty prompt and a refusal naming a requirement that does not
+    // exist. Fall back to the first starting point: the same text the chips
+    // above insert, so the run is identical to clicking one.
+    let prompt = buildCustomAgentPrompt(profile, fields);
+    if (!prompt && !profile.fields.some((field) => field.required) && profile.quickStarts[0]) {
+      prompt = buildCustomAgentPrompt(profile, {
+        ...fields,
+        [primaryField.key]: profile.quickStarts[0],
+      });
+    }
     if (!prompt) {
-      setError("Complete the brief before starting the run.");
+      setError("Add at least one line to the brief before starting the run.");
       return;
     }
     if (prompt.length > 4000) {
@@ -859,8 +1084,31 @@ function RunCustomAgentModal({
   }
 
   return (
-    <Modal open onClose={onClose} title={agent.name} description={agentBlurb(agent)} className="max-w-2xl">
+    // The blurb goes in the body, not Modal's `description`: that slot is an
+    // unclamped <p>, so a long fallback manifest pushed the whole brief below
+    // the fold. Same clamp + "More" as the card. The estimate + Start run row
+    // is the pinned footer: on the long agent briefs it used to scroll out of
+    // sight in the same box as the title.
+    <Modal
+      open
+      onClose={onClose}
+      title={agent.name}
+      className="max-w-2xl"
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-2">
+            <Icon name="Clock" className="mr-1 inline h-3 w-3" />
+            {profile.estimate}. You can leave this page; the run continues.
+            {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
+          </p>
+          <Button variant="accent" onClick={submit} loading={pending}>
+            {pending ? "Starting…" : "Start run"}
+          </Button>
+        </div>
+      }
+    >
       <div className="space-y-5">
+        <AgentBlurb text={agentBlurb(agent)} />
         <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="max-w-lg">
@@ -995,16 +1243,6 @@ function RunCustomAgentModal({
           </p>
         )}
 
-        <div className="flex items-center justify-between gap-3 pt-1">
-          <p className="text-xs text-muted-2">
-            <Icon name="Clock" className="mr-1 inline h-3 w-3" />
-            {profile.estimate}. You can leave this page; the run continues.
-            {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
-          </p>
-          <Button variant="accent" onClick={submit} loading={pending}>
-            {pending ? "Starting…" : "Start run"}
-          </Button>
-        </div>
       </div>
     </Modal>
   );
@@ -1079,6 +1317,32 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       title={agent ? `Edit ${agent.name}` : "New custom agent"}
       description="The instructions are the agent's system prompt. The run adds the client context and the user's request around them."
       className="max-w-2xl"
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          {agent ? (
+            confirmDelete ? (
+              <span className="flex items-center gap-2 text-xs">
+                Delete this agent?
+                <Button size="sm" variant="danger" onClick={remove} loading={pending}>
+                  Delete
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+                  Keep
+                </Button>
+              </span>
+            ) : (
+              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)}>
+                <Icon name="Trash2" className="h-3.5 w-3.5" /> Delete
+              </Button>
+            )
+          ) : (
+            <span />
+          )}
+          <Button variant="accent" onClick={save} loading={pending}>
+            {agent ? "Save changes" : "Create agent"}
+          </Button>
+        </div>
+      }
     >
       <div className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -1165,6 +1429,10 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
               onChange={(e) => setCreditCost(e.target.value)}
               placeholder={`${CREDIT_COSTS.customAgentRun} (default)`}
             />
+            <p className="mt-1 text-xs text-muted-2">
+              What this agent charges a client per run, on its card and in the run dialog. Left
+              empty every agent prices the same, and a video edit costs what a single post does.
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -1190,31 +1458,6 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           </p>
         )}
         {error && <p className="text-xs text-danger">{error}</p>}
-
-        <div className="flex items-center justify-between gap-3 pt-1">
-          {agent ? (
-            confirmDelete ? (
-              <span className="flex items-center gap-2 text-xs">
-                Delete this agent?
-                <Button size="sm" variant="danger" onClick={remove} loading={pending}>
-                  Delete
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-                  Keep
-                </Button>
-              </span>
-            ) : (
-              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)}>
-                <Icon name="Trash2" className="h-3.5 w-3.5" /> Delete
-              </Button>
-            )
-          ) : (
-            <span />
-          )}
-          <Button variant="accent" onClick={save} loading={pending}>
-            {agent ? "Save changes" : "Create agent"}
-          </Button>
-        </div>
       </div>
     </Modal>
   );

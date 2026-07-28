@@ -1,4 +1,5 @@
 import "server-only";
+import { jobTitleForClient } from "@/lib/job-title";
 
 import {
   chargeClientCredits,
@@ -161,7 +162,7 @@ export async function submitCustomAgentJob(
     agentId: "agent-service",
     customAgentId: agent.id,
     agentName: agent.name,
-    title: `${agent.name} - ${client.name}`,
+    title: jobTitleForClient(agent.name, client.name),
     status: "queued",
     input: { agent: agent.name, prompt },
     assetIds: [],

@@ -1,7 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import {
-  getAsset,
   getClient,
   getClientCredits,
   listContextItems,
@@ -9,7 +8,7 @@ import {
   listJobs,
   listPlannedScheduledRuns,
 } from "@/lib/data";
-import { availableCredits, isBillableClientActor } from "@/lib/credits";
+import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
@@ -17,6 +16,7 @@ import {
   type CustomAgentRunRow,
   type RunnableAgentSummary,
 } from "@/components/custom-agents";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
@@ -24,8 +24,6 @@ import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
 import { clientSafeRefusal, isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
 import type { AgentSetupState } from "@/components/custom-agents";
-import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
-import { assetImages } from "@/lib/asset-images";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import type { CustomAgent, Job } from "@/lib/types";
 import type { ClientAgentScheduleRow } from "@/components/custom-agents";
@@ -44,8 +42,13 @@ function toSummary(agent: CustomAgent): RunnableAgentSummary {
   };
 }
 
-/** Custom-agent runs as slim rows; `withLinks` adds staff-only /jobs targets. */
-function toRunRows(jobs: Job[], withLinks: boolean): CustomAgentRunRow[] {
+/**
+ * Custom-agent runs as slim rows. `staff` adds the /jobs link target AND the
+ * submitted prompt: the raw request is an operator's free text (typos, stray
+ * capitals) and never belongs in a client's run history, so it is dropped here
+ * at the RSC boundary rather than hidden at render.
+ */
+function toRunRows(jobs: Job[], staff: boolean): CustomAgentRunRow[] {
   return jobs
     .filter((j) => j.agentId === "agent-service" && j.external?.taskType === "custom")
     .sort((a, b) => b.createdAt - a.createdAt)
@@ -56,8 +59,8 @@ function toRunRows(jobs: Job[], withLinks: boolean): CustomAgentRunRow[] {
       status: j.status,
       createdAt: j.createdAt,
       assetCount: j.assetIds.length,
-      ...(j.input.prompt ? { prompt: j.input.prompt } : {}),
-      ...(withLinks ? { href: `/jobs/${j.id}` } : {}),
+      ...(staff && j.input.prompt ? { prompt: j.input.prompt } : {}),
+      ...(staff ? { href: `/jobs/${j.id}` } : {}),
     }));
 }
 
@@ -181,16 +184,53 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     const allowedNames = new Set(agents.map((a) => a.name));
     const runs = toRunRows(jobs, false).filter((r) => allowedNames.has(r.agentName));
     // Impersonating admins see the client view but never spend real credits —
-    // show the gate only to billable client actors.
-    const spendable = isBillableClientActor(user) ? availableCredits(credits) : undefined;
+    // show the gate only to billable client actors. `now` rolls the spend
+    // windows on read: a schedule doc read after a week rollover would otherwise
+    // still count last week's spend and mis-name the limit.
+    const now = Date.now();
+    const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
+    // Which limit clips that number — computed PER AGENT, because the binding
+    // limit depends on the agent's price (F130 gives agents distinct costs): a
+    // cheap agent may be blocked by the weekly cap while a pricey one is blocked
+    // by the balance, and each must name the limit its own denial would. The
+    // card shows it beside a blocked Run button, where "ask for a top-up" is
+    // wrong advice for a client who is capped for the week.
+    const creditBlockReasons: Record<string, string> = {};
+    if (spendable !== undefined) {
+      for (const agent of agents) {
+        const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+        if (spendable < cost) creditBlockReasons[agent.id] = creditBlockReason(credits, cost, now);
+      }
+    }
     const agentSetup = await buildAgentSetup(id, agents);
+    // A client run takes 10–20 minutes and the client's rows carry no link, so
+    // without this the page never moved again after "Start run". Mounted only
+    // while something is actually in flight; it unmounts when the server
+    // renders a terminal status.
+    const runInFlight = runs.some((run) => run.status === "queued" || run.status === "running");
     return (
       <>
+        {runInFlight && <AutoRefresh />}
+        {/* The section below used to repeat this heading and tagline almost
+            verbatim ("active AI team" / "always-on AI team"), one in Title Case
+            and one in sentence case. This is the surviving one. */}
         <PageHeader
-          title="AI Agents"
-          description="Your active AI team—run agents now or set their weekly production pace."
+          title="AI agents"
+          description="Your always-on AI team. Run an agent now, or set its weekly production pace."
         />
-        {agents.length > 0 && agentServiceConfigured ? (
+        {/* Two different conditions used to share the never-set-up empty state,
+            so an outage or a bad deploy told a client with three live agents
+            and a run history that they had never been set up. Only an empty
+            allowlist gets that copy now; an unconfigured service keeps the
+            agents, schedules and history on screen behind an honest notice. */}
+        {agents.length > 0 && !agentServiceConfigured && (
+          <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+            <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
+            Agent runs are paused right now — starting a new run will not work until this clears.
+            Your Karos team has been notified. Everything below is unaffected.
+          </p>
+        )}
+        {agents.length > 0 ? (
           <ClientCustomAgents
             clientId={id}
             agents={agents}
@@ -201,6 +241,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             agentSetup={agentSetup}
             viewer={{ name: user.name, email: user.email }}
             {...(spendable !== undefined ? { availableCredits: spendable } : {})}
+            creditBlockReasons={creditBlockReasons}
           />
         ) : (
           <EmptyState
@@ -220,30 +261,17 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     listPlannedScheduledRuns({ clientId: id }),
   ]);
 
-  // Thumbnail previews of what the managed agents have actually delivered, so
-  // the "Live" view can show the formats a running agent produces. Keyed by
-  // jobId → the first few image URLs across that run's deliverable assets.
-  const managedAssetIds = Array.from(
-    new Set(
-      jobs
-        .filter((j) => j.agentId === AGENT_SERVICE_AGENT_ID)
-        .flatMap((j) => j.assetIds),
-    ),
-  );
-  const managedAssets = await Promise.all(managedAssetIds.map((aid) => getAsset(aid)));
-  const assetById = new Map(managedAssets.filter(Boolean).map((a) => [a!.id, a!]));
-  const jobPreviews: Record<string, string[]> = {};
-  for (const job of jobs) {
-    if (job.agentId !== AGENT_SERVICE_AGENT_ID) continue;
-    const urls = job.assetIds
-      .map((aid) => assetById.get(aid))
-      .filter(Boolean)
-      .flatMap((a) => assetImages(a!).map((img) => img.url));
-    if (urls.length > 0) jobPreviews[job.id] = urls.slice(0, 6);
-  }
+  // (The jobPreviews block that used to live here fed <ManagedProducts />,
+  // which nothing imported — it read every managed asset for this client on
+  // every page load and handed the result to no one. Removed with F39/F45.)
 
   const staffAgents = customAgents.filter((a) => a.enabled).map(toSummary);
   const agentSetup = await buildAgentSetup(id, staffAgents);
+  const staffRuns = toRunRows(jobs, true);
+  // ClientCustomAgents renders nothing at all with no agents and no history, so
+  // a brand-new client showed staff a header and then white space to the bottom
+  // of the viewport — no cards, no empty state, no next action.
+  const nothingToShow = staffAgents.length === 0 && staffRuns.length === 0;
 
   return (
     <>
@@ -263,22 +291,44 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           </div>
         }
       />
-      {agentServiceConfigured ? (
+      {!agentServiceConfigured ? (
+        <EmptyState
+          icon={<Icon name="Bot" className="h-7 w-7" />}
+          title="Agent service not configured"
+          description="Run controls are unavailable until the agent-service environment variables are set. Existing deliverables and calendars above are unaffected."
+        />
+      ) : nothingToShow ? (
+        <EmptyState
+          icon={<Icon name="Bot" className="h-7 w-7" />}
+          title="No agents available for this client yet"
+          description={
+            client.agentsRepoSlug
+              ? "No custom agent in the library is enabled, so there is nothing to run here. Import or enable one on the Agents page."
+              : "No custom agent in the library is enabled, so there is nothing to run here. Import or enable one on the Agents page — and set this client's lab-repo slug in Settings, or runs go out without their client context."
+          }
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <a href="/agents" className="text-xs text-neon hover:underline">
+                Import or enable an agent →
+              </a>
+              {!client.agentsRepoSlug && (
+                <a href={`/clients/${id}/settings`} className="text-xs text-muted hover:text-foreground">
+                  Set the lab-repo slug →
+                </a>
+              )}
+            </div>
+          }
+        />
+      ) : (
         <ClientCustomAgents
           clientId={id}
           agents={staffAgents}
-          runs={toRunRows(jobs, true)}
+          runs={staffRuns}
           schedules={toScheduleRows(scheduledRuns, false)}
           contextItems={contextItems}
           viewerIsClient={false}
           agentSetup={agentSetup}
           viewer={{ name: user.name, email: user.email }}
-        />
-      ) : (
-        <EmptyState
-          icon={<Icon name="Bot" className="h-7 w-7" />}
-          title="Agent service not configured"
-          description="Run controls are unavailable until the agent-service environment variables are set. Existing deliverables and calendars above are unaffected."
         />
       )}
     </>

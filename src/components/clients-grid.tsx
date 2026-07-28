@@ -3,13 +3,13 @@
 import { useRef, useState, useMemo, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Card, Badge, Button, Input, Textarea, Label } from "@/components/ui";
+import { Card, Badge, Button, Input, Select, Textarea, Label } from "@/components/ui";
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { updateClientAction, deleteClientAction } from "@/lib/actions";
 import { cn } from "@/lib/utils";
 import { BrandFavicon } from "@/components/brand-favicon";
-import type { Asset, Client, Job } from "@/lib/types";
+import type { Client } from "@/lib/types";
 
 /* ── Client avatar: logo or initials fallback ────────────────────────── */
 
@@ -332,30 +332,59 @@ function DeleteConfirmModal({
 
 /* ── Clients grid ────────────────────────────────────────────────────── */
 
+/** Per-client card figures, reduced on the server. */
+export interface ClientCardCounts {
+  assets: number;
+  jobs: number;
+  /** Epoch millis of the most recent run, for the sort. 0 when there are none. */
+  lastRunAt: number;
+}
+
+type SortKey = "name" | "recent" | "deliverables";
+
 export function ClientsGrid({
   clients: initialClients,
-  assets,
-  jobs,
+  counts,
 }: {
   clients: Client[];
-  assets: Asset[];
-  jobs: Job[];
+  /**
+   * Keyed by client id. The grid used to receive every asset and every job in
+   * the database — the whole collections serialized into the RSC payload — to
+   * print two numbers per card.
+   */
+  counts: Record<string, ClientCardCounts>;
 }) {
   const [clients, setClients] = useState(initialClients);
   const [editTarget, setEditTarget] = useState<Client | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<SortKey>("name");
 
-  const assetCountByClient = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const a of assets) m.set(a.clientId, (m.get(a.clientId) ?? 0) + 1);
-    return m;
-  }, [assets]);
+  const countsFor = (id: string): ClientCardCounts =>
+    counts[id] ?? { assets: 0, jobs: 0, lastRunAt: 0 };
 
-  const jobCountByClient = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const j of jobs) m.set(j.clientId, (m.get(j.clientId) ?? 0) + 1);
-    return m;
-  }, [jobs]);
+  // The client picker in the rail next to this page has a search box; the page
+  // itself had none, and no sort, however many brands the agency runs.
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const matched = needle
+      ? clients.filter(
+          (c) =>
+            c.name.toLowerCase().includes(needle) ||
+            (c.industry ?? "").toLowerCase().includes(needle) ||
+            (c.website ?? "").toLowerCase().includes(needle),
+        )
+      : clients;
+    const sorted = [...matched];
+    if (sort === "recent") {
+      sorted.sort((a, b) => (counts[b.id]?.lastRunAt ?? 0) - (counts[a.id]?.lastRunAt ?? 0));
+    } else if (sort === "deliverables") {
+      sorted.sort((a, b) => (counts[b.id]?.assets ?? 0) - (counts[a.id]?.assets ?? 0));
+    } else {
+      sorted.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return sorted;
+  }, [clients, counts, query, sort]);
 
   function handleDeleted(clientId: string) {
     setClients((prev) => prev.filter((c) => c.id !== clientId));
@@ -363,10 +392,33 @@ export function ClientsGrid({
 
   return (
     <>
+      <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search clients…"
+          aria-label="Search clients"
+        />
+        <Select
+          value={sort}
+          onChange={(event) => setSort(event.target.value as SortKey)}
+          aria-label="Sort clients"
+        >
+          <option value="name">Name</option>
+          <option value="recent">Most recent run</option>
+          <option value="deliverables">Most deliverables</option>
+        </Select>
+      </div>
+
+      {visible.length === 0 && (
+        <p className="rounded-[var(--radius)] border border-dashed border-border px-6 py-10 text-center text-sm text-muted">
+          No client matches “{query.trim()}”.
+        </p>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {clients.map((c) => {
-          const assetCount = assetCountByClient.get(c.id) ?? 0;
-          const jobCount = jobCountByClient.get(c.id) ?? 0;
+        {visible.map((c) => {
+          const { assets: assetCount, jobs: jobCount } = countsFor(c.id);
           return (
             <div key={c.id} className="group relative">
               <Link href={`/clients/${c.id}`}>
