@@ -78,7 +78,18 @@ substitutions:
   # Runway autopilot (src/app/api/runway) — off by default. Flip to "1" at the
   # trigger level once a dryRun=1 sweep looks right in production.
   _RUNWAY_AUTOGEN_ENABLED: ""
-  _RUNWAY_MAX_JOBS_PER_CLIENT: "2"
+  # Per client, per sweep. MUST cover a full first fill: one managed run yields
+  # one asset, so a client who starts empty is 14 days short and needs 14
+  # dispatches to reach the horizon. This said "2" — the exact behaviour
+  # Albert's 2026-07-28 ruling removed from the code ("first sweep fills the
+  # FULL 14-day buffer, dispatch the whole deficit, not 1 job; steady state =
+  # weekly sweeps top up ~7"). The code default is already right
+  # (RUNWAY_MAX_JOBS_DEFAULT = RUNWAY_HORIZON_DAYS in src/lib/runway.ts), but
+  # this substitution is passed as an env var on every deploy and overrides it,
+  # so the deficit-of-10-gets-2 bug would have come back from config the moment
+  # _RUNWAY_AUTOGEN_ENABLED was flipped to "1".
+  # Keep in step with RUNWAY_HORIZON_DAYS; runway.test.ts pins the two together.
+  _RUNWAY_MAX_JOBS_PER_CLIENT: "14"
   # Override at trigger level: --substitutions _REGION=europe-west1,...
 
 options:
