@@ -123,7 +123,7 @@ are tracked in the CD table at the bottom.
 | F97 | BLOCKER | B | DASHBOARD | 1 | RESOLVED | — | The client's top call to action promises an approval they cannot make, and the link lands on th | findings-p123-160.md |
 | F125 | BLOCKER | B | DASHBOARD | 1 | RESOLVED | yes | AI Insights is badged "Demo data" and still tells the client to cut LinkedIn spend | findings-p123-160.md |
 | F99 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | The client dashboard is one unbroken scroll and the plain-English weekly briefing sits dead las | findings-p123-160.md |
-| F124 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | The dashboard opens with four counters that the two cards beneath them restate | findings-p123-160.md |
+| F124 | MEDIUM | A | DASHBOARD | 2 | STRUCK-BY-ALBERT | yes | The dashboard opens with four counters that the two cards beneath them restate — Albert 07-28: revert; baseline tiles restored (CD-G6) | findings-p123-160.md |
 | F126 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | Single-asterisk emphasis renders as literal asterisks in AI Insights | findings-p123-160.md |
 | F145 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | A channel whose token dies silently vanishes from "Connected channels" instead of asking to be  | findings-p123-160.md |
 | F100 | LOW | A | DASHBOARD | 2 | RESOLVED | — | British and American spellings sit side by side — "Analysing" on one screen, "Analyzing" on ano | findings-p161-199.md |
@@ -174,8 +174,15 @@ are tracked in the CD table at the bottom.
 | CD-E1 | SHELL | 2 | RESOLVED | Remove "Agent-specific documents" section from the client rail (setup lives on AI Agents cards) |
 | CD-E2 | SHELL | 2 | RESOLVED | Brand colors: 3-4 swatches + internal usage-percentage catalog (staff-visible %, client sees swatches) |
 | CD-E3 | SHELL | 2 | RESOLVED | Sidebar must never scroll: fixed sections (nav, client, docs compact, competitors, colors) fit viewport |
-| CD-F1 | — | end-loop | OPEN | Fleet regenerate: script + execute — re-run intel pipeline for ALL clients (concurrency-limited) after all tweaks merge; Anthropic key top-up first (Albert) |
+| CD-F1 | — | end-loop | RESHAPED→CD-G7 | Fleet regenerate: superseded by CD-G7 completion-pass design (internal agents, no API key top-up) |
 | CD-F2 | SHELL | 2 | RESOLVED | Competitor Track favicons: every row shows the real favicon (fix resolution/fallback for rows showing the generic building icon) |
+| CD-G1 | AGENTS/P3 | 3 | OPEN | Agents roster → full-page per-agent detail route; no Run Now on cards; click opens page (rescopes.md third batch) |
+| CD-G2 | AGENTS/P3 | 3 | OPEN | Client blurbs rewritten: concrete/salesy-short, no buzzwords; backfill script drafts, code fallback |
+| CD-G3 | AGENTS/P3 | 3 | OPEN | Kill "one agent per platform" copy + demote Bind to staff plumbing |
+| CD-G4 | SHELL | 3 | OPEN | STAFF sidebar top block = baseline to DOCUMENTS; chip ↗ → client website; competitor rows get ↗ + keep hover trash |
+| CD-G5 | SHELL | 3 | OPEN | Regenerate admin-only (verify) + add client-dashboard Regenerate entry point (covers docs+SEO/geo) |
+| CD-G6 | DASHBOARD | 3 | OPEN | Revert F124 counter collapse to baseline tiles; keep F99 |
+| CD-G7 | — | end-loop | OPEN | Fleet COMPLETION refresh: one team per client, keep existing data, internal Claude agents, --apply-gated Firestore writes; runs after CD-G1..G6 |
 
 ## Guard zones (all phases)
 - No deep rework of AI Insights (fix listed defects only) — call directive B5.
