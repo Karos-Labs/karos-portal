@@ -18,6 +18,7 @@ import {
   buildAnswerGrid,
   buildRecommendations,
   classifyIntent,
+  dedupeGapsByRecId,
   dedupeNearDuplicates,
   normalizeBrandKey,
   normalizeEvidence,
@@ -784,11 +785,17 @@ export async function runSeoGeoResearch(
   const citationSummary = computeCitationSummary(categoryProbes);
   const competitorsNamed = computeCompetitorsNamed(categoryProbes, gazetteer);
 
-  const gaps: VisibilityGap[] = [
-    ...computeCheckGaps(SEO_CHECKS, audit.seoChecks, "SEO"),
-    ...computeCheckGaps(GEO_READINESS_CHECKS, audit.geoChecks, "GEO"),
-    ...computeVisibilityGaps(perEngine),
-  ].sort((a, b) => b.scoreLift - a.scoreLift);
+  // QA F11: the two registries share nine ids, and the audit prompt asks the model
+  // for every id from both — so one real defect emitted two cards with different
+  // priority chips. Collapsed here, at the source, so gaps[], recommendations[] and
+  // both markdown briefs all see one row per defect.
+  const gaps: VisibilityGap[] = dedupeGapsByRecId(
+    [
+      ...computeCheckGaps(SEO_CHECKS, audit.seoChecks, "SEO"),
+      ...computeCheckGaps(GEO_READINESS_CHECKS, audit.geoChecks, "GEO"),
+      ...computeVisibilityGaps(perEngine),
+    ].sort((a, b) => b.scoreLift - a.scoreLift),
+  );
 
   const now = Date.now();
   const insights: SeoGeoInsights = {

@@ -12,6 +12,7 @@ import {
   categoryMetrics,
   classifyIntent,
   countBrandInAnswers,
+  dedupeGapsByRecId,
   engineVisibilityScore,
   normalizeBrandKey,
   dedupeNearDuplicates,
@@ -397,6 +398,58 @@ describe("QA Fix 1/2: tracked roster dedup + category-only comparison", () => {
     // Brand split is reported separately.
     expect(vis.brandNamed).toBe(1);
     expect(vis.brandPromptsMeasured).toBe(1);
+  });
+});
+
+describe("duplicate cards across the two registries (QA F11)", () => {
+  /** The nine ids that live in both SEO_CHECKS and GEO_READINESS_CHECKS. */
+  const SHARED_IDS = ["BOTH-01", "BOTH-02", "BOTH-03", "BOTH-09", "BOTH-16", "GEO-01", "GEO-02", "GEO-17", "GEO-20"];
+
+  it("confirms the nine shared ids are still the duplication source", () => {
+    const seo = new Set(SEO_CHECKS.map((d) => d.id));
+    const shared = GEO_READINESS_CHECKS.filter((d) => seo.has(d.id)).map((d) => d.id);
+    expect(shared.sort()).toEqual([...SHARED_IDS].sort());
+  });
+
+  it("emits one card per defect when the model answers both registries", () => {
+    // Exactly what the audit prompt asks for: every id from both registries.
+    const check = (id: string, bucket: string): SeoGeoCheck => ({
+      id, bucket, label: id, evidence: "failing", norm: 0, tier: "MEASURED", confidence: "CONFIRMED",
+    });
+    const seoChecks = SEO_CHECKS.map((d) => check(d.id, d.bucket));
+    const geoChecks = GEO_READINESS_CHECKS.map((d) => check(d.id, d.bucket));
+    const raw = [
+      ...computeCheckGaps(SEO_CHECKS, seoChecks, "SEO"),
+      ...computeCheckGaps(GEO_READINESS_CHECKS, geoChecks, "GEO"),
+    ];
+    // Before: BOTH-09 (weight 5 vs 2) and GEO-20 (4 vs 7) each produced two rows
+    // whose severity chips disagreed.
+    expect(raw.filter((g) => g.id === "BOTH-09")).toHaveLength(2);
+    expect(new Set(raw.filter((g) => g.id === "GEO-20").map((g) => g.severity)).size).toBe(2);
+
+    const deduped = dedupeGapsByRecId(raw);
+    for (const id of SHARED_IDS) expect(deduped.filter((g) => g.id === id)).toHaveLength(1);
+    // Survivor keeps the higher lift, so the stronger priority wins.
+    expect(deduped.find((g) => g.id === "GEO-20")!.scoreLift).toBe(7);
+    expect(deduped.find((g) => g.id === "BOTH-09")!.scoreLift).toBe(5);
+  });
+
+  it("never merges per-engine visibility gaps that share a rec-id prefix", () => {
+    const gaps = [
+      { id: "GEO-11:chatgpt", lever: "GEO", title: "a", severity: "high", evidence: "", confidence: "CONFIRMED", fixAction: "manual", target: "off-site", delivery: "advisory", benchmark: "", measured: "", scoreLift: 3 },
+      { id: "GEO-11:gemini", lever: "GEO", title: "b", severity: "high", evidence: "", confidence: "CONFIRMED", fixAction: "manual", target: "off-site", delivery: "advisory", benchmark: "", measured: "", scoreLift: 2 },
+    ] as Parameters<typeof dedupeGapsByRecId>[0];
+    expect(dedupeGapsByRecId(gaps)).toHaveLength(2);
+  });
+
+  it("promotes the survivor's lever to BOTH when the registries disagree", () => {
+    const gaps = [
+      { id: "GEO-01", lever: "SEO", title: "a", severity: "high", evidence: "", confidence: "CONFIRMED", fixAction: "manual", target: "site-wide", delivery: "agent-direct", benchmark: "", measured: "", scoreLift: 5 },
+      { id: "GEO-01", lever: "GEO", title: "a", severity: "high", evidence: "", confidence: "CONFIRMED", fixAction: "manual", target: "site-wide", delivery: "agent-direct", benchmark: "", measured: "", scoreLift: 6 },
+    ] as Parameters<typeof dedupeGapsByRecId>[0];
+    const [survivor] = dedupeGapsByRecId(gaps);
+    expect(survivor.lever).toBe("BOTH");
+    expect(survivor.scoreLift).toBe(6);
   });
 });
 

@@ -895,6 +895,52 @@ export function computeCheckGaps(
 }
 
 /**
+ * Collapse gaps that describe the SAME defect (QA F11).
+ *
+ * Nine check ids sit in BOTH registries with different labels and different
+ * weights (BOTH-01, BOTH-02, BOTH-03, BOTH-09, BOTH-16, GEO-01, GEO-02, GEO-17,
+ * GEO-20), and the audit prompt instructs the model to return every id from both.
+ * The pipeline then runs computeCheckGaps once per registry, so one real defect
+ * emitted two cards — and because severity is (1 − norm) × registry weight, and the
+ * weights differ between registries, the two cards carried DIFFERENT priority chips
+ * for the identical underlying problem (sitemap: important vs moderate; freshness:
+ * important vs urgent; scannable sections: urgent vs moderate).
+ *
+ * Survivor keeps the higher scoreLift (hence the higher severity, which derives from
+ * it) and is promoted to lever "BOTH" when the group disagrees — a defect that both
+ * registries measure genuinely affects both channels, and channel "both" already
+ * renders under both filter tabs.
+ *
+ * Keyed on the FULL id, not `id.split(":")[0]` as the spec's shorthand suggested:
+ * the competitor-visibility gaps are per-engine (`GEO-27:chatgpt`,
+ * `GEO-11:gemini`), and prefix-keying would silently merge five engines' findings
+ * into one card. Registry duplicates carry bare ids, so full-id keying collapses
+ * exactly the duplicates and nothing else.
+ */
+export function dedupeGapsByRecId(gaps: VisibilityGap[]): VisibilityGap[] {
+  const byId = new Map<string, VisibilityGap>();
+  const levers = new Map<string, Set<Lever>>();
+  const order: string[] = [];
+  for (const gap of gaps) {
+    const seenLevers = levers.get(gap.id) ?? new Set<Lever>();
+    seenLevers.add(gap.lever);
+    levers.set(gap.id, seenLevers);
+    const held = byId.get(gap.id);
+    if (!held) {
+      byId.set(gap.id, gap);
+      order.push(gap.id);
+    } else if (gap.scoreLift > held.scoreLift) {
+      byId.set(gap.id, gap);
+    }
+  }
+  return order.map((id) => {
+    const gap = byId.get(id)!;
+    const seen = levers.get(id)!;
+    return seen.size > 1 ? { ...gap, lever: "BOTH" as Lever } : gap;
+  });
+}
+
+/**
  * Competitor-vs-client visibility gaps computed from the multi-engine capture.
  * The a3 agent does not emit explicit gap values, so this is the utility logic that
  * derives them from the collected competitor vs client data (per requirement).

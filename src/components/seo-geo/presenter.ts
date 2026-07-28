@@ -21,6 +21,7 @@ import {
   brandKeys,
   categoryMetrics,
   computeCheckScore,
+  dedupeGapsByRecId,
   engineVisibilityScore,
   findMention,
   normalizeBrandKey,
@@ -777,7 +778,10 @@ export function agentLabelFor(gap: VisibilityGap): string | null {
 }
 
 export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[] {
-  return [...gaps]
+  // F11: the pipeline collapses registry duplicates at the source, but every
+  // snapshot persisted before that still carries both copies — dedupe at render
+  // too, so no UI consumer can show one defect as two contradictory cards.
+  return dedupeGapsByRecId(gaps)
     .sort((a, b) => b.scoreLift - a.scoreLift)
     .map((g, i) => {
       const severity = SEVERITY_VIEW[g.severity] ?? SEVERITY_VIEW.low;
