@@ -129,6 +129,7 @@ export default async function ClientAgentDetailPage({
         agentsById: new Map([[agent.id, agent]]),
         viewerIsClient,
         grantedAgentIds: null,
+        clientSlug: client.agentsRepoSlug,
         agentSetup,
         ...(spendable !== undefined ? { spendable } : {}),
         creditBlockReasons,

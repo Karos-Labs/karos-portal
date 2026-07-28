@@ -252,6 +252,34 @@ describe("per-client agent instance binding", () => {
     }
   });
 
+  it("refuses the BIND, not only the launch", () => {
+    // Ruling 1. Binding a per-client instance to another client creates an
+    // umbrella that reads as a set-up agent and can never produce: every launch
+    // and every scheduled fire is refused by the cores before a job row exists.
+    // Refusing at bind time is what keeps that umbrella off the disk in the
+    // first place; the launch gate's rung covers the ones already there.
+    const src = readFileSync(
+      join(process.cwd(), "src/lib/actions/client-agent-actions.ts"),
+      "utf8",
+    );
+    const start = src.indexOf("export async function bindClientAgentAction");
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf("\nexport async function ", start + 1));
+    const guardAt = body.indexOf("agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)");
+    expect(guardAt, "bindClientAgentAction does not check the binding").toBeGreaterThan(-1);
+    // Ahead of the write, so a refused bind leaves nothing behind.
+    expect(guardAt).toBeLessThan(body.indexOf("await upsertClientAgent("));
+    expect(body).toContain("perClientAgentSlug(agent.key)");
+
+    // The launch gate carries the same rung, above the intake rung: filling in
+    // a form cannot unblock a pair refused on identity.
+    const gate = readFileSync(join(process.cwd(), "src/lib/client-agents.ts"), "utf8");
+    const bindingAt = gate.indexOf('code: "wrong_client_binding"');
+    const intakeAt = gate.indexOf('code: "intake_required"');
+    expect(bindingAt).toBeGreaterThan(-1);
+    expect(bindingAt).toBeLessThan(intakeAt);
+  });
+
   it("refuses to write a schedule that every fire would refuse", () => {
     // A schedule created past a run gate fires into nothing: the submit core
     // refuses before it writes a job row, so there is no failed job and no

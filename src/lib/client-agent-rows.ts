@@ -219,6 +219,12 @@ export async function toClientAgentRows(args: {
   agentsById: Map<string, CustomAgent>;
   viewerIsClient: boolean;
   grantedAgentIds: Set<string> | null;
+  /**
+   * This client's lab-repo slug (Client.agentsRepoSlug). Feeds the launch
+   * gate's binding rung, so a card never offers a launch of an instance baked
+   * under another client's folder.
+   */
+  clientSlug?: string | null;
   agentSetup: Record<string, AgentSetupState>;
   spendable?: number;
   creditBlockReasons: Record<string, string>;
@@ -245,6 +251,8 @@ export async function toClientAgentRows(args: {
     const gate = evaluateLaunchGate({
       launchState: umbrella.launchState,
       granted,
+      agentKey: agent.key,
+      clientSlug: args.clientSlug,
       intakeReady: setup ? setup.ready : true,
       intakeLabel: setup?.label ?? null,
       launchCreditCost: launchCost,

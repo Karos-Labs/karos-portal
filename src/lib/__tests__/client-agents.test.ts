@@ -100,6 +100,10 @@ describe("launch state machine", () => {
 const baseGate = {
   launchState: "not_launched" as const,
   granted: true,
+  // An agent bound to no client at all — the common case, and the one that
+  // makes the binding rung invisible to every other assertion here.
+  agentKey: "karos-instagram-agent",
+  clientSlug: "geektime",
   intakeReady: true,
   launchCreditCost: 120,
   availableCredits: 500,
@@ -131,6 +135,82 @@ describe("evaluateLaunchGate", () => {
     expect(evaluateLaunchGate({ ...baseGate, launchState: "live" })).toMatchObject({
       allowed: false,
       code: "already_live",
+    });
+  });
+
+  /**
+   * Ruling 1. The binding and the umbrella are COMPLEMENTARY layers: an
+   * umbrella says "this client bought this agent", the binding says "this agent
+   * instance can only ever draft for the client its key names". Merging the two
+   * branches without this rung produced an F131-class state — an enabled Launch
+   * on a card whose every submit the core refuses before writing a job row.
+   */
+  describe("binding rung", () => {
+    const INSTANCE = "karos-linkedin-company-karoslabs";
+
+    it("refuses a per-client instance paired with another client", () => {
+      const result = evaluateLaunchGate({
+        ...baseGate,
+        agentKey: INSTANCE,
+        clientSlug: "geektime",
+      });
+      expect(result).toMatchObject({ allowed: false, code: "wrong_client_binding" });
+      // Names the workspace it DOES belong to, so staff know which agent to use.
+      expect(result).toMatchObject({ reason: expect.stringContaining("karoslabs") });
+    });
+
+    it("allows the instance for its own client, however the slug is written", () => {
+      for (const slug of ["karoslabs", " Karoslabs ", "clients/karoslabs/outputs"]) {
+        expect(evaluateLaunchGate({ ...baseGate, agentKey: INSTANCE, clientSlug: slug })).toEqual({
+          allowed: true,
+          cost: 120,
+        });
+      }
+    });
+
+    it("refuses when the client has no lab slug at all", () => {
+      // The safe direction: an unmatched client earns no instance, rather than
+      // every instance.
+      for (const slug of [null, undefined, ""]) {
+        expect(
+          evaluateLaunchGate({ ...baseGate, agentKey: INSTANCE, clientSlug: slug }),
+        ).toMatchObject({ allowed: false, code: "wrong_client_binding" });
+      }
+    });
+
+    it("leaves unbound agents launchable for everyone", () => {
+      for (const key of ["karos-x-agent", "karos-linkedin-agent", "karos-reddit-agent"]) {
+        expect(evaluateLaunchGate({ ...baseGate, agentKey: key, clientSlug: "sitti" })).toEqual({
+          allowed: true,
+          cost: 120,
+        });
+      }
+    });
+
+    it("outranks the intake rung — no form fills a binding in", () => {
+      // Told to go and fill in intake, a reader would do the work and come back
+      // to the same refusal, because the core refuses on identity.
+      const result = evaluateLaunchGate({
+        ...baseGate,
+        agentKey: INSTANCE,
+        clientSlug: "geektime",
+        intakeReady: false,
+        intakeLabel: "LinkedIn agent data",
+      });
+      expect(result).toMatchObject({ code: "wrong_client_binding" });
+    });
+
+    it("still hides an ungranted agent behind 'not found' first", () => {
+      // Which agents exist beyond a client's allowlist is not theirs to learn,
+      // and that outranks every other rung.
+      expect(
+        evaluateLaunchGate({
+          ...baseGate,
+          granted: false,
+          agentKey: INSTANCE,
+          clientSlug: "geektime",
+        }),
+      ).toMatchObject({ code: "not_granted" });
     });
   });
 

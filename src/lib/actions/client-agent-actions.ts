@@ -27,12 +27,16 @@ import {
 import { ensureSlotHorizon } from "@/lib/client-agent-slots";
 import { availableCredits, creditBlockReason, isBillableClientActor } from "@/lib/credits";
 import {
+  agentKeyMatchesClientSlug,
   clientSafeRunError,
   isLinkedInAgentIdentity,
+  isRedditAgentIdentity,
   isXAgentIdentity,
+  perClientAgentSlug,
 } from "@/lib/custom-agent-launch";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
+import { hasRedditAgentIntake } from "@/lib/agent-service/reddit-agent-context";
 import { socialPlatformsFor } from "@/components/agent-identity";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
 import type { ClientAgent, ClientAgentTemplate, CustomAgent } from "@/lib/types";
@@ -145,6 +149,18 @@ export async function bindClientAgentAction(input: {
   if (!client) return { error: "Client not found." };
   if (!agent || !agent.enabled) return { error: "Agent not found." };
 
+  // Refuse the BIND, not just the launch. A per-client agent instance runs an
+  // entry skill baked under the one client folder its key names, so binding it
+  // to another client creates an umbrella whose every launch and every
+  // scheduled fire the submit cores would refuse — a card that reads as a
+  // set-up agent and can never produce anything. The launch gate carries the
+  // same rung for umbrellas that predate this check.
+  if (!agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) {
+    return {
+      error: `${agent.name} runs only for the client whose lab repo slug is "${perClientAgentSlug(agent.key)}", and ${client.name}'s slug is ${client.agentsRepoSlug ? `"${client.agentsRepoSlug}"` : "not set"}. Nothing was bound — use this client's own agent.`,
+    };
+  }
+
   if (!input.bindAsLive && !input.bindAsNew) {
     if (await isAgentProducingForClient(input.clientId, agent)) {
       return { alreadyProducing: true };
@@ -249,6 +265,11 @@ export async function submitClientAgentLaunchAction(input: {
   } else if (isLinkedInAgentIdentity(agent.key)) {
     intakeLabel = "LinkedIn agent data";
     intakeReady = await hasLinkedInAgentIntake(input.clientId, agent.key);
+  } else if (isRedditAgentIdentity(agent.key)) {
+    // e15 is intake-driven exactly like the other two: launching it without the
+    // account form charges for a setup run the submit core then refuses.
+    intakeLabel = "Reddit agent data";
+    intakeReady = await hasRedditAgentIntake(input.clientId);
   }
 
   const billable = isBillableClientActor(user);
@@ -267,6 +288,10 @@ export async function submitClientAgentLaunchAction(input: {
   const gate = evaluateLaunchGate({
     launchState: umbrella.launchState,
     granted,
+    // An umbrella bound before bindClientAgentAction started refusing the pair
+    // is still on disk, so the launch rung stands behind the bind rung.
+    agentKey: agent.key,
+    clientSlug: client.agentsRepoSlug,
     intakeReady,
     intakeLabel,
     launchCreditCost: launchCost,
