@@ -23,6 +23,7 @@ import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { orderKeyForCreatedAt } from "@/lib/post-chain";
 import { reflowClientChain } from "@/lib/chain";
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { applyLaunchOutcome, isLaunchTemplatesArtifact } from "@/lib/jobs/launch-outcome";
 import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
 import { logger } from "@/services/logger";
 
@@ -217,6 +218,18 @@ export async function POST(req: NextRequest) {
   const now = Date.now();
   const events = [...job.events];
 
+  // ── Launch runs (Phase 3 §8.2) ──
+  // A setup run designs the client's templates; its deliverables are working
+  // material for staff, NOT content. They land as staff-only assets, skip the
+  // chain entirely (nothing about them belongs on a calendar), and the
+  // umbrella advances to curation. Our own job doc is the source of truth for
+  // the run type; the metadata echo is the fallback for a job written before
+  // the field was stamped.
+  const clientAgentId = job.clientAgentId ?? payload.metadata?.karos_client_agent_id ?? null;
+  const isLaunchRun =
+    (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(clientAgentId);
+  let launchTemplatesJson: string | null = null;
+
   const artifacts: ExternalJobArtifact[] = [];
   const assetIds: string[] = [...job.assetIds];
   let rehostedTotal = 0;
@@ -268,6 +281,13 @@ export async function POST(req: NextRequest) {
               contentType: artifact.content_type ?? "application/octet-stream",
             });
             entry.url = hosted.url;
+            // The setup run's structured output (seam T1). Captured here off
+            // the bytes we already fetched — no second round-trip — and only
+            // for launch runs, so a client agent that happens to ship a
+            // templates.json in a normal run can't reseed the registry.
+            if (isLaunchRun && isLaunchTemplatesArtifact(artifact.name)) {
+              launchTemplatesJson = bytes.toString("utf8").slice(0, 20_000);
+            }
             const ext = extension(artifact.name);
             if (TEXT_EXTENSIONS.includes(ext)) {
               const content = bytes.toString("utf8");
@@ -340,6 +360,11 @@ export async function POST(req: NextRequest) {
           agentsRepoSha: payload.agents_repo_sha,
           artifacts: artifacts.filter((a) => a.clientFacing),
           ...(slides ? { slides } : {}),
+          // Staff-only working material, excluded from every client library
+          // surface by getClientLibraryAssets. Flagged on the asset itself
+          // rather than inferred later: the exclusion has to survive whatever
+          // status or date this asset ends up with.
+          ...(isLaunchRun ? { launchDeliverable: true, clientAgentId } : {}),
         },
         imageUrl: orderedImageUrls[0] ?? null,
         ...(platform ? { channels: [platform] } : {}),
@@ -358,13 +383,18 @@ export async function POST(req: NextRequest) {
       // Auto-assign the new post its one-per-day chain date. Best-effort: the
       // job is already claimed (single delivery), so a reflow failure must not
       // fail the webhook — it self-heals on the next import/webhook/staff reflow.
-      await reflowClientChain(job.clientId).catch(() =>
-        events.push({
-          at: Date.now(),
-          level: "error",
-          message: "Calendar reflow failed - run the staff reflow action",
-        }),
-      );
+      // Launch deliverables are skipped entirely: they are not calendar
+      // entities, and reflowing them would hand a client's chain a day for a
+      // document about templates.
+      if (!isLaunchRun) {
+        await reflowClientChain(job.clientId).catch(() =>
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message: "Calendar reflow failed - run the staff reflow action",
+          }),
+        );
+      }
     }
     taskArtifactContent = primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "";
     taskArtifactImage = orderedImageUrls[0] ?? null;
@@ -411,6 +441,26 @@ export async function POST(req: NextRequest) {
     },
     updatedAt: now,
   });
+
+  // ── Client-agent launch state ──
+  // Advances the umbrella (launching → curating, or → launch_failed) and seeds
+  // the template registry from templates.json when the setup run emitted one.
+  // Best-effort like the syncs below: the job is already claimed, so a write
+  // failure here must not fail the delivery — staff can reset a stuck umbrella.
+  if (isLaunchRun && clientAgentId) {
+    try {
+      await applyLaunchOutcome({
+        clientAgentId,
+        status: payload.status,
+        error: payload.status === "done" ? null : (payload.error ?? payload.status),
+        templatesJson: launchTemplatesJson,
+        refunded: refund.refunded,
+        now,
+      });
+    } catch (e) {
+      console.error("[webhook] client-agent launch update failed:", e);
+    }
+  }
 
   // ── Task Map sync ──
   // 1. A run dispatched BY a board task lands its deliverable on the ticket
