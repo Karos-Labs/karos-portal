@@ -126,8 +126,8 @@ describe("renderSectionBody: markup that used to leak", () => {
 });
 
 describe("isSafeHref", () => {
-  it("accepts web schemes and relative targets", () => {
-    for (const href of ["https://x.co", "http://x.co", "mailto:a@b.co", "/docs", "#top"]) {
+  it("accepts web schemes and same-origin targets", () => {
+    for (const href of ["https://x.co", "http://x.co", "mailto:a@b.co", "/docs", "/", "#top"]) {
       expect(isSafeHref(href)).toBe(true);
     }
   });
@@ -136,5 +136,24 @@ describe("isSafeHref", () => {
     for (const href of ["javascript:alert(1)", " JavaScript:alert(1)", "data:text/html,x"]) {
       expect(isSafeHref(href)).toBe(false);
     }
+  });
+
+  /**
+   * A leading slash does not make a target same-origin: the WHATWG parser
+   * resolves both of these to https://evil.com/. Not script execution — a
+   * plantable off-site link that reads as an in-document reference, on a
+   * surface fed by client-authored corrections and by research fetched from
+   * competitor sites.
+   */
+  it("rejects protocol-relative and backslash-escaped hosts", () => {
+    for (const href of ["//evil.com", "/\\evil.com", " //evil.com", "//evil.com/a?b=c"]) {
+      expect(isSafeHref(href)).toBe(false);
+    }
+  });
+
+  it("does not turn a protocol-relative target into a link", () => {
+    const html = renderSectionBody("See [our docs](//evil.com).");
+    expect(html).not.toContain("<a ");
+    expect(html).not.toContain("href=");
   });
 });

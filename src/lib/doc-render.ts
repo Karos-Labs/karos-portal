@@ -29,9 +29,17 @@ export const LINK_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
  * Only web-ish schemes become anchors. Model-written document text is not a
  * trusted source of URLs, and `javascript:` / `data:` in an href is a script
  * sink that escaping alone does not close.
+ *
+ * A bare leading "/" is NOT enough to call a target same-origin: "//evil.com"
+ * is protocol-relative and "/\evil.com" is normalised the same way, so both
+ * resolve off-site while reading as an in-document reference. The second
+ * character has to be neither slash nor backslash. This matters because
+ * document text is reachable by client-authored corrections and by research
+ * findings fetched from competitor sites, and staff read the internal tier.
  */
 export function isSafeHref(href: string): boolean {
-  return /^(https?:\/\/|mailto:|\/|#)/i.test(href.trim());
+  const h = href.trim();
+  return /^(https?:\/\/|mailto:|#)/i.test(h) || /^\/(?![/\\])/.test(h);
 }
 
 const PLACEHOLDER_RE =
