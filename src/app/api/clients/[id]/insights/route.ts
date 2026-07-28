@@ -12,7 +12,7 @@ import {
   upsertClientInsightsCache,
 } from "@/lib/data";
 import { rankByEngagement } from "@/lib/analytics";
-import { integrationIsUsable } from "@/lib/integration-status";
+import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { logger } from "@/services/logger";
 import { MODELS } from "@/lib/constants";
 import type { Asset, ClientMarketingAnalytics } from "@/lib/types";
@@ -62,9 +62,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   // platform the client never connected (an Instagram row on a Google/LinkedIn/YouTube
   // account). Scope the digest — and therefore the prompt — to channels the client actually
   // has, so the briefing can't recommend shifting budget on a channel they don't use.
-  const connectedPlatforms = new Set(
-    integrations.filter((i) => integrationIsUsable(i)).map((i) => i.platform),
-  );
+  // QA F145: "a channel the client actually has" means CONNECTED, not "connected and
+  // healthy". A dead token doesn't delete the channel — it stops refreshing it. Scoping to
+  // usable integrations made a channel whose login expired vanish from the briefing without
+  // a word, the same silent disappearance F145 fixes on the dashboard's channels card. Its
+  // rows stay in the digest, flagged stale, so the briefing can say "LinkedIn data is stale —
+  // reconnect" instead of quietly pretending the channel isn't there.
+  const connectedPlatforms = new Set(integrations.map((i) => i.platform));
+  const stalePlatforms = [
+    ...new Set(integrations.filter((i) => integrationNeedsReconnect(i)).map((i) => i.platform)),
+  ];
   const scopedRecords = records.filter((r) => connectedPlatforms.has(r.platform));
 
   // Data-honesty signal (QA Fix 8): engagement analytics fall back to deterministic
@@ -95,7 +102,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     );
   }
 
-  const digest = buildDigest(scopedRecords, assets);
+  const digest = buildDigest(scopedRecords, assets, stalePlatforms);
 
   // No measured engagement yet — the sync cron hasn't captured any published-content
   // metrics for this client (no connected socials yet, nothing published yet, or the
@@ -167,6 +174,9 @@ Write the update now.`;
     "Use plain language (no jargon, no fabricated numbers — only the figures provided). " +
     "Only reference channels that appear in the data below; never name, compare against, or recommend " +
     "spending on a platform that is not listed — the client is not on it. " +
+    "Any channel named in staleChannels has a disconnected login: its numbers stopped updating and are " +
+    "not current. Say plainly that its data is stale and the channel needs reconnecting, and do not base " +
+    "any recommendation on its figures. " +
     "Format as 2–3 short sections with bold mini-headers and tight bullets. Cover: (1) week-over-week movement, " +
     "(2) what's winning and why, (3) the optimization choices the engine is making next (double down on winners, phase out losers). " +
     "Keep the whole thing under 160 words.";
@@ -261,6 +271,10 @@ function buildActivityDigest(assets: Asset[]): ActivityDigest {
 
 type Digest = {
   sampleSize: number;
+  /** Connected channels whose login has expired — their rows are real but no
+   *  longer refreshing (QA F145). Named in the prompt so the briefing reports
+   *  the staleness instead of the channel silently going missing. */
+  staleChannels: string[];
   weekOverWeek: {
     thisWeekAvgScore: number;
     lastWeekAvgScore: number;
@@ -287,6 +301,7 @@ function avg(nums: number[]): number {
 function buildDigest(
   records: ClientMarketingAnalytics[],
   assets: Array<{ id: string; publishedAt?: number }>,
+  staleChannels: string[] = [],
 ): Digest {
   const publishedAtById = new Map(assets.map((a) => [a.id, a.publishedAt]));
   const now = Date.now();
@@ -325,6 +340,7 @@ function buildDigest(
 
   return {
     sampleSize: records.length,
+    staleChannels,
     weekOverWeek: {
       thisWeekAvgScore: thisWeekAvg,
       lastWeekAvgScore: lastWeekAvg,

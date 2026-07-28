@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Card, CardTitle, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
-import { integrationIsUsable } from "@/lib/integration-status";
+import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import type { Asset, ClientIntegration, Job } from "@/lib/types";
 
 /** One stat in the thin summary row (QA F124) — label and number on one line,
@@ -41,6 +41,7 @@ export function ClientAnalytics({
 }) {
   const scheduled = assets.filter((a) => a.status === "scheduled").length;
   const activeChannels = integrations.filter((i) => integrationIsUsable(i));
+  const staleChannels = integrations.filter((i) => integrationNeedsReconnect(i));
 
   // Content-by-status breakdown
   const byStatus = new Map<string, number>();
@@ -103,15 +104,27 @@ export function ClientAnalytics({
           )}
         </Card>
 
-        {/* Connected channels */}
+        {/* Connected channels — QA F145: a channel whose token died used to be
+            filtered out of this list entirely. It didn't say "broken, click to
+            fix"; it just disappeared, and the channel count dropped by one with
+            no explanation, so a dead LinkedIn read as "never set up". The card's
+            whole job is answering "is LinkedIn actually working?". */}
         <Card>
           <div className="mb-4 flex items-center justify-between">
-            <CardTitle>Connected channels</CardTitle>
+            <div>
+              <CardTitle>Connected channels</CardTitle>
+              {staleChannels.length > 0 && (
+                <p className="mt-1 text-xs text-warning">
+                  {activeChannels.length} working · {staleChannels.length} need
+                  {staleChannels.length === 1 ? "s" : ""} attention
+                </p>
+              )}
+            </div>
             <Link href={`/clients/${clientId}/settings`} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline">
               Manage
             </Link>
           </div>
-          {activeChannels.length === 0 ? (
+          {integrations.length === 0 ? (
             <EmptyState
               icon={<Icon name="Plug" className="h-6 w-6" />}
               title="No channels connected"
@@ -119,7 +132,7 @@ export function ClientAnalytics({
             />
           ) : (
             <ul className="space-y-2">
-              {activeChannels.map((i) => (
+              {integrations.map((i) => (
                 <li
                   key={i.platform}
                   className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2"
@@ -128,10 +141,25 @@ export function ClientAnalytics({
                     <p className="truncate text-sm font-medium capitalize">{i.platform}</p>
                     {i.accountName && <p className="truncate text-xs text-muted-2">{i.accountName}</p>}
                   </div>
-                  <Badge tone="neon">
-                    <Icon name="CheckCircle2" className="h-3 w-3" />
-                    Connected
-                  </Badge>
+                  {integrationNeedsReconnect(i) ? (
+                    // Same treatment Settings already gives a dead token, plus the
+                    // route to fix it — the health truth existed, the dashboard
+                    // just refused to show it.
+                    <Link href={`/clients/${clientId}/settings`} className="shrink-0">
+                      <Badge tone="warning" className="hover:border-warning/60">
+                        <Icon name="TriangleAlert" className="h-3 w-3" />
+                        Reconnect needed →
+                      </Badge>
+                    </Link>
+                  ) : (
+                    <Badge tone="neon">
+                      {/* CircleCheck, not CheckCircle2: the latter isn't a name in
+                          lucide 1.x, so this badge silently rendered the sparkle
+                          fallback (F63's class of defect, called out in F145). */}
+                      <Icon name="CircleCheck" className="h-3 w-3" />
+                      Connected
+                    </Badge>
+                  )}
                 </li>
               ))}
             </ul>
