@@ -58,7 +58,7 @@ const ROLE_LABEL: Record<Role, string> = {
 
 /* ── View-as-Client picker ───────────────────────────────────────────── */
 
-function ClientContextPicker({ clients }: { clients: Client[] }) {
+function ClientContextPicker({ clients, isAdmin }: { clients: Client[]; isAdmin: boolean }) {
   const router = useRouter();
   const { activeClient, setActiveClient } = useActiveClient();
   const [open, setOpen] = useState(false);
@@ -71,8 +71,15 @@ function ClientContextPicker({ clients }: { clients: Client[] }) {
   function selectClient(client: Client) {
     setOpen(false);
     setQuery("");
-    // Optimistically switch the nav immediately; ClientContextSync fills in docs/competitors on load
-    setActiveClient({ client, contextDocs: [], competitors: [], isAdmin: true });
+    // Optimistically switch the nav immediately; ClientContextSync fills in docs/competitors on load.
+    // isAdmin carries the VIEWER's real role rather than a hardcoded true: the
+    // picker renders for every staff member, so an EMPLOYEE who picked a client
+    // got the admin-only Schedule and Regenerate controls in their rail for the
+    // whole navigation, until ClientContextSync reconciled the flag from the
+    // server. The actions themselves always refused (requireAdmin), so this was
+    // a dead control rather than an escalation — but it contradicted CD-G5's
+    // "admin-only", so the flag now starts out honest.
+    setActiveClient({ client, contextDocs: [], competitors: [], isAdmin });
     router.push(`/clients/${client.id}`);
   }
 
@@ -488,7 +495,9 @@ export function Sidebar({
             already fenced to their assigned clients by the app layout. The
             LABELLED exit is F60's ClientContextBar, which renders for any
             staff member the moment a client context is active. */}
-        {isStaff && <ClientContextPicker clients={clients} />}
+        {isStaff && (
+          <ClientContextPicker clients={clients} isAdmin={user.role === "KAROS_ADMIN"} />
+        )}
         <UserMenu user={user} realAdmin={realAdmin} />
       </div>
     </div>
