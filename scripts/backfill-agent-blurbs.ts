@@ -142,6 +142,16 @@ const BLURBS: Array<{ key: RegExp; blurb: string }> = [
     blurb:
       "Improve your Instagram reach with a daily post, different templates, and an agent that scans what is working in your niche.",
   },
+  {
+    // Twin of the landing-builder entry in lib/agent-blurbs.ts (CD-H7d) — same
+    // pattern, same sentence, so the copy a client already sees is the copy
+    // this script would persist. Keys only here, so a builder whose key does
+    // not say "landing" is reported rather than guessed at, as with any other
+    // unmatched agent.
+    key: /landing.?builder|page.?builder/,
+    blurb:
+      "Get a landing page built for your next campaign, with the headline, sections and call to action already written.",
+  },
 ];
 
 interface AgentDoc {

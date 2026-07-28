@@ -116,6 +116,15 @@ const BLURBS: Array<{ matches: (identity: string) => boolean; blurb: string }> =
       "Publish articles that bring in search traffic, written around the words your buyers actually type.",
   },
   {
+    // "Landing Builder" (CD-H7d). Its name carries no "page", so the
+    // /landing.?page/ pattern below never matched it and clients read the
+    // contentless fallback on an agent whose output is entirely concrete.
+    // Matched off the identity, so the display name alone is enough.
+    matches: (identity) => /landing.?builder|page.?builder/.test(identity),
+    blurb:
+      "Get a landing page built for your next campaign, with the headline, sections and call to action already written.",
+  },
+  {
     matches: (identity) => /landing.?page|web.?page/.test(identity),
     blurb:
       "Turn your campaign into a landing page that converts, with the copy and structure already in place.",
