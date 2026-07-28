@@ -150,7 +150,7 @@ export function NotificationBell({
               {total === 0 ? (
                 <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
-                    <Icon name="CheckCircle2" className="h-6 w-6 text-success" />
+                    <Icon name="CircleCheck" className="h-6 w-6 text-success" />
                   </div>
                   <p className="text-sm font-medium text-foreground">All caught up!</p>
                   <p className="text-xs text-muted-2">No pending tasks or reviews.</p>
@@ -230,7 +230,7 @@ export function NotificationBell({
                       className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
                     >
                       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success/10">
-                        <Icon name="CheckSquare" className="h-3.5 w-3.5 text-success" />
+                        <Icon name="SquareCheck" className="h-3.5 w-3.5 text-success" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="line-clamp-2 text-xs font-medium text-foreground">{n.text}</p>

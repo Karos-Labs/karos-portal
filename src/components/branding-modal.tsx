@@ -183,7 +183,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
         {/* Generation feedback */}
         {genResult && (
           <div className="flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
-            <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
+            <Icon name="CircleCheck" className="h-3.5 w-3.5 shrink-0" />
             {`AI Generated from live site/search data${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review the values below and save.`}
           </div>
         )}

@@ -133,7 +133,7 @@ function PersonaCard({ result }: { result: PersonaSimulationResult }) {
         <p className="mt-0.5 text-[11px] text-muted-2">{result.archetype}</p>
         <p className="mt-1 text-[11px] text-muted">Perspective: {result.perspective}</p>
         <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
-          <Icon name="AlertTriangle" className="h-3.5 w-3.5 text-warning" />
+          <Icon name="TriangleAlert" className="h-3.5 w-3.5 text-warning" />
           Couldn&apos;t get a reading from this persona.
         </p>
         {result.error && <p className="mt-1 text-[11px] text-muted-2">{result.error}</p>}

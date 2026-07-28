@@ -39,7 +39,7 @@ const BOARD_COLUMNS: { status: BoardStatus; label: string; icon: string }[] = [
   { status: "pending", label: "Pending", icon: "Circle" },
   { status: "in_progress", label: "In Progress", icon: "PlayCircle" },
   { status: "review_pending", label: "Review Pending", icon: "Eye" },
-  { status: "completed", label: "Done", icon: "CheckCircle" },
+  { status: "completed", label: "Done", icon: "CircleCheck" },
 ];
 
 const SOURCE_META: Record<TaskSource, { label: string; icon: string }> = {
@@ -673,7 +673,7 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
   if (localTasks.length === 0) {
     return (
       <EmptyState
-        icon={<Icon name="CheckSquare" className="h-10 w-10" />}
+        icon={<Icon name="SquareCheck" className="h-10 w-10" />}
         title="No tasks yet"
         description="Tasks appear here when AI Copilot or your team creates actionable work items."
       />

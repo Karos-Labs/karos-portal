@@ -115,7 +115,7 @@ export function FlagButton({
                 {success ? (
                   <div className="flex flex-col items-center gap-3 py-8 text-center">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
-                      <Icon name="CheckCircle2" className="h-6 w-6" />
+                      <Icon name="CircleCheck" className="h-6 w-6" />
                     </div>
                     <p className="text-sm font-semibold text-foreground">Flag sent</p>
                     <p className="max-w-[280px] text-sm text-muted">

@@ -57,7 +57,7 @@ export default function RequestAccessPage() {
         {submitted ? (
           <div className="card-grad rounded-[var(--radius)] border border-border p-6 text-center space-y-4">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-neon-soft">
-              <Icon name="CheckCircle" className="h-6 w-6 text-neon" />
+              <Icon name="CircleCheck" className="h-6 w-6 text-neon" />
             </div>
             <div>
               <p className="font-medium">Request received!</p>

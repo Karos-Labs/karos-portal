@@ -271,7 +271,7 @@ function PlatformCard({
                 </Badge>
               ) : (
                 <Badge tone="neon">
-                  <Icon name="CheckCircle2" className="h-3 w-3" />
+                  <Icon name="CircleCheck" className="h-3 w-3" />
                   Connected
                 </Badge>
               )
@@ -596,7 +596,7 @@ function GoogleUnifiedCard({
                 </Badge>
               ) : (
                 <Badge tone="neon">
-                  <Icon name="CheckCircle2" className="h-3 w-3" />
+                  <Icon name="CircleCheck" className="h-3 w-3" />
                   Connected
                 </Badge>
               )
@@ -866,7 +866,7 @@ export function IntegrationsTab({
       {/* Popup error banner */}
       {popupError && (
         <div className="flex items-center gap-2.5 rounded-md border border-danger/30 bg-danger/10 px-4 py-3">
-          <Icon name="AlertCircle" className="h-4 w-4 shrink-0 text-danger" />
+          <Icon name="CircleAlert" className="h-4 w-4 shrink-0 text-danger" />
           <p className="text-sm text-danger">{popupError}</p>
           <button
             onClick={() => setPopupError(null)}

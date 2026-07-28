@@ -291,7 +291,7 @@ function ProactiveWelcome({
             )}
           >
             <Icon
-              name={taskFeedback.type === "success" ? "CheckCircle" : "TriangleAlert"}
+              name={taskFeedback.type === "success" ? "CircleCheck" : "TriangleAlert"}
               className="h-3 w-3 shrink-0"
             />
             {taskFeedback.message}

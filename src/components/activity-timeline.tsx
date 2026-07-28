@@ -101,7 +101,7 @@ const EVENT_CONFIG: Record<
     label: "Website Scraped",
   },
   INTEL_GENERATION: {
-    icon: "BarChart2",
+    icon: "ChartNoAxesColumn",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Intel Report",

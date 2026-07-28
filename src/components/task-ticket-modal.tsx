@@ -63,7 +63,7 @@ const STATUS_ICON: Record<TaskStatus, string> = {
   pending:        "Circle",
   in_progress:    "Clock",
   review_pending: "Eye",
-  completed:      "CheckCircle",
+  completed:      "CircleCheck",
   archived:       "Archive",
 };
 
@@ -209,7 +209,7 @@ function ReviewPanel({
       {/* Failed upload alert */}
       {failedUpload && (
         <div className="flex items-start gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
-          <Icon name="AlertTriangle" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
+          <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
           <div className="min-w-0">
             <p className="text-xs font-semibold text-danger">Send failed</p>
             {failedUploadError && (
@@ -225,7 +225,7 @@ function ReviewPanel({
       {/* Approve / publish failure */}
       {actionError && (
         <div className="flex items-start gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
-          <Icon name="AlertTriangle" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
+          <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
           <p className="text-xs text-danger break-words">{actionError}</p>
         </div>
       )}
@@ -369,7 +369,7 @@ function AiPlanSection({
             onClick={generate}
             className="flex items-center gap-1.5 rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1 text-[11px] font-medium text-neon transition-colors hover:bg-neon/20"
           >
-            <Icon name="Wand2" className="h-3 w-3" />
+            <Icon name="WandSparkles" className="h-3 w-3" />
             Generate Plan
           </button>
         )}
@@ -655,7 +655,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
               </span>
               {failedUpload && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold text-danger">
-                  <Icon name="AlertTriangle" className="h-2.5 w-2.5" />
+                  <Icon name="TriangleAlert" className="h-2.5 w-2.5" />
                   Send Failed
                 </span>
               )}

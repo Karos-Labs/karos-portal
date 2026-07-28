@@ -166,7 +166,7 @@ function ProfileTab({
           {error && <p className="text-xs text-danger">{error}</p>}
           {success && (
             <p className="flex items-center gap-1.5 text-xs text-neon">
-              <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+              <Icon name="CircleCheck" className="h-3.5 w-3.5" />
               Profile updated.
             </p>
           )}
@@ -352,7 +352,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
             {error && <p className="text-xs text-danger">{error}</p>}
             {success && (
               <p className="flex items-center gap-1.5 text-xs text-neon">
-                <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+                <Icon name="CircleCheck" className="h-3.5 w-3.5" />
                 Password updated successfully.
               </p>
             )}

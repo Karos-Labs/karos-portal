@@ -194,7 +194,7 @@ export function StrategyWarRoom({
         {/* Footer */}
         {status === "done" && (
           <div className="flex items-center gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
-            <Icon name="CheckCircle" className="h-4 w-4 shrink-0" />
+            <Icon name="CircleCheck" className="h-4 w-4 shrink-0" />
             Consensus reached - {created ?? 0} task{created === 1 ? "" : "s"} locked into your map.
           </div>
         )}

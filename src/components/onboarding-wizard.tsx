@@ -202,7 +202,7 @@ export function OnboardingWizard({
               <Label>LinkedIn</Label>
               {linkedInConnected ? (
                 <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-4 py-3">
-                  <Icon name="CheckCircle" className="h-4 w-4 text-neon" />
+                  <Icon name="CircleCheck" className="h-4 w-4 text-neon" />
                   <p className="text-sm text-foreground">Your LinkedIn account is connected.</p>
                   <Badge tone="neon" className="ml-auto">Connected</Badge>
                 </div>
@@ -290,7 +290,7 @@ export function OnboardingWizard({
               </Button>
               <Button onClick={finish} loading={isPending}>
                 Finish setup
-                <Icon name="CheckCircle" className="h-4 w-4" />
+                <Icon name="CircleCheck" className="h-4 w-4" />
               </Button>
             </div>
           </>

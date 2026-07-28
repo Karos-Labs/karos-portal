@@ -103,7 +103,7 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
           )}
         >
           <Icon
-            name={feedback.type === "success" ? "CheckCircle" : "TriangleAlert"}
+            name={feedback.type === "success" ? "CircleCheck" : "TriangleAlert"}
             className="h-3.5 w-3.5 shrink-0"
           />
           {feedback.message}

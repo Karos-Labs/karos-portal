@@ -315,7 +315,7 @@ export function TranscriptSignalButton({
   if (done) {
     return (
       <div className="flex items-center gap-1.5 text-xs text-neon">
-        <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+        <Icon name="CircleCheck" className="h-3.5 w-3.5" />
         Sent to Intel
       </div>
     );
