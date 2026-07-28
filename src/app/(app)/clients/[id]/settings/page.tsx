@@ -187,14 +187,19 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
       </div>
 
       {/* Invite teammates */}
-      {client.clientKeyId && (
+      {/* Handing out this key auto-approves whoever uses it into the workspace
+          with full access to documents, assets, agents and credits — so it is
+          not something every client user may mint teammates with (QA F56).
+          Staff and the workspace's own group admin only, and they get a rotate
+          control so a leaked key has a remediation path. */}
+      {client.clientKeyId && (isStaff || user.isGroupAdmin) && (
         <div className="mt-8">
           <Card>
             <CardTitle className="mb-1">Invite your team</CardTitle>
             <p className="mb-3 text-sm text-muted-2">
               Share this key with a teammate so they can join your workspace.
             </p>
-            <ClientKeyInline clientKeyId={client.clientKeyId} />
+            <ClientKeyInline clientKeyId={client.clientKeyId} clientId={client.id} canRotate />
           </Card>
         </div>
       )}

@@ -100,9 +100,20 @@ export async function createClientAction(input: {
   return { id };
 }
 
-/** Regenerate the clientKeyId for a client. Invalidates any previous join links. */
+/**
+ * Regenerate the clientKeyId for a client. Invalidates any previous join links.
+ *
+ * Staff, plus the workspace's OWN group admin: a valid client key auto-approves
+ * any signup straight into that workspace, so the person who can hand it out
+ * must also be able to rotate it after a leak (QA F56 — there was no
+ * remediation path on screen at all). Ordinary client users may do neither.
+ */
 export async function regenerateClientKeyAction(clientId: string): Promise<{ clientKeyId: string }> {
-  await requireStaff();
+  const user = await requireUser();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  const isOwnGroupAdmin =
+    user.role === "CLIENT_USER" && user.isGroupAdmin === true && user.clientId === clientId;
+  if (!isStaff && !isOwnGroupAdmin) throw new Error("Forbidden");
   const clientKeyId = `ck_${randomBytes(16).toString("base64url")}`;
   await updateClient(clientId, { clientKeyId });
   revalidatePath(`/clients/${clientId}`);
