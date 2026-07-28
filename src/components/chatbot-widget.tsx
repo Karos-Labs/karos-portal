@@ -489,7 +489,16 @@ function ProactiveWelcome({
   const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
 
   return (
-    <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+    // `grow` (flex: 1 1 auto), not `flex-1` (flex: 1 1 0%). The bottom sheet is
+    // now capped rather than fixed at 70dvh (CD-G8), so this region's container
+    // can have an INDEFINITE height — and a zero flex-basis is exactly the case
+    // where engines disagree about what an auto-height column flex container
+    // should size to. Chrome resolves it to the max-content contribution (so
+    // both spellings measure identically there), but `auto` states the intent
+    // outright and does not depend on that rule. Behaviour in the fixed-height
+    // desktop rail is unchanged: this is still the only growing item, so it
+    // takes all the free space and scrolls once it runs out.
+    <div className="flex grow flex-col gap-4 overflow-y-auto p-4">
       {/* Greeting */}
       <div className="flex items-start gap-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
@@ -556,7 +565,8 @@ function ChatEmptyState({
   send: (t: string) => void;
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center">
+    // `grow` for the same reason as ProactiveWelcome — see the note there.
+    <div className="flex grow flex-col items-center justify-center gap-3 px-4 py-8 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
         <Icon name="Sparkles" className="h-6 w-6" />
       </div>
@@ -761,7 +771,8 @@ export function ChatbotWidget({
               <ChatEmptyState clientName={clientName} send={send} />
             )
           ) : (
-            <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
+            /* `grow` for the same reason as ProactiveWelcome — see the note there. */
+            <div className="flex grow flex-col gap-3 overflow-y-auto p-4">
               {messages.map((msg) => (
                 <div
                   key={msg.id}
