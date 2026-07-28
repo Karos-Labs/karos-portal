@@ -65,17 +65,36 @@ export const CLIENT_ARCHIVE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
  */
 export function getClientArchiveAssets(assets: Asset[], opts?: { now?: number }): Asset[] {
   const now = opts?.now ?? Date.now();
-  const cutoff = now - CLIENT_ARCHIVE_WINDOW_MS;
-  const postedAt = (a: Asset) => a.publishedAt ?? a.updatedAt ?? a.createdAt;
   return assets
-    .filter((a) => {
-      if (isLaunchDeliverable(a)) return false;
-      if (a.status === "draft") return false;
-      if (!isAssetUnlockedForClient(a, now)) return false;
-      if (a.status === "published") return postedAt(a) >= cutoff;
-      return true;
-    })
-    .sort((a, b) => postedAt(b) - postedAt(a));
+    .filter((a) => isInClientArchive(a, now))
+    .sort((a, b) => archiveStampOf(b) - archiveStampOf(a));
+}
+
+/** The moment the archive sorts and ages a row by: when the client got it. */
+function archiveStampOf(a: Pick<Asset, "publishedAt" | "updatedAt" | "createdAt">): number {
+  return a.publishedAt ?? a.updatedAt ?? a.createdAt;
+}
+
+/**
+ * Archive membership as ONE predicate — the four rules above, in one place.
+ *
+ * Every surface that wants to say "this is (or will be) in your archive" has to
+ * ask THIS, not re-derive a subset. Two surfaces had grown one-rule replicas of
+ * the set (`status !== "draft"`), which answers "yes, linkable" for a
+ * future-dated post, a launch deliverable, and a published post that has already
+ * aged past the 30-day window — three ways to land a client on a screen that
+ * provably excludes the row they just clicked. A link is only honest if the
+ * asset behind it passes the same filter the archive itself applies.
+ */
+export function isInClientArchive(
+  a: Pick<Asset, "meta" | "status" | "scheduledAt" | "publishedAt" | "updatedAt" | "createdAt">,
+  now: number,
+): boolean {
+  if (isLaunchDeliverable(a)) return false;
+  if (a.status === "draft") return false;
+  if (!isAssetUnlockedForClient(a, now)) return false;
+  if (a.status === "published") return archiveStampOf(a) >= now - CLIENT_ARCHIVE_WINDOW_MS;
+  return true;
 }
 
 /**

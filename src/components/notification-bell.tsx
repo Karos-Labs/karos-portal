@@ -42,9 +42,10 @@ interface Props {
   /** Render trigger as an icon button (default) or a full-width labeled row (account menu). */
   variant?: "icon" | "row";
   /**
-   * True when the bell is rendered in the client shell. Review rows then point
-   * at the client's own Workspace archive — /jobs/[id] is staff-only and
-   * bounces a client back to their dashboard (QA F51).
+   * True when the bell is rendered in the client shell. Review rows then become
+   * non-navigable status lines: /jobs/[id] is staff-only and bounces a client
+   * back to their dashboard (QA F51), and the archive — the destination that
+   * replaced it — provably excludes the drafts these rows count.
    */
   viewerIsClient?: boolean;
 }
@@ -224,19 +225,21 @@ export function NotificationBell({
                   )}
 
                   {/* ── Agent review jobs ── */}
-                  {visibleJobs.map((j) => (
-                    <div
-                      key={j.jobId}
-                      className={cn(
-                        "flex items-start gap-1 transition-colors hover:bg-surface-2",
-                        now - j.updatedAt > STALE_MS && "opacity-60",
-                      )}
-                    >
-                      <Link
-                        href={viewerIsClient ? "/tasks?tab=archive" : `/jobs/${j.jobId}`}
-                        onClick={() => setOpen(false)}
-                        className="flex min-w-0 flex-1 gap-3 px-4 py-3"
-                      >
+                  {visibleJobs.map((j) => {
+                    /* A review job's output is a DRAFT, and no surface a client
+                       can reach lists a draft — the archive excludes drafts by
+                       design (asset-visibility.ts isInClientArchive), the
+                       calendar filters them out, /jobs is staff-only. So for a
+                       client this row is a status line, not a destination: the
+                       same ruling client-home-overview.tsx already applies to
+                       the identical fact ("N deliverables in review"), and the
+                       same treatment. The copy follows: approval is staff-only
+                       (approveAssetAction calls requireStaff), so "Waiting for
+                       your review" was asking the client for a sign-off the
+                       server would refuse. Staff keep the row as it was — for
+                       them the job page exists and the review IS theirs. */
+                    const body = (
+                      <>
                         <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
                           <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
                         </div>
@@ -249,12 +252,37 @@ export function NotificationBell({
                           </p>
                           <p className="mt-0.5 text-[11px] text-muted-2">
                             {j.clientName ? `${j.clientName} · ` : ""}
-                            Waiting for your review · {relativeTime(j.updatedAt)}
+                            {viewerIsClient
+                              ? "Your Karos team is reviewing it"
+                              : "Waiting for your review"}{" "}
+                            · {relativeTime(j.updatedAt)}
                           </p>
                         </div>
-                      </Link>
-                    </div>
-                  ))}
+                      </>
+                    );
+                    return (
+                      <div
+                        key={j.jobId}
+                        className={cn(
+                          "flex items-start gap-1",
+                          !viewerIsClient && "transition-colors hover:bg-surface-2",
+                          now - j.updatedAt > STALE_MS && "opacity-60",
+                        )}
+                      >
+                        {viewerIsClient ? (
+                          <div className="flex min-w-0 flex-1 gap-3 px-4 py-3">{body}</div>
+                        ) : (
+                          <Link
+                            href={`/jobs/${j.jobId}`}
+                            onClick={() => setOpen(false)}
+                            className="flex min-w-0 flex-1 gap-3 px-4 py-3"
+                          >
+                            {body}
+                          </Link>
+                        )}
+                      </div>
+                    );
+                  })}
 
                   {/* ── Transcript action items ── */}
                   {visibleActions.map((n) => (
