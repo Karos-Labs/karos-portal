@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { AgentMark } from "@/components/agent-identity";
@@ -250,18 +251,45 @@ function ScheduledRunCard({
   );
 }
 
+/** `Button` renders a <button>; an anchor can't nest one, so it borrows the look. */
+const REVIEW_BUTTON_CLASS =
+  "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-xs text-foreground transition-all duration-200 hover:border-foreground/30 hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25";
+
 function PastRunCard({
   run,
+  canOpenJob,
   onOpenLightbox,
+  onOpenAsset,
 }: {
   run: CalendarRun;
+  /** Staff. /jobs/[id] is staff-guarded and silently redirects a client to /dashboard. */
+  canOpenJob: boolean;
   onOpenLightbox: (images: AssetImage[], index: number) => void;
+  onOpenAsset: (assetId: string) => void;
 }) {
   const images = run.images ?? [];
   const textAssets = (run.assets ?? []).filter((a) => a.images.length === 0 && a.textPreview);
   const status = run.jobStatus
     ? JOB_STATUS_META[run.jobStatus] ?? { tone: "neutral" as const, label: "Done" }
     : { tone: "neutral" as const, label: "Done" };
+
+  // Where "review this" actually goes. Staff get the run detail page the
+  // notification bell already links to; a client gets the deliverable itself,
+  // in the same detail panel the post cards below open. Telling someone
+  // something is ready to review and giving them nothing to click is the gap.
+  const firstAssetId = run.assets?.[0]?.id;
+  const reviewable = run.jobStatus === "review";
+  const href = canOpenJob ? `/jobs/${run.id}` : null;
+  const openAsset = !canOpenJob && firstAssetId ? () => onOpenAsset(firstAssetId) : null;
+
+  const heading = (
+    <>
+      <p className="text-sm font-medium">{run.productName}</p>
+      {/* Never `run.jobStatus` raw — that prints the database enum. */}
+      <Badge tone={status.tone}>{status.label}</Badge>
+      {run.clientName && <Badge tone="neutral">{run.clientName}</Badge>}
+    </>
+  );
 
   return (
     // Product code and job id are staff bookkeeping — a tooltip the server only
@@ -272,15 +300,43 @@ function PastRunCard({
           <AgentMark identity={run.productName} icon={run.productIcon} className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-medium">{run.productName}</p>
-            {/* Never `run.jobStatus` raw — that prints the database enum. */}
-            <Badge tone={status.tone}>{status.label}</Badge>
-            {run.clientName && <Badge tone="neutral">{run.clientName}</Badge>}
-          </div>
+          {href ? (
+            <Link
+              href={href}
+              className="flex flex-wrap items-center gap-2 rounded-sm transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-1 focus-visible:ring-neon/50"
+            >
+              {heading}
+            </Link>
+          ) : openAsset ? (
+            <button
+              type="button"
+              onClick={openAsset}
+              className="flex flex-wrap items-center gap-2 rounded-sm text-left transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-1 focus-visible:ring-neon/50"
+            >
+              {heading}
+            </button>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">{heading}</div>
+          )}
           <p className="mt-0.5 text-xs text-muted-2">
             {run.outputSummary ? `${run.outputSummary} · ` : ""}Ran {timeStr(run.at)}
           </p>
+
+          {reviewable && (href || openAsset) && (
+            <div className="mt-2">
+              {href ? (
+                <Link href={href} className={REVIEW_BUTTON_CLASS}>
+                  Review deliverable
+                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
+                </Link>
+              ) : (
+                <Button size="sm" variant="outline" onClick={openAsset!}>
+                  Review deliverable
+                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+          )}
 
           {run.jobStatus === "failed" ? (
             <p className="mt-2 text-xs text-danger">The run failed and produced no assets.</p>
@@ -604,7 +660,15 @@ export function RunCalendar({
               )}
               {selectedPast.length > 0 && (
                 <Section title="Completed runs">
-                  {selectedPast.map((r) => <PastRunCard key={r.id} run={r} onOpenLightbox={openLightbox} />)}
+                  {selectedPast.map((r) => (
+                    <PastRunCard
+                      key={r.id}
+                      run={r}
+                      canOpenJob={canSchedule}
+                      onOpenLightbox={openLightbox}
+                      onOpenAsset={setOpenAssetId}
+                    />
+                  ))}
                 </Section>
               )}
               {selectedPosts.length > 0 && (
