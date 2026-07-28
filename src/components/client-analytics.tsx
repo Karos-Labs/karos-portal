@@ -16,13 +16,11 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 
 export function ClientAnalytics({
   clientId,
-  clientName,
   assets,
   jobs,
   integrations,
 }: {
   clientId: string;
-  clientName: string;
   assets: Asset[];
   jobs: Job[];
   integrations: ClientIntegration[];
@@ -42,11 +40,19 @@ export function ClientAnalytics({
   return (
     <div className="space-y-6">
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatCard label="Published" value={published} />
         <StatCard label="Scheduled" value={scheduled} />
         <StatCard label="Channels" value={activeChannels.length} />
         <StatCard label="Deliverables" value={assets.length} />
+        {/* QA F99: a whole bordered panel was spent on one sentence about agent
+            runs. It's a counter — it belongs in the counter row. QA F123: the
+            sentence also read "20 agent runs · last 9h ago", which isn't one. */}
+        <StatCard
+          label="Agent runs"
+          value={jobs.length}
+          hint={lastRun ? `Last run ${relativeTime(lastRun.createdAt)}` : "No runs yet"}
+        />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -117,23 +123,6 @@ export function ClientAnalytics({
           )}
         </Card>
       </div>
-
-      {/* Agent activity */}
-      <Card>
-        <div className="mb-1 flex items-center justify-between">
-          <CardTitle>Agent activity</CardTitle>
-          <Link href={`/clients/${clientId}/agents`} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline">
-            Open AI Agents
-          </Link>
-        </div>
-        <p className="text-sm text-muted-2">
-          {jobs.length === 0
-            ? `No agent runs yet for ${clientName}.`
-            : `${jobs.length} agent run${jobs.length === 1 ? "" : "s"}${
-                lastRun ? ` · last ${relativeTime(lastRun.createdAt)}` : ""
-              }.`}
-        </p>
-      </Card>
     </div>
   );
 }

@@ -16,7 +16,8 @@ import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { ClientAnalytics } from "@/components/client-analytics";
 import { AiInsights } from "@/components/ai-insights";
 import { ClientHomeOverview } from "@/components/client-home-overview";
-import { SeoGeoPanel } from "@/components/seo-geo-panel";
+import { SeoGeoPanel, SeoGeoScores, SeoGeoPlan } from "@/components/seo-geo-panel";
+import { ClientDashboardTabs } from "@/components/client-dashboard-tabs";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import type { ClientTask } from "@/lib/types";
 
@@ -69,61 +70,92 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     ? overviewAssets.filter((a) => !a.locked)
     : assets;
 
+  const analytics = (
+    <ClientAnalytics
+      clientId={client.id}
+      assets={analyticsAssets}
+      jobs={jobs}
+      integrations={integrations}
+    />
+  );
+
+  const visibilityPanel = (
+    <SeoGeoPanel
+      insights={seoGeo}
+      trackedCompetitors={trackedCompetitorRefs}
+      clientWebsite={client.website}
+      isClientViewer={isClientViewer}
+      // QA F20: the panel promises a "next snapshot" throughout, and the
+      // monthly schedule never fires for a client whose admin never turned
+      // it on — so the report ages silently forever. The panel needs to know.
+      intelScheduleEnabled={client.intelScheduleEnabled ?? false}
+      intelScheduleNextRunAt={client.intelScheduleNextRunAt ?? null}
+      isRefreshing={isAiProcessingLockActive(client)}
+      // QA F99/F124: for the client the scores and the plan are lifted above
+      // the fold (below), so the panel must not repeat them here.
+      hideScores={isClientViewer && !!seoGeo}
+      hidePlan={isClientViewer && !!seoGeo}
+    />
+  );
+
+  // Staff keep the plain single stack: this is the operator's read-everything
+  // view, and the findings below are about what a CLIENT lands on.
+  if (!isClientViewer) {
+    return (
+      <>
+        <PageHeader title="Dashboard" description={`Workspace overview for ${client.name}.`} />
+        <div className="space-y-8">
+          {/* CLIENT_USER already sees this via the (app) shell's own wrapper — only
+              render here for staff, who use the plain Sidebar shell with no such wrapper. */}
+          <AiProcessingBanner client={client} isAdmin={user.role === "KAROS_ADMIN"} />
+          <section className="space-y-3">{analytics}</section>
+          <section className="space-y-3">{visibilityPanel}</section>
+          <section className="space-y-3">
+            <AiInsights clientId={client.id} />
+          </section>
+        </div>
+      </>
+    );
+  }
+
+  // QA F99/F124 — client dashboard, in value order. What needs the client now
+  // (attention + recent), then the plain-English briefing, then the scores and
+  // the fix list those two are about. Everything heavy (the full performance
+  // breakdown and the full visibility report) moves behind a segmented control
+  // instead of five screens of always-expanded detail. The oversized "Welcome
+  // back" banner — the shallowest element on the page — becomes one line.
   return (
     <>
-      {isClientViewer ? (
-        <PageHeader
-          title={firstName ? `Welcome back, ${firstName}` : "Welcome back"}
-          description={`Here's what's happening across the ${client.name} workspace.`}
-        />
-      ) : (
-        <PageHeader title="Dashboard" description={`Workspace overview for ${client.name}.`} />
-      )}
+      <p className="mb-6 text-sm text-muted">
+        {firstName ? `Welcome back, ${firstName}` : "Welcome back"} — here&apos;s what&apos;s
+        happening across the {client.name} workspace.
+      </p>
       <div className="space-y-8">
-        {/* CLIENT_USER already sees this via the (app) shell's own wrapper — only
-            render here for staff, who use the plain Sidebar shell with no such wrapper. */}
-        {!isClientViewer && <AiProcessingBanner client={client} isAdmin={user.role === "KAROS_ADMIN"} />}
-        {isClientViewer && (
-          <section className="space-y-3">
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Overview</p>
-            <ClientHomeOverview tasks={tasks} assets={overviewAssets} />
-          </section>
-        )}
         <section className="space-y-3">
-          {isClientViewer && (
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Performance</p>
-          )}
-          <ClientAnalytics
-            clientId={client.id}
-            clientName={client.name}
-            assets={analyticsAssets}
-            jobs={jobs}
-            integrations={integrations}
-          />
+          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Overview</p>
+          <ClientHomeOverview tasks={tasks} assets={overviewAssets} />
         </section>
         <section className="space-y-3">
-          {isClientViewer && (
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Search &amp; AI visibility</p>
-          )}
-          <SeoGeoPanel
-            insights={seoGeo}
-            trackedCompetitors={trackedCompetitorRefs}
-            clientWebsite={client.website}
-            isClientViewer={isClientViewer}
-            // QA F20: the panel promises a "next snapshot" throughout, and the
-            // monthly schedule never fires for a client whose admin never turned
-            // it on — so the report ages silently forever. The panel needs to know.
-            intelScheduleEnabled={client.intelScheduleEnabled ?? false}
-            intelScheduleNextRunAt={client.intelScheduleNextRunAt ?? null}
-            isRefreshing={isAiProcessingLockActive(client)}
-          />
-        </section>
-        <section className="space-y-3">
-          {isClientViewer && (
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">AI Insights</p>
-          )}
+          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">AI Insights</p>
           <AiInsights clientId={client.id} />
         </section>
+        {seoGeo && (
+          <>
+            <section className="space-y-3">
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Visibility scores
+              </p>
+              <SeoGeoScores insights={seoGeo} />
+            </section>
+            <section className="space-y-3">
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Action plan
+              </p>
+              <SeoGeoPlan insights={seoGeo} isClientViewer />
+            </section>
+          </>
+        )}
+        <ClientDashboardTabs performance={analytics} visibility={visibilityPanel} />
       </div>
     </>
   );

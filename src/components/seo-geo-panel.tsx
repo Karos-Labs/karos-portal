@@ -315,6 +315,72 @@ function UnmeasuredEngineCard({ view }: { view: EngineView }) {
   );
 }
 
+/* ── Liftable sections (QA F99/F124) ─────────────────────────────────
+   The headline scores and the action plan are the two things a client
+   reacts to, and inside the full panel they sat four and six screens down.
+   They render here by default; the client dashboard mounts them above the
+   fold and passes hideScores/hidePlan so nothing is shown twice. */
+
+export function SeoGeoScores({ insights }: { insights: SeoGeoInsights }) {
+  const scores = buildScoreViews(insights);
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {scores.map((view) => (
+        <ScoreTile key={view.key} view={view} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The prioritized action plan, in the client's language. The client-facing
+ * `recommendations[]` (plain-English title + what it entails + owner, each row
+ * with a real Approve control that persists and posts to the activity timeline)
+ * is the primary view — `gaps[]` is documented INTERNAL and is demoted to a
+ * staff-only technical disclosure (dev-handoff §3b/§4, QA Fix 6/7).
+ */
+export function SeoGeoPlan({
+  insights,
+  isClientViewer = false,
+}: {
+  insights: SeoGeoInsights;
+  isClientViewer?: boolean;
+}) {
+  const trust = buildSnapshotTrust(insights);
+  const gaps = buildGapViews(insights.gaps, insights.clientId);
+  // `?? []` covers snapshots captured before the plan existed.
+  const recommendations = insights.recommendations ?? [];
+  return (
+    <Card>
+      <CardTitle className="mb-1">What we&apos;re fixing</CardTitle>
+      <p className="mb-4 text-xs text-muted-2">
+        Ordered by expected impact on your scores. Approve an item and your Karos team executes it.
+      </p>
+      {trust.planPending ? (
+        <EmptyState
+          icon={<Icon name="Radar" className="h-6 w-6" />}
+          title="Your action plan lands on the next refresh"
+          description="We measured this snapshot but haven't written its plan yet. Your next visibility refresh will list the actions here."
+        />
+      ) : (
+        <SeoGeoActionPlan
+          clientId={insights.clientId}
+          recommendations={recommendations}
+          approvedRecIds={insights.approvedRecIds ?? []}
+        />
+      )}
+      {!isClientViewer && gaps.length > 0 && (
+        <Disclosure
+          className="mt-4 border-t border-border pt-3"
+          summary={`Technical detail — the ${gaps.length} measured gap${gaps.length === 1 ? "" : "s"} behind this plan (staff only)`}
+        >
+          <GapList gaps={gaps} />
+        </Disclosure>
+      )}
+    </Card>
+  );
+}
+
 /* ── Panel ───────────────────────────────────────────────────────── */
 
 export function SeoGeoPanel({
@@ -325,6 +391,8 @@ export function SeoGeoPanel({
   intelScheduleEnabled = false,
   intelScheduleNextRunAt = null,
   isRefreshing = false,
+  hideScores = false,
+  hidePlan = false,
 }: {
   insights: SeoGeoInsights | null;
   /** The CURRENT tracked-5 (same selector as the sidebar) — keeps every panel
@@ -345,6 +413,12 @@ export function SeoGeoPanel({
   /** A refresh run holds the workspace lock right now — rendered in place on the
    *  capture strip instead of leaving a stale snapshot looking current. */
   isRefreshing?: boolean;
+  /** QA F99/F124: the client dashboard lifts the headline scores and the action
+   *  plan out of this panel so they sit above the fold instead of five screens
+   *  down. Both default to rendering here, so every other call site (and the
+   *  staff dashboard) is unchanged. */
+  hideScores?: boolean;
+  hidePlan?: boolean;
 }) {
   if (!insights) {
     return (
@@ -366,13 +440,8 @@ export function SeoGeoPanel({
     );
   }
 
-  const scores = buildScoreViews(insights);
   const engines = buildEngineViews(insights, trackedCompetitors, clientWebsite);
   const presence = buildPresence(insights);
-  const gaps = buildGapViews(insights.gaps, insights.clientId);
-  // The client-facing plan (dev-handoff §3b) — built and persisted on every capture run.
-  // `?? []` covers snapshots captured before the plan existed.
-  const recommendations = insights.recommendations ?? [];
   // CD-B4: one snapshot-trust view generalizing F1's narrow planPendingRefresh
   // guard. It answers both "were these numbers produced by the current pipeline?"
   // and "does this snapshot carry a written plan?" — the second being one symptom
@@ -457,11 +526,7 @@ export function SeoGeoPanel({
       )}
 
       {/* 1 · Headline scores, coverage shown separately from the grade */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {scores.map((view) => (
-          <ScoreTile key={view.key} view={view} />
-        ))}
-      </div>
+      {!hideScores && <SeoGeoScores insights={insights} />}
 
       {/* 2 · Where we looked: the "N of 5 engines" disclosure, all engines visible */}
       <Card>
@@ -621,38 +686,8 @@ export function SeoGeoPanel({
         </Card>
       )}
 
-      {/* 5 · The prioritized action plan, in the client's language.
-          The client-facing `recommendations[]` (plain-English title + what it entails +
-          owner, each row with a real Approve control that persists and posts to the
-          activity timeline) is the primary view — `gaps[]` is documented INTERNAL and is
-          demoted to a staff-only technical disclosure (dev-handoff §3b/§4, QA Fix 6/7). */}
-      <Card>
-        <CardTitle className="mb-1">What we&apos;re fixing</CardTitle>
-        <p className="mb-4 text-xs text-muted-2">
-          Ordered by expected impact on your scores. Approve an item and your Karos team executes it.
-        </p>
-        {trust.planPending ? (
-          <EmptyState
-            icon={<Icon name="Radar" className="h-6 w-6" />}
-            title="Your action plan lands on the next refresh"
-            description="We measured this snapshot but haven't written its plan yet. Your next visibility refresh will list the actions here."
-          />
-        ) : (
-          <SeoGeoActionPlan
-            clientId={insights.clientId}
-            recommendations={recommendations}
-            approvedRecIds={insights.approvedRecIds ?? []}
-          />
-        )}
-        {!isClientViewer && gaps.length > 0 && (
-          <Disclosure
-            className="mt-4 border-t border-border pt-3"
-            summary={`Technical detail — the ${gaps.length} measured gap${gaps.length === 1 ? "" : "s"} behind this plan (staff only)`}
-          >
-            <GapList gaps={gaps} />
-          </Disclosure>
-        )}
-      </Card>
+      {/* 5 · The prioritized action plan, in the client's language. */}
+      {!hidePlan && <SeoGeoPlan insights={insights} isClientViewer={isClientViewer} />}
 
       {/* 6 · Methodology (QA F18): three named sections, three Cards. These used to
           be one Card whose only affordance was a collapsed row labelled "The 20
