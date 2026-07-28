@@ -1,4 +1,5 @@
 import "server-only";
+import { jobTitleForClient } from "@/lib/job-title";
 
 import { revalidatePath } from "next/cache";
 import { createJob, deleteJob, updateJob } from "@/lib/data";
@@ -104,7 +105,7 @@ export async function submitCustomAgentRun(args: {
     clientId: client.id,
     agentId: "agent-service",
     agentName: agent.name,
-    title: `${agent.name} - ${client.name}`,
+    title: jobTitleForClient(agent.name, client.name),
     status: "queued",
     input: { agent: agent.name, prompt },
     assetIds: [],

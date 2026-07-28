@@ -1,4 +1,5 @@
 import "server-only";
+import { jobTitleForClient } from "@/lib/job-title";
 
 import { createJob, getClient, getContextItem, updateJob } from "@/lib/data";
 import {
@@ -105,7 +106,7 @@ export async function submitManagedJob(
     clientId: input.clientId,
     agentId: "agent-service",
     agentName: label,
-    title: `${label} - ${client.name}`,
+    title: jobTitleForClient(label, client.name),
     status: "queued",
     input: inputSummary,
     assetIds: [],

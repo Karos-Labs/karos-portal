@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { z } from "zod";
+import { assetTitleFromJobTitle } from "@/lib/job-title";
 import {
   claimExternalJobCompletion,
   createAsset,
@@ -318,15 +319,12 @@ export async function POST(req: NextRequest) {
           ? hintedType
           : (ASSET_TYPE_MAP[payload.task_type] ?? "note");
       const platform = payload.metadata?.platform || undefined;
-      // job.title is `${job.agentName} — ${clientName}` (submit-managed.ts /
-      // custom-agent-actions.ts). Strip only that exact appended " — <client>"
-      // suffix — never a blind split on " — " (agent/client names may contain
-      // legitimate em-dashes). The job doc keeps its full title.
-      const clientSuffix = " — ";
-      const assetTitle =
-        job.agentName && job.title.startsWith(job.agentName + clientSuffix)
-          ? job.agentName
-          : job.title;
+      // Strip the appended " - <client>" the submit paths add, so a client's
+      // own workspace doesn't put their company name in half of every title.
+      // Separator and strip share one definition (lib/job-title.ts) — this
+      // looked for an em dash while every builder wrote a hyphen, so it never
+      // fired for any run from any path.
+      const assetTitle = assetTitleFromJobTitle(job.title, job.agentName);
       // Only real catalog products get a template chip; "custom" runs have no
       // managed product (getManagedProduct would fall back to the first one).
       const managedProduct = MANAGED_PRODUCTS.find((p) => p.taskType === payload.task_type);
