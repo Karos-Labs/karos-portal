@@ -11,8 +11,11 @@
  *   5. Upserts the branding-guidelines context doc.
  *   6. Injects a BRAND_SYNC block into the brand-voice context doc.
  *
- * Run with:
- *   npx tsx scripts/backfill-branding.ts
+ *   npx tsx scripts/backfill-branding.ts            # dry run — prints the plan
+ *   npx tsx scripts/backfill-branding.ts --apply    # writes
+ *
+ * DRY RUN IS THE DEFAULT ON PURPOSE. The credentials in .env.local point at
+ * production Firestore. Read the printed plan first.
  *
  * The script reads Firebase credentials from .env.local automatically.
  */
@@ -47,7 +50,7 @@ loadEnvFile(resolve(process.cwd(), ".env"));
 
 // ── Firebase Admin SDK ───────────────────────────────────────────────────────
 import { initializeApp, getApps, cert } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
 function initAdmin() {
   if (getApps().length) return;
@@ -69,9 +72,8 @@ function initAdmin() {
   );
 }
 
-initAdmin();
-const db = getFirestore();
-db.settings({ ignoreUndefinedProperties: true });
+/** Assigned by main() — never at module scope, so importing opens no connection. */
+let db: Firestore;
 
 // ── Types (inlined to avoid Next.js server-only imports) ─────────────────────
 interface BrandingGuidelines {
@@ -318,7 +320,7 @@ async function getContextDoc(clientId: string, docType: string): Promise<Context
   return { id: d.id, ...(d.data() as Omit<ContextDoc, "id">) };
 }
 
-async function upsertContextDoc(doc: Omit<ContextDoc, "id">): Promise<void> {
+async function upsertContextDoc(doc: Omit<ContextDoc, "id">, apply: boolean): Promise<void> {
   const snap = await db
     .collection("clientContextDocs")
     .where("clientId", "==", doc.clientId)
@@ -326,6 +328,7 @@ async function upsertContextDoc(doc: Omit<ContextDoc, "id">): Promise<void> {
     .where("tier", "==", doc.tier)
     .limit(1)
     .get();
+  if (!apply) return;
   if (!snap.empty) {
     await snap.docs[0].ref.update({ ...doc });
   } else {
@@ -335,6 +338,15 @@ async function upsertContextDoc(doc: Omit<ContextDoc, "id">): Promise<void> {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
+  const apply = process.argv.includes("--apply");
+  initAdmin();
+  db = getFirestore();
+  db.settings({ ignoreUndefinedProperties: true });
+
+  console.log(
+    apply ? "APPLYING branding backfill\n" : "DRY RUN — nothing is written. Pass --apply to write.\n",
+  );
+
   console.log("🔍 Fetching all clients from Firestore…");
   const clients = await listAllClients();
   console.log(`   Found ${clients.length} client(s)\n`);
@@ -376,36 +388,44 @@ async function main() {
 
       await Promise.all([
         // Update client record
-        db.collection("clients").doc(client.id).update({ brandingGuidelines: fullGuidelines }),
+        apply
+          ? db.collection("clients").doc(client.id).update({ brandingGuidelines: fullGuidelines })
+          : Promise.resolve(),
 
         // Upsert branding-guidelines context doc
-        upsertContextDoc({
-          clientId: client.id,
-          docType: "branding-guidelines",
-          tier: brandingDoc?.tier ?? "internal",
-          content: brandingToContextDocContent(fullGuidelines, client.name),
-          version: (brandingDoc?.version ?? 0) + 1,
-          sources: brandingDoc?.sources,
-          createdAt: brandingDoc?.createdAt ?? now,
-          updatedAt: now,
-        }),
+        upsertContextDoc(
+          {
+            clientId: client.id,
+            docType: "branding-guidelines",
+            tier: brandingDoc?.tier ?? "internal",
+            content: brandingToContextDocContent(fullGuidelines, client.name),
+            version: (brandingDoc?.version ?? 0) + 1,
+            sources: brandingDoc?.sources,
+            createdAt: brandingDoc?.createdAt ?? now,
+            updatedAt: now,
+          },
+          apply,
+        ),
 
         // Inject BRAND_SYNC block into brand-voice doc (if it exists)
         voiceDoc
-          ? upsertContextDoc({
-              clientId: client.id,
-              docType: "brand-voice",
-              tier: voiceDoc.tier,
-              content: injectBrandVoiceSection(voiceDoc.content, buildBrandVoiceSection(fullGuidelines)),
-              version: voiceDoc.version + 1,
-              sources: voiceDoc.sources,
-              createdAt: voiceDoc.createdAt,
-              updatedAt: now,
-            })
+          ? upsertContextDoc(
+              {
+                clientId: client.id,
+                docType: "brand-voice",
+                tier: voiceDoc.tier,
+                content: injectBrandVoiceSection(voiceDoc.content, buildBrandVoiceSection(fullGuidelines)),
+                version: voiceDoc.version + 1,
+                sources: voiceDoc.sources,
+                createdAt: voiceDoc.createdAt,
+                updatedAt: now,
+              },
+              apply,
+            )
           : Promise.resolve(),
       ]);
 
-      console.log(`${label} ✅ ${status} — saved to Firestore`);
+      console.log(`${label} ✅ ${status} — ${apply ? "saved to Firestore" : "planned (nothing written)"}`);
       summary[status]++;
     } catch (err) {
       console.error(`${label} ❌ Failed:`, err);
@@ -422,7 +442,11 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+// Only when invoked directly — importing this file must never open a Firestore
+// connection, let alone write to one.
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

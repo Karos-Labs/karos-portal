@@ -3,11 +3,11 @@
  * no longer exists — the leftovers of pre-cascade client deletions that used to
  * spill into cross-client staff views (task board, assets, calendar, jobs).
  *
- * DRY-RUN BY DEFAULT: prints what it would delete, grouped by dead clientId.
- * Pass --execute to actually delete (permanent — there is no undo).
+ *   npx tsx scripts/purge-orphaned-client-docs.ts            # dry run — prints the plan
+ *   npx tsx scripts/purge-orphaned-client-docs.ts --apply    # deletes (permanent — there is no undo)
  *
- *   npx tsx scripts/purge-orphaned-client-docs.ts
- *   npx tsx scripts/purge-orphaned-client-docs.ts --execute
+ * DRY RUN IS THE DEFAULT ON PURPOSE. The credentials in .env.local point at
+ * production Firestore. Read the printed plan first.
  *
  * Keep the collection list in step with CLIENT_SCOPED_COLLECTIONS /
  * CLIENT_DOC_COLLECTIONS in src/lib/data.ts (inlined here because data.ts is
@@ -74,7 +74,7 @@ const CLIENT_DOC_COLLECTIONS = [
 ];
 
 async function main() {
-  const execute = process.argv.includes("--execute");
+  const apply = process.argv.includes("--apply");
   if (!getApps().length) {
     const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
     if (!raw) throw new Error("FIREBASE_SERVICE_ACCOUNT_KEY not set");
@@ -84,7 +84,9 @@ async function main() {
 
   const clientsSnap = await db.collection("clients").get();
   const liveIds = new Set(clientsSnap.docs.map((d) => d.id));
-  console.log(`${liveIds.size} live clients${execute ? "  [EXECUTE — deletions are permanent]" : "  [DRY RUN]"}`);
+  console.log(
+    `${liveIds.size} live clients${apply ? "  [APPLY — deletions are permanent]" : "  [DRY RUN — nothing is deleted. Pass --apply to delete.]"}`,
+  );
 
   const byDeadClient = new Map<string, Array<{ coll: string; ref: FirebaseFirestore.DocumentReference; label: string }>>();
 
@@ -123,8 +125,8 @@ async function main() {
   }
   console.log(`\n${total} orphaned documents across ${byDeadClient.size} dead client id(s).`);
 
-  if (!execute) {
-    console.log("Dry run — nothing deleted. Re-run with --execute to purge.");
+  if (!apply) {
+    console.log("Dry run — nothing deleted. Re-run with --apply to purge.");
     return;
   }
 
@@ -139,7 +141,11 @@ async function main() {
   console.log(`Purged ${deleted} orphaned documents.`);
 }
 
-main().then(() => process.exit(0)).catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Only when invoked directly — importing this file must never open a Firestore
+// connection, let alone write to one.
+if (require.main === module) {
+  main().then(() => process.exit(0)).catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

@@ -70,7 +70,7 @@ changed on branch `claude/competitor-tracking-audit-1cee56`.
 - **Presence split aligned** with the intent classifier (subtitle and engine cards can
   no longer disagree), plus pluralization fix, and the previously-dead citation
   leaderboard now renders ("Who the engines quote as sources").
-- **Lab client import.** `npx tsx scripts/import-lab-client.ts <slug> [--dry-run]`
+- **Lab client import.** `npx tsx scripts/import-lab-client.ts <slug> [--apply]` (dry run by default)
   imports a karos-agents client from a local checkout: client record + brand colors +
   logo, profile docs → internal context docs, `competitor-tracking.json` → competitor
   pool (tier-mapped so direct rivals win the tracked-5), and every

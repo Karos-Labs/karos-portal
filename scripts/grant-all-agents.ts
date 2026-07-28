@@ -38,6 +38,10 @@ async function main() {
   const revokeArg = process.argv.find((a) => a.startsWith("--revoke-ids="));
   const revokeIds = revokeArg ? revokeArg.split("=")[1].split(",").filter(Boolean) : [];
 
+  console.log(
+    apply ? "APPLYING agent grants\n" : "DRY RUN — nothing is written. Pass --apply to write.\n",
+  );
+
   loadEnv();
   const { initializeApp, cert } = await import("firebase-admin/app");
   const { getFirestore, FieldValue } = await import("firebase-admin/firestore");

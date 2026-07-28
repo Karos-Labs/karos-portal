@@ -20,9 +20,12 @@
  *      the UI's lab-import screen shows these runs as already imported.
  *
  * Run:
- *   npx tsx scripts/import-lab-client.ts geektime
- *   npx tsx scripts/import-lab-client.ts geektime --dry-run
+ *   npx tsx scripts/import-lab-client.ts geektime            # dry run — prints the plan
+ *   npx tsx scripts/import-lab-client.ts geektime --apply    # writes
  *   npx tsx scripts/import-lab-client.ts geektime --lab-root /path/to/karos-agents
+ *
+ * DRY RUN IS THE DEFAULT ON PURPOSE. The credentials in .env.local point at
+ * production Firestore. Read the printed plan first.
  *
  * Reads Firebase credentials from .env.local (same pattern as
  * backfill-branding.ts). Requires NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET for the
@@ -249,13 +252,19 @@ function titleCaseFormat(s: string): string {
 async function main() {
   const args = process.argv.slice(2);
   const slug = args.find((a) => !a.startsWith("--")) ?? "";
-  const dryRun = args.includes("--dry-run");
+  const apply = args.includes("--apply");
+  // Dry run is the default; `db` stays null below so no write can slip through.
+  const dryRun = !apply;
   const labRootArg = args.find((a) => a.startsWith("--lab-root="))?.split("=")[1];
   const industryArg = args.find((a) => a.startsWith("--industry="))?.split("=")[1];
   if (!slug) {
-    console.error("Usage: npx tsx scripts/import-lab-client.ts <slug> [--dry-run] [--lab-root=PATH] [--industry=TEXT]");
+    console.error("Usage: npx tsx scripts/import-lab-client.ts <slug> [--apply] [--lab-root=PATH] [--industry=TEXT]");
     process.exit(1);
   }
+
+  console.log(
+    apply ? "APPLYING lab-client import\n" : "DRY RUN — nothing is written. Pass --apply to write.\n",
+  );
 
   const labRoot = resolve(labRootArg ?? join(homedir(), "karos-agents"));
   const clientDir = join(labRoot, "clients", slug);
@@ -636,7 +645,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error("\n✘ Import failed:", err);
-  process.exit(1);
-});
+// Only when invoked directly — importing this file must never open a Firestore
+// connection, let alone write to one.
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

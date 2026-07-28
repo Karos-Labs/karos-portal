@@ -13,10 +13,11 @@
  *   - Report-only groups keep the row with the most measured llmMentions
  *     (then the newest); the rest are deleted.
  *
- * DRY-RUN BY DEFAULT — pass --execute to apply.
+ *   npx tsx scripts/dedupe-competitors.ts            # dry run — prints the plan
+ *   npx tsx scripts/dedupe-competitors.ts --apply    # writes
  *
- *   npx tsx scripts/dedupe-competitors.ts
- *   npx tsx scripts/dedupe-competitors.ts --execute
+ * DRY RUN IS THE DEFAULT ON PURPOSE. The credentials in .env.local point at
+ * production Firestore. Read the printed plan first.
  */
 
 import { readFileSync } from "node:fs";
@@ -49,7 +50,7 @@ import type { ClientCompetitor } from "../src/lib/types";
 type Row = ClientCompetitor & { _ref: FirebaseFirestore.DocumentReference };
 
 async function main() {
-  const execute = process.argv.includes("--execute");
+  const apply = process.argv.includes("--apply");
   if (!getApps().length) {
     const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
     if (!raw) throw new Error("FIREBASE_SERVICE_ACCOUNT_KEY not set");
@@ -57,6 +58,10 @@ async function main() {
   }
   const db = getFirestore();
   db.settings({ ignoreUndefinedProperties: true });
+
+  console.log(
+    apply ? "APPLYING competitor dedupe\n" : "DRY RUN — nothing is written. Pass --apply to write.\n",
+  );
 
   const clientsSnap = await db.collection("clients").get();
   const clientNames = new Map(clientsSnap.docs.map((d) => [d.id, (d.data().name as string) ?? d.id]));
@@ -142,8 +147,8 @@ async function main() {
     return;
   }
   console.log(`\n${groups} duplicate group(s), ${deletions} row(s) to remove.`);
-  if (!execute) {
-    console.log("Dry run — nothing changed. Re-run with --execute to merge.");
+  if (!apply) {
+    console.log("Dry run — nothing changed. Re-run with --apply to merge.");
     return;
   }
   for (const op of ops) op();
@@ -151,7 +156,11 @@ async function main() {
   console.log("Merged.");
 }
 
-main().then(() => process.exit(0)).catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Only when invoked directly — importing this file must never open a Firestore
+// connection, let alone write to one.
+if (require.main === module) {
+  main().then(() => process.exit(0)).catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

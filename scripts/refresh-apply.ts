@@ -792,6 +792,10 @@ async function main() {
     return;
   }
 
+  console.log(
+    apply ? "APPLYING refresh proposal\n" : "DRY RUN — nothing is written. Pass --apply to write.\n",
+  );
+
   const proposalPath = path.resolve(process.cwd(), fileArg);
   let proposal: unknown;
   try {

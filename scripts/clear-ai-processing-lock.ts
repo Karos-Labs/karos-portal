@@ -3,8 +3,11 @@
  * generation cycle died — out-of-credits, dev-server restart, etc. — without
  * reaching its `finally` release).
  *
- * Run with:
- *   npx tsx scripts/clear-ai-processing-lock.ts "<client name or id>"
+ *   npx tsx scripts/clear-ai-processing-lock.ts "<client name or id>"            # dry run — prints the plan
+ *   npx tsx scripts/clear-ai-processing-lock.ts "<client name or id>" --apply    # writes
+ *
+ * DRY RUN IS THE DEFAULT ON PURPOSE. The credentials in .env.local point at
+ * production Firestore. Read the printed plan first.
  *
  * Reads Firebase credentials from .env.local automatically.
  */
@@ -59,14 +62,21 @@ function initAdmin() {
 }
 
 async function main() {
-  const query = process.argv[2];
+  const apply = process.argv.includes("--apply");
+  // Positional selector — skip flags so `--apply` is never read as the query.
+  const query = process.argv.slice(2).find((a) => !a.startsWith("--"));
   if (!query) {
-    console.error('Usage: npx tsx scripts/clear-ai-processing-lock.ts "<client name or id>"');
+    console.error('Usage: npx tsx scripts/clear-ai-processing-lock.ts "<client name or id>" [--apply]');
     process.exit(1);
+    return;
   }
 
   initAdmin();
   const db = getFirestore();
+
+  console.log(
+    apply ? "APPLYING ai-processing lock clear\n" : "DRY RUN — nothing is written. Pass --apply to write.\n",
+  );
 
   const byId = await db.collection("clients").doc(query).get();
   const matches = byId.exists
@@ -91,15 +101,23 @@ async function main() {
   console.log(`  isAiProcessing: ${data.isAiProcessing}`);
   console.log(`  aiProcessingStartedAt: ${data.aiProcessingStartedAt ? new Date(data.aiProcessingStartedAt).toISOString() : "—"}`);
 
-  await doc.ref.set(
-    { isAiProcessing: false, aiProcessingStartedAt: null, aiProcessingError: null },
-    { merge: true },
-  );
-  console.log("✅ Lock cleared. Regenerate / Refresh Task Map are unlocked.");
+  if (apply) {
+    await doc.ref.set(
+      { isAiProcessing: false, aiProcessingStartedAt: null, aiProcessingError: null },
+      { merge: true },
+    );
+    console.log("✅ Lock cleared. Regenerate / Refresh Task Map are unlocked.");
+  } else {
+    console.log("Would clear the lock. Re-run with --apply to write.");
+  }
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+// Only when invoked directly — importing this file must never open a Firestore
+// connection, let alone write to one.
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
