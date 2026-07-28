@@ -4,7 +4,13 @@ import { getAsset, listPlannedScheduledRuns } from "@/lib/data";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
-import { clientSafeRefusal, isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
+import { hasRedditAgentIntake } from "@/lib/agent-service/reddit-agent-context";
+import {
+  clientSafeRefusal,
+  isLinkedInAgentIdentity,
+  isRedditAgentIdentity,
+  isXAgentIdentity,
+} from "@/lib/custom-agent-launch";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { runRowLabel, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgentFeedback } from "@/lib/data-client-agents";
@@ -194,6 +200,19 @@ export async function buildAgentSetup(
             ready: await hasLinkedInAgentIntake(clientId, agent.key),
             href: `/clients/${clientId}/linkedin-agent`,
             label: "LinkedIn agent data",
+          },
+        ];
+      }
+      if (isRedditAgentIdentity(agent.key)) {
+        // e15 is intake-driven exactly like the other two. Without this entry
+        // its card computes `ready: true` by omission, which is the one answer
+        // that cannot be right for an agent the submit core hard-gates.
+        return [
+          agent.id,
+          {
+            ready: await hasRedditAgentIntake(clientId),
+            href: `/clients/${clientId}/reddit-agent`,
+            label: "Reddit agent data",
           },
         ];
       }

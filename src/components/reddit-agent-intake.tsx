@@ -21,6 +21,10 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { SavedFormCard } from "@/components/saved-form-card";
+import { JobStatusBadge } from "@/components/job-status";
+import { laneLabel } from "@/lib/draft-lane-label";
+import { formatDate, relativeTime } from "@/lib/utils";
+import type { JobStatus } from "@/lib/types";
 import {
   addRedditDraftFeedbackAction,
   saveRedditCompanyIntakeAction,
@@ -50,7 +54,8 @@ export interface RedditFeedbackRowView {
 
 export interface RedditRunRowView {
   id: string;
-  status: string;
+  /** Typed so the row renders through JobStatusBadge, never the raw word. */
+  status: JobStatus;
   createdAt: number;
   href?: string;
 }
@@ -294,23 +299,36 @@ function FeedbackBox({
   return (
     <Card className="p-5">
       <CardTitle>Feedback</CardTitle>
+      {/* F28: the archive holds APPROVED work (F149 filters it to approved,
+          non-future items), so a fresh batch is not there yet and a client sent
+          looking for one finds an empty page. Name the approval step, and link
+          the archive rather than describing where it might be. */}
       <p className="mt-1 text-sm text-muted">
-        Tell us what is working and what is not, in your own words. It goes straight into the next
-        run. Saying whether you posted an individual reply happens on the reply itself, in your
-        Workspace archive, and that is the signal that sharpens the voice fastest.
+        Tell us what is working and what is not, in your own words. It goes straight into the
+        agent&apos;s next run. Once your Karos team approves a batch, saying whether you posted a
+        reply happens on the reply itself, in{" "}
+        <a href="/tasks?tab=archive" className="underline hover:text-foreground">
+          your archive
+        </a>
+        {" "}— and that is the signal that sharpens the voice fastest.
       </p>
       {runs.length > 0 ? (
-        <ul className="mt-3 space-y-1">
+        /* The run's state through the app's own mapper, and its date through
+           the app's own formatter. This printed the raw database word
+           ("review", "queued", "failed") beside an ISO machine date, in
+           client-facing copy — the same rows the X and LinkedIn intakes render
+           properly. */
+        <ul className="mt-3 space-y-1.5">
           {runs.slice(0, 4).map((r) => (
-            <li key={r.id} className="text-xs text-muted">
+            <li key={r.id} className="flex items-center gap-2 text-xs text-muted">
               {r.href ? (
                 <a href={r.href} className="underline hover:text-foreground">
-                  Run {new Date(r.createdAt).toISOString().slice(0, 10)}
+                  Run {formatDate(r.createdAt)}
                 </a>
               ) : (
-                <span>Run {new Date(r.createdAt).toISOString().slice(0, 10)}</span>
-              )}{" "}
-              · {r.status}
+                <span>Run {formatDate(r.createdAt)}</span>
+              )}
+              <JobStatusBadge status={r.status} />
             </li>
           ))}
         </ul>
@@ -327,7 +345,7 @@ function FeedbackBox({
           <Button onClick={submit} disabled={pending || !note.trim()}>
             {pending ? "Sending…" : "Send feedback"}
           </Button>
-          {sent ? <span className="text-xs text-muted">Sent - it feeds the next run.</span> : null}
+          {sent ? <span className="text-xs text-muted">Sent — it feeds the next run.</span> : null}
         </div>
       </div>
       {recent.length > 0 ? (
@@ -339,8 +357,9 @@ function FeedbackBox({
               </span>
               {f.reasonCode ? ` · ${REASON_LABEL[f.reasonCode] ?? f.reasonCode}` : ""}
               {f.subreddit ? ` · ${f.subreddit}` : ""}
-              {f.draftRef ? ` · ${f.draftRef}` : ""} ·{" "}
-              {new Date(f.createdAt).toISOString().slice(0, 10)}
+              {/* draftRef is stored raw (it is the feedback log's join key) and
+                  humanized only here, the same way every other reader does it. */}
+              {f.draftRef ? ` · ${laneLabel(f.draftRef)}` : ""} · {relativeTime(f.createdAt)}
             </li>
           ))}
         </ul>

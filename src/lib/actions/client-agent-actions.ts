@@ -68,12 +68,22 @@ const TEMPLATE_KEY_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
  *
  * The X agent deliberately owns NONE: it produces a weekly batch and syncs to
  * the calendar as a daily pick-of-3 (§4.5), so its slots present choices and
- * must never re-date chain assets. Everything else maps by identity, with the
- * social platforms as the catch-all — that is the same signal §9's backfill
- * uses to decide an agent is a content platform at all.
+ * must never re-date chain assets.
+ *
+ * Reddit owns none either, for a different reason. Its deliverable is a set of
+ * REPLIES to threads that exist right now: the value of an answer is tied to a
+ * live discussion, and re-dating one to fill a calendar gap posts it into a
+ * thread that has moved on. It also reaches the identity map as a social
+ * platform, so without this it would claim the social family — and then a
+ * client running Reddit alongside Instagram would have one of the two silently
+ * owning the other's chain days.
+ *
+ * Everything else maps by identity, with the social platforms as the catch-all
+ * — the same signal §9's backfill uses to decide an agent is a content
+ * platform at all.
  */
 function chainFamilyForAgent(agent: Pick<CustomAgent, "key" | "name">): ClientAgent["chainFamily"] {
-  if (isXAgentIdentity(agent.key)) return undefined;
+  if (isXAgentIdentity(agent.key) || isRedditAgentIdentity(agent.key)) return undefined;
   const identity = `${agent.key} ${agent.name}`.toLowerCase();
   if (/newsletter/.test(identity)) return "email";
   if (/blog|article/.test(identity)) return "article";

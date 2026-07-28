@@ -34,6 +34,8 @@ import {
   type RedditParsedAccount,
   type RedditParsedDraft,
 } from "@/lib/reddit-drafts";
+import { laneLabel } from "@/lib/draft-lane-label";
+import { stripInlineMarkdown } from "@/lib/doc-render";
 import { splitMetaLinks } from "@/lib/draft-meta";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
@@ -74,7 +76,7 @@ function VerdictBadge({ draft }: { draft: RedditParsedDraft }) {
   if (!draft.verdict) return null;
   const valueOnly = draft.verdict === "value-only";
   return (
-    <span title={draft.verdictNote ?? undefined}>
+    <span title={draft.verdictNote ? stripInlineMarkdown(draft.verdictNote) : undefined}>
       <Badge tone={valueOnly ? "warning" : "info"}>
         {valueOnly ? "Value only, no mention" : "Mention ok, disclosed"}
       </Badge>
@@ -217,7 +219,14 @@ function DraftCard({
 
       <div className="mt-2 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-foreground">{draft.threadTitle ?? draft.formula}</p>
+          {/* The lab's own lane vocabulary ("Draft 1 · Thorough value
+              answer") is production shorthand, not something a client has
+              any way to read (F70) — humanized here, at the render
+              boundary only, because the RAW formula is the draftRef the
+              feedback actions log against. */}
+          <p className="text-sm font-medium text-foreground">
+            {draft.threadTitle ? stripInlineMarkdown(draft.threadTitle) : laneLabel(draft.formula)}
+          </p>
           {draft.posted ? <p className="mt-0.5 text-[11px] text-muted-2">Thread posted {draft.posted}</p> : null}
         </div>
         {draft.threadUrl ? (
@@ -232,8 +241,15 @@ function DraftCard({
         ) : null}
       </div>
 
-      {draft.whyThread ? <p className="mt-2 text-xs text-muted">Why this thread: {draft.whyThread}</p> : null}
-      {draft.laneNote ? <p className="mt-1 text-xs text-muted">{draft.laneNote}</p> : null}
+      {/* Commentary ABOUT the draft is de-marked; the reply body and the
+          disclosure below are not, because those are what the client posts
+          and Reddit renders markdown natively. */}
+      {draft.whyThread ? (
+        <p className="mt-2 text-xs text-muted">Why this thread: {stripInlineMarkdown(draft.whyThread)}</p>
+      ) : null}
+      {draft.laneNote ? (
+        <p className="mt-1 text-xs text-muted">{stripInlineMarkdown(draft.laneNote)}</p>
+      ) : null}
 
       <div className="mt-3 rounded-md border border-border bg-background p-4">
         <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{draft.text}</p>
@@ -249,7 +265,7 @@ function DraftCard({
       {draft.whySafe ? (
         <p className="mt-2 text-xs text-muted">
           <Icon name="Check" className="mr-1 inline h-3 w-3 text-success" />
-          Safe here: {draft.whySafe}
+          Safe here: {stripInlineMarkdown(draft.whySafe)}
         </p>
       ) : null}
 
@@ -269,7 +285,7 @@ function DraftCard({
                     {seg.text}
                   </a>
                 ) : (
-                  <span key={j}>{seg.text}</span>
+                  <span key={j}>{stripInlineMarkdown(seg.text)}</span>
                 ),
               )}
             </li>
@@ -473,7 +489,9 @@ export function RedditDraftsBatch({
               </span>
             ) : null}
           </header>
-          {acc.note ? <p className="px-4 pt-3 text-xs text-muted">{acc.note}</p> : null}
+          {acc.note ? (
+            <p className="px-4 pt-3 text-xs text-muted">{stripInlineMarkdown(acc.note)}</p>
+          ) : null}
           <div className="space-y-3 p-4">
             {acc.drafts.map((draft) => (
               <DraftCard
