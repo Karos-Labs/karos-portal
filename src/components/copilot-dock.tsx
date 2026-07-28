@@ -15,6 +15,8 @@ const DOCK_STATE_KEY = "karos.copilot.dock";
 
 interface Props {
   clientId: string;
+  /** Signed-in viewer — scopes the persisted copilot transcript. */
+  viewerUid: string;
   clientName: string;
   userName?: string;
   hasGoogleIntegration?: boolean;
@@ -28,7 +30,7 @@ interface Props {
  * it, so nothing jumps or resizes. The chat stays mounted (state preserved) and
  * is simply clipped when collapsed. Desktop (lg+) only.
  */
-export function CopilotDock({ clientId, clientName, userName, hasGoogleIntegration, client, report }: Props) {
+export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, client, report }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   /** Blocks the write-back below until the restore pass has run. */
@@ -63,6 +65,7 @@ export function CopilotDock({ clientId, clientName, userName, hasGoogleIntegrati
 
   const widgetProps = {
     clientId,
+    viewerUid,
     clientName,
     userName,
     hasGoogleIntegration,

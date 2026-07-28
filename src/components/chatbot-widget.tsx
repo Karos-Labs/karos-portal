@@ -114,6 +114,7 @@ function buildProactiveActions(): ProactiveAction[] {
 
 function useCopilot(
   clientId: string,
+  viewerUid: string,
   onBrandingChange: () => void,
   onTasksCreated: () => void,
 ) {
@@ -123,7 +124,11 @@ function useCopilot(
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const storageKey = `${THREAD_KEY_PREFIX}${clientId}`;
+  // Scoped to viewer AND client: sessionStorage survives sign-out in the same
+  // tab, and StaffCopilotDock writes under this prefix too — an unscoped key
+  // let the next signed-in user restore the previous one's transcript, which
+  // for a staff→client handover means internal-tier context in a client's pane.
+  const storageKey = `${THREAD_KEY_PREFIX}${viewerUid || "anon"}.${clientId}`;
   /** Blocks the write-back below until the restore pass has run. */
   const hydratedRef = useRef(false);
 
@@ -151,8 +156,13 @@ function useCopilot(
   useEffect(() => {
     if (!hydratedRef.current || streaming) return;
     try {
-      if (messages.length === 0) sessionStorage.removeItem(storageKey);
-      else sessionStorage.setItem(storageKey, JSON.stringify(messages.slice(-MAX_PERSISTED_MESSAGES)));
+      // Never clear on empty. CopilotDock mounts TWO widgets (mobile sheet +
+      // desktop rail) against this same key; the hidden one can render with an
+      // empty list and would otherwise wipe the thread the visible one just
+      // restored. reset() clears the key explicitly, which is the only path
+      // that should.
+      if (messages.length === 0) return;
+      sessionStorage.setItem(storageKey, JSON.stringify(messages.slice(-MAX_PERSISTED_MESSAGES)));
     } catch {
       /* quota or private mode — the in-memory thread still works */
     }
@@ -575,6 +585,9 @@ function ChatEmptyState({
 
 interface Props {
   clientId: string;
+  /** Signed-in viewer. Scopes the persisted transcript so a shared tab cannot
+   *  hand one user's conversation to the next (staff→client leaks internal text). */
+  viewerUid: string;
   clientName: string;
   /** When true the chat panel opens automatically on mount (CLIENT_USER login). */
   defaultOpen?: boolean;
@@ -596,6 +609,7 @@ interface Props {
 
 export function ChatbotWidget({
   clientId,
+  viewerUid,
   clientName,
   defaultOpen = false,
   userName,
@@ -622,6 +636,7 @@ export function ChatbotWidget({
 
   const { messages, input, setInput, send, streaming, error, reset } = useCopilot(
     clientId,
+    viewerUid,
     onBrandingChange,
     onTasksCreated,
   );

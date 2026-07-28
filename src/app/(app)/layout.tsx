@@ -189,6 +189,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
             <CopilotDock
               clientId={client.id}
+              viewerUid={user.uid}
               clientName={client.name}
               userName={user.name}
               hasGoogleIntegration={integrations.some(
@@ -238,7 +239,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </main>
         </div>
         {/* Docked copilot right-rail — visible when admin selects a client via "View as Client" */}
-        <StaffCopilotDock userName={user.name} />
+        <StaffCopilotDock userName={user.name} viewerUid={user.uid} />
       </div>
     </ActiveClientProvider>
   );
