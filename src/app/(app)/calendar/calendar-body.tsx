@@ -208,7 +208,10 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         // they were on the server — a schedule with no stored zone (written
         // before the field existed) keeps the old runtime-local behaviour.
         ...(r.timeZone ? { timeZone: r.timeZone, zoneLabel: shortZoneLabel(r.timeZone, r.nextRunAt) } : {}),
-        prompt: r.prompt,
+        // The schedule's standing instruction is staff-authored direction —
+        // run-calendar paints it under "Will run", so a client would read the
+        // internal brief verbatim. Same shape as staffRef below (delta-lens).
+        ...(isClient ? {} : { prompt: r.prompt }),
         ...(blurb ? { agentDescription: blurb } : {}),
       };
     });

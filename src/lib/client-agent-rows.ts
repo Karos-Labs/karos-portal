@@ -10,7 +10,6 @@ import { listClientAgentFeedback } from "@/lib/data-client-agents";
 import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-agents";
 import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
 import { upcomingSlots } from "@/lib/client-agent-slots";
-import { OPTIONS_PER_SLOT } from "@/lib/slot-plan";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { AgentSetupState, ClientAgentScheduleRow, CustomAgentRunRow, RunnableAgentSummary } from "@/components/custom-agents";
 import type { ClientAgentCardRow } from "@/components/client-agents/types";

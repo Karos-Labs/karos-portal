@@ -64,12 +64,14 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   // redacted placeholders for locked (future-dated) posts; analytics is fed only
   // currently-unlocked assets so upcoming volume isn't revealed in its counts.
   // Staff keep full visibility (invariant A10.6).
+  // Locked placeholders are FILTERED here, not passed redacted: the overview's
+  // "Recent activity" is delivered work, and a week of slots generated in one
+  // minute would render as five "Upcoming post · 3 hours ago" rows — the batch
+  // tell the churn rules exist to prevent (delta-lens bounce, 2026-07-28).
   const overviewAssets = isClientViewer
-    ? getClientLibraryAssets(assets, { forClient: true })
+    ? getClientLibraryAssets(assets, { forClient: true }).filter((a) => !a.locked)
     : assets;
-  const analyticsAssets = isClientViewer
-    ? overviewAssets.filter((a) => !a.locked)
-    : assets;
+  const analyticsAssets = overviewAssets;
 
   const analytics = (
     <ClientAnalytics

@@ -797,9 +797,13 @@ function CancelRunControl({ runId }: { runId: string }) {
  * to reveal. A client may be told the PACE (how many posts a week, which days),
  * never the batching that produces it.
  *
- * So the client form offers one number, posts per week, and pins outputs per
- * run to 1 — a genuinely one-post-per-fire schedule, which is both what the
- * product is and the only shape whose honest description contains no batch.
+ * So the client form offers one number — the days it actually changes — and
+ * READS the stored outputs-per-run into the weekly cost and the save payload
+ * rather than pinning it: a pinned 1 both under-quoted a 3×5 schedule's price
+ * and silently rewrote it on save (delta-lens bounce). The label decomposes
+ * nothing: "Posts per week" when one output per fire is stored, otherwise
+ * "Posting days a week". The server independently preserves stored
+ * outputsPerRun and prompt for client actors (planned-run-actions).
  */
 export function AgentScheduleModal({
   agent,
