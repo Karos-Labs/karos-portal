@@ -128,6 +128,7 @@ function PlatformCard({
   isOAuthEnabled,
   isConnecting,
   isAdmin,
+  isClientViewer,
   onOAuthConnect,
   onDisconnected,
   linkedinSeats,
@@ -140,6 +141,8 @@ function PlatformCard({
   isOAuthEnabled: boolean;
   isConnecting: boolean;
   isAdmin: boolean;
+  /** Required, not defaulted: a missing role must not fail open to staff copy. */
+  isClientViewer: boolean;
   onOAuthConnect: () => void;
   onDisconnected: () => void;
   linkedinSeats?: SeatView[];
@@ -310,8 +313,12 @@ function PlatformCard({
         )}
 
         {/* Three-tier publishing control: on = the cron auto-posts scheduled
-            content here; off = content goes out only via the manual Publish Now
-            in the calendar's post detail panel (staff).
+            content here; off = it goes out by hand. WHOSE hand differs, so the
+            off-copy is role-aware: Publish Now lives in the calendar's post
+            detail panel and is staff-only (publishAssetNowAction is
+            requireStaff), while a client posts from their own account and
+            records it with "Mark as posted". Naming a control the reader cannot
+            see is the defect this whole finding is about.
             Hidden for read/analytics-only platforms — there's nothing to publish. */}
         {isConnected && !READ_ONLY_PLATFORM_IDS.has(platform.id) && (
           <button
@@ -321,7 +328,9 @@ function PlatformCard({
             title={
               autoPublish
                 ? "Scheduled content posts automatically at its slot"
-                : "Auto-posting is off. Scheduled content waits on the calendar until someone opens it and presses Publish Now"
+                : isClientViewer
+                  ? "Auto-posting is off. Scheduled content waits on your calendar for you to post it yourself, then mark it as posted"
+                  : "Auto-posting is off. Scheduled content waits on the calendar until someone opens it and presses Publish Now"
             }
           >
             <span className="flex items-center gap-1.5 text-xs text-muted">
@@ -734,6 +743,9 @@ export function IntegrationsTab({
 }: Props) {
   const router = useRouter();
   const isAdmin = currentUserRole === "KAROS_ADMIN";
+  // This tab renders on /clients/[id]/settings, which a client can open for
+  // their own workspace — so copy here has to know who is reading it.
+  const isClientViewer = currentUserRole === "CLIENT_USER";
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
   const [popupError, setPopupError] = useState<string | null>(null);
   const popupTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -817,6 +829,7 @@ export function IntegrationsTab({
         isOAuthEnabled={oauthEnabledPlatforms.includes(platform.id)}
         isConnecting={connectingPlatform === platform.id}
         isAdmin={isAdmin}
+        isClientViewer={isClientViewer}
         onOAuthConnect={() => openOAuthPopup(platform.id)}
         onDisconnected={() => router.refresh()}
         {...(platform.id === "linkedin" ? { linkedinSeats, seatLimit, seatCost } : {})}
