@@ -7,6 +7,7 @@ import {
   getCustomAgent,
   listAssets,
   listClientIntegrations,
+  listContextItems,
   listJobs,
   listPlannedScheduledRuns,
 } from "@/lib/data";
@@ -26,6 +27,8 @@ import { platformLabel } from "@/lib/integrations/platforms";
 import { getClientArchiveAssets } from "@/lib/asset-visibility";
 import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
+import { LegacyAgentPanel } from "@/components/client-agents/legacy-agent-panel";
+import { evaluateLegacyRunGate } from "@/lib/client-agent-runs";
 import {
   buildAgentSetup,
   scheduleZonesByAgent,
@@ -80,13 +83,17 @@ export default async function ClientAgentDetailPage({
   const agent = await getCustomAgent(agentId);
   if (!agent || !agent.enabled) notFound();
 
-  const [jobs, credits, scheduledRuns, umbrellas, assets, integrations] = await Promise.all([
+  const [jobs, credits, scheduledRuns, umbrellas, assets, integrations, contextItems] =
+    await Promise.all([
     listJobs({ clientId: id }),
     getClientCredits(id),
     listPlannedScheduledRuns({ clientId: id }),
     listClientAgents({ clientId: id }),
     listAssets({ clientId: id }),
     listClientIntegrations(id),
+    // The run dialog's attachment picker (CD-H8) — the legacy branch offers
+    // the standard run gesture, and the standard gesture can attach context.
+    listContextItems({ clientId: id }),
   ]);
 
   // A client may only open an agent they were granted — or one that has already
@@ -167,11 +174,20 @@ export default async function ClientAgentDetailPage({
   const produced = visibleAssets
     .filter((asset) => {
       const job = asset.jobId ? (jobById.get(asset.jobId) ?? null) : null;
+      // The direct link, when one exists: this agent's own job, or a job the
+      // umbrella owns.
       if (job && (job.customAgentId === agent.id || (umbrella && job.clientAgentId === umbrella.id))) {
         return true;
       }
-      if (!umbrella) return false;
-      return resolveContentIdentity({ asset, job }, umbrellas).clientAgentId === umbrella.id;
+      const identity = resolveContentIdentity({ asset, job }, umbrellas);
+      if (umbrella) return identity.clientAgentId === umbrella.id;
+      // CD-H8, the legacy shape: a live schedule and no umbrella doc, which is
+      // the flagship Instagram Agent. There is no umbrella id for the helper to
+      // resolve to, so attribution falls to the ONE NAME it resolves — its
+      // fourth rung, which exists precisely for content produced before
+      // umbrellas and carrying no agent link at all. Without this the page
+      // showed a live, producing agent as having made nothing.
+      return identity.label === agent.name;
     })
     .slice(0, 8);
 
@@ -179,6 +195,20 @@ export default async function ClientAgentDetailPage({
   const connections = sanitizeIntegrations(integrations);
   const launchInFlight = umbrella ? isLaunchInFlight(umbrella.launchState) : false;
   const agentServiceConfigured = isAgentServiceConfigured();
+
+  // CD-H8. The run gate for the legacy shape, evaluated HERE for the same
+  // reason every other gate on this surface is: a control may only offer a
+  // press the server would accept (F131), and its reason has to arrive with it
+  // already resolved so it can be painted rather than hidden in a tooltip on a
+  // pointer-events-none button (F25). Same ladder the generic card walks —
+  // service, then intake, then credits — so the two cannot disagree.
+  const legacyGate = evaluateLegacyRunGate({
+    serviceConfigured: agentServiceConfigured,
+    setup,
+    cost,
+    ...(spendable !== undefined ? { availableCredits: spendable } : {}),
+    creditBlockReason: creditBlockReasons[agent.id] ?? null,
+  });
 
   return (
     <>
@@ -233,20 +263,28 @@ export default async function ClientAgentDetailPage({
               viewer={{ name: user.name, email: user.email }}
             />
           ) : status.tone === "live" ? (
-            /* The legacy shape: no umbrella was ever bound, but a weekly
-               schedule is firing — so this agent genuinely IS producing, and
-               rosterStatus badges it Live on the roster and in the header above.
-               Falling through to "Not set up yet" here made the page contradict
-               its own badge. There are no templates or gates to show without an
-               umbrella, so this says exactly what is true and no more. */
-            <div className="rounded-[var(--radius)] border border-border bg-surface-2/50 p-4">
-              <p className="text-sm text-foreground">Producing on a weekly schedule</p>
-              <p className="mt-1 text-xs text-muted-2">
-                This agent is already writing for you. Your Karos team is still finishing its setup
-                here — its formats and the controls to steer them will appear on this page once that
-                is done. Finished posts reach your Workspace as usual in the meantime.
-              </p>
-            </div>
+            /* The legacy shape (CD-H8): no umbrella was ever bound, but a weekly
+               schedule is firing — so this agent genuinely IS producing, and the
+               roster and header badge it Live. It is also the flagship case, not
+               an edge one: Karos Labs' own Instagram Agent predates the umbrella
+               model. It used to render one sentence and nothing else, which made
+               the most-looked-at agent in the portal the one with no way to make
+               a post, no way to change its pace, and no sign of anything it had
+               ever made. It now gets the two gestures that need no umbrella;
+               templates, the week strip and notes stay umbrella-gated because
+               faking them would invent streams this agent does not have. */
+            <LegacyAgentPanel
+              clientId={id}
+              agent={summary}
+              cost={spendable !== undefined ? cost : null}
+              gate={legacyGate}
+              schedule={schedule}
+              {...(setup ? { setup } : {})}
+              contextItems={contextItems}
+              viewerIsClient={viewerIsClient}
+              viewer={{ name: user.name, email: user.email }}
+              {...(spendable !== undefined ? { availableCredits: spendable } : {})}
+            />
           ) : (
             <EmptyState
               icon={<Icon name="Bot" className="h-7 w-7" />}
