@@ -49,6 +49,14 @@ export interface ClientAgentScheduleInput {
   prompt: string;
   hour?: number;
   minute?: number;
+  /**
+   * The VIEWER's IANA zone for `hour`/`minute` (F108's timezone contract:
+   * schedules store a wall clock plus the zone it was written in, and nextRunAt
+   * is derived from both). Optional, and consumed by F108's work in the
+   * CALENDAR cluster — declared here so the client dialog can already send it
+   * instead of silently letting the schedule fall back to the server's zone.
+   */
+  timeZone?: string;
 }
 
 /** Staff can act on a client only if admin, or an employee assigned to it. */

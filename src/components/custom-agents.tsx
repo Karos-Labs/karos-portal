@@ -793,6 +793,9 @@ function AgentScheduleModal({
         prompt,
         hour,
         minute,
+        // The time above is a wall clock the client typed in THEIR zone; without
+        // this the schedule silently anchors to the server's.
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       if (result.error) {
         setError(result.error);
