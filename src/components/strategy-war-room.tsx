@@ -21,6 +21,7 @@ type Line =
   | { kind: "agent"; agent: SwarmAgentId; emoji: string; name: string; message: string }
   | { kind: "consensus"; count: number }
   | { kind: "persisted"; note: string }
+  | { kind: "campaign"; title: string; themeScope: string; count: number }
   | { kind: "system"; message: string };
 
 type Status = "running" | "done" | "error";
@@ -83,6 +84,15 @@ export function StrategyWarRoom({
             duplicatesSkipped: ev.duplicatesSkipped,
             capSkipped: ev.capSkipped,
           });
+          break;
+        // A high-weight trend also builds a full campaign. The engine has always
+        // emitted this frame; with no case for it the console parsed and dropped
+        // it, so the client saw cards appear that nothing had mentioned (QA F92).
+        case "campaign":
+          setLines((p) => [
+            ...p,
+            { kind: "campaign", title: ev.title, themeScope: ev.themeScope, count: ev.taskCount },
+          ]);
           break;
         case "done":
           setStatus("done");
@@ -316,6 +326,13 @@ function ConsoleLine({ line }: { line: Line }) {
       );
     case "persisted":
       return <p className="text-muted">↳ {line.note}</p>;
+    case "campaign":
+      return (
+        <p className="pt-1 text-info">
+          🎬 Campaign built — “{line.title}” ({line.themeScope}): {line.count} extra task
+          {line.count === 1 ? "" : "s"} added to your board.
+        </p>
+      );
     case "system":
       return <p className="text-danger">⚠ {line.message}</p>;
   }

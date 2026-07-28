@@ -324,6 +324,11 @@ export async function* runSwarm(input: SwarmInput): AsyncGenerator<SwarmEvent, v
     );
     yield { type: "persisted", ...persisted };
 
+    // The closing count used to report the debate's total only, so a run that
+    // also built a campaign told the client seven tasks when eleven cards
+    // landed on the board (QA F92).
+    let createdTotal = persisted.created;
+
     // High-weight trend ⇒ shift up to a cohesive omnichannel campaign bundle
     // (anchor blog + newsletter + socials) alongside the standalone tasks.
     const trend = input.context.campaignTrend;
@@ -334,13 +339,28 @@ export async function* runSwarm(input: SwarmInput): AsyncGenerator<SwarmEvent, v
           createdBy: input.createdBy,
           trend,
         });
-        yield {
-          type: "campaign",
-          campaignId: campaign.campaignId,
-          title: campaign.title,
-          themeScope: campaign.themeScope,
-          taskCount: campaign.taskIds.length,
-        };
+        if (campaign) {
+          createdTotal += campaign.taskIds.length;
+          yield {
+            type: "campaign",
+            campaignId: campaign.campaignId,
+            title: campaign.title,
+            themeScope: campaign.themeScope,
+            taskCount: campaign.taskIds.length,
+          };
+        } else {
+          // Nothing was written — the board is full or the anchor already
+          // exists. Say so in the console rather than silently skipping.
+          yield {
+            type: "agent_message",
+            round: totalRounds,
+            agent: "creative",
+            agentName: "Campaign Director",
+            emoji: "🎬",
+            message: `Skipped the "${trend.theme}" campaign — your board is already at capacity or already covers its anchor article.`,
+            taskCount: consensus.length,
+          };
+        }
       } catch (e) {
         // A campaign failure must not sink the whole run — the task map still landed.
         yield {
@@ -355,7 +375,7 @@ export async function* runSwarm(input: SwarmInput): AsyncGenerator<SwarmEvent, v
       }
     }
 
-    yield { type: "done", created: persisted.created };
+    yield { type: "done", created: createdTotal };
   } catch (e) {
     yield { type: "error", message: e instanceof Error ? e.message : "Failed to save the task map" };
   }

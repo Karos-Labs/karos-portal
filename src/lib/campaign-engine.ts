@@ -18,10 +18,17 @@ import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { after } from "next/server";
-import { MODELS } from "@/lib/constants";
+import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { logger } from "@/services/logger";
-import { getClient, listAssets, createCampaign, createClientTask, updateCampaign } from "@/lib/data";
-import { taskWeekKey } from "@/lib/task-dedup";
+import {
+  getClient,
+  listAssets,
+  createCampaign,
+  createClientTask,
+  updateCampaign,
+  getTaskBoardCapacity,
+} from "@/lib/data";
+import { taskWeekKey, findDuplicateReason } from "@/lib/task-dedup";
 import { freshnessGuard } from "@/lib/entropy-guard";
 import type { TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
 
@@ -131,6 +138,10 @@ export interface GeneratedCampaign {
   themeScope: string;
   targetWeek: string;
   taskIds: string[];
+  /** Pieces dropped because the board already covers them. */
+  duplicatesSkipped: number;
+  /** Pieces dropped because the active karos_managed ceiling was reached. */
+  capSkipped: number;
 }
 
 function buildCampaignPrompt(
@@ -154,10 +165,14 @@ Every piece must ladder up to the same theme and reference the anchor's angle. S
  * entropy guard against the client's last-30-days text first (appending
  * freshness constraints when the theme is repetitive), asks the model for a
  * blueprint, then writes the Campaign doc and its dependency-wired tasks.
+ *
+ * Returns null when nothing could be written — the board is at capacity or the
+ * anchor already exists. Nothing is persisted in that case, not even the
+ * campaign shell.
  */
 export async function generateCampaignBundle(
   input: GenerateCampaignInput,
-): Promise<GeneratedCampaign> {
+): Promise<GeneratedCampaign | null> {
   const now = input.now ?? Date.now();
   const client = await getClient(input.clientId);
   if (!client) throw new Error("Client not found");
@@ -195,6 +210,53 @@ export async function generateCampaignBundle(
   const drafts = buildCampaignTaskDrafts(blueprint);
   const targetWeek = input.targetWeek ?? taskWeekKey(now);
 
+  // Capacity + dedup, mirroring persistSwarmTasks. This path used to call
+  // createClientTask straight down the draft list, so the MAX_ACTIVE_TASKS
+  // ceiling the copilot tells clients is enforced server-side was bypassed and
+  // a board already at the limit quietly went over (QA F92).
+  const { activeCount, tasks: boardTasks } = await getTaskBoardCapacity(input.clientId);
+  const pool = [...boardTasks];
+  let slotsFree = Math.max(0, MAX_ACTIVE_TASKS - activeCount);
+  const admitted: CampaignTaskDraft[] = [];
+  let duplicatesSkipped = 0;
+  let capSkipped = 0;
+
+  for (const draft of drafts) {
+    const reason = findDuplicateReason(
+      { title: draft.title, productType: draft.productType, platform: draft.platform },
+      pool,
+      now,
+    );
+    if (reason) {
+      duplicatesSkipped++;
+      continue;
+    }
+    if (slotsFree <= 0) {
+      capSkipped++;
+      continue;
+    }
+    slotsFree--;
+    admitted.push(draft);
+    // Accepted pieces join the pool so the bundle cannot duplicate itself.
+    pool.push({
+      id: `pending-campaign-${admitted.length}`,
+      clientId: input.clientId,
+      title: draft.title,
+      status: "pending",
+      priority: weightToPriority(draft.weight),
+      source: "content_dispatch" as TaskSource,
+      owner: "karos_managed" as TaskOwner,
+      metadata: { productType: draft.productType, platform: draft.platform },
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  // Every other piece teases the anchor and depends on it, so a bundle without
+  // its anchor is not a campaign — write nothing rather than a headless one.
+  if (!admitted.some((d) => d.role === "anchor")) return null;
+
   // Create the campaign shell first so tasks can carry campaignId on write.
   const campaignId = await createCampaign({
     clientId: input.clientId,
@@ -212,7 +274,7 @@ export async function generateCampaignBundle(
   // Persist the anchor first so dependents can reference its real id.
   const roleToId: Partial<Record<CampaignRole, string>> = {};
   const orderedTaskIds: string[] = [];
-  for (const draft of drafts) {
+  for (const draft of admitted) {
     const dependsOnTaskIds = draft.dependsOnRoles
       .map((r) => roleToId[r])
       .filter((id): id is string => !!id);
@@ -254,5 +316,7 @@ export async function generateCampaignBundle(
     themeScope: blueprint.themeScope,
     targetWeek,
     taskIds: orderedTaskIds,
+    duplicatesSkipped,
+    capSkipped,
   };
 }

@@ -8,6 +8,7 @@ const {
   createCampaignMock,
   createClientTaskMock,
   updateCampaignMock,
+  getTaskBoardCapacityMock,
 } = vi.hoisted(() => ({
   generateObjectMock: vi.fn(),
   logUsageMock: vi.fn(),
@@ -16,6 +17,7 @@ const {
   createCampaignMock: vi.fn(),
   createClientTaskMock: vi.fn(),
   updateCampaignMock: vi.fn(),
+  getTaskBoardCapacityMock: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -29,6 +31,7 @@ vi.mock("@/lib/data", () => ({
   createCampaign: createCampaignMock,
   createClientTask: createClientTaskMock,
   updateCampaign: updateCampaignMock,
+  getTaskBoardCapacity: getTaskBoardCapacityMock,
 }));
 
 import {
@@ -82,6 +85,7 @@ describe("generateCampaignBundle", () => {
     let n = 0;
     createClientTaskMock.mockImplementation(() => Promise.resolve(`t${++n}`));
     updateCampaignMock.mockResolvedValue(undefined);
+    getTaskBoardCapacityMock.mockResolvedValue({ activeCount: 0, tasks: [] });
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -142,5 +146,55 @@ describe("generateCampaignBundle", () => {
     await generateCampaignBundle(input);
     const systemArg = (generateObjectMock.mock.calls[0][0] as { system: string }).system;
     expect(systemArg).not.toContain("CREATIVE ENTROPY GUARD");
+  });
+
+  /* QA F92 — this path used to write straight past the ceiling and the dedup. */
+
+  it("respects the active-task ceiling: only the free slots are written", async () => {
+    // 13 of 15 active ⇒ 2 slots: the anchor and the newsletter land, both
+    // socials are deferred.
+    getTaskBoardCapacityMock.mockResolvedValue({ activeCount: 13, tasks: [] });
+
+    const result = await generateCampaignBundle(input);
+
+    expect(createClientTaskMock).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ taskIds: ["t1", "t2"], capSkipped: 2, duplicatesSkipped: 0 });
+  });
+
+  it("writes nothing at all — not even the campaign shell — when the board is full", async () => {
+    getTaskBoardCapacityMock.mockResolvedValue({ activeCount: 15, tasks: [] });
+
+    const result = await generateCampaignBundle(input);
+
+    expect(result).toBeNull();
+    expect(createCampaignMock).not.toHaveBeenCalled();
+    expect(createClientTaskMock).not.toHaveBeenCalled();
+  });
+
+  it("drops a piece the board already carries", async () => {
+    getTaskBoardCapacityMock.mockResolvedValue({
+      activeCount: 1,
+      tasks: [
+        {
+          id: "existing",
+          clientId: "c1",
+          title: "Black Friday issue",
+          status: "pending",
+          priority: "medium",
+          source: "copilot",
+          owner: "karos_managed",
+          createdBy: "u1",
+          createdAt: input.now,
+          updatedAt: input.now,
+        },
+      ],
+    });
+
+    const result = await generateCampaignBundle(input);
+
+    expect(createClientTaskMock).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ duplicatesSkipped: 1, capSkipped: 0 });
+    // The anchor still landed, so the dependents still resolve against it.
+    expect(createClientTaskMock.mock.calls[1][0]).toMatchObject({ dependsOnTaskIds: ["t1"] });
   });
 });
