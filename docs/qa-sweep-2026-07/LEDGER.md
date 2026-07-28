@@ -70,7 +70,7 @@ are tracked in the CD table at the bottom.
 | F54 | HIGH | A | WORKSPACE | 2 | OPEN | yes | A task moved to "Review Pending" from the ticket vanishes from the board with no way back | findings-p085-122.md |
 | F55 | HIGH | B | WORKSPACE | 2 | OPEN | yes | Branded "Connect with Instagram" buttons open a popup showing a bare error sentence, and only a | findings-p085-122.md |
 | F56 | HIGH | B | WORKSPACE | 2 | OPEN | — | Every client user can hand out permanent workspace access, and the key can never be rotated fro | findings-p085-122.md |
-| F57 | HIGH | A | WORKSPACE | 2 | OPEN | — | The AI Execution Guide shows clients raw markup — "## Overview", "**Task**" and all | findings-p085-122.md |
+| F57 | HIGH | A | DOCS | 2 | OPEN | — | The AI Execution Guide shows clients raw markup — "## Overview", "**Task**" and all | findings-p085-122.md |
 | F58 | HIGH | B | WORKSPACE | 2 | OPEN | — | The Autopilot switch spends the client's credits and fires five agent runs with no label, no pr | findings-p085-122.md |
 | F149 | HIGH | B | WORKSPACE | 2 | OPEN | — | Nothing marks a post as posted, so the archive shows everything the moment it is generated | findings-p085-122.md |
 | F150 | HIGH | B | WORKSPACE | 2 | OPEN | — | Video deliverables have no path into the portal — clips are hand-delivered by email | findings-p085-122.md |
