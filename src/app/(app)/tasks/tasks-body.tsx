@@ -7,9 +7,11 @@ import {
   listAssets,
   getClientReport,
 } from "@/lib/data";
+import { listClientAgents } from "@/lib/data-client-agents";
 import { TasksBoard } from "@/components/tasks-board";
 import { ProgressView } from "@/components/progress-view";
 import { PageHeader } from "@/components/ui";
+import { contentLabelsByAsset, resolveContentIdentity } from "@/lib/agent-identity-map";
 import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import type { AppUser, ClientTask } from "@/lib/types";
@@ -50,12 +52,13 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
   // Archiving is handled at query level (listClientTasks hides tasks Done ≥7d)
   // plus a physical sweep in the /api/credits/reconcile cron — no page-load work.
   if (scopedClientId) {
-    const [tasks, activityLogs, jobs, report, rawAssets] = await Promise.all([
+    const [tasks, activityLogs, jobs, report, rawAssets, umbrellas] = await Promise.all([
       listClientTasks({ clientId: scopedClientId }),
       listClientActivityLogs(scopedClientId),
       listJobs({ clientId: scopedClientId }),
       getClientReport(scopedClientId),
       listAssets({ clientId: scopedClientId }),
+      listClientAgents({ clientId: scopedClientId }),
     ]);
     // Archive tab data. A client's archive is POSTED work from the last ~30
     // days only (F149/A4) — filtered HERE, at the server boundary, so nothing
@@ -75,11 +78,25 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     // surface routes through clientSafeRefusal. Both are handled HERE, at the
     // server boundary, because everything below is serialized into the RSC
     // payload whether or not it is painted.
+    //
+    // §7.3 identity (F147). The Workspace shows the same stream twice — the
+    // Activity tab narrates the runs, the Archive tab groups their output — and
+    // before this the two read the JOB's stored agentName and the ASSET's
+    // derived label independently, which is exactly how one agent came to have
+    // two names one tab apart. Both are resolved HERE, through the one helper,
+    // and only the finished label crosses into the payload: the archive is a
+    // client component and has no business holding umbrella ids or launch
+    // states to re-derive a heading from.
+    const labelledJobs = jobs.map((job) => {
+      const label = resolveContentIdentity({ job }, umbrellas).label;
+      return label === job.agentName ? job : { ...job, agentName: label };
+    });
+    const agentLabelByAssetId = contentLabelsByAsset(assets, jobs, umbrellas);
     const timelineJobs = isClientViewer
-      ? jobs
+      ? labelledJobs
           .filter((job) => job.runType !== "launch")
           .map((job) => (job.error ? { ...job, error: clientSafeRefusal(job.error) } : job))
-      : jobs;
+      : labelledJobs;
     return (
       <div>
         <PageHeader
@@ -94,6 +111,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
           jobs={timelineJobs}
           report={report}
           assets={assets}
+          agentLabelByAssetId={agentLabelByAssetId}
         />
       </div>
     );

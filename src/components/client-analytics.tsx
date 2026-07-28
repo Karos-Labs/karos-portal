@@ -6,7 +6,15 @@ import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integratio
 import { platformLabel } from "@/lib/integrations/platforms";
 import type { Asset, ClientIntegration, Job } from "@/lib/types";
 
-/* Judgment scale: in-progress = amber, live/done = green, in-between = slate. */
+/* Judgment scale: in-progress = amber, live/done = green, in-between = slate.
+ *
+ * WP-7 swept this file for a per-surface AGENT label map to delete (§7.3) and
+ * found none: the analytics stack counts and charts assets, jobs and channels
+ * and never names the agent behind one. This map is asset-STATUS vocabulary,
+ * the same class as archive-view's STATUS_LABEL, and identity resolution has
+ * nothing to say about it. Add an agent-named row here later — a per-agent
+ * breakdown, a "top producing agent" tile — and it takes resolveContentIdentity
+ * like every other surface. */
 const STATUS_META: Record<string, { label: string; color: string }> = {
   draft: { label: "Draft", color: "var(--warning)" },
   approved: { label: "Approved", color: "var(--success)" },

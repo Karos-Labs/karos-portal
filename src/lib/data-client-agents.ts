@@ -51,8 +51,20 @@ export async function getClientAgentByKey(
   return getClientAgent(clientAgentDocId(clientId, agentKey));
 }
 
-export async function listClientAgents(opts: { clientId: string }): Promise<ClientAgent[]> {
-  const snap = await col.clientAgents().where("clientId", "==", opts.clientId).get();
+/**
+ * Umbrellas for one client, or — with no filter — every umbrella there is.
+ *
+ * The unfiltered read exists for the CROSS-CLIENT staff surfaces (the calendar
+ * overview, /jobs): they label every row through the §7.3 identity helper, and
+ * the alternative is one query per printed row. The collection holds a single
+ * doc per (client, lab agent), so reading it whole is cheaper than the fan-out
+ * it replaces — the same trade `listCustomAgents()` already makes on those
+ * pages. Callers still fence the result to the clients the viewer may see.
+ */
+export async function listClientAgents(opts?: { clientId?: string }): Promise<ClientAgent[]> {
+  const base: FirebaseFirestore.Query = col.clientAgents();
+  const query = opts?.clientId ? base.where("clientId", "==", opts.clientId) : base;
+  const snap = await query.get();
   return snap.docs
     .map((d) => withId<ClientAgent>(d))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));

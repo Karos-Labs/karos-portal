@@ -15,7 +15,7 @@
  */
 
 import type { Asset, ClientAgent, Job, PlannedScheduledRun } from "@/lib/types";
-import { agentLabelForAsset, chainFamilyFor } from "@/lib/post-chain";
+import { agentLabelForAsset, chainFamilyFor, type ChainFamily } from "@/lib/post-chain";
 
 /** What the resolver needs to know about a client's umbrella agents. */
 export type ClientAgentIdentity = Pick<
@@ -23,8 +23,14 @@ export type ClientAgentIdentity = Pick<
   "id" | "agentKey" | "customAgentId" | "displayName" | "platform" | "chainFamily" | "launchState"
 >;
 
+/** The job fields identity is resolved from — never its payload or its events. */
+export type IdentityJob = Pick<
+  Job,
+  "clientAgentId" | "customAgentId" | "agentName" | "external"
+>;
+
 export interface ContentIdentityInput {
-  job?: Pick<Job, "clientAgentId" | "customAgentId" | "agentName"> | null;
+  job?: IdentityJob | null;
   asset?: Pick<Asset, "agentId" | "meta" | "type" | "templateKey" | "templateName"> | null;
   scheduledRun?: Pick<PlannedScheduledRun, "clientAgentId" | "customAgentId" | "agentName"> | null;
   /** A slot's umbrella, when the surface already knows it (calendar day cards). */
@@ -58,16 +64,53 @@ function metaString(meta: Record<string, unknown> | undefined, key: string): str
 }
 
 /**
+ * A managed task type is the catalog's spelling of a content family. Both the
+ * asset (`meta.taskType`) and the job (`external.taskType`) carry it, and
+ * "landing_page" deliberately maps to nothing — it belongs to no chain.
+ */
+const FAMILY_BY_TASK_TYPE: Record<string, ChainFamily> = {
+  social_post: "social",
+  newsletter_issue: "email",
+  blog_article: "article",
+};
+
+/**
+ * The content family this row belongs to, from whichever of the three shapes
+ * the calling surface happens to hold.
+ *
+ * Reading it off the JOB matters as much as off the asset: a run row IS the
+ * job and nothing else (the calendar's past-run cards, the /jobs list, the
+ * agent run history), and the managed job whose `agentName` is the literal
+ * "Social posts (IG/TikTok)" string F147 is about carries its family only in
+ * `external.taskType`. Without this rung those rows would keep printing the
+ * managed-product label beside the umbrella's own name on the very same day.
+ */
+function familyOf(input: ContentIdentityInput): ChainFamily | null {
+  if (input.asset) {
+    const family = chainFamilyFor(input.asset.type);
+    if (family) return family;
+    const assetTaskType = metaString(input.asset.meta, "taskType");
+    if (assetTaskType && FAMILY_BY_TASK_TYPE[assetTaskType]) {
+      return FAMILY_BY_TASK_TYPE[assetTaskType];
+    }
+  }
+  const jobTaskType = input.job?.external?.taskType;
+  if (jobTaskType && FAMILY_BY_TASK_TYPE[jobTaskType]) return FAMILY_BY_TASK_TYPE[jobTaskType];
+  return null;
+}
+
+/**
  * Resolve the single identity for a run / asset / schedule row.
  *
  * Rules, in order — the first that answers wins:
  *   1. an explicit umbrella link (slot, job, or schedule row);
  *   2. the job's / schedule's custom agent → its umbrella for this client;
- *   3. the asset's content family → the client's live umbrella that OWNS that
- *      family. This is the rung that kills the double identity: a social post
- *      produced before umbrellas existed carries no agent link at all, and
- *      without this it would keep rendering the managed-product label beside
- *      the umbrella's own name;
+ *   3. the content family — read from the asset's type / `meta.taskType` or
+ *      from the job's `external.taskType` — → the client's live umbrella that
+ *      OWNS that family. This is the rung that kills the double identity: a
+ *      social post produced before umbrellas existed carries no agent link at
+ *      all, and without this it would keep rendering the managed-product label
+ *      beside the umbrella's own name;
  *   4. today's fallback labels (agentLabelForAsset / the job's agent name),
  *      so nothing that renders today starts rendering blank.
  */
@@ -89,30 +132,66 @@ export function resolveContentIdentity(
     if (bound) return identityOf(bound);
   }
 
+  const family = familyOf(input);
+  if (family) {
+    const owner = clientAgents.find(
+      (agent) => agent.chainFamily === family && agent.launchState === "live",
+    );
+    if (owner) return identityOf(owner);
+  }
+
   if (input.asset) {
-    const family = chainFamilyFor(input.asset.type);
-    // A managed taskType is the other spelling of the same family — an older
-    // social_post asset and a new one must not resolve differently.
-    const taskType = metaString(input.asset.meta, "taskType");
-    const impliedFamily =
-      family ??
-      (taskType === "social_post"
-        ? "social"
-        : taskType === "newsletter_issue"
-          ? "email"
-          : taskType === "blog_article"
-            ? "article"
-            : null);
-    if (impliedFamily) {
-      const owner = clientAgents.find(
-        (agent) => agent.chainFamily === impliedFamily && agent.launchState === "live",
-      );
-      if (owner) return identityOf(owner);
-    }
     const label = agentLabelForAsset(input.asset);
     if (label) return { label };
   }
 
   const fallback = input.job?.agentName ?? input.scheduledRun?.agentName;
   return { label: fallback && fallback.trim() ? fallback : "Karos agent" };
+}
+
+/**
+ * Umbrellas grouped by client, for the surfaces that render rows of MANY
+ * clients at once (the staff calendar overview, /jobs).
+ *
+ * Those surfaces resolve an identity per row, and a per-row umbrella query
+ * would be one Firestore read per printed line. They read the umbrellas once
+ * for the whole scope and index them here instead.
+ */
+export function identitiesByClient<T extends ClientAgentIdentity & { clientId: string }>(
+  agents: T[],
+): Map<string, T[]> {
+  const byClient = new Map<string, T[]>();
+  for (const agent of agents) {
+    const bucket = byClient.get(agent.clientId);
+    if (bucket) bucket.push(agent);
+    else byClient.set(agent.clientId, [agent]);
+  }
+  return byClient;
+}
+
+/**
+ * The archive grouping's projection: assetId → the ONE name its group heading
+ * may carry.
+ *
+ * A pure function rather than a loop inside the page, because the archive is a
+ * CLIENT component: it used to receive `jobId → job.agentName` and join it
+ * itself, which is a second (and, for an asset whose job was filtered out of
+ * the payload, a differently-answering) copy of the resolver. Resolving here
+ * means only finished labels cross the RSC boundary — no umbrella ids, launch
+ * states or chain families reach the browser to be re-derived from.
+ */
+export function contentLabelsByAsset(
+  assets: Array<
+    Pick<Asset, "id" | "jobId" | "agentId" | "meta" | "type" | "templateKey" | "templateName">
+  >,
+  jobs: Array<IdentityJob & { id: string }>,
+  clientAgents: ClientAgentIdentity[],
+): Record<string, string> {
+  const jobById = new Map(jobs.map((job) => [job.id, job]));
+  const labels: Record<string, string> = {};
+  for (const asset of assets) {
+    const job = asset.jobId ? (jobById.get(asset.jobId) ?? null) : null;
+    labels[asset.id] = resolveContentIdentity({ asset, job }, clientAgents).label;
+  }
+  return labels;
 }

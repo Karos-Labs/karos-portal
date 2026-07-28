@@ -35,6 +35,7 @@ export function ProgressView({
   jobs,
   report,
   assets,
+  agentLabelByAssetId,
 }: {
   tasks: ClientTask[];
   currentUserRole: Role;
@@ -44,6 +45,14 @@ export function ProgressView({
   report: ClientReport | null;
   /** Pre-redacted per viewer role (see TasksBody) — feeds the Archive tab. */
   assets: Asset[];
+  /**
+   * assetId → the ONE name its archive group may carry, resolved server-side
+   * through the §7.3 identity helper (F147). This used to be a jobId →
+   * job.agentName map built right here, which made the archive a second
+   * answer to "who made this" — and the one that still printed the
+   * managed-product label next to the umbrella's own name.
+   */
+  agentLabelByAssetId: Record<string, string>;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -72,8 +81,6 @@ export function ProgressView({
     const query = params.toString();
     window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
   }
-
-  const agentNameByJobId = Object.fromEntries(jobs.map((j) => [j.id, j.agentName]));
 
   return (
     <>
@@ -120,7 +127,7 @@ export function ProgressView({
       ) : (
         <ArchiveView
           assets={assets}
-          agentNameByJobId={agentNameByJobId}
+          agentLabelByAssetId={agentLabelByAssetId}
           viewerIsClient={currentUserRole === "CLIENT_USER"}
         />
       )}

@@ -238,11 +238,13 @@ When the user asks to scan/refresh the task map, the board you produce MUST cove
 ${contractLines.length > 0 ? contractLines.join("\n") : "□ (no required onboarding/re-auth/gap items — all channels connected and covered; focus on the product sweep and signals)"}
 
 Then run the PRODUCT SWEEP — walk through EVERY agent in the registry above, one by one, and decide out loud in your analysis:
-- **Social posts**: is every connected social channel covered for the FULL next 14 days (both weeks)? One dispatch task per platform sized for the whole window ("Produce 6 Instagram posts covering the next two weeks via Social posts") — never two small tasks for the same platform+product in one week.
+- **Social posts**: is every connected social channel covered for the FULL next 14 days (both weeks)? One dispatch task per platform sized for the whole window ("Produce 6 Instagram posts covering the next two weeks") — never two small tasks for the same platform+product in one week.
 - **Newsletter issue**: is an issue queued for this cycle? If no email content is scheduled and no newsletter task is active, create one.
 - **Blog article**: is the article cadence alive (≥1 in the pipeline)? SEO compounds — a silent blog is a gap.
 - **Landing page**: only when a concrete campaign, offer, or launch signal exists in context — never as filler.
-A product you skip must have a stated reason (covered / no fitting signal). "I didn't consider it" is not an outcome.`;
+A product you skip must have a stated reason (covered / no fitting signal). "I didn't consider it" is not an outcome.
+
+The four names above are OUR internal catalog, used for routing (they are what \`productType\` carries) — they are not what anything is called on the client's screens. So write task titles that name the WORK and the channel ("Produce 6 Instagram posts covering the next two weeks"), and never the catalog label ("Social posts", "Social posts (IG/TikTok)", "Newsletter issue"). The client's own agent already has a name on every surface they read, and a task printing ours beside it gives one stream two identities (F147).`;
 
   const scenarioA = hasSocial
     ? `**Scenario A — Social Accounts Linked (${socialPlatformList})**

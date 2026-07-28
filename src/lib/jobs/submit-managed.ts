@@ -23,6 +23,18 @@ import { mintJobToken } from "@/lib/mcp/job-token";
 // The catalog products this serves; "custom" runs go through runCustomAgentAction.
 type CatalogTaskType = Exclude<ManagedTaskType, "custom">;
 
+/**
+ * The name a managed run is RECORDED under. Stored history is data: a job that
+ * fired as "Social posts (IG/TikTok)" fired as that, and rewriting it after the
+ * fact would falsify the record and break the joins keyed on it.
+ *
+ * What changed in WP-7 is every DISPLAY of it (F147/§7.3). The job also carries
+ * `external.taskType`, and resolveContentIdentity reads the family off it — so
+ * for a client whose live social umbrella owns that family, the calendar card,
+ * the /jobs row, the run history and the archive group all print the umbrella's
+ * own name instead. The label below survives only where no umbrella claims the
+ * stream, which is exactly the case it was written for.
+ */
 const MANAGED_TASK_LABELS: Record<CatalogTaskType, string> = {
   social_post: "Social posts (IG/TikTok)",
   newsletter_issue: "Newsletter issue",

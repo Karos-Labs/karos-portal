@@ -6,6 +6,7 @@ import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
 import { clientSafeRefusal, isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgentFeedback } from "@/lib/data-client-agents";
 import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-agents";
 import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
@@ -63,8 +64,18 @@ export function toSummary(agent: CustomAgent): RunnableAgentSummary {
  * failure this architecture exists to kill), offer a Cancel the card doesn't,
  * and advertise "· 1 draft" for a deliverable that is staff-only by design.
  * Staff keep the rows: they link to /jobs and are the run's real history.
+ *
+ * `agentName` stays the STORED name because the surfaces join on it (a card
+ * matches its own runs by agent name, the avatar looks the lab agent up by it).
+ * What a row PRINTS is `label`, resolved through the §7.3 helper against this
+ * client's umbrellas — so a run and the calendar card of what it produced never
+ * again carry two names for one stream (F147).
  */
-export function toRunRows(jobs: Job[], staff: boolean): CustomAgentRunRow[] {
+export function toRunRows(
+  jobs: Job[],
+  staff: boolean,
+  umbrellas: ClientAgentIdentity[],
+): CustomAgentRunRow[] {
   return jobs
     .filter((j) => j.agentId === "agent-service" && j.external?.taskType === "custom")
     .filter((j) => staff || j.runType !== "launch")
@@ -73,6 +84,7 @@ export function toRunRows(jobs: Job[], staff: boolean): CustomAgentRunRow[] {
     .map((j) => ({
       id: j.id,
       agentName: j.agentName,
+      label: resolveContentIdentity({ job: j }, umbrellas).label,
       status: j.status,
       createdAt: j.createdAt,
       assetCount: j.assetIds.length,
