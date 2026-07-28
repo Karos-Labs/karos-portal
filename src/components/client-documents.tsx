@@ -702,8 +702,12 @@ export function RegenerateModal({
 
         {/* Body */}
         <div className="space-y-4 px-5 py-4">
+          {/* Corrections are NOT lost any more: runOnboardPipeline reads them back
+              through listClientDocCorrections and buildCorrectionsBlock re-injects
+              them into every doc prompt as ground truth. The old copy predated that. */}
           <p className="rounded-[8px] border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
-            This replaces all documents. Corrections applied since the last run will be lost.
+            This rebuilds every document from scratch. Corrections you&apos;ve applied are
+            carried into the new versions.
           </p>
           <p className="text-sm text-muted">
             Optionally add run-specific context for this regeneration. These instructions apply
