@@ -11,6 +11,7 @@ import { TasksBoard } from "@/components/tasks-board";
 import { ProgressView } from "@/components/progress-view";
 import { PageHeader } from "@/components/ui";
 import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
+import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import type { AppUser, ClientTask } from "@/lib/types";
 
 /**
@@ -65,6 +66,20 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     const assets = isClientViewer
       ? getClientLibraryAssets(getClientArchiveAssets(rawAssets), { forClient: true })
       : getClientLibraryAssets(rawAssets);
+    // The activity timeline maps every job to "<agent> delivered a draft", and
+    // on failure prints the stored error verbatim. Two things must not go
+    // through that door for a client: a LAUNCH run (its story is the launch
+    // card's three phases — a second telling is the double identity again, and
+    // it announces a deliverable that is staff-only by design), and the raw
+    // service error, which is the same internal string every other client
+    // surface routes through clientSafeRefusal. Both are handled HERE, at the
+    // server boundary, because everything below is serialized into the RSC
+    // payload whether or not it is painted.
+    const timelineJobs = isClientViewer
+      ? jobs
+          .filter((job) => job.runType !== "launch")
+          .map((job) => (job.error ? { ...job, error: clientSafeRefusal(job.error) } : job))
+      : jobs;
     return (
       <div>
         <PageHeader
@@ -76,7 +91,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
           currentUserRole={user.role}
           clientId={scopedClientId}
           activityLogs={activityLogs}
-          jobs={jobs}
+          jobs={timelineJobs}
           report={report}
           assets={assets}
         />
