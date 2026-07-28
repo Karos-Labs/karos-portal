@@ -159,9 +159,20 @@ export function AiInsights({ clientId }: { clientId: string }) {
    too. Render all of that safely as React nodes (no dangerouslySetInnerHTML,
    no markdown dependency) rather than leaving raw syntax on the page. */
 
-function renderInline(line: string, keyPrefix: string): React.ReactNode[] {
-  // Split on **bold** spans, keeping the delimited groups.
-  return line.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, i) => {
+/**
+ * The inline spans a briefing can carry: **bold**, *emphasis*, _emphasis_.
+ *
+ * QA F126: this used to match only the double-asterisk form, so whenever the
+ * model reached for italics the delimiters landed on the page verbatim ("Top
+ * performers: *Playbook* (4.2 score) and *Special Edition*"). Latent rather
+ * than always visible — it depends on what the model emits that week — which is
+ * how it survived review. Bold is listed first so it wins the alternation.
+ */
+export const INLINE_EMPHASIS_RE = /(\*\*[^*]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g;
+
+export function renderInline(line: string, keyPrefix: string): React.ReactNode[] {
+  // Split on emphasis spans, keeping the delimited groups.
+  return line.split(INLINE_EMPHASIS_RE).filter(Boolean).map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {
       return (
         <strong key={`${keyPrefix}-${i}`} className="font-semibold text-foreground">
@@ -169,11 +180,21 @@ function renderInline(line: string, keyPrefix: string): React.ReactNode[] {
         </strong>
       );
     }
+    if (
+      (part.startsWith("*") && part.endsWith("*")) ||
+      (part.startsWith("_") && part.endsWith("_"))
+    ) {
+      return (
+        <em key={`${keyPrefix}-${i}`} className="italic text-foreground/90">
+          {part.slice(1, -1)}
+        </em>
+      );
+    }
     return <span key={`${keyPrefix}-${i}`}>{part}</span>;
   });
 }
 
-function renderBriefing(text: string): React.ReactNode {
+export function renderBriefing(text: string): React.ReactNode {
   const lines = text.split("\n");
 
   // Drop a leading H1 — it's the model restating a title ("# CLIENT - WEEKLY
