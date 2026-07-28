@@ -164,6 +164,17 @@ export async function addActivityNoteAction(clientId: string, text: string): Pro
 
 /**
  * Run the Intel Report pipeline for a client. Admins and employees only.
+ *
+ * The pipeline normally takes minutes and is allowed 20 before it is treated as
+ * dead, while Cloud Run kills the request at 300s — so awaiting it inside the
+ * action meant any run past five minutes reported failure for a run that may
+ * well have completed, with the stale-lock window then blocking the retry. The
+ * lock check stays synchronous (so a second click still gets the "already
+ * running" error immediately); everything after it runs in `after()`, matching
+ * the three other triggers of this same pipeline (client creation, onboarding
+ * completion, the cron). Progress is the AiProcessingBanner plus the lock, which
+ * already disables the Regenerate button.
+ *
  * @param runSpecificContext Optional run-specific instructions entered at execution time.
  *   These are threaded into the pipeline as Layer C (highest priority) and expire after this run.
  */
@@ -177,31 +188,36 @@ export async function generateIntelReportAction(
   if (!(await tryAcquireAiProcessingLock(clientId))) {
     throw new Error("AI generation is already running for this client. Please wait for it to finish.");
   }
-  let failure: string | undefined;
-  try {
-    const { runIntelReportPipeline } = await import("@/lib/intel");
-    await runIntelReportPipeline(clientId, runSpecificContext);
-    await updateClient(clientId, { lastIntelReportAt: Date.now() });
-    const ctxNote = runSpecificContext?.trim()
-      ? ` - with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
-      : "";
-    await logActivity({
-      clientId,
-      timestamp: Date.now(),
-      type: "INTEL_GENERATION",
-      title: "Intel Report generated",
-      description: `Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical)${ctxNote}`,
-      actor: "System AI",
-      actorRole: "system",
-    });
-  } catch (e) {
-    failure = e instanceof Error ? e.message : String(e);
-    throw e;
-  } finally {
-    // Persisted even though this action also throws synchronously to the modal —
-    // other tabs/teammates only learn what happened via the client doc.
-    await releaseAiProcessingLock(clientId, failure);
-  }
+
+  after(async () => {
+    let failure: string | undefined;
+    try {
+      const { runIntelReportPipeline } = await import("@/lib/intel");
+      await runIntelReportPipeline(clientId, runSpecificContext);
+      await updateClient(clientId, { lastIntelReportAt: Date.now() });
+      const ctxNote = runSpecificContext?.trim()
+        ? ` - with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
+        : "";
+      await logActivity({
+        clientId,
+        timestamp: Date.now(),
+        type: "INTEL_GENERATION",
+        title: "Intel Report generated",
+        description: `Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical)${ctxNote}`,
+        actor: "System AI",
+        actorRole: "system",
+      });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+      console.error("[intel] Regenerate pipeline failed:", e);
+    } finally {
+      // Passing `failure` (undefined on success) both releases the lock and
+      // persists WHY it failed — the run no longer throws to the caller, so this
+      // record is the only place the reason survives.
+      await releaseAiProcessingLock(clientId, failure);
+    }
+  });
+
   revalidatePath(`/clients/${clientId}`);
 }
 

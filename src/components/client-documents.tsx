@@ -475,6 +475,10 @@ function RegenerateModal({
             <span className="font-medium text-foreground">this run only</span> and take the
             highest priority if they conflict with global settings.
           </p>
+          <p className="text-xs text-muted-2">
+            The run takes a few minutes and continues in the background — you can close this and
+            keep working. Regenerate stays locked until it finishes.
+          </p>
           <div className="space-y-1.5">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
               Run-Specific Context{" "}
@@ -515,7 +519,7 @@ function RegenerateModal({
               name="RefreshCw"
               className={cn("h-3.5 w-3.5", running && "animate-spin")}
             />
-            {running ? "Running pipeline…" : "Confirm & Run"}
+            {running ? "Starting…" : "Confirm & Run"}
           </button>
         </div>
       </div>
