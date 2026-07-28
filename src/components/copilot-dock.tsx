@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatbotWidget } from "@/components/chatbot-widget";
 import { Icon } from "@/components/icon";
+import { MOBILE_TAB_BAR_OFFSET_CLASS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import type { Client, ClientReport } from "@/lib/types";
 
@@ -13,6 +14,42 @@ import type { Client, ClientReport } from "@/lib/types";
  */
 const DOCK_STATE_KEY = "karos.copilot.dock";
 
+/**
+ * Which app shell hosts the dock. The two differ only in the width of their
+ * left nav column — ClientRail is `w-72`, the staff Sidebar is `w-64` — but the
+ * strip has to start exactly at that column's right edge, and both numbers used
+ * to be hardcoded to the client portal's geometry (CD-G8).
+ */
+export type CopilotShell = "client" | "staff";
+
+/**
+ * Where the strip and the expanded sheet pin themselves, below `lg`.
+ *
+ * The bottom is the same in both shells: every shell that shows the client
+ * 4-tab nav renders the mobile bottom bar below `md` (CD-G9a), so the strip
+ * parks directly above it and drops to the viewport edge from `md` up, where
+ * that nav is a left column instead. `right-0` is unconditional — running to
+ * the viewport's right edge is the whole point of the contract.
+ */
+const SHELL_ANCHOR: Record<CopilotShell, string> = {
+  client: `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-72`,
+  staff: `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-64`,
+};
+
+/**
+ * Whether an element is actually painted. The shell swaps its two dock surfaces
+ * with `lg:hidden` / `hidden lg:block`, and a `display:none` element still holds
+ * a live ref — so the outside-click pass below has to skip the surface that
+ * isn't on screen, or browsing at phone width would quietly persist a collapsed
+ * desktop rail (and vice versa) through DOCK_STATE_KEY.
+ *
+ * `getClientRects()` rather than `offsetParent`: the sheet is `position: fixed`,
+ * whose offsetParent is null even when it is perfectly visible.
+ */
+function isPainted(el: HTMLElement | null): el is HTMLElement {
+  return !!el && el.getClientRects().length > 0;
+}
+
 interface Props {
   clientId: string;
   /** Signed-in viewer — scopes the persisted copilot transcript. */
@@ -22,6 +59,8 @@ interface Props {
   hasGoogleIntegration?: boolean;
   client?: Pick<Client, "name" | "website" | "industry" | "isAiProcessing">;
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
+  /** Host shell — sets the left offset of the pinned strip. Defaults to the client portal. */
+  shell?: CopilotShell;
 }
 
 /**
@@ -30,11 +69,14 @@ interface Props {
  * it, so nothing jumps or resizes. The chat stays mounted (state preserved) and
  * is simply clipped when collapsed. Desktop (lg+) only.
  */
-export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, client, report }: Props) {
+export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, client, report, shell = "client" }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   /** Blocks the write-back below until the restore pass has run. */
   const hydratedRef = useRef(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLElement>(null);
+  const anchor = SHELL_ANCHOR[shell];
 
   useEffect(() => {
     hydratedRef.current = false;
@@ -63,6 +105,33 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
     }
   }, [collapsed, sheetOpen]);
 
+  /**
+   * Dismiss on any click outside the copilot (CD-G9b): it stays open only while
+   * the viewer is working inside it. Same idiom as the export menu in
+   * client-documents.tsx — a document `mousedown` plus a ref containment test —
+   * rather than the full-screen click-catcher some menus use, because a catcher
+   * would swallow the first click on every page while the copilot is open.
+   *
+   * Neither surface is unmounted: the sheet is hidden with `display:none` and
+   * the rail is clipped, so a half-typed message and the restored transcript
+   * both survive an accidental dismissal (QA F88).
+   *
+   * The Strategy War Room renders inside ChatbotWidget with no portal, so its
+   * DOM is inside these refs and clicking it does not count as "outside".
+   */
+  useEffect(() => {
+    if (!sheetOpen && collapsed) return;
+    function handleOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      const sheet = sheetRef.current;
+      const rail = railRef.current;
+      if (sheetOpen && isPainted(sheet) && !sheet.contains(target)) setSheetOpen(false);
+      if (!collapsed && isPainted(rail) && !rail.contains(target)) setCollapsed(true);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [sheetOpen, collapsed]);
+
   const widgetProps = {
     clientId,
     viewerUid,
@@ -75,29 +144,48 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
 
   return (
     <>
-      {/* Below lg: docked bottom sheet — a tab that expands to the bottom ~70%
-          and stays pinned (sits above the mobile bottom tab bar on phones).
-          At 35vh the header and the greeting filled the whole sheet and the
-          four AI actions sat below the fold on first open (QA F94). */}
+      {/* Below lg: a strip pinned to the bottom of the viewport that pops up
+          into a sheet. Both states share one anchor so the sheet opens exactly
+          where the strip was, and neither ever floats mid-flow (CD-G8).
+
+          The sheet is capped rather than fixed at 70dvh: a fixed box left a
+          dead region between the sparse welcome content and the input row. It
+          now grows with the transcript up to the cap, and only then scrolls.
+          (The cap itself is QA F94 — at 35vh the greeting filled the sheet and
+          the four AI actions sat below the fold on first open.)
+
+          Both surfaces stay mounted and swap with `hidden`, so dismissing the
+          sheet keeps a half-typed message alive (CD-G9b). */}
       <div className="lg:hidden">
-        {sheetOpen ? (
-          <div className="fixed left-0 right-0 bottom-[54px] z-40 h-[70dvh] border-t border-border bg-background shadow-[0_-8px_30px_rgba(0,0,0,0.5)] md:bottom-0 md:left-72">
-            <ChatbotWidget docked defaultOpen onCollapse={() => setSheetOpen(false)} {...widgetProps} />
-          </div>
-        ) : (
-          <button
-            onClick={() => setSheetOpen(true)}
-            className="fixed left-0 right-0 bottom-[54px] z-40 flex items-center justify-center gap-2 border-t border-border bg-background/95 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-foreground backdrop-blur-sm transition-colors hover:bg-surface-2 md:bottom-0 md:left-72"
-            aria-label="Open AI Copilot"
-          >
-            <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
-            AI Copilot
-            <Icon name="ChevronUp" className="h-4 w-4 text-muted-2" />
-          </button>
-        )}
+        <div
+          ref={sheetRef}
+          className={cn(
+            "fixed z-40 flex max-h-[70dvh] flex-col border-t border-border bg-background shadow-[0_-8px_30px_rgba(0,0,0,0.5)]",
+            anchor,
+            !sheetOpen && "hidden",
+          )}
+        >
+          <ChatbotWidget docked defaultOpen onCollapse={() => setSheetOpen(false)} {...widgetProps} />
+        </div>
+
+        <button
+          onClick={() => setSheetOpen(true)}
+          className={cn(
+            "fixed z-40 flex items-center justify-center gap-2 border-t border-border bg-background/95 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-foreground backdrop-blur-sm transition-colors hover:bg-surface-2",
+            anchor,
+            sheetOpen && "hidden",
+          )}
+          aria-label="Open AI Copilot"
+          aria-expanded={sheetOpen}
+        >
+          <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
+          AI Copilot
+          <Icon name="ChevronUp" className="h-4 w-4 text-muted-2" />
+        </button>
       </div>
 
       <aside
+        ref={railRef}
         className={cn(
           // min-w-0 beats the flex automatic minimum — without it the fixed-width
           // chat inside keeps the rail at 380px and w-12 never takes effect.
