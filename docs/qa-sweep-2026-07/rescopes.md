@@ -186,3 +186,17 @@ starting. Updated by the orchestrator after each verification gate.
 - customAgents collection contains a "Reddit Agent" record (staff library card)
   even though portal Reddit surfaces don't exist — consistent with lab import;
   no action, context for AGENTS/TOMER.
+
+## Wave A mid-flight coordination (orchestrator rulings)
+- **F135 re-pointed AGENTS** (second move): the "estimated weekly cost line" is
+  custom-agents.tsx:691, not schedule-run-modal.tsx (phantom citation). AGENTS
+  implements pluralisation of runs+outputs; custom-agents.tsx:461 "credits per
+  output" belongs to F130 (also AGENTS).
+- **F107 (CALENDAR) approved approach**: staff-gated Publish Now added in
+  asset-detail-modal.tsx (composed WITH MarkPostedRow — Publish Now = staff push,
+  MarkPostedRow = client attestation, must not preempt §A4); connectedPlatforms
+  threaded calendar-body → run-calendar staff-only in RSC payload. Verifier
+  checklist: requireStaff end-to-end on publishAssetNowAction; no new client
+  payload fields. **Still open for WORKSPACE (wave B): F107 part 1** — pass
+  connectedPlatforms into AssetCard from assets-view.tsx:113 and
+  jobs/[id]/page.tsx:61, else Publish Now never appears on the staff assets list.

@@ -64,7 +64,7 @@ are tracked in the CD table at the bottom.
 | F43 | LOW | A | AGENTS | 2 | OPEN | — | Staff land on a completely blank AI Agents page for any client whose agent list is empty | findings-p047-084.md |
 | F44 | LOW | A | AGENTS | 2 | OPEN | yes | The client AI Agents page stacks two near-identical headings and taglines on top of each other | findings-p047-084.md |
 | F45 | LOW | A | AGENTS | 2 | OPEN | — | Two managed-product run components and their submit action are dead code — the four catalog pro | findings-p047-084.md |
-| F135 | LOW | A | CALENDAR | 2 | OPEN | yes | "3 runs × 1 outputs × 25 credits" — unpluralised units in the cost line | findings-p047-084.md |
+| F135 | LOW | A | AGENTS | 2 | OPEN | yes | "3 runs × 1 outputs × 25 credits" — unpluralised units in the cost line | findings-p047-084.md |
 | F147 | HIGH | B | ARCH | 3 | OPEN | yes | One content stream, two agent identities: "Instagram Agent" and "Social posts (IG/TikTok)" run  | findings-p047-084.md |
 | F148 | HIGH | B | ARCH | 3 | OPEN | — | The portal has no launch-vs-runs model — the architecture the team decided on has nowhere to li | findings-p047-084.md |
 | F46 | BLOCKER | B | WORKSPACE | 1 | RESOLVED | — | A client can never act on a draft — the pick/post/skip loop the intake copy promises does not e | findings-p047-084.md |
