@@ -24,6 +24,7 @@ import {
   setPlannedRunStatusAction,
 } from "@/lib/actions/planned-run-actions";
 import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
+import { MAX_OUTPUTS_PER_RUN, MAX_RUNS_PER_WEEK } from "@/lib/scheduled-runs";
 import {
   buildCustomAgentPrompt,
   initialAgentBrief,
@@ -96,6 +97,10 @@ export interface ClientAgentScheduleRow {
   /** Epoch millis of that refusal. */
   lastErrorAt?: number | null;
 }
+
+/** The dialog's dropdowns, built from the same bounds the server clamps to. */
+const RUNS_PER_WEEK_OPTIONS = Array.from({ length: MAX_RUNS_PER_WEEK }, (_, i) => i + 1);
+const OUTPUTS_PER_RUN_OPTIONS = Array.from({ length: MAX_OUTPUTS_PER_RUN }, (_, i) => i + 1);
 
 function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
   return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
@@ -735,7 +740,7 @@ function AgentScheduleModal({
               value={postsPerWeek}
               onChange={(event) => setPostsPerWeek(Number(event.target.value))}
             >
-              {[1, 2, 3, 4, 5, 6, 7].map((count) => (
+              {RUNS_PER_WEEK_OPTIONS.map((count) => (
                 <option key={count} value={count}>{count}</option>
               ))}
             </Select>
@@ -747,7 +752,7 @@ function AgentScheduleModal({
               value={outputsPerRun}
               onChange={(event) => setOutputsPerRun(Number(event.target.value))}
             >
-              {[1, 2, 3, 4, 5].map((count) => (
+              {OUTPUTS_PER_RUN_OPTIONS.map((count) => (
                 <option key={count} value={count}>{count}</option>
               ))}
             </Select>
