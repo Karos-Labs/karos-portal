@@ -24,11 +24,24 @@ export default async function ClientsPage() {
   // Reduced HERE, not in the browser: the grid used to receive every asset and
   // every job in the database, serialized into the RSC payload, to print two
   // numbers per card. lastRunAt backs the "most recent run" sort.
+  //
+  // Fenced to the VISIBLE clients, the same skip /jobs does (QA F37). `clients`
+  // is scoped to an employee's assignments and `credits` is built from it, but
+  // `counts` was keyed off the unfiltered listAssets()/listJobs() — so the map
+  // handed to ClientsGrid carried the ids, volumes and last-run times of every
+  // client in the database, including ones outside the employee's assignment
+  // and orphans of deleted clients. Replacing the two full scans with a
+  // server-side count() stays a handover item; the fence is what lands now.
+  const visibleClientIds = new Set(clients.map((c) => c.id));
   const counts: Record<string, ClientCardCounts> = {};
   const bump = (clientId: string): ClientCardCounts =>
     (counts[clientId] ??= { assets: 0, jobs: 0, lastRunAt: 0 });
-  for (const asset of assets) bump(asset.clientId).assets++;
+  for (const asset of assets) {
+    if (!visibleClientIds.has(asset.clientId)) continue;
+    bump(asset.clientId).assets++;
+  }
   for (const job of jobs) {
+    if (!visibleClientIds.has(job.clientId)) continue;
     const entry = bump(job.clientId);
     entry.jobs++;
     if (job.createdAt > entry.lastRunAt) entry.lastRunAt = job.createdAt;
