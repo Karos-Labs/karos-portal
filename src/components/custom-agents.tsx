@@ -411,14 +411,21 @@ export function ClientCustomAgents({
   return (
     <section className="mt-10">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-xl text-foreground">{viewerIsClient ? "Your AI agents" : "Custom agents"}</h2>
-          <p className="mt-0.5 text-sm text-muted">
-            {viewerIsClient
-              ? "Your always-on AI team. Run an agent now or choose its weekly production pace."
-              : "Prompt-driven agents from the custom library, run against this client."}
-          </p>
-        </div>
+        {/* Clients already read this page's own header, which says the same
+            thing in slightly different words. Only staff get a section heading
+            here — their page header describes the whole page, not this section.
+            The credits badge stays either way; it is the row's only unique
+            content. */}
+        {viewerIsClient ? (
+          <span />
+        ) : (
+          <div>
+            <h2 className="text-xl text-foreground">Custom agents</h2>
+            <p className="mt-0.5 text-sm text-muted">
+              Prompt-driven agents from the custom library, run against this client.
+            </p>
+          </div>
+        )}
         {viewerIsClient && availableCredits !== undefined && (
           <Badge tone={availableCredits > 0 ? "neon" : "warning"}>
             {availableCredits} credits available

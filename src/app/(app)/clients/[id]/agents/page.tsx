@@ -200,9 +200,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     return (
       <>
         {runInFlight && <AutoRefresh />}
+        {/* The section below used to repeat this heading and tagline almost
+            verbatim ("active AI team" / "always-on AI team"), one in Title Case
+            and one in sentence case. This is the surviving one. */}
         <PageHeader
-          title="AI Agents"
-          description="Your active AI team—run agents now or set their weekly production pace."
+          title="AI agents"
+          description="Your always-on AI team. Run an agent now, or set its weekly production pace."
         />
         {/* Two different conditions used to share the never-set-up empty state,
             so an outage or a bad deploy told a client with three live agents
