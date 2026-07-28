@@ -109,9 +109,15 @@ export async function pickAgentSlotOptionAction(input: {
   // THE CLAIM (B6). The optionPick check above is a pre-flight courtesy that
   // gives a fast, friendly error; it is NOT the guard. Two tabs both read null
   // before either writes, and both would mint a post for the same day. The
-  // winner is decided inside a transaction on the slot doc, and the asset is
-  // created only after winning it: an orphan claim with no asset is recoverable,
-  // an orphan asset with no claim is a duplicate post nobody asked for.
+  // winner is decided inside a transaction on the slot doc.
+  //
+  // The asset is created only after winning, and the failure modes are not
+  // symmetric. Claim-then-crash costs ONE DAY: the slot reads as chosen with no
+  // asset behind it, the client cannot re-pick, and un-sticking it needs a
+  // direct edit to the slot doc — bad, but bounded, silent to everyone else,
+  // and confined to a window of milliseconds. Asset-then-crash would leave a
+  // real post the client never confirmed, duplicable on every retry. Given the
+  // choice, lose the day rather than publish something nobody picked.
   const claimed = await claimAgentSlotOptionPick(slot.id, {
     optionRef: chosen.ref,
     ...(chosen.direction ? { direction: chosen.direction } : {}),

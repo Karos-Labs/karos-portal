@@ -219,10 +219,17 @@ export async function updateAgentSlot(id: string, data: Partial<AgentSlot>): Pro
  * single-delivery problem on jobs.
  *
  * Returns false when someone else got there first; the caller must treat that
- * as "already chosen" and not create an asset. The asset is deliberately
- * created AFTER a successful claim: an orphan claim with no asset is
- * recoverable (the day shows as chosen, staff can see the slot), whereas an
- * orphan asset with no claim is a duplicate post nobody asked for.
+ * as "already chosen" and not create an asset.
+ *
+ * The asset is deliberately created AFTER a successful claim, and the two
+ * failure modes are not equivalent. A crash between the claim and the asset
+ * strands that ONE DAY: it reads as chosen, has nothing behind it, the client
+ * cannot pick again, and clearing it needs a direct edit to the slot doc. That
+ * is a real cost, not a self-healing one — but it is one day, in a
+ * millisecond-wide window, visible to nobody else. The reverse order would risk
+ * a published post the client never confirmed, re-minted on every retry. The
+ * ordering trades a recoverable-by-hand gap for the impossibility of a
+ * duplicate, which is the right way round for something that becomes content.
  */
 export async function claimAgentSlotOptionPick(
   id: string,
