@@ -879,6 +879,111 @@ export function validateProposal(proposal: unknown, current: CurrentState): Vali
   };
 }
 
+/* ── Selection ───────────────────────────────────────────────────────── */
+
+export type PlanItemKind = "doc" | "competitor" | "profile" | "palette";
+
+/**
+ * One tickable line in the plan. Staff import a subset — "I should be able to
+ * tick if I don't want to import one of the things" — so every write in the
+ * plan needs a stable identity the browser can hand back.
+ */
+export interface PlanItem {
+  key: string;
+  kind: PlanItemKind;
+  label: string;
+  /**
+   * Items that must be ticked whenever this one is. Surfaced as a
+   * disabled-with-reason tick, so a dependency is visible in the UI rather than
+   * discovered as a refusal after clicking Import.
+   */
+  requires: string[];
+  /** Why `requires` exists, in the words the tick's tooltip uses. */
+  requiresReason: string | null;
+}
+
+export const docItemKey = (docType: string, tier: string) => `doc:${docType}@${tier}`;
+const competitorItemKey = (c: CompetitorPlan) => (c.id ? `comp:${c.id}` : `comp:new:${String(c.data.url)}`);
+export const PROFILE_ITEM_KEY = "client:profile";
+export const PALETTE_ITEM_KEY = "client:palette";
+
+/** The palette's document twin — the one dependency in the plan. */
+const BRANDING_DOC_KEY = docItemKey("branding-guidelines", "internal");
+
+/**
+ * Every write in the plan, as a tickable item. Unchanged rows are not listed:
+ * there is nothing to opt out of.
+ */
+export function planItems(plan: RefreshPlan): PlanItem[] {
+  const items: PlanItem[] = [];
+
+  for (const d of plan.docs) {
+    if (d.action === "unchanged") continue;
+    items.push({
+      key: docItemKey(d.docType, d.tier),
+      kind: "doc",
+      label: `${d.docType} · ${d.tier}`,
+      requires: [],
+      requiresReason: null,
+    });
+  }
+
+  for (const c of plan.competitors) {
+    if (c.action === "unchanged") continue;
+    items.push({ key: competitorItemKey(c), kind: "competitor", label: c.company, requires: [], requiresReason: null });
+  }
+
+  if (plan.client.profile.length > 0 || plan.client.brandingFill.length > 0) {
+    items.push({ key: PROFILE_ITEM_KEY, kind: "profile", label: "Client profile fills", requires: [], requiresReason: null });
+  }
+
+  if (plan.client.colors) {
+    // The app regenerates the branding document from the palette on save, so
+    // taking the palette WITHOUT its document leaves every agent reading stale
+    // hexes — the same drift the validator refuses at proposal level. Only a
+    // real write counts: if the stored document already matches, it is
+    // "unchanged", absent from this list, and the palette needs nothing.
+    const docIsAWrite = plan.docs.some(
+      (d) => d.action !== "unchanged" && docItemKey(d.docType, d.tier) === BRANDING_DOC_KEY,
+    );
+    items.push({
+      key: PALETTE_ITEM_KEY,
+      kind: "palette",
+      label: "Brand palette",
+      requires: docIsAWrite ? [BRANDING_DOC_KEY] : [],
+      requiresReason: docIsAWrite
+        ? "The app rebuilds the branding document from the palette, so the two must land together — otherwise agents read stale hex codes."
+        : null,
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Re-check a selection server-side. The UI disables the ticks that would break
+ * a dependency, but the selection arrives over the wire, so the rule is
+ * enforced here too — the disabled tick is the explanation, not the guarantee.
+ */
+export function validateSelection(plan: RefreshPlan, selected: ReadonlySet<string>): string[] {
+  const errors: string[] = [];
+  const items = planItems(plan);
+  const byKey = new Map(items.map((i) => [i.key, i]));
+
+  for (const key of selected) {
+    if (!byKey.has(key)) errors.push(`"${key}" is not something this plan can write.`);
+  }
+  for (const item of items) {
+    if (!selected.has(item.key)) continue;
+    for (const dep of item.requires) {
+      if (!selected.has(dep)) {
+        errors.push(`${item.label} needs ${byKey.get(dep)?.label ?? dep} in the same import. ${item.requiresReason ?? ""}`.trim());
+      }
+    }
+  }
+  return errors;
+}
+
 /* ── Write ops ───────────────────────────────────────────────────────── */
 
 /**
@@ -894,12 +999,18 @@ export type WriteOp =
  * Turn an approved plan into the exact writes the CLI has always performed.
  * Pure: same plan + same `now` ⇒ same ops, so the page's dry run and its apply
  * cannot disagree.
+ *
+ * `selected` narrows the plan to the ticked subset (see `planItems`). Omit it —
+ * as the CLI does — to write everything, which is the behaviour this function
+ * has always had.
  */
-export function buildWriteOps(plan: RefreshPlan, now: number): WriteOp[] {
+export function buildWriteOps(plan: RefreshPlan, now: number, selected?: ReadonlySet<string>): WriteOp[] {
   const ops: WriteOp[] = [];
+  const wants = (key: string) => selected === undefined || selected.has(key);
 
   for (const d of plan.docs) {
     if (d.action === "unchanged") continue;
+    if (!wants(docItemKey(d.docType, d.tier))) continue;
     const content = plan.docContent[`${d.docType}@${d.tier}`];
     if (content === undefined) {
       throw new Error(`Internal: missing validated content for ${d.docType}@${d.tier}`);
@@ -925,6 +1036,7 @@ export function buildWriteOps(plan: RefreshPlan, now: number): WriteOp[] {
 
   for (const c of plan.competitors) {
     if (c.action === "unchanged") continue;
+    if (!wants(competitorItemKey(c))) continue;
     if (c.action === "create") {
       ops.push({
         kind: "create",
@@ -958,13 +1070,19 @@ export function buildWriteOps(plan: RefreshPlan, now: number): WriteOp[] {
     }
   }
 
-  if (plan.counts.clientTouched) {
+  // The profile fills and the palette are two independent ticks that share one
+  // `clients` document, so each half is resolved before the patch is built —
+  // taking the palette alone must not drag an unticked profile fill along.
+  const takeProfile = (plan.client.profile.length > 0 || plan.client.brandingFill.length > 0) && wants(PROFILE_ITEM_KEY);
+  const takePalette = plan.client.colors != null && wants(PALETTE_ITEM_KEY);
+
+  if (takeProfile || takePalette) {
     const patch: Row = { updatedAt: now };
-    for (const p of plan.client.profile) patch[p.field] = p.to;
-    if (plan.client.colors || plan.client.brandingFill.length) {
+    if (takeProfile) for (const p of plan.client.profile) patch[p.field] = p.to;
+    if (takePalette || (takeProfile && plan.client.brandingFill.length)) {
       const bg: Row = { ...plan.client.storedBranding };
-      for (const b of plan.client.brandingFill) bg[b.field] = b.to;
-      if (plan.client.colors) {
+      if (takeProfile) for (const b of plan.client.brandingFill) bg[b.field] = b.to;
+      if (takePalette && plan.client.colors) {
         const to = plan.client.colors.to;
         bg.dominantColors = to;
         // Legacy scalars mirror dominantColors[0..3].hex — src/lib/branding.ts:762-765.

@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildWriteOps,
+  docItemKey,
+  planItems,
   validateProposal,
+  validateSelection,
+  PALETTE_ITEM_KEY,
+  PROFILE_ITEM_KEY,
   type CurrentState,
   type Row,
 } from "@/lib/refresh-apply-core";
@@ -554,5 +559,142 @@ describe("buildWriteOps", () => {
   it("produces nothing at all when the proposal matches what is stored", () => {
     const plan = accept(proposal({}));
     expect(buildWriteOps(plan, 42)).toEqual([]);
+  });
+});
+
+/* ── Selective import ────────────────────────────────────────────────── */
+
+describe("selective import", () => {
+  /** A palette change always ships with its branding document (the validator insists). */
+  const paletteProposal = () =>
+    proposal({
+      docs: [
+        { docType: "branding-guidelines", tier: "internal", content: docBody({ extra: "\n\n#111111 #222222 #333333" }) },
+        { docType: "brand-voice", tier: "internal", content: docBody() },
+      ],
+      competitors: { create: [{ company: "New Co", url: "new-co.io" }] },
+      client: {
+        profile: { website: "https://acme.test" },
+        brandingGuidelines: {
+          dominantColors: [
+            { hex: "#111111", dominanceRank: 1, usagePct: 50 },
+            { hex: "#222222", dominanceRank: 2, usagePct: 30 },
+            { hex: "#333333", dominanceRank: 3, usagePct: 20 },
+          ],
+        },
+      },
+    });
+
+  const BRANDING_DOC = docItemKey("branding-guidelines", "internal");
+  const VOICE_DOC = docItemKey("brand-voice", "internal");
+
+  it("lists one tickable item per write and nothing for unchanged rows", () => {
+    const body = docBody();
+    const plan = accept(
+      proposal({
+        docs: [
+          { docType: "brand-voice", tier: "internal", content: body },
+          { docType: "market-strategy", tier: "internal", content: docBody({ pad: 70 }) },
+        ],
+      }),
+      current({ docs: new Map([["brand-voice@internal", { id: "d1", content: body, version: 2 }]]) }),
+    );
+    expect(planItems(plan).map((i) => i.key)).toEqual([docItemKey("market-strategy", "internal")]);
+  });
+
+  it("writes only the ticked subset", () => {
+    const plan = accept(paletteProposal());
+    const ops = buildWriteOps(plan, 42, new Set([VOICE_DOC]));
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ collection: "clientContextDocs", data: { docType: "brand-voice" } });
+  });
+
+  it("omitting the selection writes everything, as the CLI always has", () => {
+    const plan = accept(paletteProposal());
+    expect(buildWriteOps(plan, 42, undefined)).toEqual(buildWriteOps(plan, 42));
+  });
+
+  it("drops an unticked competitor without touching the others", () => {
+    const roster: Row[] = [{ id: "c1", company: "Rival Inc", url: "rival.com" }];
+    const plan = accept(
+      proposal({
+        competitors: {
+          update: [{ id: "c1", positioning: "budget tier" }],
+          create: [{ company: "New Co", url: "new-co.io" }],
+        },
+      }),
+      current({ competitors: roster }),
+    );
+    const ops = buildWriteOps(plan, 42, new Set(["comp:c1"]));
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ kind: "merge", id: "c1" });
+  });
+
+  // Profile fills and the palette share one `clients` document but are two
+  // independent ticks, so taking one must not drag the other along.
+  it("keeps profile fills and the palette independent inside the shared client doc", () => {
+    const plan = accept(paletteProposal());
+
+    const paletteOnly = buildWriteOps(plan, 42, new Set([PALETTE_ITEM_KEY, BRANDING_DOC]))
+      .find((o) => o.collection === "clients");
+    expect(paletteOnly!.data).not.toHaveProperty("website");
+    expect(brandingPatch([paletteOnly!])).toMatchObject({ primaryAccent: "#111111" });
+
+    const profileOnly = buildWriteOps(plan, 42, new Set([PROFILE_ITEM_KEY]))
+      .find((o) => o.collection === "clients");
+    expect(profileOnly!.data).toMatchObject({ website: "https://acme.test" });
+    expect(profileOnly!.data).not.toHaveProperty("brandingGuidelines");
+  });
+
+  it("writes no client document when neither client item is ticked", () => {
+    const plan = accept(paletteProposal());
+    expect(buildWriteOps(plan, 42, new Set([VOICE_DOC])).some((o) => o.collection === "clients")).toBe(false);
+  });
+
+  describe("the palette's dependency on its document", () => {
+    it("declares it when the branding document is itself a write", () => {
+      const item = planItems(accept(paletteProposal())).find((i) => i.key === PALETTE_ITEM_KEY);
+      expect(item?.requires).toEqual([BRANDING_DOC]);
+      expect(item?.requiresReason).toContain("stale hex");
+    });
+
+    it("refuses a selection that takes the palette without its document", () => {
+      const plan = accept(paletteProposal());
+      const errors = validateSelection(plan, new Set([PALETTE_ITEM_KEY]));
+      expect(errors.join(" ")).toContain("Brand palette needs");
+    });
+
+    it("accepts the pair together", () => {
+      const plan = accept(paletteProposal());
+      expect(validateSelection(plan, new Set([PALETTE_ITEM_KEY, BRANDING_DOC]))).toEqual([]);
+    });
+
+    // No dependency when the stored document already states the palette: it is
+    // "unchanged", so there is no document write to keep in step with.
+    it("declares no dependency when the branding document needs no rewrite", () => {
+      const brandingBody = docBody({ extra: "\n\n#111111 #222222 #333333" });
+      const plan = accept(
+        proposal({
+          docs: [{ docType: "branding-guidelines", tier: "internal", content: brandingBody }],
+          client: {
+            brandingGuidelines: {
+              dominantColors: [
+                { hex: "#111111", dominanceRank: 1, usagePct: 50 },
+                { hex: "#222222", dominanceRank: 2, usagePct: 30 },
+                { hex: "#333333", dominanceRank: 3, usagePct: 20 },
+              ],
+            },
+          },
+        }),
+        current({ docs: new Map([["branding-guidelines@internal", { id: "d1", content: brandingBody, version: 4 }]]) }),
+      );
+      expect(planItems(plan).find((i) => i.key === PALETTE_ITEM_KEY)?.requires).toEqual([]);
+      expect(validateSelection(plan, new Set([PALETTE_ITEM_KEY]))).toEqual([]);
+    });
+  });
+
+  it("refuses a key that is not in the plan at all", () => {
+    const plan = accept(paletteProposal());
+    expect(validateSelection(plan, new Set(["doc:client-guidelines@client"])).join(" ")).toContain("not something this plan can write");
   });
 });
