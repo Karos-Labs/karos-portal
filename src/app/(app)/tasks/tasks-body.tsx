@@ -10,10 +10,11 @@ import {
 import { listClientAgents } from "@/lib/data-client-agents";
 import { TasksBoard } from "@/components/tasks-board";
 import { ProgressView } from "@/components/progress-view";
-import type { TimelineJob } from "@/components/activity-timeline";
+import type { TimelineActivity, TimelineJob } from "@/components/activity-timeline";
 import { PageHeader } from "@/components/ui";
 import { contentLabelsByAsset, runRowLabel } from "@/lib/agent-identity-map";
 import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
+import { clientSafeActor } from "@/lib/activity-actors";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import type { AppUser, ClientTask } from "@/lib/types";
 
@@ -96,6 +97,29 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     // paints five fields; five fields is what crosses. Built by CONSTRUCTION so
     // a field added to Job later is excluded by default (the redactLockedAsset
     // rule), which is exactly what a `{ ...job }` here defeated.
+    // The timeline's OTHER half, projected by the same rule and for the same
+    // reason. An ActivityLog carries `clientId` and a free-form `metadata` bag
+    // nothing paints, and its `actor` is whatever the writer stored — the
+    // automated writers store internal service names ("Runway autopilot", see
+    // activity-actors.ts). All of it shipped, and the redaction ran in the
+    // BROWSER on a payload the browser already had.
+    //
+    // MANUAL_NOTE rows go the same way. They are written by the staff-only
+    // composer in the timeline ("Add an internal note…"), and they were dropped
+    // at render for a client while crossing the boundary in full — title, body
+    // and the staff author's name. Dropped HERE instead, exactly like the
+    // launch runs below.
+    const timelineActivity: TimelineActivity[] = activityLogs
+      .filter((log) => !isClientViewer || log.type !== "MANUAL_NOTE")
+      .map((log) => ({
+        id: log.id,
+        timestamp: log.timestamp,
+        type: log.type,
+        title: log.title,
+        ...(log.description ? { description: log.description } : {}),
+        // Staff are handed the row untouched, so their timeline is unchanged.
+        ...clientSafeActor(log.actor, log.actorRole, isClientViewer),
+      }));
     const agentLabelByAssetId = contentLabelsByAsset(assets, jobs, umbrellas);
     const timelineJobs: TimelineJob[] = jobs
       .filter((job) => !isClientViewer || job.runType !== "launch")
@@ -119,7 +143,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
           tasks={tasks}
           currentUserRole={user.role}
           clientId={scopedClientId}
-          activityLogs={activityLogs}
+          activityLogs={timelineActivity}
           jobs={timelineJobs}
           report={report}
           assets={assets}
