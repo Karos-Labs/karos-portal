@@ -15,8 +15,14 @@
  * the roster reads correctly whether or not this script has ever run. The two
  * lists carry identical copy on purpose and must be changed together — if they
  * drift, a client sees one line before the backfill and a different one after,
- * for no reason they could ever observe. Scripts cannot import from `@/`
- * (nothing under scripts/ resolves the path alias), which is why this is a
+ * for no reason they could ever observe. This stays a hand-kept twin only
+ * because the two lists are keyed differently — this one matches on the agent
+ * KEY alone, the runtime one on the full identity string — so neither is a
+ * drop-in for the other. (An earlier version of this note claimed scripts
+ * cannot import from `@/` at all; that is wrong — tsx resolves the alias
+ * through tsconfig paths, and scripts/backfill-client-agents.ts imports the
+ * production helpers directly. Prefer that whenever the logic is shareable.)
+ * Which is why this is a
  * documented twin rather than a shared import.
  *
  * The copy rule both follow (CD-G2, Albert): benefit first, concrete nouns for
