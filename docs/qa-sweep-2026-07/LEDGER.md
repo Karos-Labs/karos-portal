@@ -76,7 +76,7 @@ are tracked in the CD table at the bottom.
 | F54 | HIGH | A | WORKSPACE | 2 | OPEN | yes | A task moved to "Review Pending" from the ticket vanishes from the board with no way back | findings-p085-122.md |
 | F55 | HIGH | B | WORKSPACE | 2 | OPEN | yes | Branded "Connect with Instagram" buttons open a popup showing a bare error sentence, and only a | findings-p085-122.md |
 | F56 | HIGH | B | WORKSPACE | 2 | OPEN | — | Every client user can hand out permanent workspace access, and the key can never be rotated fro | findings-p085-122.md |
-| F57 | HIGH | A | DOCS | 2 | OPEN | — | The AI Execution Guide shows clients raw markup — "## Overview", "**Task**" and all | findings-p085-122.md |
+| F57 | HIGH | A | DOCS | 2 | RESOLVED | — | The AI Execution Guide shows clients raw markup — "## Overview", "**Task**" and all | findings-p085-122.md |
 | F58 | HIGH | B | WORKSPACE | 2 | OPEN | — | The Autopilot switch spends the client's credits and fires five agent runs with no label, no pr | findings-p085-122.md |
 | F149 | HIGH | B | WORKSPACE | 2 | OPEN | — | Nothing marks a post as posted, so the archive shows everything the moment it is generated | findings-p085-122.md |
 | F150 | HIGH | B | WORKSPACE | 2 | OPEN | — | Video deliverables have no path into the portal — clips are hand-delivered by email | findings-p085-122.md |
@@ -95,22 +95,22 @@ are tracked in the CD table at the bottom.
 | F71 | LOW | A | WORKSPACE | 2 | OPEN | — | Client-facing strings use a spaced hyphen where the rest of the UI uses an em dash — including  | findings-p085-122.md |
 | F72 | LOW | A | WORKSPACE | 2 | OPEN | yes | One page, three different names: the staff sidebar says "Tasks", the client rail says "Workspac | findings-p085-122.md |
 | F73 | LOW | A | WORKSPACE | 2 | OPEN | — | The Activity tab's empty state promises clients "notes" that are filtered out of their view, an | findings-p085-122.md |
-| F74 | HIGH | B | DOCS | 2 | OPEN | yes | "Correct Info" charges the client 2 credits and reports success even when the correction was th | findings-p085-122.md |
-| F75 | HIGH | B | DOCS | 2 | OPEN | — | After Regenerate or a correction, the staff sidebar keeps serving the OLD document — the button | findings-p085-122.md |
-| F76 | HIGH | B | DOCS | 2 | OPEN | yes | Internal, staff-only analyst documents are shipped to the client's browser — and the client nav | findings-p085-122.md |
-| F77 | HIGH | B | DOCS | 2 | OPEN | yes | Regenerate destroys every document and every correction the client ever made, with no warning a | findings-p085-122.md |
-| F78 | HIGH | B | DOCS | 2 | OPEN | yes | Regenerate runs the whole multi-minute pipeline inside one request, so it can report failure on | findings-p123-160.md |
-| F79 | MEDIUM | A | DOCS | 2 | OPEN | — | A document that generated empty still shows in the nav and opens to a completely blank panel | findings-p123-160.md |
-| F80 | MEDIUM | A | DOCS | 2 | OPEN | yes | Brand and strategy documents open as one flat wall with no section navigation, and the helper t | findings-p123-160.md |
-| F81 | MEDIUM | B | DOCS | 2 | OPEN | yes | Correcting a document does not reach the AI that quotes it — the Copilot and the X agent keep a | findings-p123-160.md |
-| F82 | MEDIUM | B | DOCS | 2 | OPEN | — | Exported PDFs silently swallow any text in angle brackets, including the templates' unfilled pl | findings-p123-160.md |
-| F83 | MEDIUM | A | DOCS | 2 | OPEN | yes | Raw markdown leaks into the document viewer: literal hash marks, orphaned nested bullets, and u | findings-p123-160.md |
-| F84 | MEDIUM | B | DOCS | 2 | OPEN | yes | The Schedule modal shows the wrong "Next run" date for any cadence longer than monthly | findings-p123-160.md |
+| F74 | HIGH | B | DOCS | 2 | RESOLVED | yes | "Correct Info" charges the client 2 credits and reports success even when the correction was th | findings-p085-122.md |
+| F75 | HIGH | B | DOCS | 2 | RESOLVED | — | After Regenerate or a correction, the staff sidebar keeps serving the OLD document — the button | findings-p085-122.md |
+| F76 | HIGH | B | DOCS | 2 | RESOLVED | yes | Internal, staff-only analyst documents are shipped to the client's browser — and the client nav | findings-p085-122.md |
+| F77 | HIGH | B | DOCS | 2 | RESOLVED | yes | Regenerate destroys every document and every correction the client ever made, with no warning a | findings-p085-122.md |
+| F78 | HIGH | B | DOCS | 2 | RESOLVED | yes | Regenerate runs the whole multi-minute pipeline inside one request, so it can report failure on | findings-p123-160.md |
+| F79 | MEDIUM | A | DOCS | 2 | RESOLVED | — | A document that generated empty still shows in the nav and opens to a completely blank panel | findings-p123-160.md |
+| F80 | MEDIUM | A | DOCS | 2 | RESOLVED | yes | Brand and strategy documents open as one flat wall with no section navigation, and the helper t | findings-p123-160.md |
+| F81 | MEDIUM | B | DOCS | 2 | RESOLVED | yes | Correcting a document does not reach the AI that quotes it — the Copilot and the X agent keep a | findings-p123-160.md |
+| F82 | MEDIUM | B | DOCS | 2 | RESOLVED | — | Exported PDFs silently swallow any text in angle brackets, including the templates' unfilled pl | findings-p123-160.md |
+| F83 | MEDIUM | A | DOCS | 2 | RESOLVED | yes | Raw markdown leaks into the document viewer: literal hash marks, orphaned nested bullets, and u | findings-p123-160.md |
+| F84 | MEDIUM | B | DOCS | 2 | RESOLVED | yes | The Schedule modal shows the wrong "Next run" date for any cadence longer than monthly | findings-p123-160.md |
 | F85 | MEDIUM | A | CREDITS | 2 | OPEN | yes | The client is billed 2 credits for a correction with no price shown anywhere in the flow | findings-p123-160.md |
-| F138 | MEDIUM | B | DOCS | 2 | OPEN | yes | Document body numbering starts at "2." and the numbers are baked into the text | findings-p123-160.md |
-| F86 | LOW | B | DOCS | 2 | OPEN | yes | No document tells you how old it is — no last-updated, no version, and no way to navigate a fou | findings-p123-160.md |
-| F139 | LOW | A | DOCS | 2 | OPEN | yes | A teammate's real name is used as the example of a wrong fact in client-facing copy | findings-p123-160.md |
-| F140 | LOW | A | DOCS | 2 | OPEN | yes | A fill-in-the-blank label ships as "EVERY ___ MONTH(S)" | findings-p123-160.md |
+| F138 | MEDIUM | B | DOCS | 2 | RESOLVED | yes | Document body numbering starts at "2." and the numbers are baked into the text | findings-p123-160.md |
+| F86 | LOW | B | DOCS | 2 | RESOLVED | yes | No document tells you how old it is — no last-updated, no version, and no way to navigate a fou | findings-p123-160.md |
+| F139 | LOW | A | DOCS | 2 | RESOLVED | yes | A teammate's real name is used as the example of a wrong fact in client-facing copy | findings-p123-160.md |
+| F140 | LOW | A | DOCS | 2 | RESOLVED | yes | A fill-in-the-blank label ships as "EVERY ___ MONTH(S)" | findings-p123-160.md |
 | F87 | HIGH | B | COPILOT | 2 | OPEN | — | "Competitor Deep-Dive" asks for a competitor's web address it has no way to open | findings-p123-160.md |
 | F88 | HIGH | A | COPILOT | 2 | OPEN | yes | All four AI actions disappear after the first message, and the only way back destroys the threa | findings-p123-160.md |
 | F89 | HIGH | A | COPILOT | 2 | OPEN | — | Raw model markup is shown to the client — asterisks, hashes and table pipes land in the panel | findings-p123-160.md |
