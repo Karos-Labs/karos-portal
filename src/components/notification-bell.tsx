@@ -57,7 +57,11 @@ export function NotificationBell({
   const visibleActions = actionItems.filter(
     (n) => !dismissed.has(`action-${n.transcriptId}-${n.itemIndex}`),
   );
-  const visibleJobs = reviewJobs.filter((j) => !dismissed.has(`job-${j.jobId}`));
+  // Review rows have no dismiss control: the X used to write nothing but local
+  // state, so the row (and the count) came back on the next page load — a badge
+  // that lies (QA F121). listReviewJobs queries status == "review", so the row
+  // clears by itself the moment the job is approved, exactly like the task rows.
+  const visibleJobs = reviewJobs;
 
   // Task alerts: review_pending tasks are surfaced first (need immediate attention),
   // then pending tasks. No local dismissal — they disappear when status changes.
@@ -82,9 +86,6 @@ export function NotificationBell({
     });
   }
 
-  function dismissJob(jobId: string) {
-    setDismissed((prev) => new Set([...prev, `job-${jobId}`]));
-  }
 
   return (
     <div className="relative">
@@ -205,14 +206,14 @@ export function NotificationBell({
                     <div
                       key={j.jobId}
                       className={cn(
-                        "flex items-start gap-1 px-4 py-3 transition-colors hover:bg-surface-2",
+                        "flex items-start gap-1 transition-colors hover:bg-surface-2",
                         now - j.updatedAt > STALE_MS && "opacity-60",
                       )}
                     >
                       <Link
                         href={viewerIsClient ? "/tasks?tab=archive" : `/jobs/${j.jobId}`}
                         onClick={() => setOpen(false)}
-                        className="flex min-w-0 flex-1 gap-3"
+                        className="flex min-w-0 flex-1 gap-3 px-4 py-3"
                       >
                         <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
                           <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
@@ -230,17 +231,6 @@ export function NotificationBell({
                           </p>
                         </div>
                       </Link>
-                      <button
-                        onClick={() => dismissJob(j.jobId)}
-                        className={cn(
-                          "mt-0.5 shrink-0 rounded-[6px] p-1 text-muted-2",
-                          "transition-colors hover:bg-surface-3 hover:text-foreground",
-                        )}
-                        aria-label="Dismiss"
-                        title="Dismiss"
-                      >
-                        <Icon name="X" className="h-3.5 w-3.5" />
-                      </button>
                     </div>
                   ))}
 
