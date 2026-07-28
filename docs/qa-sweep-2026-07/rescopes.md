@@ -398,3 +398,21 @@ starting. Updated by the orchestrator after each verification gate.
   several job writes omit updatedAt; F134 regex misses [Person]/[person's]
   capitalized/possessive; CheckCircle2 (custom-agents.tsx:1042) not in lucide
   1.21 → silent Sparkles fallback (pre-existing).
+
+## Albert directives 2026-07-28 (sidebar review on localhost)
+- CD-E1: "Agent-specific documents" (client-documents.tsx ~:1068-1100, renders
+  when clientId set — SAME on main; conditional mount explains the
+  appears/disappears confusion) → REMOVE the section. Agent data intake stays
+  reachable via AI Agents cards (F131 chip / F35 hub badges). SHELL wave C.
+- CD-E2: brand colors → up to 3-4 colors, each with an INTERNAL usage-percentage
+  (staff catalog; clients see swatches only). Data model: extend client
+  brandColors; keep pencil editor; percentages staff-only in payload (boundary
+  rule). SHELL wave C.
+- CD-E3: sidebar NO-SCROLL contract — nav (Dashboard/AI Agents/Calendar/
+  Workspace), client chip, DOCUMENTS (compact rows, simpler icons ok),
+  COMPETITOR TRACK, BRAND COLORS, footer must fit the viewport with no
+  scrollbar at common laptop heights; fixed layout, no overflow scroll. CD-E1's
+  removal buys room. SHELL wave C (client-rail.tsx free after CREDITS merges).
+- Phase-3 design v2 committed: launch client+staff triggered, client-billed
+  gated-until-priced (Q10 pending Albert veto), per-agent pricing, X daily
+  3-option slots with pick/edit/post telemetry (WP-9, seam T7).

@@ -46,10 +46,11 @@ Glossary (use these words everywhere; credits vocabulary rules apply — never
 |---|---|
 | client agent | The per-client umbrella (parent). Collection `clientAgents`. |
 | template | A child stream ("By The Numbers"). Lives in the parent's `templates` array; joined to posts via `Asset.templateKey`. |
-| launch / setup run | The one-time heavy run that researches the client and produces the template set. `runType: "launch"`. |
+| launch / setup run | The one-time heavy run that researches the client and produces the template set. Client- or staff-fired (Q2); client-billed at the measured per-agent price (Q1, §6.3). `runType: "launch"`. |
 | recurring run | A scheduled fire of the parent agent that fills slots. `runType: "scheduled"`. |
-| manual template run | Client-triggered "run this template now", 25 credits (per-agent price). `runType: "manual_template"`. |
+| manual template run | Client-triggered "run this template now", 25 credits (per-agent flat price, Q6). `runType: "manual_template"`. |
 | slot | A calendar-day intent: template + date (+ optional note). What clients see on the calendar. Collection `agentSlots`. |
+| options slot | The X daily variant (Q9, §4.5): one day, three post options, the client picks/edits/posts one; pick telemetry feeds the learning loop. |
 | posted | Asset status `published` reached via Mark-as-posted (or a real platform push). The only state the client archive shows. |
 
 ---
@@ -758,7 +759,8 @@ Client calendar: §4.1 (+ §4.5 picker on the day card). Client archive: §3.
   umbrella (pick lab agent → creates clientAgents doc), Launch button (with
   intake gate surfaced), curation pane in `curating` (launch deliverables
   listed staff-only; template editor seeded per §8.2; "Go live"), Reset on
-  launch_failed, per-umbrella economics card (§6.2).
+  launch_failed, per-umbrella economics card (§6.2) incl. the setup-vs-run
+  USD ratio + suggested launch price (§6.3).
 - **Staff calendar**: full truth — slots + real asset states + jobs, exactly
   as today plus slot cards. Staff day detail shows the client note
   prominently (path-3 consumption).
@@ -840,10 +842,11 @@ All of these ride on mechanisms verified in current code:
 | T4 | **Note revision as a first-class light run** (cheaper than a full run) | portal fallback = full custom run (§4.3 path 2, behind a flag) | dedicated revise skill / task param |
 | T5 | **Video deliverables (F150/CD-D1)**: `Asset.kind`-style `mimeType: video/*` + storage URL field | portal renders `<video controls>` in the detail modal off `meta.artifacts` video entries (WP-5 stretch; the liMedia filter already recognizes video/*; extract the shared helper per rescopes F150 note) | GCP block storage + upload path; service fetches from storage |
 | T6 | **TikTok connector** | CD-D2 "Pending TikTok verification" chip state (integration status), decoupled from launch | TikTok app verification + connector |
+| T7 | **X daily 3-option generation** (§4.5): X engine mode "produce exactly 3 option drafts, distinct directions, for <date>", consuming the pick/edit/posted learning log to converge on the client's demonstrated preferences | cron fires per options slot with `karos_slot_id`; picker, telemetry, and learning-log serialization (x-agent-context.ts) all live and already feeding every X run — the interim batch-slicing selector simply retires | lab X skill gains the daily-options mode + pick-history optimization contract |
 
-Nothing in Phase 3 *waits* on T1–T6: every feature has a working degraded mode
+Nothing in Phase 3 *waits* on T1–T7: every feature has a working degraded mode
 (staff curation, 2-stage narrative, pre-generated slot matching, staff-applied
-notes, no inline video, pending chip).
+notes, no inline video, pending chip, batch-sliced daily options).
 
 ---
 
@@ -877,11 +880,19 @@ prints a per-client plan table. Steps per client:
    dates; the slot planner only moves things on subsequent explicit edits.
    Days beyond existing assets are NOT pre-filled (horizon generation runs
    lazily after go-live).
-5. **Jobs**: legacy jobs get NO runType (heuristic launch-detection is
+5. **X umbrella (options mode, §4.5)**: created like step 1 but with
+   `chainFamily` unset and no template seeding (registry stays empty — the
+   options model has no template streams; `rotation` empty). `launchState`
+   "live" when X runs exist (the weekly batch contract predates launches).
+   NO retroactive options slots and no touching of existing batch assets or
+   XDraftFeedback rows: daily options slots generate forward-only from the
+   first horizon run after --apply, drawing on the most recent batch asset.
+   The existing weekly schedule row is linked per step 3 and keeps firing.
+6. **Jobs**: legacy jobs get NO runType (heuristic launch-detection is
    unreliable); analytics buckets them as "before run-type tracking". Optional
    `--stamp-jobs` pass stamps `clientAgentId` only (by customAgentId →
    umbrella), which is safe and useful for grouping.
-6. Report: umbrellas created, templates seeded, slots derived, schedules
+7. Report: umbrellas created, templates seeded, slots derived, schedules
    linked, anomalies (assets with unknown templates → listed for staff
    review, left untouched).
 
@@ -900,7 +911,7 @@ Sizing: one Opus builder per WP in its own worktree; file-disjoint except where
 flagged; serial merges. Every WP: `npx tsc --noEmit` + `npm run build` +
 unit tests for pure modules + the three-lens gate.
 
-**Merge-conflict strategy:** WP-1..WP-6 build new files under
+**Merge-conflict strategy:** WP-1..WP-6 and WP-9 build new files under
 `src/components/client-agents/`, `src/lib/slot-plan.ts`,
 `src/lib/actions/client-agent-actions.ts`, `src/lib/agent-identity-map.ts`.
 The only shared-file touches are enumerated per WP below — those files are the
@@ -912,25 +923,28 @@ F129 status strip, F25 blockReason, planned-run-actions call-site arg).
 
 | WP | Scope | Files (new / shared-touch) | Blocked on | Acceptance criteria (condensed) |
 |---|---|---|---|---|
-| **WP-0 Foundations** | Types (§1.4 additions + 3 new interfaces), data.ts CRUD (clientAgents, agentSlots, clientAgentFeedback: get/list/upsert/patch, deterministic ids), `slot-plan.ts` pure module + tests (horizon gen, asset↔slot matching, reorder), agent-identity-map helper + tests | new: slot-plan.ts, agent-identity-map.ts; shared: types.ts, data.ts | **AGENTS merge** (types.ts JobStatus "cancelled" conflict) | tsc/build green; tests cover: horizon respects zone + paused templates; matching preserves deriveOrderKey order per template; no asset ever moved to a past day; identity helper resolves the F147 double-identity fixture |
-| **WP-1 Launch engine** | client-agent-actions.ts (bind, launch submit, reset, curate templates, go-live), submit path metadata plumb (add `extraMetadata`/`runType` inputs to `SubmitCustomAgentInput`), webhook launch branch, `launchDeliverable` exclusion in getClientLibraryAssets, LaunchProgressCard + staff curation pane, agents-page wiring | new: actions + components; shared: submit-custom.ts (metadata arg), webhook route, asset-visibility.ts, agents page.tsx | WP-0 | Launch fires with runType metadata; launch deliverables never client-visible (mock-client lens: client sees only guided progress through the whole cycle); failed launch → neutral client copy + auto-refund verified; state machine transitions server-enforced (no client-role launch) |
+| **WP-0 Foundations** | Types (§1.4 additions + 4 new interfaces incl. slot `kind`/option fields), data.ts CRUD (clientAgents, agentSlots, clientAgentFeedback: get/list/upsert/patch, deterministic ids), `slot-plan.ts` pure module + tests (horizon gen, asset↔slot matching, reorder, `assignOptionRefs` batch-slicing selector §4.5b), agent-identity-map helper + tests | new: slot-plan.ts, agent-identity-map.ts; shared: types.ts, data.ts | **AGENTS merge** (types.ts JobStatus "cancelled" conflict) | tsc/build green; tests cover: horizon respects zone + paused templates; matching preserves deriveOrderKey order per template; no asset ever moved to a past day; identity helper resolves the F147 double-identity fixture; option selector is deterministic, never reuses a draft across slots, and diversifies directions |
+| **WP-1 Launch engine** | client-agent-actions.ts (bind, **client self-serve + staff launch submit** with the §2 gate ladder incl. `agent_launch` charge + pricing gate, reset, curate templates, go-live), submit path metadata plumb (add `extraMetadata`/`runType` inputs to `SubmitCustomAgentInput`), webhook launch branch, `launchDeliverable` exclusion in getClientLibraryAssets, client Launch CTA card + LaunchProgressCard + staff curation pane, agents-page wiring | new: actions + components; shared: submit-custom.ts (metadata arg), webhook route, asset-visibility.ts, agents page.tsx | WP-0 | Client-fired launch charges `launchCreditCost` exactly once (ledger op `agent_launch`, jobId-paired) and refunds on failure with "credits returned" copy; unpriced/intake-blocked/credits-short states each show a disabled CTA with its visible reason (F25/F131 — mock-client lens walks all three); staff launch never charges; launch deliverables never client-visible through the whole cycle; state transitions server-enforced (no second launch while one is in flight) |
 | **WP-2 Live view** | ClientAgentCard, template rows (per-template run w/ credit gate, pause, reorder, rationale), week strip, page card-selection logic | new: components; shared: agents page.tsx, custom-agents.tsx (render delegation only — one conditional, rebased after AGENTS) | WP-0, WP-1; **rebase after AGENTS** | Per-template run submits pinned prompt + template metadata and charges per-agent price exactly once; disabled states show visible reasons (F25 pattern); reorder persists rotation and regenerates horizon; run history for umbrella agents leaks no batch tells (churn checklist §4.1 items 3–4) |
 | **WP-3 Feedback** | Feedback collection actions + modal UI (both scopes), feedback context-file builder, submit-core attachment | new: actions/components/builder; shared: submit-custom.ts (one attachment block — coordinate with WP-1's touch: WP-1 lands first, WP-3 rebases) | WP-0 | Caps enforced server-side (50 × 500); feedback file attaches on every live-umbrella run and never on launch runs; template scope validated against registry; client sees own history; staff resolve works |
 | **WP-4 Slots + calendar** | Slot actions (note, reorder, skip), calendar client projection (slot chips + day-card slot view + note editor), staff slot surfaces, run-scheduled slot-aware firing, reflow delegation guard | new: slot components; shared: run-calendar.tsx, calendar-body.tsx, run-scheduled route, chain.ts, planned-run-actions.ts | WP-0; CALENDAR already merged (safe); **coordinate with WORKSPACE on notification-bell** (note alert — separate small file preferred) | Client calendar shows template-name slots for ALL future content (mock-client lens must fail to distinguish pre-generated from not-generated); notes clamp + surface to staff within one refresh; reorder re-dates matching assets correctly (test via slot-plan fixtures); paused schedule freezes horizon; no client payload carries locked content (RSC payload inspection) |
 | **WP-5 Posted/archive + churn copy** | Archive = published-only + 30d window + template grouping; MarkPostedRow extraction + day-card mount; locked-copy rewrite sweep; F47 run-started copy; (stretch) video render off artifacts | shared: archive-view.tsx, asset-detail-modal.tsx, tasks-body/progress-view seeding, run modal copy in custom-agents.tsx | **Wave-B WORKSPACE (F149/F66/F107-part-1)** — consume if landed, implement if not (§3) | Client archive shows only posted ≤30d; nothing "draft"-badged ever client-visible; Mark-as-posted reachable from day card and archive modal, one action; "unlock"/"already exists" language gone from client strings; F97 attention count no longer inflated by future drafts |
-| **WP-6 Credit split + analytics** | `agent_launch` operation, ledger label map, credits-panel per-agent breakdown, staff umbrella economics card | shared: types.ts (enum — WP-0 can pre-land it), credits-panel.tsx, agents page staff branch | WP-0; **rebase after CREDITS cluster** (credits-panel edits) | Ledger renders launch vs scheduled vs manual buckets that sum to the existing totals; staff card splits USD by runType with an honest legacy bucket; no charge-path behavior change (risk lens: charge/refund diffs zero) |
+| **WP-6 Credit split + analytics** | `agent_launch` operation, ledger label map, credits-panel per-agent breakdown, staff umbrella economics card incl. **setup-vs-run USD ratio + suggested launch price (§6.3)**, `launchCreditCost` field on the agent editor (validated > creditCost) | shared: types.ts (enum — WP-0 can pre-land it), credits-panel.tsx, custom-agents.tsx editor modal (rebase after AGENTS), agents page staff branch | WP-0; **rebase after CREDITS cluster** (credits-panel edits) | Ledger renders launch vs scheduled vs manual buckets that sum to the existing totals; staff card splits USD by runType with an honest legacy bucket AND shows the ratio + suggested price with sample sizes; editor rejects launchCreditCost ≤ creditCost; no charge-path behavior change (risk lens: charge/refund diffs zero) |
 | **WP-7 Identity unification (F147)** | Wire agent-identity-map into calendar-body, archive grouping, jobs page, run rows, analytics labels | shared: calendar-body.tsx, archive-view.tsx, jobs page, custom-agents.tsx run rows | WP-0 (helper), WP-4 (calendar file overlap — same builder or after) | The F147 screenshot scenario (27 Jul stacked "Instagram Agent" + "Social posts (IG/TikTok)") renders one identity; TikTok single identity; zero label maps duplicated |
-| **WP-8 Backfill script + handover** | §9 script, TOMER-HANDOVER Phase-3 section (T1–T6 with file pointers), ledger flips | new: script; shared: docs | WP-0..WP-4 shapes final | Dry-run on Geektime + Karos Labs fixtures produces a zero-asset-movement plan; --apply idempotent (second run = no-op); handover lists every seam with expected payload |
+| **WP-8 Backfill script + handover** | §9 script incl. the X options-mode umbrella (step 5), TOMER-HANDOVER Phase-3 section (T1–T7 with file pointers), ledger flips | new: script; shared: docs | WP-0..WP-4 + WP-9 shapes final | Dry-run on Geektime + Karos Labs fixtures produces a zero-asset-movement plan; --apply idempotent (second run = no-op); X umbrella gets no retroactive slots and touches no XDraftFeedback rows; handover lists every seam with expected payload |
+| **WP-9 X daily options + telemetry (§4.5)** | Option picker component (three cards, inline edit, "Use this one"), `pickAgentSlotOptionAction` (materialize chosen asset, stamp optionPick, auto-write skipped `not_posted` rows), Mark-as-posted wrapper writing the chosen `posted`/`posted_with_edits` row, options-slot rendering on calendar/day card/Today, options-mode ClientAgentCard variant | new: picker + card variant components; shared: x-agent-actions.ts (feedback writes), asset-actions.ts or a thin wrapper (posted hook), day-card file from WP-4 | WP-0 (types + selector), WP-4 (slot surfaces); **coordinate x-drafts-review adjacency with WORKSPACE (F70 owner)** — build the picker as a new component, don't edit x-drafts-review | Future days show only "pick of 3" chips (mock-client lens: option texts unreachable in the RSC payload before the day); pick materializes exactly one approved asset + N−1 not_posted rows, idempotent per slot; edited pick → posted_with_edits + finalText on Mark-as-posted; picks are free (no charge path touched); learning log serialization verified to include the new rows (existing x-agent-context path) |
 
 Startable immediately (after AGENTS merge lands, which is imminent): WP-0 →
 then WP-1, WP-3, WP-6 in parallel (disjoint after WP-0), WP-4 parallel to
 WP-1/2 except the shared submit/cron file order (WP-1 → WP-3 → WP-4 on
 submit-custom.ts / run-scheduled). WP-5 waits on Wave-B WORKSPACE or absorbs
-F149. WP-2 after WP-1. WP-7 last-but-one. WP-8 last.
+F149. WP-2 after WP-1. WP-9 after WP-4 (and after WORKSPACE's F70/F28 merges
+touch the X reader surfaces). WP-7 next-to-last. WP-8 last.
 
-**DEFER-TO-TOMER list** (= §8.3 T1–T6 verbatim, into TOMER-HANDOVER.md), plus
-the two ops items: run the backfill script (§9) and the existing F127 blurb
-backfill before client-facing demo.
+**DEFER-TO-TOMER list** (= §8.3 T1–T7 verbatim, into TOMER-HANDOVER.md), plus
+the three ops items: run the backfill script (§9), set per-agent
+`launchCreditCost` from the measured ratio once staff launches accumulate
+(§6.3), and the existing F127 blurb backfill before client-facing demo.
 
 ---
 
@@ -947,7 +961,9 @@ backfill before client-facing demo.
 - JOB_STATUS_META consumed, never re-invented; "cancelled" treated as terminal
   (AGENTS F30) including in the launch branch.
 - Churn rule A3 is enforced structurally (server-side redaction + slot
-  projection), with the five named residual tells closed in WP-2/WP-4/WP-5.
+  projection), with the five named residual tells closed in WP-2/WP-4/WP-5;
+  §4.5's options texts additionally cross the RSC boundary only on their day
+  (generated day-of or presented day-of, per the Q9 ruling).
 - Credits vocabulary: "credits" client-facing; "token" reserved for PATs/LLM
   counts; no flat-price copy reintroduced (F130).
 - Reddit surfaces: none designed (struck per rescopes); TikTok = CD-D2
@@ -956,16 +972,24 @@ backfill before client-facing demo.
 
 ---
 
-## 12. Open questions — Albert only (defaults chosen so building can start)
+## 12. Albert rulings + remaining open questions
+
+### 12.1 Answered (2026-07-28, via orchestrator) — now binding spec
+
+| # | Ruling | Where it landed |
+|---|---|---|
+| Q1 | **Launch is client-billed, priced above a template run**, with the credit price set per agent from the MEASURED setup-vs-run USD ratio (jobs.external.totalCostUsd). Staff analytics must surface that ratio to inform pricing. | §6.1, §6.3 (calibration + ops step), §1.4 `launchCreditCost`, WP-1/WP-6 |
+| Q2 | **Launch triggerable by BOTH client (self-serve button with guided progress) and staff.** | §2 (gate ladder), §7.1 card 1, WP-1 |
+| Q6 | **Per-agent flat run price** (today's `creditCost` model); templates inherit it, no per-template overrides. | §6.1 (no design change — default confirmed) |
+| Q9 | **X keeps batch generation AND syncs to the calendar as a daily 3-option slot** with pick/edit/posted telemetry feeding a learning loop; options generated or presented day-of (churn-honest). | §4.5, §1.2 slot `kind`/options fields, seam T7, WP-9, §9 step 5 |
+
+### 12.2 Still open — defaults chosen so building can start
 
 | # | Question | Default until answered |
 |---|---|---|
-| Q1 | Is the **launch billed to the client** in credits (and at what price per agent)? A5 asks for the split to be *visible*; it doesn't say who pays. | Staff-fired, not billed; `launchCreditCost` field exists but null. USD economics visible to staff either way. |
-| Q2 | Who may **trigger a launch** — staff only, or a client-facing "Launch" button once intake is complete? | Staff only; client sees guided progress. |
 | Q3 | Must **staff confirm the template set** before the client sees it (the `curating` gate), or does the agent's output go straight to live once T1 exists? | Staff confirm (curating stays even after T1; it becomes one click). |
 | Q4 | A client note lands on a day whose post is **already generated**: auto-run a paid revision pass (whose credits?), route to staff as a task, or best-effort? | Path 3 (staff notification + note surfaced); revision pass built but flag-off. |
 | Q5 | Archive **30-day window**: confirm hide-after-30d (data retained, staff see all). Any client-facing "request older content" affordance needed? | Hide at 30d, no affordance, contact-us path suffices. |
-| Q6 | Pricing granularity: per-agent price for manual template runs (current design) or **per-template overrides**? | Per-agent (F130's shape). |
 | Q7 | **Paused umbrellas on the calendar**: hide future slots (client) + greyed (staff), per §4.4 — confirm. (Extends the CALENDAR cluster's logged paused-schedule gap.) | As stated. |
 | Q8 | Churn: for live umbrellas, **hide raw batch-run rows** from the client's "Recent agent runs" entirely (staff keep them)? A visible "ran yesterday · 7 assets" row contradicts day-of slots. | Hide for umbrella agents, keep for non-umbrella. |
-| Q9 | X agent umbrella: X drafts a **weekly batch the client picks from** (per the e13 contract) — does X adopt slots too, or keep the batch-review model under the umbrella card (launch + templates + feedback, no slot calendar)? | X gets umbrella + feedback + launch, batch-review retained, no slots (chainFamily left unset); revisit with Tomer. |
+| Q10 | Q1 follow-up: while an agent's launch price is **uncalibrated**, the client Launch button is GATED ("pricing being finalized") rather than charging a provisional number — §6.3's justification (never bill a price nobody set; F130's placeholder-pricing failure at the most expensive SKU). Veto if you prefer a provisional price. | Gated until admin sets `launchCreditCost`; staff launches (free) proceed and produce the measurements. |

@@ -171,6 +171,9 @@ are tracked in the CD table at the bottom.
 | CD-C1 | — | loop | OPEN | Mock-client pass sanity-checks competitor/citation data vs stored snapshots |
 | CD-D1 | ARCH | 3/4 | OPEN | Video deliverables: portal renders storage-URL field; GCP wiring → Tomer |
 | CD-D2 | AGENTS | 2 | RESOLVED | TikTok connector state shown as pending verification, not pretending |
+| CD-E1 | SHELL | 2 | OPEN | Remove "Agent-specific documents" section from the client rail (setup lives on AI Agents cards) |
+| CD-E2 | SHELL | 2 | OPEN | Brand colors: 3-4 swatches + internal usage-percentage catalog (staff-visible %, client sees swatches) |
+| CD-E3 | SHELL | 2 | OPEN | Sidebar must never scroll: fixed sections (nav, client, docs compact, competitors, colors) fit viewport |
 
 ## Guard zones (all phases)
 - No deep rework of AI Insights (fix listed defects only) — call directive B5.
