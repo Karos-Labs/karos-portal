@@ -111,9 +111,18 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // the agent's name, not its id).
   const agentById = new Map(customAgents.map((a) => [a.id, a]));
   const agentByName = new Map(customAgents.map((a) => [a.name, a]));
+  // `description` here is the internal lab manifest and this array is serialized
+  // into the payload the browser receives, rendered or not — so client viewers
+  // get the written blurb (empty until one exists), never the manifest.
   const agentOptions: ScheduleAgentOption[] = customAgents
     .filter((a) => a.enabled)
-    .map((a) => ({ id: a.id, name: a.name, description: a.description, icon: a.icon, color: a.color }));
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      description: isClient ? a.clientBlurb?.trim() ?? "" : a.description,
+      icon: a.icon,
+      color: a.color,
+    }));
 
   const assetsByJob = new Map<string, Asset[]>();
   for (const a of assets) {

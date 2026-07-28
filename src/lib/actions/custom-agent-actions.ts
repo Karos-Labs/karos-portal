@@ -255,19 +255,20 @@ export async function importCustomAgentsAction(
     const appearance = GROUP_APPEARANCE[candidate.group] ?? GROUP_APPEARANCE.Other;
     const now = Date.now();
     const description = (frontmatter.description || candidate.description).slice(0, 600);
-    // The manifest blurb is written for the lab, not for the client. It becomes
-    // the client-facing blurb only when it is free of lab shorthand; otherwise
-    // the agent imports with no clientBlurb and the staff card flags it until an
-    // admin writes one. This is the gate that stops an import from putting
-    // engineering notes back on a client's agent card.
-    const clientBlurb =
-      description && !containsLabJargon(description) ? description.slice(0, MAX_CLIENT_BLURB_CHARS) : null;
-    if (!clientBlurb) flagged++;
+    // A manifest blurb is NEVER promoted to the client-facing one, however clean
+    // it looks. LAB_JARGON_RE is allow-by-default — five patterns cannot decide
+    // whether prose was written for a client, and the strings this finding was
+    // raised over ("parameterized clone of the proven reference engine",
+    // "pixel-verifiable and gated") sail through it. Promoting on a clean scan
+    // would also clear the "No client blurb" badge, so nobody would ever be
+    // prompted to rewrite them. Every import lands flagged; an admin writes the
+    // blurb in the editor, where the jargon guard does apply to what they type.
+    flagged++;
     await createCustomAgent({
       key: candidate.key,
       name: candidate.name.slice(0, MAX_NAME_CHARS),
       description,
-      clientBlurb,
+      clientBlurb: null,
       icon: appearance.icon,
       color: appearance.color,
       entrySkillDir: candidate.entrySkillDir,

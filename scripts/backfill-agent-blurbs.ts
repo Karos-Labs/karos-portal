@@ -7,8 +7,8 @@
  * is what clients read; agents imported before the field existed have none and
  * fall back to the manifest until this runs.
  *
- * Blurbs are hand-written below, one per agent, matched on `<key> <name>` the
- * same way the launch profiles match. `description` is never touched.
+ * Blurbs are hand-written below, one per agent, matched on the agent KEY (see
+ * the ordering note on BLURBS). `description` is never touched.
  *
  *   npx tsx scripts/backfill-agent-blurbs.ts            # dry run — prints the plan
  *   npx tsx scripts/backfill-agent-blurbs.ts --apply    # writes
@@ -73,43 +73,56 @@ const LAB_JARGON_RE = /\be\d{1,2}\)|sub-skill|tonemap|FORGE|Path [A-Z]\b/i;
 const MAX_CLIENT_BLURB_CHARS = 300;
 
 /**
- * Matched against `<key> <name>` lowercased, first hit wins — so ordering
- * matters where patterns overlap (interview clips and branded shorts are both
- * "video", Instagram and TikTok are both "content engine").
+ * Matched against the agent KEY only (lowercased) — never the display name,
+ * which is editable and whose wording can collide ("… X agent" ends with the
+ * same two words as the X agent itself).
+ *
+ * FIRST HIT WINS, so specific keys must precede the broad ones. In particular
+ * `karos-instagram-tiktok-content-agent` contains BOTH "instagram" and "tiktok"
+ * and must be matched by its own exact key before either single-platform
+ * pattern gets a chance at it. Agents no pattern matches are reported, not
+ * guessed at.
  */
-const BLURBS: Array<{ match: RegExp; blurb: string }> = [
+const BLURBS: Array<{ key: RegExp; blurb: string }> = [
   {
-    match: /karos-x-agent|(^|\s)x agent/,
+    // The combined content engine — must come before /tiktok/ and /instagram/.
+    key: /^karos-instagram-tiktok-content-agent$/,
+    blurb:
+      "Runs your Instagram and TikTok content together: studies your market, then produces on-brand posts for both on a continuous schedule.",
+  },
+  {
+    key: /^karos-x-agent$/,
     blurb:
       "Drafts your X posts from your company page, your team's profiles, and the updates you save on the X agent data page. Every post arrives as a draft for you to approve.",
   },
   {
-    match: /linkedin/,
+    // karos-linkedin-agent and every karos-linkedin-company-<slug>.
+    key: /^karos-linkedin/,
     blurb:
       "Drafts LinkedIn posts for your company page and your team from the profiles and updates you save on the LinkedIn agent data page. Nothing publishes without your approval.",
   },
   {
-    match: /reddit/,
+    key: /reddit/,
     blurb:
       "Finds the Reddit conversations worth joining and drafts one reply at a time in your voice. You post each reply yourself.",
   },
   {
-    match: /interview.?clip/,
+    key: /interview/,
     blurb:
       "Cuts your interviews and long recordings into short captioned clips, ready to post.",
   },
   {
-    match: /branded.?short|shorts editor/,
+    key: /branded.?short|shorts.?editor/,
     blurb:
       "Turns a video you upload into short branded cuts with captions, sized for social.",
   },
   {
-    match: /tiktok/,
+    key: /tiktok/,
     blurb:
       "Turns your brand guidelines and what is trending in your industry into a steady run of TikTok-ready ideas and scripts.",
   },
   {
-    match: /instagram/,
+    key: /instagram/,
     blurb:
       "Produces a continuous stream of on-brand Instagram posts, drawn from your brand guidelines and what is happening in your industry.",
   },
@@ -142,8 +155,7 @@ async function main() {
 
   for (const doc of snap.docs) {
     const agent = doc.data() as AgentDoc;
-    const identity = `${agent.key ?? ""} ${agent.name ?? ""}`.toLowerCase();
-    const entry = BLURBS.find((b) => b.match.test(identity));
+    const entry = BLURBS.find((b) => b.key.test((agent.key ?? "").toLowerCase()));
     if (!entry) {
       unmatched.push(`${agent.name ?? "(unnamed)"} [${agent.key ?? doc.id}]`);
       continue;
@@ -172,7 +184,12 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Only when invoked directly. Importing this file — for its BLURBS table, or by
+// accident from a test runner glob — must never open a Firestore connection,
+// let alone write to one.
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
