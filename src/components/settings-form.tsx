@@ -111,7 +111,7 @@ function ProfileTab({
     <div className="space-y-5">
       {/* Avatar card */}
       <Card>
-        <CardTitle className="mb-4">Profile Picture</CardTitle>
+        <CardTitle className="mb-4">Profile picture</CardTitle>
         <AvatarUploader
           name={savedName}
           value={photoURL}
@@ -124,7 +124,7 @@ function ProfileTab({
 
       {/* Editable fields */}
       <Card>
-        <CardTitle className="mb-4">Personal Information</CardTitle>
+        <CardTitle className="mb-4">Personal information</CardTitle>
         <form onSubmit={save} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -192,7 +192,7 @@ function ProfileTab({
 
       {/* Account metadata — read-only */}
       <Card>
-        <CardTitle className="mb-4">Account Details</CardTitle>
+        <CardTitle className="mb-4">Account details</CardTitle>
         <dl className="space-y-3">
           <div className="flex items-center justify-between">
             <dt className="text-sm text-muted">Role</dt>
@@ -274,7 +274,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
     <div className="space-y-5">
       {/* Auth method overview */}
       <Card>
-        <CardTitle className="mb-4">Authentication Method</CardTitle>
+        <CardTitle className="mb-4">Authentication method</CardTitle>
         <div className="space-y-3">
           {socialProviders.map((pid) => {
             const meta = PROVIDER_META[pid];
@@ -309,7 +309,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
       {/* Password change — only for email/password accounts */}
       {hasPassword && (
         <Card>
-          <CardTitle className="mb-4">Change Password</CardTitle>
+          <CardTitle className="mb-4">Change password</CardTitle>
           <form onSubmit={savePassword} className="space-y-4">
             <div>
               <Label htmlFor="pw-current">Current password</Label>

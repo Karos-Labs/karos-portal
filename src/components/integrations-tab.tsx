@@ -20,7 +20,7 @@ import {
   type PlatformConfig,
 } from "@/lib/integrations/platforms";
 import { SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
-import { integrationNeedsReconnect } from "@/lib/integration-status";
+import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { LinkedInSeatsWorkspace, type SeatView } from "@/components/linkedin-seats-workspace";
 import type { Role } from "@/lib/types";
 
@@ -132,6 +132,83 @@ function actionErrorText(e: unknown, fallback: string): string {
   const raw = e instanceof Error ? e.message.trim() : "";
   if (!raw || /^(forbidden|unauthorized)\.?$/i.test(raw)) return fallback;
   return raw;
+}
+
+/**
+ * One channels section, connected first. Every platform used to render as an
+ * identical full-height card whether it was live or had never been touched, so
+ * on a nine-card grid reading "Not connected" eight times, the one channel that
+ * actually mattered was lost in the noise.
+ *
+ * Live channels keep the full card. The rest collapse into a compact add-row
+ * list; clicking one expands that platform's real card in place, so nothing is
+ * removed — only deferred.
+ */
+function ChannelSection({
+  title,
+  blurb,
+  platforms,
+  isLive,
+  renderCard,
+  leadingCards,
+}: {
+  title: string;
+  blurb: string;
+  platforms: PlatformConfig[];
+  /** True when this platform is connected and usable (not dead-token). */
+  isLive: (p: PlatformConfig) => boolean;
+  renderCard: (p: PlatformConfig) => React.ReactNode;
+  /** Always-full cards that belong to this section (the merged Google suite). */
+  leadingCards?: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState<string[]>([]);
+  const live = platforms.filter(isLive);
+  const rest = platforms.filter((p) => !isLive(p));
+  const opened = rest.filter((p) => expanded.includes(p.id));
+  const collapsed = rest.filter((p) => !expanded.includes(p.id));
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <p className="text-xs text-muted-2">{blurb}</p>
+      </div>
+
+      {(live.length > 0 || opened.length > 0 || leadingCards) && (
+        <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {live.map(renderCard)}
+          {leadingCards}
+          {opened.map(renderCard)}
+        </div>
+      )}
+
+      {collapsed.length > 0 && (
+        <div className="overflow-hidden rounded-[var(--radius)] border border-border">
+          <p className="border-b border-border bg-foreground/[0.03] px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-2">
+            Add a channel
+          </p>
+          <ul className="divide-y divide-border">
+            {collapsed.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  onClick={() => setExpanded((prev) => [...prev, p.id])}
+                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-2/60"
+                >
+                  <PlatformMark id={p.id} className="h-4 w-4 shrink-0 text-muted-2" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-foreground">{p.name}</span>
+                    <span className="block truncate text-[11px] text-muted-2">{p.description}</span>
+                  </span>
+                  <Icon name="Plus" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function PlatformCard({
@@ -889,6 +966,16 @@ export function IntegrationsTab({
     }, 600);
   }
 
+  /**
+   * A channel worth leading with: connected AND usable. A dead-token
+   * integration is deliberately NOT "live" — it needs attention, and
+   * integrationIsUsable is the same test the rest of the product gates on.
+   */
+  function isLivePlatform(platform: PlatformConfig): boolean {
+    const integration = integrations.find((i) => i.platform === platform.id);
+    return !!integration && integrationIsUsable(integration);
+  }
+
   function renderPlatformCard(platform: PlatformConfig) {
     const integration = integrations.find((i) => i.platform === platform.id);
     return (
@@ -913,7 +1000,7 @@ export function IntegrationsTab({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-semibold">Connected Channels</h2>
+          <h2 className="text-base font-semibold">Connected channels</h2>
           <p className="mt-0.5 text-sm text-muted-2">
             Link accounts so agents can publish content and pull performance data automatically.
           </p>
@@ -940,32 +1027,32 @@ export function IntegrationsTab({
         </div>
       )}
 
-      {/* Social Publishing & Engagement */}
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Social Publishing & Engagement</h3>
-          <p className="text-xs text-muted-2">Channels your agents post and schedule content to.</p>
-        </div>
-        <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {publishingPlatforms.map(renderPlatformCard)}
-        </div>
-      </section>
+      {/* Social publishing & engagement */}
+      <ChannelSection
+        title="Social publishing &amp; engagement"
+        blurb="Channels your agents post and schedule content to."
+        platforms={publishingPlatforms}
+        isLive={isLivePlatform}
+        renderCard={renderPlatformCard}
+      />
 
       {/* Analytics & Performance Intelligence — the three read-only Google
           services (Search Console / Analytics / Business Profile) render as
           ONE merged card; YouTube's own standalone card stays in Publishing
           since it's also a post target, but its status still surfaces here
           as an info pill on the Google Suite card. */}
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Analytics & Performance Intelligence</h3>
-          <p className="text-xs text-muted-2">
-            Read-only sources agents pull performance data and content ideas from.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {analyticsStandalonePlatforms.map(renderPlatformCard)}
+      <ChannelSection
+        title="Analytics &amp; performance intelligence"
+        blurb="Read-only sources agents pull performance data and content ideas from."
+        platforms={analyticsStandalonePlatforms}
+        isLive={isLivePlatform}
+        renderCard={renderPlatformCard}
+        leadingCards={
+          // The merged Google suite is one card covering three services and has
+          // its own internal connected/not state, so it always renders in full
+          // rather than partitioning with the standalone platforms.
           <GoogleUnifiedCard
+            key="google_unified"
             integrations={integrations.filter((i) => googleMergedIds.has(i.platform))}
             youtubeConnected={integrations.some((i) => i.platform === "youtube")}
             clientId={clientId}
@@ -975,8 +1062,8 @@ export function IntegrationsTab({
             onOAuthConnect={() => openOAuthPopup("google_unified")}
             onDisconnected={() => router.refresh()}
           />
-        </div>
-      </section>
+        }
+      />
 
       {/* Footer note */}
       <p className="text-xs text-muted-2">
