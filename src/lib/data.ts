@@ -1660,8 +1660,35 @@ export async function listReviewJobs(clientId: string): Promise<AgentReviewNotif
     .get();
   return snap.docs.map((d) => {
     const j = withId<Job>(d);
-    return { jobId: j.id, title: j.title, agentName: j.agentName, updatedAt: j.updatedAt };
+    return { jobId: j.id, title: j.title, agentName: j.agentName, updatedAt: j.updatedAt, clientId: j.clientId };
   });
+}
+
+/**
+ * Review-queue jobs across several clients — the staff notification bell, which
+ * could never show a review because the layout only ever built this feed for
+ * CLIENT_USER (QA F68). One query, filtered to the caller's scoped client ids
+ * (an employee only sees their assigned clients), newest first.
+ */
+export async function listReviewJobsForClients(
+  clientIds: string[],
+  opts?: { limit?: number },
+): Promise<AgentReviewNotification[]> {
+  if (clientIds.length === 0) return [];
+  const allowed = new Set(clientIds);
+  const snap = await col.jobs().where("status", "==", "review").get();
+  return snap.docs
+    .map((d) => withId<Job>(d))
+    .filter((j) => allowed.has(j.clientId))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, opts?.limit ?? 15)
+    .map((j) => ({
+      jobId: j.id,
+      title: j.title,
+      agentName: j.agentName,
+      updatedAt: j.updatedAt,
+      clientId: j.clientId,
+    }));
 }
 
 /* ─────────────────────── Login audit logs ───────────────────────────── */

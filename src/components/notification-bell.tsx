@@ -18,8 +18,11 @@ const PRIORITY_COLOR: Record<string, string> = {
 interface Props {
   actionItems: ActionItemNotification[];
   reviewJobs: AgentReviewNotification[];
-  /** Pending + review_pending client tasks — server-fetched, refreshed via router.refresh(). */
-  taskAlerts: ClientTask[];
+  /**
+   * Pending + review_pending tasks — server-fetched, refreshed via
+   * router.refresh(). Staff feeds are cross-client and carry `_clientName`.
+   */
+  taskAlerts: (ClientTask & { _clientName?: string })[];
   /** Where the panel opens relative to the trigger. */
   panelPlacement?: "down" | "up" | "right";
   /** Render trigger as an icon button (default) or a full-width labeled row (account menu). */
@@ -205,6 +208,7 @@ export function NotificationBell({
                             New content ready: <span className="text-foreground">{j.title}</span>
                           </p>
                           <p className="mt-0.5 text-[10px] text-muted-2">
+                            {j.clientName ? `${j.clientName} · ` : ""}
                             {j.agentName} · Pending review · {relativeTime(j.updatedAt)}
                           </p>
                         </div>
@@ -263,13 +267,13 @@ export function NotificationBell({
             {/* Footer */}
             {total > 0 && (
               <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
-                {taskAlerts.length > 0 ? (
+                {taskAlerts.length > 0 || visibleJobs.length > 0 ? (
                   <Link
                     href="/tasks"
                     onClick={() => setOpen(false)}
                     className="text-[11px] text-muted-2 transition-colors hover:text-foreground"
                   >
-                    View task board →
+                    View workspace →
                   </Link>
                 ) : (
                   <Link
@@ -291,7 +295,13 @@ export function NotificationBell({
 
 /* ── Task alert row ──────────────────────────────────────────────── */
 
-function TaskAlertRow({ task, onClose }: { task: ClientTask; onClose: () => void }) {
+function TaskAlertRow({
+  task,
+  onClose,
+}: {
+  task: ClientTask & { _clientName?: string };
+  onClose: () => void;
+}) {
   const isReview = task.status === "review_pending";
   const prioColor = PRIORITY_COLOR[task.priority] ?? PRIORITY_COLOR.low;
   // Land on the tab that actually holds this card, and open it. The board used
@@ -322,6 +332,7 @@ function TaskAlertRow({ task, onClose }: { task: ClientTask; onClose: () => void
           {task.title}
         </p>
         <p className="mt-0.5 text-[10px] text-muted-2">
+          {task._clientName ? `${task._clientName} · ` : ""}
           {isReview ? "Review pending" : "Pending"} · {task.priority} priority · {relativeTime(task.createdAt)}
         </p>
       </div>

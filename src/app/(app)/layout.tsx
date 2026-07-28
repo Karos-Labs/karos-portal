@@ -5,6 +5,7 @@ import {
   listClients,
   listAssignedActionItems,
   listReviewJobs,
+  listReviewJobsForClients,
   listClientTasks,
   getClient,
   getClientCredits,
@@ -39,6 +40,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   let pendingCount = 0;
   let clients: Client[] = [];
 
+  // Staff bell feeds are cross-client, so they need the viewer's client scope:
+  // admins see every client, an employee only their assigned ones — the same
+  // fence /jobs, /assets and the task board use.
+  const isStaffViewer = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  const staffClients: Client[] = isStaffViewer
+    ? await listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined)
+    : [];
+  const staffClientNames = new Map(staffClients.map((c) => [c.id, c.name]));
+
   const [adminData, actionItems, reviewJobs, taskAlerts] = await Promise.all([
     user.role === "KAROS_ADMIN"
       ? Promise.all([listUsers(), listClients()]).then(([allUsers, allClients]) => ({
@@ -53,17 +63,38 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         ? listAssignedActionItems(user.uid, { forClientId: user.clientId })
         : Promise.resolve([] as ActionItemNotification[])
       : listAssignedActionItems(user.uid),
-    user.role === "CLIENT_USER" && user.clientId
-      ? listReviewJobs(user.clientId)
-      : Promise.resolve([] as AgentReviewNotification[]),
-    user.role === "CLIENT_USER" && user.clientId
-      ? listClientTasks({
-          clientId: user.clientId,
-          status: ["pending", "review_pending"],
-          limit: 50,
-        })
-      : Promise.resolve([] as ClientTask[]),
+    // Reviews + tasks: the client's own, or — for staff — everything in their
+    // client scope. These two feeds used to be handed empty arrays to staff, so
+    // "Ready for review" and "Pending tasks" were structurally unreachable for
+    // the people who run the agency, and the bell claimed "All caught up!"
+    // while drafts sat in review (QA F68).
+    user.role === "CLIENT_USER"
+      ? user.clientId
+        ? listReviewJobs(user.clientId)
+        : Promise.resolve([] as AgentReviewNotification[])
+      : listReviewJobsForClients([...staffClientNames.keys()], { limit: 15 }),
+    user.role === "CLIENT_USER"
+      ? user.clientId
+        ? listClientTasks({
+            clientId: user.clientId,
+            status: ["pending", "review_pending"],
+            limit: 50,
+          })
+        : Promise.resolve([] as ClientTask[])
+      : listClientTasks({ status: ["pending", "review_pending"], limit: 200 }),
   ]);
+
+  // Annotate staff rows with the client name (same pattern as tasks-body) and
+  // fence them to the viewer's scope.
+  const scopedReviewJobs: AgentReviewNotification[] = isStaffViewer
+    ? reviewJobs.map((j) => ({ ...j, clientName: staffClientNames.get(j.clientId) ?? undefined }))
+    : reviewJobs;
+  const scopedTaskAlerts: (ClientTask & { _clientName?: string })[] = isStaffViewer
+    ? taskAlerts
+        .filter((t) => staffClientNames.has(t.clientId))
+        .slice(0, 20)
+        .map((t) => ({ ...t, _clientName: staffClientNames.get(t.clientId) }))
+    : taskAlerts;
 
   if (adminData) {
     pendingCount = adminData.allUsers.filter((u) => u.disabled && !u.approvedAt).length;
@@ -158,8 +189,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <ClientContextBar />
           <AppHeader
             actionItems={actionItems as ActionItemNotification[]}
-            reviewJobs={reviewJobs}
-            taskAlerts={taskAlerts}
+            reviewJobs={scopedReviewJobs}
+            taskAlerts={scopedTaskAlerts}
             userName={user.name}
             userEmail={user.email}
           />

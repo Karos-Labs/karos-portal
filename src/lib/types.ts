@@ -1152,6 +1152,9 @@ export interface AgentReviewNotification {
   title: string;
   agentName: string;
   updatedAt: number;
+  clientId: string;
+  /** Set on staff (cross-client) feeds so a row can say whose review it is. */
+  clientName?: string;
 }
 
 /**
