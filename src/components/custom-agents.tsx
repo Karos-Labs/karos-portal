@@ -728,7 +728,8 @@ function AgentScheduleModal({
             <span className="font-mono text-sm text-neon">{weeklyCost} credits</span>
           </div>
           <p className="mt-1 text-[11px] text-muted-2">
-            {postsPerWeek} runs × {outputsPerRun} outputs × {costPerOutput} credits.
+            {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
+            {outputsPerRun === 1 ? "" : "s"} × {costPerOutput} credits.
             Credits are charged when each scheduled run starts.
           </p>
           {availableCredits !== undefined && (
