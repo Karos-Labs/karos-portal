@@ -4,127 +4,36 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { ClientAgentLaunchCard } from "./launch-card";
-import { ClientAgentLiveCard } from "./live-card";
-import { AgentEconomicsCard } from "./agent-economics";
-import type { AgentEconomics } from "@/lib/credit-reporting";
 import {
   bindClientAgentAction,
   goLiveClientAgentAction,
   saveClientAgentTemplatesAction,
 } from "@/lib/actions/client-agent-actions";
 import type { ClientAgentTemplateInput } from "@/lib/client-agents";
-import { cn } from "@/lib/utils";
 import type { ClientAgentCardRow } from "./types";
 
 /**
- * The client-agents section of /clients/[id]/agents.
+ * The staff plumbing that used to wrap the client-agents card grid.
  *
- * One card per umbrella, and which card it is comes from the launch state: the
- * launch CTA and its guided progress before go-live, the live agent (template
- * streams, week strip, feedback, pace) after. Staff additionally get the
- * curation pane and the bind control that creates an umbrella in the first
- * place.
+ * The grid itself is gone (CD-I1): staff click an agent on the roster and open
+ * the same full page a client opens, so an umbrella's launch card, live card,
+ * template rows and week strip are rendered ONCE, by the detail route, for both
+ * audiences. What survives here are the two controls that were never per-card
+ * in spirit — binding an agent to this client, which is a roster-level gesture,
+ * and curating a template set, which belongs beside the agent it curates.
  *
- * WHICH umbrellas reach a client at all is the page's decision
- * (`umbrellaOwnsClientCard`): a live umbrella with no templates yet keeps
- * today's generic card rather than replacing it with an empty one.
+ * Both are exported now rather than private to a section component, because the
+ * surfaces that mount them are two different routes.
  */
-export function ClientAgentsSection({
-  agents,
-  viewerIsClient,
-  viewer,
-  bindable,
-  economics,
-  clientId,
-}: {
-  agents: ClientAgentCardRow[];
-  viewerIsClient: boolean;
-  viewer?: { name: string; email: string };
-  /** Staff only: enabled lab agents that have no umbrella for this client yet. */
-  bindable?: Array<{ id: string; name: string }>;
-  /**
-   * Staff only (§6.2b): USD spend per bound agent, keyed by customAgentId, with
-   * the launch price currently set on the lab agent. Absent for clients — this
-   * is cost data, and the client's side of the same question is credits.
-   */
-  economics?: Record<
-    string,
-    { economics: AgentEconomics; launchCreditCost: number | null }
-  >;
-  clientId: string;
-}) {
-  const visible = agents;
-  if (visible.length === 0 && (!bindable || bindable.length === 0)) return null;
-
-  // CD-G8: a section holding nothing but staff plumbing must not reserve a
-  // viewport's worth of height. Albert's narrow-width screenshot showed the
-  // agents page stacking "AI Agents", a near-empty "Client agents" and "Custom
-  // agents" with mt-10 between them — a screen of dead air before any content.
-  // The top gutter follows what is actually below it, and is tight on a phone.
-  const bare = visible.length === 0;
-
-  return (
-    <section className={bare ? "mt-5" : "mt-6 sm:mt-10"}>
-      <div
-        className={cn(
-          "flex flex-wrap items-center justify-between gap-2",
-          bare ? "mb-0" : "mb-3 sm:mb-4",
-        )}
-      >
-        {/* CD-G3: "One agent per platform this client buys: set it up once,
-            then it produces to its own template set and schedule." is dead.
-            Albert read it as a rule about what a client is ALLOWED to have —
-            "They should be able to run every single agent if they want to" —
-            and it is not one: every current agent is granted to every client.
-            The binding is plumbing (it creates the umbrella that holds a
-            template set), so it is labelled as plumbing and nothing here
-            frames the client's roster at all. Clients simply see their agents. */}
-        {viewerIsClient ? <span /> : <h2 className="text-sm text-muted">Agent setup</h2>}
-        {!viewerIsClient && bindable && bindable.length > 0 && (
-          <BindAgentControl clientId={clientId} agents={bindable} />
-        )}
-      </div>
-
-      {visible.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {visible.map((agent) => (
-            <div key={agent.id} className="flex flex-col gap-2">
-              {agent.launchState === "live" ? (
-                <ClientAgentLiveCard
-                  agent={agent}
-                  viewerIsClient={viewerIsClient}
-                  {...(viewer ? { viewer } : {})}
-                />
-              ) : (
-                <ClientAgentLaunchCard
-                  agent={agent}
-                  viewerIsClient={viewerIsClient}
-                  {...(viewer ? { viewer } : {})}
-                />
-              )}
-              {!viewerIsClient && agent.launchState !== "not_launched" && (
-                <CurationPane agent={agent} />
-              )}
-              {!viewerIsClient && economics?.[agent.customAgentId] && (
-                <AgentEconomicsCard
-                  customAgentId={agent.customAgentId}
-                  agentName={agent.displayName}
-                  economics={economics[agent.customAgentId].economics}
-                  launchCreditCost={economics[agent.customAgentId].launchCreditCost}
-                />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
 
 /* ─────────────────────────── staff: bind ───────────────────────────── */
 
-function BindAgentControl({
+/**
+ * Bind a lab agent to this client — the gesture that creates the umbrella a
+ * template set and schedule hang off. Roster-level: it is about which agents
+ * this client HAS, which is the question the roster answers.
+ */
+export function BindAgentControl({
   clientId,
   agents,
 }: {
@@ -235,7 +144,7 @@ function BindAgentControl({
  * again on the server; a key that drifts silently unhooks every future post
  * from its stream.
  */
-function CurationPane({ agent }: { agent: ClientAgentCardRow }) {
+export function CurationPane({ agent }: { agent: ClientAgentCardRow }) {
   const router = useRouter();
   const [rows, setRows] = useState<ClientAgentTemplateInput[]>(() =>
     agent.templates.map((t) => ({

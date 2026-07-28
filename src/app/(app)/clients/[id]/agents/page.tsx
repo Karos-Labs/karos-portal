@@ -3,7 +3,6 @@ import { requireUser } from "@/lib/auth";
 import {
   getClient,
   getClientCredits,
-  listContextItems,
   listCustomAgents,
   listJobs,
   listPlannedScheduledRuns,
@@ -11,84 +10,29 @@ import {
 import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { ClientCustomAgents, type RunnableAgentSummary } from "@/components/custom-agents";
+import { AgentRunHistory } from "@/components/custom-agents";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
-import {
-  buildLinkedInAgentIntakeView,
-  buildRedditAgentIntakeView,
-  buildXAgentIntakeView,
-} from "@/lib/agent-intake-views";
-import {
-  agentKeyMatchesClientSlug,
-  isLinkedInAgentIdentity,
-  isRedditAgentIdentity,
-  isXAgentIdentity,
-} from "@/lib/custom-agent-launch";
+import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
-import { summarizeAgentEconomics } from "@/lib/credit-reporting";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
 import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
-import { ClientAgentsSection } from "@/components/client-agents/client-agents-section";
+import { BindAgentControl } from "@/components/client-agents/client-agents-section";
 import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
 import {
   buildAgentSetup,
-  type AgentIntakePanes,
   scheduleZonesByAgent,
   toClientAgentRows,
   toRunRows,
   toScheduleRows,
   toSummary,
 } from "@/lib/client-agent-rows";
-import type { Job } from "@/lib/types";
 
 
-/**
- * The intake forms for the intake-driven agents (X e13, LinkedIn e10, Reddit
- * e15), prefetched so the run dialog can collect them in place.
- *
- * Building one costs a full read of seats, intake, drops and run history, so it
- * only happens when that agent is actually on this page's list, and it reuses
- * the caller's `jobs` scan rather than repeating it per agent. The result is
- * handed to buildAgentSetup, which attaches each pane to its own agent's setup
- * state — so the components downstream ask one keyed map for everything about
- * an agent instead of being passed three per-platform payloads and asked to
- * work out which is which (ruling 7).
- */
-async function intakePanes(
-  clientId: string,
-  agents: RunnableAgentSummary[],
-  opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string },
-): Promise<AgentIntakePanes> {
-  const hasX = agents.some((agent) => isXAgentIdentity(agent.key));
-  const hasLinkedIn = agents.some((agent) => isLinkedInAgentIdentity(agent.key));
-  const hasReddit = agents.some((agent) => isRedditAgentIdentity(agent.key));
-  const [xData, linkedinData, redditData] = await Promise.all([
-    hasX ? buildXAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) : null,
-    hasLinkedIn
-      ? buildLinkedInAgentIntakeView(clientId, {
-          isStaff: opts.isStaff,
-          jobs: opts.jobs,
-          ...(opts.linkedinPageUrl ? { pageUrlSuggestion: opts.linkedinPageUrl } : {}),
-        })
-      : null,
-    hasReddit ? buildRedditAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) : null,
-  ]);
-  // Only the FORMS are built here. `ready` is not re-derived alongside them:
-  // buildAgentSetup answers it with the very calls the submit cores gate on
-  // (hasXAgentIntake / hasLinkedInAgentIntake / hasRedditAgentIntake), and two
-  // independent answers to "is this set up" is exactly the drift that lets a
-  // card offer a run the server refuses.
-  return {
-    ...(xData ? { x: xData } : {}),
-    ...(linkedinData ? { linkedin: linkedinData } : {}),
-    ...(redditData ? { reddit: redditData } : {}),
-  };
-}
 
 /**
  * A client's AI Agents page. Clients can run only the custom agents that an
@@ -113,7 +57,6 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   const agentServiceConfigured = isAgentServiceConfigured();
-  const linkedinPageUrl = client.socialLinks?.linkedin;
 
   // Client users: explicitly granted agents plus any agent that has already
   // delivered a successful run for this workspace.
@@ -291,9 +234,8 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     );
   }
 
-  const [jobs, contextItems, customAgents, scheduledRuns, umbrellas] = await Promise.all([
+  const [jobs, customAgents, scheduledRuns, umbrellas] = await Promise.all([
     listJobs({ clientId: id }),
-    listContextItems({ clientId: id }),
     listCustomAgents(),
     listPlannedScheduledRuns({ clientId: id }),
     listClientAgents({ clientId: id }),
@@ -313,68 +255,82 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // so it stays removed: it is one getAsset per managed deliverable per page
   // load, for a value with no reader.)
 
-  // Ruling 7: the inline intake panes serve the STAFF dialog. The client's own
-  // route reaches the same forms through AgentSetupState.href, so this read
-  // happens on the staff branch only.
-  const panes = await intakePanes(id, enabledAgents, {
-    isStaff,
-    jobs,
-    ...(linkedinPageUrl ? { linkedinPageUrl } : {}),
-  });
-  const agentSetup = await buildAgentSetup(id, enabledAgents, panes);
+  // No `intakePanes` here any more, and no listContextItems: both fed the run
+  // DIALOG, and CD-I1 moved every staff run gesture to the agent detail page.
+  // The roster asks buildAgentSetup for readiness alone — which is what its
+  // status word needs — and the detail route builds the panes for the one
+  // agent it is about, rather than this page building them for all of them
+  // (three full reads of seats, intake, drops and run history, per agent, for
+  // a dialog that is no longer on this page).
+  const agentSetup = await buildAgentSetup(id, enabledAgents);
   const staffRuns = toRunRows(jobs, true, umbrellas);
-  // Staff see every umbrella in every state (including live) — this is where
-  // the launch is fired for a client who cannot yet self-serve, and where the
-  // template set is curated before the client ever sees it.
   const staffScheduleRows = toScheduleRows(scheduledRuns, false);
-  const staffAgentRows = await toClientAgentRows({
-    umbrellas,
-    agentsById: new Map(customAgents.map((a) => [a.id, a])),
-    viewerIsClient: false,
-    grantedAgentIds: null,
-    clientSlug: client.agentsRepoSlug,
-    agentSetup,
-    creditBlockReasons: {},
-    scheduleRows: staffScheduleRows,
-    scheduleZones: scheduleZonesByAgent(scheduledRuns),
-    jobs,
-    viewerUid: user.uid,
-    viewerIsStaff: true,
-    now: Date.now(),
-  });
-  // §6.2(b). USD this client has spent per bound agent, split by run type.
-  // Computed from the jobs already loaded above — no extra read — and staff-only:
-  // it is passed to the staff branch of the section and nowhere else.
-  const agentById = new Map(customAgents.map((a) => [a.id, a]));
-  const jobsByAgent = new Map<string, typeof jobs>();
-  for (const job of jobs) {
-    if (!job.customAgentId) continue;
-    const bucket = jobsByAgent.get(job.customAgentId);
-    if (bucket) bucket.push(job);
-    else jobsByAgent.set(job.customAgentId, [job]);
-  }
-  const economicsByAgent: Record<
-    string,
-    { economics: ReturnType<typeof summarizeAgentEconomics>; launchCreditCost: number | null }
-  > = {};
-  for (const umbrella of umbrellas) {
-    const agent = agentById.get(umbrella.customAgentId);
-    if (!agent) continue;
-    economicsByAgent[umbrella.customAgentId] = {
-      economics: summarizeAgentEconomics(jobsByAgent.get(umbrella.customAgentId) ?? []),
-      launchCreditCost: agent.launchCreditCost ?? null,
-    };
-  }
 
   const boundAgentIds = new Set(umbrellas.map((u) => u.customAgentId));
   const bindable = customAgents
     .filter((a) => a.enabled && !boundAgentIds.has(a.id))
     .map((a) => ({ id: a.id, name: a.name }));
   const launchInFlight = umbrellas.some((u) => isLaunchInFlight(u.launchState));
-  // ClientCustomAgents renders nothing at all with no agents and no history, so
-  // a brand-new client showed staff a header and then white space to the bottom
-  // of the viewport — no cards, no empty state, no next action.
   const nothingToShow = enabledAgents.length === 0 && staffRuns.length === 0;
+
+  // ── The staff roster (CD-I1) ──
+  // The same roster + detail model the client has, for the same reason Albert
+  // gave for the client's: "they can just click on it, and then it opens… over
+  // the whole page." Staff were the only audience still meeting an agent as a
+  // card that carried four controls and a status line, which meant the two
+  // audiences read the same agent on two different surfaces — and every fix to
+  // one had to be remembered for the other.
+  //
+  // Built from the AGENT list, not the umbrellas: an unbound agent is not
+  // missing from a staff roster, it is an agent nobody has set up yet, and the
+  // page it opens is where it gets set up.
+  const staffUmbrellaByAgentId = new Map(umbrellas.map((u) => [u.customAgentId, u]));
+  const staffScheduleByAgentId = new Map(staffScheduleRows.map((row) => [row.agentId, row]));
+  // Drafts waiting on staff, per agent — the queue the retired card surfaced
+  // as its "N ready" chip. Counted from the jobs already loaded.
+  const reviewCountByAgentName = new Map<string, number>();
+  for (const job of jobs) {
+    if (job.external?.taskType !== "custom" || job.status !== "review") continue;
+    if (job.assetIds.length === 0) continue;
+    reviewCountByAgentName.set(
+      job.agentName,
+      (reviewCountByAgentName.get(job.agentName) ?? 0) + job.assetIds.length,
+    );
+  }
+  const staffRosterEntries: AgentRosterEntry[] = enabledAgents.map((agent) => {
+    const umbrella = staffUmbrellaByAgentId.get(agent.id) ?? null;
+    const schedule = staffScheduleByAgentId.get(agent.id) ?? null;
+    const review = reviewCountByAgentName.get(agent.name) ?? 0;
+    const setup = agentSetup[agent.id] ?? null;
+    // One line of operator state, so the roster still answers "which of these
+    // needs me" without becoming a control panel again. Highest-priority fact
+    // only — the detail page carries the full ladder.
+    const note =
+      review > 0
+        ? `${review} draft${review === 1 ? "" : "s"} waiting for review`
+        : setup && !setup.ready
+          ? `${setup.label} is still empty`
+          : schedule
+            ? `${schedule.postsPerWeek} run${schedule.postsPerWeek === 1 ? "" : "s"}/week · ${schedule.outputsPerRun} output${schedule.outputsPerRun === 1 ? "" : "s"} each`
+            : null;
+    return {
+      customAgentId: agent.id,
+      identity: `${agent.key} ${agent.name}`,
+      icon: agent.icon ?? null,
+      displayName: umbrella?.displayName ?? agent.name,
+      blurb: clientAgentBlurb({
+        key: agent.key,
+        name: agent.name,
+        clientBlurb: agent.clientBlurb ?? null,
+      }),
+      status: rosterStatus({
+        launchState: umbrella?.launchState ?? null,
+        scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
+        scheduleActive: schedule?.status === "active",
+      }),
+      note,
+    };
+  });
 
   return (
     <>
@@ -394,12 +350,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           </div>
         }
       />
-      {/* An unconfigured service must NOT hide the roster. F34's banner above
-          says "everything below is unaffected", and replacing the whole grid
-          with an empty state made that a lie — the client's granted agents,
-          their schedules and their run history simply vanished. The banner
-          carries the outage; the cards stay, with their run controls disabled
-          by the same readiness gate that already handles setup and credits. */}
+      {/* An unconfigured service must NOT hide the roster. F34's banner says
+          "everything below is unaffected", and replacing the whole grid with an
+          empty state made that a lie — the client's agents, their schedules and
+          their run history simply vanished. The banner carries the outage; the
+          roster stays, and the run controls on each agent's page are disabled by
+          the same readiness gate that already handles setup and credits. */}
       {nothingToShow && !agentServiceConfigured ? (
         <EmptyState
           icon={<Icon name="Bot" className="h-7 w-7" />}
@@ -430,25 +386,30 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         />
       ) : (
         <>
-          {launchInFlight && <AutoRefresh />}
-          <ClientAgentsSection
-            clientId={id}
-            agents={staffAgentRows}
-            viewerIsClient={false}
-            bindable={bindable}
-            economics={economicsByAgent}
-            viewer={{ name: user.name, email: user.email }}
-          />
-          <ClientCustomAgents
-            clientId={id}
-            agents={enabledAgents}
-            runs={staffRuns}
-            schedules={staffScheduleRows}
-            contextItems={contextItems}
-            viewerIsClient={false}
-            agentSetup={agentSetup}
-            viewer={{ name: user.name, email: user.email }}
-          />
+          {(launchInFlight ||
+            staffRuns.some((run) => run.status === "queued" || run.status === "running")) && (
+            <AutoRefresh />
+          )}
+          {/* The bind control is roster-level: it answers "which agents does
+              this client have", which is exactly the question the roster asks.
+              Everything else that used to sit beside it — the launch card, the
+              live card, the curation pane, the economics — is on the agent's
+              own page now, next to the agent it describes. */}
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-2 sm:mt-6">
+            <h2 className="text-sm text-muted">Agent setup</h2>
+            {bindable.length > 0 && <BindAgentControl clientId={id} agents={bindable} />}
+          </div>
+          {staffRosterEntries.length > 0 && (
+            <ClientAgentRoster clientId={id} entries={staffRosterEntries} />
+          )}
+          {/* Kept whole, and kept HERE: this is the cross-agent history staff
+              had before, and per-agent pages alone would have lost it. Each
+              agent's page carries its own slice of the same list. */}
+          {staffRuns.length > 0 && (
+            <div className="mt-6 sm:mt-8">
+              <AgentRunHistory runs={staffRuns} agents={enabledAgents} />
+            </div>
+          )}
         </>
       )}
     </>

@@ -7,12 +7,26 @@ import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { AgentScheduleModal, CancelRunControl } from "@/components/custom-agents";
 import { ClientAgentFeedbackModal } from "./feedback-modal";
-import { OptionsRow, TemplateRows, WeekStrip } from "./live-card";
+import { OptionsRow, StaffSlotNotes, TemplateRows, WeekStrip } from "./live-card";
 import { SlotNoteModal } from "./slot-note-modal";
 import { OptionPicked, OptionPicker } from "./option-picker";
 import { noRunnableTemplateReason, visibleTemplates } from "@/lib/client-agent-runs";
 import { runClientAgentTemplateAction } from "@/lib/actions/client-agent-run-actions";
+import type { AgentArchetype } from "@/lib/agent-archetype";
 import type { ClientAgentCardRow } from "./types";
+
+/**
+ * What one run of this agent makes, in the client's words (CD-I1).
+ *
+ * "Create a new post" is wrong on a clip maker and wrong on a Reddit agent, and
+ * a control that misnames its own output is how a client presses a button
+ * expecting one thing and is billed for another.
+ */
+const OUTPUT_NOUN: Record<AgentArchetype, string> = {
+  template_calendar: "post",
+  clip_maker: "clip",
+  daily_finder: "reply",
+};
 
 /**
  * The interactive half of an agent's detail page (CD-G1).
@@ -38,10 +52,26 @@ export function AgentDetailPanel({
   agent,
   viewerIsClient,
   viewer,
+  archetype = "template_calendar",
+  staffNotes,
 }: {
   agent: ClientAgentCardRow;
   viewerIsClient: boolean;
   viewer?: { name: string; email: string };
+  /**
+   * Which page shape this panel is the CONTROLS band of (CD-I1).
+   *
+   * Only `template_calendar` renders the format registry and the week strip.
+   * The other two archetypes lead with their own product — a video gallery, a
+   * day's finds — and this panel sits under it carrying the gestures that are
+   * common to all three: run, steer, pace. Suppressing the two sections is not
+   * cosmetic: template rows on a clip maker would offer per-format runs for
+   * formats that do not exist, and a second calendar strip under the daily
+   * finder's own would show the same days twice in two vocabularies.
+   */
+  archetype?: AgentArchetype;
+  /** Staff only: the client's per-day notes, rendered beside the plan (B2). */
+  staffNotes?: boolean;
 }) {
   const router = useRouter();
   const [feedback, setFeedback] = useState<
@@ -54,6 +84,12 @@ export function AgentDetailPanel({
   const [, startTransition] = useTransition();
 
   const templates = visibleTemplates(agent);
+  const noun = OUTPUT_NOUN[archetype];
+  // The format registry and the plan strip belong to the template-calendar
+  // shape alone — the other two archetypes render their own product above this
+  // panel and would otherwise say the same thing twice.
+  const showTemplates = archetype === "template_calendar";
+  const showWeek = archetype !== "daily_finder";
 
   // "Create new post" is the page's primary gesture, and it has to resolve to a
   // REAL format — the server runs one template, never an abstract "post". The
@@ -103,8 +139,8 @@ export function AgentDetailPanel({
               aria-hidden="true"
             />
             <p className="text-xs text-info">
-              Making your {agent.activeRun.templateName ?? "next"} post now — this takes 10–20
-              minutes. Your Karos team reviews it when it lands, and finished posts appear in your
+              Making your {agent.activeRun.templateName ?? "next"} {noun} now — this takes 10–20
+              minutes. Your Karos team reviews it when it lands, and finished work appears in your
               Workspace once approved.
             </p>
           </div>
@@ -121,15 +157,15 @@ export function AgentDetailPanel({
         </div>
       )}
 
-      {/* ── Create new post ── */}
+      {/* ── Create new post / clip / reply ── */}
       <section>
         <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 p-4">
           <div className="min-w-0 flex-1">
-            <p className="text-sm text-foreground">Create a new post</p>
+            <p className="text-sm text-foreground">Create a new {noun}</p>
             <p className="mt-0.5 text-xs text-muted-2">
               {runnableTemplate
-                ? `Makes one ${runnableTemplate.name} post now. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace.`
-                : "Making a post now is not available yet."}
+                ? `Makes one ${runnableTemplate.name} ${noun} now. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace.`
+                : `Making a ${noun} now is not available yet.`}
             </p>
           </div>
           <Button
@@ -139,7 +175,9 @@ export function AgentDetailPanel({
             onClick={createPost}
           >
             <Icon name="Sparkles" className="h-4 w-4" />
-            {agent.runCost != null ? `Create new post · ${agent.runCost} credits` : "Create new post"}
+            {agent.runCost != null
+              ? `Create new ${noun} · ${agent.runCost} credits`
+              : `Create new ${noun}`}
           </Button>
         </div>
         {/* The reason it is off, PAINTED. The Button primitive sets
@@ -168,7 +206,11 @@ export function AgentDetailPanel({
         {error && <p className="mt-2 text-xs text-warning">{error}</p>}
       </section>
 
-      {/* ── The formats this agent writes ── */}
+      {/* ── The formats this agent writes ── template-calendar only. A clip
+          maker has no format registry to render (its umbrella binds with no
+          chain family and no templates), and the daily finder's product is the
+          day's find, which the panel above this one already showed. */}
+      {showTemplates && (
       <section>
         <SectionHeading
           title={agent.optionsMode ? "What you get" : "Formats"}
@@ -209,15 +251,21 @@ export function AgentDetailPanel({
           />
         )}
       </section>
+      )}
 
       {/* ── Coming up ── */}
-      {agent.week.length > 0 && (
+      {showWeek && agent.week.length > 0 && (
         <section>
           {/* The strip is where a client can say something about ONE day
               (§4.3). It stays intent-only: a note marker says the client wrote
               something, which they already know, and still reveals nothing
               about whether that day's post exists yet. */}
           <WeekStrip week={agent.week} clientId={agent.clientId} onNote={setNoteDay} />
+          {/* B2: the notes reach the people who apply them. The live CARD has
+              always mounted this for staff; the detail page is where staff now
+              read an agent, so without it the notes a client leaves had no
+              staff surface again the moment the card grid was retired. */}
+          {staffNotes && <StaffSlotNotes clientId={agent.clientId} week={agent.week} />}
         </section>
       )}
 
@@ -225,7 +273,7 @@ export function AgentDetailPanel({
       <section>
         <SectionHeading
           title="Steer this agent"
-          hint="Feedback shapes everything it writes from here on. Pace decides how often it posts."
+          hint="Feedback shapes everything it makes from here on. Pace decides how often it works."
         />
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="subtle" onClick={() => setFeedback({ scope: "agent" })}>
@@ -237,7 +285,7 @@ export function AgentDetailPanel({
             </Button>
           )}
           <p className="text-xs text-muted-2">
-            {agent.runCost != null ? `${agent.runCost} credits per post` : "Staff runs are free"}
+            {agent.runCost != null ? `${agent.runCost} credits per ${noun}` : "Staff runs are free"}
           </p>
         </div>
       </section>

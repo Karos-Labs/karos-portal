@@ -21,6 +21,17 @@ export interface AgentRosterEntry {
   displayName: string;
   blurb: string | null;
   status: RosterStatus;
+  /**
+   * STAFF ONLY: one line of operator state — drafts waiting, an empty intake,
+   * the schedule's pace (CD-I1).
+   *
+   * The client's roster never sets it, and that is the whole design: "3 drafts
+   * waiting for review" is a fact about the staff queue, and on a client's
+   * roster it would announce that work exists before anyone approved it (A3/A4).
+   * It is a STRING, resolved server-side, not a set of fields the card
+   * re-derives — the card cannot leak what it was never sent.
+   */
+  note?: string | null;
 }
 
 /**
@@ -57,6 +68,7 @@ export function ClientAgentRoster({
             displayName={entry.displayName}
             blurb={entry.blurb}
             status={entry.status}
+            note={entry.note ?? null}
           />
         ))}
       </div>

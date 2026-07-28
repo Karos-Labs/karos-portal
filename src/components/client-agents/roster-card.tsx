@@ -32,6 +32,7 @@ export function ClientAgentRosterCard({
   displayName,
   blurb,
   status,
+  note,
 }: {
   href: string;
   /** `"<key> <name>"` — drives the platform mark. */
@@ -40,6 +41,14 @@ export function ClientAgentRosterCard({
   displayName: string;
   blurb: string | null;
   status: RosterStatus;
+  /**
+   * Staff-only operator line, already resolved to a sentence server-side. It
+   * is plain TEXT rather than a link on purpose: the whole card is already a
+   * <Link>, and a nested anchor is invalid markup that browsers resolve by
+   * silently breaking one of the two. The thing it points at is one click away
+   * on the page this card opens.
+   */
+  note?: string | null;
 }) {
   return (
     <Link
@@ -63,6 +72,12 @@ export function ClientAgentRosterCard({
           </div>
           {blurb && (
             <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{blurb}</p>
+          )}
+          {note && (
+            <p className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-2">
+              <Icon name="Dot" className="h-3 w-3 shrink-0" aria-hidden="true" />
+              {note}
+            </p>
           )}
         </div>
         <Icon

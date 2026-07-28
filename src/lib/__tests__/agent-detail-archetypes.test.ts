@@ -1,0 +1,431 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import type { Asset, Job, PlannedScheduledRun } from "@/lib/types";
+
+vi.mock("server-only", () => ({}));
+
+const {
+  agentProducedAssets,
+  buildClipMakerView,
+  buildDailyFinderView,
+  deliverableStamp,
+  finderDays,
+} = await import("@/lib/agent-detail-archetypes");
+
+/**
+ * CD-I1: the per-archetype RSC-boundary projections.
+ *
+ * The rules under test are the ones a client can be HARMED by getting wrong —
+ * an unapproved draft surfacing as "found today", a batch's shared generation
+ * instant printed under a gallery of a client's own clips, tomorrow's thread
+ * arriving in a payload nobody paints. Every one of those is a boundary
+ * decision, which is why they are asserted against the projection rather than
+ * against a rendered component: a field that reaches the browser is readable
+ * whether or not anything paints it.
+ */
+
+const REPO = path.resolve(__dirname, "../..", "..");
+const source = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
+
+const NOW = Date.UTC(2026, 6, 28, 12, 0, 0); // 2026-07-28T12:00:00Z
+const DAY = 24 * 60 * 60 * 1000;
+
+function makeAsset(overrides: Partial<Asset> = {}): Asset {
+  return {
+    id: "asset-1",
+    clientId: "c1",
+    title: "Deliverable",
+    content: "Body",
+    createdBy: "staff-1",
+    createdAt: NOW,
+    updatedAt: NOW,
+    status: "approved",
+    type: "social_post",
+    ...overrides,
+  };
+}
+
+function makeJob(overrides: Partial<Job> = {}): Job {
+  return {
+    id: "job-1",
+    clientId: "c1",
+    agentId: "agent-service",
+    agentName: "Clip Agent",
+    status: "delivered",
+    input: {},
+    assetIds: [],
+    createdBy: "staff-1",
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  } as Job;
+}
+
+/* ─────────────────────────── attribution ─────────────────────────── */
+
+describe("agentProducedAssets", () => {
+  const agent = { id: "ca-clip", name: "Clip Agent" };
+
+  it("gives a CLIENT delivered work only, and staff everything", () => {
+    const job = makeJob({ id: "j1", customAgentId: "ca-clip", assetIds: ["a-draft", "a-live"] });
+    const draft = makeAsset({ id: "a-draft", status: "draft", jobId: "j1" });
+    const live = makeAsset({ id: "a-live", status: "approved", jobId: "j1" });
+
+    const forClient = agentProducedAssets({
+      assets: [draft, live],
+      jobs: [job],
+      agent,
+      umbrella: null,
+      umbrellas: [],
+      viewerIsClient: true,
+      now: NOW,
+    });
+    expect(forClient.map((a) => a.id)).toEqual(["a-live"]);
+
+    const forStaff = agentProducedAssets({
+      assets: [draft, live],
+      jobs: [job],
+      agent,
+      umbrella: null,
+      umbrellas: [],
+      viewerIsClient: false,
+      now: NOW,
+    });
+    expect(forStaff.map((a) => a.id).sort()).toEqual(["a-draft", "a-live"]);
+  });
+
+  it("never returns another agent's work", () => {
+    const mine = makeAsset({ id: "mine", jobId: "j1" });
+    const theirs = makeAsset({ id: "theirs", jobId: "j2" });
+    const jobs = [
+      makeJob({ id: "j1", customAgentId: "ca-clip" }),
+      makeJob({ id: "j2", customAgentId: "ca-other", agentName: "Someone Else" }),
+    ];
+
+    const out = agentProducedAssets({
+      assets: [mine, theirs],
+      jobs,
+      agent,
+      umbrella: null,
+      umbrellas: [],
+      viewerIsClient: false,
+      now: NOW,
+    });
+    expect(out.map((a) => a.id)).toEqual(["mine"]);
+  });
+
+  it("keeps the pre-umbrella name rung, so a legacy agent is not shown as having made nothing", () => {
+    // The flagship shape (CD-H8): a job carrying no customAgentId at all,
+    // attributed by the ONE NAME resolveContentIdentity resolves.
+    // `type: "note"` so no asset-derived label outranks the job's own name —
+    // that fourth rung is what the flagship pre-umbrella agents rely on.
+    const asset = makeAsset({ id: "legacy", jobId: "j-legacy", type: "note" });
+    const job = makeJob({ id: "j-legacy", agentName: "Clip Agent" });
+    delete (job as Partial<Job>).customAgentId;
+
+    const out = agentProducedAssets({
+      assets: [asset],
+      jobs: [job],
+      agent,
+      umbrella: null,
+      umbrellas: [],
+      viewerIsClient: false,
+      now: NOW,
+    });
+    expect(out.map((a) => a.id)).toEqual(["legacy"]);
+  });
+});
+
+describe("deliverableStamp", () => {
+  it("gives a client the DELIVERY moment and staff the generation instant", () => {
+    // The batch tell in its purest form: seven posts generated in one minute,
+    // delivered across a week. createdAt would print all seven as "3 hours ago".
+    const asset = makeAsset({ createdAt: 1_000, updatedAt: 9_000 });
+    expect(deliverableStamp(asset, true)).toBe(9_000);
+    expect(deliverableStamp(asset, false)).toBe(1_000);
+  });
+
+  it("prefers the posting time once work is published", () => {
+    const asset = makeAsset({ createdAt: 1_000, updatedAt: 9_000, publishedAt: 5_000 });
+    expect(deliverableStamp(asset, true)).toBe(5_000);
+  });
+});
+
+/* ─────────────────────────── clip maker ─────────────────────────── */
+
+describe("buildClipMakerView", () => {
+  it("partitions playable clips from everything else the agent wrote", () => {
+    const clip = makeAsset({ id: "clip", videoUrl: "https://cdn.example/a.mp4" });
+    const metaClip = makeAsset({
+      id: "meta-clip",
+      meta: { files: [{ name: "cut-1.mp4", url: "https://cdn.example/cut-1.mp4" }] },
+    });
+    const doc = makeAsset({ id: "doc", content: "A caption, not a clip." });
+
+    const view = buildClipMakerView({ assets: [clip, metaClip, doc], run: null, now: NOW });
+    expect(view.clips.map((a) => a.id)).toEqual(["clip", "meta-clip"]);
+    expect(view.documents.map((a) => a.id)).toEqual(["doc"]);
+  });
+
+  it("cannot render a clip for a locked asset", () => {
+    // redactLockedAsset builds by whitelist and does not carry videoUrl, so a
+    // future-dated clip resolves to zero videos even if one reached this far.
+    const redacted = makeAsset({
+      id: "locked",
+      title: "Upcoming post",
+      content: "",
+      meta: { locked: true },
+      imageUrl: null,
+      locked: true,
+    });
+    const view = buildClipMakerView({ assets: [redacted], run: null, now: NOW });
+    expect(view.clips).toEqual([]);
+  });
+
+  it("has no schedule days without a schedule, and no template field at all", () => {
+    const view = buildClipMakerView({ assets: [], run: null, now: NOW });
+    expect(view.scheduledDays).toEqual([]);
+    // The archetype's hard rule: NO TEMPLATE ROWS EVER. It holds because the
+    // view has no template field to render one from.
+    expect(Object.keys(view).sort()).toEqual(["clips", "documents", "scheduledDays"]);
+  });
+});
+
+/* ────────────────────────── daily finder ────────────────────────── */
+
+/**
+ * The pinned batch structure, trimmed from the fixture reddit-drafts.test.ts
+ * holds. Same shape on purpose: if the agent's output format moves, both
+ * fixtures have to move, and a private near-miss here would let this file keep
+ * passing against a document the real reader can no longer parse.
+ */
+const REDDIT_BATCH = `# Reddit answer drafts — Karos Labs
+
+## Account 1 · Karos Labs — company account (u/karos-al) · warming
+*Value-only program-wide until the account earns history.*
+
+### Draft 1 · Thorough value answer
+*P5 early growth, the account's earned lane.*
+
+- **Thread:** [How do you guys ACTUALLY market your SaaS?](https://www.reddit.com/r/SaaS/comments/1uqssai/how_do_you_guys_actually_market_your_saas/)
+- **Subreddit:** r/SaaS — value-only, never mention
+- **Thread posted:** 2026-07-28, same-day and active
+- **Why this thread:** nobody names the core problem
+
+> At a month in with 150 users, the problem is not a missing channel.
+
+\`742 chars\`
+`;
+
+describe("buildDailyFinderView", () => {
+  const zone = "UTC";
+
+  it("puts TODAY's finds in `today` and everything older in `earlier`", () => {
+    const today = makeAsset({
+      id: "find-today",
+      content: REDDIT_BATCH,
+      updatedAt: NOW,
+      createdAt: NOW,
+    });
+    const yesterday = makeAsset({
+      id: "find-yesterday",
+      content: REDDIT_BATCH,
+      updatedAt: NOW - DAY,
+      createdAt: NOW - DAY,
+    });
+
+    const view = buildDailyFinderView({
+      assets: [today, yesterday],
+      jobs: [],
+      run: null,
+      viewerIsClient: true,
+      now: NOW,
+      zone,
+    });
+
+    expect(view.today.map((b) => b.assetId)).toEqual(["find-today"]);
+    expect(view.earlier.map((b) => b.assetId)).toEqual(["find-yesterday"]);
+    expect(view.todayKey).toBe("2026-07-28");
+  });
+
+  it("never puts a FUTURE day's find in `today` (churn A3/A4)", () => {
+    // The one fact the model exists to keep indistinguishable. A find stamped
+    // tomorrow is not today's, whatever else is true of it.
+    const tomorrow = makeAsset({
+      id: "find-tomorrow",
+      content: REDDIT_BATCH,
+      updatedAt: NOW + DAY,
+      createdAt: NOW + DAY,
+    });
+    const view = buildDailyFinderView({
+      assets: [tomorrow],
+      jobs: [],
+      run: null,
+      viewerIsClient: true,
+      now: NOW,
+      zone,
+    });
+    expect(view.today).toEqual([]);
+  });
+
+  it("routes an asset that is not a draft batch to documents, not to an empty find", () => {
+    const report = makeAsset({ id: "report", content: "# Weekly summary\n\nNo threads." });
+    const view = buildDailyFinderView({
+      assets: [report],
+      jobs: [],
+      run: null,
+      viewerIsClient: true,
+      now: NOW,
+      zone,
+    });
+    expect(view.today).toEqual([]);
+    expect(view.earlier).toEqual([]);
+    expect(view.documents.map((a) => a.id)).toEqual(["report"]);
+  });
+
+  it("parses at the boundary and sends the parsed shape, not the raw document", () => {
+    const asset = makeAsset({ id: "find", content: REDDIT_BATCH, updatedAt: NOW });
+    const view = buildDailyFinderView({
+      assets: [asset],
+      jobs: [],
+      run: null,
+      viewerIsClient: true,
+      now: NOW,
+      zone,
+    });
+    const batch = view.today[0];
+    expect(batch.accounts).toHaveLength(1);
+    expect(batch.accounts[0].drafts[0].subreddit).toBe("r/SaaS");
+    expect(batch.accounts[0].mode).toBe("warming");
+    // The batch carries no asset content field of its own — the payload is the
+    // parsed shape.
+    expect(Object.keys(batch).sort()).toEqual(["accounts", "assetId", "at"]);
+  });
+
+  it("stamps a client's finds with delivery, not with the shared generation instant", () => {
+    const asset = makeAsset({ id: "find", content: REDDIT_BATCH, createdAt: 1_000, updatedAt: NOW });
+    const forClient = buildDailyFinderView({
+      assets: [asset],
+      jobs: [],
+      run: null,
+      viewerIsClient: true,
+      now: NOW,
+      zone,
+    });
+    expect(forClient.today[0].at).toBe(NOW);
+
+    const forStaff = buildDailyFinderView({
+      assets: [asset],
+      jobs: [],
+      run: null,
+      viewerIsClient: false,
+      now: NOW,
+      zone,
+    });
+    // Staff keep the generation instant, so for them the same asset is old.
+    expect(forStaff.today).toEqual([]);
+    expect(forStaff.earlier[0].at).toBe(1_000);
+  });
+});
+
+describe("finderDays", () => {
+  const zone = "UTC";
+
+  it("always contains today, and marks the days that have passed", () => {
+    const days = finderDays({ run: null, now: NOW, zone });
+    const today = days.find((d) => d.isToday);
+    expect(today?.dateKey).toBe("2026-07-28");
+    expect(days.filter((d) => d.isPast).every((d) => d.dateKey < "2026-07-28")).toBe(true);
+    // Nothing after today without a schedule to project — the strip does not
+    // invent a rhythm the agent does not have.
+    expect(days.every((d) => d.dateKey <= "2026-07-28")).toBe(true);
+  });
+
+  it("projects forward from the agent's own schedule", () => {
+    const run = {
+      id: "run-1",
+      clientId: "c1",
+      customAgentId: "ca-reddit",
+      cadence: "weekly",
+      status: "active",
+      hour: 9,
+      minute: 0,
+      weekdays: [1, 2, 3, 4, 5],
+      nextRunAt: NOW + DAY,
+      timeZone: zone,
+    } as unknown as PlannedScheduledRun;
+
+    const days = finderDays({ run, now: NOW, zone, horizonDays: 7 });
+    expect(days.some((d) => d.dateKey > "2026-07-28")).toBe(true);
+    // Weekday-only: the Reddit agent fires at most five days a week, so a
+    // seven-day strip would promise two days it never works.
+    const weekend = days.filter((d) => {
+      const [y, m, dd] = d.dateKey.split("-").map(Number);
+      const day = new Date(Date.UTC(y, m - 1, dd)).getUTCDay();
+      return day === 0 || day === 6;
+    });
+    expect(weekend.every((d) => d.dateKey <= "2026-07-28")).toBe(true);
+  });
+});
+
+/* ───────────────────────────── wiring ───────────────────────────── */
+
+describe("wiring", () => {
+  const route = () => source("src/app/(app)/clients/[id]/agents/[agentId]/page.tsx");
+
+  it("the detail route builds every archetype view through the server-only module", () => {
+    const src = route();
+    expect(src).toContain("agentProducedAssets");
+    expect(src).toContain("buildClipMakerView");
+    expect(src).toContain("buildDailyFinderView");
+  });
+
+  it("keeps the staff run history and its prompt off a client payload", () => {
+    const src = route();
+    // toRunRows only fills `prompt`/`href` for staff, and the route must not
+    // build the rows at all for a client viewer.
+    expect(src).toContain("const agentRuns = isStaff");
+    expect(src).toContain("const economics = isStaff");
+  });
+
+  it("mounts every staff capability the retired card grid carried", () => {
+    const src = route();
+    for (const symbol of ["StaffAgentControls", "CurationPane", "AgentEconomicsCard", "AgentRunHistory"]) {
+      expect(src, symbol).toContain(symbol);
+    }
+    // The bind control is the one that belongs to the roster, not to an agent.
+    expect(source("src/app/(app)/clients/[id]/agents/page.tsx")).toContain("BindAgentControl");
+  });
+
+  it("recovers a Reddit setup refusal with the link, not with contact-us", () => {
+    // The three submit cores gate the same way, so the staff-side refusal
+    // helper has to name all three prefixes.
+    const src = source("src/components/custom-agents.tsx");
+    const fn = src.slice(src.indexOf("function refusalNamesSetup"));
+    expect(fn.slice(0, 400)).toContain("REDDIT_SETUP_REQUIRED_PREFIX");
+    expect(fn.slice(0, 400)).toContain("X_SETUP_REQUIRED_PREFIX");
+    expect(fn.slice(0, 400)).toContain("LINKEDIN_SETUP_REQUIRED_PREFIX");
+  });
+
+  it("no longer ships the retired all-in-one card grid", () => {
+    expect(source("src/components/custom-agents.tsx")).not.toContain("export function ClientCustomAgents");
+  });
+
+  it("renders the finds through the existing reader, keeping its pinned strip rules", () => {
+    // reddit-drafts.test.ts pins which fields RedditDraftsBatch strips and
+    // which two it must never strip. A second reader would be a second copy
+    // of those rules.
+    expect(source("src/components/client-agents/daily-finder-panel.tsx")).toContain(
+      "RedditDraftsBatch",
+    );
+  });
+
+  it("renders clips through the modal that owns the F150 video path", () => {
+    const gallery = source("src/components/client-agents/clip-gallery.tsx");
+    expect(gallery).toContain("AssetDetailModal");
+    expect(gallery).toContain("assetVideos");
+    // No second player.
+    expect(gallery).not.toContain("<video");
+  });
+});

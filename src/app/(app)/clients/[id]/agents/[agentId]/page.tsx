@@ -20,23 +20,95 @@ import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
-import { resolveContentIdentity } from "@/lib/agent-identity-map";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
-import { clientDeliveryStamp, getClientArchiveAssets } from "@/lib/asset-visibility";
 import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
 import { LegacyAgentPanel } from "@/components/client-agents/legacy-agent-panel";
+import { ClipGallery } from "@/components/client-agents/clip-gallery";
+import { DailyFinderPanel } from "@/components/client-agents/daily-finder-panel";
+import {
+  FinderIntakeCard,
+  SourceMaterialCard,
+  type SourceFile,
+} from "@/components/client-agents/archetype-cards";
 import { evaluateLegacyRunGate } from "@/lib/client-agent-runs";
+import { agentArchetype } from "@/lib/agent-archetype";
+import {
+  agentProducedAssets,
+  buildClipMakerView,
+  buildDailyFinderView,
+  deliverableStamp,
+} from "@/lib/agent-detail-archetypes";
+import {
+  buildLinkedInAgentIntakeView,
+  buildRedditAgentIntakeView,
+  buildXAgentIntakeView,
+} from "@/lib/agent-intake-views";
+import {
+  isLinkedInAgentIdentity,
+  isRedditAgentIdentity,
+  isXAgentIdentity,
+  launchProfileFor,
+} from "@/lib/custom-agent-launch";
+import { summarizeAgentEconomics } from "@/lib/credit-reporting";
+import { AgentRunHistory, StaffAgentControls } from "@/components/custom-agents";
+import { AgentEconomicsCard } from "@/components/client-agents/agent-economics";
+import { CurationPane } from "@/components/client-agents/client-agents-section";
 import {
   buildAgentSetup,
+  type AgentIntakePanes,
   scheduleZonesByAgent,
   toClientAgentRows,
+  toRunRows,
   toScheduleRows,
   toSummary,
 } from "@/lib/client-agent-rows";
 import { relativeTime } from "@/lib/utils";
+import type { Job } from "@/lib/types";
+
+/**
+ * The inline intake form for THIS agent, when it is one of the three that draft
+ * from stored intake (X e13, LinkedIn e10, Reddit e15).
+ *
+ * Moved here from the roster page with CD-I1's staff parity. Ruling 7 put the
+ * panes on whichever surface owns the run DIALOG, and that surface is now this
+ * one — so the roster stopped paying for them and this page builds exactly one,
+ * for the agent it is about, instead of three for every agent on a list.
+ *
+ * Only the FORMS are built here. `ready` is not re-derived alongside them:
+ * buildAgentSetup answers it with the very calls the submit cores gate on, and
+ * two independent answers to "is this set up" is the drift that lets a control
+ * offer a run the server refuses.
+ */
+async function agentIntakePane(
+  clientId: string,
+  agent: { key: string },
+  opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string },
+): Promise<AgentIntakePanes> {
+  if (isXAgentIdentity(agent.key)) {
+    return { x: await buildXAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) };
+  }
+  if (isLinkedInAgentIdentity(agent.key)) {
+    return {
+      linkedin: await buildLinkedInAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+        ...(opts.linkedinPageUrl ? { pageUrlSuggestion: opts.linkedinPageUrl } : {}),
+      }),
+    };
+  }
+  if (isRedditAgentIdentity(agent.key)) {
+    return {
+      reddit: await buildRedditAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+      }),
+    };
+  }
+  return {};
+}
 
 /**
  * One agent's home page (CD-G1).
@@ -120,7 +192,22 @@ export default async function ClientAgentDetailPage({
       ? { [agent.id]: creditBlockReason(credits, cost, now) }
       : {};
 
-  const agentSetup = await buildAgentSetup(id, [summary]);
+  // Ruling 7: the inline pane rides the setup state, keyed by agent. Staff get
+  // the form (their run dialog collects it in place); a client's own route
+  // reaches the same form through AgentSetupState.href, which is the CD-E1
+  // model and stays a full page.
+  const panes = isStaff
+    ? await agentIntakePane(
+        id,
+        agent,
+        {
+          isStaff,
+          jobs,
+          ...(client.socialLinks?.linkedin ? { linkedinPageUrl: client.socialLinks.linkedin } : {}),
+        },
+      )
+    : undefined;
+  const agentSetup = await buildAgentSetup(id, [summary], panes);
   const scheduleRows = toScheduleRows(scheduledRuns, viewerIsClient);
   const umbrella = umbrellas.find((u) => u.customAgentId === agent.id) ?? null;
   const rows = umbrella
@@ -156,44 +243,121 @@ export default async function ClientAgentDetailPage({
   });
 
   // ── What this agent has already delivered (§7.3 identity) ──
-  // Attribution runs through resolveContentIdentity, the one helper that knows
-  // how an asset, its job and an umbrella relate — Asset has no clientAgentId
-  // of its own, so a hand-rolled join here would be a second, subtly different
-  // answer to "who made this".
-  const jobById = new Map(jobs.map((job) => [job.id, job]));
-  // DELIVERED WORK ONLY for a client (A3/A4). getClientLibraryAssets was the
-  // wrong helper here: it MAPS a future-dated asset through redactLockedAsset
-  // rather than dropping it, and the placeholder keeps createdAt and
-  // templateName. Under a heading reading "What it has made for you" that
-  // rendered seven batch-generated posts as "Upcoming post · 3 hours ago" —
-  // the batch tell in its purest form, since the timestamps show a week of
-  // "daily" posts all created within the same minute.
-  //
-  // getClientArchiveAssets is the set that is actually true to the heading: no
-  // launch deliverables, no drafts, nothing still locked. Staff keep everything.
-  const visibleAssets = viewerIsClient ? getClientArchiveAssets(assets, { now }) : assets;
-  const produced = visibleAssets
-    .filter((asset) => {
-      const job = asset.jobId ? (jobById.get(asset.jobId) ?? null) : null;
-      // The direct link, when one exists: this agent's own job, or a job the
-      // umbrella owns.
-      if (job && (job.customAgentId === agent.id || (umbrella && job.clientAgentId === umbrella.id))) {
-        return true;
-      }
-      const identity = resolveContentIdentity({ asset, job }, umbrellas);
-      if (umbrella) return identity.clientAgentId === umbrella.id;
-      // CD-H8, the legacy shape: a live schedule and no umbrella doc, which is
-      // the flagship Instagram Agent. There is no umbrella id for the helper to
-      // resolve to, so attribution falls to the ONE NAME it resolves — its
-      // fourth rung, which exists precisely for content produced before
-      // umbrellas and carrying no agent link at all. Without this the page
-      // showed a live, producing agent as having made nothing.
-      return identity.label === agent.name;
-    })
-    .slice(0, 8);
+  // The attribution join, the client's delivered-work-only filter and the
+  // delivery stamp all moved to agent-detail-archetypes.ts when the second and
+  // third archetypes arrived (CD-I1): three page shapes asking "what did this
+  // agent make" three different ways is three chances to credit a post to an
+  // agent that did not write it (F147).
+  const produced = agentProducedAssets({
+    assets,
+    jobs,
+    agent: { id: agent.id, name: agent.name },
+    umbrella,
+    umbrellas,
+    viewerIsClient,
+    now,
+  });
+
+  // ── WHICH PAGE SHAPE (CD-I1) ──
+  // Albert: "a logical UI for each of the agents based on what each of the
+  // agents does." The archetype is resolved from the agent's identity through
+  // the §7.3 idiom, and it decides the HERO only — status, archive, data,
+  // connectors and feedback are the common chassis and render for all three.
+  const archetype = agentArchetype({ key: agent.key, name: agent.name });
+
+  // The agent's own weekly schedule row, unredacted, for the day projections.
+  // `scheduleRows` above is the client-safe projection and deliberately drops
+  // the fields projectRunOccurrences needs.
+  const plannedRun =
+    scheduledRuns.find(
+      (run) =>
+        run.customAgentId === agent.id && run.cadence === "weekly" && run.status !== "completed",
+    ) ?? null;
+
+  const clipView =
+    archetype === "clip_maker"
+      ? buildClipMakerView({ assets: produced, run: plannedRun, now })
+      : null;
+
+  // The finder reads the SAME produced set — its finds are assets like any
+  // other deliverable, so a client's archive rules already apply to them and
+  // an unapproved batch can never surface as "found today".
+  const finderView =
+    archetype === "daily_finder"
+      ? buildDailyFinderView({
+          assets: produced,
+          jobs,
+          run: plannedRun,
+          viewerIsClient,
+          now,
+        })
+      : null;
+
+  // The finder's intake card. `buildRedditAgentIntakeView` already builds its
+  // company view by whitelist (toRedditIntakeView), so what lands in the RSC
+  // payload is the client's own answers and nothing else from the shared
+  // intake document.
+  const finderIntake =
+    archetype === "daily_finder"
+      ? (await buildRedditAgentIntakeView(id, { isStaff, jobs })).company
+      : null;
+
+  // The clip maker's source material: what it has to cut FROM. `mimeType` is
+  // the reliable discriminator — ContextItem.kind has no "video" variant yet
+  // (the other half of F150, still ops-pending), so a clip uploaded today is
+  // stored as "other" and a kind check would report none on file.
+  // The archive list under the hero: the rows, and what to call them. Capped
+  // at 8 on every branch — this is a summary that links the Workspace, not the
+  // Workspace itself.
+  const archiveRows = (
+    clipView ? clipView.documents : finderView ? finderView.documents : produced
+  ).slice(0, 8);
+  const archiveHeading =
+    archetype === "template_calendar" ? "What it has made for you" : "Documents it produced";
+
+  // ── STAFF PARITY (CD-I1) ──
+  // Everything the retired card grid could do, resolved for THIS agent. The
+  // directive is that nothing staff could do before becomes unreachable, so
+  // each of these maps to a capability that used to live on that card: the run
+  // dialog, the schedule dialog, the intake affordance, the review queue, the
+  // run history, the curation pane and the economics card.
+  const agentRuns = isStaff
+    ? toRunRows(jobs, true, umbrellas).filter((run) => run.agentName === agent.name)
+    : [];
+  const reviewCount = isStaff
+    ? jobs
+        .filter(
+          (job) =>
+            job.external?.taskType === "custom" &&
+            job.status === "review" &&
+            job.agentName === agent.name,
+        )
+        .reduce((total, job) => total + job.assetIds.length, 0)
+    : 0;
+  const lastStaffRun = agentRuns[0];
+  // §6.2(b). USD this client has spent on this agent, split by run type.
+  // Computed from the jobs already loaded — no extra read — and staff-only:
+  // this is cost data, and the client's side of the same question is credits.
+  const economics = isStaff
+    ? summarizeAgentEconomics(jobs.filter((job) => job.customAgentId === agent.id))
+    : null;
+
+  const sourceFiles: SourceFile[] =
+    archetype === "clip_maker"
+      ? contextItems
+          .filter(
+            (item) =>
+              item.mimeType.startsWith("video/") || item.mimeType.startsWith("audio/"),
+          )
+          .map((item) => ({ id: item.id, name: item.name, at: item.createdAt }))
+      : [];
 
   const setup = agentSetup[agent.id] ?? null;
   const connections = sanitizeIntegrations(integrations);
+  // Platform ids for the deliverable modal's publish controls — the same
+  // sanitized set the connector chips below render, never the raw integration
+  // docs (which carry credentials).
+  const connectedPlatformNames = connections.map((connection) => connection.platform);
   const launchInFlight = umbrella ? isLaunchInFlight(umbrella.launchState) : false;
   const agentServiceConfigured = isAgentServiceConfigured();
 
@@ -288,6 +452,45 @@ export default async function ClientAgentDetailPage({
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
+          {/* ── THE ARCHETYPE HERO (CD-I1) ──
+              Deliberately ABOVE the controls band. Albert asked for the clip
+              maker to be deliverables-first and the finder to lead with what it
+              found today, and "first" is a layout claim, not a copy one: what a
+              page opens with is what it is about. The template-calendar shape
+              has no separate hero — its product IS the format registry and the
+              week ahead, which live inside the panel below. */}
+          {clipView && (
+            <section>
+              <SectionHeading title="Your clips" />
+              <ClipGallery
+                clips={clipView.clips}
+                viewerIsClient={viewerIsClient}
+                canApprove={isStaff}
+                {...(connectedPlatformNames.length > 0
+                  ? { connectedPlatforms: connectedPlatformNames }
+                  : {})}
+                emptyHint={
+                  sourceFiles.length === 0
+                    ? "This agent cuts from footage you provide. Once your Karos team has your source video, finished clips land here for you to download and post."
+                    : "Your footage is on file. Finished clips land here once your Karos team has reviewed them."
+                }
+              />
+            </section>
+          )}
+
+          {finderView && (
+            <DailyFinderPanel
+              clientId={id}
+              view={finderView}
+              scheduleActive={schedule?.status === "active"}
+              emptyHint={
+                schedule?.status === "active"
+                  ? "It looks once a day and only brings back a thread worth answering — some days there is nothing good, and a forced reply is worse than none."
+                  : "Your Karos team sets how often this agent goes looking. Nothing runs until they do."
+              }
+            />
+          )}
+
           {/* Hero: the launch card for a non-live umbrella (§7.1 states 1–3),
               the working agent once it is live. An agent with no umbrella at
               all has neither — it is simply not set up, and says so rather
@@ -297,6 +500,8 @@ export default async function ClientAgentDetailPage({
               agent={row}
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
+              archetype={archetype}
+              staffNotes={isStaff}
             />
           ) : row ? (
             <ClientAgentLaunchCard
@@ -347,15 +552,50 @@ export default async function ClientAgentDetailPage({
             />
           )}
 
+          {/* ── STAFF CONTROLS (CD-I1 staff parity) ──
+              The four gestures the retired card carried — run now, set/manage
+              the schedule, reach the agent's data, read why a schedule is
+              refusing — mounted for the ONE agent this page is about. Placed
+              under the client-facing band deliberately: staff read this page to
+              see what the client sees, then act. */}
+          {isStaff && (
+            <StaffAgentControls
+              clientId={id}
+              agent={summary}
+              {...(schedule ? { schedule } : {})}
+              {...(setup ? { setup } : {})}
+              contextItems={contextItems}
+              reviewCount={reviewCount}
+              reviewHref={agentRuns.find((run) => run.status === "review")?.href ?? `/clients/${id}/assets`}
+              {...(lastStaffRun ? { lastRunAt: lastStaffRun.createdAt } : {})}
+              viewer={{ name: user.name, email: user.email }}
+            />
+          )}
+
+          {/* Where staff confirm the template set before a client ever sees it
+              (the Q3 curation gate). Umbrella-only by nature — it edits the
+              umbrella's registry — and never shown for an unbound agent. */}
+          {isStaff && row && umbrella && umbrella.launchState !== "not_launched" && (
+            <CurationPane agent={row} />
+          )}
+
+          {/* ── The per-agent archive (common chassis) ──
+              WHAT is listed depends on the archetype, because two of the three
+              already showed their product above and a second listing of the
+              same rows under a different heading is how one deliverable ends
+              up looking like two. The clip maker lists what it wrote BESIDE
+              the clips; the finder lists what it wrote that was not a find. */}
           <section>
-            <SectionHeading title="What it has made for you" />
-            {produced.length === 0 ? (
+            <SectionHeading title={archiveHeading} />
+            {archiveRows.length === 0 ? (
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-4 py-3 text-xs text-muted-2">
-                Nothing yet. Finished work appears here once your Karos team has approved it.
+                {archetype === "template_calendar"
+                  ? "Nothing yet. Finished work appears here once your Karos team has approved it."
+                  : "Nothing else yet — everything this agent has made is above."}
               </p>
             ) : (
               <ul className="space-y-1.5">
-                {produced.map((asset) => (
+                {archiveRows.map((asset) => (
                   <li
                     key={asset.id}
                     className="flex items-center justify-between gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2"
@@ -371,9 +611,7 @@ export default async function ClientAgentDetailPage({
                         — the same batch tell the asset filter three screens up
                         was added to close. Staff keep the generation time. */}
                     <span className="shrink-0 text-[11px] text-muted-2">
-                      {relativeTime(
-                        viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt,
-                      )}
+                      {relativeTime(deliverableStamp(asset, viewerIsClient))}
                     </span>
                   </li>
                 ))}
@@ -386,10 +624,38 @@ export default async function ClientAgentDetailPage({
               Open your Workspace <Icon name="ArrowRight" className="h-3 w-3" />
             </Link>
           </section>
+
+          {/* This agent's own run history, with the /jobs links and the
+              submitted prompt — the staff slice of the same list the roster
+              page shows across every agent. Client viewers never mount it:
+              toRunRows only fills `prompt` and `href` for staff, and this page
+              only builds the rows at all when isStaff. */}
+          {isStaff && agentRuns.length > 0 && (
+            <AgentRunHistory runs={agentRuns} agents={[summary]} heading="This agent's runs" />
+          )}
         </div>
 
         <aside className="space-y-6">
-          {/* ── The data this agent runs on ── */}
+          {/* ── The data this agent runs on ──
+              The generic card answers this with one link, which is right for
+              an agent whose data is a form and wrong for both new archetypes:
+              a clip maker runs on FILES, and a finder runs on a list of
+              communities it is welcome in and a list it is banned from — and
+              being banned somewhere is a fact a client wants to see on the
+              page, not behind a link. */}
+          {archetype === "clip_maker" ? (
+            <SourceMaterialCard
+              files={sourceFiles}
+              hint={launchProfileFor({ key: agent.key, name: agent.name }).attachments.hint}
+            />
+          ) : archetype === "daily_finder" && setup ? (
+            <FinderIntakeCard
+              intake={finderIntake}
+              href={setup.href}
+              label={setup.label}
+              ready={setup.ready}
+            />
+          ) : (
           <section>
             <SectionHeading title="What it knows about you" />
             {setup ? (
@@ -418,6 +684,7 @@ export default async function ClientAgentDetailPage({
               </p>
             )}
           </section>
+          )}
 
           {/* ── Connectors ── read-only chips. Connecting and reconnecting are
               settings actions, so this states the fact and links there rather
@@ -461,6 +728,20 @@ export default async function ClientAgentDetailPage({
               Manage connections <Icon name="ArrowRight" className="h-3 w-3" />
             </Link>
           </section>
+
+          {/* §6.2(b), staff only: what this agent has actually cost in USD.
+              It rode the umbrella card before, so it was invisible for any
+              agent nobody had bound — which is most of them. Keyed off the
+              lab agent rather than the umbrella now, so it appears wherever
+              the runs did. */}
+          {isStaff && economics && (
+            <AgentEconomicsCard
+              customAgentId={agent.id}
+              agentName={umbrella?.displayName ?? agent.name}
+              economics={economics}
+              launchCreditCost={agent.launchCreditCost ?? null}
+            />
+          )}
         </aside>
       </div>
     </>
