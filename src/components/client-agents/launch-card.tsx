@@ -109,7 +109,7 @@ export function ClientAgentLaunchCard({
 
       <div className="mt-4 flex-1">
         {inFlight ? (
-          <LaunchProgress phase={phase} />
+          <LaunchProgress phase={phase} confirmed={agent.launchState === "curating"} />
         ) : failed ? (
           <FailureNote agent={agent} viewerIsClient={viewerIsClient} />
         ) : agent.launchState === "live" ? (
@@ -196,18 +196,31 @@ function WhatLaunchDoes() {
 const PHASE_ORDER: ClientLaunchPhase[] = ["researching", "designing", "live"];
 
 /**
- * The guided progress a client watches while the setup runs. Three phases, and
- * the copy never claims work it cannot see: until the service emits progress
- * events, "designing" is a time-based narrative stage, not a report that the
- * research finished.
+ * The guided progress a client watches while the setup runs.
+ *
+ * The stage never claims work it cannot see. Until the service emits progress
+ * events (seam T2) the split between "researching" and "designing" is a clock,
+ * not a report — so while the job is still `launching`, a passed step advances
+ * the COPY but is drawn without its check-mark. The tick is the claim: a green
+ * ✓ on "Researching your brand" at minute 13, sourced from nothing but elapsed
+ * time, is the portal asserting an outcome it has no evidence for. Once the
+ * webhook lands (`curating`), the run demonstrably finished those steps and
+ * the check-marks are earned.
  */
-function LaunchProgress({ phase }: { phase: ClientLaunchPhase }) {
+function LaunchProgress({
+  phase,
+  confirmed,
+}: {
+  phase: ClientLaunchPhase;
+  /** True once a real signal (the delivered job) backs the passed steps. */
+  confirmed: boolean;
+}) {
   const activeIndex = PHASE_ORDER.indexOf(phase);
   return (
     <div className="space-y-2.5">
       {PHASE_ORDER.map((step, index) => {
         const copy = CLIENT_LAUNCH_PHASE_COPY[step as keyof typeof CLIENT_LAUNCH_PHASE_COPY];
-        const done = index < activeIndex;
+        const done = confirmed && index < activeIndex;
         const active = index === activeIndex;
         return (
           <div key={step} className="flex gap-2.5">
