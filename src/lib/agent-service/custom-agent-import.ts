@@ -204,6 +204,20 @@ export async function fetchSkillFrontmatter(
   }
 }
 
+/**
+ * Lab-repo shorthand that must never reach a client surface: product codes
+ * ("(e13)"), pipeline vocabulary ("sub-skill", "tonemap"), internal gate names
+ * ("FORGE"), and route labels ("Path A"). The import path tests every manifest
+ * blurb against this before it may become a client-facing `clientBlurb`, and
+ * the admin editor refuses a blurb that matches — so the next import cannot
+ * quietly reintroduce engineering notes into the client's agent cards.
+ */
+export const LAB_JARGON_RE = /\be\d{1,2}\)|sub-skill|tonemap|FORGE|Path [A-Z]\b/i;
+
+export function containsLabJargon(text: string): boolean {
+  return LAB_JARGON_RE.test(text);
+}
+
 /** Default editable instructions seeded into an imported agent. */
 export function defaultInstructionsFor(candidate: CustomAgentImportCandidate, skillDescription?: string): string {
   const about = skillDescription || candidate.description;

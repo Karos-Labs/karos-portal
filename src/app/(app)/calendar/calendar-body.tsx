@@ -126,6 +126,8 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     .filter((r) => r.status === "active")
     .map((r) => {
       const agent = agentById.get(r.customAgentId);
+      // Client-visible calendar: the lab manifest never ships here either.
+      const blurb = agent?.clientBlurb?.trim() || agent?.description;
       return {
         id: r.id,
         kind: "scheduled" as const,
@@ -138,7 +140,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         cadence: r.cadence,
         cadenceLabel: describeCadence(r),
         prompt: r.prompt,
-        ...(agent?.description ? { agentDescription: agent.description } : {}),
+        ...(blurb ? { agentDescription: blurb } : {}),
       };
     });
 

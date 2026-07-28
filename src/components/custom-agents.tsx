@@ -43,9 +43,23 @@ import { cn, formatDate, relativeTime } from "@/lib/utils";
  * Deliberately excludes instructions (the system prompt), skill paths, and
  * repo provenance — pages map full docs down to this before passing them.
  */
-export type RunnableAgentSummary = Pick<CustomAgent, "id" | "key" | "name" | "description" | "icon" | "color"> & {
+export type RunnableAgentSummary = Pick<
+  CustomAgent,
+  "id" | "key" | "name" | "description" | "clientBlurb" | "icon" | "color"
+> & {
   creditCost?: number | null;
 };
+
+/**
+ * What a client is allowed to read about an agent. `description` is the lab
+ * repo's own skill manifest — product codes, pipeline architecture, gate names
+ * — so client surfaces render `clientBlurb` instead. Agents imported before the
+ * field existed have none; those fall back to the manifest rather than showing
+ * a blank card, and the staff library flags them for a rewrite.
+ */
+function agentBlurb(agent: Pick<RunnableAgentSummary, "description" | "clientBlurb">): string {
+  return agent.clientBlurb?.trim() || agent.description;
+}
 
 /** One run-history row, pre-filtered and stripped server-side. */
 export interface CustomAgentRunRow {
@@ -209,6 +223,9 @@ export function CustomAgentsHub({
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
+                  {/* No client blurb ⇒ the client's card is still falling back to
+                      the lab manifest below. Flagged here, fixed in the editor. */}
+                  {!agent.clientBlurb?.trim() && <Badge tone="warning">No client blurb</Badge>}
                   {!agent.enabled && <Badge tone="warning">Disabled</Badge>}
                   {/* Repo-catalog flag — informational until an admin reviews and enables. */}
                   {!agent.enabled && agent.source?.status === "blocked" && (
@@ -388,7 +405,7 @@ export function ClientCustomAgents({
                         </Badge>
                       ) : null}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agent.description}</p>
+                    <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agentBlurb(agent)}</p>
                   </div>
                   {readyAssetCount > 0 && (
                     <Link
@@ -885,7 +902,7 @@ function RunCustomAgentModal({
   }
 
   return (
-    <Modal open onClose={onClose} title={agent.name} description={agent.description} className="max-w-2xl">
+    <Modal open onClose={onClose} title={agent.name} description={agentBlurb(agent)} className="max-w-2xl">
       <div className="space-y-5">
         <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1047,6 +1064,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
   const [name, setName] = useState(agent?.name ?? "");
   const [key, setKey] = useState(agent?.key ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
+  const [clientBlurb, setClientBlurb] = useState(agent?.clientBlurb ?? "");
   const [icon, setIcon] = useState(agent?.icon ?? "Sparkles");
   const [color, setColor] = useState(agent?.color ?? "#A3E635");
   const [entrySkillDir, setEntrySkillDir] = useState(agent?.entrySkillDir ?? "");
@@ -1062,6 +1080,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       name,
       key: key || name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""),
       description,
+      clientBlurb,
       icon,
       color,
       entrySkillDir,
@@ -1116,8 +1135,26 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           </div>
         </div>
         <div>
-          <Label htmlFor="ae-desc">Description</Label>
+          <Label htmlFor="ae-desc">Description (internal)</Label>
           <Textarea id="ae-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+          <p className="mt-1 text-xs text-muted-2">
+            The lab manifest blurb. Staff surfaces only — clients never see this.
+          </p>
+        </div>
+        <div>
+          <Label htmlFor="ae-blurb">Client blurb</Label>
+          <Textarea
+            id="ae-blurb"
+            rows={2}
+            maxLength={300}
+            value={clientBlurb}
+            onChange={(e) => setClientBlurb(e.target.value)}
+            placeholder="Drafts a week of on-brand posts for your team to review and publish."
+          />
+          <p className="mt-1 text-xs text-muted-2">
+            What the client reads on the agent card and in the run dialog: 1–2 sentences, sentence
+            case, no product codes. Leave empty and the card falls back to the internal description.
+          </p>
         </div>
         <div>
           <Label htmlFor="ae-entry">Entry skill dir (in karos-agents)</Label>

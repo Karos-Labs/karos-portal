@@ -223,7 +223,19 @@ export interface CustomAgent {
   /** Stable slug (the repo skill_name for imports), unique across agents. */
   key: string;
   name: string;
+  /**
+   * INTERNAL. The lab-repo skill manifest blurb — product codes, pipeline
+   * architecture, engineering shorthand. Staff surfaces only. Client surfaces
+   * render `clientBlurb`.
+   */
   description: string;
+  /**
+   * What this agent does, in the client's language: 1–2 sentences, sentence
+   * case, no lab product codes. Rendered on the client's agent card and in the
+   * run dialog. Absent on agents imported before the field existed — surfaces
+   * fall back to `description` until an admin writes one.
+   */
+  clientBlurb?: string | null;
   /** lucide icon name (see components/icon.tsx). */
   icon: string;
   /** Badge/chip hex color. */

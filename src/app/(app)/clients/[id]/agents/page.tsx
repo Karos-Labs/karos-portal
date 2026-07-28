@@ -35,6 +35,7 @@ function toSummary(agent: CustomAgent): RunnableAgentSummary {
     key: agent.key,
     name: agent.name,
     description: agent.description,
+    clientBlurb: agent.clientBlurb ?? null,
     icon: agent.icon,
     color: agent.color,
     creditCost: agent.creditCost ?? null,

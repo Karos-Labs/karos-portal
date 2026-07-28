@@ -13,6 +13,7 @@ import {
   updateCustomAgent,
 } from "@/lib/data";
 import {
+  containsLabJargon,
   defaultInstructionsFor,
   fetchSkillFrontmatter,
   isCustomAgentImportConfigured,
@@ -27,6 +28,7 @@ const MAX_INSTRUCTIONS_CHARS = 12_000;
 const MAX_KEY_CHARS = 120; // brief agent_key
 const MAX_NAME_CHARS = 200; // brief label
 const MAX_SKILL_DIR_CHARS = 300;
+const MAX_CLIENT_BLURB_CHARS = 300; // 1–2 sentences — it is a card line, not a spec
 const MAX_SKILL_ROOTS = 8;
 const SKILL_DIR_RE = /^(?!.*\.\.)(?!.*\/\/)(products|skills|clients)\/[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 
@@ -46,7 +48,10 @@ function normalizeSkillDir(dir: string): string {
 export interface CustomAgentInput {
   key: string;
   name: string;
+  /** Internal lab blurb — staff surfaces only. */
   description: string;
+  /** Client-facing 1–2 sentences. Empty/null clears it. */
+  clientBlurb?: string | null;
   icon: string;
   color: string;
   entrySkillDir: string;
@@ -81,7 +86,20 @@ function validateAgentInput(input: CustomAgentInput): string | null {
   if (input.creditCost != null && (!Number.isInteger(input.creditCost) || input.creditCost < 0)) {
     return "Credit cost must be a whole number ≥ 0 (empty = default).";
   }
+  const blurb = (input.clientBlurb ?? "").trim();
+  if (blurb.length > MAX_CLIENT_BLURB_CHARS) {
+    return `Client blurb is too long (max ${MAX_CLIENT_BLURB_CHARS} characters — 1 to 2 sentences).`;
+  }
+  if (blurb && containsLabJargon(blurb)) {
+    return "Client blurb reads as lab notes (product code, sub-skill, tonemap, FORGE, or Path X). Rewrite it in the client's language.";
+  }
   return null;
+}
+
+/** Normalizes the editable blurb to what the document should store. */
+function normalizeClientBlurb(raw: string | null | undefined): string | null {
+  const blurb = (raw ?? "").trim();
+  return blurb ? blurb.slice(0, MAX_CLIENT_BLURB_CHARS) : null;
 }
 
 /* ─────────────────────────── admin CRUD ─────────────────────────── */
@@ -100,6 +118,7 @@ export async function createCustomAgentAction(
     key: input.key.trim(),
     name: input.name.trim(),
     description: input.description.trim(),
+    clientBlurb: normalizeClientBlurb(input.clientBlurb),
     icon: input.icon || "Sparkles",
     color: input.color || "#A3E635",
     entrySkillDir: normalizeSkillDir(input.entrySkillDir),
@@ -134,6 +153,7 @@ export async function updateCustomAgentAction(
     key: input.key.trim(),
     name: input.name.trim(),
     description: input.description.trim(),
+    clientBlurb: normalizeClientBlurb(input.clientBlurb),
     icon: input.icon || agent.icon,
     color: input.color || agent.color,
     entrySkillDir: normalizeSkillDir(input.entrySkillDir),
@@ -189,7 +209,7 @@ export async function listCustomAgentImportCandidatesAction(): Promise<{
 
 export async function importCustomAgentsAction(
   keys: string[],
-): Promise<{ imported?: number; skipped?: number; error?: string }> {
+): Promise<{ imported?: number; skipped?: number; flagged?: number; error?: string }> {
   const user = await requireAdmin();
   if (!isCustomAgentImportConfigured()) {
     return { error: "Set AGENTS_REPO_GITHUB_TOKEN to import agents from the karos-agents repo." };
@@ -209,6 +229,7 @@ export async function importCustomAgentsAction(
 
   let imported = 0;
   let skipped = 0;
+  let flagged = 0;
   for (const key of keys) {
     const candidate = byKey.get(key);
     if (!candidate) {
@@ -233,10 +254,20 @@ export async function importCustomAgentsAction(
     const frontmatter = await fetchSkillFrontmatter(candidate.entrySkillDir);
     const appearance = GROUP_APPEARANCE[candidate.group] ?? GROUP_APPEARANCE.Other;
     const now = Date.now();
+    const description = (frontmatter.description || candidate.description).slice(0, 600);
+    // The manifest blurb is written for the lab, not for the client. It becomes
+    // the client-facing blurb only when it is free of lab shorthand; otherwise
+    // the agent imports with no clientBlurb and the staff card flags it until an
+    // admin writes one. This is the gate that stops an import from putting
+    // engineering notes back on a client's agent card.
+    const clientBlurb =
+      description && !containsLabJargon(description) ? description.slice(0, MAX_CLIENT_BLURB_CHARS) : null;
+    if (!clientBlurb) flagged++;
     await createCustomAgent({
       key: candidate.key,
       name: candidate.name.slice(0, MAX_NAME_CHARS),
-      description: (frontmatter.description || candidate.description).slice(0, 600),
+      description,
+      clientBlurb,
       icon: appearance.icon,
       color: appearance.color,
       entrySkillDir: candidate.entrySkillDir,
@@ -259,7 +290,7 @@ export async function importCustomAgentsAction(
     imported++;
   }
   revalidatePath("/agents");
-  return { imported, skipped };
+  return { imported, skipped, flagged };
 }
 
 /* ───────────────────── per-client agent access ──────────────────── */
