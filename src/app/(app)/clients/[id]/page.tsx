@@ -18,6 +18,7 @@ import { AiInsights } from "@/components/ai-insights";
 import { ClientHomeOverview } from "@/components/client-home-overview";
 import { SeoGeoPanel, SeoGeoScores, SeoGeoPlan } from "@/components/seo-geo-panel";
 import { ClientDashboardTabs } from "@/components/client-dashboard-tabs";
+import { RegenerateWorkspaceButton } from "@/components/regenerate-workspace-button";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import type { ClientTask } from "@/lib/types";
 
@@ -103,7 +104,23 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   if (!isClientViewer) {
     return (
       <>
-        <PageHeader title="Dashboard" description={`Workspace overview for ${client.name}.`} />
+        <PageHeader
+          title="Dashboard"
+          description={`Workspace overview for ${client.name}.`}
+          // CD-G5: regeneration rewrites the documents AND the SEO/GEO intel, so
+          // it needs an entry point at client level and not only in the rail's
+          // documents header. Admin-only, same gate as that one — an employee or
+          // a client viewer never sees it (client viewers never reach this
+          // branch at all).
+          action={
+            user.role === "KAROS_ADMIN" ? (
+              <RegenerateWorkspaceButton
+                clientId={client.id}
+                isAiProcessing={isAiProcessingLockActive(client)}
+              />
+            ) : undefined
+          }
+        />
         <div className="space-y-8">
           {/* CLIENT_USER already sees this via the (app) shell's own wrapper — only
               render here for staff, who use the plain Sidebar shell with no such wrapper. */}
