@@ -62,8 +62,8 @@ export function SeoGeoActionPlan({
     return (
       <EmptyState
         icon={<Icon name="CheckCircle2" className="h-6 w-6" />}
-        title="No open recommendations"
-        description="Every measured check passed and no competitor out-ranks this brand in the capture."
+        title="Nothing to fix right now"
+        description="Every check we measured passed, and no tracked competitor out-ranks you in this snapshot."
       />
     );
   }

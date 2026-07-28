@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   GEO_READINESS_CHECKS,
+  REC_COPY,
   SEO_CHECKS,
   TARGET_MENTION,
   analyzeAnswer,
@@ -385,7 +386,52 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
       { id: "SEO-02", bucket: "onPage", label: "Title tags", evidence: "b", norm: 0.1, tier: "MEASURED", confidence: "CONFIRMED" },
     ];
     const recs = buildRecommendations(computeCheckGaps(SEO_CHECKS, dup, "SEO"), 5);
-    expect(recs.filter((r) => r.title === "Title tags ≤ 60 chars, unique, keyword-placed").length).toBeLessThanOrEqual(1);
+    expect(recs.filter((r) => r.title === "Tighten your page titles")).toHaveLength(1);
+  });
+
+  /**
+   * QA F9: an uncovered id used to fall through to `def.label` — the internal
+   * registry string — and became the client's card title ("LCP p75 ≤ 2.5s"). This
+   * pins the coverage contract so adding a check without copy fails here, not in
+   * front of a client.
+   */
+  it("has plain-English copy for every id in both check registries", () => {
+    const uncovered = [...SEO_CHECKS, ...GEO_READINESS_CHECKS]
+      .map((d) => d.id)
+      .filter((id) => !REC_COPY[id]);
+    expect(uncovered).toEqual([]);
+  });
+
+  it("never lets a registry label reach a client-facing title or description", () => {
+    const labels = new Set([...SEO_CHECKS, ...GEO_READINESS_CHECKS].map((d) => d.label));
+    const checks: SeoGeoCheck[] = [...SEO_CHECKS, ...GEO_READINESS_CHECKS].map((d) => ({
+      id: d.id,
+      bucket: d.bucket,
+      label: d.label,
+      evidence: "observed this run",
+      norm: 0,
+      tier: "MEASURED",
+      confidence: "CONFIRMED",
+    }));
+    const gaps = [
+      ...computeCheckGaps(SEO_CHECKS, checks, "SEO"),
+      ...computeCheckGaps(GEO_READINESS_CHECKS, checks, "GEO"),
+    ];
+    for (const rec of buildRecommendations(gaps, 999)) {
+      expect(labels.has(rec.title)).toBe(false);
+      expect(labels.has(rec.description)).toBe(false);
+      expect(rec.description.length).toBeGreaterThan(10);
+    }
+  });
+
+  it("falls back to neutral copy for an id the model invented, never its own label", () => {
+    const invented: SeoGeoCheck[] = [
+      { id: "GEO-999", bucket: "extractability", label: "Vibes score above 0.8", evidence: "x", norm: 0, tier: "MEASURED", confidence: "CONFIRMED" },
+    ];
+    const [rec] = buildRecommendations(computeCheckGaps(GEO_READINESS_CHECKS, invented, "GEO"));
+    expect(rec.title).not.toContain("Vibes");
+    expect(rec.description).not.toContain("Vibes");
+    expect(rec.title).toBe("A technical finding your team is reviewing");
   });
 });
 

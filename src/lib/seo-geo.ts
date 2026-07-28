@@ -940,10 +940,16 @@ function impactFor(severity: GapSeverity): RecImpact {
 
 /**
  * Plain-English client copy per a3 rec id (QA Fix 7 — the Sitti one-pager voice: a verb-first
- * action title + what it entails). Keyed by the id prefix (before any ":"). Anything not
- * mapped falls back to the internal gap title (still readable, just less polished).
+ * action title + what it entails). Keyed by the id prefix (before any ":").
+ *
+ * COVERAGE IS THE CONTRACT (QA F9): every id in SEO_CHECKS and GEO_READINESS_CHECKS must
+ * have an entry here, because an uncovered id used to fall through to the internal
+ * registry label — client-facing card titles like "LCP p75 ≤ 2.5s". Pinned by a unit test
+ * in src/lib/__tests__/seo-geo.test.ts; add copy here whenever you add a check.
+ * Ids the audit model invents that are in neither registry get REC_FALLBACK, never the
+ * model's own label.
  */
-const REC_COPY: Record<string, { title: string; description: string }> = {
+export const REC_COPY: Record<string, { title: string; description: string }> = {
   "BOTH-07": { title: "Point your guides hub at itself", description: "The guides page currently tells search engines its canonical version is the homepage, so Google credits the homepage instead. Point the canonical tag at the guides hub." },
   "SEO-02": { title: "Tighten your page titles", description: "Keep titles under 60 characters, unique per page, with the main keyword near the front so they aren't cut off in results." },
   "SEO-06": { title: "Fix your meta descriptions", description: "Rewrite each description to 120–158 characters - long enough to use the space, short enough not to be truncated - and make each one unique." },
@@ -961,7 +967,41 @@ const REC_COPY: Record<string, { title: string; description: string }> = {
   "GEO-27": { title: "Close the share-of-voice gap on category questions", description: "A tracked competitor is named far more often than you on the questions buyers actually ask. Earn mentions in the sources those answers draw from." },
   "GEO-35": { title: "Get named on category questions", description: "You're rarely named when buyers ask category questions (not your brand by name). Owned comparison content plus third-party mentions fix this." },
   "GEO-11": { title: "Earn citations from the engines", description: "The engines don't yet cite your site as a source on category answers. Quotable, evidence-backed pages turn into citations." },
+  // ── QA F9: the 22 registry ids that used to fall through to their engineering label ──
+  "BOTH-01b": { title: "Clear the hidden 'do not list' flags", description: "Some pages carry an instruction telling engines not to list or quote them. Remove it from the pages you want buyers to find." },
+  "BOTH-02": { title: "Serve your main content as plain HTML", description: "Content that only appears after a login, behind a paywall, or once scripts run is invisible to engines. They read the raw page, so anything they can't see doesn't count." },
+  "BOTH-03": { title: "Make your content original", description: "Pages that closely echo what already ranks give engines no reason to pick yours. Add your own data, examples, and point of view." },
+  "BOTH-05": { title: "Link your important pages to each other", description: "Each priority page should link out to a few others on your site. Internal links show engines which pages matter and how they relate." },
+  "BOTH-09": { title: "Publish a clean sitemap", description: "Your sitemap is the index that tells engines which pages exist. Make sure it's valid, listed in robots.txt, and free of pages you've asked engines to ignore." },
+  "BOTH-11": { title: "Show first-hand experience", description: "Say what you actually did, tested, or measured, and show your own numbers. Engines increasingly favour content with real experience behind it." },
+  "BOTH-13": { title: "Publish on a steady cadence", description: "Gaps longer than a month make a site look dormant. A predictable publishing rhythm keeps engines coming back to check for new answers." },
+  "BOTH-19": { title: "Make the phone version match the desktop one", description: "Phone visitors should get the same content with no sideways scrolling. Search and AI engines judge your site on its mobile version." },
+  "BOTH-21": { title: "Give each page one job", description: "A page chasing several topics at once wins none of them. Keep one clear purpose per page and drop repeated keyword padding." },
+  "SEO-04a": { title: "Speed up how fast your pages appear", description: "Your main content should be visible within about two and a half seconds. Slow pages lose readers before they read anything." },
+  "SEO-04b": { title: "Make your pages respond faster to taps", description: "When someone taps or clicks, the page should react almost immediately. Lag here frustrates visitors and counts against you in search." },
+  "SEO-04c": { title: "Stop your pages jumping while they load", description: "Content that shifts as images and banners arrive makes people mis-tap. Reserve the space they'll occupy so the page settles as it loads." },
+  "GEO-01": { title: "Let search and AI crawlers read your site", description: "Your robots.txt decides which crawlers may read you. Allow the search engines and the AI assistants, or you aren't eligible to appear at all." },
+  "GEO-07": { title: "Point your public entity record at your website", description: "Your Wikidata entry should list your real domain as the official site. When it doesn't, engines credit your work to whichever site is listed instead." },
+  "GEO-08": { title: "Get listed where ChatGPT looks", description: "ChatGPT's search leans on Bing's index and its own crawler. Missing from either means it can't surface you even when you're the right answer." },
+  "GEO-10": { title: "Open your about pages to AI crawlers", description: "Your about and company pages are where engines learn who you are. Blocking them leaves the assistants guessing at your identity." },
+  "GEO-18": { title: "Name the things you're actually talking about", description: "Use the real names of your products, places, people, and partners instead of vague wording, so engines can connect your pages to what buyers ask about. Naturally — not stuffed in." },
+  "GEO-19": { title: "Add original images with descriptions", description: "Use your own visuals rather than stock, and describe each one in alt text so engines can read what the image shows." },
+  "GEO-23": { title: "Get your pages into Brave's index", description: "Brave runs its own independent index that some assistants draw on. Being missing there is a blind spot no other fix covers." },
+  "GEO-24": { title: "Get your pages into Bing's index", description: "Bing feeds several AI assistants. Submitting your site and turning on instant indexing gets new pages picked up in days rather than weeks." },
+  "GEO-37": { title: "Keep your cornerstone pages current", description: "Your about page and main topic pages should be revisited at least quarterly. Engines treat long-untouched cornerstone pages as less reliable." },
+  "GEO-41": { title: "Confirm Google can list and quote you", description: "Check your pages are in Google's index and that you haven't opted out of its AI answers — that opt-out is easy to leave switched on by accident." },
 };
+
+/**
+ * Last-resort client copy for an id in neither registry nor REC_COPY (the audit model
+ * occasionally invents one). Deliberately says nothing specific rather than echoing the
+ * model's own label into a client-facing card title (QA F3c / F9).
+ */
+const REC_FALLBACK = {
+  title: "A technical finding your team is reviewing",
+  description:
+    "Our audit flagged something on your site that doesn't map to a standard check yet. Your Karos team reviews it and turns it into a plain-English action on your next refresh.",
+} as const;
 
 function ownerFor(actionKind: ActionKind): string {
   switch (actionKind) {
@@ -983,8 +1023,10 @@ export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recomme
   const seen = new Set<string>();
   const out: Recommendation[] = [];
   for (const gap of [...gaps].sort((a, b) => b.scoreLift - a.scoreLift)) {
-    const copy = REC_COPY[gap.id.split(":")[0]];
-    const title = copy?.title ?? gap.title;
+    // REC_COPY covers every registry id (pinned by test); REC_FALLBACK catches
+    // model-invented ids so a raw engineering label can never become a card title (F9).
+    const copy = REC_COPY[gap.id.split(":")[0]] ?? REC_FALLBACK;
+    const title = copy.title;
     const key = title.toLowerCase().trim();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -992,7 +1034,8 @@ export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recomme
     out.push({
       recId: gap.id,
       title,
-      description: copy?.description ?? gap.benchmark ?? "",
+      // Never `gap.benchmark` — that is the internal registry label (F3b/F9).
+      description: copy.description,
       owner: ownerFor(actionKind),
       vertical: gap.lever,
       impact: impactFor(gap.severity),
