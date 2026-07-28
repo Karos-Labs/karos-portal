@@ -3,8 +3,10 @@
 import { revalidatePath } from "next/cache";
 import {
   getAsset,
+  getJob,
   listAssets,
   updateAsset,
+  updateJob,
   clearAssetSchedule,
   markAssetPublished,
   listClientIntegrations,
@@ -198,8 +200,40 @@ export async function approveAssetAction(
   }
 
   await updateAsset(id, patch);
+  await closeProducingJobIfReviewed(asset);
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
+  revalidatePath(`/clients/${asset.clientId}/agents`);
+}
+
+/**
+ * Move a run out of "review" once every deliverable it produced has been
+ * approved.
+ *
+ * Approving a deliverable used to write the deliverable and nothing else, so a
+ * job sat on "review" forever — and the amber "N ready" pill on the agent card,
+ * which counts runs in review, could never go down no matter how many times the
+ * drafts were reviewed. It also left "approved"/"delivered" unreachable states
+ * on the run badge. Best-effort: a failure here must not undo an approval that
+ * has already been written, so it is logged, not thrown.
+ */
+async function closeProducingJobIfReviewed(asset: Asset): Promise<void> {
+  if (!asset.jobId) return;
+  try {
+    const job = await getJob(asset.jobId);
+    if (!job || job.status !== "review" || job.assetIds.length === 0) return;
+    const siblings = await Promise.all(
+      job.assetIds.map((assetId) => (assetId === asset.id ? null : getAsset(assetId))),
+    );
+    // The asset just written is approved by construction; every other one must
+    // already be past "draft" (approved, scheduled, delivered, or published).
+    // A missing sibling — deleted since the run — cannot hold the run open.
+    const outstanding = siblings.some((sibling) => sibling != null && sibling.status === "draft");
+    if (outstanding) return;
+    await updateJob(job.id, { status: "approved" });
+  } catch (error) {
+    console.error("[approveAsset] could not close producing job", asset.jobId, error);
+  }
 }
 
 /**

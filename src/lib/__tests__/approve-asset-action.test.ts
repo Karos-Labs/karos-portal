@@ -41,6 +41,49 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("approveAssetAction closes the producing run", () => {
+  function setupApproval(asset: any) {
+    (data.getAsset as any).mockImplementation(async (id: string) =>
+      id === asset.id ? asset : siblings[id],
+    );
+    (data.listClientIntegrations as any).mockResolvedValue([]);
+    (data.getClientSettings as any).mockResolvedValue({ clientId: "c1" });
+    (data.updateAsset as any).mockResolvedValue(undefined);
+  }
+  let siblings: Record<string, any> = {};
+
+  beforeEach(() => {
+    siblings = {};
+  });
+
+  it("moves the job out of review once every deliverable is approved", async () => {
+    const asset = makeAsset({ jobId: "j1" });
+    siblings.a2 = makeAsset({ id: "a2", status: "approved" });
+    setupApproval(asset);
+    (data.getJob as any).mockResolvedValue({ id: "j1", status: "review", assetIds: ["a1", "a2"] });
+    const jobPatches: any[] = [];
+    (data.updateJob as any).mockImplementation(async (id: string, patch: Record<string, any>) => {
+      jobPatches.push({ id, patch });
+    });
+
+    await actions.approveAssetAction("a1");
+
+    expect(jobPatches).toEqual([{ id: "j1", patch: { status: "approved" } }]);
+  });
+
+  it("leaves the job in review while another deliverable is still a draft", async () => {
+    const asset = makeAsset({ jobId: "j1" });
+    siblings.a2 = makeAsset({ id: "a2", status: "draft" });
+    setupApproval(asset);
+    (data.getJob as any).mockResolvedValue({ id: "j1", status: "review", assetIds: ["a1", "a2"] });
+    (data.updateJob as any).mockResolvedValue(undefined);
+
+    await actions.approveAssetAction("a1");
+
+    expect((data.updateJob as any).mock.calls.length).toBe(0);
+  });
+});
+
 describe("approveAssetAction auto-schedule behavior", () => {
   it("auto-schedules and marks auto when an active integration exists and recommendedAt is present", async () => {
     const asset = makeAsset({ recommendedAt: NOW + 86_400_000, channels: ["linkedin"] });
