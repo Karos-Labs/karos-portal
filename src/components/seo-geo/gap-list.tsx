@@ -15,9 +15,11 @@ import type { GapChannel, GapView } from "./presenter";
  * agents page (SCRUM-52 amendment).
  */
 
+/** QA F144: same word set as the presenter's channel chips — "search engines"
+ *  read as AI search to the team that built it, so it reads that way to a client. */
 const FILTERS: Array<{ id: "all" | GapChannel; label: string }> = [
   { id: "all", label: "All" },
-  { id: "search", label: "Search engines" },
+  { id: "search", label: "Search results" },
   { id: "ai", label: "AI answers" },
 ];
 
@@ -44,6 +46,11 @@ function GapCard({ gap }: { gap: GapView }) {
             <Badge tone="neutral">{gap.channelLabel}</Badge>
             <span className="text-sm font-medium text-foreground">{gap.title}</span>
           </span>
+          {open && gap.technicalLabel && (
+            <span className="mt-0.5 block font-mono text-[10px] text-muted-2">
+              {gap.technicalLabel}
+            </span>
+          )}
           {!open && (
             <span className="mt-1 block truncate text-xs text-muted">
               What we found: {gap.foundLine}
@@ -65,10 +72,12 @@ function GapCard({ gap }: { gap: GapView }) {
             <p className="mt-0.5 text-xs text-muted">{gap.foundLine}</p>
             {gap.evidence && <p className="mt-0.5 text-xs text-muted-2">{gap.evidence}</p>}
           </div>
-          <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">What good looks like</p>
-            <p className="mt-0.5 text-xs text-muted">{gap.goalLine}</p>
-          </div>
+          {gap.goalLine && (
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">What good looks like</p>
+              <p className="mt-0.5 text-xs text-muted">{gap.goalLine}</p>
+            </div>
+          )}
           <div>
             <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">How it gets fixed</p>
             {gap.fixArea && (
@@ -77,7 +86,11 @@ function GapCard({ gap }: { gap: GapView }) {
                 <span className="text-muted-2"> · {gap.fixArea.gloss}</span>
               </p>
             )}
-            {gap.agentChip ? (
+            {/* The route sentence always renders; the agent chip is additive (F7) —
+                previously the chip REPLACED it, so a card either explained how the
+                fix ships or named its agent, never both. */}
+            <p className="mt-0.5 text-xs text-muted">{gap.fixRoute}</p>
+            {gap.agentChip && (
               <Link
                 href={gap.agentChip.href}
                 className="mt-1.5 inline-flex items-center gap-1 rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-1 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-neon transition-colors hover:bg-neon/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
@@ -85,8 +98,6 @@ function GapCard({ gap }: { gap: GapView }) {
                 {gap.agentChip.label}
                 <Icon name="ArrowRight" className="h-3 w-3" />
               </Link>
-            ) : (
-              <p className="mt-0.5 text-xs text-muted">{gap.fixRoute}</p>
             )}
             {gap.qualifier && <p className="mt-1.5 text-[11px] text-muted-2">{gap.qualifier}</p>}
           </div>
@@ -96,35 +107,42 @@ function GapCard({ gap }: { gap: GapView }) {
   );
 }
 
+const matchesFilter = (g: GapView, filter: "all" | GapChannel) =>
+  filter === "all" || g.channel === filter || g.channel === "both";
+
 export function GapList({ gaps }: { gaps: GapView[] }) {
   const [filter, setFilter] = useState<"all" | GapChannel>("all");
   const [showAll, setShowAll] = useState(false);
 
-  const filtered = gaps.filter(
-    (g) => filter === "all" || g.channel === filter || g.channel === "both",
-  );
+  const filtered = gaps.filter((g) => matchesFilter(g, filter));
   const visible = showAll ? filtered : filtered.slice(0, COLLAPSED_COUNT);
   const hidden = filtered.length - visible.length;
 
   return (
     <div>
       <div className="mb-3 inline-flex rounded-md border border-border bg-surface-2 p-1">
-        {FILTERS.map((f) => (
-          <button
-            key={f.id}
-            type="button"
-            aria-pressed={filter === f.id}
-            onClick={() => setFilter(f.id)}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
-              filter === f.id
-                ? "bg-surface text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.3)]"
-                : "text-muted hover:text-foreground",
-            )}
-          >
-            {f.label}
-          </button>
-        ))}
+        {FILTERS.map((f) => {
+          // Row counts (F16): a tab that quietly holds fewer rows than you expect
+          // is exactly how mis-filed checks stayed invisible.
+          const count = gaps.filter((g) => matchesFilter(g, f.id)).length;
+          return (
+            <button
+              key={f.id}
+              type="button"
+              aria-pressed={filter === f.id}
+              onClick={() => setFilter(f.id)}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
+                filter === f.id
+                  ? "bg-surface text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.3)]"
+                  : "text-muted hover:text-foreground",
+              )}
+            >
+              {f.label}
+              <span className="ml-1.5 font-mono text-[10px] text-muted-2">{count}</span>
+            </button>
+          );
+        })}
       </div>
 
       {filtered.length === 0 ? (

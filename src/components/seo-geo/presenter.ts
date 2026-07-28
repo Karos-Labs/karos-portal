@@ -14,13 +14,16 @@
 import { competitorBrandKeys } from "@/lib/competitor-input";
 import {
   ENGINE_LABELS,
-  ENGINE_PROVIDERS,
   GEO_READINESS_CHECKS,
+  REC_COPY,
   SEO_CHECKS,
+  SEO_GEO_PIPELINE_VERSION,
+  SNAPSHOT_TRUST_CUTOFF,
   brandKeys,
+  categoryMetrics,
   computeCheckScore,
+  dedupeGapsByRecId,
   engineVisibilityScore,
-  findMention,
   normalizeBrandKey,
   type EngineId,
   type SeoGeoInsights,
@@ -120,11 +123,14 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   const seoBand = scoreBand(insights.seoScore);
   const geoBand = scoreBand(insights.geoReadiness);
   const visBand = scoreBand(insights.geoVisibilityIndex);
-  const promptCount = insights.promptSet.length;
 
   const seoMeasured = insights.seoDataCoveragePct > 0;
   const readinessMeasured = insights.geoReadinessCoveragePct > 0;
   const visibilityMeasured = insights.geoVisibilityEnginesScored > 0;
+  // State the denominator (QA F10): the index is scored on the CATEGORY questions,
+  // the same set every card and gap below uses — not the full prompt set, which
+  // includes the questions that name the client and hit by construction.
+  const categoryCount = insights.categoryPresence?.total ?? 0;
 
   return [
     {
@@ -156,7 +162,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
     {
       key: "visibility",
       label: "AI visibility today",
-      explainer: `How often AI assistants actually name or recommend you right now, when we ask them ${promptCount || "real"} buyer questions. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we can measure. This is the number the fixes below are designed to move.`,
+      explainer: `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand — the questions new customers ask. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we can measure. This is the number the fixes below are designed to move.`,
       value: visibilityMeasured ? insights.geoVisibilityIndex : null,
       tone: visibilityMeasured ? visBand.tone : "neutral",
       bandLabel: visibilityMeasured ? visBand.label : "no engines measured this run",
@@ -167,7 +173,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       coverageLine: `based on ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} AI engines`,
       breakdownTitle: "Score by engine",
       breakdown: insights.perEngine
-        .filter((e) => e.captureTier !== "UNAVAILABLE" && e.promptsMeasured > 0)
+        .filter((e) => e.captureTier !== "UNAVAILABLE" && categoryMetrics(e).promptsMeasured > 0)
         .map((e) => ({
           label: ENGINE_LABELS[e.engine] ?? "Engine",
           pct: Math.round(engineVisibilityScore(e) * 100),
@@ -179,22 +185,176 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
 
 /* ── Capture context ──────────────────────────────────────────────── */
 
+/**
+ * QA F20: this emitted a raw machine date ("2026-05-12") straight into client copy.
+ * Fixed locale + UTC so the string is deterministic (server-rendered, and pinned by
+ * tests) rather than drifting with the render host.
+ */
 export function formatCaptured(capturedAt: number): string {
   if (!Number.isFinite(capturedAt)) return "an earlier run";
-  return new Date(capturedAt).toISOString().slice(0, 10);
+  return new Date(capturedAt).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
-export function buildContextLine(insights: SeoGeoInsights): string {
+const DAY_MS = 86_400_000;
+/** Past this, a snapshot is old enough that the panel says so (monthly cadence + slack). */
+export const SNAPSHOT_STALE_DAYS = 45;
+
+/** Relative age of a snapshot, in the client's language. Null when undateable. */
+export function snapshotAge(capturedAt: number, now = Date.now()): { days: number; label: string; stale: boolean } | null {
+  if (!Number.isFinite(capturedAt)) return null;
+  const days = Math.max(0, Math.floor((now - capturedAt) / DAY_MS));
+  const months = Math.round(days / 30);
+  const label =
+    days === 0
+      ? "today"
+      : days === 1
+        ? "yesterday"
+        : days < 45
+          ? `${days} days ago`
+          : months < 2
+            ? "about a month ago"
+            : months < 12
+              ? `${months} months ago`
+              : "over a year ago";
+  return { days, label, stale: days >= SNAPSHOT_STALE_DAYS };
+}
+
+/**
+ * True when the AI answer capture rejected and the pipeline substituted an empty
+ * probe set, empty prompt set and a one-name roster (QA F23). The panel renders the
+ * full scaffolding against those zeros otherwise — "0 real buyer questions",
+ * "excluding the 0 questions that name you directly", "The 0 buyer questions we
+ * asked" opening onto an empty box — which reads like the product is broken rather
+ * than like one leg of one run degrading.
+ */
+export function capturedNothing(insights: SeoGeoInsights): boolean {
+  return (insights.promptSet?.length ?? 0) === 0;
+}
+
+export function buildContextLine(insights: SeoGeoInsights, now = Date.now()): string {
+  const age = snapshotAge(insights.capturedAt, now);
+  const dated = `Snapshot from ${formatCaptured(insights.capturedAt)}${age ? ` (${age.label})` : ""}`;
+  if (capturedNothing(insights)) {
+    return `${dated} · AI answer capture did not complete this run`;
+  }
   return [
-    `Snapshot from ${formatCaptured(insights.capturedAt)}`,
+    dated,
     `${insights.promptSet.length} real buyer questions`,
     `${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} AI engines measured`,
   ].join(" · ");
 }
 
+/* ── Snapshot trust (CD-B4) ───────────────────────────────────────── */
+
+export interface SnapshotTrustView {
+  /** Measured under superseded rules — show it as historical, not current. */
+  isLegacy: boolean;
+  /** Banner heading; null when the snapshot is current. */
+  title: string | null;
+  /** Banner body; null when the snapshot is current. */
+  description: string | null;
+  /** No written plan on this snapshot — the action plan renders its waiting state
+   *  instead of an empty "nothing to fix", which would be a lie. */
+  planPending: boolean;
+}
+
+/**
+ * CD-B4, generalizing the narrow guard F1 added rather than adding a second
+ * mechanism beside it.
+ *
+ * F1's guard was `recommendations.length === 0 && gaps.length > 0` — one symptom
+ * (a snapshot captured before the plan was persisted) of one cause: this snapshot
+ * was produced by a pipeline that no longer matches the one describing it. The
+ * cause is now the thing we test, via the version stamp, and the missing-plan case
+ * is one reason among them. That covers the 2026-07-23/24 redeploy the team
+ * flagged, the QA-sweep measurement changes, and every future change that makes
+ * old snapshots non-comparable — without a new flag per episode.
+ *
+ * The copy deliberately does not narrate product history (F1's guard said "before
+ * we started writing the plan in plain English", which tells a client about our
+ * release schedule). It says what it means for their numbers, and what to do.
+ */
+export function buildSnapshotTrust(insights: SeoGeoInsights): SnapshotTrustView {
+  const planPending =
+    (insights.recommendations?.length ?? 0) === 0 && (insights.gaps?.length ?? 0) > 0;
+  const isLegacy = insights.pipelineVersion !== SEO_GEO_PIPELINE_VERSION;
+  if (!isLegacy) return { isLegacy: false, title: null, description: null, planPending };
+
+  const preRedeploy = Number.isFinite(insights.capturedAt) && insights.capturedAt < SNAPSHOT_TRUST_CUTOFF;
+  return {
+    isLegacy: true,
+    title: "These results are from an earlier measurement setup",
+    description: preRedeploy
+      ? `This snapshot was captured on ${formatCaptured(insights.capturedAt)}, before we rebuilt how visibility is measured. Read the numbers as history rather than your position today — a refresh re-measures everything on the current setup.`
+      : "How we measure visibility has changed since this snapshot, so these numbers aren't directly comparable with a current one. A refresh re-measures everything on the current setup.",
+    planPending,
+  };
+}
+
+/* ── Capture strip (QA F20 / CD-B4) ───────────────────────────────── */
+
+export interface CaptureStripView {
+  line: string;
+  /** "warning" once the snapshot is past the staleness threshold. */
+  tone: Tone;
+  /** True while a refresh run holds the workspace lock — an in-place state
+   *  instead of a top-of-page banner naming controls the client doesn't have. */
+  refreshing: boolean;
+  /** "Next snapshot: …" when a schedule is on; null when it will never fire. */
+  nextLine: string | null;
+  /** Ask-us-to-schedule prefill, when no refresh is scheduled. */
+  scheduleFlagPrefill: FlagPrefill | null;
+  /** Shown beside the prefill button; explains why we're asking. */
+  noScheduleLine: string | null;
+}
+
+/**
+ * QA F20. Across the report a client is told "we'll retry on the next snapshot",
+ * "this is measured on the next snapshot", "we ask every engine the same questions
+ * on every snapshot" — while no control on the page produces a next snapshot and no
+ * date says when one is due. The snapshot is only ever written by the intel
+ * pipeline, which has exactly three entry points: client creation, a staff-only
+ * regenerate action, and an admin-only monthly schedule that never fires for a
+ * client whose schedule was never switched on. So for those clients the promised
+ * next snapshot never happens and the report ages silently forever.
+ *
+ * This strip says, in one place: how old this snapshot is, whether it is stale,
+ * whether a refresh is running right now, and when the next one is due — or, when
+ * nothing is scheduled, offers the existing flag-to-team route to ask for one.
+ */
+export function buildCaptureStrip(
+  insights: SeoGeoInsights,
+  opts: { scheduleEnabled?: boolean; nextRunAt?: number | null; refreshing?: boolean } = {},
+  now = Date.now(),
+): CaptureStripView {
+  const age = snapshotAge(insights.capturedAt, now);
+  const scheduled = !!opts.scheduleEnabled && Number.isFinite(opts.nextRunAt ?? NaN);
+  return {
+    line: buildContextLine(insights, now),
+    tone: age?.stale ? "warning" : "neutral",
+    refreshing: !!opts.refreshing,
+    nextLine: scheduled ? `Next snapshot: ${formatCaptured(opts.nextRunAt as number)}` : null,
+    noScheduleLine: scheduled
+      ? null
+      : "No refresh is scheduled yet, so this snapshot won't update on its own.",
+    scheduleFlagPrefill: scheduled
+      ? null
+      : {
+          subject: "Request: schedule regular search and AI visibility snapshots",
+          message: `Our latest snapshot is from ${formatCaptured(insights.capturedAt)}${age ? ` (${age.label})` : ""}. Please set up a regular refresh so it stays current.`,
+        },
+  };
+}
+
 /* ── Engines ──────────────────────────────────────────────────────── */
 
-export type EngineStatus = "measured" | "no-data" | "not-wired";
+/** CD-B2: "not-wired" removed — every tracked engine has a provider. */
+export type EngineStatus = "measured" | "no-data";
 
 export interface EngineBrandRow {
   name: string;
@@ -232,7 +392,8 @@ export interface EngineView {
   ghost: { label: string; explainer: string } | null;
 }
 
-const ENGINE_ORDER: EngineId[] = ["chatgpt", "gemini", "claude", "perplexity", "copilot"];
+/** Display order for every engine surface. CD-B2 removed Perplexity and Copilot. */
+const ENGINE_ORDER: EngineId[] = ["chatgpt", "gemini", "claude"];
 
 /** Closed provider → "measured through …" phrase (provenance without badges). */
 const PROVIDER_PHRASES: Record<string, string> = {
@@ -250,16 +411,13 @@ function fraction(count: number, total: number, noun: string): string {
   return `${count} of ${total} ${noun}`;
 }
 
-/** Closed status → copy map for the two unmeasured states. */
+/**
+ * Copy for the one unmeasured state. CD-B2 removed the "not-wired" tier along with
+ * Perplexity and Copilot: every tracked engine has a wired provider now, so a
+ * permanently-unreachable "we can't measure this yet, flag us to add it" tier would
+ * be exactly the dead client-facing surface F7 and F152 exist to prevent.
+ */
 const UNMEASURED_COPY = {
-  "not-wired": {
-    statusLabel: "not yet measured",
-    explainer: (name: string) =>
-      `We can't measure ${name} yet. Our connection to this engine isn't built. Your scores only count the engines we can actually measure, so nothing here is guessed.`,
-    causeLine: (name: string) =>
-      `We can't ask ${name} questions yet. Our connection to this engine isn't built.`,
-    prefill: engineFlagPrefill,
-  },
   "no-data": {
     statusLabel: "no answers this run",
     explainer: (name: string) =>
@@ -376,12 +534,11 @@ export function buildEngineViews(
   return ENGINE_ORDER.map((engine) => {
     const row = byEngine.get(engine) ?? null;
     const name = ENGINE_LABELS[engine] ?? "Engine";
-    const source = row?.source ?? ENGINE_PROVIDERS[engine] ?? null;
     const measured = !!row && row.captureTier !== "UNAVAILABLE" && row.promptsMeasured > 0;
-    const status: EngineStatus = measured ? "measured" : source === null ? "not-wired" : "no-data";
+    const status: EngineStatus = measured ? "measured" : "no-data";
 
     if (status !== "measured" || !row) {
-      const copy = UNMEASURED_COPY[status === "not-wired" ? "not-wired" : "no-data"];
+      const copy = UNMEASURED_COPY["no-data"];
       return {
         engine,
         name,
@@ -398,23 +555,14 @@ export function buildEngineViews(
       };
     }
 
-    // Client-vs-competitor comparison uses CATEGORY prompts only — the 6 branded
-    // questions name the client by construction and guarantee it mentions, which
-    // would otherwise inflate every stat here to a near-meaningless number even
-    // when every tracked competitor sits at 0 (QA Fix 2). Older persisted snapshots
-    // were captured before `category` existed on this record, so fall back to the
-    // full (all-prompts) metrics rather than crashing on the missing field.
-    const cat: SubMetrics = row.category ?? {
-      promptsMeasured: row.promptsMeasured,
-      mentionRate: row.mentionRate,
-      citationRate: row.citationRate,
-      firstPositionRate: row.firstPositionRate,
-      shareOfVoice: row.shareOfVoice,
-      netSentiment: row.netSentiment,
-      ghostCitationRate: row.ghostCitationRate,
-      topCompetitor: row.topCompetitor,
-      brandMentions: row.brandMentions,
-    };
+    // Client-vs-competitor comparison uses CATEGORY prompts only — the branded
+    // questions name the client by construction and guarantee mentions, which would
+    // otherwise inflate every stat here to a near-meaningless number even when every
+    // tracked competitor sits at 0 (QA Fix 2 / CD-B3). `categoryMetrics` carries the
+    // legacy fallback for snapshots captured before `category` existed on this record,
+    // and is the SAME accessor the scoring maths uses, so the tile and these cards
+    // can never drift apart again (QA F10).
+    const cat: SubMetrics = categoryMetrics(row);
     const n = cat.promptsMeasured;
     const citedCount = Math.round(cat.citationRate * n);
     const firstCount = Math.round(cat.firstPositionRate * n);
@@ -453,10 +601,12 @@ export function buildEngineViews(
             "When the answer listed brands, how often yours came first. First mention carries the most weight with buyers skimming an answer.",
         },
       ],
+      // F10: `cat.`, not `row.` — the chip sat in the same card as "cited as a
+      // source: 0 of 14", which is category-only, and read from the full set.
       ghost:
-        row.ghostCitationRate > 0
+        cat.ghostCitationRate > 0
           ? {
-              label: `linked but not named · ${Math.round(row.ghostCitationRate)}% of your citations`,
+              label: `linked but not named · ${Math.round(cat.ghostCitationRate)}% of your citations`,
               explainer:
                 "The engine used your website as a source but never said your name. Your content is doing the work while your brand stays invisible. Usually fixable with clearer branding on the cited pages.",
             }
@@ -591,6 +741,8 @@ export function buildDiscoveredViews(
   tracked?: TrackedCompetitorRef[],
 ): DiscoveredView[] {
   const trackedKeys = new Set((tracked ?? []).flatMap(refKeys));
+  // Both sides of this fraction are CATEGORY answers (CD-B3) — the same scope the
+  // comparison rows use, so a discovered brand's count is read like-for-like.
   const total = insights.citationSummary?.totalMeasuredAnswers ?? 0;
   return (insights.discoveredBrands ?? [])
     .filter((d) => !brandKeys(d.name, d.url).some((k) => trackedKeys.has(k)))
@@ -598,7 +750,10 @@ export function buildDiscoveredViews(
       name: d.name,
       url: d.url ?? null,
       mentions: d.mentions,
-      line: total > 0 ? `named in ${fraction(d.mentions, total, "answers")}` : `named ${d.mentions} times`,
+      line:
+        total > 0
+          ? `named in ${fraction(d.mentions, total, "category answers")}`
+          : `named ${d.mentions} times`,
     }));
 }
 
@@ -651,6 +806,10 @@ export interface GapView {
   /** React key only. Never rendered. */
   key: string;
   title: string;
+  /** The registry's own check label, when it differs from the resolved plain-English
+   *  title. Staff-only surface (F1 demoted GapList behind an isClientViewer gate), so
+   *  the technical precision stays available without becoming a card headline (F3c). */
+  technicalLabel: string | null;
   severityLabel: string;
   severityTone: Tone;
   channel: GapChannel;
@@ -658,7 +817,9 @@ export interface GapView {
   foundLine: string;
   /** Extra evidence when it adds detail beyond foundLine. */
   evidence: string | null;
-  goalLine: string;
+  /** null when the benchmark is just the title again (F3b) — the registry sets
+   *  `benchmark = def.label = title` for every site check, so it always was. */
+  goalLine: string | null;
   fixArea: { label: string; gloss: string } | null;
   fixRoute: string;
   /** SCRUM-52 amendment: funnel into the executing agent. */
@@ -673,10 +834,26 @@ const SEVERITY_VIEW: Record<string, { label: string; tone: Tone }> = {
   low: { label: "minor", tone: "neutral" },
 };
 
+/** Display order for the priority chips (QA F22). Unknown severities sort last. */
+const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const SEVERITY_RANK_DEFAULT = 4;
+
+function severityRank(severity: string): number {
+  return SEVERITY_RANK[severity] ?? SEVERITY_RANK_DEFAULT;
+}
+
+/**
+ * QA F144 / call directive B1. "Search engines" was the word the whole report
+ * hinges on and the team itself paused on it — "search engines also sounds like
+ * AI". One word set everywhere: classic ranked results vs assistant answers.
+ * "Search results" rather than "Google search" because the checks behind this
+ * channel cover Bing and Brave indexes too (GEO-24, GEO-23), so naming one engine
+ * would be its own inaccuracy.
+ */
 const CHANNEL_VIEW: Record<string, { channel: GapChannel; label: string }> = {
-  SEO: { channel: "search", label: "search engines" },
+  SEO: { channel: "search", label: "search results" },
   GEO: { channel: "ai", label: "AI answers" },
-  BOTH: { channel: "both", label: "search + AI" },
+  BOTH: { channel: "both", label: "search + AI answers" },
 };
 
 const FIX_AREAS: Record<string, { label: string; gloss: string }> = {
@@ -690,8 +867,15 @@ const FIX_AREAS: Record<string, { label: string; gloss: string }> = {
   indexing: { label: "Search engine access", gloss: "Making sure engines can find and list your pages." },
 };
 
+/**
+ * QA F4: "agent-direct" does NOT mean an actuator applies the fix. Nothing in the
+ * portal writes to a client's website: there is no apply action, no job type, and
+ * both gap producers hardcode `artifactRef: null`. The route means Karos drafts the
+ * change and the client approves it on the action plan. Do NOT reintroduce the word
+ * "automatically" until an apply path exists that writes artifactRef.
+ */
 const FIX_ROUTES: Record<string, string> = {
-  "agent-direct": "Karos can apply this fix for you automatically.",
+  "agent-direct": "Karos drafts this fix for your approval.",
   "existing-product": "This is handled through a tool already in your Karos plan.",
   advisory: "Our team will recommend the changes. This one takes content or outreach work, not a switch we can flip.",
 };
@@ -705,17 +889,39 @@ const QUALIFIERS: Record<string, string | null> = {
 const QUALIFIER_DEFAULT = "Under review by the Karos team";
 
 /**
- * SCRUM-52 amendment: rec id → executing agent, for the cross-product routes
- * where the analysis funnels into an agent the client already has. CLOSED map:
- * unknown ids fall back to the plain fix-route sentence, never a broken link.
+ * Rec id → executing agent (QA F7). CLOSED map: unknown ids fall back to the plain
+ * fix-route sentence, never a broken link.
+ *
+ * The original map keyed GEO-16 / GEO-31 / BOTH-08 — ids no producer in this repo
+ * emits — and the chip was additionally gated on `delivery === "existing-product"`,
+ * which only the four indexReach checks ever get (GEO-24/23/41/BOTH-09). Zero
+ * overlap, so the chip was structurally unreachable. Keyed off the rec id now, and
+ * only onto ids the registries actually emit (pinned in seo-geo-presenter.test.ts).
+ *
+ * Deliberately NOT mapped: the off-site entity/review checks (GEO-04, GEO-14,
+ * GEO-25) and the competitor-visibility gaps (GEO-11, GEO-27, GEO-35). Those are
+ * `advisory` outreach work; the only agents that could own them are the per-client
+ * LinkedIn (e10) custom agent — honest only if it is in `client.customAgentIds`,
+ * which this panel does not receive — and a Reddit agent that does not exist in this
+ * repo. Naming an agent a client doesn't have is the exact defect F7 reports.
  */
 const REC_AGENT_LABELS: Record<string, string> = {
-  "GEO-16": "Reddit agent",
+  // Content-shaped checks → the blog_article product.
+  "GEO-02": "Blog agent",
+  "GEO-03": "Blog agent",
+  "GEO-09": "Blog agent",
   "GEO-20": "Blog agent",
+  "GEO-22": "Blog agent",
   "BOTH-13": "Blog agent",
-  "GEO-31": "LinkedIn agent",
-  "BOTH-08": "Website agent",
+  "BOTH-16": "Blog agent",
+  // Page-level title / description / canonical work → the landing_page product.
+  "SEO-02": "Website agent",
+  "SEO-06": "Website agent",
+  "BOTH-07": "Website agent",
 };
+
+/** Exported for the regression pin: every key must be an id a producer emits (F7). */
+export const AGENT_MAPPED_IDS = Object.keys(REC_AGENT_LABELS);
 
 /** Managed-product task types (agent-service catalog) → agent label. */
 const PRODUCT_AGENT_LABELS: Record<string, string> = {
@@ -738,22 +944,39 @@ export function agentLabelFor(gap: VisibilityGap): string | null {
 }
 
 export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[] {
-  return [...gaps]
-    .sort((a, b) => b.scoreLift - a.scoreLift)
+  // F11: the pipeline collapses registry duplicates at the source, but every
+  // snapshot persisted before that still carries both copies — dedupe at render
+  // too, so no UI consumer can show one defect as two contradictory cards.
+  return dedupeGapsByRecId(gaps)
+    // F22: the header promises "ordered by expected impact", so the chip a client
+    // reads must agree with the rank they see. Severity first, lift as the
+    // tie-breaker — scanning top-down now gives the urgent things first.
+    .sort((a, b) => severityRank(a.severity) - severityRank(b.severity) || b.scoreLift - a.scoreLift)
     .map((g, i) => {
       const severity = SEVERITY_VIEW[g.severity] ?? SEVERITY_VIEW.low;
       const channel = CHANNEL_VIEW[g.lever] ?? CHANNEL_VIEW.BOTH;
-      const agentLabel = g.delivery === "existing-product" ? agentLabelFor(g) : null;
+      // F7: keyed off the rec id, NOT `delivery` — the delivery gate made this
+      // permanently null (only indexReach is "existing-product", and none of those
+      // ids are in the agent map).
+      const agentLabel = agentLabelFor(g);
+      // F3c: the registry/model label is never the headline. REC_COPY covers every
+      // registry id (pinned in seo-geo.test.ts); the raw title is the last resort and
+      // is demoted to a secondary technical line when the lookup succeeds.
+      const copy = REC_COPY[g.id.split(":")[0]];
+      const title = copy?.title ?? g.title;
       return {
         key: `${g.id}-${i}`,
-        title: g.title,
+        title,
+        technicalLabel: g.title && g.title !== title ? g.title : null,
         severityLabel: severity.label,
         severityTone: severity.tone,
         channel: channel.channel,
         channelLabel: channel.label,
         foundLine: g.measured,
         evidence: g.evidence && g.evidence !== g.measured ? g.evidence : null,
-        goalLine: g.benchmark,
+        // F3b: `benchmark` is `def.label` for every site check, i.e. the same string
+        // as the title — the existing evidence-vs-measured guard, applied here too.
+        goalLine: g.benchmark && g.benchmark !== g.title && g.benchmark !== title ? g.benchmark : null,
         fixArea: FIX_AREAS[g.fixAction] ?? null,
         fixRoute: FIX_ROUTES[g.delivery] ?? FIX_ROUTE_DEFAULT,
         agentChip: agentLabel
@@ -764,27 +987,233 @@ export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[
     });
 }
 
+/* ── Answer grid (QA F12) ─────────────────────────────────────────── */
+
+/**
+ * The per-question × per-engine matrix the pipeline computes and persists on every
+ * run (`insights.answerGrid`) and which, until now, no component read. It is the
+ * exhibit behind every aggregate on the page — "named in 3 of 14 answers" without it
+ * is an assertion, and the panel's own "no black box" claim was unsupported.
+ *
+ * The raw answer TEXT is deliberately never persisted (src/lib/intel/seo-geo.ts),
+ * so this shows the outcome per question, not the answer. Surfacing the text would
+ * be a separate data-retention decision.
+ */
+export interface AnswerCellView {
+  engine: EngineId;
+  engineName: string;
+  /** Plain-English outcome, from a CLOSED map — never the raw CellState. */
+  label: string;
+  tone: Tone;
+  /** Filled / ring / hollow / none — the dot rendered in the matrix. */
+  mark: "solid" | "ring" | "hollow" | "none";
+}
+
+export interface AnswerGridRow {
+  prompt: string;
+  /** Typographically presentable form of `prompt` (F18) — quoted, punctuated. */
+  displayText: string;
+  cells: AnswerCellView[];
+}
+
+/** Rows under one plain-English intent heading (F18). */
+export interface AnswerGridGroup {
+  intentLabel: string;
+  rows: AnswerGridRow[];
+}
+
+export interface AnswerGridView {
+  engines: Array<{ engine: EngineId; name: string }>;
+  groups: AnswerGridGroup[];
+  legend: Array<{ label: string; tone: Tone; mark: AnswerCellView["mark"] }>;
+}
+
+/** Closed CellState → client copy. Unknown states get the safe "not measured". */
+const CELL_VIEW: Record<string, { label: string; tone: Tone; mark: AnswerCellView["mark"] }> = {
+  named_first: { label: "Named first", tone: "success", mark: "solid" },
+  named: { label: "Named", tone: "info", mark: "solid" },
+  cited_not_named: { label: "Used your site, didn't name you", tone: "warning", mark: "ring" },
+  absent: { label: "Not named", tone: "neutral", mark: "hollow" },
+  unavailable: { label: "Not measured", tone: "neutral", mark: "none" },
+};
+const CELL_VIEW_DEFAULT = CELL_VIEW.unavailable;
+
+/**
+ * Plain-English headings for the buyer-intent taxonomy. Closed map — the stored
+ * DISC / COMP / PROB / BRAND / NAV codes never reach a client screen. Order here is
+ * the display order: the questions that win new customers first.
+ */
+export const INTENT_VIEW: Record<string, string> = {
+  discovery: "Category questions",
+  comparison: "Comparison questions",
+  problem: "Problem questions",
+  brand: "Questions that name you",
+  navigational: "People looking for your site",
+};
+export const INTENT_VIEW_ORDER = ["discovery", "comparison", "problem", "brand", "navigational"];
+const INTENT_VIEW_DEFAULT = "Other questions";
+
+export function intentLabel(intent: string): string {
+  return INTENT_VIEW[intent] ?? INTENT_VIEW_DEFAULT;
+}
+
+/** Prompts that open with one of these read as questions and earn a "?" (F18). */
+const INTERROGATIVE =
+  /^(what|which|who|whom|whose|where|when|why|how|is|are|was|were|do|does|did|can|could|should|would|will|has|have|am)\b/i;
+
+/**
+ * Typographic treatment for a stored prompt (QA F18). The questions rendered as
+ * bare unpunctuated text — "Top-rated dental clinics", "Karos alternatives",
+ * "karoslabs.com" — reading as a dump rather than a deliberate set, even though
+ * the markdown brief for the same run already quotes each one.
+ *
+ * Quotes make every row read as a query that was typed into an engine. The "?" is
+ * added only to prompts that actually open interrogatively: the deterministic
+ * fallback set deliberately contains bare keyword strings and a bare domain, and
+ * "karoslabs.com?" would be a new defect, not a fix. (The spec's shorthand was
+ * "append a question mark when there is no terminal punctuation" — narrowed here
+ * for that reason.)
+ */
+export function formatPrompt(prompt: string): string {
+  const text = prompt.trim();
+  if (!text) return text;
+  const punctuated = /[.?!]$/.test(text) || !INTERROGATIVE.test(text) ? text : `${text}?`;
+  return `“${punctuated}”`;
+}
+
+/**
+ * Build the answer matrix. Columns are the engines that actually answered something
+ * this run, in the panel's fixed engine order; an engine with nothing but
+ * "not measured" cells is dropped rather than shown as an empty column. Returns
+ * null when there is no grid at all (pre-grid snapshots, or a failed capture).
+ */
+export function buildAnswerGridViews(insights: SeoGeoInsights): AnswerGridView | null {
+  const grid = insights.answerGrid ?? [];
+  if (grid.length === 0) return null;
+
+  const answered = new Set<EngineId>();
+  for (const row of grid) {
+    for (const cell of row.cells ?? []) {
+      if (cell.state !== "unavailable") answered.add(cell.engine);
+    }
+  }
+  const engines = ENGINE_ORDER.filter((e) => answered.has(e)).map((engine) => ({
+    engine,
+    name: ENGINE_LABELS[engine] ?? "Engine",
+  }));
+  if (engines.length === 0) return null;
+
+  const toRow = (row: (typeof grid)[number]): AnswerGridRow => {
+    const byEngine = new Map((row.cells ?? []).map((c) => [c.engine, c] as const));
+    return {
+      prompt: row.prompt,
+      displayText: formatPrompt(row.prompt),
+      cells: engines.map(({ engine, name }) => {
+        const state = byEngine.get(engine)?.state;
+        const view = (state && CELL_VIEW[state]) || CELL_VIEW_DEFAULT;
+        return { engine, engineName: name, ...view };
+      }),
+    };
+  };
+
+  // Grouped under plain-English intent headings (F18), in the display order that
+  // puts the questions winning new customers first. Unknown intents fall into one
+  // trailing "Other questions" group rather than vanishing.
+  const known = new Set(INTENT_VIEW_ORDER);
+  const order = [...INTENT_VIEW_ORDER, ...new Set(grid.map((r) => r.intent).filter((i) => !known.has(i)))];
+  const groups: AnswerGridGroup[] = [];
+  for (const intent of order) {
+    const rows = grid.filter((r) => r.intent === intent).map(toRow);
+    if (rows.length > 0) groups.push({ intentLabel: intentLabel(intent), rows });
+  }
+
+  return {
+    engines,
+    groups,
+    legend: [CELL_VIEW.named_first, CELL_VIEW.named, CELL_VIEW.cited_not_named, CELL_VIEW.absent],
+  };
+}
+
+/* ── Grouped question list (pre-grid snapshots) ───────────────────── */
+
+export interface IntentPromptGroup {
+  intentLabel: string;
+  prompts: PromptView[];
+}
+
+/**
+ * The questions grouped under plain-English intent headings, for snapshots with no
+ * persisted answer grid (QA F18). Mirrors the grouping the markdown brief has
+ * always used (intel/seo-geo.ts), reusing INTENT_LABELS' ordering but never its
+ * DISC/COMP/PROB codes. Returns a single unlabelled group when nothing is tagged.
+ */
+export function buildIntentPromptViews(insights: SeoGeoInsights): IntentPromptGroup[] {
+  const views = new Map(buildPromptViews(insights).map((v) => [v.text, v] as const));
+  const intents = insights.intentPrompts ?? [];
+  if (intents.length === 0) {
+    return [{ intentLabel: "", prompts: [...views.values()] }];
+  }
+  const known = new Set(INTENT_VIEW_ORDER);
+  const order = [...INTENT_VIEW_ORDER, ...new Set(intents.map((p) => p.intent).filter((i) => !known.has(i)))];
+  const groups: IntentPromptGroup[] = [];
+  for (const intent of order) {
+    const prompts = intents
+      .filter((p) => p.intent === intent)
+      .map((p) => views.get(p.prompt))
+      .filter((v): v is PromptView => !!v);
+    if (prompts.length > 0) groups.push({ intentLabel: intentLabel(intent), prompts });
+  }
+  return groups;
+}
+
 /* ── Prompt set ───────────────────────────────────────────────────── */
 
 export interface PromptView {
   text: string;
-  /**
-   * "mentions you" when the client's display name appears in the prompt;
-   * null otherwise. Deliberately makes no "category question" claim: the
-   * pipeline's brand/category split matches the full alias set (domain,
-   * short label), which isn't stored on the doc, so a definite tag here
-   * could contradict the presence tile above. Follow-up: persist per-prompt
-   * brand flags in clientSeoGeo so both surfaces classify identically.
-   */
+  /** "mentions you" for the questions the comparison excludes; null otherwise. */
   tagLabel: string | null;
+  /** What the tag means — the chip used to be the only marker on an inert row. */
+  tagExplainer: string | null;
 }
 
+/**
+ * QA F17 — the chip and the count came from two different classifiers.
+ *
+ * The chip matched only the client's DISPLAY NAME against the prompt text. The
+ * "questions that name you" count comes from the pipeline's intent classifier,
+ * which matches the full alias set (name, domain, short label) and returns
+ * "comparison" for anything containing alternative/vs/compare BEFORE it checks the
+ * brand name. So "Karos alternatives" was counted as a category question and
+ * included in the like-for-like comparison while wearing a chip saying the
+ * opposite; and a multi-word brand lost its chip on the bare-domain prompt, which
+ * the pipeline does count as naming you.
+ *
+ * Driven by the persisted per-prompt intent now — the single source of truth the
+ * comparison itself uses. The chip is additionally scoped to prompts an engine
+ * actually ANSWERED (via the answer grid), because brandPresence.total counts only
+ * measured prompts: without that, a partial run showed more chips than the sentence
+ * claimed. Chip count now equals brandPresence.total by construction, on complete
+ * and partial runs alike.
+ */
 export function buildPromptViews(insights: SeoGeoInsights): PromptView[] {
-  const clientName = insights.roster[0] ?? "";
-  return insights.promptSet.map((prompt) => ({
-    text: prompt,
-    tagLabel: clientName && findMention(prompt, clientName) >= 0 ? "mentions you" : null,
-  }));
+  const intentByPrompt = new Map((insights.intentPrompts ?? []).map((p) => [p.prompt, p.intent]));
+  const grid = insights.answerGrid ?? [];
+  const hasGrid = grid.length > 0;
+  const measured = new Set(
+    grid.filter((r) => (r.cells ?? []).some((c) => c.state !== "unavailable")).map((r) => r.prompt),
+  );
+  return insights.promptSet.map((prompt) => {
+    const intent = intentByPrompt.get(prompt);
+    const namesYou =
+      (intent === "brand" || intent === "navigational") && (!hasGrid || measured.has(prompt));
+    return {
+      text: prompt,
+      tagLabel: namesYou ? "mentions you" : null,
+      tagExplainer: namesYou
+        ? "This question names your brand, so engines are near-guaranteed to mention you. We leave it out of the competitor comparison to keep that like-for-like."
+        : null,
+    };
+  });
 }
 
 /* ── Flag-to-team prefills ────────────────────────────────────────── */
@@ -794,13 +1223,6 @@ export interface FlagPrefill {
   message: string;
 }
 
-export function engineFlagPrefill(engineName: string, insights: SeoGeoInsights): FlagPrefill {
-  return {
-    subject: `Request: measure ${engineName} in our AI visibility snapshot`,
-    message: `We'd like ${engineName} added to our AI visibility snapshot. It currently shows "not yet measured" on our dashboard (snapshot ${formatCaptured(insights.capturedAt)}).`,
-  };
-}
-
 export function noDataFlagPrefill(engineName: string, insights: SeoGeoInsights): FlagPrefill {
   return {
     subject: `Question about ${engineName} in our AI visibility snapshot`,
@@ -808,14 +1230,10 @@ export function noDataFlagPrefill(engineName: string, insights: SeoGeoInsights):
   };
 }
 
-/** One request covering every unwired engine, for the capture-strip banner. */
-export function unwiredRequestPrefill(engineNames: string[], insights: SeoGeoInsights): FlagPrefill {
-  const names = engineNames.join(" and ");
-  return {
-    subject: `Request: measure ${names} in our AI visibility snapshot`,
-    message: `We'd like ${names} added to our AI visibility snapshot (snapshot ${formatCaptured(insights.capturedAt)}).`,
-  };
-}
+/* CD-B2 removed `engineFlagPrefill` and `unwiredRequestPrefill`. Both existed only
+   to let a client ask us to add Perplexity or Copilot coverage; with those engines
+   out of the tracked set there is no unwired engine to request, and keeping the
+   prefills would keep alive a banner that can never render. */
 
 export function genericFlagPrefill(insights: SeoGeoInsights): FlagPrefill {
   return {

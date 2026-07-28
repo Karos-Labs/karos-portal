@@ -3,17 +3,23 @@ import { Icon } from "@/components/icon";
 import { BrandFavicon } from "@/components/brand-favicon";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 import {
-  buildContextLine,
+  buildAnswerGridViews,
+  buildCaptureStrip,
   buildDiscoveredViews,
   buildEngineViews,
   buildGapViews,
+  buildIntentPromptViews,
   buildPresence,
   buildPromptViews,
   buildRosterChips,
   buildRosterDrift,
   buildScoreViews,
+  buildSnapshotTrust,
+  capturedNothing,
+  formatPrompt,
   genericFlagPrefill,
-  unwiredRequestPrefill,
+  type AnswerCellView,
+  type AnswerGridView,
   type EngineView,
   type ScoreView,
   type TrackedCompetitorRef,
@@ -50,6 +56,101 @@ function InfoTip({ text }: { text: string }) {
         {text}
       </span>
     </span>
+  );
+}
+
+/** One matrix cell: a dot carrying its plain-English outcome as accessible text. */
+function AnswerDot({ mark, tone, label }: { mark: AnswerCellView["mark"]; tone: string; label: string }) {
+  const color = TONE_COLORS[tone as keyof typeof TONE_COLORS] ?? "var(--muted-2)";
+  return (
+    <span className="inline-flex items-center justify-center" title={label}>
+      <span className="sr-only">{label}</span>
+      {mark === "none" ? (
+        <span aria-hidden className="text-[11px] text-muted-2">
+          &ndash;
+        </span>
+      ) : (
+        <span
+          aria-hidden
+          className="block h-2.5 w-2.5 rounded-full"
+          style={
+            mark === "solid"
+              ? { background: color }
+              : mark === "ring"
+                ? { border: `2px solid ${color}` }
+                : { border: "1px solid var(--border)" }
+          }
+        />
+      )}
+    </span>
+  );
+}
+
+/**
+ * The per-question × per-engine matrix (QA F12) — the exhibit behind every
+ * aggregate on the page. Horizontally scrollable in its own container so it never
+ * pushes the page sideways.
+ */
+function AnswerGrid({ view }: { view: AnswerGridView }) {
+  return (
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[420px] border-collapse text-xs">
+          <thead>
+            <tr>
+              <th className="py-1.5 pr-3 text-left font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2">
+                Question
+              </th>
+              {view.engines.map((e) => (
+                <th
+                  key={e.engine}
+                  className="px-2 py-1.5 text-center font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
+                >
+                  {e.name}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          {/* One tbody per intent group (F18): the questions carry a five-way
+              taxonomy the pipeline already persists, and the old flat dump threw
+              that hierarchy away. */}
+          {view.groups.map((group) => (
+            <tbody key={group.intentLabel}>
+              <tr>
+                <th
+                  colSpan={view.engines.length + 1}
+                  className="border-t border-border pb-1 pt-3 text-left font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
+                >
+                  {group.intentLabel}
+                </th>
+              </tr>
+              {group.rows.map((row, i) => (
+                <tr key={`${row.prompt}-${i}`} className="border-t border-border">
+                  <td className="py-1.5 pr-3 align-middle text-muted">{row.displayText}</td>
+                  {row.cells.map((cell) => (
+                    <td key={cell.engine} className="px-2 py-1.5 text-center align-middle">
+                      <AnswerDot mark={cell.mark} tone={cell.tone} label={`${cell.engineName}: ${cell.label}`} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          ))}
+        </table>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-2">
+        {view.legend.map((l) => (
+          <span key={l.label} className="inline-flex items-center gap-1.5">
+            <AnswerDot mark={l.mark} tone={l.tone} label={l.label} />
+            <span aria-hidden>{l.label}</span>
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1.5">
+          <AnswerDot mark="none" tone="neutral" label="Not measured" />
+          <span aria-hidden>Not measured</span>
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -221,6 +322,9 @@ export function SeoGeoPanel({
   trackedCompetitors,
   clientWebsite,
   isClientViewer = false,
+  intelScheduleEnabled = false,
+  intelScheduleNextRunAt = null,
+  isRefreshing = false,
 }: {
   insights: SeoGeoInsights | null;
   /** The CURRENT tracked-5 (same selector as the sidebar) — keeps every panel
@@ -233,6 +337,14 @@ export function SeoGeoPanel({
    *  `SeoGeoInsights.gaps` is explicitly documented as never being rendered raw
    *  to a client (dev-handoff §4). */
   isClientViewer?: boolean;
+  /** Whether a recurring refresh will actually fire (QA F20). The report promises
+   *  a "next snapshot" throughout; without this the panel cannot say whether one
+   *  is ever coming. */
+  intelScheduleEnabled?: boolean;
+  intelScheduleNextRunAt?: number | null;
+  /** A refresh run holds the workspace lock right now — rendered in place on the
+   *  capture strip instead of leaving a stale snapshot looking current. */
+  isRefreshing?: boolean;
 }) {
   if (!insights) {
     return (
@@ -261,16 +373,41 @@ export function SeoGeoPanel({
   // The client-facing plan (dev-handoff §3b) — built and persisted on every capture run.
   // `?? []` covers snapshots captured before the plan existed.
   const recommendations = insights.recommendations ?? [];
-  // Pre-plan snapshot: gaps exist but no plan was built. Don't tell the client
-  // "nothing to fix" — say the plan lands on the next refresh.
-  const planPendingRefresh = recommendations.length === 0 && gaps.length > 0;
+  // CD-B4: one snapshot-trust view generalizing F1's narrow planPendingRefresh
+  // guard. It answers both "were these numbers produced by the current pipeline?"
+  // and "does this snapshot carry a written plan?" — the second being one symptom
+  // of the first.
+  const trust = buildSnapshotTrust(insights);
   const prompts = buildPromptViews(insights);
+  // Grouped under plain-English intent headings (F18) — the fallback list for
+  // snapshots with no persisted answer grid.
+  const promptGroups = buildIntentPromptViews(insights);
+  // QA F12: the per-question × per-engine matrix the pipeline has been computing and
+  // persisting on every run since SCRUM-52, read by no component until now. It is the
+  // exhibit behind every aggregate above; without it the "no black box" claim on this
+  // card is unsupported. Null on pre-grid snapshots — the flat list stays the fallback.
+  const answerGrid = buildAnswerGridViews(insights);
   const generic = genericFlagPrefill(insights);
   const citationLeaderboard = insights.citationLeaderboard ?? [];
 
+  // QA F23: the AI capture rejected and the pipeline substituted an empty probe
+  // set, empty prompt set and a one-name roster. Without this guard the panel
+  // renders its full scaffolding against those zeros — "0 real buyer questions",
+  // "excluding the 0 questions that name you directly", and a disclosure labelled
+  // "The 0 buyer questions we asked" that opens onto an empty box. That reads like
+  // the product is broken, when one leg of one run degraded.
+  const captureFailed = capturedNothing(insights);
+
+  // QA F20: age, staleness tone, in-place refresh state, and the real "next
+  // snapshot" date (or the ask-us-to-schedule route when none will ever fire).
+  const strip = buildCaptureStrip(insights, {
+    scheduleEnabled: intelScheduleEnabled,
+    nextRunAt: intelScheduleNextRunAt,
+    refreshing: isRefreshing,
+  });
+
   const measuredEngines = engines.filter((e) => e.status === "measured");
   const unmeasuredEngines = engines.filter((e) => e.status !== "measured");
-  const unwiredNames = engines.filter((e) => e.status === "not-wired").map((e) => e.name);
   // An EMPTY tracked list with a legacy snapshot still renders snapshot rows, so
   // fall back to the snapshot roster count rather than announcing "no competitors".
   const competitorCount = trackedCompetitors?.length
@@ -285,12 +422,40 @@ export function SeoGeoPanel({
   const rosterChips = buildRosterChips(insights, trackedCompetitors, clientWebsite);
 
   // Citation leaderboard split (QA Fix 5): "who's quoted instead of you" vs your own baseline.
-  const clientCitation = citationLeaderboard.find((r) => r.isClient) ?? null;
   const quotedInstead = citationLeaderboard.filter((r) => !r.isClient);
   const leaderboardMax = Math.max(1, ...quotedInstead.map((x) => x.citations));
 
+  // QA F133: ONE definition of "cited" for the whole client-facing report.
+  // This sentence used to count raw citation OCCURRENCES across ALL captured
+  // answers ("cited 11 times") while the fix card a screen above counted the
+  // ANSWER RATE across category answers ("cited in 0% of category answers") —
+  // two numbers for the same measurement, both stated as fact, reading as the
+  // report contradicting itself. Both surfaces now use the engine cards' unit
+  // and scope: answers cited, out of measured category answers.
+  const cited = insights.citationSummary?.answersCited ?? 0;
+  const citedOf = insights.citationSummary?.totalMeasuredAnswers ?? 0;
+  const clientCitationLine =
+    citedOf === 0
+      ? "We couldn't measure any category answers this run, so there is nothing to count citations against yet."
+      : cited > 0
+        ? `Your site was cited as a source in ${cited} of ${citedOf} category answers across every engine we measured.`
+        : `Your site was never cited as a source in the ${citedOf} category answers we measured — earning citations from these domains' territory is what moves the visibility score.`;
+
   return (
     <div className="space-y-6">
+      {/* 0 · CD-B4: say it once, at the top, when this snapshot was produced by a
+          measurement setup we've since replaced — rather than presenting
+          superseded maths as the client's position today. */}
+      {trust.isLegacy && (
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-3.5 py-2.5">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-warning">
+            <Icon name="TriangleAlert" className="h-4 w-4 shrink-0" />
+            {trust.title}
+          </p>
+          <p className="mt-1 text-xs text-muted">{trust.description}</p>
+        </div>
+      )}
+
       {/* 1 · Headline scores, coverage shown separately from the grade */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {scores.map((view) => (
@@ -300,20 +465,41 @@ export function SeoGeoPanel({
 
       {/* 2 · Where we looked: the "N of 5 engines" disclosure, all engines visible */}
       <Card>
-        <p className="font-mono text-[11px] text-muted">{buildContextLine(insights)}</p>
+        <p
+          className="font-mono text-[11px]"
+          style={{ color: strip.tone === "warning" ? TONE_COLORS.warning : "var(--muted)" }}
+        >
+          {strip.line}
+        </p>
+        {/* QA F20: an in-place refreshing state, so a stale snapshot never sits
+            there looking current while a run is rewriting it. */}
+        {strip.refreshing && (
+          <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-neon">
+            <Icon name="Loader" className="h-3 w-3 animate-spin" />
+            Refreshing this snapshot now — the numbers below are the previous run.
+          </p>
+        )}
+        {!strip.refreshing && strip.nextLine && (
+          <p className="mt-1.5 text-[11px] text-muted-2">{strip.nextLine}</p>
+        )}
+        {/* The report promises a "next snapshot" throughout, and for a client whose
+            schedule was never switched on, one never comes. Say so, and give them
+            the existing route to ask for one. */}
+        {!strip.refreshing && strip.scheduleFlagPrefill && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] text-muted-2">{strip.noScheduleLine}</span>
+            <FlagButton
+              subject={strip.scheduleFlagPrefill.subject}
+              message={strip.scheduleFlagPrefill.message}
+              label="Ask us to schedule refreshes"
+            />
+          </div>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {engines.map((view) => (
             <EngineChip key={view.engine} view={view} />
           ))}
         </div>
-        {unwiredNames.length > 0 && (
-          <div className="mt-3">
-            <FlagButton
-              {...unwiredRequestPrefill(unwiredNames, insights)}
-              label={`Want ${unwiredNames.join(" or ")} coverage? Flag it to the Karos team`}
-            />
-          </div>
-        )}
         {noEnginesMeasured && (
           <p className="mt-3 rounded-md border border-info/30 bg-info/10 px-3 py-2 text-xs text-info">
             We couldn&apos;t capture any AI engine answers this run. Your search score and AI
@@ -370,7 +556,11 @@ export function SeoGeoPanel({
         )}
       </Card>
 
-      {/* 4 · Engine-by-engine proof: you vs the SAME competitors the sidebar tracks */}
+      {/* 4 · Engine-by-engine proof: you vs the SAME competitors the sidebar tracks.
+          Suppressed entirely on a degraded run (F23): its subtitle interpolates
+          three counts that are all zero, and the no-engines banner on the capture
+          strip above already explains what happened. */}
+      {!captureFailed && (
       <Card>
         <CardTitle className="mb-1">You vs competitors on each AI engine</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
@@ -404,6 +594,7 @@ export function SeoGeoPanel({
           </div>
         )}
       </Card>
+      )}
 
       {/* 4b · Brands the engines volunteered that we don't track yet */}
       {discovered.length > 0 && (
@@ -440,11 +631,11 @@ export function SeoGeoPanel({
         <p className="mb-4 text-xs text-muted-2">
           Ordered by expected impact on your scores. Approve an item and your Karos team executes it.
         </p>
-        {planPendingRefresh ? (
+        {trust.planPending ? (
           <EmptyState
             icon={<Icon name="Radar" className="h-6 w-6" />}
-            title="Your action plan is being prepared"
-            description="This snapshot was captured before we started writing the plan in plain English. Your next visibility refresh will list the actions here."
+            title="Your action plan lands on the next refresh"
+            description="We measured this snapshot but haven't written its plan yet. Your next visibility refresh will list the actions here."
           />
         ) : (
           <SeoGeoActionPlan
@@ -463,67 +654,47 @@ export function SeoGeoPanel({
         )}
       </Card>
 
-      {/* 6 · Methodology: the exact questions and roster, no black box */}
+      {/* 6 · Methodology (QA F18): three named sections, three Cards. These used to
+          be one Card whose only affordance was a collapsed row labelled "The 20
+          buyer questions we asked" — so the competitor roster and the citation
+          leaderboard, both named sections of this report, were children of a
+          disclosure that didn't mention them and was closed by default. A client
+          asking "who are you comparing me to?" could never find the answer. */}
+      {/* F23: no disclosure inviting a click that opens onto an empty box. */}
+      {!captureFailed && (
       <Card>
-        <Disclosure summary={`The ${prompts.length} buyer questions we asked`}>
-          <ul className="space-y-1.5">
-            {prompts.map((p, i) => (
-              <li key={`q-${i}`} className="flex items-center justify-between gap-2 text-xs">
-                <span className="text-muted">{p.text}</span>
-                {p.tagLabel && (
-                  <span className="shrink-0 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
-                    {p.tagLabel}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-3 border-t border-border pt-3">
-            <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
-              Who we compare you against
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {rosterChips.map((chip, i) => (
-                <span
-                  key={`${chip.name}-${i}`}
-                  className={
-                    chip.isClient
-                      ? "inline-flex items-center gap-1 rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-neon"
-                      : "inline-flex items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted"
-                  }
-                >
-                  <BrandFavicon website={chip.url} faviconSize={32} className="h-3 w-3 rounded-[2px]" />
-                  {chip.name}
-                  {chip.isClient && <span>(you)</span>}
-                  {chip.pending && <span className="text-muted-2">· next snapshot</span>}
-                </span>
+        <Disclosure summary={`The ${prompts.length} questions we asked`}>
+          {answerGrid ? (
+            <>
+              <p className="mb-2 text-xs text-muted-2">
+                What each engine did with each question this run.
+              </p>
+              <AnswerGrid view={answerGrid} />
+            </>
+          ) : (
+            <div className="space-y-3">
+              {promptGroups.map((group, gi) => (
+                <div key={group.intentLabel || `g-${gi}`}>
+                  {group.intentLabel && (
+                    <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                      {group.intentLabel}
+                    </p>
+                  )}
+                  <ul className="space-y-1.5">
+                    {group.prompts.map((p, i) => (
+                      <li key={`q-${gi}-${i}`} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-muted">{formatPrompt(p.text)}</span>
+                        {p.tagLabel && (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                            {p.tagLabel}
+                            {p.tagExplainer && <InfoTip text={p.tagExplainer} />}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ))}
-            </div>
-          </div>
-          {quotedInstead.length > 0 && (
-            <div className="mt-3 border-t border-border pt-3">
-              <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
-                Who the engines quote as sources
-              </p>
-              <ul className="space-y-1.5">
-                {quotedInstead.slice(0, 8).map((r) => (
-                  <li key={r.domain} className="flex items-center gap-2 text-xs">
-                    <BrandFavicon website={r.domain} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
-                    <span className="min-w-0 flex-1 truncate text-muted">{r.domain}</span>
-                    <span className="w-20 shrink-0">
-                      <Meter pct={(r.citations / leaderboardMax) * 100} color="var(--info)" />
-                    </span>
-                    <span className="w-6 shrink-0 text-right font-mono text-[11px] text-muted-2">
-                      {r.citations}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-1.5 text-[11px] text-muted-2">
-                {clientCitation
-                  ? `Your site was cited ${clientCitation.citations} time${clientCitation.citations === 1 ? "" : "s"} across these answers.`
-                  : "Your site was never cited as a source this run — earning citations from these domains' territory is what moves the visibility score."}
-              </p>
             </div>
           )}
           <p className="mt-3 text-[11px] text-muted-2">
@@ -532,6 +703,78 @@ export function SeoGeoPanel({
           </p>
         </Disclosure>
       </Card>
+      )}
+
+      <Card>
+        <CardTitle className="mb-1">Who we compare you against</CardTitle>
+        <p className="mb-3 text-xs text-muted-2">
+          The brands your visibility is measured against on every snapshot.
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {rosterChips.map((chip, i) => (
+            <span
+              key={`${chip.name}-${i}`}
+              className={
+                chip.isClient
+                  ? "inline-flex items-center gap-1 rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-neon"
+                  : "inline-flex items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted"
+              }
+            >
+              <BrandFavicon website={chip.url} faviconSize={32} className="h-3 w-3 rounded-[2px]" />
+              {chip.name}
+              {chip.isClient && <span>(you)</span>}
+              {chip.pending && <span className="text-muted-2">· next snapshot</span>}
+            </span>
+          ))}
+        </div>
+      </Card>
+
+      {/* QA F19: this Card is NOT gated on there being citations. The client's own
+          citation sentence used to be nested inside a `quotedInstead.length > 0`
+          check, so the single most important line in the section — your site was
+          never cited, and earning citations is what moves the score — was exactly
+          the line that could not render when there were no citations at all. The
+          zero state deleted its own explanation while the engine cards above kept
+          saying "cited as a source: 0 of 14" with nothing to explain it.
+          It IS suppressed on a degraded run (F23) — there were no answers to
+          count citations across, and the capture-strip banner says so. */}
+      {!captureFailed && (
+      <Card>
+        <CardTitle className="mb-1">Who the engines quote as sources</CardTitle>
+        {quotedInstead.length > 0 ? (
+          <>
+            {/* The bars count citations, the sentence below counts answers — say
+                which is which, so two honest numbers don't read as a contradiction. */}
+            <p className="mb-3 text-xs text-muted-2">
+              How many times each of these {quotedInstead.length} domains was cited across the
+              category answers we measured.
+            </p>
+            {/* Every row the data layer returns — the old hard `.slice(0, 8)` against
+                a limit of 12 dropped up to four competitor source domains with no
+                count, no "show all", and no hint there were more. */}
+            <ul className="space-y-1.5">
+              {quotedInstead.map((r) => (
+                <li key={r.domain} className="flex items-center gap-2 text-xs">
+                  <BrandFavicon website={r.domain} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+                  <span className="min-w-0 flex-1 truncate text-muted">{r.domain}</span>
+                  <span className="w-20 shrink-0">
+                    <Meter pct={(r.citations / leaderboardMax) * 100} color="var(--info)" />
+                  </span>
+                  <span className="w-6 shrink-0 text-right font-mono text-[11px] text-muted-2">
+                    {r.citations}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p className="mb-1 text-xs text-muted-2">
+            No engine cited any source domain on the answers we measured this run.
+          </p>
+        )}
+        <p className="mt-2 text-[11px] text-muted-2">{clientCitationLine}</p>
+      </Card>
+      )}
 
       {/* 7 · Catch-all flag affordance */}
       <div className="flex justify-end">

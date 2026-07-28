@@ -10,6 +10,7 @@ import {
   listClientCompetitors,
 } from "@/lib/data";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
+import { isAiProcessingLockActive } from "@/lib/constants";
 import { PageHeader } from "@/components/ui";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { ClientAnalytics } from "@/components/client-analytics";
@@ -109,6 +110,12 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             trackedCompetitors={trackedCompetitorRefs}
             clientWebsite={client.website}
             isClientViewer={isClientViewer}
+            // QA F20: the panel promises a "next snapshot" throughout, and the
+            // monthly schedule never fires for a client whose admin never turned
+            // it on — so the report ages silently forever. The panel needs to know.
+            intelScheduleEnabled={client.intelScheduleEnabled ?? false}
+            intelScheduleNextRunAt={client.intelScheduleNextRunAt ?? null}
+            isRefreshing={isAiProcessingLockActive(client)}
           />
         </section>
         <section className="space-y-3">

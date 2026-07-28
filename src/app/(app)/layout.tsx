@@ -108,7 +108,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 {/* Same cap as the staff shell — the two shells must render pages
                     at identical widths or tabs appear to change size. */}
                 <div className="mx-auto w-full max-w-6xl animate-fade-up">
-                  <AiProcessingBanner client={client} />
+                  {/* The client shell — this banner's audience is a CLIENT_USER,
+                      who has neither Regenerate nor Refresh Task Map (F20). */}
+                  <AiProcessingBanner client={client} isClientViewer />
                   {children}
                 </div>
               </main>

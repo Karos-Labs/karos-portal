@@ -20,8 +20,20 @@
 
 /* ── Engines & provenance ─────────────────────────────────────────── */
 
-/** The five answer engines from the a3 spec. Only engines with a wired provider are probed. */
-export type EngineId = "chatgpt" | "gemini" | "claude" | "perplexity" | "copilot";
+/**
+ * The tracked answer engines. Call directive B2 (2026-07-27) removed Perplexity and
+ * Copilot from the set entirely: neither has a wired provider, so they contributed
+ * nothing but permanent "not yet measured" chips, a "0 of 5 engines measured"
+ * coverage figure that could never reach 5, and a standing flag-us-to-add-them
+ * banner for connectors nobody is building. Removing them from the TYPE is
+ * deliberate — every roster, order and label map is keyed by EngineId, so the
+ * compiler now enforces the removal rather than five separate lists agreeing.
+ *
+ * Snapshots captured before this still carry perplexity/copilot rows; they are
+ * simply not rendered (ENGINE_ORDER drives the UI) and their stored
+ * geoVisibilityEnginesTotal of 5 stands as a historical fact.
+ */
+export type EngineId = "chatgpt" | "gemini" | "claude";
 
 /** Which model provider actually produced a data point (multi-model provenance). */
 export type ProviderSource = "OpenAI" | "Gemini" | "Anthropic";
@@ -33,8 +45,6 @@ export const ENGINE_LABELS: Record<EngineId, string> = {
   chatgpt: "ChatGPT",
   gemini: "Gemini",
   claude: "Claude",
-  perplexity: "Perplexity",
-  copilot: "Copilot",
 };
 
 /** Engine → provider that answers for it in this platform (null = no connector wired yet). */
@@ -42,8 +52,6 @@ export const ENGINE_PROVIDERS: Record<EngineId, ProviderSource | null> = {
   chatgpt: "OpenAI",
   gemini: "Gemini",
   claude: "Anthropic",
-  perplexity: null,
-  copilot: null,
 };
 
 /* ── Probe & answer shapes ────────────────────────────────────────── */
@@ -442,14 +450,54 @@ function clamp01(v: number): number {
   return Math.min(Math.max(v, 0), 1);
 }
 
-/** Per-engine geo-score-v3 sub-score, 0..1 (each signal normalized to 0..1 first). */
-export function engineVisibilityScore(e: PerEngineVisibility): number {
+/**
+ * The CATEGORY sub-metrics for an engine row, with a fallback to the full-prompt
+ * figures for snapshots captured before `category` existed on this record. One
+ * definition, shared by the scoring maths and the presenter, so the headline tile
+ * and the cards under it can never disagree about their denominator (QA F10 / CD-B3).
+ */
+export function categoryMetrics(e: PerEngineVisibility): SubMetrics {
   return (
-    APPEARANCE_LED_WEIGHTS.appearance * clamp01(e.mentionRate) +
-    APPEARANCE_LED_WEIGHTS.citation * clamp01(e.citationRate) +
-    APPEARANCE_LED_WEIGHTS.firstPosition * clamp01(e.firstPositionRate) +
-    APPEARANCE_LED_WEIGHTS.shareOfRoster * clamp01(e.shareOfVoice / 100) +
-    APPEARANCE_LED_WEIGHTS.sentiment * clamp01((e.netSentiment + 1) / 2)
+    e.category ?? {
+      promptsMeasured: e.promptsMeasured,
+      mentionRate: e.mentionRate,
+      citationRate: e.citationRate,
+      firstPositionRate: e.firstPositionRate,
+      shareOfVoice: e.shareOfVoice,
+      netSentiment: e.netSentiment,
+      ghostCitationRate: e.ghostCitationRate,
+      topCompetitor: e.topCompetitor,
+      brandMentions: e.brandMentions,
+    }
+  );
+}
+
+/**
+ * Per-engine geo-score-v3 sub-score, 0..1 (each signal normalized to 0..1 first).
+ *
+ * QA F10 — two corrections to the ported model, both about honesty rather than
+ * weighting:
+ *  (1) Inputs are the CATEGORY sub-metrics, not the full prompt set. The brand and
+ *      navigational questions name the client by construction, so the headline used
+ *      to show a positive grade next to an engine card of zeros, while claiming to
+ *      be "the number the fixes below are designed to move" — those fixes derive
+ *      from the category metrics. Also the CD-B3 rule: branded queries never feed a
+ *      client-vs-competitor number.
+ *  (2) The sentiment term only counts when the brand was actually mentioned.
+ *      netSentiment is 0 for an unmentioned brand, which maps to the neutral 0.5
+ *      midpoint and awarded 5/100 for having no presence at all — contradicting
+ *      this file's own rule, stated three times, that ESTIMATED signals never enter
+ *      a grade. The weights themselves are untouched (the a3 model is the recorded
+ *      baseline); zero presence now scores zero.
+ */
+export function engineVisibilityScore(e: PerEngineVisibility): number {
+  const c = categoryMetrics(e);
+  return (
+    APPEARANCE_LED_WEIGHTS.appearance * clamp01(c.mentionRate) +
+    APPEARANCE_LED_WEIGHTS.citation * clamp01(c.citationRate) +
+    APPEARANCE_LED_WEIGHTS.firstPosition * clamp01(c.firstPositionRate) +
+    APPEARANCE_LED_WEIGHTS.shareOfRoster * clamp01(c.shareOfVoice / 100) +
+    (c.mentionRate > 0 ? APPEARANCE_LED_WEIGHTS.sentiment * clamp01((c.netSentiment + 1) / 2) : 0)
   );
 }
 
@@ -480,7 +528,11 @@ export function computeVisibilityIndex(
   perEngine: PerEngineVisibility[],
   enginesTotal = perEngine.length,
 ): VisibilityIndexResult {
-  const live = perEngine.filter((e) => e.captureTier !== "UNAVAILABLE" && e.promptsMeasured > 0);
+  // Scored on CATEGORY questions (F10), so an engine that only answered branded
+  // questions contributes nothing rather than a guaranteed-hit inflation.
+  const live = perEngine.filter(
+    (e) => e.captureTier !== "UNAVAILABLE" && categoryMetrics(e).promptsMeasured > 0,
+  );
   const index = live.length
     ? Math.round((live.reduce((a, e) => a + engineVisibilityScore(e), 0) / live.length) * 100)
     : 0;
@@ -741,6 +793,18 @@ export interface VisibilityGap {
   artifactRef?: string | null;
 }
 
+/**
+ * ONE severity scale for every gap type (QA F22). Site checks derive their lift from
+ * registry weight, which runs 0–10; the competitor-visibility gaps used to set their
+ * chip independently and produce much smaller numbers on unrelated scales, so a
+ * half-failing site check scoring 5 and tagged "important" out-ranked a genuinely
+ * urgent visibility gap whose number topped out at 4.5 — under a header promising
+ * the list was ordered by impact.
+ *
+ * Known ceiling, unchanged and deliberate: a site check whose registry weight is
+ * below 7 can never reach "urgent" however completely it fails. Changing that means
+ * re-tuning the a3 weights, which is out of scope here.
+ */
 function severityFromLift(lift: number): GapSeverity {
   if (lift >= 7) return "critical";
   if (lift >= 4) return "high";
@@ -748,10 +812,61 @@ function severityFromLift(lift: number): GapSeverity {
   return "low";
 }
 
-/** Derive the lever from an a3 rec id prefix (BOTH-* → BOTH), falling back per registry. */
+/**
+ * Normalize a visibility shortfall onto the same 0–10 band computeCheckGaps uses.
+ * `weight` is chosen so a TOTAL miss lands in the severity the product intends:
+ * never named at all is urgent (10), never cited is important (6), and a category
+ * leader holding 100% of the conversation to your 0% is urgent (10).
+ */
+function visibilityLift(shortfall: number, target: number, weight: number): number {
+  const ratio = target > 0 ? clamp01(shortfall / target) : 0;
+  return Math.round(ratio * weight * 10) / 10;
+}
+
+/**
+ * Normalize an audit-model evidence string before it is persisted (QA F3a).
+ * The model writes free-text markdown ("**robots.txt** (fetched today) has _no_
+ * `Disallow` for ClaudeBot"); this strips the markup, collapses whitespace,
+ * sentence-cases the opening and gives it terminal punctuation, so no raw model
+ * formatting survives into any rendered surface. Pure — applied at the server
+ * boundary in intel/seo-geo.ts sanitizeChecks, never at render.
+ */
+export function normalizeEvidence(raw: string): string {
+  let s = (raw ?? "").trim();
+  if (!s) return "";
+  s = s
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1") // [text](url) / ![alt](src) → text
+    .replace(/`{1,3}([^`]*)`{1,3}/g, "$1") // `code` → code
+    .replace(/\*\*([^*]+)\*\*/g, "$1") // **bold** → bold
+    .replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,;:!?]|$)/g, "$1$2") // *em* / _em_ → em
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, "") // list bullets
+    .replace(/^\s*#{1,6}\s*/gm, "") // headings
+    .replace(/^\s*>\s*/gm, "") // blockquote markers
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return "";
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  if (!/[.!?)\]"']$/.test(s)) s += ".";
+  return s;
+}
+
+/**
+ * Derive the lever for a check (QA F16).
+ *
+ * The channel is a property of the REGISTRY the check is scored in, not of its id
+ * prefix. GEO-01, GEO-02, GEO-17 and GEO-20 are entries in the SEARCH score
+ * registry (eligibility, on-page, structure buckets), but reading the prefix made
+ * them AI-only — the presenter mapped that to the AI channel and the "Search
+ * engines" tab silently dropped four of its seventeen checks, so a client reading
+ * that tab believed the category was clean when it wasn't.
+ *
+ * A "BOTH-" prefix is still authoritative: BOTH-05 lives only in SEO_CHECKS, and
+ * demoting it to search-only would be the same mis-filing in the other direction.
+ * Ids that sit in BOTH registries come out with a different lever per registry and
+ * are promoted to "BOTH" by dedupeGapsByRecId, which is where they belong.
+ */
 export function leverFromId(id: string, fallback: Lever): Lever {
-  const prefix = id.split(/[-:]/)[0].toUpperCase();
-  return prefix === "BOTH" ? "BOTH" : prefix === "SEO" ? "SEO" : prefix === "GEO" ? "GEO" : fallback;
+  return id.split(/[-:]/)[0].toUpperCase() === "BOTH" ? "BOTH" : fallback;
 }
 
 /** Deterministic check-id → actuator fix_action map (machine-appliable fixes only). */
@@ -824,6 +939,52 @@ export function computeCheckGaps(
 }
 
 /**
+ * Collapse gaps that describe the SAME defect (QA F11).
+ *
+ * Nine check ids sit in BOTH registries with different labels and different
+ * weights (BOTH-01, BOTH-02, BOTH-03, BOTH-09, BOTH-16, GEO-01, GEO-02, GEO-17,
+ * GEO-20), and the audit prompt instructs the model to return every id from both.
+ * The pipeline then runs computeCheckGaps once per registry, so one real defect
+ * emitted two cards — and because severity is (1 − norm) × registry weight, and the
+ * weights differ between registries, the two cards carried DIFFERENT priority chips
+ * for the identical underlying problem (sitemap: important vs moderate; freshness:
+ * important vs urgent; scannable sections: urgent vs moderate).
+ *
+ * Survivor keeps the higher scoreLift (hence the higher severity, which derives from
+ * it) and is promoted to lever "BOTH" when the group disagrees — a defect that both
+ * registries measure genuinely affects both channels, and channel "both" already
+ * renders under both filter tabs.
+ *
+ * Keyed on the FULL id, not `id.split(":")[0]` as the spec's shorthand suggested:
+ * the competitor-visibility gaps are per-engine (`GEO-27:chatgpt`,
+ * `GEO-11:gemini`), and prefix-keying would silently merge five engines' findings
+ * into one card. Registry duplicates carry bare ids, so full-id keying collapses
+ * exactly the duplicates and nothing else.
+ */
+export function dedupeGapsByRecId(gaps: VisibilityGap[]): VisibilityGap[] {
+  const byId = new Map<string, VisibilityGap>();
+  const levers = new Map<string, Set<Lever>>();
+  const order: string[] = [];
+  for (const gap of gaps) {
+    const seenLevers = levers.get(gap.id) ?? new Set<Lever>();
+    seenLevers.add(gap.lever);
+    levers.set(gap.id, seenLevers);
+    const held = byId.get(gap.id);
+    if (!held) {
+      byId.set(gap.id, gap);
+      order.push(gap.id);
+    } else if (gap.scoreLift > held.scoreLift) {
+      byId.set(gap.id, gap);
+    }
+  }
+  return order.map((id) => {
+    const gap = byId.get(id)!;
+    const seen = levers.get(id)!;
+    return seen.size > 1 ? { ...gap, lever: "BOTH" as Lever } : gap;
+  });
+}
+
+/**
  * Competitor-vs-client visibility gaps computed from the multi-engine capture.
  * The a3 agent does not emit explicit gap values, so this is the utility logic that
  * derives them from the collected competitor vs client data (per requirement).
@@ -844,41 +1005,51 @@ export function computeVisibilityGaps(perEngine: PerEngineVisibility[]): Visibil
 
     if (c.topCompetitor && c.topCompetitor.shareOfVoice > c.shareOfVoice) {
       const delta = c.topCompetitor.shareOfVoice - c.shareOfVoice;
+      // F22: one scale. A leader holding 100% to your 0% is the total miss = 10.
+      const sovLift = visibilityLift(delta, 100, 10);
       gaps.push({
         ...base,
         id: `GEO-27:${e.engine}`,
         lever: "GEO",
         title: `Share-of-voice gap on ${label}: ${c.topCompetitor.name} leads by ${Math.round(delta)} pts`,
-        severity: delta >= 40 ? "critical" : delta >= 20 ? "high" : delta >= 10 ? "medium" : "low",
+        severity: severityFromLift(sovLift),
         measured: `${Math.round(c.shareOfVoice)}% share of voice (vs ${c.topCompetitor.name} at ${Math.round(c.topCompetitor.shareOfVoice)}%)`,
         benchmark: `≥ ${Math.round(c.topCompetitor.shareOfVoice)}% (match category leader)`,
-        scoreLift: Math.round(delta) / 10,
+        scoreLift: sovLift,
         evidence: `Measured across ${c.promptsMeasured} category questions answered by ${label}`,
       });
     }
     if (c.mentionRate < TARGET_MENTION) {
+      // Never named at all is the total miss = 10 → urgent, as before, but now
+      // derived from the number the list is sorted by rather than set beside it.
+      const mentionLift = visibilityLift(TARGET_MENTION - c.mentionRate, TARGET_MENTION, 10);
       gaps.push({
         ...base,
         id: `GEO-35:${e.engine}`,
         lever: "GEO",
         title: `Low named-mention rate on ${label}`,
-        severity: c.mentionRate === 0 ? "critical" : c.mentionRate < 0.15 ? "high" : "medium",
-        measured: `Named in ${Math.round(c.mentionRate * 100)}% of category answers`,
+        severity: severityFromLift(mentionLift),
+        // F133: counts, with the denominator, in the same unit the engine cards and
+        // the citation footer use — never a bare percentage against an unstated set.
+        measured: `Named in ${Math.round(c.mentionRate * c.promptsMeasured)} of ${c.promptsMeasured} ${label} category answers`,
         benchmark: `≥ ${TARGET_MENTION * 100}% of category answers`,
-        scoreLift: Math.round((TARGET_MENTION - c.mentionRate) * 15 * 10) / 10,
+        scoreLift: mentionLift,
         evidence: `${c.promptsMeasured} category questions probed on ${label}`,
       });
     }
     if (c.citationRate < TARGET_CITE) {
+      // Never cited at all is important, not urgent — weight 6 puts a total miss
+      // at the top of the "high" band, matching the severity this gap always had.
+      const citeLift = visibilityLift(TARGET_CITE - c.citationRate, TARGET_CITE, 6);
       gaps.push({
         ...base,
         id: `GEO-11:${e.engine}`,
         lever: "GEO",
         title: `Site never cited as a source by ${label}`,
-        severity: c.citationRate === 0 ? "high" : "medium",
-        measured: `Cited in ${Math.round(c.citationRate * 100)}% of category answers`,
+        severity: severityFromLift(citeLift),
+        measured: `Cited in ${Math.round(c.citationRate * c.promptsMeasured)} of ${c.promptsMeasured} ${label} category answers`,
         benchmark: `≥ ${TARGET_CITE * 100}% citation share`,
-        scoreLift: Math.round((TARGET_CITE - c.citationRate) * 35 * 10) / 10,
+        scoreLift: citeLift,
         evidence: `${c.promptsMeasured} category questions probed on ${label}`,
       });
     }
@@ -940,10 +1111,16 @@ function impactFor(severity: GapSeverity): RecImpact {
 
 /**
  * Plain-English client copy per a3 rec id (QA Fix 7 — the Sitti one-pager voice: a verb-first
- * action title + what it entails). Keyed by the id prefix (before any ":"). Anything not
- * mapped falls back to the internal gap title (still readable, just less polished).
+ * action title + what it entails). Keyed by the id prefix (before any ":").
+ *
+ * COVERAGE IS THE CONTRACT (QA F9): every id in SEO_CHECKS and GEO_READINESS_CHECKS must
+ * have an entry here, because an uncovered id used to fall through to the internal
+ * registry label — client-facing card titles like "LCP p75 ≤ 2.5s". Pinned by a unit test
+ * in src/lib/__tests__/seo-geo.test.ts; add copy here whenever you add a check.
+ * Ids the audit model invents that are in neither registry get REC_FALLBACK, never the
+ * model's own label.
  */
-const REC_COPY: Record<string, { title: string; description: string }> = {
+export const REC_COPY: Record<string, { title: string; description: string }> = {
   "BOTH-07": { title: "Point your guides hub at itself", description: "The guides page currently tells search engines its canonical version is the homepage, so Google credits the homepage instead. Point the canonical tag at the guides hub." },
   "SEO-02": { title: "Tighten your page titles", description: "Keep titles under 60 characters, unique per page, with the main keyword near the front so they aren't cut off in results." },
   "SEO-06": { title: "Fix your meta descriptions", description: "Rewrite each description to 120–158 characters - long enough to use the space, short enough not to be truncated - and make each one unique." },
@@ -961,7 +1138,41 @@ const REC_COPY: Record<string, { title: string; description: string }> = {
   "GEO-27": { title: "Close the share-of-voice gap on category questions", description: "A tracked competitor is named far more often than you on the questions buyers actually ask. Earn mentions in the sources those answers draw from." },
   "GEO-35": { title: "Get named on category questions", description: "You're rarely named when buyers ask category questions (not your brand by name). Owned comparison content plus third-party mentions fix this." },
   "GEO-11": { title: "Earn citations from the engines", description: "The engines don't yet cite your site as a source on category answers. Quotable, evidence-backed pages turn into citations." },
+  // ── QA F9: the 22 registry ids that used to fall through to their engineering label ──
+  "BOTH-01b": { title: "Clear the hidden 'do not list' flags", description: "Some pages carry an instruction telling engines not to list or quote them. Remove it from the pages you want buyers to find." },
+  "BOTH-02": { title: "Serve your main content as plain HTML", description: "Content that only appears after a login, behind a paywall, or once scripts run is invisible to engines. They read the raw page, so anything they can't see doesn't count." },
+  "BOTH-03": { title: "Make your content original", description: "Pages that closely echo what already ranks give engines no reason to pick yours. Add your own data, examples, and point of view." },
+  "BOTH-05": { title: "Link your important pages to each other", description: "Each priority page should link out to a few others on your site. Internal links show engines which pages matter and how they relate." },
+  "BOTH-09": { title: "Publish a clean sitemap", description: "Your sitemap is the index that tells engines which pages exist. Make sure it's valid, listed in robots.txt, and free of pages you've asked engines to ignore." },
+  "BOTH-11": { title: "Show first-hand experience", description: "Say what you actually did, tested, or measured, and show your own numbers. Engines increasingly favour content with real experience behind it." },
+  "BOTH-13": { title: "Publish on a steady cadence", description: "Gaps longer than a month make a site look dormant. A predictable publishing rhythm keeps engines coming back to check for new answers." },
+  "BOTH-19": { title: "Make the phone version match the desktop one", description: "Phone visitors should get the same content with no sideways scrolling. Search and AI engines judge your site on its mobile version." },
+  "BOTH-21": { title: "Give each page one job", description: "A page chasing several topics at once wins none of them. Keep one clear purpose per page and drop repeated keyword padding." },
+  "SEO-04a": { title: "Speed up how fast your pages appear", description: "Your main content should be visible within about two and a half seconds. Slow pages lose readers before they read anything." },
+  "SEO-04b": { title: "Make your pages respond faster to taps", description: "When someone taps or clicks, the page should react almost immediately. Lag here frustrates visitors and counts against you in search." },
+  "SEO-04c": { title: "Stop your pages jumping while they load", description: "Content that shifts as images and banners arrive makes people mis-tap. Reserve the space they'll occupy so the page settles as it loads." },
+  "GEO-01": { title: "Let search and AI crawlers read your site", description: "Your robots.txt decides which crawlers may read you. Allow the search engines and the AI assistants, or you aren't eligible to appear at all." },
+  "GEO-07": { title: "Point your public entity record at your website", description: "Your Wikidata entry should list your real domain as the official site. When it doesn't, engines credit your work to whichever site is listed instead." },
+  "GEO-08": { title: "Get listed where ChatGPT looks", description: "ChatGPT's search leans on Bing's index and its own crawler. Missing from either means it can't surface you even when you're the right answer." },
+  "GEO-10": { title: "Open your about pages to AI crawlers", description: "Your about and company pages are where engines learn who you are. Blocking them leaves the assistants guessing at your identity." },
+  "GEO-18": { title: "Name the things you're actually talking about", description: "Use the real names of your products, places, people, and partners instead of vague wording, so engines can connect your pages to what buyers ask about. Naturally — not stuffed in." },
+  "GEO-19": { title: "Add original images with descriptions", description: "Use your own visuals rather than stock, and describe each one in alt text so engines can read what the image shows." },
+  "GEO-23": { title: "Get your pages into Brave's index", description: "Brave runs its own independent index that some assistants draw on. Being missing there is a blind spot no other fix covers." },
+  "GEO-24": { title: "Get your pages into Bing's index", description: "Bing feeds several AI assistants. Submitting your site and turning on instant indexing gets new pages picked up in days rather than weeks." },
+  "GEO-37": { title: "Keep your cornerstone pages current", description: "Your about page and main topic pages should be revisited at least quarterly. Engines treat long-untouched cornerstone pages as less reliable." },
+  "GEO-41": { title: "Confirm Google can list and quote you", description: "Check your pages are in Google's index and that you haven't opted out of its AI answers — that opt-out is easy to leave switched on by accident." },
 };
+
+/**
+ * Last-resort client copy for an id in neither registry nor REC_COPY (the audit model
+ * occasionally invents one). Deliberately says nothing specific rather than echoing the
+ * model's own label into a client-facing card title (QA F3c / F9).
+ */
+const REC_FALLBACK = {
+  title: "A technical finding your team is reviewing",
+  description:
+    "Our audit flagged something on your site that doesn't map to a standard check yet. Your Karos team reviews it and turns it into a plain-English action on your next refresh.",
+} as const;
 
 function ownerFor(actionKind: ActionKind): string {
   switch (actionKind) {
@@ -979,12 +1190,25 @@ function ownerFor(actionKind: ActionKind): string {
  * lift (highest impact first). The internal gap fields never cross into the returned
  * objects — only the §3b render contract does; titles/descriptions are plain-English.
  */
+/** Display order for the plan's impact badges (QA F22). */
+const SEVERITY_ORDER: Record<GapSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
 export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recommendation[] {
   const seen = new Set<string>();
   const out: Recommendation[] = [];
-  for (const gap of [...gaps].sort((a, b) => b.scoreLift - a.scoreLift)) {
-    const copy = REC_COPY[gap.id.split(":")[0]];
-    const title = copy?.title ?? gap.title;
+  // F22: the client's plan is headed "Ordered by expected impact on your scores",
+  // so the impact badge on a row must agree with where that row sits. Severity
+  // first, lift as the tie-breaker — same rule as the staff gap list.
+  const ordered = [...gaps].sort(
+    (a, b) =>
+      (SEVERITY_ORDER[a.severity] ?? 4) - (SEVERITY_ORDER[b.severity] ?? 4) ||
+      b.scoreLift - a.scoreLift,
+  );
+  for (const gap of ordered) {
+    // REC_COPY covers every registry id (pinned by test); REC_FALLBACK catches
+    // model-invented ids so a raw engineering label can never become a card title (F9).
+    const copy = REC_COPY[gap.id.split(":")[0]] ?? REC_FALLBACK;
+    const title = copy.title;
     const key = title.toLowerCase().trim();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -992,7 +1216,8 @@ export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recomme
     out.push({
       recId: gap.id,
       title,
-      description: copy?.description ?? gap.benchmark ?? "",
+      // Never `gap.benchmark` — that is the internal registry label (F3b/F9).
+      description: copy.description,
       owner: ownerFor(actionKind),
       vertical: gap.lever,
       impact: impactFor(gap.severity),
@@ -1282,6 +1507,30 @@ export function countBrandInAnswers(
   };
 }
 
+/* ── Snapshot trust (call directive B4) ───────────────────────────── */
+
+/**
+ * Stamped onto every snapshot the pipeline writes. Bump this whenever a change
+ * makes older snapshots non-comparable with new ones, so the UI can say so
+ * instead of presenting stale maths as current.
+ *
+ * 2026-07-28 covers the QA-sweep measurement changes: category-only client-vs-
+ * competitor scoring and citations (CD-B3, F10), Perplexity/Copilot dropped from
+ * the engine roster (CD-B2), registry-duplicate gaps collapsed (F11), levers taken
+ * from the registry rather than the id prefix (F16), and one severity scale across
+ * all gap types (F22). A snapshot without this stamp was measured under the old
+ * rules; its numbers are historical, not wrong-but-current.
+ */
+export const SEO_GEO_PIPELINE_VERSION = "2026-07-28";
+
+/**
+ * The team treats captures before the 2026-07-23/24 SEO/GEO redeploy as
+ * unreliable (call directive B4). Used only to word the legacy notice — the
+ * version stamp above is what decides trust, because a hardcoded date stops being
+ * meaningful the moment the pipeline changes again.
+ */
+export const SNAPSHOT_TRUST_CUTOFF = Date.UTC(2026, 6, 23);
+
 /* ── Stored insights record ───────────────────────────────────────── */
 
 /**
@@ -1292,6 +1541,9 @@ export function countBrandInAnswers(
 export interface SeoGeoInsights {
   clientId: string;
   capturedAt: number;
+  /** Pipeline that produced this snapshot (CD-B4). Absent on anything captured
+   *  before version stamping — those are shown as legacy, never as current. */
+  pipelineVersion?: string;
   /** Headline KPIs (0–100 ints, measured-only per the grade rule). */
   seoScore: number;
   seoDataCoveragePct: number;

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  ENGINE_LABELS,
+  ENGINE_PROVIDERS,
   GEO_READINESS_CHECKS,
+  REC_COPY,
   SEO_CHECKS,
   TARGET_MENTION,
   analyzeAnswer,
@@ -8,8 +11,11 @@ import {
   buildAnswerGrid,
   buildGazetteer,
   buildRecommendations,
+  categoryMetrics,
   classifyIntent,
   countBrandInAnswers,
+  dedupeGapsByRecId,
+  engineVisibilityScore,
   normalizeBrandKey,
   dedupeNearDuplicates,
   selectByIntentQuota,
@@ -22,6 +28,7 @@ import {
   computeVisibilityGaps,
   computeVisibilityIndex,
   findMention,
+  normalizeEvidence,
   ratioClamp,
   rootDomain,
   tagPromptIntents,
@@ -172,11 +179,63 @@ describe("visibility index (appearance-led geo-score-v3, PR#6 contract)", () => 
   });
 
   it("returns zero index and coverage when no engine measured", () => {
-    const vis = computePerEngineVisibility("perplexity", [], gaz);
+    const vis = computePerEngineVisibility("claude", [], gaz);
     const result = computeVisibilityIndex([vis], 5);
     expect(result.index).toBe(0);
     expect(result.enginesScored).toBe(0);
     expect(result.dataCoveragePct).toBe(0);
+  });
+
+  /** QA F10 — the headline used the FULL prompt set while every card below it used
+   *  the category subset, and the sentiment term gave 5/100 to a brand with no
+   *  presence at all. Both are grade-honesty defects, not weighting preferences. */
+  it("scores zero for a brand with no presence, instead of a 5-point sentiment floor", () => {
+    const isCategory = (p: string) => !/acme/i.test(p);
+    const vis = computePerEngineVisibility(
+      "chatgpt",
+      [analyzeAnswer(answer({ prompt: "best fintech app?", answerText: "Rival One leads." }), gaz)],
+      gaz,
+      isCategory,
+    );
+    expect(vis.category.mentionRate).toBe(0);
+    expect(engineVisibilityScore(vis)).toBe(0);
+    expect(computeVisibilityIndex([vis], 5).index).toBe(0);
+  });
+
+  it("scores the index on category questions, so tile and cards share a denominator", () => {
+    const isCategory = (p: string) => !/acme/i.test(p);
+    const probes = [
+      // Branded question: named by construction, guaranteed hit.
+      analyzeAnswer(answer({ prompt: "is Acme Fintech good?", answerText: "Acme Fintech is great.", citations: ["acmefintech.com"] }), gaz),
+      // Category question: only the competitor is named.
+      analyzeAnswer(answer({ prompt: "best fintech app?", answerText: "Rival One leads the space." }), gaz),
+    ];
+    const vis = computePerEngineVisibility("chatgpt", probes, gaz, isCategory);
+    // Full-set metrics still see the branded hit...
+    expect(vis.mentionRate).toBeGreaterThan(0);
+    // ...but the grade follows the category questions the fixes are designed to move.
+    expect(vis.category.mentionRate).toBe(0);
+    expect(computeVisibilityIndex([vis], 5).index).toBe(0);
+  });
+
+  it("still keeps the sentiment term once the brand is actually mentioned", () => {
+    const vis = computePerEngineVisibility(
+      "chatgpt",
+      [analyzeAnswer(answer({ answerText: "Acme Fintech is the best choice.", citations: ["acmefintech.com"] }), gaz)],
+      gaz,
+    );
+    expect(engineVisibilityScore(vis)).toBeCloseTo(1, 10);
+  });
+
+  it("falls back to full-set metrics for snapshots captured before `category` existed", () => {
+    const vis = computePerEngineVisibility(
+      "chatgpt",
+      [analyzeAnswer(answer({ answerText: "Acme Fintech is the best choice.", citations: ["acmefintech.com"] }), gaz)],
+      gaz,
+    );
+    const legacy = { ...vis, category: undefined as unknown as typeof vis.category };
+    expect(categoryMetrics(legacy).mentionRate).toBe(vis.mentionRate);
+    expect(engineVisibilityScore(legacy)).toBeCloseTo(1, 10);
   });
 });
 
@@ -232,19 +291,27 @@ describe("PDF/report contract: intent taxonomy, answer grid, citations", () => {
       analyzeAnswer(answer({ engine: "gemini", source: "Gemini", prompt: "best fintech?", answerText: "Rival One is best; also see this guide.", citations: ["acmefintech.com"] }), gaz),
       analyzeAnswer(answer({ engine: "claude", source: "Anthropic", prompt: "is Acme Fintech good?", answerText: "There are other options like Rival One." }), gaz),
     ];
-    const grid = buildAnswerGrid(prompts, ["chatgpt", "gemini", "claude", "perplexity", "copilot"], probes);
+    // CD-B2: the tracked roster is the three engines with wired providers.
+    const grid = buildAnswerGrid(prompts, ["chatgpt", "gemini", "claude"], probes);
     expect(grid).toHaveLength(2);
     const row0 = grid[0];
     expect(row0.intent).toBe("discovery");
-    expect(row0.cells).toHaveLength(5);
+    expect(row0.cells).toHaveLength(3);
     // chatgpt: named + cited + sole roster mention → named_first
     expect(row0.cells.find((c) => c.engine === "chatgpt")?.state).toBe("named_first");
     // gemini: cited the client domain but named Rival One, not the client → ghost
     expect(row0.cells.find((c) => c.engine === "gemini")?.state).toBe("cited_not_named");
-    // perplexity/copilot: no connector → unavailable
-    expect(row0.cells.find((c) => c.engine === "perplexity")?.state).toBe("unavailable");
+    // claude answered the other prompt only → no cell data for this row
+    expect(row0.cells.find((c) => c.engine === "claude")?.state).toBe("unavailable");
     // claude row: named a competitor, client absent
     expect(grid[1].cells.find((c) => c.engine === "claude")?.state).toBe("absent");
+  });
+
+  it("has a wired provider for every tracked engine (CD-B2)", () => {
+    for (const engine of Object.keys(ENGINE_PROVIDERS) as Array<keyof typeof ENGINE_PROVIDERS>) {
+      expect(ENGINE_PROVIDERS[engine]).not.toBeNull();
+    }
+    expect(Object.keys(ENGINE_LABELS).sort()).toEqual(["chatgpt", "claude", "gemini"]);
   });
 
   it("computes the citation leaderboard and always keeps the client's own line", () => {
@@ -344,6 +411,168 @@ describe("QA Fix 1/2: tracked roster dedup + category-only comparison", () => {
   });
 });
 
+describe("one severity scale for every gap type (QA F22)", () => {
+  const catMetrics = (patch: Record<string, unknown> = {}) => ({
+    promptsMeasured: 10, mentionRate: 0, citationRate: 0, firstPositionRate: 0,
+    shareOfVoice: 0, netSentiment: 0, ghostCitationRate: 0, topCompetitor: null,
+    brandMentions: [], ...patch,
+  });
+  const engine = (patch: Record<string, unknown> = {}) =>
+    ({
+      engine: "chatgpt", source: "OpenAI", captureTier: "MEASURED", promptsMeasured: 10,
+      promptsTotal: 10, mentionRate: 0, citationRate: 0, firstPositionRate: 0, shareOfVoice: 0,
+      netSentiment: 0, ghostCitationRate: 0, topCompetitor: null, brandMentions: [],
+      brandNamed: 0, brandPromptsMeasured: 0, category: catMetrics(), ...patch,
+    }) as Parameters<typeof computeVisibilityGaps>[0][number];
+
+  it("lands every visibility gap in the 0-10 band the site checks use", () => {
+    const gaps = computeVisibilityGaps([
+      engine({ category: catMetrics({ topCompetitor: { name: "Rival", mentionRate: 1, shareOfVoice: 100 } }) }),
+    ]);
+    for (const g of gaps) {
+      expect(g.scoreLift).toBeGreaterThanOrEqual(0);
+      expect(g.scoreLift).toBeLessThanOrEqual(10);
+    }
+  });
+
+  it("derives the chip from the number the list is sorted by", () => {
+    const gaps = computeVisibilityGaps([
+      engine({ category: catMetrics({ topCompetitor: { name: "Rival", mentionRate: 1, shareOfVoice: 100 } }) }),
+    ]);
+    const bySeverity = { critical: 7, high: 4, medium: 2, low: 0 } as const;
+    for (const g of gaps) expect(g.scoreLift).toBeGreaterThanOrEqual(bySeverity[g.severity]);
+  });
+
+  it("keeps a total miss at the severity the product intends", () => {
+    const gaps = computeVisibilityGaps([
+      engine({ category: catMetrics({ topCompetitor: { name: "Rival", mentionRate: 1, shareOfVoice: 100 } }) }),
+    ]);
+    // Never named at all: urgent. Never cited at all: important.
+    expect(gaps.find((g) => g.id.startsWith("GEO-35"))!.severity).toBe("critical");
+    expect(gaps.find((g) => g.id.startsWith("GEO-11"))!.severity).toBe("high");
+    // Leader holding 100% to your 0%: urgent.
+    expect(gaps.find((g) => g.id.startsWith("GEO-27"))!.severity).toBe("critical");
+  });
+
+  it("orders the client plan by impact, not by a lift on another scale", () => {
+    const g = (patch: Partial<Parameters<typeof buildRecommendations>[0][number]>) => ({
+      id: "SEO-02", lever: "SEO" as const, title: "t", severity: "low" as const, evidence: "",
+      confidence: "CONFIRMED" as const, fixAction: "manual" as const, target: "site-wide",
+      delivery: "agent-direct" as const, benchmark: "", measured: "", scoreLift: 1, ...patch,
+    });
+    const recs = buildRecommendations([
+      // Higher lift, lower severity — used to sort above the urgent row.
+      g({ id: "SEO-02", severity: "medium", scoreLift: 6 }),
+      g({ id: "GEO-35:chatgpt", severity: "critical", scoreLift: 4.5 }),
+    ]);
+    expect(recs.map((r) => r.impact)).toEqual(["high", "medium"]);
+    expect(recs[0].recId).toBe("GEO-35:chatgpt");
+  });
+});
+
+describe("lever comes from the registry, not the id prefix (QA F16)", () => {
+  const failing = (defs: typeof SEO_CHECKS): SeoGeoCheck[] =>
+    defs.map((d) => ({
+      id: d.id, bucket: d.bucket, label: d.label, evidence: "failing", norm: 0,
+      tier: "MEASURED", confidence: "CONFIRMED",
+    }));
+
+  it("keeps GEO-prefixed SEARCH checks on the search channel", () => {
+    // The four the finding names: GEO-01, GEO-02, GEO-17, GEO-20 all live in
+    // SEO_CHECKS, and prefix-reading filed them as AI-only.
+    const gaps = computeCheckGaps(SEO_CHECKS, failing(SEO_CHECKS), "SEO");
+    for (const id of ["GEO-01", "GEO-02", "GEO-17", "GEO-20"]) {
+      expect(gaps.find((g) => g.id === id)!.lever).toBe("SEO");
+    }
+  });
+
+  it("still honours a BOTH- prefix for a check that lives in one registry only", () => {
+    // BOTH-05 is in SEO_CHECKS alone; forcing the registry lever would hide it
+    // from the AI tab — the same mis-filing in the other direction.
+    const gaps = computeCheckGaps(SEO_CHECKS, failing(SEO_CHECKS), "SEO");
+    expect(gaps.find((g) => g.id === "BOTH-05")!.lever).toBe("BOTH");
+  });
+
+  it("ends up as BOTH for a check scored in both registries", () => {
+    const merged = dedupeGapsByRecId([
+      ...computeCheckGaps(SEO_CHECKS, failing(SEO_CHECKS), "SEO"),
+      ...computeCheckGaps(GEO_READINESS_CHECKS, failing(GEO_READINESS_CHECKS), "GEO"),
+    ]);
+    for (const id of ["GEO-01", "GEO-02", "GEO-17", "GEO-20"]) {
+      expect(merged.find((g) => g.id === id)!.lever).toBe("BOTH");
+    }
+    // A search-only check stays search-only.
+    expect(merged.find((g) => g.id === "SEO-04a")!.lever).toBe("SEO");
+    // An AI-only check stays AI-only.
+    expect(merged.find((g) => g.id === "GEO-18")!.lever).toBe("GEO");
+  });
+
+  it("files no check under a channel its registry never scored", () => {
+    const seoIds = new Set(SEO_CHECKS.map((d) => d.id));
+    const geoIds = new Set(GEO_READINESS_CHECKS.map((d) => d.id));
+    const merged = dedupeGapsByRecId([
+      ...computeCheckGaps(SEO_CHECKS, failing(SEO_CHECKS), "SEO"),
+      ...computeCheckGaps(GEO_READINESS_CHECKS, failing(GEO_READINESS_CHECKS), "GEO"),
+    ]);
+    for (const gap of merged) {
+      if (gap.lever === "SEO") expect(seoIds.has(gap.id)).toBe(true);
+      if (gap.lever === "GEO") expect(geoIds.has(gap.id)).toBe(true);
+    }
+  });
+});
+
+describe("duplicate cards across the two registries (QA F11)", () => {
+  /** The nine ids that live in both SEO_CHECKS and GEO_READINESS_CHECKS. */
+  const SHARED_IDS = ["BOTH-01", "BOTH-02", "BOTH-03", "BOTH-09", "BOTH-16", "GEO-01", "GEO-02", "GEO-17", "GEO-20"];
+
+  it("confirms the nine shared ids are still the duplication source", () => {
+    const seo = new Set(SEO_CHECKS.map((d) => d.id));
+    const shared = GEO_READINESS_CHECKS.filter((d) => seo.has(d.id)).map((d) => d.id);
+    expect(shared.sort()).toEqual([...SHARED_IDS].sort());
+  });
+
+  it("emits one card per defect when the model answers both registries", () => {
+    // Exactly what the audit prompt asks for: every id from both registries.
+    const check = (id: string, bucket: string): SeoGeoCheck => ({
+      id, bucket, label: id, evidence: "failing", norm: 0, tier: "MEASURED", confidence: "CONFIRMED",
+    });
+    const seoChecks = SEO_CHECKS.map((d) => check(d.id, d.bucket));
+    const geoChecks = GEO_READINESS_CHECKS.map((d) => check(d.id, d.bucket));
+    const raw = [
+      ...computeCheckGaps(SEO_CHECKS, seoChecks, "SEO"),
+      ...computeCheckGaps(GEO_READINESS_CHECKS, geoChecks, "GEO"),
+    ];
+    // Before: BOTH-09 (weight 5 vs 2) and GEO-20 (4 vs 7) each produced two rows
+    // whose severity chips disagreed.
+    expect(raw.filter((g) => g.id === "BOTH-09")).toHaveLength(2);
+    expect(new Set(raw.filter((g) => g.id === "GEO-20").map((g) => g.severity)).size).toBe(2);
+
+    const deduped = dedupeGapsByRecId(raw);
+    for (const id of SHARED_IDS) expect(deduped.filter((g) => g.id === id)).toHaveLength(1);
+    // Survivor keeps the higher lift, so the stronger priority wins.
+    expect(deduped.find((g) => g.id === "GEO-20")!.scoreLift).toBe(7);
+    expect(deduped.find((g) => g.id === "BOTH-09")!.scoreLift).toBe(5);
+  });
+
+  it("never merges per-engine visibility gaps that share a rec-id prefix", () => {
+    const gaps = [
+      { id: "GEO-11:chatgpt", lever: "GEO", title: "a", severity: "high", evidence: "", confidence: "CONFIRMED", fixAction: "manual", target: "off-site", delivery: "advisory", benchmark: "", measured: "", scoreLift: 3 },
+      { id: "GEO-11:gemini", lever: "GEO", title: "b", severity: "high", evidence: "", confidence: "CONFIRMED", fixAction: "manual", target: "off-site", delivery: "advisory", benchmark: "", measured: "", scoreLift: 2 },
+    ] as Parameters<typeof dedupeGapsByRecId>[0];
+    expect(dedupeGapsByRecId(gaps)).toHaveLength(2);
+  });
+
+  it("promotes the survivor's lever to BOTH when the registries disagree", () => {
+    const gaps = [
+      { id: "GEO-01", lever: "SEO", title: "a", severity: "high", evidence: "", confidence: "CONFIRMED", fixAction: "manual", target: "site-wide", delivery: "agent-direct", benchmark: "", measured: "", scoreLift: 5 },
+      { id: "GEO-01", lever: "GEO", title: "a", severity: "high", evidence: "", confidence: "CONFIRMED", fixAction: "manual", target: "site-wide", delivery: "agent-direct", benchmark: "", measured: "", scoreLift: 6 },
+    ] as Parameters<typeof dedupeGapsByRecId>[0];
+    const [survivor] = dedupeGapsByRecId(gaps);
+    expect(survivor.lever).toBe("BOTH");
+    expect(survivor.scoreLift).toBe(6);
+  });
+});
+
 describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
   it("maps internal gaps to a client-safe action plan with the right controls", () => {
     const seoChecks: SeoGeoCheck[] = [
@@ -385,7 +614,68 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
       { id: "SEO-02", bucket: "onPage", label: "Title tags", evidence: "b", norm: 0.1, tier: "MEASURED", confidence: "CONFIRMED" },
     ];
     const recs = buildRecommendations(computeCheckGaps(SEO_CHECKS, dup, "SEO"), 5);
-    expect(recs.filter((r) => r.title === "Title tags ≤ 60 chars, unique, keyword-placed").length).toBeLessThanOrEqual(1);
+    expect(recs.filter((r) => r.title === "Tighten your page titles")).toHaveLength(1);
+  });
+
+  /**
+   * QA F9: an uncovered id used to fall through to `def.label` — the internal
+   * registry string — and became the client's card title ("LCP p75 ≤ 2.5s"). This
+   * pins the coverage contract so adding a check without copy fails here, not in
+   * front of a client.
+   */
+  it("has plain-English copy for every id in both check registries", () => {
+    const uncovered = [...SEO_CHECKS, ...GEO_READINESS_CHECKS]
+      .map((d) => d.id)
+      .filter((id) => !REC_COPY[id]);
+    expect(uncovered).toEqual([]);
+  });
+
+  it("never lets a registry label reach a client-facing title or description", () => {
+    const labels = new Set([...SEO_CHECKS, ...GEO_READINESS_CHECKS].map((d) => d.label));
+    const checks: SeoGeoCheck[] = [...SEO_CHECKS, ...GEO_READINESS_CHECKS].map((d) => ({
+      id: d.id,
+      bucket: d.bucket,
+      label: d.label,
+      evidence: "observed this run",
+      norm: 0,
+      tier: "MEASURED",
+      confidence: "CONFIRMED",
+    }));
+    const gaps = [
+      ...computeCheckGaps(SEO_CHECKS, checks, "SEO"),
+      ...computeCheckGaps(GEO_READINESS_CHECKS, checks, "GEO"),
+    ];
+    for (const rec of buildRecommendations(gaps, 999)) {
+      expect(labels.has(rec.title)).toBe(false);
+      expect(labels.has(rec.description)).toBe(false);
+      expect(rec.description.length).toBeGreaterThan(10);
+    }
+  });
+
+  /** QA F3a: markdown + free-form casing from the audit model, normalized once at
+   *  the server boundary so no downstream surface renders raw model formatting. */
+  it("normalizes audit-model evidence at the persistence boundary", () => {
+    expect(normalizeEvidence("**robots.txt** (fetched today) has _no_ `Disallow` for ClaudeBot")).toBe(
+      "Robots.txt (fetched today) has no Disallow for ClaudeBot.",
+    );
+    expect(normalizeEvidence("- homepage title is 74 chars:  'Acme — the best'")).toBe(
+      "Homepage title is 74 chars: 'Acme — the best'",
+    );
+    expect(normalizeEvidence("## Findings\n\nsitemap returns 404")).toBe("Findings sitemap returns 404.");
+    expect(normalizeEvidence("[the sitemap](https://x.com/sitemap.xml) is valid")).toBe(
+      "The sitemap is valid.",
+    );
+    expect(normalizeEvidence("   ")).toBe("");
+  });
+
+  it("falls back to neutral copy for an id the model invented, never its own label", () => {
+    const invented: SeoGeoCheck[] = [
+      { id: "GEO-999", bucket: "extractability", label: "Vibes score above 0.8", evidence: "x", norm: 0, tier: "MEASURED", confidence: "CONFIRMED" },
+    ];
+    const [rec] = buildRecommendations(computeCheckGaps(GEO_READINESS_CHECKS, invented, "GEO"));
+    expect(rec.title).not.toContain("Vibes");
+    expect(rec.description).not.toContain("Vibes");
+    expect(rec.title).toBe("A technical finding your team is reviewing");
   });
 });
 
