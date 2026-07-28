@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ALL_LAUNCH_PROFILES,
+  agentKeyMatchesClientSlug,
   buildCustomAgentPrompt,
   clientSafeRunError,
   initialAgentBrief,
@@ -184,5 +187,59 @@ describe("managed product launch profiles", () => {
     expect(landing?.briefFields.find((field) => field.key === "reference_urls")?.valueKind).toBe(
       "stringList",
     );
+  });
+});
+
+
+/**
+ * F38. The staff hub is the one surface that pairs an ARBITRARY agent with an
+ * arbitrary client, so it is the one that can assemble a pair both submit cores
+ * refuse. Until now that refusal arrived only after the whole brief had been
+ * written and submitted. The eligibility rule the hub filters on is asserted
+ * here; the source test below pins that the hub actually applies it.
+ */
+describe("staff hub client eligibility", () => {
+  const CLIENTS = [
+    { id: "c1", name: "Geektime", agentsRepoSlug: "geektime" },
+    { id: "c2", name: "Karos Labs", agentsRepoSlug: "karoslabs" },
+    { id: "c3", name: "New Client", agentsRepoSlug: null },
+  ];
+  const eligibleFor = (agentKey: string) =>
+    CLIENTS.filter((c) => agentKeyMatchesClientSlug(agentKey, c.agentsRepoSlug)).map((c) => c.name);
+
+  it("narrows a per-client instance to exactly its own client", () => {
+    expect(eligibleFor("karos-linkedin-company-karoslabs")).toEqual(["Karos Labs"]);
+  });
+
+  it("leaves an unbound agent runnable for every client, slug or not", () => {
+    for (const key of ["karos-x-agent", "karos-reddit-agent", "branded-shorts"]) {
+      expect(eligibleFor(key)).toEqual(["Geektime", "Karos Labs", "New Client"]);
+    }
+  });
+
+  it("yields nobody for an instance whose client is not in the visible set", () => {
+    // An employee sees only their assigned clients, so this is reachable
+    // without anything being wrong in the data — the Run button is disabled
+    // rather than offering a pair that cannot run.
+    expect(eligibleFor("karos-linkedin-company-sitti")).toEqual([]);
+  });
+});
+
+describe("the hub applies that rule to the controls it paints", () => {
+  it("filters the picker, states the binding, and disables an unrunnable Run", () => {
+    const src = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
+    const start = src.indexOf("export function CustomAgentsHub");
+    expect(start).toBeGreaterThan(-1);
+    const hub = src.slice(start, src.indexOf("client-page section", start));
+
+    // The eligible set is computed per agent card...
+    expect(hub).toContain("agentKeyMatchesClientSlug(agent.key, c.agentsRepoSlug)");
+    // ...gates the Run control...
+    expect(hub).toContain("eligible.length === 0");
+    // ...names the binding on the card (F35)...
+    expect(hub).toContain("perClientAgentSlug(agent.key)");
+    // ...and the dialog receives the filtered list, never the raw one.
+    expect(hub).toContain("agentKeyMatchesClientSlug(runAgent.key, c.agentsRepoSlug)");
+    expect(hub).not.toMatch(/clients=\{clients\}/);
   });
 });

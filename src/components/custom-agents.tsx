@@ -37,12 +37,14 @@ import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { MAX_OUTPUTS_PER_RUN, MAX_RUNS_PER_WEEK } from "@/lib/scheduled-runs";
 import {
+  agentKeyMatchesClientSlug,
   buildCustomAgentPrompt,
   initialAgentBrief,
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
+  perClientAgentSlug,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
@@ -390,7 +392,14 @@ export function CustomAgentsHub({
   serviceConfigured,
 }: {
   agents: CustomAgent[];
-  clients: Array<{ id: string; name: string }>;
+  /**
+   * The lab-repo slug rides along because the hub is the one surface that pairs
+   * an ARBITRARY agent with an arbitrary client: a per-client instance runs an
+   * entry skill baked under the folder its key names, and both submit cores
+   * refuse the wrong pair. Without the slug the hub can only offer every client
+   * and let the server refuse — after the whole brief has been written (F38).
+   */
+  clients: Array<{ id: string; name: string; agentsRepoSlug?: string | null }>;
   isAdmin: boolean;
   importConfigured: boolean;
   serviceConfigured: boolean;
@@ -439,7 +448,19 @@ export function CustomAgentsHub({
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          {agents.map((agent) => (
+          {agents.map((agent) => {
+            // F38. The clients this agent can actually run for. An unbound agent
+            // keeps the whole list; a per-client instance keeps its own client,
+            // and keeps NONE when that client is absent from this staff member's
+            // visible set or has no lab slug on file.
+            const eligible = clients.filter((c) =>
+              agentKeyMatchesClientSlug(agent.key, c.agentsRepoSlug),
+            );
+            // F35. What the card must say out loud: which workspace an instance
+            // belongs to. Until now the only way to learn it was to write a
+            // brief and read the refusal.
+            const boundTo = perClientAgentSlug(agent.key);
+            return (
             <div
               key={agent.id}
               className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
@@ -466,6 +487,10 @@ export function CustomAgentsHub({
                       Needs {intakeDrivenLabel(agent.key)}
                     </Badge>
                   )}
+                  {/* F35: the binding, stated. An instance's entry skill is
+                      baked under one client's lab folder, so this is a property
+                      of the agent, not of whoever is looking at it. */}
+                  {boundTo && <Badge tone="neutral">{boundTo} only</Badge>}
                   {/* No client blurb ⇒ the client's card is still falling back to
                       the lab manifest below. Flagged here, fixed in the editor. */}
                   {!agent.clientBlurb?.trim() && <Badge tone="warning">No client blurb</Badge>}
@@ -495,13 +520,20 @@ export function CustomAgentsHub({
                   <Button
                     size="sm"
                     variant="subtle"
-                    disabled={!agent.enabled || !serviceConfigured}
+                    // F38. No eligible client ⇒ every pair this dialog could
+                    // build is one the server refuses, so the refusal is stated
+                    // here instead of after the brief is written.
+                    disabled={!agent.enabled || !serviceConfigured || eligible.length === 0}
                     title={
                       !serviceConfigured
                         ? "Agent service is not configured"
                         : !agent.enabled
                           ? "Enable this agent first"
-                          : undefined
+                          : eligible.length === 0
+                            ? boundTo
+                              ? `This agent runs only for the "${boundTo}" workspace, and no client you can see has that lab repo slug.`
+                              : "No client is available to run this agent for."
+                            : undefined
                     }
                     onClick={() => setRunAgent(agent)}
                   >
@@ -510,14 +542,19 @@ export function CustomAgentsHub({
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {runAgent && (
         <RunCustomAgentModal
           agent={runAgent}
-          clients={clients}
+          // Only the clients this agent can draft for reach the picker, so a
+          // staff member cannot assemble a pair the submit core refuses.
+          clients={clients.filter((c) =>
+            agentKeyMatchesClientSlug(runAgent.key, c.agentsRepoSlug),
+          )}
           contextItems={[]}
           viewerIsClient={false}
           onClose={() => setRunAgent(null)}
@@ -1697,20 +1734,37 @@ export function RunCustomAgentModal({
         {!clientId && clients && (
           <div>
             <Label htmlFor="ca-client">Client</Label>
-            <Select
-              id="ca-client"
-              value={selectedClientId}
-              onChange={(event) => {
-                setSelectedClientId(event.target.value);
-                setSelectedFiles([]);
-              }}
-            >
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
+            {clients.length === 1 ? (
+              // F38. A per-client agent instance has exactly one client it can
+              // draft for, and a dropdown of one is a question with a single
+              // answer — worse, it reads as though there were a choice. The
+              // fixed chip states the binding instead.
+              <div
+                id="ca-client"
+                className="mt-1 inline-flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-xs text-foreground"
+              >
+                <Icon name="Building2" className="h-3.5 w-3.5 text-muted-2" />
+                {clients[0].name}
+                {perClientAgentSlug(agent.key) ? (
+                  <span className="text-muted-2">· this agent&apos;s own client</span>
+                ) : null}
+              </div>
+            ) : (
+              <Select
+                id="ca-client"
+                value={selectedClientId}
+                onChange={(event) => {
+                  setSelectedClientId(event.target.value);
+                  setSelectedFiles([]);
+                }}
+              >
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
           </div>
         )}
 
