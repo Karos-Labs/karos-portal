@@ -18,6 +18,7 @@ import { AiInsights } from "@/components/ai-insights";
 import { ClientHomeOverview } from "@/components/client-home-overview";
 import { SeoGeoPanel, SeoGeoScores, SeoGeoPlan } from "@/components/seo-geo-panel";
 import { ClientDashboardTabs } from "@/components/client-dashboard-tabs";
+import { RegenerateWorkspaceButton } from "@/components/regenerate-workspace-button";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import type { ClientTask } from "@/lib/types";
 
@@ -91,8 +92,8 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       intelScheduleEnabled={client.intelScheduleEnabled ?? false}
       intelScheduleNextRunAt={client.intelScheduleNextRunAt ?? null}
       isRefreshing={isAiProcessingLockActive(client)}
-      // QA F99/F124: for the client the scores and the plan are lifted to the
-      // top of the visibility tab (below), so the panel must not repeat them.
+      // QA F99: for the client the scores and the plan are lifted to the top of
+      // the visibility tab (below), so the panel must not repeat them.
       hideScores={isClientViewer && !!seoGeo}
       hidePlan={isClientViewer && !!seoGeo}
     />
@@ -103,7 +104,23 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   if (!isClientViewer) {
     return (
       <>
-        <PageHeader title="Dashboard" description={`Workspace overview for ${client.name}.`} />
+        <PageHeader
+          title="Dashboard"
+          description={`Workspace overview for ${client.name}.`}
+          // CD-G5: regeneration rewrites the documents AND the SEO/GEO intel, so
+          // it needs an entry point at client level and not only in the rail's
+          // documents header. Admin-only, same gate as that one — an employee or
+          // a client viewer never sees it (client viewers never reach this
+          // branch at all).
+          action={
+            user.role === "KAROS_ADMIN" ? (
+              <RegenerateWorkspaceButton
+                clientId={client.id}
+                isAiProcessing={isAiProcessingLockActive(client)}
+              />
+            ) : undefined
+          }
+        />
         <div className="space-y-8">
           {/* CLIENT_USER already sees this via the (app) shell's own wrapper — only
               render here for staff, who use the plain Sidebar shell with no such wrapper. */}
@@ -119,9 +136,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   }
 
   // The whole search-and-AI-visibility story, in reading order, INSIDE its tab:
-  // headline scores first (F124's lift — and CD-B4's legacy-snapshot notice rides
-  // with them, since SeoGeoScores renders the two together), then the fix list,
-  // then the full report with those two suppressed so nothing renders twice.
+  // headline scores first (and CD-B4's legacy-snapshot notice rides with them,
+  // since SeoGeoScores renders the two together), then the fix list, then the
+  // full report with those two suppressed so nothing renders twice.
   //
   // The scores and the plan used to sit outside the tabs, above the segmented
   // control. That put ~1.6 screens of visibility content AHEAD of the control,
@@ -147,7 +164,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     visibilityPanel
   );
 
-  // QA F99/F124 — client dashboard, in value order. What needs the client now
+  // QA F99 — client dashboard, in value order. What needs the client now
   // (attention + recent), then the plain-English briefing. Everything heavy (the
   // full performance breakdown and the full visibility report) sits behind a
   // segmented control instead of five screens of always-expanded detail. The
