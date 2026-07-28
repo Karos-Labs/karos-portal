@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Icon, LinkedInLogo, XLogo } from "@/components/icon";
+import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import {
   isSafeHref,
@@ -1087,39 +1087,13 @@ export function ClientDocuments({
         </ul>
       )}
 
-      {clientId && (
-        <>
-          <p className="mb-1.5 mt-4 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-            Agent-specific documents
-          </p>
-          <ul>
-            <li>
-              <a
-                href={`/clients/${clientId}/x-agent`}
-                className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
-              >
-                <XLogo className="h-3.5 w-3.5 shrink-0 text-muted-2 group-hover:text-foreground" />
-                <span className="flex-1 truncate text-sm text-muted group-hover:text-foreground">
-                  X agent data
-                </span>
-                <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
-              </a>
-            </li>
-            <li>
-              <a
-                href={`/clients/${clientId}/linkedin-agent`}
-                className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
-              >
-                <LinkedInLogo className="h-3.5 w-3.5 shrink-0 text-muted-2 group-hover:text-foreground" />
-                <span className="flex-1 truncate text-sm text-muted group-hover:text-foreground">
-                  LinkedIn agent data
-                </span>
-                <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
-              </a>
-            </li>
-          </ul>
-        </>
-      )}
+      {/* An "Agent-specific documents" section used to sit here (X / LinkedIn
+          agent data), mounted only when clientId was set — so it appeared and
+          disappeared as you moved around the portal, and it competed with the
+          real documents list for the rail's fixed height. Agent data intake is
+          reachable where it belongs: the AI Agents cards link it per agent
+          (buildAgentSetup in clients/[id]/agents/page.tsx), which is also the
+          only place that knows whether the client HAS that agent (CD-E1). */}
 
       {openDoc && (
         <DocOverlay
