@@ -13,6 +13,11 @@ import { ClientDocuments } from "@/components/client-documents";
 import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { BrandFavicon } from "@/components/brand-favicon";
+import { ClientProfilePanel } from "@/components/client-profile-panel";
+import { ThemeSwitch } from "@/components/theme-switch";
+import { ContactUsButton } from "@/components/contact-us-modal";
+import { LogoutButton } from "@/components/logout-button";
+import { MobileCompanySheet, MobileTabBar, useCompanySheet } from "@/components/mobile-shell";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import type { AppUser, Client, Role } from "@/lib/types";
 
@@ -293,6 +298,7 @@ export function Sidebar({
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const { activeClient } = useActiveClient();
+  const [companyOpen, setCompanyOpen] = useCompanySheet();
 
   const clientHomePath =
     user.role === "CLIENT_USER" && user.clientId ? `/clients/${user.clientId}` : null;
@@ -321,6 +327,13 @@ export function Sidebar({
   // In Client View mode show the 4 client-facing tabs; otherwise show the full admin nav.
   // Using (isStaff && activeClient) so TS narrows activeClient to non-null in the truthy branch.
   const items: NavItem[] = (isStaff && activeClient) ? clientViewNav(activeClient.client.id) : adminItems;
+
+  // Narrow-width contract (CD-G9a): with a client context active the staff
+  // shell drops the top bar + hamburger and renders the SAME bottom tab bar and
+  // full-screen Company sheet the client shell uses. Staff WITHOUT a context
+  // keep the drawer — the full admin nav is more tabs than a bar can hold
+  // (flagged, not ruled). Bound once so TS narrows it inside the JSX below.
+  const clientCtx = isStaff && activeClient ? activeClient : null;
 
   // QA F113 (staff stranded in client view) is answered by the ClientContextPicker
   // at the foot of the rail: its ✕ clears the context AND routes to /clients, and
@@ -511,40 +524,104 @@ export function Sidebar({
 
   return (
     <>
-      {/* Mobile top bar */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
-        <Link href="/dashboard" className="flex items-center gap-2.5">
-          <Image
-            src="/brand/kairos-head-disc-dark.svg"
-            alt=""
-            width={26}
-            height={26}
-            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
-            unoptimized
+      {clientCtx ? (
+        /* ── Narrow width, client context: bottom tab bar + Company sheet.
+             Twin of the client shell's own mount (components/client-rail.tsx)
+             — same bar, same sheet frame, staff-flavoured contents. ── */
+        <>
+          <MobileTabBar
+            items={items}
+            companyOpen={companyOpen}
+            onOpenCompany={() => setCompanyOpen(true)}
           />
-          <span className="font-serif text-xl font-normal leading-none text-foreground">Karos Labs</span>
-        </Link>
-        <button
-          onClick={() => setOpen((o) => !o)}
-          className="text-muted transition-colors hover:text-foreground"
-          aria-label={open ? "Close menu" : "Open menu"}
-          aria-expanded={open}
-        >
-          <Icon name={open ? "X" : "Menu"} className="h-5 w-5" />
-        </button>
-      </div>
 
-      {/* Mobile drawer */}
-      {open && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setOpen(false)}
-          />
-          <div className="absolute left-0 top-0 h-full w-64 overflow-y-auto border-r border-border bg-surface">
-            {content}
+          <MobileCompanySheet open={companyOpen} onClose={() => setCompanyOpen(false)}>
+            <ClientProfilePanel client={clientCtx.client} />
+
+            <div className="border-t border-border pt-4">
+              <ClientDocuments
+                contextDocs={clientCtx.contextDocs}
+                isAdmin={clientCtx.isAdmin}
+                clientId={clientCtx.client.id}
+                isAiProcessing={isAiProcessingLockActive(clientCtx.client)}
+                aiProcessingError={clientCtx.client.aiProcessingError ?? null}
+                intelSchedule={clientIntelSchedule(clientCtx.client)}
+                /* Staff-only shell: internal-tier documents are readable here. */
+                allowInternalFallback
+              />
+            </div>
+
+            {/* key: see the desktop mount — switching client must reset the
+                panel's optimistic rows (QA F62). */}
+            <CompetitorTrack
+              key={clientCtx.client.id}
+              competitors={clientCtx.competitors}
+              clientId={clientCtx.client.id}
+              isStaff={true}
+            />
+
+            <BrandColorsSection
+              guidelines={clientCtx.client.brandingGuidelines}
+              clientId={clientCtx.client.id}
+              hasWebsite={!!clientCtx.client.website}
+              /* Staff shell — internal usage percentages are visible here. */
+              isStaff
+            />
+
+            {/* Tail mirrors the client sheet's, plus the sign-out the drawer
+                used to carry — without the drawer there is no other way out. */}
+            <div className="space-y-0.5 border-t border-border pt-4">
+              <Link
+                href="/settings"
+                className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+              >
+                <Icon name="Settings" className="h-4 w-4 text-muted-2" />
+                Settings
+              </Link>
+              <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
+              <ThemeSwitch />
+              <LogoutButton compact />
+            </div>
+          </MobileCompanySheet>
+        </>
+      ) : (
+        <>
+          {/* Mobile top bar */}
+          <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
+            <Link href="/dashboard" className="flex items-center gap-2.5">
+              <Image
+                src="/brand/kairos-head-disc-dark.svg"
+                alt=""
+                width={26}
+                height={26}
+                className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+                unoptimized
+              />
+              <span className="font-serif text-xl font-normal leading-none text-foreground">Karos Labs</span>
+            </Link>
+            <button
+              onClick={() => setOpen((o) => !o)}
+              className="text-muted transition-colors hover:text-foreground"
+              aria-label={open ? "Close menu" : "Open menu"}
+              aria-expanded={open}
+            >
+              <Icon name={open ? "X" : "Menu"} className="h-5 w-5" />
+            </button>
           </div>
-        </div>
+
+          {/* Mobile drawer */}
+          {open && (
+            <div className="fixed inset-0 z-40 md:hidden">
+              <div
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                onClick={() => setOpen(false)}
+              />
+              <div className="absolute left-0 top-0 h-full w-64 overflow-y-auto border-r border-border bg-surface">
+                {content}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Desktop sidebar */}

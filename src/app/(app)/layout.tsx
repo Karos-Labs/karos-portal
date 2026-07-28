@@ -234,7 +234,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             userName={user.name}
             userEmail={user.email}
           />
-          <main className="flex-1 overflow-x-clip px-4 py-6 md:px-8 md:py-8">
+          {/* Same bottom-padding ladder as the client shell: below md a fixed
+              tab bar (client context) and the copilot strip sit over the page. */}
+          <main className="flex-1 overflow-x-clip px-4 pb-28 pt-6 md:px-8 md:pb-16 md:pt-8 lg:pb-8">
             <div className="@container mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
           </main>
         </div>
