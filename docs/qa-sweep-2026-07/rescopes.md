@@ -910,3 +910,25 @@ Open residuals carried to pass 2 verification:
 - REC_COPY["BOTH-07"] unreachable copy.
 Pass 2 = full re-verification of the changed surface + sampled re-check of
 pass-1-verified rows; clean pass 2 then confirmed by a delta pass 3.
+
+## Closing audit — pass 2 outcome (2026-07-28)
+NOT CLEAN: 23 FIX-NEEDED (16 substantive, 7 hardening) — all dispatched to one
+fix round. Gates green (tsc 0, 979/979, build 0); 25/25 sampled rows HOLD (no
+silent reverts); AI-Insights + conventions guard zones CLEAN.
+Residual rulings: saveBrandingGuidelinesAction ACCEPT (client edit is the
+sanctioned path; usagePct stripped on read, reapplied on write, audited);
+redate script module-exit ACCEPT (with precondition noted); REC_COPY BOTH-07
+ACCEPT (dead-but-protective, pinned). notification-bell archive link =
+FIX-NEEDED (item 1 of the round).
+Families being fixed: shared archive-membership predicate; 5 more churn
+generation-time tells; WP-7 completion (binding surface test, Job payload
+projection, bell labels, exhaustiveness guard); 3 parity gaps (server setup
+rung, calendar pushability copy, server-side note redaction); 2 handover
+staleness; 7 hardening (allowlist copilot fence, cron-run attribution+copy,
+auth-before-existence, whitelist branding view, blurbs to copilot LLM,
+cancel try/catch, pinned lever vocabulary).
+Pass 3 = delta verification of this round + fresh sample; clean pass 3 after
+a clean-delta = the two-consecutive-clean bar (pass 2's finding set becomes
+the first "clean" only once its fixes verify — the honest reading is: pass 3
+verifies the round, pass 4 samples fresh. Orchestrator will judge when the
+loop has genuinely converged rather than gaming the counter.)
