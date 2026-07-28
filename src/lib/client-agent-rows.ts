@@ -12,6 +12,7 @@ import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
 import { canNoteSlot } from "@/lib/slot-notes";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { resolveOptions } from "@/lib/x-options";
+import { laneLabel } from "@/lib/draft-lane-label";
 import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { AgentSetupState, ClientAgentScheduleRow, CustomAgentRunRow, RunnableAgentSummary } from "@/components/custom-agents";
@@ -282,11 +283,17 @@ export async function toClientAgentRows(args: {
       const todaySlot = slots.find((slot) => slot.dateKey === todayKey);
       if (todaySlot && (todaySlot.optionRefs?.length ?? 0) > 0) {
         if (todaySlot.optionPick) {
-          const picked = todaySlot.optionPick.optionRef;
+          // F70: the ref's tail is the LAB's lane vocabulary ("News-reaction
+          // (live)", "Avenue 2"), which no client surface may render raw. The
+          // direction stored at pick time is already humanised; the fallback
+          // runs the tail through the same laneLabel every other path uses, so
+          // a pick made before the field existed still reads properly.
+          const pick = todaySlot.optionPick;
           today = {
             slotId: todaySlot.id,
             options: [],
-            pickedDirection: picked.split(" · ").slice(-1)[0] ?? "chosen",
+            pickedDirection:
+              pick.direction ?? laneLabel(pick.optionRef.split(" · ").slice(1).join(" · ")),
           };
         } else if (todaySlot.assetId) {
           const batchAsset = await getAsset(todaySlot.assetId);
@@ -376,10 +383,20 @@ export async function toClientAgentRows(args: {
         // back. authorName, never the uid — the same rule the feedback list
         // follows, so a client never receives the internal id of the staff
         // member who answered them.
+        // B5: the label is VIEWER-relative, not role-derived. "You" computed
+        // from authorRole === "client" is right for the client and a lie to the
+        // staff member reading the same note on the same surface — this row is
+        // built for both. Whoever wrote it sees "You"; everyone else sees the
+        // stored name, falling back to the side they were on for notes written
+        // before authorName existed.
         note: slot.note
           ? {
               text: slot.note.text,
-              authorName: slot.note.authorRole === "client" ? "You" : "Karos",
+              authorName:
+                slot.note.authorUid === args.viewerUid
+                  ? "You"
+                  : (slot.note.authorName ??
+                    (slot.note.authorRole === "client" ? "Your team" : "Karos")),
               createdAt: slot.note.createdAt,
               applied: slot.note.consumedAt != null,
             }

@@ -69,6 +69,7 @@ export async function setAgentSlotNoteAction(input: {
     note: {
       text,
       authorUid: user.uid,
+      authorName: user.name,
       authorRole: user.role === "CLIENT_USER" ? "client" : "staff",
       createdAt: now,
       // Consumption is stamped by whoever applies it. Cleared on every edit:

@@ -1706,6 +1706,16 @@ export interface AgentSlotNote {
   /** ≤ 500 chars, plain text (server-clamped). */
   text: string;
   authorUid: string;
+  /**
+   * Display name of the author, denormalized at write time — the same reason
+   * ClientAgentFeedback keeps createdByName and ActivityLog keeps its actor.
+   *
+   * A surface serving BOTH viewers cannot derive the label from role alone:
+   * "You", computed from authorRole === "client", is right for the client and a
+   * lie to the staff member reading the same row. The label is computed from
+   * viewer-vs-author; this is the half that has to be stored.
+   */
+  authorName?: string;
   authorRole: "client" | "staff";
   createdAt: number;
   /** Stamped when a generation/revision run actually received this note. */
@@ -1721,6 +1731,13 @@ export interface AgentSlotNote {
 export interface AgentSlotOptionPick {
   /** Which option was chosen — its ref within the linked batch asset, or its option key. */
   optionRef: string;
+  /**
+   * Humanised angle of the chosen option ("Playbook", "Founder POV"), stored at
+   * pick time. The ref's tail is the lab's own lane vocabulary and must never
+   * reach a client surface raw (F70); keeping the label here also saves
+   * re-reading and re-parsing the batch asset on every render.
+   */
+  direction?: string;
   pickedAt: number;
   pickedBy: string;
   /** True when the client edited the text before confirming. */

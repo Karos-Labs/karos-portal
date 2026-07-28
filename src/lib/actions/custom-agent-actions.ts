@@ -364,7 +364,13 @@ export async function runCustomAgentAction(input: {
     customAgentId: input.agentId,
   });
   if (blocked) return { error: blocked };
-  const result = await submitCustomAgentJob(user, input);
+  // B4 / §6.2a. This is the OTHER client-reachable, billable run — the generic
+  // run dialog — and it stamped no run type, so every charge it made landed in
+  // the undifferentiated "Other usage" bucket that the per-agent breakdown
+  // exists to eliminate. It is a run the client started by hand, which is
+  // exactly what "manual" means; both the Job type and creditBucketFor already
+  // understand it.
+  const result = await submitCustomAgentJob(user, { ...input, runType: "manual" });
   if (result.jobId && !result.error) {
     revalidatePath("/jobs");
     revalidatePath(`/clients/${input.clientId}`);
