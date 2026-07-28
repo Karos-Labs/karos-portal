@@ -58,11 +58,24 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   ]);
   if (!client) return Response.json({ error: "Client not found" }, { status: 404 });
 
+  // QA F125 (second half): metrics rows are written per published asset, so they can name a
+  // platform the client never connected (an Instagram row on a Google/LinkedIn/YouTube
+  // account). Scope the digest — and therefore the prompt — to channels the client actually
+  // has, so the briefing can't recommend shifting budget on a channel they don't use.
+  const connectedPlatforms = new Set(
+    integrations.filter((i) => integrationIsUsable(i)).map((i) => i.platform),
+  );
+  const scopedRecords = records.filter((r) => connectedPlatforms.has(r.platform));
+
   // Data-honesty signal (QA Fix 8): engagement analytics fall back to deterministic
   // MOCK metrics for platforms with no live token. If EVERY record feeding the digest
   // is mock-sourced, the engagement briefing is narrating demo numbers — tell the client
   // via a response header so <AiInsights/> can badge (or suppress) it.
-  const engagementIsMock = records.length > 0 && records.every((r) => r.source === "mock");
+  // Computed on `scopedRecords`, NOT `records`: the briefing is built from the scoped set,
+  // so judging provenance on the unscoped set would let live rows on a dropped platform
+  // vouch for a briefing made entirely of mock rows (analytics/sync leaves real historical
+  // rows behind when an integration expires).
+  const engagementIsMock = scopedRecords.length > 0 && scopedRecords.every((r) => r.source === "mock");
   const dataSourceHeaders = engagementIsMock ? { "X-Insights-Data-Source": "mock" } : undefined;
 
   // QA F125: a "Demo data" badge does not offset paragraphs of specific, numbered budget
@@ -81,15 +94,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       },
     );
   }
-
-  // QA F125 (second half): metrics rows are written per published asset, so they can name a
-  // platform the client never connected (an Instagram row on a Google/LinkedIn/YouTube
-  // account). Scope the digest — and therefore the prompt — to channels the client actually
-  // has, so the briefing can't recommend shifting budget on a channel they don't use.
-  const connectedPlatforms = new Set(
-    integrations.filter((i) => integrationIsUsable(i)).map((i) => i.platform),
-  );
-  const scopedRecords = records.filter((r) => connectedPlatforms.has(r.platform));
 
   const digest = buildDigest(scopedRecords, assets);
 

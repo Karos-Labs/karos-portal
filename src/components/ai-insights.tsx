@@ -43,7 +43,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
         }
         setIsDemoData(res.headers.get("X-Insights-Data-Source") === "mock");
         if (res.headers.get("X-Insights-State") === "needs-connection") {
-          void res.body?.cancel();
+          res.body?.cancel().catch(() => {});
           setNeedsConnection(true);
           return;
         }
