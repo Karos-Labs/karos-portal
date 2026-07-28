@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { dismissAssignedActionItemAction } from "@/lib/actions";
-import type { ActionItemNotification, AgentReviewNotification, ClientTask } from "@/lib/types";
+import type { ActionItemNotification, AgentReviewNotification, ClientTask, TaskOwner } from "@/lib/types";
 
 /* ── Priority colours for task alerts ───────────────────────────── */
 
@@ -294,10 +294,16 @@ export function NotificationBell({
 function TaskAlertRow({ task, onClose }: { task: ClientTask; onClose: () => void }) {
   const isReview = task.status === "review_pending";
   const prioColor = PRIORITY_COLOR[task.priority] ?? PRIORITY_COLOR.low;
+  // Land on the tab that actually holds this card, and open it. The board used
+  // to always open on "Automated", so a click on one of the client's own items
+  // showed a tab that did not contain it (QA F64). `owner` is a distinct key —
+  // `tab` belongs to the Workspace's board/activity/archive toggle.
+  const owner: TaskOwner = task.owner ?? (task.source === "manual" ? "client_managed" : "karos_managed");
+  const href = `/tasks?owner=${owner === "client_managed" ? "client" : "karos"}&task=${task.id}`;
 
   return (
     <Link
-      href="/tasks"
+      href={href}
       onClick={onClose}
       className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
     >

@@ -53,6 +53,17 @@ export function ProgressView({
   // server data fetches on every click.
   const [view, setView] = useState<View>(() => parseView(searchParams.get("tab")));
 
+  // Same-route navigation (the client rail's "Workspace" link, or a bell row
+  // pointing at ?tab=archive, clicked while already on /tasks) re-renders this
+  // component instead of remounting it, so the tab has to follow the URL or it
+  // silently desyncs from the address bar (F97 watch-item, folded in with F64).
+  const tabParam = searchParams.get("tab");
+  const [prevTabParam, setPrevTabParam] = useState(tabParam);
+  if (prevTabParam !== tabParam) {
+    setPrevTabParam(tabParam);
+    setView(parseView(tabParam));
+  }
+
   function selectView(next: View) {
     setView(next);
     const params = new URLSearchParams(searchParams.toString());

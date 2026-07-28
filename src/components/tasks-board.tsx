@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   DndContext,
   PointerSensor,
@@ -479,13 +479,29 @@ interface Props {
 
 export function TasksBoard({ tasks, currentUserRole, showClientName = false, clientId }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Deep link from the notification bell: ?owner= picks the tab, ?task= opens
+  // the ticket (QA F64). Distinct keys — ?tab= is the Workspace's
+  // board/activity/archive toggle and must not be re-keyed. Unknown values are
+  // ignored, so a stale link degrades to the default board.
+  const ownerParam = searchParams.get("owner");
+  const taskParam = searchParams.get("task");
+  const linkedTask = taskParam ? tasks.find((t) => t.id === taskParam) : undefined;
+  const initialTab: OwnerTab = linkedTask
+    ? inferOwner(linkedTask) === "client_managed"
+      ? "client"
+      : "karos"
+    : ownerParam === "client"
+      ? "client"
+      : "karos";
+
   const [localTasks, setLocalTasks] = useState<BoardTask[]>(tasks);
-  const [activeTab, setActiveTab] = useState<OwnerTab>("karos");
+  const [activeTab, setActiveTab] = useState<OwnerTab>(initialTab);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [clientFilter, setClientFilter] = useState<string>("all");
   const [execError, setExecError] = useState<string | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(linkedTask?.id ?? null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const dragSnapshotRef = useRef<BoardTask[] | null>(null);
   const [, startTransition] = useTransition();
@@ -501,6 +517,17 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
   if (prevTasksProp !== tasks) {
     setPrevTasksProp(tasks);
     setLocalTasks(tasks);
+  }
+
+  // Same-route navigation (bell row clicked while already on /tasks) doesn't
+  // remount, so the deep-link params have to be re-read when they change —
+  // otherwise the board keeps whatever tab it was on (QA F64 / F97 watch-item).
+  const linkSignature = `${ownerParam ?? ""}|${taskParam ?? ""}`;
+  const [prevLinkSignature, setPrevLinkSignature] = useState(linkSignature);
+  if (prevLinkSignature !== linkSignature) {
+    setPrevLinkSignature(linkSignature);
+    setActiveTab(initialTab);
+    if (taskParam) setSelectedTaskId(linkedTask?.id ?? null);
   }
 
   const hasExecuting = localTasks.some((t) => t.metadata?.executing === true);
