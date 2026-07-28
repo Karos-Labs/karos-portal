@@ -8,7 +8,7 @@ AI marketing-agency OS. Next.js 16 (App Router, Turbopack) · Firebase Auth · F
 ## Conventions
 - **All Firestore access is server-side** through `src/lib/data.ts` (Admin SDK). The browser
   uses Firebase **only for auth**. `firestore.rules` denies all direct client access.
-- **Writes go through server actions** in `src/lib/actions.ts` (the app's write API). Each
+- **Writes go through server actions** in `src/lib/actions/` (barrel: `src/lib/actions/index.ts` — the app's write API). Each
   action authorizes via `getCurrentUser()` / `requireStaff()` / `requireAdmin()`.
 - **Auth**: `src/lib/auth.ts` — Firebase session cookie (`karos_session`), `getCurrentUser`,
   `requireUser(roles?)`. First user or `ADMIN_EMAILS` → admin; others land disabled (pending).

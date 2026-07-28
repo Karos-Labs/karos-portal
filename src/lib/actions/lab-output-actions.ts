@@ -1,5 +1,6 @@
 "use server";
 
+import { labImportTitle } from "@/lib/activity-titles";
 import { revalidatePath } from "next/cache";
 import { createAsset, getClient, listAssets } from "@/lib/data";
 import {
@@ -269,7 +270,7 @@ export async function importLabRunAction(input: {
       clientId: input.clientId,
       timestamp: Date.now(),
       type: "CAMPAIGN_CREATED",
-      title: `Imported lab run: ${runKey} (${created} item${created !== 1 ? "s" : ""})`,
+      title: labImportTitle(runKey, created),
       actor: ctx.user.name,
       actorRole: "staff",
       metadata: { runKey, created, skipped },

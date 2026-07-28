@@ -6,6 +6,8 @@ import {
   agentSetupStartedTitle,
   customRunStartedTitle,
   isRunMachineryTitle,
+  labImportTitle,
+  opsImportTitle,
   managedRunStartedTitle,
   templateRunStartedTitle,
 } from "@/lib/activity-titles";
@@ -59,6 +61,8 @@ describe("run-machinery activity titles", () => {
     expect(isRunMachineryTitle(customRunStartedTitle("X Agent"))).toBe(true);
     expect(isRunMachineryTitle(agentSetupStartedTitle("Social"))).toBe(true);
     expect(isRunMachineryTitle(templateRunStartedTitle("Social", "Daily post"))).toBe(true);
+    expect(isRunMachineryTitle(labImportTitle("2026-07-21-sonnet-trial", 4))).toBe(true);
+    expect(isRunMachineryTitle(opsImportTitle("lab repo abc123", "14 document(s)"))).toBe(true);
   });
 
   it("still matches the rows already written to production", () => {
@@ -69,6 +73,9 @@ describe("run-machinery activity titles", () => {
     expect(isRunMachineryTitle("Agent run started: Karos X Agent")).toBe(true);
     expect(isRunMachineryTitle("Agent setup started: LinkedIn")).toBe(true);
     expect(isRunMachineryTitle("Instagram: Carousel run started")).toBe(true);
+    // The old schedule-change wording decomposed the batch — retroactively
+    // machinery. Its replacement (pace vocabulary) stays on the timeline below.
+    expect(isRunMachineryTitle("Set Instagram to 3 runs per week (12 drafts)")).toBe(true);
   });
 
   it("leaves rows that describe what happened to the account", () => {
@@ -82,7 +89,7 @@ describe("run-machinery activity titles", () => {
       "Intel Report generated",
       "Workspace generation stopped early",
       "SEO/GEO fix approved",
-      "Set Instagram to 3 runs per week (12 drafts)",
+      "Set Instagram's pace: 3 posting days a week",
     ]) {
       expect(isRunMachineryTitle(title), `${title} is not machinery`).toBe(false);
     }

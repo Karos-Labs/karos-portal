@@ -330,12 +330,11 @@ export async function configureClientAgentScheduleAction(
     clientId: input.clientId,
     timestamp: now,
     type: "CAMPAIGN_CREATED",
-    // Runs, not posts: postsPerWeek counts the days the agent fires, and each
-    // fire produces outputsPerRun items. The field name is persisted and read
-    // in several places, so only the wording moves.
-    title:
-      `Set ${agent.name} to ${postsPerWeek} run${postsPerWeek === 1 ? "" : "s"} per week ` +
-      `(${postsPerWeek * outputsPerRun} draft${postsPerWeek * outputsPerRun === 1 ? "" : "s"})`,
+    // Pace vocabulary, one stored string for both audiences (A3/A4): the old
+    // wording decomposed the batch ("3 runs per week (12 drafts)") — that shape
+    // is now on the retroactive machinery patterns, and new rows say only the
+    // pace. Staff read run/output detail on the schedule row itself.
+    title: `Set ${agent.name}'s pace: ${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week`,
     actor: user.name,
     actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
     metadata: { scheduledRunId: id, customAgentId: agent.id, postsPerWeek, outputsPerRun },

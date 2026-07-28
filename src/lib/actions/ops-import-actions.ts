@@ -1,5 +1,6 @@
 "use server";
 
+import { opsImportTitle } from "@/lib/activity-titles";
 import { revalidatePath } from "next/cache";
 
 import { adminDb } from "@/lib/firebase/admin";
@@ -546,11 +547,12 @@ export async function applyOpsBundleAction(input: {
       clientId,
       timestamp: Date.now(),
       type: "CONTEXT_DOC_UPDATED",
-      title:
-        `Ops import from ${sourceLabel}: ${plan.counts.docWrites} document(s), ` +
-        `${plan.counts.compWrites} competitor row(s)` +
-        (plan.counts.clientTouched ? ", client profile" : "") +
-        (outcome.seoGeo.applied ? ", SEO/GEO snapshot" : ""),
+      title: opsImportTitle(
+        sourceLabel,
+        `${plan.counts.docWrites} document(s), ${plan.counts.compWrites} competitor row(s)` +
+          (plan.counts.clientTouched ? ", client profile" : "") +
+          (outcome.seoGeo.applied ? ", SEO/GEO snapshot" : ""),
+      ),
       actor: user.name,
       actorRole: "staff",
       metadata: {
@@ -567,7 +569,7 @@ export async function applyOpsBundleAction(input: {
       clientId,
       timestamp: Date.now(),
       type: "CONTEXT_DOC_UPDATED",
-      title: `Ops import from ${sourceLabel}: SEO/GEO snapshot (imported, not machine-measured)`,
+      title: opsImportTitle(sourceLabel, "SEO/GEO snapshot (imported, not machine-measured)"),
       actor: user.name,
       actorRole: "staff",
       metadata: { origin, ref, seoGeoImported: true },

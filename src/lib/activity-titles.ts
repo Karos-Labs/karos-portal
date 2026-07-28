@@ -57,6 +57,20 @@ export function agentSetupStartedTitle(umbrellaName: string): string {
   return `Agent setup started: ${umbrellaName}`;
 }
 
+/** `importLabRunAction` — a lab run's deliverables copied into the portal. */
+export function labImportTitle(runKey: string, created: number): string {
+  return `Imported lab run: ${runKey} (${created} item${created !== 1 ? "s" : ""})`;
+}
+
+/**
+ * The Ops Import surface — staff pulled locally-produced updates in. The
+ * detail suffix varies per import; the prefix is the contract the pattern
+ * below matches on.
+ */
+export function opsImportTitle(sourceLabel: string, detail: string): string {
+  return `Ops import from ${sourceLabel}: ${detail}`;
+}
+
 /**
  * The shapes above, matched on the STORED string.
  *
@@ -72,15 +86,25 @@ const RUN_MACHINERY_PATTERNS: readonly RegExp[] = [
   /^agent run started: /i,
   /^agent setup started: /i,
   / run started$/i,
+  // Data-ops machinery (pass-3 follow-up): lab run keys, repo refs and write
+  // counts are operator bookkeeping. The work these imports produce reaches
+  // the client as documents and drafts with their own honest rows.
+  /^imported lab run: /i,
+  /^ops import from /i,
+  // Retroactive only: the old schedule-change wording decomposed the batch
+  // ("3 runs per week (12 drafts)"). New rows mint in pace vocabulary and
+  // stay on the client's timeline.
+  / runs? per week \(\d+ drafts?\)$/i,
 ];
 
 /**
  * Does this row announce machinery starting rather than work happening?
  *
- * Deliberately narrow: it matches "a run/job/setup began", not everything an
- * automated writer produces. A failed generation cycle, a competitor analysis,
- * a brand-guideline rewrite and a schedule change are all things that HAPPENED
- * to the client's account, and they stay on the client's timeline.
+ * Deliberately narrow: it matches "a run/job/setup began" and data-ops
+ * bookkeeping, not everything an automated writer produces. A failed
+ * generation cycle, a competitor analysis, a brand-guideline rewrite and a
+ * schedule change are all things that HAPPENED to the client's account, and
+ * they stay on the client's timeline.
  */
 export function isRunMachineryTitle(title: string): boolean {
   const t = title.trim();
