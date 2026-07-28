@@ -357,3 +357,28 @@ starting. Updated by the orchestrator after each verification gate.
 - CD-B2: fixer also removed now-dead not-wired tier / engineFlagPrefill /
   unwiredRequestPrefill / unwired banner (shipping dead client copy = F7/F152
   defect class) — pending drift ruling on the scope.
+
+## AGENTS cluster drift rulings (26/26 ALIGNED)
+- **F120 (SHELL) → NO-OP**: F41 renders JobStatusBadge + re-typed row status to
+  JobStatus, covering every surface F120 cites (x-agent-intake:686,
+  linkedin-agent-intake:638; Reddit N/A; agent-intake-views.ts is a phantom).
+  F120 fixer must add NOTHING and must NOT mint JOB_STATUS_LABEL. Ledger F120 as
+  resolved-by-F41.
+- **F104 (CREDITS) MUST consume CREDIT_BLOCK_REASON + bindingCreditLimit()** (F25
+  added them to credits.ts with the exact "resets Monday"/"resets on the 1st"
+  strings and a signature mirroring availableCredits so badge/reason can't
+  disagree). Do NOT mint a third phrasing.
+- Ledger statuses: F130 → OPS-PENDING (per-agent prices set by admin; card shows
+  25 until then). F33 → OPS-PENDING (backfill-asset-titles.ts written, dry-run,
+  NOT run). F37 → RESOLVED-except /clients server-side scan (needs count()
+  helpers — end-loop or handover). F29 → RESOLVED (partial-approval count
+  precision dissolves under F149/A4). CD-D2 → connector half RESOLVED, agent
+  representation → Phase 3.
+- F130 dual-meaning flag for CD-A5/Phase 3: creditCost means per-RUN on the card
+  and per-OUTPUT in the schedule dialog (chargeMultiplier=outputsPerRun) —
+  accurate per surface, inconsistent across them; Phase 3 analytics/credit split
+  should resolve.
+- End-loop nits: submit-managed.ts:17 stale docstring (mentions retired
+  submitManagedJobAction); CancelRunControl "Credits returned" copy odd for
+  staff-fired uncharged runs; F128 Disclosure-deviation + F25 CD-B2 deferral
+  absent from commit bodies (reporting lapse, code correct).
