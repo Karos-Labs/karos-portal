@@ -725,3 +725,70 @@ completion refresh lands. Scope (two consecutive clean passes required):
 - Albert: "implement with an agent that reviews at the end if it matches
   what I asked" — a dedicated Albert-match review lens runs over the whole
   CD-G wave after merge, checking his verbatim feedback against localhost.
+
+### CD-G9 — Narrow-viewport shell contract + copilot dismissal + chrome relocation (Albert, fourth batch)
+- **CD-G9a — bottom bar everywhere below md.** Any view showing the client
+  4-tab nav (the client shell AND the staff shell in client context) renders
+  the SAME bottom tab bar at narrow width: Dashboard · AI Agents · Calendar ·
+  Workspace · Company (Company LAST; it opens the sheet with profile,
+  documents, competitor track, brand colors, settings). NO top menu/hamburger
+  pattern at narrow width — "We don't want a top menu-like thing." The client
+  shell already has this (client-rail.tsx mobile bar + Company sheet); the
+  staff shell must adopt it in client context. Staff full-admin nav at narrow
+  width is out of scope for now (more tabs than fit a bar) — flagged, not ruled.
+- **CD-G9b — copilot dismissal.** The expanded copilot closes on ANY click
+  outside it; it stays open only while the user is clicking/typing within it.
+  The explicit close control also remains. The collapsed strip sits directly
+  ABOVE the bottom tab bar at narrow width (54px offset contract), and pops
+  up from there.
+- **CD-G9c — chrome relocation in full view.** The top-right icon cluster
+  (support/contact, light-dark theme switch, notifications) moves into the
+  Company/settings area (account-menu zone) instead of a floating top bar.
+  NOTE: this consciously overrules F116's "badge visible without opening a
+  menu" rationale for the bell — Albert's ruling wins; record in ledger. An
+  unread-count dot may surface on the Company/account trigger so the signal
+  survives without the floating bar.
+
+### CD-G8/G9b orchestrator rulings after the dock-fixer report (2026-07-28)
+- **Outside-click dismissal is scoped to the OVERLAY presentation (<lg).**
+  Albert's words described the pop-up ("it should pop up… click out, it
+  should hide"). At lg+ the copilot is a persistent side rail whose collapse
+  reflows the content column — auto-collapsing it on any page click is not
+  what he asked for. The rail keeps its explicit toggle only. (Flagged for
+  the Albert-match lens to confirm against his eye.)
+- **Right-edge gap ruling: the forced classic scrollbar goes.** globals.css
+  forces `html { overflow-y: scroll }` + root-level `::-webkit-scrollbar`
+  styling, which opts Chrome/macOS out of overlay scrollbars — every
+  `fixed right-0` element stops 10px short. Fix globally: drop the forced
+  root scrollbar, scope the custom scrollbar skin to inner scroll containers
+  only. macOS gets overlay (true edge-to-edge); other platforms unchanged in
+  substance.
+- **Merge order:** the dock branch depends on CD-G9a's staff bottom bar at
+  phone width (strip sits on the 54px bar). Shell3 merges FIRST, dock second.
+  Both read MOBILE_TAB_BAR_H / MOBILE_TAB_BAR_OFFSET_CLASS (src/lib/constants.ts).
+- **Staff `main` needs a bottom scroll reserve** (client has pb-28/md:pb-16;
+  staff has none, so last rows sit behind the strip) — assigned to shell3,
+  which owns staff chrome.
+- **Dead code found:** the non-docked floating ChatbotWidget branch
+  (floatingPosition, fixed 380px panel) is unreachable — end-loop sweep item,
+  not fixed mid-wave.
+
+### End-loop sweep additions (post-CD-G9 build)
+- `src/components/theme-toggle.tsx` becomes unreferenced once shell3 merges
+  (relocations use the labeled ThemeSwitch rows) — delete in the end loop.
+- shell3 applied CD-G9c staff-wide (AppHeader was one mount serving both
+  context modes) — accepted; staff no-context narrow keeps hamburger but
+  gains the unread dot + drawer rows so nothing went 3 taps deep.
+
+### P3 builder deferrals (carry into WP-4+ / end loop)
+- WP-9 options picker still to build (D6 removed only the premature promise).
+- Clients lost the cross-agent "recent runs" list (runs now live per-agent on
+  detail pages). Acceptable under CD-G1; surface to Albert in the wave report.
+- Client run gesture takes no attachments — generic dialog's picker now
+  unreachable for clients. Needs a design call if client attachments matter.
+- Staff keep the all-in-one cards + curation pane (intentional); staff
+  roster/detail unification is future work.
+- calendar-body.tsx ~178 falls back to agent.description for a blurb — same
+  CD-G2 defect class on the calendar surface. End-loop fix via clientAgentBlurb.
+- Pre-existing react-hooks/purity lint errors (Date.now()) in agents page +
+  launch-card.tsx — pre-date this wave; end-loop sweep.

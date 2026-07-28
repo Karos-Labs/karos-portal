@@ -1,24 +1,10 @@
 import Link from "next/link";
-import { Card, CardTitle, Badge, EmptyState } from "@/components/ui";
+import { Card, CardTitle, StatCard, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
 import type { Asset, ClientIntegration, Job } from "@/lib/types";
-
-/** One stat in the thin summary row (QA F124) — label and number on one line,
- *  a fraction of the height a StatCard tile spends on the same two facts. */
-function SummaryStat({ label, value, hint }: { label: string; value: number; hint?: string }) {
-  return (
-    <div className="min-w-0">
-      <p className="font-mono text-[10px] uppercase leading-snug tracking-[0.08em] text-muted">
-        {label}
-      </p>
-      <p className="mt-0.5 font-mono text-lg font-medium leading-none text-foreground">{value}</p>
-      {hint && <p className="mt-1 text-[11px] text-muted-2">{hint}</p>}
-    </div>
-  );
-}
 
 /* Judgment scale: in-progress = amber, live/done = green, in-between = slate. */
 const STATUS_META: Record<string, { label: string; color: string }> = {
@@ -40,6 +26,7 @@ export function ClientAnalytics({
   jobs: Job[];
   integrations: ClientIntegration[];
 }) {
+  const published = assets.filter((a) => a.status === "published").length;
   const scheduled = assets.filter((a) => a.status === "scheduled").length;
   const activeChannels = integrations.filter((i) => integrationIsUsable(i));
   const staleChannels = integrations.filter((i) => integrationNeedsReconnect(i));
@@ -54,23 +41,25 @@ export function ClientAnalytics({
 
   return (
     <div className="space-y-6">
-      {/* QA F124: this used to be four full-height stat tiles, of which two
-          (Published, Channels) were restated verbatim by the two cards directly
-          beneath them — a whole screen of duplicated counters before anything
-          actionable. Only the numbers nothing else on the page carries survive,
-          and they share one thin row instead of a tile each.
-          QA F99: agent runs joins them — it was a whole bordered panel holding a
-          single sentence. QA F123: that sentence read "20 agent runs · last 9h
-          ago", which isn't one. */}
-      <Card className="flex flex-wrap items-center gap-x-10 gap-y-3 px-5 py-3.5">
-        <SummaryStat label="Scheduled" value={scheduled} />
-        <SummaryStat label="Deliverables" value={assets.length} />
-        <SummaryStat
+      {/* Stats. F124 collapsed these four tiles into one thin SummaryStat row on
+          the duplication argument; Albert reviewed it on 2026-07-28 and struck
+          the finding (CD-G6) — the row read as messy, and the counters are the
+          first view. The baseline tiles are the shipped design; do not collapse
+          them again. */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <StatCard label="Published" value={published} />
+        <StatCard label="Scheduled" value={scheduled} />
+        <StatCard label="Channels" value={activeChannels.length} />
+        <StatCard label="Deliverables" value={assets.length} />
+        {/* QA F99: a whole bordered panel was spent on one sentence about agent
+            runs. It's a counter — it belongs in the counter row. QA F123: the
+            sentence also read "20 agent runs · last 9h ago", which isn't one. */}
+        <StatCard
           label="Agent runs"
           value={jobs.length}
           hint={lastRun ? `Last run ${relativeTime(lastRun.createdAt)}` : "No runs yet"}
         />
-      </Card>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Content by status */}

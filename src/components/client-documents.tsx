@@ -620,7 +620,9 @@ function DocOverlay({
 
 /* ── Regenerate modal ─────────────────────────────────────────────────── */
 
-function RegenerateModal({
+/* Exported for the staff dashboard's Regenerate entry point (CD-G5) — the flow
+   lives here because this is where it was born, and it must exist exactly once. */
+export function RegenerateModal({
   clientId,
   open,
   onClose,

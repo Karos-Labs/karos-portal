@@ -58,7 +58,7 @@ const ROLE_LABEL: Record<Role, string> = {
 
 /* ── View-as-Client picker ───────────────────────────────────────────── */
 
-function ClientContextPicker({ clients }: { clients: Client[] }) {
+function ClientContextPicker({ clients, isAdmin }: { clients: Client[]; isAdmin: boolean }) {
   const router = useRouter();
   const { activeClient, setActiveClient } = useActiveClient();
   const [open, setOpen] = useState(false);
@@ -71,8 +71,17 @@ function ClientContextPicker({ clients }: { clients: Client[] }) {
   function selectClient(client: Client) {
     setOpen(false);
     setQuery("");
-    // Optimistically switch the nav immediately; ClientContextSync fills in docs/competitors on load
-    setActiveClient({ client, contextDocs: [], competitors: [], isAdmin: true });
+    // Optimistically switch the nav immediately; ClientContextSync fills in docs/competitors on load.
+    // isAdmin carries the VIEWER's real role rather than a hardcoded true: the
+    // picker renders for every staff member, so an EMPLOYEE who picked a client
+    // got the admin-only Schedule and Regenerate controls in their rail for the
+    // whole navigation, until ClientContextSync reconciled the flag from the
+    // server. That was a REAL escalation window, not a dead control: at the
+    // time, generateIntelReportAction gated on requireStaff, so the employee's
+    // click would have fired a full pipeline run (the action is requireAdmin
+    // now — CD-G5 hardening — closing the server side too). The flag starting
+    // out honest closes the UI side.
+    setActiveClient({ client, contextDocs: [], competitors: [], isAdmin });
     router.push(`/clients/${client.id}`);
   }
 
@@ -319,7 +328,7 @@ export function Sidebar({
   // the nav was redundant — three controls for one action, and one more row
   // competing for the rail's fixed height (CD-E3).
   const nav = (
-    <nav className="flex flex-col gap-0.5">
+    <nav className="flex flex-col gap-1">
       {items.map((item) => {
         const itemPath = item.href.split("?")[0];
         const active = item.exact
@@ -357,12 +366,35 @@ export function Sidebar({
     </nav>
   );
 
-  // Client-context sections appended below core nav when a client is active
+  // CD-G4: the chip's ↗ opens the client's REAL website, not /clients/[id] —
+  // the nav's Dashboard tab already goes there in client view, so the internal
+  // link was a duplicate. Same protocol normalisation the Competitor Track rows
+  // use for their own ↗. Null when the client has no website on file, and the
+  // chip falls back to the internal link rather than rendering a dead control.
+  const clientWebsite = activeClient?.client.website?.trim();
+  const clientSiteHref = clientWebsite
+    ? clientWebsite.startsWith("http")
+      ? clientWebsite
+      : `https://${clientWebsite}`
+    : null;
+
+  // Client-context sections appended below core nav when a client is active.
+  // CD-G4: the top block — logo, nav, client chip, and the rule above the
+  // Documents header — is back to the 36a5200 baseline measurement-for-
+  // measurement; Documents and everything under it keeps the approved
+  // compaction. `space-y` is the one class that straddles that boundary (it
+  // sets the chip→Documents gap AND the Documents→Competitors→Brand Colors
+  // gaps), so it stays at the compact 1.5; the baseline air above Documents is
+  // restored through the two wrappers' own pt-4 instead.
   const clientSections = activeClient ? (
-    <div className="mt-1.5 space-y-1.5">
-      {/* Client header */}
-      <div className="border-t border-border pt-1.5">
-        <div className="flex items-center gap-2 px-1">
+    <div className="mt-2 space-y-1.5">
+      {/* Client header. pb-1.5 exists to BLOCK margin collapsing, not for its
+          own 6px: space-y compiles to a child margin on this wrapper, and the
+          inner row's mb-1 collapses into it — leaving 6px above DOCUMENTS vs
+          the baseline's 16px (shell2-lens measurement). Padding interrupts the
+          collapse, so mb-1(4) + pb-1.5(6) + space-y(6) = the baseline 16px. */}
+      <div className="border-t border-border pb-1.5 pt-4">
+        <div className="mb-1 flex items-center gap-2 px-1">
           <BrandFavicon
             src={activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl}
             website={activeClient.client.website}
@@ -375,18 +407,31 @@ export function Sidebar({
           <span className="flex-1 truncate text-sm font-semibold text-foreground">
             {activeClient.client.name}
           </span>
-          <Link
-            href={`/clients/${activeClient.client.id}`}
-            onClick={() => setOpen(false)}
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-            title="Go to client dashboard"
-          >
-            <Icon name="ArrowUpRight" className="h-3 w-3" />
-          </Link>
+          {clientSiteHref ? (
+            <a
+              href={clientSiteHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setOpen(false)}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
+              title="Open client website"
+            >
+              <Icon name="ArrowUpRight" className="h-3 w-3" />
+            </a>
+          ) : (
+            <Link
+              href={`/clients/${activeClient.client.id}`}
+              onClick={() => setOpen(false)}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
+              title="Go to client dashboard"
+            >
+              <Icon name="ArrowUpRight" className="h-3 w-3" />
+            </Link>
+          )}
         </div>
       </div>
 
-      <div className="border-t border-border pt-1.5">
+      <div className="border-t border-border pt-4">
         <ClientDocuments
           contextDocs={activeClient.contextDocs}
           isAdmin={activeClient.isAdmin}
@@ -422,7 +467,7 @@ export function Sidebar({
   const content = (
     <div className="flex h-full flex-col">
       {/* Logo — fixed top */}
-      <div className="shrink-0 px-4 pb-1 pt-2.5">
+      <div className="shrink-0 px-4 pb-2 pt-4">
         <Link href="/dashboard" className="flex items-center gap-2.5 px-2 py-1">
           <Image
             src="/brand/kairos-head-disc-dark.svg"
@@ -444,7 +489,7 @@ export function Sidebar({
           client tabs, ≤6 documents, ≤5 tracked competitors, ≤4 swatches — so
           the compacted stack fits; overflow-y-auto stays as the safety valve
           for genuinely short windows rather than clipping a section away. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-0 pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-0 pt-2">
         {nav}
         {clientSections}
       </div>
@@ -456,7 +501,9 @@ export function Sidebar({
             already fenced to their assigned clients by the app layout. The
             LABELLED exit is F60's ClientContextBar, which renders for any
             staff member the moment a client context is active. */}
-        {isStaff && <ClientContextPicker clients={clients} />}
+        {isStaff && (
+          <ClientContextPicker clients={clients} isAdmin={user.role === "KAROS_ADMIN"} />
+        )}
         <UserMenu user={user} realAdmin={realAdmin} />
       </div>
     </div>

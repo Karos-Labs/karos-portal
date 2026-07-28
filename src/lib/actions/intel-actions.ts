@@ -227,7 +227,12 @@ export async function generateIntelReportAction(
   clientId: string,
   runSpecificContext?: string,
 ): Promise<void> {
-  await requireStaff();
+  // Admin, not staff: every UI entry point (docs-header button, dashboard
+  // button) is admin-gated per Albert's CD-G5 ruling, and the schedule action
+  // above it already requires admin. A staff-wide server gate under admin-only
+  // UI would let an employee fire a full pipeline run by invoking the action
+  // directly (dash-lens note, 2026-07-28).
+  await requireAdmin();
   // Same workspace lock the post-onboarding background trigger uses — stops this
   // manual Regenerate from overlapping that run (or a second concurrent click).
   if (!(await tryAcquireAiProcessingLock(clientId))) {
