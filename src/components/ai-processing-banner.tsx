@@ -34,8 +34,8 @@ export function AiProcessingBanner({
           <span className="font-medium">Karos Agents are building your workspace strategy</span>{" "}
           <span className="text-muted">
             {isClientViewer
-              ? "- this usually takes a few minutes. Your workspace updates on its own when it finishes."
-              : "- Regenerate and Refresh Task Map are locked until this finishes."}
+              ? "— this usually takes a few minutes. Your workspace updates on its own when it finishes."
+              : "— Regenerate and Refresh Task Map are locked until this finishes."}
           </span>
         </p>
       </div>

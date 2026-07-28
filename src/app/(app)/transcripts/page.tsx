@@ -52,7 +52,7 @@ export default async function TranscriptsPage() {
               <code className="rounded bg-surface-2 px-1 py-0.5 text-xs text-neon">
                 /api/ingest/fireflies
               </code>{" "}
-              - new meetings with a{" "}
+              — new meetings with a{" "}
               <code className="rounded bg-surface-2 px-1 py-0.5 text-xs text-neon">
                 @karoslabs.com
               </code>{" "}

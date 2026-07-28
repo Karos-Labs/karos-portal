@@ -113,7 +113,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       singleFilter = { clientId: viewClient.id };
       single = true;
       defaultClientId = viewClient.id;
-      title = `${viewClient.name} - Calendar`;
+      title = `${viewClient.name} — Calendar`;
     } else {
       // Scope to the staff member's visible clients — for employees that's their
       // assigned set, for admins every existing client. Never null: an unfenced

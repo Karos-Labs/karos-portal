@@ -104,7 +104,7 @@ function CompanyForm({
       </div>
       <p className="mt-1 text-sm text-muted">
         One per business. The page runs on your brand voice and your own first-party material; we
-        only ask what we cannot find ourselves. Drafts only - a person always posts.
+        only ask what we cannot find ourselves. Drafts only — a person always posts.
       </p>
       <div className="mt-4 space-y-4">
         <div>
@@ -176,13 +176,13 @@ function FallbackField({
     <div>
       <Label htmlFor={`${idPrefix}-fallback`}>If this person is not very active on LinkedIn (optional)</Label>
       <Select id={`${idPrefix}-fallback`} value={kind} onChange={(e) => onKind(e.target.value)}>
-        <option value="">They post regularly - we learn the voice from their real posts</option>
+        <option value="">They post regularly — we learn the voice from their real posts</option>
         <option value="writing">Drop a long piece of their own genuine writing</option>
         <option value="about">Tell us who they are (typed, or a transcribed voice note)</option>
       </Select>
       <p className="mt-1 text-xs text-muted">
         Being inactive on LinkedIn is a first-class case, not a problem. This is how we learn a real
-        voice for someone who does not post - a spoken sample is the best source.
+        voice for someone who does not post — a spoken sample is the best source.
       </p>
       {kind ? (
         <Textarea
@@ -192,7 +192,7 @@ function FallbackField({
           onChange={(e) => onText(e.target.value)}
           placeholder={
             kind === "writing"
-              ? "Paste the piece here - an essay, a long email, anything they genuinely wrote themselves."
+              ? "Paste the piece here — an essay, a long email, anything they genuinely wrote themselves."
               : "Who are they, what have they actually done, how do they talk? Paste a voice-note transcript if you have one."
           }
         />
@@ -248,7 +248,7 @@ function CvUpload({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
         ) : null}
       </div>
       <p className="mt-1 text-xs text-muted">
-        Private - only our team and the agent read it, and it is never posted. The CV is for
+        Private — only our team and the agent read it, and it is never posted. The CV is for
         substance (their real experience), not voice. Not strictly required: real posts or the
         voice sample below also work, but it is the strongest single source.
       </p>
@@ -310,7 +310,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
       {belowMinimum ? (
         <p className="mt-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
           This seat has no voice source yet. Add their profile URL, a CV, or the voice sample
-          below - drafts need at least one genuine source of who they are.
+          below — drafts need at least one genuine source of who they are.
         </p>
       ) : null}
       <div className="mt-4 space-y-4">
@@ -371,7 +371,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
         />
         <p className="text-xs text-muted">
           No voice questions here on purpose: we build the voice from their real posts, CV and
-          edits - and if they already have a seat for another agent, we reuse what we already know.
+          edits — and if they already have a seat for another agent, we reuse what we already know.
         </p>
         {fieldError(error)}
         <Button onClick={saveSeat} disabled={pending} variant="subtle">
@@ -546,7 +546,7 @@ function FeedbackBox({
     <Card className="p-5">
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
-        Tell us what is working and what is not - in your own words, as much detail as you like.
+        Tell us what is working and what is not — in your own words, as much detail as you like.
         It goes straight into the agent&apos;s next run. Picking, editing, or skipping individual
         drafts happens on the drafts themselves, in your Workspace archive.
       </p>
@@ -590,7 +590,7 @@ function FeedbackBox({
           <Button onClick={submit} disabled={pending || !note.trim()}>
             {pending ? "Sending…" : "Send feedback"}
           </Button>
-          {sent ? <span className="text-xs text-muted">Sent - it feeds the next run.</span> : null}
+          {sent ? <span className="text-xs text-muted">Sent — it feeds the next run.</span> : null}
         </div>
       </div>
       {recent.length > 0 ? (
