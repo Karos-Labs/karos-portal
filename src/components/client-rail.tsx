@@ -91,6 +91,10 @@ export function ClientRail({
   // navigation.
   const [companyOpen, setCompanyOpen] = useCompanySheet();
 
+  // The same three feeds the bell counts, so the Company tab's dot and the
+  // badge inside the sheet can never disagree (CD-H5).
+  const unread = actionItems.length + reviewJobs.length + taskAlerts.length;
+
   return (
     <>
       {/* ── Desktop left rail (z-30 so its menus/panels sit above the center column) ── */}
@@ -206,7 +210,12 @@ export function ClientRail({
         </div>
       </aside>
 
-      {/* ── Mobile top bar ── */}
+      {/* ── Mobile top bar ──
+           Branding + the credits pill only. The bell that used to sit here is
+           in the Company sheet now (CD-H5): at this width the sheet is where
+           every piece of account chrome lives, and the staff shell already
+           works this way. The strip itself stays — it is the product's
+           wordmark, not a menu (orchestrator ruling). */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
         <Link href={home} className="flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -230,12 +239,6 @@ export function ClientRail({
               <span className="font-mono font-medium text-foreground">{spendableCredits}</span>
             </Link>
           )}
-          <NotificationBell
-            actionItems={actionItems}
-            reviewJobs={reviewJobs}
-            taskAlerts={taskAlerts}
-            viewerIsClient
-          />
         </div>
       </div>
 
@@ -244,6 +247,9 @@ export function ClientRail({
         items={primaryNav}
         companyOpen={companyOpen}
         onOpenCompany={() => setCompanyOpen(true)}
+        /* CD-H5: the bell moved off the top bar into the sheet, so the tab
+           carries the signal — same treatment CD-G9c gave the staff shell. */
+        companyUnread={unread}
       />
 
       {/* ── Mobile Company sheet ── */}
@@ -292,6 +298,20 @@ export function ClientRail({
               Team
             </Link>
           )}
+          {/* The bell's full panel, reachable at phone width now that the top
+              bar no longer carries it (CD-H5). panelPlacement="up" opens it
+              over the sheet body and the max-height keeps it inside the
+              sheet's own scroll container instead of running off the bottom —
+              the constraint the staff mount already uses. */}
+          <NotificationBell
+            actionItems={actionItems}
+            reviewJobs={reviewJobs}
+            taskAlerts={taskAlerts}
+            variant="row"
+            panelPlacement="up"
+            panelClassName="max-h-[45vh]"
+            viewerIsClient
+          />
           <div className="px-0">
             <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
           </div>
