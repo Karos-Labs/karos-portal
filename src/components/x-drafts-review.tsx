@@ -282,12 +282,18 @@ export function XDraftsBatch({
   assetId: string;
   accounts: XParsedAccount[];
 }) {
+  const totalDrafts = accounts.reduce((n, a) => n + a.drafts.length, 0);
   return (
     <div className="space-y-5">
+      {/* A3/A4: this used to open "About a week of posting to choose from" and
+          close on "the next batch" — two statements of the batch shape on the
+          one client-reachable surface where the drafts are visibly a set. The
+          LinkedIn twin was scrubbed already; this is the same treatment, so the
+          two reviews say the same thing about how the work arrives (nothing). */}
       <p className="text-sm text-muted">
-        About a week of posting to choose from. Pick your favorites (each pick opens X with the
-        post ready), edit freely, and skip with a reason. Every choice sharpens that
-        account&apos;s voice for the next batch.
+        {totalDrafts === 1 ? "The next post, ready to review." : "Drafts to choose from."} Picking
+        opens X with the post ready; edit freely, or skip with a reason. Every choice sharpens
+        that account&apos;s voice for the next run.
       </p>
       {accounts.map((acc) => {
         const isCompany = acc.title.toLowerCase().includes("company page");
