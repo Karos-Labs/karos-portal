@@ -320,6 +320,11 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         posts={posts}
         assets={assets}
         canSchedule={canSchedule}
+        // Pausing is not a staff privilege — a client owns their own schedules
+        // and the server action already authorizes them. Deleting stays behind
+        // canSchedule.
+        canManageRuns
+
         clients={clientOptions}
         agents={agentOptions}
         {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}

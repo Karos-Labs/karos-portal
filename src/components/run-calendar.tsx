@@ -209,24 +209,61 @@ function PostChip({
 function ScheduledRunCard({
   run,
   canManage,
+  canDelete,
 }: {
   run: CalendarRun;
+  /** Pause this schedule. Clients may manage their own (requireClientAccess). */
   canManage: boolean;
+  /** Delete it outright — staff only; a client's undo is a staff member. */
+  canDelete: boolean;
 }) {
   const router = useRouter();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<null | "pause" | "delete">(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [paused, setPaused] = useState(false);
 
-  async function cancel() {
+  // Both handlers previously ignored the result and never cleared the busy
+  // flag: a refused call span forever with no message and left the card on
+  // screen as if nothing had happened.
+  async function remove() {
     if (busy) return;
-    setBusy(true);
-    await deletePlannedRunAction(run.id);
-    router.refresh();
+    setBusy("delete");
+    setError(null);
+    try {
+      const res = await deletePlannedRunAction(run.id);
+      if (res?.error) {
+        setError(res.error);
+        setConfirmingDelete(false);
+        return;
+      }
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't delete this schedule.");
+    } finally {
+      setBusy(null);
+    }
   }
+
   async function pause() {
     if (busy) return;
-    setBusy(true);
-    await setPlannedRunStatusAction(run.id, "paused");
-    router.refresh();
+    setBusy("pause");
+    setError(null);
+    try {
+      const res = await setPlannedRunStatusAction(run.id, "paused");
+      if (res?.error) {
+        setError(res.error);
+        return;
+      }
+      // The calendar only carries active schedules, so this card is about to
+      // disappear — say so rather than letting it blink out.
+      setPaused(true);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't pause this schedule.");
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (
@@ -255,12 +292,70 @@ function ScheduledRunCard({
               {run.prompt ? `“${run.prompt}”` : "Runs the agent's default playbook."}
             </p>
           </div>
-          {canManage && (
-            <div className="mt-3 flex gap-2">
-              <Button size="sm" variant="ghost" onClick={pause} loading={busy}>Pause</Button>
-              <Button size="sm" variant="danger" onClick={cancel} loading={busy}>Cancel</Button>
-            </div>
+          {paused ? (
+            <p className="mt-3 text-xs text-muted-2">
+              Paused. It won&apos;t fire again until you resume it on the AI Agents page.
+            </p>
+          ) : (
+            (canManage || canDelete) && (
+              <div className="mt-3 space-y-2">
+                {confirmingDelete ? (
+                  <>
+                    <p className="text-xs text-danger">
+                      Delete this schedule permanently? The agent stops running on this cadence and
+                      it can&apos;t be undone. To stop it temporarily, pause it instead.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        onClick={remove}
+                        loading={busy === "delete"}
+                        disabled={busy != null}
+                      >
+                        Yes, delete it
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setConfirmingDelete(false)}
+                        disabled={busy != null}
+                      >
+                        Keep it
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {canManage && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={pause}
+                        loading={busy === "pause"}
+                        disabled={busy != null}
+                      >
+                        Pause
+                      </Button>
+                    )}
+                    {canDelete && (
+                      // Named for what it does. "Cancel" sat next to a dismissible
+                      // card and destroyed the schedule on one click.
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        onClick={() => setConfirmingDelete(true)}
+                        disabled={busy != null}
+                      >
+                        Delete schedule
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
           )}
+          {error && <p className="mt-2 text-xs text-danger">{error}</p>}
         </div>
       </div>
     </div>
@@ -454,6 +549,7 @@ export function RunCalendar({
   posts,
   assets,
   canSchedule = false,
+  canManageRuns = false,
   clients = [],
   agents = [],
   connectedPlatformsByClient,
@@ -462,8 +558,14 @@ export function RunCalendar({
   runs: CalendarRun[];
   posts: CalendarPost[];
   assets: Asset[];
-  /** Staff on their own clients — shows the "Schedule a run" button + management controls. */
+  /** Staff on their own clients — shows the "Schedule a run" button + staff-only controls. */
   canSchedule?: boolean;
+  /**
+   * May pause a scheduled run. True for clients on their own calendar too:
+   * setPlannedRunStatusAction authorizes with requireClientAccess, and pausing
+   * was already possible for them one page over, on AI Agents.
+   */
+  canManageRuns?: boolean;
   clients?: CalendarClientOption[];
   agents?: ScheduleAgentOption[];
   /**
@@ -742,7 +844,12 @@ export function RunCalendar({
               {selectedScheduled.length > 0 && (
                 <Section title="Upcoming runs">
                   {selectedScheduled.map((r) => (
-                    <ScheduledRunCard key={r.id} run={r} canManage={canSchedule} />
+                    <ScheduledRunCard
+                      key={r.id}
+                      run={r}
+                      canManage={canManageRuns || canSchedule}
+                      canDelete={canSchedule}
+                    />
                   ))}
                 </Section>
               )}
