@@ -21,9 +21,23 @@ export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * Serialize a value for interpolation INSIDE a <script> element.
+ *
+ * JSON.stringify escapes quotes and backslashes but leaves `<` alone, so a
+ * value containing `</script>` closes the element and everything after it is
+ * parsed as HTML. That is reachable unauthenticated: the callback route
+ * reflects the provider's `error_description` (and the authorize route the URL
+ * path segment) before any state/CSRF check. Escaping `<` as < keeps the
+ * payload a string literal in every case.
+ */
+export function js(value: unknown): string {
+  return JSON.stringify(value ?? null).replace(/</g, "\\u003c");
+}
+
 export function successPage(platform: string, accountName: string, origin: string): Response {
   const body = `<div class="icon" style="background:#FF6B2C22"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#FF6B2C" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h2>Connected!</h2><p>Closing window…</p>`;
-  const script = `(function(){var o=window.opener;if(o&&!o.closed){o.postMessage({type:"karos_oauth_success",platform:${JSON.stringify(platform)},accountName:${JSON.stringify(accountName)}},${JSON.stringify(origin)});setTimeout(function(){window.close()},800)}else{document.querySelector("p").textContent="You can close this window."}})()`;
+  const script = `(function(){var o=window.opener;if(o&&!o.closed){o.postMessage({type:"karos_oauth_success",platform:${js(platform)},accountName:${js(accountName)}},${js(origin)});setTimeout(function(){window.close()},800)}else{document.querySelector("p").textContent="You can close this window."}})()`;
   return htmlPage(body, script);
 }
 
@@ -34,6 +48,6 @@ export function errorPage(
   status = 200,
 ): Response {
   const body = `<div class="icon" style="background:#ef444422"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round"/></svg></div><h2>Connection failed</h2><p>${esc(message)}</p>`;
-  const script = `(function(){var o=window.opener;if(o&&!o.closed){o.postMessage({type:"karos_oauth_error",platform:${JSON.stringify(platform)},error:${JSON.stringify(message)}},${JSON.stringify(origin)});setTimeout(function(){window.close()},1500)}else{document.querySelector("p").textContent+=" You can close this window."}})()`;
+  const script = `(function(){var o=window.opener;if(o&&!o.closed){o.postMessage({type:"karos_oauth_error",platform:${js(platform)},error:${js(message)}},${js(origin)});setTimeout(function(){window.close()},1500)}else{document.querySelector("p").textContent+=" You can close this window."}})()`;
   return htmlPage(body, script, status);
 }
