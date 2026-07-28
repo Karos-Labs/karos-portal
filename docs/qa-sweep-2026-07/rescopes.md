@@ -382,3 +382,19 @@ starting. Updated by the orchestrator after each verification gate.
   submitManagedJobAction); CancelRunControl "Credits returned" copy odd for
   staff-fired uncharged runs; F128 Disclosure-deviation + F25 CD-B2 deferral
   absent from commit bodies (reporting lapse, code correct).
+
+## AGENTS risk-lens bounces (2 UNSAFE + 1 regression)
+- F25 argmin/ladder mismatch → bindingCreditLimit must take cost + match
+  assessCharge order; pass now to creditBlockReason + availableCredits.
+- F34 raw AGENT_SERVICE_* env strings reach clients on outage → client-safe map
+  at action boundary.
+- F32 removed modal height cap entirely → restore bounded min(…,1100px).
+- Logged non-blocking (end-loop / handover): F37 clients/page.tsx:14-20 ships
+  unfenced count map to employees (guard-zone "fence cross-client views" — one
+  line: skip !nameById.has(clientId)); F31 4s poll runs full run duration
+  (10-20min) doing listJobs+buildAgentSetup; F36 all-optional brief silently
+  substitutes quickStarts[0] into the CHARGED prompt; F27 stored schedules
+  above 5 replies not retro-clamped; submit-custom.ts:178 independent cap of 10;
+  several job writes omit updatedAt; F134 regex misses [Person]/[person's]
+  capitalized/possessive; CheckCircle2 (custom-agents.tsx:1042) not in lucide
+  1.21 → silent Sparkles fallback (pre-existing).

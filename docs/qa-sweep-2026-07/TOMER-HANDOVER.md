@@ -345,12 +345,15 @@ established patterns instead of inventing new ones:**
    `parseRedditDrafts` + `RedditDraftsBatch` as the third sniff in BOTH
    components, same order discipline. Documented in F46's commit `271c381`.
 2. **Draft titles:** strip/translate lab-internal vocabulary ("Avenue 3 ·
-   News-reaction…") at the reader render boundary, the way F70's fix does in
-   `src/components/x-drafts-review.tsx` / `li-drafts-review.tsx`.
-3. **Intake copy:** mirror the corrected X/LinkedIn intake pages
-   (`src/components/x-agent-intake.tsx`, `linkedin-agent-intake.tsx`) — F28
-   rewrote where drafts actually live; there is no `reddit-agent-intake.tsx`
-   today, so build it from those.
+   News-reaction…") at the reader render boundary in
+   `src/components/x-drafts-review.tsx` / `li-drafts-review.tsx` — this is
+   F70's prescribed fix (WORKSPACE cluster, in flight at draft time); apply
+   the same boundary treatment to the Reddit reader.
+3. **Intake copy:** mirror the X/LinkedIn intake pages
+   (`src/components/x-agent-intake.tsx`, `linkedin-agent-intake.tsx`) as
+   corrected by F28 (AGENTS cluster, in flight at draft time — it rewrites
+   where drafts actually live). There is no `reddit-agent-intake.tsx` today;
+   build it from those.
 4. **Run status labels:** consume `JOB_STATUS_META` (§6.5) — never print raw
    `job.status`.
 5. **Reply-cap economics (F27) and empty-input refusal (F36):** re-check both
@@ -518,8 +521,9 @@ enforced; breaking them will fail the same review gates.
 
 ### 6.2 The NUL-byte grep hazard (this one bites silently)
 
-`src/lib/seo-geo.ts` is CRLF and contains a literal NUL byte (a map-key
-separator near the killedReasons map). `grep`/`rg` treat the file as binary
+`src/lib/seo-geo.ts` is CRLF and contains a literal NUL byte — it is the
+Map-key separator in the question-row builder's `byKey` map
+(`` `${p.prompt}\0${p.engine}` ``). `grep`/`rg` treat the file as binary
 and **silently return nothing** — a plain grep for a symbol defined there
 reports false "zero matches / zero importers". Use:
 
