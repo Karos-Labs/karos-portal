@@ -444,7 +444,7 @@ export function Sidebar({
           client tabs, ≤6 documents, ≤5 tracked competitors, ≤4 swatches — so
           the compacted stack fits; overflow-y-auto stays as the safety valve
           for genuinely short windows rather than clipping a section away. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-1">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-1 pt-4">
         {nav}
         {clientSections}
       </div>
