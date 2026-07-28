@@ -61,6 +61,24 @@ describe("narrow-viewport shell chrome", () => {
     expect(clientAnchor).not.toBe(staffAnchor);
   });
 
+  it("scopes outside-click dismissal to the overlay, never the lg+ side rail", () => {
+    // CD-G9b ruling: Albert described the pop-up. The persistent 380px rail
+    // owns a column of the layout, so collapsing it on a stray page click would
+    // reflow the page and then persist that through DOCK_STATE_KEY. It keeps
+    // its explicit handle as the only way to collapse.
+    const effect = /addEventListener\("mousedown"[\s\S]{0,80}?\n/.exec(dock);
+    expect(effect).not.toBeNull();
+
+    // The handler that runs on an outside click may close the sheet and nothing
+    // else — reaching setCollapsed from there is the regression.
+    const handler = /function handleOutside\([\s\S]*?\n    \}/.exec(dock)?.[0] ?? "";
+    expect(handler).toContain("setSheetOpen(false)");
+    expect(handler).not.toContain("setCollapsed");
+
+    // And the rail must not be wired for containment testing at all.
+    expect(dock).not.toContain("railRef");
+  });
+
   it("gives the expanded sheet a height cap rather than a fixed box", () => {
     // A fixed 70dvh box left dead air between sparse content and the input row.
     expect(dock).toContain("max-h-[70dvh]");

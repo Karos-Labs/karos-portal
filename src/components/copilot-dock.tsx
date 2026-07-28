@@ -39,9 +39,8 @@ const SHELL_ANCHOR: Record<CopilotShell, string> = {
 /**
  * Whether an element is actually painted. The shell swaps its two dock surfaces
  * with `lg:hidden` / `hidden lg:block`, and a `display:none` element still holds
- * a live ref — so the outside-click pass below has to skip the surface that
- * isn't on screen, or browsing at phone width would quietly persist a collapsed
- * desktop rail (and vice versa) through DOCK_STATE_KEY.
+ * a live ref — so this is how the outside-click pass below tells "the sheet is
+ * the surface on screen" from "we are at lg+ and the rail is".
  *
  * `getClientRects()` rather than `offsetParent`: the sheet is `position: fixed`,
  * whose offsetParent is null even when it is perfectly visible.
@@ -75,7 +74,6 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
   /** Blocks the write-back below until the restore pass has run. */
   const hydratedRef = useRef(false);
   const sheetRef = useRef<HTMLDivElement>(null);
-  const railRef = useRef<HTMLElement>(null);
   const anchor = SHELL_ANCHOR[shell];
 
   useEffect(() => {
@@ -106,31 +104,37 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
   }, [collapsed, sheetOpen]);
 
   /**
-   * Dismiss on any click outside the copilot (CD-G9b): it stays open only while
-   * the viewer is working inside it. Same idiom as the export menu in
+   * Dismiss the sheet on any click outside it (CD-G9b): it stays open only
+   * while the viewer is working inside it. Same idiom as the export menu in
    * client-documents.tsx — a document `mousedown` plus a ref containment test —
    * rather than the full-screen click-catcher some menus use, because a catcher
    * would swallow the first click on every page while the copilot is open.
    *
-   * Neither surface is unmounted: the sheet is hidden with `display:none` and
-   * the rail is clipped, so a half-typed message and the restored transcript
-   * both survive an accidental dismissal (QA F88).
+   * Scoped to the OVERLAY presentation below `lg` on purpose. The lg+ surface
+   * is a persistent side rail that owns a column of the layout, not a pop-up:
+   * collapsing it on a stray page click would reflow the whole content column
+   * and then persist that through DOCK_STATE_KEY. It keeps its explicit handle
+   * as the only way to collapse it.
+   *
+   * The sheet is not unmounted either — it is hidden with `display:none`, so a
+   * half-typed message and the restored transcript both survive an accidental
+   * dismissal (QA F88).
    *
    * The Strategy War Room renders inside ChatbotWidget with no portal, so its
-   * DOM is inside these refs and clicking it does not count as "outside".
+   * DOM is inside this ref and clicking it does not count as "outside".
    */
   useEffect(() => {
-    if (!sheetOpen && collapsed) return;
+    if (!sheetOpen) return;
     function handleOutside(e: MouseEvent) {
-      const target = e.target as Node;
       const sheet = sheetRef.current;
-      const rail = railRef.current;
-      if (sheetOpen && isPainted(sheet) && !sheet.contains(target)) setSheetOpen(false);
-      if (!collapsed && isPainted(rail) && !rail.contains(target)) setCollapsed(true);
+      // `isPainted` is the breakpoint test: above lg the shell sets the sheet's
+      // wrapper to `display:none`, and a persisted sheetOpen would otherwise let
+      // an lg+ page click rewrite state for a surface that is not even on screen.
+      if (isPainted(sheet) && !sheet.contains(e.target as Node)) setSheetOpen(false);
     }
     document.addEventListener("mousedown", handleOutside);
     return () => document.removeEventListener("mousedown", handleOutside);
-  }, [sheetOpen, collapsed]);
+  }, [sheetOpen]);
 
   const widgetProps = {
     clientId,
@@ -154,8 +158,9 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
           (The cap itself is QA F94 — at 35vh the greeting filled the sheet and
           the four AI actions sat below the fold on first open.)
 
-          Both surfaces stay mounted and swap with `hidden`, so dismissing the
-          sheet keeps a half-typed message alive (CD-G9b). */}
+          Both states stay mounted and swap with `hidden`, so dismissing the
+          sheet — by the close control or by clicking outside it — keeps a
+          half-typed message alive (CD-G9b). */}
       <div className="lg:hidden">
         <div
           ref={sheetRef}
@@ -185,7 +190,6 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
       </div>
 
       <aside
-        ref={railRef}
         className={cn(
           // min-w-0 beats the flex automatic minimum — without it the fixed-width
           // chat inside keeps the rail at 380px and w-12 never takes effect.
