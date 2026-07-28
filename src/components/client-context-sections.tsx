@@ -346,22 +346,24 @@ export function BrandColorsSection({
 
   return (
     <div className="border-t border-border pb-1 pt-2.5">
-      <div className="mb-2 flex items-center justify-between px-1">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+      {/* CD-H2: ONE row, not two. The label, the swatches and the edit control
+          share a single line, which is the sanctioned lever for getting both
+          rails back under the CD-E3 no-scroll contract without touching any of
+          the approved spacing above this section. Nothing is hidden: every
+          swatch, its copy behaviour and its tooltip are all still here. */}
+      <div className="flex items-center gap-2 px-1">
+        <p className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
           Brand Colors
         </p>
-        <button
-          onClick={() => setBrandingOpen(true)}
-          className="flex h-5 w-5 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-          aria-label="Edit branding guidelines"
-          title="Edit branding guidelines"
-        >
-          <Icon name="Pencil" className="h-3 w-3" />
-        </button>
-      </div>
 
-      {effective.length > 0 ? (
-        <div className="flex items-start gap-2.5 px-1 pb-0.5">
+        {effective.length > 0 ? (
+        /* 20px swatches at a 4px gap is what the STAFF rail can actually give
+           this row. w-64 less px-4 is 223px of content — 213px while the rail
+           is scrolled, because a classic scrollbar takes its 10px out of the
+           content box — and the label (79) + the edit control (20) + two 8px
+           gaps leave 98px for four swatches. At the old 28px they overflowed
+           by 60px and the rail grew a horizontal scrollbar of its own. */
+        <div className="flex min-w-0 flex-1 items-center gap-1">
           {effective.map((color, i) => (
             <div key={i} className="group relative">
               {/* A button, not a div: the hex is the thing people actually want
@@ -370,27 +372,25 @@ export function BrandColorsSection({
               <button
                 type="button"
                 onClick={() => copyHex(color.hex, i)}
-                className="block h-7 w-7 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon"
+                className="block h-5 w-5 shrink-0 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon"
                 style={{ backgroundColor: color.hex }}
                 title={color.role ? `${color.role} · ${color.hex}` : color.hex}
                 aria-label={`Copy ${color.role ? `${color.role} ` : ""}${color.hex}`}
               />
-              {/* Internal mix share — staff only; a client's payload never
-                  carries the number (CD-E2). */}
-              {showUsage && (
-                <p className="mt-1 text-center font-mono text-[11px] leading-none text-muted-2">
-                  {color.usagePct != null ? `${color.usagePct}%` : "—"}
-                </p>
-              )}
               {/* Anchored to the near edge, not centred: a centred tooltip on the
                   first swatch ran off the left of the rail. Swatches past the
                   midpoint flip to the right edge for the same reason. */}
               <div
                 className={cn(
                   "pointer-events-none absolute bottom-full z-20 mb-2 w-max transition-opacity",
-                  // Widest that still clears the rail from the last swatch's
-                  // left edge; the label wraps rather than running off-screen.
-                  "max-w-[9.5rem]",
+                  // Widest that still clears the rail now that the swatches
+                  // start AFTER the label (CD-H2): the binding case is the
+                  // second swatch, left-anchored 115px into a 223px staff row.
+                  // The label wraps rather than running off-screen — and an
+                  // absolutely-positioned tooltip counts toward scrollWidth
+                  // even at opacity 0, so overflowing here would put the
+                  // horizontal scrollbar straight back.
+                  "max-w-[6rem]",
                   i >= 2 ? "right-0" : "left-0",
                   // The confirmation has to hold on its own: a tap has no hover
                   // to keep the tooltip up, and a keyboard user never had one.
@@ -411,6 +411,17 @@ export function BrandColorsSection({
                       {color.role && (
                         <span className="ml-1 font-sans text-muted-2">· {color.role}</span>
                       )}
+                      {/* Internal mix share — staff only; a client's payload
+                          never carries the number (CD-E2). It used to be a
+                          caption UNDER the swatch, which is the second line
+                          this section no longer has (CD-H2); the number itself
+                          is unchanged and reads on the same hover that already
+                          shows the hex and the role. */}
+                      {showUsage && (
+                        <span className="ml-1 font-sans text-muted-2">
+                          · {color.usagePct != null ? `${color.usagePct}%` : "—"}
+                        </span>
+                      )}
                     </>
                   )}
                 </div>
@@ -418,9 +429,19 @@ export function BrandColorsSection({
             </div>
           ))}
         </div>
-      ) : (
-        <p className="px-1 py-1 text-xs text-muted-2">No brand colors set yet.</p>
-      )}
+        ) : (
+          <p className="min-w-0 flex-1 truncate text-xs text-muted-2">No brand colors set yet.</p>
+        )}
+
+        <button
+          onClick={() => setBrandingOpen(true)}
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
+          aria-label="Edit branding guidelines"
+          title="Edit branding guidelines"
+        >
+          <Icon name="Pencil" className="h-3 w-3" />
+        </button>
+      </div>
 
       <BrandingModal
         open={brandingOpen}
