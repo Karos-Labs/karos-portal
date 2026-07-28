@@ -340,7 +340,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
   {
     id: "google_analytics",
     name: "Google Analytics",
-    icon: "BarChart3",
+    icon: "ChartColumn",
     color: "#E37400",
     description: "Read sessions, conversions, and AI-referral traffic from the client's GA4 property.",
     fields: [

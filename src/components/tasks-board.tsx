@@ -37,7 +37,7 @@ type BoardTask = ClientTask & { _clientName?: string };
 
 const BOARD_COLUMNS: { status: BoardStatus; label: string; icon: string }[] = [
   { status: "pending", label: "Pending", icon: "Circle" },
-  { status: "in_progress", label: "In Progress", icon: "PlayCircle" },
+  { status: "in_progress", label: "In Progress", icon: "CirclePlay" },
   { status: "review_pending", label: "Review Pending", icon: "Eye" },
   { status: "completed", label: "Done", icon: "CircleCheck" },
 ];
