@@ -357,6 +357,18 @@ export function Sidebar({
     </nav>
   );
 
+  // CD-G4: the chip's ↗ opens the client's REAL website, not /clients/[id] —
+  // the nav's Dashboard tab already goes there in client view, so the internal
+  // link was a duplicate. Same protocol normalisation the Competitor Track rows
+  // use for their own ↗. Null when the client has no website on file, and the
+  // chip falls back to the internal link rather than rendering a dead control.
+  const clientWebsite = activeClient?.client.website?.trim();
+  const clientSiteHref = clientWebsite
+    ? clientWebsite.startsWith("http")
+      ? clientWebsite
+      : `https://${clientWebsite}`
+    : null;
+
   // Client-context sections appended below core nav when a client is active.
   // CD-G4: the top block — logo, nav, client chip, and the rule above the
   // Documents header — is back to the 36a5200 baseline measurement-for-
@@ -382,14 +394,27 @@ export function Sidebar({
           <span className="flex-1 truncate text-sm font-semibold text-foreground">
             {activeClient.client.name}
           </span>
-          <Link
-            href={`/clients/${activeClient.client.id}`}
-            onClick={() => setOpen(false)}
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-            title="Go to client dashboard"
-          >
-            <Icon name="ArrowUpRight" className="h-3 w-3" />
-          </Link>
+          {clientSiteHref ? (
+            <a
+              href={clientSiteHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setOpen(false)}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
+              title="Open client website"
+            >
+              <Icon name="ArrowUpRight" className="h-3 w-3" />
+            </a>
+          ) : (
+            <Link
+              href={`/clients/${activeClient.client.id}`}
+              onClick={() => setOpen(false)}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
+              title="Go to client dashboard"
+            >
+              <Icon name="ArrowUpRight" className="h-3 w-3" />
+            </Link>
+          )}
         </div>
       </div>
 
