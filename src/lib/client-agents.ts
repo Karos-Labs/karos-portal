@@ -264,7 +264,13 @@ export function evaluateLaunchGate(input: LaunchGateInput): LaunchGateResult {
   if (input.availableCredits === undefined) return { allowed: true, cost: 0 };
 
   const cost = input.launchCreditCost;
-  if (cost == null) {
+  // Uncalibrated means "no price a human set" — which includes 0, a negative,
+  // and a non-integer, not just null. Treating those as valid would charge
+  // nothing, write NO ledger row (chargeClientCredits returns before the write
+  // for amount ≤ 0), and still quote the client a price on the card: a free
+  // launch that reads as paid and leaves no trace in the ledger it should be
+  // reconcilable from. A price nobody consciously set is not a price.
+  if (cost == null || !Number.isInteger(cost) || cost <= 0) {
     return {
       allowed: false,
       code: "pricing_uncalibrated",

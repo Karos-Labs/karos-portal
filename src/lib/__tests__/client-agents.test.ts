@@ -154,6 +154,17 @@ describe("evaluateLaunchGate", () => {
     });
   });
 
+  it("treats 0, negatives and fractions as uncalibrated, not as a free launch", () => {
+    // A zero price would charge nothing, write NO ledger row, and still quote
+    // the client a price on the card. "No price a human set" includes these.
+    for (const cost of [0, -25, 12.5, Number.NaN]) {
+      expect(evaluateLaunchGate({ ...baseGate, launchCreditCost: cost })).toMatchObject({
+        allowed: false,
+        code: "pricing_uncalibrated",
+      });
+    }
+  });
+
   it("lets STAFF launch an uncalibrated agent for free — those runs are the measurement", () => {
     expect(
       evaluateLaunchGate({ ...baseGate, launchCreditCost: null, availableCredits: undefined }),

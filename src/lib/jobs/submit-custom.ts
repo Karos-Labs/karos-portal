@@ -47,6 +47,20 @@ const MAX_PROMPT_CHARS = 4_000;
 const MAX_KEY_CHARS = 120;
 const MAX_NAME_CHARS = 200;
 
+/**
+ * Metadata keys this core owns. `extraMetadata` may not set them: they carry
+ * the webhook's job identity and the run's signed callback credential.
+ */
+const RESERVED_METADATA = new Set([
+  "platform_job_id",
+  "karos_job_token",
+  "karos_mcp_url",
+  "karos_task_id",
+  "karos_run_type",
+  "karos_client_agent_id",
+  "karos_template_key",
+]);
+
 export interface SubmitCustomAgentInput {
   agentId: string;
   clientId: string;
@@ -135,6 +149,14 @@ export async function submitCustomAgentJob(
   if (prompt.length > MAX_PROMPT_CHARS) {
     return { error: `Prompt is too long (max ${MAX_PROMPT_CHARS.toLocaleString()} characters).` };
   }
+  // A charge override must be a real price. Clamping a bad one to 0 would run
+  // the job for free AND write no ledger row at all (chargeClientCredits
+  // returns before the write for amount ≤ 0), while the surface that offered
+  // it still quoted a price — so the only honest handling is to refuse. Checked
+  // up here with the other input validation, before any job doc exists.
+  if (input.charge && (!Number.isInteger(input.charge.amount) || input.charge.amount <= 0)) {
+    return { error: "This run's price is not set up correctly — your Karos team can fix it." };
+  }
 
   const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
   if (!appUrl) {
@@ -218,7 +240,7 @@ export async function submitCustomAgentJob(
   // can hand the credits back.
   const multiplier = Math.max(1, Math.min(10, Math.round(input.chargeMultiplier ?? 1)));
   const runCost = input.charge
-    ? Math.max(0, Math.round(input.charge.amount))
+    ? input.charge.amount
     : (agent.creditCost ?? CREDIT_COSTS.customAgentRun) * multiplier;
   if (isBillableClientActor(user)) {
     try {
@@ -265,6 +287,16 @@ export async function submitCustomAgentJob(
       callback_url: `${origin}/api/agent-service/webhook`,
       ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),
       metadata: {
+        // Caller-supplied keys go FIRST so the core's own routing can never be
+        // shadowed: platform_job_id is how the webhook recovers a job when the
+        // serviceJobId write loses the race, and karos_job_token is a signed
+        // credential — a caller that passed either through extraMetadata (by
+        // accident or otherwise) could redirect a delivery or hand out a token
+        // for someone else's job. Reserved keys are dropped, not overridden
+        // silently, so the mistake is visible in the payload rather than fatal.
+        ...Object.fromEntries(
+          Object.entries(input.extraMetadata ?? {}).filter(([key]) => !RESERVED_METADATA.has(key)),
+        ),
         platform_job_id: jobId,
         ...(input.taskId ? { karos_task_id: input.taskId } : {}),
         ...(jobToken ? { karos_job_token: jobToken, karos_mcp_url: `${origin}/api/mcp` } : {}),
@@ -274,7 +306,6 @@ export async function submitCustomAgentJob(
         ...(input.runType ? { karos_run_type: input.runType } : {}),
         ...(input.clientAgentId ? { karos_client_agent_id: input.clientAgentId } : {}),
         ...(input.templateKey ? { karos_template_key: input.templateKey } : {}),
-        ...(input.extraMetadata ?? {}),
       },
     });
     submittedServiceJobId = submitted.job_id;
