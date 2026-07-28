@@ -14,7 +14,11 @@ import {
   stripDocPreamble,
   stripHeadingNumber,
 } from "@/lib/doc-render";
-import { generateIntelReportAction, updateIntelScheduleAction } from "@/lib/actions";
+import {
+  generateDocSummaryAction,
+  generateIntelReportAction,
+  updateIntelScheduleAction,
+} from "@/lib/actions";
 import { CorrectInfoModal } from "@/components/correct-info-modal";
 import {
   computeFirstIntelScheduleRun,
@@ -379,6 +383,7 @@ function sectionId(heading: string, i: number): string {
 function DocOverlay({
   doc,
   label,
+  clientId,
   onClose,
   onDocUpdated,
 }: {
@@ -390,6 +395,7 @@ function DocOverlay({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [correcting, setCorrecting] = useState(false);
+  const [summary, setSummary] = useState<string[] | null>(null);
   // renderFullDoc("") returns "" — with no branch here the panel used to open
   // onto a completely blank body with no message and no explanation.
   const body = renderFullDoc(doc.content);
@@ -418,6 +424,25 @@ function DocOverlay({
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [doc.id]);
 
+  // Executive summary: already built on the server, with caching keyed on the
+  // document version and its own usage logging, and no screen had ever called
+  // it. Non-blocking and best-effort — the document reads fine without it, and
+  // a repeat open of an unchanged version is served from cache with no model
+  // call.
+  useEffect(() => {
+    if (!clientId) return;
+    let live = true;
+    generateDocSummaryAction(clientId, doc.docType, doc.tier)
+      .then((bullets) => {
+        if (live && bullets.length) setSummary(bullets);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+      setSummary(null);
+    };
+  }, [clientId, doc.docType, doc.tier, doc.version]);
+
   return createPortal(
     <>
       <div
@@ -429,8 +454,15 @@ function DocOverlay({
       >
         <div className="flex h-full w-full max-w-[92%] flex-col border-l border-border bg-surface shadow-2xl animate-slide-in-right md:max-w-[50%]">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-6 py-3.5">
-            <p className="text-sm font-semibold text-foreground">{label}</p>
-            <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-foreground">{label}</p>
+              {/* "Is this current?" is the first question a document with a
+                  recurring regeneration schedule has to answer. */}
+              <p className="mt-0.5 text-[11px] text-muted-2">
+                Updated {formatDate(doc.updatedAt)} · v{doc.version}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
               <ExportMenu doc={doc} label={label} />
               <button
                 onClick={() => setCorrecting(true)}
@@ -451,6 +483,21 @@ function DocOverlay({
           </div>
 
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
+            {body && summary && (
+              <div className="mx-auto mb-6 w-full max-w-3xl rounded-[10px] border border-border bg-surface-2 px-4 py-3">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                  In short
+                </p>
+                <ul className="space-y-1">
+                  {summary.map((line) => (
+                    <li key={line} className="flex gap-2 text-xs leading-[1.6] text-muted">
+                      <span className="mt-[3px] shrink-0 text-[10px] text-neon/50">▸</span>
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {!body ? (
               <p className="mx-auto w-full max-w-2xl text-sm text-muted">
                 This document has not been generated yet — ask your Karos team to regenerate it.
