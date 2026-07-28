@@ -547,8 +547,12 @@ function FeedbackBox({
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
         Tell us what is working and what is not - in your own words, as much detail as you like.
-        It goes straight into the agent&apos;s next run. Picking, editing, or skipping individual
-        drafts happens on the drafts themselves, in your Workspace archive.
+        It goes straight into the agent&apos;s next run. To pick, edit or skip an individual
+        draft, open it from{" "}
+        <a href="/tasks?tab=archive" className="underline hover:text-foreground">
+          your archive
+        </a>{" "}
+        — each of those choices reaches the agent too.
       </p>
       {runs.length > 0 ? (
         <ul className="mt-3 space-y-1">
