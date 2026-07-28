@@ -319,7 +319,7 @@ export function Sidebar({
   // the nav was redundant — three controls for one action, and one more row
   // competing for the rail's fixed height (CD-E3).
   const nav = (
-    <nav className="flex flex-col gap-0.5">
+    <nav className="flex flex-col gap-1">
       {items.map((item) => {
         const itemPath = item.href.split("?")[0];
         const active = item.exact
@@ -357,12 +357,19 @@ export function Sidebar({
     </nav>
   );
 
-  // Client-context sections appended below core nav when a client is active
+  // Client-context sections appended below core nav when a client is active.
+  // CD-G4: the top block — logo, nav, client chip, and the rule above the
+  // Documents header — is back to the 36a5200 baseline measurement-for-
+  // measurement; Documents and everything under it keeps the approved
+  // compaction. `space-y` is the one class that straddles that boundary (it
+  // sets the chip→Documents gap AND the Documents→Competitors→Brand Colors
+  // gaps), so it stays at the compact 1.5; the baseline air above Documents is
+  // restored through the two wrappers' own pt-4 instead.
   const clientSections = activeClient ? (
-    <div className="mt-1.5 space-y-1.5">
+    <div className="mt-2 space-y-1.5">
       {/* Client header */}
-      <div className="border-t border-border pt-1.5">
-        <div className="flex items-center gap-2 px-1">
+      <div className="border-t border-border pt-4">
+        <div className="mb-1 flex items-center gap-2 px-1">
           <BrandFavicon
             src={activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl}
             website={activeClient.client.website}
@@ -386,7 +393,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="border-t border-border pt-1.5">
+      <div className="border-t border-border pt-4">
         <ClientDocuments
           contextDocs={activeClient.contextDocs}
           isAdmin={activeClient.isAdmin}
@@ -422,7 +429,7 @@ export function Sidebar({
   const content = (
     <div className="flex h-full flex-col">
       {/* Logo — fixed top */}
-      <div className="shrink-0 px-4 pb-1 pt-2.5">
+      <div className="shrink-0 px-4 pb-2 pt-4">
         <Link href="/dashboard" className="flex items-center gap-2.5 px-2 py-1">
           <Image
             src="/brand/kairos-head-disc-dark.svg"
@@ -444,7 +451,7 @@ export function Sidebar({
           client tabs, ≤6 documents, ≤5 tracked competitors, ≤4 swatches — so
           the compacted stack fits; overflow-y-auto stays as the safety valve
           for genuinely short windows rather than clipping a section away. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-0 pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-0 pt-2">
         {nav}
         {clientSections}
       </div>
