@@ -342,7 +342,7 @@ function ExportMenu({
             <Icon name="FileText" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
             <div>
               <p className="font-medium text-foreground">Export PDF</p>
-              <p className="text-[10px] text-muted-2">Opens print dialog</p>
+              <p className="text-[11px] text-muted-2">Opens print dialog</p>
             </div>
           </button>
           <div className="h-px bg-border" />
@@ -356,7 +356,7 @@ function ExportMenu({
             <Icon name="FileCode" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
             <div>
               <p className="font-medium text-foreground">Export Markdown</p>
-              <p className="text-[10px] text-muted-2">Downloads .md file</p>
+              <p className="text-[11px] text-muted-2">Downloads .md file</p>
             </div>
           </button>
         </div>
@@ -460,7 +460,9 @@ function DocOverlay({
               <p className="truncate text-sm font-semibold text-foreground">{label}</p>
               {/* "Is this current?" is the first question a document with a
                   recurring regeneration schedule has to answer. */}
-              <p className="mt-0.5 text-[11px] text-muted-2">
+              {/* Carries a date and a version number, so it takes the readable
+                  tone — muted-2 is for labels (QA F119). */}
+              <p className="mt-0.5 text-[11px] text-muted">
                 Updated {formatDate(doc.updatedAt)} · v{doc.version}
               </p>
             </div>
@@ -1074,7 +1076,7 @@ export function ClientDocuments({
                 <div className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left">
                   <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2/60" />
                   <span className="flex-1 truncate text-sm text-muted-2">{item.label}</span>
-                  <span className="shrink-0 text-[10px] text-muted-2">Rebuilding</span>
+                  <span className="shrink-0 text-[11px] text-muted-2">Rebuilding</span>
                 </div>
                 <p className="px-2 pb-1.5 text-[11px] text-muted-2">
                   This document is being rebuilt — check back shortly.
