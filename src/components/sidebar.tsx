@@ -430,6 +430,8 @@ export function Sidebar({
         guidelines={activeClient.client.brandingGuidelines}
         clientId={activeClient.client.id}
         hasWebsite={!!activeClient.client.website}
+        /* Staff shell — internal usage percentages are visible and editable here. */
+        isStaff
       />
     </div>
   ) : null;

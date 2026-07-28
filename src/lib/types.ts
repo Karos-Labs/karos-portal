@@ -670,6 +670,15 @@ export interface BrandColor {
   dominanceRank: number;
   /** Optional semantic role if unambiguous, e.g. "Logo fill", "Primary CTA". */
   role?: string;
+  /**
+   * INTERNAL ONLY — share of the brand's visual surface this color should
+   * occupy, 0-100. It is the agency's own mix guidance for the design work, not
+   * something a client is asked to reason about, so it is stripped at the
+   * client boundary (toClientPortalView) and clients see swatches only.
+   * Never render it behind a client-visible conditional — it must not be in
+   * their RSC payload at all.
+   */
+  usagePct?: number;
 }
 
 export interface BrandingGuidelines {
