@@ -10,7 +10,7 @@ import {
 import { TasksBoard } from "@/components/tasks-board";
 import { ProgressView } from "@/components/progress-view";
 import { PageHeader } from "@/components/ui";
-import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
 import type { AppUser, ClientTask } from "@/lib/types";
 
 /**
@@ -56,12 +56,15 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
       getClientReport(scopedClientId),
       listAssets({ clientId: scopedClientId }),
     ]);
-    // Archive tab data. Client viewers get the redacted library set (locked
-    // future posts are whitelist-stripped before crossing the RSC boundary —
-    // same rule as the old Library page); staff keep full visibility.
-    const assets = getClientLibraryAssets(rawAssets, {
-      forClient: user.role === "CLIENT_USER",
-    });
+    // Archive tab data. A client's archive is POSTED work from the last ~30
+    // days only (F149/A4) — filtered HERE, at the server boundary, so nothing
+    // unposted crosses into the RSC payload at all; redaction still runs behind
+    // it as the standing guard for anything future-dated. Staff keep the full
+    // library.
+    const isClientViewer = user.role === "CLIENT_USER";
+    const assets = isClientViewer
+      ? getClientLibraryAssets(getClientArchiveAssets(rawAssets), { forClient: true })
+      : getClientLibraryAssets(rawAssets);
     return (
       <div>
         <PageHeader

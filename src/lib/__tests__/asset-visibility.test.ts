@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import {
+  CLIENT_ARCHIVE_WINDOW_MS,
+  getClientArchiveAssets,
+  getClientLibraryAssets,
+} from "@/lib/asset-visibility";
 import type { Asset } from "@/lib/types";
 
 function makeAsset(overrides: Partial<Asset> = {}): Asset {
@@ -34,5 +38,58 @@ describe("getClientLibraryAssets", () => {
     const visible = getClientLibraryAssets([older, newer]);
 
     expect(visible.map((asset) => asset.id)).toEqual(["newer", "older"]);
+  });
+});
+
+describe("getClientArchiveAssets", () => {
+  const now = 1_000_000_000_000;
+
+  it("hides unapproved drafts", () => {
+    const draft = makeAsset({ id: "draft-1", status: "draft", updatedAt: now });
+    const approved = makeAsset({ id: "approved-1", status: "approved", updatedAt: now });
+
+    expect(getClientArchiveAssets([draft, approved], { now }).map((a) => a.id)).toEqual([
+      "approved-1",
+    ]);
+  });
+
+  it("keeps work the client still has to post, whatever its age", () => {
+    const old = makeAsset({
+      id: "delivered-old",
+      status: "delivered",
+      updatedAt: now - 10 * CLIENT_ARCHIVE_WINDOW_MS,
+    });
+
+    expect(getClientArchiveAssets([old], { now }).map((a) => a.id)).toEqual(["delivered-old"]);
+  });
+
+  it("ages posted work out after the 30-day window", () => {
+    const fresh = makeAsset({
+      id: "posted-fresh",
+      status: "published",
+      publishedAt: now - 1000,
+      updatedAt: now - 1000,
+    });
+    const stale = makeAsset({
+      id: "posted-stale",
+      status: "published",
+      publishedAt: now - CLIENT_ARCHIVE_WINDOW_MS - 1000,
+      updatedAt: now - CLIENT_ARCHIVE_WINDOW_MS - 1000,
+    });
+
+    expect(getClientArchiveAssets([fresh, stale], { now }).map((a) => a.id)).toEqual([
+      "posted-fresh",
+    ]);
+  });
+
+  it("never lists a future-dated post — upcoming work lives on the calendar", () => {
+    const upcoming = makeAsset({
+      id: "locked-1",
+      status: "approved",
+      scheduledAt: now + 3 * 24 * 60 * 60 * 1000,
+      updatedAt: now,
+    });
+
+    expect(getClientArchiveAssets([upcoming], { now })).toEqual([]);
   });
 });

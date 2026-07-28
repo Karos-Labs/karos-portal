@@ -18,6 +18,15 @@ const STATUS_TONE: Record<Asset["status"], "neutral" | "success" | "warning" | "
   delivered: "success",
 };
 
+/** Client vocabulary for the stored status — "published" reads as "Posted". */
+const STATUS_LABEL: Record<Asset["status"], string> = {
+  draft: "Draft",
+  approved: "Approved",
+  scheduled: "Scheduled",
+  published: "Posted",
+  delivered: "Delivered",
+};
+
 interface AgentGroup {
   name: string;
   assets: Asset[];
@@ -25,19 +34,25 @@ interface AgentGroup {
 }
 
 /**
- * The Workspace "Archive" tab: every asset the agents have produced for this
- * client, grouped per agent and carrying the agent's real platform mark.
- * A tile opens the same detail modal the calendar uses — which mounts the
- * per-draft reader for agent draft batches (pick / edit / skip) and is
- * otherwise read-only; approval itself stays on the staff Library.
+ * The Workspace "Archive" tab, grouped per agent and carrying the agent's real
+ * platform mark. A tile opens the same detail modal the calendar uses — which
+ * mounts the per-draft reader for agent draft batches (pick / edit / skip) and
+ * is otherwise read-only; approval itself stays on the staff Library.
+ *
+ * For a client the set is POSTED work from the last ~30 days only — the filter
+ * runs server-side in TasksBody (F149/A4); this component only has to talk
+ * about it honestly. Staff see the client's full library.
  */
 export function ArchiveView({
   assets,
   agentNameByJobId,
+  viewerIsClient = false,
 }: {
   assets: Asset[];
   /** jobId → agent display name, for attributing job-produced assets. */
   agentNameByJobId: Record<string, string>;
+  /** Drives the copy only — the posted-only filter is applied on the server. */
+  viewerIsClient?: boolean;
 }) {
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
 
@@ -65,8 +80,12 @@ export function ArchiveView({
     return (
       <EmptyState
         icon={<Icon name="Archive" className="h-7 w-7" />}
-        title="Nothing archived yet"
-        description="Everything your agents produce lands here, organized per agent."
+        title={viewerIsClient ? "Nothing here yet" : "Nothing archived yet"}
+        description={
+          viewerIsClient
+            ? "Work your Karos team has approved shows up here, and stays for 30 days after you mark it posted."
+            : "Everything the agents produce lands here, organized per agent."
+        }
       />
     );
   }
@@ -115,7 +134,7 @@ function ArchiveTile({ asset, onOpen }: { asset: Asset; onOpen: () => void }) {
         <p className="truncate text-sm font-medium text-foreground">{asset.title}</p>
         <div className="mt-auto flex items-center justify-between gap-2">
           <span className="text-[11px] text-muted-2">{relativeTime(asset.createdAt)}</span>
-          <Badge tone={STATUS_TONE[asset.status]}>{asset.status}</Badge>
+          <Badge tone={STATUS_TONE[asset.status]}>{STATUS_LABEL[asset.status] ?? asset.status}</Badge>
         </div>
       </div>
     </button>

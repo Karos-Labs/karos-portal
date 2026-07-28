@@ -12,7 +12,7 @@ import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
-import { markAssetPostedAction } from "@/lib/actions";
+import { MarkPostedRow } from "@/components/mark-posted-row";
 import { publishAssetNowAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { assetImages } from "@/lib/asset-images";
@@ -457,51 +457,6 @@ function PublishNowRow({
  * into the platform), so this is where the loop has to be closed — without it
  * nothing the user does can ever move the asset off approved/scheduled.
  */
-function MarkPostedRow({ asset }: { asset: Asset }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const eligible =
-    (asset.status === "approved" || asset.status === "scheduled" || asset.status === "delivered") &&
-    asset.publishMode !== "placeholder";
-  if (!eligible) return null;
-
-  async function markPosted() {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await markAssetPostedAction(asset.id);
-      if (!result.ok) setError(result.error);
-      else router.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't mark this as posted");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="border-t border-border pt-3">
-      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
-        Already posted it?
-      </p>
-      <button
-        type="button"
-        onClick={markPosted}
-        disabled={busy}
-        className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
-      >
-        <Icon name="CheckCheck" className="h-3.5 w-3.5" />
-        {busy ? "Marking…" : "Mark as posted"}
-      </button>
-      <p className="mt-1.5 text-[11px] text-muted-2">
-        Moves it to Published so the calendar shows what&apos;s live.
-      </p>
-      {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
-    </div>
-  );
-}
 
 function TabButton({
   active,

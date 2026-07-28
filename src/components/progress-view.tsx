@@ -107,7 +107,11 @@ export function ProgressView({
           currentUserRole={currentUserRole}
         />
       ) : (
-        <ArchiveView assets={assets} agentNameByJobId={agentNameByJobId} />
+        <ArchiveView
+          assets={assets}
+          agentNameByJobId={agentNameByJobId}
+          viewerIsClient={currentUserRole === "CLIENT_USER"}
+        />
       )}
     </>
   );

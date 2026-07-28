@@ -25,6 +25,42 @@ export function getClientLibraryAssets(
   return sorted.map((a) => (isAssetUnlockedForClient(a, now) ? a : redactLockedAsset(a)));
 }
 
+/** How far back the client archive reaches. Older posts are hidden, never deleted. */
+export const CLIENT_ARCHIVE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * The client-facing Archive set (QA F149, call directive A4).
+ *
+ * The archive used to be every deliverable the moment it existed, badged
+ * "draft" — breaking the approval promise the run dialog makes and handing the
+ * client the whole batch at generation time. Three rules now:
+ *
+ * 1. **No drafts.** An unapproved draft is never client-visible, so nothing
+ *    appears "the moment it is generated".
+ * 2. **No future-dated posts.** Upcoming work lives on the calendar as slots;
+ *    the archive never hints that a later day's post already exists (A3/A4).
+ * 3. **Posted work ages out at ~30 days**, while work the client still has to
+ *    post (approved / scheduled / delivered) stays until they mark it posted —
+ *    that is what keeps "Mark as posted" reachable from the archive modal, and
+ *    keeps the per-draft pick/edit/skip reader (F46) reachable at all.
+ *
+ * Ageing out is a VIEW filter — nothing is deleted, and staff surfaces keep the
+ * full history.
+ */
+export function getClientArchiveAssets(assets: Asset[], opts?: { now?: number }): Asset[] {
+  const now = opts?.now ?? Date.now();
+  const cutoff = now - CLIENT_ARCHIVE_WINDOW_MS;
+  const postedAt = (a: Asset) => a.publishedAt ?? a.updatedAt ?? a.createdAt;
+  return assets
+    .filter((a) => {
+      if (a.status === "draft") return false;
+      if (!isAssetUnlockedForClient(a, now)) return false;
+      if (a.status === "published") return postedAt(a) >= cutoff;
+      return true;
+    })
+    .sort((a, b) => postedAt(b) - postedAt(a));
+}
+
 /**
  * Whitelist-redacted placeholder for a future-dated asset. Built by
  * CONSTRUCTION (never spread-and-delete) so any field added to Asset later is
