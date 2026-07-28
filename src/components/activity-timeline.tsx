@@ -8,6 +8,7 @@ import { AgentMark } from "@/components/agent-identity";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { addActivityNoteAction } from "@/lib/actions";
+import { clientSafeActor } from "@/lib/activity-actors";
 import type { ActivityEventType, ActivityLog, ClientReport, Job, Role } from "@/lib/types";
 
 /**
@@ -42,15 +43,18 @@ interface TimelineEvent {
 
 /* ── Event derivation ────────────────────────────────────────────────── */
 
-function eventsFromLogs(logs: ActivityLog[]): TimelineEvent[] {
+function eventsFromLogs(logs: ActivityLog[], viewerIsClient: boolean): TimelineEvent[] {
   return logs.map((l) => ({
     id: l.id,
     timestamp: l.timestamp,
     type: l.type,
     title: l.title,
     description: l.description,
-    actor: l.actor,
-    actorRole: l.actorRole,
+    // The row stores whatever its writer put there, and the automated writers
+    // put internal service names in it ("Runway autopilot" via submitManagedJob's
+    // synthetic admin). Redacted HERE, at the projection, so every caller of
+    // this timeline gets it — staff keep the real name.
+    ...clientSafeActor(l.actor, l.actorRole, viewerIsClient),
   }));
 }
 
@@ -153,8 +157,9 @@ function buildEvents(
   report: ClientReport | null,
   currentUserRole: Role,
 ): TimelineEvent[] {
-  const logEvents = eventsFromLogs(logs).filter(
-    (e) => currentUserRole !== "CLIENT_USER" || e.type !== "MANUAL_NOTE",
+  const viewerIsClient = currentUserRole === "CLIENT_USER";
+  const logEvents = eventsFromLogs(logs, viewerIsClient).filter(
+    (e) => viewerIsClient === false || e.type !== "MANUAL_NOTE",
   );
 
   // Deduplicate: if an INTEL_GENERATION log already exists for a date close to the
@@ -163,7 +168,7 @@ function buildEvents(
   const reportEvents = hasIntelLog ? [] : eventsFromReport(report);
 
   const jobEvents =
-    currentUserRole === "CLIENT_USER" ? clientEventsFromJobs(jobs) : eventsFromJobs(jobs);
+    viewerIsClient ? clientEventsFromJobs(jobs) : eventsFromJobs(jobs);
 
   const all = [...logEvents, ...jobEvents, ...reportEvents];
   // Sort newest first, stable-ish via id as tiebreaker

@@ -1,4 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  clientSafeActor,
+  isInternalActor,
+  RUNWAY_ACTOR_NAME,
+} from "@/lib/activity-actors";
 import { computeRunway, FAMILY_PRODUCT, RUNWAY_HORIZON_DAYS } from "@/lib/runway";
 import { startOfDayMs } from "@/lib/post-chain";
 import type { Asset } from "@/lib/types";
@@ -100,5 +107,65 @@ describe("runway constants", () => {
       email: "newsletter_issue",
       article: "blog_article",
     });
+  });
+});
+
+
+describe("the autopilot never signs a client's activity feed", () => {
+  it("redacts the internal actor for client viewers only", () => {
+    expect(clientSafeActor(RUNWAY_ACTOR_NAME, "staff", true)).toEqual({
+      actor: "Karos",
+      // The role moves with the name: a row labelled "Karos" that still claims
+      // a staff actor puts a person behind an automated event.
+      actorRole: "system",
+    });
+    // Staff keep the real name — they are the ones who need to know which
+    // sweep fired.
+    expect(clientSafeActor(RUNWAY_ACTOR_NAME, "staff", false)).toEqual({
+      actor: RUNWAY_ACTOR_NAME,
+      actorRole: "staff",
+    });
+  });
+
+  it("leaves a real person's name alone", () => {
+    expect(clientSafeActor("Albert Kattan", "staff", true)).toEqual({
+      actor: "Albert Kattan",
+      actorRole: "staff",
+    });
+    expect(clientSafeActor("Maya at Geektime", "client", true)).toEqual({
+      actor: "Maya at Geektime",
+      actorRole: "client",
+    });
+  });
+
+  it("covers the other synthetic writers, however the string was stored", () => {
+    for (const name of ["System AI", "Scheduler", "Client schedule", "  runway autopilot  "]) {
+      expect(isInternalActor(name)).toBe(true);
+      expect(clientSafeActor(name, "staff", true).actor).toBe("Karos");
+    }
+    expect(isInternalActor("Albert")).toBe(false);
+  });
+
+  it("is applied at the timeline projection, not at render", () => {
+    // Everything on a timeline row is serialized into the RSC payload, so a
+    // name redacted at render has already been shipped.
+    const src = readFileSync(join(process.cwd(), "src/components/activity-timeline.tsx"), "utf8");
+    expect(src).toContain("clientSafeActor(l.actor, l.actorRole, viewerIsClient)");
+  });
+
+  it("reads the actor name from one constant the route also uses", () => {
+    const route = readFileSync(join(process.cwd(), "src/app/api/runway/route.ts"), "utf8");
+    expect(route).toContain("name: RUNWAY_ACTOR_NAME");
+    expect(route).not.toContain('name: "Runway autopilot"');
+  });
+
+  it("hands the agent a brief with no operations vocabulary in it", () => {
+    // Whatever goes into the brief can come back out in a caption.
+    const route = readFileSync(join(process.cwd(), "src/app/api/runway/route.ts"), "utf8");
+    const brief = route.match(/notes: "([^"]+)"/)?.[1] ?? "";
+    expect(brief).toBeTruthy();
+    for (const phrase of ["runway", "top-up", "next two weeks", "automated"]) {
+      expect(brief.toLowerCase()).not.toContain(phrase);
+    }
   });
 });

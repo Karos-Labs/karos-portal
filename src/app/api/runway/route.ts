@@ -5,6 +5,7 @@ import { integrationIsUsable } from "@/lib/integration-status";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
 import { computeRunway, FAMILY_PRODUCT, RUNWAY_HORIZON_DAYS, type RunwayProduct } from "@/lib/runway";
+import { RUNWAY_ACTOR_NAME } from "@/lib/activity-actors";
 import type { AppUser } from "@/lib/types";
 import type { ChainFamily } from "@/lib/post-chain";
 import { logger } from "@/services/logger";
@@ -53,10 +54,13 @@ const AUTOGEN_FAMILIES: ChainFamily[] = ["social", "email"];
 const IN_FLIGHT: ReadonlySet<string> = new Set(["queued", "running"]);
 
 // System actor: makes every dispatch free agency overhead, like a staff run.
+// The name is a STAFF-facing codename — submitManagedJob logs it as the
+// activity actor, and the client timeline redacts it through clientSafeActor
+// (activity-actors.ts), which reads this same constant.
 const SYSTEM_USER: AppUser = {
   uid: "system-runway",
   email: "runway@karoslabs.internal",
-  name: "Runway autopilot",
+  name: RUNWAY_ACTOR_NAME,
   role: "KAROS_ADMIN",
   createdAt: 0,
 };
@@ -159,8 +163,14 @@ export async function GET(req: NextRequest) {
           // "notes" (plural) is the only free-text field either schema
           // recognizes (both are additionalProperties:false) — a "note" or
           // any other unrecognized key gets the whole request 422'd.
+          //
+          // The brief is MODEL INPUT, and a model repeats what it is given. An
+          // agent told this is an "automated weekly runway top-up" covering
+          // "the next two weeks" can echo either phrase into a caption, a
+          // subject line or a sign-off — internal operations vocabulary, on the
+          // client's own post. Say what to write, not why we are asking for it.
           brief: {
-            notes: "Automated weekly runway top-up — keep the calendar filled with on-brand content through the next two weeks.",
+            notes: "Create on-brand content for this client's upcoming schedule.",
           },
         });
         if (res.jobId && !res.error) jobsDispatched++;
