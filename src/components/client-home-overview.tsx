@@ -50,10 +50,15 @@ export function ClientHomeOverview({
   const attentionCount =
     deliverablesInReview.length + reviewPendingTasks.length + pendingTasks.length;
 
-  // eslint-disable-next-line react-hooks/purity -- Date.now() intentional: the
-  // archive is a time-windowed view (30 days) and a future-dated post is not in
-  // it yet, so "does this row have a destination" can only be answered against
-  // the current moment. Read once per render.
+  // Date.now() intentional: the archive is a time-windowed view (30 days) and a
+  // future-dated post is not in it yet, so "does this row have a destination"
+  // can only be answered against the current moment. Read once per render.
+  //
+  // The directive has to be the LAST line before the statement — it applies to
+  // the next SOURCE line, so with the explanation underneath it was suppressing
+  // a comment and the rule fired anyway (an error in the tree since this
+  // comment was written, and the "unused directive" warning beside it).
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
 
   // A3/A4, the treatment its siblings already carry (archive-view, the agent
