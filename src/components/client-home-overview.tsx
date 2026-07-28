@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Card, CardTitle, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
-import type { Asset, ClientTask, Job } from "@/lib/types";
+import type { Asset, ClientTask } from "@/lib/types";
 
 const ASSET_TYPE_LABEL: Record<Asset["type"], string> = {
   instagram_post: "Instagram post",
@@ -31,18 +31,20 @@ const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info">
  * an un-redacted future title would leak; the redaction stays at the page.
  */
 export function ClientHomeOverview({
-  jobs,
   tasks,
   assets,
 }: {
-  jobs: Job[];
   tasks: ClientTask[];
   assets: Asset[];
 }) {
-  const awaitingApproval = jobs.filter((j) => j.status === "review");
+  // Counted off the deliverables themselves, not off agent runs in `review` —
+  // the row links into the deliverable archive, so the number has to describe
+  // the same data the client is about to see.
+  const deliverablesInReview = assets.filter((a) => a.status === "draft");
   const reviewPendingTasks = tasks.filter((t) => t.status === "review_pending");
   const pendingTasks = tasks.filter((t) => t.status === "pending");
-  const attentionCount = awaitingApproval.length + reviewPendingTasks.length + pendingTasks.length;
+  const attentionCount =
+    deliverablesInReview.length + reviewPendingTasks.length + pendingTasks.length;
 
   const recentAssets = [...assets]
     .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))
@@ -73,14 +75,17 @@ export function ClientHomeOverview({
           </div>
         ) : (
           <ul className="space-y-2">
-            {awaitingApproval.length > 0 && (
+            {deliverablesInReview.length > 0 && (
               <AttentionRow
-                // Client users cannot open the staff-only Jobs screen. Draft
-                // deliverables are reviewed from their library instead.
-                href="/assets?view=library&status=draft"
+                // Approval is staff-only by design (approveAssetAction calls
+                // requireStaff so a client can't approve and arm auto-publish),
+                // so this row reports status rather than asking for a sign-off.
+                // /assets bounces client users to /tasks and drops the filter —
+                // link straight at the Archive tab where the drafts live.
+                href="/tasks?tab=archive"
                 icon="Sparkles"
-                label={`${awaitingApproval.length} post${awaitingApproval.length === 1 ? "" : "s"} awaiting your approval`}
-                hint="Review and approve to keep content moving."
+                label={`${deliverablesInReview.length} deliverable${deliverablesInReview.length === 1 ? "" : "s"} in review`}
+                hint="Your Karos team is reviewing these — they'll appear in your archive when ready."
               />
             )}
             {reviewPendingTasks.length > 0 && (
@@ -108,7 +113,7 @@ export function ClientHomeOverview({
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Recent activity</CardTitle>
           <Link
-            href="/tasks"
+            href="/tasks?tab=archive"
             className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
           >
             Open archive
@@ -130,7 +135,7 @@ export function ClientHomeOverview({
             {recentAssets.map((a) => (
               <li key={a.id}>
                 <Link
-                  href="/tasks"
+                  href="/tasks?tab=archive"
                   className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2 transition-colors hover:border-border-strong"
                 >
                   <div className="min-w-0 flex-1">
