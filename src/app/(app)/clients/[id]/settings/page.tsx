@@ -24,13 +24,23 @@ import { CreditsPanel } from "@/components/credits-panel";
 import { ClientAgentAccessCard } from "@/components/custom-agents";
 import { ScheduledRunsCard } from "@/components/scheduled-runs";
 import { ClientEditor } from "@/components/client-editor";
-import { LogoutButton } from "@/components/logout-button";
+import { SettingsTabs, type SettingsTab } from "@/components/settings-tabs";
 import { relativeTime } from "@/lib/utils";
 import type { ClientIntegration, Transcript, ClientCredits, CreditLedgerEntry, CustomAgent, ClientSettings, EmployeeSeat, ScheduledRun } from "@/lib/types";
 
-export default async function ClientSettingsPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ClientSettingsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  // Read here rather than with useSearchParams in SettingsTabs: this keeps the
+  // tab component free of a Suspense requirement and seeds it from the URL on a
+  // hard load, which is what makes a ?tab= link work at all.
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const user = await requireUser();
   const { id } = await params;
+  const { tab: initialTab } = await searchParams;
 
   if (user.role === "CLIENT_USER") {
     if (user.clientId !== id) redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
@@ -64,11 +74,126 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
   // — plus which secrets are set, for the form's placeholder.
   const sanitizedIntegrations = sanitizeIntegrations(integrations);
 
+  // Grouped by task instead of stacked. Sections keep their existing markup —
+  // only where they live changes. A tab whose content is entirely staff-gated
+  // collapses to null and is dropped below, so a client is never shown an empty
+  // tab (the Profile tab is admin/employee-only in practice).
+  const profileSection = isStaff ? <ClientEditor client={client} /> : null;
+
+  const creditsSection = (
+    <CreditsPanel
+      clientId={client.id}
+      credits={credits}
+      ledger={creditLedger}
+      role={user.role}
+      viewer={{ name: user.name, email: user.email }}
+    />
+  );
+
+  const channelsSection = (
+    <IntegrationsTab
+      clientId={client.id}
+      integrations={sanitizedIntegrations}
+      oauthEnabledPlatforms={oauthEnabledPlatforms}
+      currentUserRole={user.role}
+      linkedinSeats={sanitizedLinkedinSeats}
+      seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
+      seatCost={CREDIT_COSTS.employeeSeat}
+    />
+  );
+
+  const automationSection = (
+    <div className="space-y-8">
+      <AutoScheduleToggle clientId={client.id} enabled={settings?.autoScheduleEnabled} />
+
+      {/* Agent access (admin) — which custom agents this client may fire themselves */}
+      {isAdmin && (
+        <Card>
+          <CardTitle className="mb-1">AI agent access</CardTitle>
+          <p className="mb-3 text-sm text-muted-2">
+            Agents this client&apos;s users can run from their AI Agents page. Each run charges the
+            client&apos;s credits.
+          </p>
+          <ClientAgentAccessCard
+            clientId={client.id}
+            agents={customAgents}
+            allowedIds={client.customAgentIds ?? []}
+          />
+        </Card>
+      )}
+
+      {/* Scheduled runs (admin) — recurring generators fired on a cadence, draft-first + free */}
+      {isAdmin && (
+        <Card>
+          <CardTitle className="mb-1">Scheduled runs</CardTitle>
+          <p className="mb-3 text-sm text-muted-2">
+            Fire a custom agent for this client on a recurring cadence (e.g. the LinkedIn
+            company-page generator, Tue–Thu). Runs are draft-first and never charge credits.
+          </p>
+          <ScheduledRunsCard
+            clientId={client.id}
+            runs={scheduledRuns}
+            agents={customAgents
+              .filter((a) => a.enabled)
+              .map((a) => ({ id: a.id, name: a.name, entrySkillDir: a.entrySkillDir }))}
+          />
+        </Card>
+      )}
+    </div>
+  );
+
+  const meetingsSection = (
+    <Card>
+      <CardTitle className="mb-3">Meetings</CardTitle>
+      {transcripts.length === 0 ? (
+        <p className="text-sm text-muted-2">
+          No meetings linked yet. Calls synced from Fireflies appear here.
+        </p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {transcripts.slice(0, 12).map((t) => (
+            <li key={t.id}>
+              <Link
+                href={`/transcripts/${t.id}`}
+                className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-surface-2/40"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{t.title}</p>
+                  <p className="text-xs text-muted-2">{relativeTime(t.meetingDate ?? t.createdAt)}</p>
+                </div>
+                <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+
+  const teamSection = client.clientKeyId ? (
+    <Card>
+      <CardTitle className="mb-1">Invite your team</CardTitle>
+      <p className="mb-3 text-sm text-muted-2">
+        Share this key with a teammate so they can join your workspace.
+      </p>
+      <ClientKeyInline clientKeyId={client.clientKeyId} />
+    </Card>
+  ) : null;
+
+  const tabs: SettingsTab[] = [
+    { id: "profile", label: "Profile", icon: "Building2", content: profileSection },
+    { id: "channels", label: "Channels", icon: "Share2", content: channelsSection },
+    { id: "credits", label: "Credits", icon: "Coins", content: creditsSection },
+    { id: "automation", label: "Automation", icon: "Bot", content: automationSection },
+    { id: "meetings", label: "Meetings", icon: "Mic", content: meetingsSection },
+    { id: "team", label: "Team", icon: "Users", content: teamSection },
+  ].filter((t) => t.content !== null);
+
   return (
     <>
       <PageHeader
         title="Settings"
-        description="Connect channels, review meetings, and invite teammates."
+        description="Credits and usage, connected channels, automation, meetings, and teammates."
         action={
           <Link
             href="/settings"
@@ -88,127 +213,9 @@ export default async function ClientSettingsPage({ params }: { params: Promise<{
         </div>
       )}
 
-      {/* Brand profile (logo, voice, contact) — staff-managed */}
-      {isStaff && (
-        <div className="mb-8">
-          <ClientEditor client={client} />
-        </div>
-      )}
-
-      {/* Credits & usage */}
-      <div className="mb-8">
-        <CreditsPanel clientId={client.id} credits={credits} ledger={creditLedger} role={user.role} />
-      </div>
-
-      {/* Agent access (admin) — which custom agents this client may fire themselves */}
-      {isAdmin && (
-        <div className="mb-8">
-          <Card>
-            <CardTitle className="mb-1">AI agent access</CardTitle>
-            <p className="mb-3 text-sm text-muted-2">
-              Agents this client&apos;s users can run from their AI Agents page. Each run charges
-              the client&apos;s credits.
-            </p>
-            <ClientAgentAccessCard
-              clientId={client.id}
-              agents={customAgents}
-              allowedIds={client.customAgentIds ?? []}
-            />
-          </Card>
-        </div>
-      )}
-
-      {/* Scheduled runs (admin) — recurring generators fired on a cadence, draft-first + free */}
-      {isAdmin && (
-        <div className="mb-8">
-          <Card>
-            <CardTitle className="mb-1">Scheduled runs</CardTitle>
-            <p className="mb-3 text-sm text-muted-2">
-              Fire a custom agent for this client on a recurring cadence (e.g. the LinkedIn
-              company-page generator, Tue–Thu). Runs are draft-first and never charge credits.
-            </p>
-            <ScheduledRunsCard
-              clientId={client.id}
-              runs={scheduledRuns}
-              agents={customAgents
-                .filter((a) => a.enabled)
-                .map((a) => ({ id: a.id, name: a.name, entrySkillDir: a.entrySkillDir }))}
-            />
-          </Card>
-        </div>
-      )}
-
-      {/* Integrations */}
-      <IntegrationsTab
-        clientId={client.id}
-        integrations={sanitizedIntegrations}
-        oauthEnabledPlatforms={oauthEnabledPlatforms}
-        currentUserRole={user.role}
-        linkedinSeats={sanitizedLinkedinSeats}
-        seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
-        seatCost={CREDIT_COSTS.employeeSeat}
-      />
-
-      {/* Auto-schedule opt-in toggle */}
-      <div className="mt-6">
-        {/* Render client-side toggle so the user gets immediate UI feedback */}
-        <div>
-          <AutoScheduleToggle clientId={client.id} enabled={settings?.autoScheduleEnabled} />
-        </div>
-      </div>
-
-      {/* Meetings */}
-      <div className="mt-8">
-        <Card>
-          <CardTitle className="mb-3">Meetings</CardTitle>
-          {transcripts.length === 0 ? (
-            <p className="text-sm text-muted-2">
-              No meetings linked yet. Calls synced from Fireflies appear here.
-            </p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {transcripts.slice(0, 12).map((t) => (
-                <li key={t.id}>
-                  <Link
-                    href={`/transcripts/${t.id}`}
-                    className="flex items-center justify-between gap-3 py-2.5 transition-colors hover:bg-surface-2/40 -mx-2 rounded-lg px-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{t.title}</p>
-                      <p className="text-xs text-muted-2">{relativeTime(t.meetingDate ?? t.createdAt)}</p>
-                    </div>
-                    <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-      </div>
-
-      {/* Invite teammates */}
-      {client.clientKeyId && (
-        <div className="mt-8">
-          <Card>
-            <CardTitle className="mb-1">Invite your team</CardTitle>
-            <p className="mb-3 text-sm text-muted-2">
-              Share this key with a teammate so they can join your workspace.
-            </p>
-            <ClientKeyInline clientKeyId={client.clientKeyId} />
-          </Card>
-        </div>
-      )}
-
-      {/* Account */}
-      <div className="mt-8">
-        <Card className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <CardTitle>Account</CardTitle>
-            <p className="mt-0.5 text-sm text-muted-2">Sign out of your Karos workspace.</p>
-          </div>
-          <LogoutButton />
-        </Card>
-      </div>
+      {/* The Account card that used to close this page held nothing but a Sign
+          out button, which already lives in the rail's account menu. */}
+      <SettingsTabs tabs={tabs} initialTab={initialTab} />
     </>
   );
 }

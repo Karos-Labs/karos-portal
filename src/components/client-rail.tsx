@@ -46,7 +46,8 @@ export function ClientRail({
   actionItems,
   reviewJobs,
   taskAlerts,
-  creditBalance,
+  spendableCredits,
+  correctionPricing,
 }: {
   user: AppUser;
   client: Client;
@@ -56,8 +57,20 @@ export function ClientRail({
   actionItems: ActionItemNotification[];
   reviewJobs: AgentReviewNotification[];
   taskAlerts: ClientTask[];
-  /** Client's credit balance — shown as a pill linking to settings. Hidden when null. */
-  creditBalance?: number | null;
+  /**
+   * Credits the client can actually SPEND right now — availableCredits(), i.e.
+   * the balance clipped by the weekly/monthly caps, not the raw stored balance.
+   * The pill is labelled "remaining", so it must be the number the charge
+   * transaction would honour. Shown as a pill linking to settings; hidden when null.
+   */
+  spendableCredits?: number | null;
+  /**
+   * Price of a targeted document correction, for the Correct Info modal the
+   * rail's document panel opens. Resolved server-side and present ONLY for a
+   * billable client viewer, so staff never see a charge they don't incur;
+   * `blockReason` is the server's own refusal line when the cost won't fit.
+   */
+  correctionPricing?: { cost: number; blockReason?: string };
 }) {
   const pathname = usePathname();
   const home = `/clients/${client.id}`;
@@ -141,6 +154,7 @@ export function ClientRail({
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
                 intelSchedule={clientIntelSchedule(client)}
+                correctionPricing={correctionPricing}
               />
             </div>
 
@@ -159,7 +173,7 @@ export function ClientRail({
 
           {/* Bottom account menu */}
           <div className="shrink-0 border-t border-border p-3">
-            {creditBalance != null && (
+            {spendableCredits != null && (
               <Link
                 href={settingsItem.href}
                 className="mb-2 flex items-center justify-between rounded-md border border-border px-3 py-2 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground"
@@ -168,7 +182,7 @@ export function ClientRail({
                   <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
                   Credits
                 </span>
-                <span className="font-mono font-medium text-foreground">{creditBalance}</span>
+                <span className="font-mono font-medium text-foreground">{spendableCredits}</span>
               </Link>
             )}
             <AccountMenu
@@ -197,14 +211,14 @@ export function ClientRail({
           </span>
         </Link>
         <div className="flex items-center gap-2">
-          {creditBalance != null && (
+          {spendableCredits != null && (
             <Link
               href={settingsItem.href}
-              aria-label={`${creditBalance} credits remaining, open settings`}
+              aria-label={`${spendableCredits} credits remaining, open settings`}
               className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted"
             >
               <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
-              <span className="font-mono font-medium text-foreground">{creditBalance}</span>
+              <span className="font-mono font-medium text-foreground">{spendableCredits}</span>
             </Link>
           )}
           <NotificationBell actionItems={actionItems} reviewJobs={reviewJobs} taskAlerts={taskAlerts} />
@@ -265,6 +279,7 @@ export function ClientRail({
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
                 intelSchedule={clientIntelSchedule(client)}
+                correctionPricing={correctionPricing}
               />
             </div>
 

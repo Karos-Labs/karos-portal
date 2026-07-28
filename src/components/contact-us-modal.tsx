@@ -10,10 +10,18 @@ export function ContactUsButton({
   variant = "icon",
   userName,
   userEmail,
+  label = "Support",
 }: {
   variant?: "icon" | "row";
   userName: string;
   userEmail: string;
+  /**
+   * Row-variant trigger text. Defaults to the account-menu wording; callers
+   * mounting it as a way out of a specific dead end (a spent-out credit cap)
+   * name that instead, so the control reads as the next step rather than a
+   * generic support link.
+   */
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -72,7 +80,7 @@ export function ContactUsButton({
           className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
         >
           <Icon name="Headphones" className="h-4 w-4 text-muted-2" />
-          Support
+          {label}
         </button>
       ) : (
         <button

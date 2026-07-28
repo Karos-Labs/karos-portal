@@ -14,6 +14,12 @@ import {
   listClientCompetitors,
 } from "@/lib/data";
 import { ActiveClientProvider } from "@/lib/active-client-context";
+import {
+  CREDIT_COSTS,
+  availableCredits,
+  creditBlockReason,
+  isBillableClientActor,
+} from "@/lib/credits";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldBlockForOnboarding } from "@/lib/onboarding";
@@ -85,6 +91,31 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         getClientCredits(user.clientId),
       ]);
 
+      // The SPENDABLE figure, not the raw balance. The pill is labelled "credits
+      // remaining", and what the charge transaction actually enforces is the
+      // balance clipped by the weekly/monthly caps. This is the same call the
+      // Agents page makes, so the rail and that page can no longer print two
+      // different "available" numbers for the same second.
+      // `now` is omitted on purpose: getClientCredits rolls the spend windows on
+      // read, and it just ran in this same request, so the doc is already
+      // current. Calling Date.now() here would only add an impure call in render
+      // (react-hooks/purity) for no behavioural gain.
+      const spendableCredits = availableCredits(credits);
+
+      // Price + refusal for a targeted doc correction, resolved HERE rather than
+      // in the modal — same shape as the Agents page's creditBlockReasons map:
+      // the reason comes from the server's own ladder, so the modal can't invent
+      // a different one. Present only for a billable client viewer; staff and
+      // admins in "View as Client" are never charged, so they see no price.
+      const correctionPricing = isBillableClientActor(user)
+        ? {
+            cost: CREDIT_COSTS.targetedCorrection,
+            ...(spendableCredits < CREDIT_COSTS.targetedCorrection
+              ? { blockReason: creditBlockReason(credits, CREDIT_COSTS.targetedCorrection) }
+              : {}),
+          }
+        : undefined;
+
       return (
         <ActiveClientProvider>
           <div className="flex min-h-screen flex-col md:flex-row">
@@ -97,7 +128,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               actionItems={actionItems as ActionItemNotification[]}
               reviewJobs={reviewJobs}
               taskAlerts={taskAlerts}
-              creditBalance={credits.balance}
+              spendableCredits={spendableCredits}
+              correctionPricing={correctionPricing}
             />
 
             <div className="flex min-w-0 flex-1 flex-col">
