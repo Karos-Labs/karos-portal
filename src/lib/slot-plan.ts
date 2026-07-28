@@ -196,7 +196,12 @@ export function slotInstant(dateKey: string, timeZone: string): number {
  * calendar entities, only chain-provenance drafts may be re-dated, and a
  * pinned (staff-booked / already-visible / published) asset is untouchable.
  */
-function isSlotCandidate(a: Asset, family: ChainFamily, todayStartMs: number): boolean {
+function isSlotCandidate(
+  a: Asset,
+  family: ChainFamily,
+  todayKey: string,
+  timeZone: string,
+): boolean {
   if (chainFamilyFor(a.type) !== family) return false;
   if (a.publishMode === "placeholder") return false;
   if (isReferenceDocAsset(a)) return false;
@@ -208,7 +213,17 @@ function isSlotCandidate(a: Asset, family: ChainFamily, todayStartMs: number): b
   if (!hasProvenance) return false;
   // Already client-visible (its day has arrived) ⇒ pinned, exactly as the chain
   // treats a draft dated on or before today.
-  if (a.scheduledAt != null && a.scheduledAt <= todayStartMs) return false;
+  //
+  // Compared as a DAY, never as an instant. Every pin in the repo is a day
+  // boundary (post-chain.ts startOfDayMs / isAssetUnlockedForClient), and an
+  // instant comparison silently disagrees with them: a post dated 11:00 in the
+  // schedule's zone is unlocked for the client from that day's midnight, so
+  // testing against 11:00 leaves a whole morning in which the planner would
+  // happily move a post the client can already read onto a future day. The
+  // window is invisible in a UTC− zone and wide open in a UTC+ one.
+  if (a.scheduledAt != null && compareDateKeys(dateKeyInZone(a.scheduledAt, timeZone), todayKey) <= 0) {
+    return false;
+  }
   return true;
 }
 
@@ -253,7 +268,6 @@ export interface SlotMatchResult {
  */
 export function matchAssetsToSlots(input: SlotMatchInput): SlotMatchResult {
   const todayKey = dateKeyInZone(input.now, input.timeZone);
-  const todayStartMs = slotInstant(todayKey, input.timeZone);
 
   const futureSlots = input.slots
     .filter((slot) => (slot.kind ?? "single") === "single")
@@ -266,7 +280,7 @@ export function matchAssetsToSlots(input: SlotMatchInput): SlotMatchResult {
   );
 
   const candidates = input.assets
-    .filter((a) => isSlotCandidate(a, input.family, todayStartMs))
+    .filter((a) => isSlotCandidate(a, input.family, todayKey, input.timeZone))
     .filter((a) => !alreadyLinked.has(a.id))
     .sort((a, b) => {
       const cmp = deriveOrderKey(a).localeCompare(deriveOrderKey(b));

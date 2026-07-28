@@ -207,6 +207,56 @@ describe("matchAssetsToSlots", () => {
     );
   });
 
+  it("pins a today-dated draft by DAY, not by the 11:00 instant, in a UTC+ zone", () => {
+    // Geektime's zone. The bug this locks down: pinning on
+    // `scheduledAt <= slotInstant(today)` compares against 11:00 wall-clock,
+    // so a post dated 11:00 today — already unlocked for the client since
+    // local midnight — stayed a candidate for the whole morning and could be
+    // moved onto a future day. Every other pin in the repo is a day boundary.
+    const tz = "Asia/Jerusalem";
+    const morning = Date.UTC(2026, 6, 27, 6, 0); // 09:00 in Jerusalem
+    const todayKey = dateKeyInZone(morning, tz);
+    // Dated 14:00 Jerusalem — still TODAY (so the client can already read it),
+    // but later than the 11:00 instant the old predicate compared against.
+    const scheduledAt = slotInstant(todayKey, tz) + 3 * 60 * 60 * 1000;
+    expect(dateKeyInZone(scheduledAt, tz)).toBe(todayKey);
+    const todaysPost = labAsset({
+      id: "todays-post",
+      templateKey: "playbook",
+      orderKey: "2026-07-01#a",
+      scheduledAt,
+    });
+    const result = matchAssetsToSlots({
+      assets: [todaysPost],
+      slots: [slot({ dateKey: "2026-07-31", templateKey: "playbook" })],
+      family: "social",
+      timeZone: tz,
+      now: morning,
+    });
+    expect(result.matches).toEqual([]);
+    expect(result.assignments).toEqual([]);
+    expect(result.unmatchedAssetIds).toEqual([]);
+  });
+
+  it("still treats tomorrow's draft as movable in the same UTC+ zone", () => {
+    const tz = "Asia/Jerusalem";
+    const morning = Date.UTC(2026, 6, 27, 6, 0);
+    const tomorrows = labAsset({
+      id: "tomorrows-post",
+      templateKey: "playbook",
+      orderKey: "2026-07-01#a",
+      scheduledAt: slotInstant("2026-07-28", tz),
+    });
+    const result = matchAssetsToSlots({
+      assets: [tomorrows],
+      slots: [slot({ dateKey: "2026-07-31", templateKey: "playbook" })],
+      family: "social",
+      timeZone: tz,
+      now: morning,
+    });
+    expect(result.matches.map((m) => m.assetId)).toEqual(["tomorrows-post"]);
+  });
+
   it("never moves an asset onto a past or same-day slot", () => {
     const past = [
       slot({ dateKey: "2026-07-20", templateKey: "playbook" }),
