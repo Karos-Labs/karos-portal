@@ -95,7 +95,12 @@ export async function GET(req: NextRequest) {
         results.push({ ...base, status: "skipped", coveredThroughMs: null, deficit: {}, dispatched: [], detail: `client status: ${client.status}` });
         continue;
       }
-      if (client.onboardingStatus && client.onboardingStatus !== "done") {
+      // "failed" here means the one-time intel/context-doc research run
+      // degraded (pipeline.ts's research-agent quality gate) — it is NOT a
+      // content-generation readiness signal (agent-swarm / submitManagedJob
+      // never check it), so it must not block the autopilot. Only "pending"/
+      // "running" — genuinely still mid-setup — are skipped.
+      if (client.onboardingStatus === "pending" || client.onboardingStatus === "running") {
         results.push({ ...base, status: "skipped", coveredThroughMs: null, deficit: {}, dispatched: [], detail: `onboarding: ${client.onboardingStatus}` });
         continue;
       }

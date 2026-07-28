@@ -125,9 +125,13 @@ gcloud scheduler jobs create http runway \
   per run (default 2). Bounds agency-side agent-service spend; runway top-ups go
   through the staff/agency path and never charge client credits.
 
-Only `active`, onboarded clients are topped up; `social` and `newsletter_issue`
-families auto-fire (no required brief), while `blog_article` deficits are
-reported but left to the Task Map / manual flow (a blog needs a real topic).
+Only `active` clients still `pending`/`running` their initial onboarding are
+skipped — a past `onboardingStatus: "failed"` (the intel/context-doc research
+quality gate) does NOT block a client, matching every other generation entry
+point (agent-swarm, submitManagedJob), which never check it. `social` and
+`newsletter_issue` families auto-fire (no required brief), while `blog_article`
+deficits are reported but left to the Task Map / manual flow (a blog needs a
+real topic).
 
 `intel-report-schedule` drives the admin-configurable recurring Intel Report +
 SEO/GEO regeneration (Schedule button on each client's dashboard). Ticking
