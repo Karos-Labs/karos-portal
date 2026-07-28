@@ -732,13 +732,21 @@ export function ClientCustomAgents({
 }
 
 /**
- * Stop an in-flight run from the run row. The only cancel control used to live
- * on the staff run-detail page, so a client who mis-fired a twenty-five-minute
- * billable run could not stop it and could not reach the page that could. The
- * confirm step is deliberate: cancelling costs the run, and the row sits one
- * pixel from rows that are merely history.
+ * Stop an in-flight run. The only cancel control used to live on the staff
+ * run-detail page, so a client who mis-fired a twenty-five-minute billable run
+ * could not stop it and could not reach the page that could. The confirm step
+ * is deliberate: cancelling costs the run, and on the staff hub the row sits
+ * one pixel from rows that are merely history.
+ *
+ * EXPORTED because CD-G1 took the client's only mount away with it (F30
+ * regression). Dropping ClientCustomAgents from the client branch left this
+ * control mounted on the staff hub alone, so the client-authorized action
+ * behind it — cancelClientAgentJobAction, which authorizes on the JOB's own
+ * clientId — had no surface. The agent DETAIL page is where a client now meets
+ * their in-flight run, so that is where the control goes: one implementation,
+ * one action, one confirm step, on both panels.
  */
-function CancelRunControl({ runId }: { runId: string }) {
+export function CancelRunControl({ runId }: { runId: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [confirming, setConfirming] = useState(false);

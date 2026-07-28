@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
-import { AgentScheduleModal } from "@/components/custom-agents";
+import { AgentScheduleModal, CancelRunControl } from "@/components/custom-agents";
 import { ClientAgentFeedbackModal } from "./feedback-modal";
 import { OptionsRow, TemplateRows, WeekStrip } from "./live-card";
 import { SlotNoteModal } from "./slot-note-modal";
@@ -96,16 +96,25 @@ export function AgentDetailPanel({
           fires stay invisible — a "ran 2 hours ago · 7 drafts" line beside a
           week of daily slots is the tell that the days are a batch (§4.1). */}
       {agent.activeRun && (
-        <div className="flex items-start gap-2 rounded-[var(--radius)] border border-info/30 bg-info/10 px-4 py-3">
-          <span
-            className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-info animate-pulse-neon"
-            aria-hidden="true"
-          />
-          <p className="text-xs text-info">
-            Making your {agent.activeRun.templateName ?? "next"} post now — this takes 10–20
-            minutes. Your Karos team reviews it when it lands, and finished posts appear in your
-            Workspace once approved.
-          </p>
+        <div className="rounded-[var(--radius)] border border-info/30 bg-info/10">
+          <div className="flex items-start gap-2 px-4 py-3">
+            <span
+              className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-info animate-pulse-neon"
+              aria-hidden="true"
+            />
+            <p className="text-xs text-info">
+              Making your {agent.activeRun.templateName ?? "next"} post now — this takes 10–20
+              minutes. Your Karos team reviews it when it lands, and finished posts appear in your
+              Workspace once approved.
+            </p>
+          </div>
+          {/* F30, restored. The cancel used to ride the generic run rows, and
+              CD-G1 removed those from the client's branch — leaving a client
+              who mis-fired a billable twenty-minute run with no way to stop it
+              and no page to reach that could. The banner is where a client now
+              meets that run, so the existing control mounts here rather than a
+              second one being written for it. */}
+          <CancelRunControl runId={agent.activeRun.id} />
         </div>
       )}
 

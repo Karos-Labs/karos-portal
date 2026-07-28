@@ -424,6 +424,7 @@ export async function toClientAgentRows(args: {
       })),
       activeRun: pending
         ? {
+            id: pending.id,
             status: pending.status === "running" ? "running" : "queued",
             templateName: pending.templateKey
               ? (templateNames.get(pending.templateKey) ?? null)
