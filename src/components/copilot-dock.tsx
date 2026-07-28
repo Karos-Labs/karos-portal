@@ -198,12 +198,14 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
         )}
       >
       {/* z-40: sticky always forms its own stacking context, so the handle's
-          z-index can't beat the z-30 page header from inside — the frame
-          itself must sit above it or the header covers the handle's left half. */}
+          own z-index cannot lift it above sibling chrome from in here — the
+          frame itself has to outrank anything sticky in the column it borders,
+          or that chrome clips the handle's left half. Stays above the z-30 band
+          the shells use for their rails and any sticky page chrome. */}
       <div className="sticky top-0 z-40 h-screen">
         {/* Edge handle — inside the sticky frame so it pins to the viewport
-            near the top (never scrolls away), and above the sticky page
-            header so the full circle always shows. */}
+            near the top (never scrolls away), and above the column's own
+            chrome so the full circle always shows. */}
         <button
           onClick={() => setCollapsed((c) => !c)}
           className="absolute left-0 top-4 z-40 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-surface text-muted-2 shadow-md transition-colors hover:text-foreground"

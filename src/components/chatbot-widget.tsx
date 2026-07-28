@@ -711,10 +711,14 @@ export function ChatbotWidget({
         >
 
           {/* Header — single title; hairline divider, no fill (surface ladder).
-              h matches the AppHeader's border-box height (py-2 + h-9 + 1px
-              border = 53px) so the two border-b hairlines meet the rail
-              border as one continuous straight line. */}
-          <div className="flex h-[53px] shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+              Sizes to its own content. This used to be pinned to h-[53px] to
+              match the border-box height of the page header the rail sat beside,
+              so the two border-b hairlines read as one continuous line; that
+              header no longer exists, which left the number aligned to nothing.
+              py-3 around the two-line title block (16px + mt-1 + 9px, all
+              leading-none) lands within a pixel of the old height anyway, and
+              the 28px controls opposite it are shorter, so they never drive it. */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
             <div className="min-w-0">
               <p className="font-serif text-base leading-none">AI Copilot</p>
               <p className="mt-1 truncate font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-muted-2">
