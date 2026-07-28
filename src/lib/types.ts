@@ -200,7 +200,14 @@ export type JobStatus =
   | "review" // output ready, awaiting employee/client review
   | "approved"
   | "delivered"
-  | "failed";
+  | "failed"
+  /**
+   * Stopped on purpose. Distinct from "failed": folding the two presented a
+   * deliberate stop as a breakage, polluted failure counts, and left the person
+   * who pressed Cancel unsure whether it had worked. Credits are refunded for
+   * this outcome exactly as for a failure.
+   */
+  | "cancelled";
 
 export interface JobRunEvent {
   at: number;

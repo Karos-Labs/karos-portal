@@ -8,6 +8,7 @@ const MAP: Record<JobStatus, { tone: "neutral" | "neon" | "warning" | "danger" |
   approved: { tone: "neon", label: "Approved" },
   delivered: { tone: "neon", label: "Delivered" },
   failed: { tone: "danger", label: "Failed" },
+  cancelled: { tone: "neutral", label: "Cancelled" },
 };
 
 export function JobStatusBadge({ status }: { status: JobStatus }) {

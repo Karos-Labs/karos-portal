@@ -24,6 +24,7 @@ import {
   configureClientAgentScheduleAction,
   setPlannedRunStatusAction,
 } from "@/lib/actions/planned-run-actions";
+import { cancelClientAgentJobAction } from "@/lib/actions/external-job-actions";
 import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
 import { MAX_OUTPUTS_PER_RUN, MAX_RUNS_PER_WEEK } from "@/lib/scheduled-runs";
 import {
@@ -638,10 +639,13 @@ export function ClientCustomAgents({
                     <div className={rowClass}>{row}</div>
                   )}
                   {inFlight && (
-                    <ManagedJobProgress
-                      status={run.status}
-                      className="mb-0 rounded-none border-0 border-t border-border bg-surface-2/50 px-4 py-2"
-                    />
+                    <div className="border-t border-border bg-surface-2/50">
+                      <ManagedJobProgress
+                        status={run.status}
+                        className="mb-0 rounded-none border-0 bg-transparent px-4 py-2"
+                      />
+                      <CancelRunControl runId={run.id} />
+                    </div>
                   )}
                 </div>
               );
@@ -670,6 +674,58 @@ export function ClientCustomAgents({
         />
       )}
     </section>
+  );
+}
+
+/**
+ * Stop an in-flight run from the run row. The only cancel control used to live
+ * on the staff run-detail page, so a client who mis-fired a twenty-five-minute
+ * billable run could not stop it and could not reach the page that could. The
+ * confirm step is deliberate: cancelling costs the run, and the row sits one
+ * pixel from rows that are merely history.
+ */
+function CancelRunControl({ runId }: { runId: string }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function cancel() {
+    setError(null);
+    startTransition(async () => {
+      const result = await cancelClientAgentJobAction(runId);
+      if (result.error) {
+        setError(result.error);
+        setConfirming(false);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
+      {confirming ? (
+        <>
+          <span className="text-[11px] text-muted">Stop this run? Credits for it are returned.</span>
+          <Button size="sm" variant="danger" onClick={cancel} loading={pending}>
+            Stop run
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} disabled={pending}>
+            Keep going
+          </Button>
+        </>
+      ) : (
+        <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+          <Icon name="CircleSlash" className="h-3.5 w-3.5" /> Cancel run
+        </Button>
+      )}
+      {error && (
+        <span className="text-[11px] text-danger" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
   );
 }
 

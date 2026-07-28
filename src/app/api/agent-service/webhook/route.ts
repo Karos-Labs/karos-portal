@@ -35,7 +35,9 @@ const STATUS_MAP: Record<AgentServiceWebhookPayload["status"], JobStatus> = {
   done: "review",
   failed: "failed",
   dead_letter: "failed",
-  cancelled: "failed",
+  // A deliberate stop is not a breakage: it maps to itself so the badge, the
+  // progress strip and every failure count can tell the two apart.
+  cancelled: "cancelled",
 };
 
 const ASSET_TYPE_MAP = {

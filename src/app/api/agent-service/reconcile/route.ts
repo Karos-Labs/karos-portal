@@ -28,7 +28,7 @@ const STALE_AFTER_MS = 20 * 60 * 1000;
 // Failure outcomes only — `done` is left for the webhook (see above).
 const FAILURE_MAP: Record<string, JobStatus> = {
   failed: "failed",
-  cancelled: "failed",
+  cancelled: "cancelled",
   dead_letter: "failed",
 };
 
