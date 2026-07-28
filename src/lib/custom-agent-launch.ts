@@ -753,15 +753,33 @@ export const LINKEDIN_SETUP_REQUIRED_PREFIX = "Set up the LinkedIn agent data";
  * Applied server-side, before the row is serialized: a string that never leaves
  * the server cannot be read out of the RSC payload.
  */
+function isClientReadableRefusal(message: string): boolean {
+  return (
+    message.startsWith(X_SETUP_REQUIRED_PREFIX) ||
+    message.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
+    isCreditDenialMessage(message)
+  );
+}
+
 export function clientSafeRefusal(refusal: string): string {
-  if (
-    refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
-    refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
-    isCreditDenialMessage(refusal)
-  ) {
-    return refusal;
-  }
-  return "This agent could not start on its last scheduled run. Your Karos team can unblock it.";
+  return isClientReadableRefusal(refusal)
+    ? refusal
+    : "This agent could not start on its last scheduled run. Your Karos team can unblock it.";
+}
+
+/**
+ * The manual-run twin of clientSafeRefusal: a client who fires a run must never
+ * receive the submit core's internal strings — service URLs, env var names
+ * ("AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN"), upstream provider errors — which
+ * now reach the client's own run dialog. F34 mounts the run controls during an
+ * outage, so the honest failure is a client-safe line, not a raw config error.
+ * The same allowlist passes setup refusals and credit denials through verbatim
+ * (both are written for the client and the dialog links off the setup ones).
+ */
+export function clientSafeRunError(error: string): string {
+  return isClientReadableRefusal(error)
+    ? error
+    : "This run could not be started right now. Your Karos team has been notified.";
 }
 
 /**

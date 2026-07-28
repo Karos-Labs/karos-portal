@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   ALL_LAUNCH_PROFILES,
   buildCustomAgentPrompt,
+  clientSafeRunError,
   initialAgentBrief,
   launchProfileFor,
+  X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
+import { CREDIT_DENIAL_PREFIX } from "@/lib/credits";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 
 describe("custom agent launch profiles", () => {
@@ -113,6 +116,25 @@ describe("custom agent launch profiles", () => {
     expect(prompt).toContain("Executive or account\nMaya Chen, CEO");
     expect(prompt).toContain("Point of view or outcome\nExplain the lesson");
     expect(prompt).toContain("Audience\nOperations leaders");
+  });
+});
+
+describe("clientSafeRunError", () => {
+  it("hides the submit core's config strings from a client run dialog", () => {
+    const raw = "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN).";
+    const safe = clientSafeRunError(raw);
+    expect(safe).not.toContain("AGENT_SERVICE_URL");
+    expect(safe).not.toBe(raw);
+    expect(clientSafeRunError("AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks.")).toBe(
+      safe,
+    );
+  });
+
+  it("passes setup refusals and credit denials through verbatim", () => {
+    const setup = `${X_SETUP_REQUIRED_PREFIX} first. Open the "X agent data" page.`;
+    expect(clientSafeRunError(setup)).toBe(setup);
+    const denial = `${CREDIT_DENIAL_PREFIX.insufficient_balance} 25 credits and 3 are left.`;
+    expect(clientSafeRunError(denial)).toBe(denial);
   });
 });
 

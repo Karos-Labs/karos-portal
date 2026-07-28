@@ -21,6 +21,8 @@ import {
   type CustomAgentImportCandidate,
 } from "@/lib/agent-service/custom-agent-import";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
+import { clientSafeRunError } from "@/lib/custom-agent-launch";
+import { isBillableClientActor } from "@/lib/credits";
 import { requireAdmin, requireClientAccess } from "./_shared";
 
 /* ── limits (mirror agent-service/src/schemas/task-types/custom.json) ── */
@@ -332,6 +334,13 @@ export async function runCustomAgentAction(input: {
     revalidatePath("/jobs");
     revalidatePath(`/clients/${input.clientId}`);
     revalidatePath(`/clients/${input.clientId}/agents`);
+    return result;
+  }
+  // A real client's run dialog must not receive the submit core's internal
+  // strings (service URLs, env var names). Sanitize only for billable client
+  // actors — staff, and admins in "View as Client", keep the raw message.
+  if (result.error && isBillableClientActor(user)) {
+    return { error: clientSafeRunError(result.error) };
   }
   return result;
 }
