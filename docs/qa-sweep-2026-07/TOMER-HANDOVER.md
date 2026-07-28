@@ -397,6 +397,13 @@ colors need 3–4 unique hexes with sequential `dominanceRank` and `usagePct`
 summing to exactly 100; **every other client profile field is fill-only**. That
 last rule is why §2.11 exists.
 
+Those rules now live in `src/lib/refresh-apply-core.ts`, shared verbatim with the
+**admin Ops Import page** (`/admin/ops`) — the same import without the CLI, plus
+the SEO/GEO and posts halves. See
+[refresh/OPS-IMPORT.md](./refresh/OPS-IMPORT.md) for the inbox layout
+(`OPS_IMPORT_DIR`), what each button does, and the provenance rule that keeps a
+hand-imported SEO/GEO snapshot from reading as a fresh machine capture.
+
 ### 2.10 Per-agent pricing — the F130 decision Albert has to make in the UI
 
 F130 ("every agent priced identically at 25 credits per output") is OPS-PENDING,
