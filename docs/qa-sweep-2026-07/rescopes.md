@@ -803,3 +803,10 @@ the correct screenshot; the run-pending CTA gets a clean, non-distorting
 placement (right-aligned in the row if it fits, else its own full-width row
 below the toolbar), verified at common widths. Owner: p3-builder (same surface
 family as its settings-actions batch-runner work).
+
+### CD-G11 — Brand color swatches copy their hex on click (Albert, fifth batch)
+Clicking a swatch copies its color tag ("#E8703A"-style) to the clipboard,
+with a brief visual confirmation ("Copied" flash / check) so the click reads
+as successful. Coexists with the existing hover tooltip and CD-E2 rules
+(clients see swatches + hex only; internal usage percentages stay staff-only).
+Both mounts (staff sidebar + client rail) get it. Owner: shell3-fixer.
