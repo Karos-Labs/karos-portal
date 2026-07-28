@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   listAssets,
-  listClientIntegrations,
   listClients,
   listCustomAgents,
   listJobs,
@@ -16,9 +15,8 @@ import {
   scheduleRowLabel,
   type ClientAgentIdentity,
 } from "@/lib/agent-identity-map";
-import { integrationIsUsable } from "@/lib/integration-status";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
-import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import { clientCadenceLabel, describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
 import { isValidTimeZone } from "@/lib/run-cadence";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
@@ -348,32 +346,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // publishAssetNowAction is requireStaff(), so this is built ONLY for staff —
   // a client viewer's payload gains nothing. Integrations are read for the
   // clients that actually own a pushable post, not for every client in scope.
-  let connectedPlatformsByClient: Record<string, string[]> | undefined;
-  if (!isClient) {
-    const pushableClientIds = [
-      ...new Set(
-        assets
-          .filter(
-            (a) =>
-              (a.status === "approved" || a.status === "scheduled") &&
-              a.publishMode !== "placeholder" &&
-              (PUBLISHABLE_PLATFORMS[a.type] ?? []).length > 0,
-          )
-          .map((a) => a.clientId),
-      ),
-    ];
-    if (pushableClientIds.length > 0) {
-      const perClient = await Promise.all(
-        pushableClientIds.map(async (id) => {
-          const integrations = await listClientIntegrations(id);
-          // Platform ids only — never the integration records, which carry
-          // decrypted OAuth credentials.
-          return [id, integrations.filter(integrationIsUsable).map((i) => i.platform)] as const;
-        }),
-      );
-      connectedPlatformsByClient = Object.fromEntries(perClient);
-    }
-  }
+  //
+  // The predicate itself lives in lib/publish-targets.ts, which exists so "is
+  // this post pushable" cannot drift between the surfaces that ask it. This
+  // file had kept a byte-identical copy of that function's body inline — three
+  // status/mode/platform conditions and the integration read — which is the
+  // second answer the shared module was extracted to prevent.
+  const connectedPlatformsByClient = isClient
+    ? undefined
+    : await pushablePlatformsByClient(assets);
 
   // ── Empty state ─────────────────────────────────────────────────────
   // A month of blank squares under a header promising "what your agents will

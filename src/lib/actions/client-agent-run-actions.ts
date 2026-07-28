@@ -10,6 +10,7 @@ import {
   templateRunPrompt,
   umbrellaRunBlock,
 } from "@/lib/client-agent-runs";
+import { buildAgentSetup } from "@/lib/client-agent-rows";
 import { ensureSlotHorizon } from "@/lib/client-agent-slots";
 import { effectiveRotation } from "@/lib/client-agents";
 import {
@@ -111,9 +112,21 @@ export async function runClientAgentTemplateAction(input: {
     if (spendable < cost) blockReason = creditBlockReason(credits, cost, now);
   }
 
+  // The INTAKE rung, resolved with the SAME call the card makes. The gate
+  // already has this rung; this action was calling the gate without ever
+  // filling the field in, so server-side it was a no-op and the ladder here was
+  // one rung shorter than the one the button was painted from. For an X /
+  // LinkedIn umbrella with no intake that meant the press cleared this gate,
+  // reached the submit core, and was refused there — after the credit check,
+  // with a different message. "One function, called from both" only holds if
+  // both feed it the same input.
+  const setup =
+    (await buildAgentSetup(input.clientId, [{ id: agent.id, key: agent.key }]))[agent.id] ?? null;
+
   const gate = evaluateTemplateRunGate({
     launchState: umbrella.launchState,
     templateStatus: template.status,
+    ...(setup ? { setup } : {}),
     cost,
     ...(spendable !== undefined ? { availableCredits: spendable } : {}),
     creditBlockReason: blockReason,

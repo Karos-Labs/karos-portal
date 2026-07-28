@@ -12,6 +12,8 @@
  * one sniff can't claim the other's batches.
  */
 
+import { isInternalLine } from "@/lib/doc-render";
+
 export interface LiParsedDraft {
   /** e.g. "Post 1 · Thought-leadership". */
   lane: string;
@@ -84,10 +86,13 @@ export function parseLiDrafts(markdown: string): LiParsedBatch | null {
 
     if (!account) continue;
 
-    // Italic note directly under an account or post heading.
+    // Italic note directly under an account or post heading. Bookkeeping lines
+    // are dropped in the PARSER, not at render — see the twin comment in
+    // x-drafts.ts for why the render-side strip was never enough.
     const italic = line.match(/^\*([^*].*)\*$/);
     if (italic) {
       const text = italic[1].trim();
+      if (isInternalLine(text)) continue;
       if (draft && !draft.laneNote && draft.text.length === 0) draft.laneNote = text;
       else if (!draft && !account.note && account.drafts.length === 0) account.note = text;
       continue;

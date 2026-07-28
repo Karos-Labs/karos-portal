@@ -85,6 +85,49 @@ describe("parseLiDrafts", () => {
     expect(batch!.accounts[0].drafts[0].postWindow).toBe("Tue-Thu morning, client timezone");
   });
 
+  /**
+   * The notes are free text the agent lifted out of its own deliverable, so
+   * they carry whatever it wrote there — including the run bookkeeping the
+   * summary path already drops. The readers only ever applied
+   * `stripInlineMarkdown`, which takes the marks off and leaves the words, so
+   * the filter has to be in the parser: one choke point, server and browser.
+   */
+  it("drops an account or lane note that is run bookkeeping, not prose", () => {
+    const leaky = BATCH.replace(
+      "*Brand voice: measured, no hype.*",
+      "*status: pending_review · product e13 · job e52ffe1e*",
+    ).replace("*The $250K CMO lane, evergreen.*", "*run: 2026-07-28-abc12345*");
+
+    const batch = parseLiDrafts(leaky);
+    expect(batch!.accounts[0].note).toBeUndefined();
+    expect(batch!.accounts[0].drafts[0].laneNote).toBeUndefined();
+    // The posts themselves are untouched — this filters notes, not content.
+    expect(batch!.accounts[0].drafts[0].text).toContain("Most founders do not need");
+  });
+
+  it("keeps a genuine note — the filter is not a blanket drop", () => {
+    const batch = parseLiDrafts(BATCH);
+    expect(batch!.accounts[0].note).toBe("Brand voice: measured, no hype.");
+    expect(batch!.accounts[0].drafts[0].laneNote).toBe("The $250K CMO lane, evergreen.");
+  });
+
+  it("the X parser applies the same rule to its own notes", () => {
+    const xLeaky = [
+      "# Account 1 · Company page @getkaros",
+      "*status: pending_review · job e52ffe1e*",
+      "",
+      "## Avenue 1 · Build-in-public",
+      "*Keeps the build visible.*",
+      "",
+      "> Shipping the thing.",
+      "",
+      "`21 chars`",
+    ].join("\n");
+    const batch = parseXDrafts(xLeaky);
+    expect(batch!.accounts[0].note).toBeUndefined();
+    expect(batch!.accounts[0].drafts[0].laneNote).toBe("Keeps the build visible.");
+  });
+
   it("never claims an X batch, and the X parser never claims a LinkedIn batch", () => {
     const xBatch = [
       "# Account 1 · Company page @getkaros",

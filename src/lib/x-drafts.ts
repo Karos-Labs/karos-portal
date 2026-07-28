@@ -7,6 +7,8 @@
  * callers can fall back to plain rendering.
  */
 
+import { isInternalLine } from "@/lib/doc-render";
+
 export interface XParsedPost {
   text: string;
   /** Thread position marker, e.g. "1/3". */
@@ -83,9 +85,20 @@ export function parseXDrafts(markdown: string): XParsedBatch | null {
     if (!account) continue;
 
     // Italic note directly under an account or avenue heading.
+    //
+    // Filtered HERE, in the parser, rather than at render. The readers only
+    // ever put `stripInlineMarkdown` on these, which removes the marks and
+    // leaves the words — so an italic line carrying the run's own bookkeeping
+    // ("*status: pending_review · job e52ffe1e*", which is the same agent
+    // writing the same file as the header toPlainSummary already drops)
+    // reached the client intact. The parser is the one choke point every
+    // consumer goes through, server-side (client-agent-rows resolving slot
+    // options) and in the browser alike, so a note that is bookkeeping is
+    // simply never captured. The render-side strip stays as the belt.
     const italic = line.match(/^\*([^*].*)\*$/);
     if (italic) {
       const text = italic[1].trim();
+      if (isInternalLine(text)) continue;
       if (draft && !draft.laneNote && draft.posts.length === 0) draft.laneNote = text;
       else if (!draft && !account.note && account.drafts.length === 0) account.note = text;
       continue;
