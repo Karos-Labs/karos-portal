@@ -375,9 +375,24 @@ export function SeoGeoPanel({
   const rosterChips = buildRosterChips(insights, trackedCompetitors, clientWebsite);
 
   // Citation leaderboard split (QA Fix 5): "who's quoted instead of you" vs your own baseline.
-  const clientCitation = citationLeaderboard.find((r) => r.isClient) ?? null;
   const quotedInstead = citationLeaderboard.filter((r) => !r.isClient);
   const leaderboardMax = Math.max(1, ...quotedInstead.map((x) => x.citations));
+
+  // QA F133: ONE definition of "cited" for the whole client-facing report.
+  // This sentence used to count raw citation OCCURRENCES across ALL captured
+  // answers ("cited 11 times") while the fix card a screen above counted the
+  // ANSWER RATE across category answers ("cited in 0% of category answers") —
+  // two numbers for the same measurement, both stated as fact, reading as the
+  // report contradicting itself. Both surfaces now use the engine cards' unit
+  // and scope: answers cited, out of measured category answers.
+  const cited = insights.citationSummary?.answersCited ?? 0;
+  const citedOf = insights.citationSummary?.totalMeasuredAnswers ?? 0;
+  const clientCitationLine =
+    citedOf === 0
+      ? "We couldn't measure any category answers this run, so there is nothing to count citations against yet."
+      : cited > 0
+        ? `Your site was cited as a source in ${cited} of ${citedOf} category answers across every engine we measured.`
+        : `Your site was never cited as a source in the ${citedOf} category answers we measured — earning citations from these domains' territory is what moves the visibility score.`;
 
   return (
     <div className="space-y-6">
@@ -601,8 +616,13 @@ export function SeoGeoPanel({
           </div>
           {quotedInstead.length > 0 && (
             <div className="mt-3 border-t border-border pt-3">
-              <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
                 Who the engines quote as sources
+              </p>
+              {/* The bars count citations, the sentence below counts answers — say
+                  which is which, so two honest numbers don't read as a contradiction. */}
+              <p className="mb-1.5 text-[11px] text-muted-2">
+                How many times each domain was cited across the category answers we measured.
               </p>
               <ul className="space-y-1.5">
                 {quotedInstead.slice(0, 8).map((r) => (
@@ -618,11 +638,7 @@ export function SeoGeoPanel({
                   </li>
                 ))}
               </ul>
-              <p className="mt-1.5 text-[11px] text-muted-2">
-                {clientCitation
-                  ? `Your site was cited ${clientCitation.citations} time${clientCitation.citations === 1 ? "" : "s"} across these answers.`
-                  : "Your site was never cited as a source this run — earning citations from these domains' territory is what moves the visibility score."}
-              </p>
+              <p className="mt-1.5 text-[11px] text-muted-2">{clientCitationLine}</p>
             </div>
           )}
           <p className="mt-3 text-[11px] text-muted-2">

@@ -980,7 +980,9 @@ export function computeVisibilityGaps(perEngine: PerEngineVisibility[]): Visibil
         lever: "GEO",
         title: `Low named-mention rate on ${label}`,
         severity: c.mentionRate === 0 ? "critical" : c.mentionRate < 0.15 ? "high" : "medium",
-        measured: `Named in ${Math.round(c.mentionRate * 100)}% of category answers`,
+        // F133: counts, with the denominator, in the same unit the engine cards and
+        // the citation footer use — never a bare percentage against an unstated set.
+        measured: `Named in ${Math.round(c.mentionRate * c.promptsMeasured)} of ${c.promptsMeasured} ${label} category answers`,
         benchmark: `≥ ${TARGET_MENTION * 100}% of category answers`,
         scoreLift: Math.round((TARGET_MENTION - c.mentionRate) * 15 * 10) / 10,
         evidence: `${c.promptsMeasured} category questions probed on ${label}`,
@@ -993,7 +995,7 @@ export function computeVisibilityGaps(perEngine: PerEngineVisibility[]): Visibil
         lever: "GEO",
         title: `Site never cited as a source by ${label}`,
         severity: c.citationRate === 0 ? "high" : "medium",
-        measured: `Cited in ${Math.round(c.citationRate * 100)}% of category answers`,
+        measured: `Cited in ${Math.round(c.citationRate * c.promptsMeasured)} of ${c.promptsMeasured} ${label} category answers`,
         benchmark: `≥ ${TARGET_CITE * 100}% citation share`,
         scoreLift: Math.round((TARGET_CITE - c.citationRate) * 35 * 10) / 10,
         evidence: `${c.promptsMeasured} category questions probed on ${label}`,
