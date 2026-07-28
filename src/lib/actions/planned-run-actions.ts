@@ -272,14 +272,24 @@ export async function configureClientAgentScheduleAction(
   return { id, weeklyCredits };
 }
 
-/** Pause, resume, or cancel a scheduled run. Clients may control their own. */
+/**
+ * Pause, resume, or retire a scheduled run.
+ *
+ * Clients may pause and resume their own — that is reversible, and the calendar
+ * and the AI Agents page both offer it. "completed" is NOT client-callable:
+ * it retires the schedule and drops it off the calendar for good, which is the
+ * same irreversible outcome as a delete wearing a different word.
+ */
 export async function setPlannedRunStatusAction(
   id: string,
   status: "active" | "paused" | "completed",
 ): Promise<{ error?: string }> {
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
-  await requireClientAccess(run.clientId);
+  const user = await requireClientAccess(run.clientId);
+  if (user.role === "CLIENT_USER" && status !== "paused" && status !== "active") {
+    return { error: "Ask your Karos contact to retire this schedule." };
+  }
 
   const patch: Record<string, unknown> = { status, updatedAt: Date.now() };
   // Resuming a recurring run: re-anchor its next fire to the future so a stale
@@ -302,11 +312,15 @@ export async function setPlannedRunStatusAction(
   return {};
 }
 
-/** Deletes a scheduled run outright. Clients may delete their own. */
+/**
+ * Deletes a scheduled run outright. STAFF ONLY — a client's undo for a deleted
+ * schedule is a staff member, so the UI's client-facing controls stop at Pause
+ * and the server enforces the same rule rather than trusting the button.
+ */
 export async function deletePlannedRunAction(id: string): Promise<{ error?: string }> {
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
-  await requireClientAccess(run.clientId);
+  await requireStaff();
   await deletePlannedScheduledRun(id);
   revalidatePath("/calendar");
   return {};

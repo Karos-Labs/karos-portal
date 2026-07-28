@@ -562,8 +562,10 @@ export function RunCalendar({
   canSchedule?: boolean;
   /**
    * May pause a scheduled run. True for clients on their own calendar too:
-   * setPlannedRunStatusAction authorizes with requireClientAccess, and pausing
-   * was already possible for them one page over, on AI Agents.
+   * setPlannedRunStatusAction authorizes with requireClientAccess and allows a
+   * CLIENT_USER exactly the reversible statuses (paused/active), and pausing
+   * was already possible for them one page over, on AI Agents. Deleting is
+   * gated separately, on the server as well as here.
    */
   canManageRuns?: boolean;
   clients?: CalendarClientOption[];
