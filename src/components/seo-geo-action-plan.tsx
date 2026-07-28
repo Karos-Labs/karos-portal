@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { approveSeoGeoRecommendationAction } from "@/lib/actions";
-import type { Recommendation, RecImpact } from "@/lib/seo-geo";
+import type { Lever, Recommendation, RecImpact } from "@/lib/seo-geo";
 
 /**
  * Client-facing SEO/GEO action plan (dev-handoff §3b, QA Fix 6). Each row has a REAL
@@ -14,6 +14,25 @@ import type { Recommendation, RecImpact } from "@/lib/seo-geo";
  * fields (impact + vertical + plain title + description + owner); no internal producer
  * fields cross the boundary (§4).
  */
+
+/**
+ * F144/CD-B1: the vertical badge rendered `r.vertical` — the raw lever code "SEO" /
+ * "GEO" / "BOTH" — on every row of the plan a client reads, the one surface on this
+ * page that had escaped the presenter's mapping discipline.
+ *
+ * The words are the presenter's LEVER_LABELS verbatim (seo-geo/presenter.ts), so the
+ * badge a client reads on a plan row and the channel chip staff read on the gap
+ * behind it say the same thing; seo-geo-presenter.test.ts pins the two together.
+ * Copied rather than imported because this is a client leaf and the presenter pulls
+ * the whole domain module in with it — the boundary its own header comment sets.
+ *
+ * `Record<Lever, …>`: a new lever is a compile error here, not a leaked code.
+ */
+const LEVER_LABELS: Record<Lever, string> = {
+  SEO: "search results",
+  GEO: "AI answers",
+  BOTH: "search + AI answers",
+};
 
 const IMPACT_TONES: Record<RecImpact, "danger" | "warning" | "neutral"> = {
   high: "danger",
@@ -84,7 +103,7 @@ export function SeoGeoActionPlan({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <Badge tone={IMPACT_TONES[r.impact]}>{r.impact}</Badge>
-                  <Badge tone="neutral">{r.vertical}</Badge>
+                  <Badge tone="neutral">{LEVER_LABELS[r.vertical]}</Badge>
                   <span className="text-sm font-medium text-foreground">{cap(r.title)}</span>
                 </div>
                 {isApproved ? (

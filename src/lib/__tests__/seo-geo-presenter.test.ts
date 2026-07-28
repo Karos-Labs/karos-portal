@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  AGENT_MAPPED_IDS,
-  agentLabelFor,
+  LEVER_LABELS,
+  PRODUCT_MAPPED_IDS,
+  productLabelFor,
   bucketLabel,
   buildAnswerGridViews,
   buildCaptureStrip,
@@ -25,10 +28,10 @@ import {
 } from "@/components/seo-geo/presenter";
 import {
   GEO_READINESS_CHECKS,
-  REC_COPY,
   SEO_CHECKS,
   SEO_GEO_PIPELINE_VERSION,
   computeCheckGaps,
+  computeVisibilityGaps,
   type PerEngineVisibility,
   type SeoGeoInsights,
   type VisibilityGap,
@@ -201,7 +204,12 @@ describe("leak guard (SCRUM-52 fix 1)", () => {
     expect(rendered).not.toContain("GUESSING");
     expect(rendered).not.toContain("MYSTERY");
     expect(view.fixArea).toBeNull();
-    expect(view.fixRoute).toBe("The Karos team will handle this.");
+    // The unknown delivery route falls back to the closed map's default; the
+    // executing product still resolves, because it is keyed off the rec id and
+    // never off `delivery` (F7).
+    expect(view.fixRoute).toBe(
+      "The Karos team will handle this. Produced by the Landing page managed product.",
+    );
     expect(view.qualifier).toBe("Under review by the Karos team");
     expect(view.channelLabel).toBe("search + AI answers");
     expect(view.severityLabel).toBe("minor");
@@ -242,7 +250,39 @@ describe("leak guard (SCRUM-52 fix 1)", () => {
     const rendered = JSON.stringify(view);
     expect(rendered).not.toContain("social_post");
     expect(rendered).not.toContain("products/");
-    expect(view.agentChip?.label).toBe("Handled by your Social agent");
+    expect(view.fixRoute).toContain("Social posts managed product");
+  });
+});
+
+describe("client action-plan lever badge (QA F144 / CD-B1)", () => {
+  const ACTION_PLAN = readFileSync(
+    path.resolve(process.cwd(), "src/components/seo-geo-action-plan.tsx"),
+    "utf8",
+  );
+
+  /**
+   * The plan rendered `<Badge>{r.vertical}</Badge>` — the raw "SEO"/"GEO"/"BOTH"
+   * lever code — on every row a CLIENT reads, while the staff gap card beside it
+   * said "search results" / "AI answers". Its replacement map lives in the
+   * component (a client leaf must not import the presenter, which would drag the
+   * whole domain module into the browser bundle), so the two are pinned together
+   * here: this test is the only thing standing between one defect and two
+   * vocabularies for the same channel.
+   */
+  it("renders the presenter's lever words, never the raw code", () => {
+    for (const lever of ALL_LEVERS) {
+      expect(LEVER_LABELS[lever]).not.toBe(lever);
+      expect(ACTION_PLAN).toContain(`${lever}: "${LEVER_LABELS[lever]}"`);
+    }
+    expect(ACTION_PLAN).toContain("LEVER_LABELS[r.vertical]");
+    expect(ACTION_PLAN).not.toContain(">{r.vertical}<");
+  });
+
+  it("says the same thing as the staff channel chip for every lever", () => {
+    for (const lever of ALL_LEVERS) {
+      const [view] = buildGapViews([gap({ lever })], "c");
+      expect(view.channelLabel).toBe(LEVER_LABELS[lever]);
+    }
   });
 });
 
@@ -321,7 +361,7 @@ describe("gap copy (QA F3)", () => {
   });
 });
 
-describe("funnel chip (QA F7)", () => {
+describe("executing-product line (QA F7)", () => {
   /**
    * The regression this whole block exists for: the old suite hand-constructed
    * `delivery: "existing-product"` gaps carrying GEO-16 / GEO-31 / BOTH-08 — a
@@ -329,7 +369,7 @@ describe("funnel chip (QA F7)", () => {
    * structurally unreachable in production. Every id below is emitted by a real
    * registry, and none of them is forced onto the existing-product route.
    */
-  it("routes real registry ids to their executing agent, whatever the delivery route", () => {
+  it("names the executing managed product on real registry ids, whatever the delivery route", () => {
     const views = buildGapViews(
       [
         gap({ id: "GEO-20", delivery: "agent-direct", scoreLift: 9 }),
@@ -339,25 +379,78 @@ describe("funnel chip (QA F7)", () => {
       ],
       "client-9",
     );
-    expect(views.map((v) => v.agentChip?.label)).toEqual([
-      "Handled by your Blog agent",
-      "Handled by your Blog agent",
-      "Handled by your Website agent",
-      "Handled by your Blog agent",
+    expect(views.map((v) => v.fixRoute)).toEqual([
+      "Karos drafts this fix for your approval. Produced by the Blog article managed product.",
+      "Karos drafts this fix for your approval. Produced by the Blog article managed product.",
+      "Karos drafts this fix for your approval. Produced by the Landing page managed product.",
+      "Karos drafts this fix for your approval. Produced by the Blog article managed product.",
     ]);
-    for (const v of views) expect(v.agentChip?.href).toBe("/clients/client-9/agents");
+  });
+
+  it("never sends staff to an agents page that has no card for the product", () => {
+    // /clients/[id]/agents renders the client's granted CUSTOM agents and their
+    // umbrellas — MANAGED_PRODUCTS have no card there or anywhere else, so the
+    // old "Handled by your Blog agent →" chip was a dead end twice over: no agent
+    // by that name, and no card for the product doing the work.
+    const views = buildGapViews(
+      [gap({ id: "GEO-20" }), gap({ id: "SEO-02" }), gap({ id: "GEO-24" })],
+      "client-9",
+    );
+    for (const v of views) expect(v.agentChip).toBeNull();
+    expect(JSON.stringify(views)).not.toContain("/clients/client-9/agents");
   });
 
   it("maps only ids the producers actually emit — no phantom keys", () => {
-    const emitted = new Set([
-      ...SEO_CHECKS.map((d) => d.id),
-      ...GEO_READINESS_CHECKS.map((d) => d.id),
-      ...Object.keys(REC_COPY),
-    ]);
-    for (const id of AGENT_MAPPED_IDS) expect(emitted.has(id)).toBe(true);
+    /**
+     * Derived by RUNNING the producers, not by listing ids by hand. Every gap the
+     * pipeline persists comes from exactly two of them (src/lib/intel/seo-geo.ts):
+     * computeCheckGaps over each check registry, and computeVisibilityGaps — given
+     * an engine row here that trips all three of its branches.
+     *
+     * REC_COPY is deliberately NOT in this set. It is client COPY, not a producer,
+     * and folding it in is what let "BOTH-07" sit in the map unnoticed: it has
+     * REC_COPY prose but no entry in either registry, so nothing can ever emit it.
+     *
+     * Limitation: computeCheckGaps passes through whatever ids the audit model
+     * returned, and sanitizeChecks does not filter them to the registries. The
+     * registries are what the audit prompt enumerates and demands back "exactly
+     * once", so they are the honest producer set; an id the model invents resolves
+     * through REC_FALLBACK and can never reach this map.
+     */
+    const failing = (defs: typeof SEO_CHECKS) =>
+      defs.map((d) => ({
+        id: d.id,
+        bucket: d.bucket,
+        label: d.label,
+        evidence: "observed this run",
+        norm: 0,
+        tier: "MEASURED" as const,
+        confidence: "CONFIRMED" as const,
+      }));
+    const starved = engineRow({
+      category: {
+        ...engineRow().category,
+        mentionRate: 0,
+        citationRate: 0,
+        shareOfVoice: 0,
+        topCompetitor: { name: "Rival", mentionRate: 0.9, shareOfVoice: 90 },
+      },
+    });
+    const emitted = new Set(
+      [
+        ...computeCheckGaps(SEO_CHECKS, failing(SEO_CHECKS), "SEO"),
+        ...computeCheckGaps(GEO_READINESS_CHECKS, failing(GEO_READINESS_CHECKS), "GEO"),
+        ...computeVisibilityGaps([starved]),
+      ].map((g) => g.id.split(":")[0]),
+    );
+    // A producer set that quietly went empty would make the subset check vacuous.
+    expect(emitted.size).toBeGreaterThan(20);
+    expect(emitted.has("GEO-27")).toBe(true); // the visibility producer really ran
+    expect(emitted.has("BOTH-07")).toBe(false); // REC_COPY prose, no producer
+    for (const id of PRODUCT_MAPPED_IDS) expect(emitted.has(id)).toBe(true);
   });
 
-  it("resolves the chip on a real pipeline gap, not just a hand-built one", () => {
+  it("resolves the product on a real pipeline gap, not just a hand-built one", () => {
     // Straight from the producer: model checks → computeCheckGaps → buildGapViews.
     const gaps = computeCheckGaps(
       SEO_CHECKS,
@@ -365,15 +458,15 @@ describe("funnel chip (QA F7)", () => {
       "SEO",
     );
     const [view] = buildGapViews(gaps, "c");
-    expect(view.agentChip?.label).toBe("Handled by your Website agent");
+    expect(view.fixRoute).toContain("Landing page managed product");
   });
 
-  it("keeps the route sentence alongside the chip instead of replacing it", () => {
+  it("keeps the route sentence alongside the product instead of replacing it", () => {
     const [view] = buildGapViews([gap({ id: "GEO-20", delivery: "agent-direct" })], "c");
     // QA F4: no apply path exists (both producers hardcode artifactRef: null), so
     // this route promises a draft-for-approval, never an automatic fix.
-    expect(view.fixRoute).toBe("Karos drafts this fix for your approval.");
-    expect(view.agentChip).not.toBeNull();
+    expect(view.fixRoute).toContain("Karos drafts this fix for your approval.");
+    expect(view.fixRoute).toContain("Blog article managed product");
   });
 
   it("never promises an automatic fix on any delivery route (QA F4)", () => {
@@ -386,28 +479,29 @@ describe("funnel chip (QA F7)", () => {
     for (const v of views) expect(v.fixRoute.toLowerCase()).not.toContain("automatic");
   });
 
-  it("leaves advisory off-site and visibility gaps without an agent chip", () => {
-    // Naming an agent the client may not have is the defect F7 reports; these
-    // routes stay on the honest "our team will handle it" sentence.
+  it("leaves advisory off-site and visibility gaps without a named product", () => {
+    // Naming an agent (or a product) the client may not have is the defect F7
+    // reports; these routes stay on the honest "our team will handle it" sentence.
     for (const id of ["GEO-04", "GEO-14", "GEO-25", "GEO-11:chatgpt", "GEO-27:gemini", "GEO-35:claude"]) {
       const [view] = buildGapViews([gap({ id, delivery: "advisory" })], "c");
-      expect(view.agentChip).toBeNull();
+      expect(view.fixRoute).toBe(
+        "Our team will recommend the changes. This one takes content or outreach work, not a switch we can flip.",
+      );
     }
   });
 
-  it("falls back to the plain route sentence when no route resolves (closed map)", () => {
+  it("falls back to the plain route sentence when no product resolves (closed map)", () => {
     const [view] = buildGapViews([gap({ id: "GEO-24", delivery: "existing-product" })], "c");
-    expect(view.agentChip).toBeNull();
     expect(view.fixRoute).toBe("This is handled through a tool already in your Karos plan.");
   });
 
   it("prefers a resolvable productRef over the static rec-id map", () => {
     const g = gap({
-      id: "GEO-20", // static map says Blog agent
+      id: "GEO-20", // static map says Blog article
       delivery: "existing-product",
       productRef: { id: "landing_page", folder: "products/e9-web", status: "live" },
     });
-    expect(agentLabelFor(g)).toBe("Website agent");
+    expect(productLabelFor(g)).toBe("Landing page");
   });
 
   it("falls back to the rec-id map when the productRef id is unknown", () => {
@@ -416,11 +510,11 @@ describe("funnel chip (QA F7)", () => {
       delivery: "existing-product",
       productRef: { id: "mystery_product", folder: "x", status: "live" },
     });
-    expect(agentLabelFor(g)).toBe("Blog agent");
+    expect(productLabelFor(g)).toBe("Blog article");
   });
 
   it("strips engine suffixes from rec ids before the lookup", () => {
-    expect(agentLabelFor(gap({ id: "GEO-20:chatgpt" }))).toBe("Blog agent");
+    expect(productLabelFor(gap({ id: "GEO-20:chatgpt" }))).toBe("Blog article");
   });
 });
 
