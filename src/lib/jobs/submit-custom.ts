@@ -28,7 +28,7 @@ import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
 import { mintJobToken } from "@/lib/mcp/job-token";
-import type { AppUser } from "@/lib/types";
+import type { AppUser, Client, CreditOperation, CustomAgent, JobRunType } from "@/lib/types";
 
 /**
  * Shared core for firing a repo-imported custom agent. Called by BOTH the web
@@ -60,6 +60,57 @@ export interface SubmitCustomAgentInput {
   taskId?: string;
   /** Server-controlled multiplier for scheduled runs requesting multiple outputs. */
   chargeMultiplier?: number;
+  /**
+   * How this run was initiated in the launch-vs-runs model. Stamped on the job
+   * doc AND echoed to the service as `karos_run_type`, so the webhook can
+   * branch and the staff economics card can split launch vs recurring USD
+   * without heuristics. Absent ⇒ an untyped run, exactly as before.
+   */
+  runType?: JobRunType;
+  /** The client-agent umbrella this run belongs to (job doc + metadata echo). */
+  clientAgentId?: string | null;
+  /** The template stream this run produces (job doc + metadata echo). */
+  templateKey?: string | null;
+  /**
+   * Extra `karos_*` metadata for the service to echo back (slot ids, revision
+   * targets). Values must be strings — the service's schema is
+   * `z.record(z.string(), z.string())`.
+   */
+  extraMetadata?: Record<string, string>;
+  /**
+   * Overrides the per-run price and ledger operation for runs that are not
+   * priced per output — today only the client-billed LAUNCH, which costs
+   * `CustomAgent.launchCreditCost` and lands as `agent_launch`. Charged with
+   * the same jobId pairing as a normal run, so the webhook's failure refund
+   * and the reconcile sweeps hand it back with no extra code.
+   */
+  charge?: { amount: number; operation: CreditOperation; reason: string };
+}
+
+/**
+ * Whether this client may fire this agent at all: an explicit allowlist entry,
+ * or an agent that already delivered a successful run for the workspace (a
+ * staff run activates it).
+ *
+ * Extracted so the launch action's pre-flight gate can ask the SAME question
+ * the submit core enforces — a card that offers a launch the core would refuse
+ * with "Agent not found." is the F131 failure in its most confusing form.
+ */
+export async function isCustomAgentGrantedToClient(
+  client: Pick<Client, "id" | "customAgentIds">,
+  agent: Pick<CustomAgent, "id" | "name">,
+): Promise<boolean> {
+  if ((client.customAgentIds ?? []).includes(agent.id)) return true;
+  // customAgentId is authoritative for new jobs; name matching keeps historic
+  // completed runs useful without a migration.
+  const successful = new Set(["review", "approved", "delivered"]);
+  const priorRuns = await listJobs({ clientId: client.id });
+  return priorRuns.some(
+    (job) =>
+      job.external?.taskType === "custom" &&
+      successful.has(job.status) &&
+      (job.customAgentId === agent.id || (!job.customAgentId && job.agentName === agent.name)),
+  );
 }
 
 export async function submitCustomAgentJob(
@@ -74,22 +125,9 @@ export async function submitCustomAgentJob(
   if (!agent || !agent.enabled) return { error: "Agent not found." };
   const client = await getClient(input.clientId);
   if (!client) return { error: "Client not found." };
-  if (user.role === "CLIENT_USER" && !(client.customAgentIds ?? []).includes(agent.id)) {
-    // A successfully delivered staff run activates the agent for this client.
-    // customAgentId is authoritative for new jobs; name matching keeps historic
-    // completed runs useful without a migration.
-    const successful = new Set(["review", "approved", "delivered"]);
-    const priorRuns = await listJobs({ clientId: input.clientId });
-    const activated = priorRuns.some(
-      (job) =>
-        job.external?.taskType === "custom" &&
-        successful.has(job.status) &&
-        (job.customAgentId === agent.id || (!job.customAgentId && job.agentName === agent.name)),
-    );
-    if (!activated) {
-      // Same message as missing — don't leak which agents exist beyond the allowlist.
-      return { error: "Agent not found." };
-    }
+  if (user.role === "CLIENT_USER" && !(await isCustomAgentGrantedToClient(client, agent))) {
+    // Same message as missing — don't leak which agents exist beyond the allowlist.
+    return { error: "Agent not found." };
   }
 
   const prompt = input.prompt.trim();
@@ -161,6 +199,9 @@ export async function submitCustomAgentJob(
     clientId: input.clientId,
     agentId: "agent-service",
     customAgentId: agent.id,
+    ...(input.runType ? { runType: input.runType } : {}),
+    ...(input.clientAgentId ? { clientAgentId: input.clientAgentId } : {}),
+    ...(input.templateKey ? { templateKey: input.templateKey } : {}),
     agentName: agent.name,
     title: jobTitleForClient(agent.name, client.name),
     status: "queued",
@@ -176,14 +217,19 @@ export async function submitCustomAgentJob(
   // with jobId pairing so the webhook's failure refund and the reconcile sweeps
   // can hand the credits back.
   const multiplier = Math.max(1, Math.min(10, Math.round(input.chargeMultiplier ?? 1)));
-  const runCost = (agent.creditCost ?? CREDIT_COSTS.customAgentRun) * multiplier;
+  const runCost = input.charge
+    ? Math.max(0, Math.round(input.charge.amount))
+    : (agent.creditCost ?? CREDIT_COSTS.customAgentRun) * multiplier;
   if (isBillableClientActor(user)) {
     try {
       await chargeClientCredits({
         clientId: input.clientId,
         amount: runCost,
-        operation: "custom_agent_run",
-        reason: `Agent run · ${agent.name}${multiplier > 1 ? ` · ${multiplier} outputs` : ""}`.slice(0, 120),
+        operation: input.charge?.operation ?? "custom_agent_run",
+        reason: (
+          input.charge?.reason ??
+          `Agent run · ${agent.name}${multiplier > 1 ? ` · ${multiplier} outputs` : ""}`
+        ).slice(0, 120),
         agentId: agent.id,
         jobId,
         actorUid: user.uid,
@@ -222,6 +268,13 @@ export async function submitCustomAgentJob(
         platform_job_id: jobId,
         ...(input.taskId ? { karos_task_id: input.taskId } : {}),
         ...(jobToken ? { karos_job_token: jobToken, karos_mcp_url: `${origin}/api/mcp` } : {}),
+        // Launch-vs-runs routing. Echoed back by the service (the
+        // platform_job_id fallback proves the round-trip), which is what lets
+        // the webhook branch without a second lookup.
+        ...(input.runType ? { karos_run_type: input.runType } : {}),
+        ...(input.clientAgentId ? { karos_client_agent_id: input.clientAgentId } : {}),
+        ...(input.templateKey ? { karos_template_key: input.templateKey } : {}),
+        ...(input.extraMetadata ?? {}),
       },
     });
     submittedServiceJobId = submitted.job_id;

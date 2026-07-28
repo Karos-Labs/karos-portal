@@ -22,7 +22,23 @@ export function getClientLibraryAssets(
   );
   if (!opts?.forClient) return sorted;
   const now = opts.now ?? Date.now();
-  return sorted.map((a) => (isAssetUnlockedForClient(a, now) ? a : redactLockedAsset(a)));
+  return sorted
+    .filter((a) => !isLaunchDeliverable(a))
+    .map((a) => (isAssetUnlockedForClient(a, now) ? a : redactLockedAsset(a)));
+}
+
+/**
+ * A client agent's SETUP-run output: the research write-up and the proposed
+ * template set. Working material staff curate, not a deliverable — it is
+ * excluded here so all three client surfaces (library, calendar, archive)
+ * inherit one exclusion instead of each growing its own filter.
+ *
+ * Not covered by the draft/date rules: a launch deliverable is undated (so the
+ * lock never applies) and would age into the archive the moment staff approved
+ * anything. The flag is written by the webhook at creation.
+ */
+export function isLaunchDeliverable(a: Pick<Asset, "meta">): boolean {
+  return a.meta?.launchDeliverable === true;
 }
 
 /** How far back the client archive reaches. Older posts are hidden, never deleted. */
@@ -53,6 +69,7 @@ export function getClientArchiveAssets(assets: Asset[], opts?: { now?: number })
   const postedAt = (a: Asset) => a.publishedAt ?? a.updatedAt ?? a.createdAt;
   return assets
     .filter((a) => {
+      if (isLaunchDeliverable(a)) return false;
       if (a.status === "draft") return false;
       if (!isAssetUnlockedForClient(a, now)) return false;
       if (a.status === "published") return postedAt(a) >= cutoff;

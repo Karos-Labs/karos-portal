@@ -138,6 +138,9 @@ export function clientLaunchPhase(
 /** Halfway through the quoted launch window — where the client narrative turns. */
 export const LAUNCH_STAGE_SPLIT_MS = 12 * 60 * 1000;
 
+/** ~How long a setup run takes, in the client's words. */
+export const LAUNCH_ESTIMATE = "~20–40 min";
+
 export const CLIENT_LAUNCH_PHASE_COPY: Record<
   Exclude<ClientLaunchPhase, "not_started" | "failed">,
   { title: string; detail: string }
@@ -315,6 +318,18 @@ export function effectiveRotation(
     }
   }
   return rotation;
+}
+
+/**
+ * One row of the staff curation pane. Lives here (not beside the action) so
+ * both the form and the server validator read the same shape — a "use server"
+ * module may only export async functions, and a shared input type is not one.
+ */
+export interface ClientAgentTemplateInput {
+  key: string;
+  name: string;
+  rationale?: string;
+  status?: ClientAgentTemplate["status"];
 }
 
 /** The umbrella's slot mode. X-style umbrellas own no chain family. */
