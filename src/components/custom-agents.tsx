@@ -533,7 +533,11 @@ export function ClientCustomAgents({
                   )}
                 </div>
                 <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
-                  <p className="text-xs text-muted-2">{cost} credits per output</p>
+                  {/* Per RUN — that is what CustomAgent.creditCost prices and
+                      what "Run now" charges once, whatever the brief asks for.
+                      Only a scheduled fire multiplies it by outputs per run,
+                      and the schedule dialog does that arithmetic itself. */}
+                  <p className="text-xs text-muted-2">{cost} credits per run</p>
                   <div className="flex gap-1.5">
                     <Button
                       size="sm"
@@ -1268,6 +1272,10 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
               onChange={(e) => setCreditCost(e.target.value)}
               placeholder={`${CREDIT_COSTS.customAgentRun} (default)`}
             />
+            <p className="mt-1 text-xs text-muted-2">
+              What this agent charges a client per run, on its card and in the run dialog. Left
+              empty every agent prices the same, and a video edit costs what a single post does.
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-4">
