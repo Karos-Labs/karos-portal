@@ -86,12 +86,12 @@
 
 html {
   color-scheme: dark;
-  /* The vertical scrollbar must exist on EVERY page or pages that scroll are
-     ~10-15px narrower than pages that don't, and the whole layout shifts when
-     switching tabs (classic-scrollbar setups; overlay scrollbars unaffected).
-     scrollbar-gutter alone is not reliably honored on the root element in
-     Chrome, so force the scrollbar area with overflow-y: scroll. */
-  overflow-y: scroll;
+  /* Pages that scroll must not be ~10-15px narrower than pages that don't, or
+     the whole layout shifts when switching tabs. `scrollbar-gutter: stable`
+     reserves that space on classic-scrollbar setups (Windows, macOS "always
+     show") and is a no-op under overlay scrollbars, which never take width.
+     This used to also force `overflow-y: scroll` — see the scrollbar skin
+     below for why that had to go (CD-G8). */
   scrollbar-gutter: stable;
 }
 html.light {
@@ -133,20 +133,28 @@ body {
   color: var(--accent-ink);
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
+/* Scrollbar skin — INNER scroll containers only, never the root.
+   Styling ::-webkit-scrollbar on html/body is itself what opts Chrome out of
+   macOS overlay scrollbars, and a classic root scrollbar permanently reserves
+   its width: every `position: fixed; right: 0` surface then stops short of the
+   window edge. Measured at a 375px window before this change — innerWidth 375
+   vs documentElement.clientWidth 365 — which is why the copilot strip's top
+   border, and the client tab bar under it, both stopped 10px short (CD-G8).
+   The `:not(html):not(body)` fence is load-bearing; do not simplify it back to
+   a bare `::-webkit-scrollbar`. */
+:not(html):not(body)::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
-::-webkit-scrollbar-track {
+:not(html):not(body)::-webkit-scrollbar-track {
   background: transparent;
 }
-::-webkit-scrollbar-thumb {
+:not(html):not(body)::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: 999px;
   border: 2px solid var(--background);
 }
-::-webkit-scrollbar-thumb:hover {
+:not(html):not(body)::-webkit-scrollbar-thumb:hover {
   /* Decorative fill, not text — pinned to the old value (QA F119). */
   background: var(--muted-3);
 }
@@ -254,11 +262,14 @@ body {
   -webkit-backdrop-filter: blur(18px) saturate(120%);
 }
 
-.light ::-webkit-scrollbar-thumb {
+/* `.light` sits on <html>, so the descendant combinator already excludes the
+   root — but not <body>, whose scrollbar propagates to the viewport. Same fence
+   as the base skin above, for the same reason (CD-G8). */
+.light :not(body)::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-color: var(--background);
 }
-.light ::-webkit-scrollbar-thumb:hover {
+.light :not(body)::-webkit-scrollbar-thumb:hover {
   /* Decorative fill, not text — pinned to the old value (QA F119). */
   background: var(--muted-3);
 }

@@ -489,7 +489,16 @@ function ProactiveWelcome({
   const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
 
   return (
-    <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+    // `grow` (flex: 1 1 auto), not `flex-1` (flex: 1 1 0%). The bottom sheet is
+    // now capped rather than fixed at 70dvh (CD-G8), so this region's container
+    // can have an INDEFINITE height — and a zero flex-basis is exactly the case
+    // where engines disagree about what an auto-height column flex container
+    // should size to. Chrome resolves it to the max-content contribution (so
+    // both spellings measure identically there), but `auto` states the intent
+    // outright and does not depend on that rule. Behaviour in the fixed-height
+    // desktop rail is unchanged: this is still the only growing item, so it
+    // takes all the free space and scrolls once it runs out.
+    <div className="flex grow flex-col gap-4 overflow-y-auto p-4">
       {/* Greeting */}
       <div className="flex items-start gap-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
@@ -556,7 +565,8 @@ function ChatEmptyState({
   send: (t: string) => void;
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center">
+    // `grow` for the same reason as ProactiveWelcome — see the note there.
+    <div className="flex grow flex-col items-center justify-center gap-3 px-4 py-8 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
         <Icon name="Sparkles" className="h-6 w-6" />
       </div>
@@ -701,10 +711,14 @@ export function ChatbotWidget({
         >
 
           {/* Header — single title; hairline divider, no fill (surface ladder).
-              h matches the AppHeader's border-box height (py-2 + h-9 + 1px
-              border = 53px) so the two border-b hairlines meet the rail
-              border as one continuous straight line. */}
-          <div className="flex h-[53px] shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+              Sizes to its own content. This used to be pinned to h-[53px] to
+              match the border-box height of the page header the rail sat beside,
+              so the two border-b hairlines read as one continuous line; that
+              header no longer exists, which left the number aligned to nothing.
+              py-3 around the two-line title block (16px + mt-1 + 9px, all
+              leading-none) lands within a pixel of the old height anyway, and
+              the 28px controls opposite it are shorter, so they never drive it. */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
             <div className="min-w-0">
               <p className="font-serif text-base leading-none">AI Copilot</p>
               <p className="mt-1 truncate font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-muted-2">
@@ -761,7 +775,8 @@ export function ChatbotWidget({
               <ChatEmptyState clientName={clientName} send={send} />
             )
           ) : (
-            <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
+            /* `grow` for the same reason as ProactiveWelcome — see the note there. */
+            <div className="flex grow flex-col gap-3 overflow-y-auto p-4">
               {messages.map((msg) => (
                 <div
                   key={msg.id}
