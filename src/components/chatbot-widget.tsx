@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
+import { renderSectionBody } from "@/lib/doc-render";
 import { StrategyWarRoom } from "@/components/strategy-war-room";
 import type { Client, ClientReport } from "@/lib/types";
 
@@ -737,7 +738,18 @@ export function ChatbotWidget({
                     )}
                   >
                     {msg.content ? (
-                      <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
+                      msg.role === "assistant" ? (
+                        // The model writes markdown — the system prompt is itself
+                        // authored in it and the flagship actions ask for
+                        // multi-section deliverables — so a pre-wrapped span put
+                        // asterisks, hash marks and table pipes on screen (QA F89).
+                        // renderSectionBody escapes before formatting, so model
+                        // output cannot inject markup; it is the same renderer the
+                        // documents view uses.
+                        <div dangerouslySetInnerHTML={{ __html: renderSectionBody(msg.content) }} />
+                      ) : (
+                        <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
+                      )
                     ) : (
                       <TypingDots />
                     )}

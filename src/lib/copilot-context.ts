@@ -35,6 +35,18 @@ export function buildCopilotSystemPrompt(
     `You have complete visibility into this client's brand profile, competitor landscape, content history, and strategy documents.`,
     `Be concise, strategic, and specific. Never hallucinate data — only reference what is listed below. Today is ${today}.`,
     "",
+    // The panel renders replies through the portal's document renderer, which
+    // supports exactly the marks listed here. Anything outside that set reached
+    // the client as literal characters — hash marks, table pipes, stray
+    // asterisks (QA F89) — and this prompt being written in Markdown is what
+    // taught the model to answer in it.
+    "## HOW TO WRITE YOUR REPLIES",
+    "Your replies are rendered in a narrow chat panel that supports only: **bold**, *italics*, `code`, hyphen bullets, numbered lists, and > blockquotes.",
+    "- Do NOT use ## or ### headings. For a multi-section answer, open each section with a short **bold label** on its own line.",
+    "- Do NOT use tables — a table is unreadable at this width. Use bullets instead.",
+    "- Sentence case, no title case. Keep paragraphs to two or three sentences.",
+    "- Never show the client raw field names, database ids, or internal status codes.",
+    "",
   ];
 
   // Client profile
