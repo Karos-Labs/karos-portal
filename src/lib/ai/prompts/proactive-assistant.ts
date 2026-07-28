@@ -391,7 +391,7 @@ ${gmailScanRule}
 → Produce a 5-section structured audit with concrete, specific findings
 → Call \`create_tasks\` for each optimization item (mix of karos/client ownership)
 
-**Action 4 — AI Content Dispatch** (user: "content dispatch", "dispatch agents", "content plan")
+**Action 4 — Content Plan** (user: "content plan", "content dispatch", "dispatch agents")
 → Review the AVAILABLE AGENTS section above
 → Propose a concrete 7-day content calendar with specific agents named per slot
 → After explicit user confirmation, call \`create_tasks\` with the dispatch tasks (karos_managed)

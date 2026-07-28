@@ -22,11 +22,18 @@ const PRIORITY_COLOR: Record<string, string> = {
   low:    "text-muted   bg-surface-2  border-border",
 };
 
+/**
+ * The badge a task wears in its ticket. Clients open this modal, so the labels
+ * name the WORK, never the pipeline that produced it — `content_dispatch`
+ * reads "Content", matching the board chip in tasks-board.tsx so the same task
+ * does not carry two names between its card and its ticket (A3). This map is
+ * not role-branched: there is no staff-only variant of these labels.
+ */
 const SOURCE_LABEL: Record<string, { label: string; color: string }> = {
   gmail:               { label: "Operational Intel",   color: "#6b9fd4" },
   competitor_research: { label: "Competitor Research", color: "#FF6B2C" },
   brand_audit:         { label: "Brand Audit",         color: "#d9a13d" },
-  content_dispatch:    { label: "Content Dispatch",    color: "#e5484d" },
+  content_dispatch:    { label: "Content",             color: "#e5484d" },
   copilot:             { label: "AI Copilot",          color: "#FF6B2C" },
   manual:              { label: "Manual",              color: "#9c9ca3" },
 };

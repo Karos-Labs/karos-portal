@@ -113,8 +113,14 @@ export async function submitCustomAgentRun(args: {
   // drop as company-updates.md, CVs, learning logs, and prior batches (see
   // linkedin-agent-context.ts) — so scheduler-fired LinkedIn runs read the
   // same live client data as manual ones. Hard-gated the same way.
+  //
+  // KEYED (ruling 6), matching submit-custom.ts and schedule-gate.ts: the
+  // Path-B master gates on ANY LinkedIn intake, company-page instances on the
+  // company form. Unkeyed here, a seat-only workspace whose schedule the gate
+  // accepted would refuse on every fire — invisibly, since the refusal happens
+  // before any job row is written.
   if (isLinkedInAgent(agent.key)) {
-    if (!(await hasLinkedInAgentIntake(client.id))) {
+    if (!(await hasLinkedInAgentIntake(client.id, agent.key))) {
       return {
         error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };

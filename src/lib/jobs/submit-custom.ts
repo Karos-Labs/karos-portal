@@ -230,8 +230,16 @@ export async function submitCustomAgentJob(
   // LinkedIn agents (e10): the same contract — portal intake, the shared news
   // drop as company-updates.md, CVs, learning logs, and prior batches (see
   // linkedin-agent-context.ts). Hard-gated the same way.
+  //
+  // KEYED (ruling 6). The Path-B master (karos-linkedin-agent) has no company
+  // form of its own and gates on ANY LinkedIn intake; company-page instances
+  // gate on the company form. Dropping the key collapses both onto the
+  // company-only check, so a seat-only workspace reads ready on the agents page
+  // (client-agent-rows.ts passes the key), passes unfireableScheduleReason
+  // (schedule-gate.ts passes the key) — and then dies here with a setup notice
+  // for a form the master does not have. The key argument is the whole fix.
   if (isLinkedInAgent(agent.key)) {
-    if (!(await hasLinkedInAgentIntake(input.clientId))) {
+    if (!(await hasLinkedInAgentIntake(input.clientId, agent.key))) {
       return {
         error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };

@@ -8,8 +8,7 @@ import { AgentMark } from "@/components/agent-identity";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { addActivityNoteAction } from "@/lib/actions";
-import { clientSafeActor } from "@/lib/activity-actors";
-import type { ActivityEventType, ActivityLog, ClientReport, Job, Role } from "@/lib/types";
+import type { ActivityEventType, ClientReport, Job, Role } from "@/lib/types";
 
 /**
  * The ONLY job fields this timeline may hold.
@@ -27,6 +26,32 @@ export type TimelineJob = Pick<
   "id" | "agentName" | "status" | "title" | "createdAt" | "error"
 >;
 
+/**
+ * The ONLY activity-log fields this timeline may hold — the jobs rule above,
+ * applied to the other half of the stream.
+ *
+ * It used to take `ActivityLog[]` straight off the data layer. That carried
+ * `clientId` and a free-form `metadata` bag nothing here paints, and — worse —
+ * it carried the row's stored `actor` verbatim, so the internal writer names
+ * ("Runway autopilot" and friends, see activity-actors.ts) were sanitized in
+ * the BROWSER, on a list the browser had already downloaded. Staff MANUAL_NOTE
+ * rows travelled the same way: written by a staff-only composer, filtered out
+ * at render, present in full in the RSC payload.
+ *
+ * Both are now decided server-side (tasks-body.tsx), so what arrives is already
+ * this viewer's timeline: client-safe actor names, and no rows they may not
+ * read. Staff receive the same fields with nothing redacted.
+ */
+export interface TimelineActivity {
+  id: string;
+  timestamp: number;
+  type: ActivityEventType;
+  title: string;
+  description?: string;
+  actor: string;
+  actorRole: "system" | "staff" | "client";
+}
+
 /* ── Unified display event ───────────────────────────────────────────── */
 
 interface TimelineEvent {
@@ -43,18 +68,19 @@ interface TimelineEvent {
 
 /* ── Event derivation ────────────────────────────────────────────────── */
 
-function eventsFromLogs(logs: ActivityLog[], viewerIsClient: boolean): TimelineEvent[] {
+function eventsFromLogs(logs: TimelineActivity[]): TimelineEvent[] {
+  // A straight rename into TimelineEvent's shape. The actor arrives already
+  // redacted for this viewer and the staff-only rows are already gone — both
+  // decided at the RSC boundary, because an internal string that reaches the
+  // browser is readable whether or not this function ever paints it.
   return logs.map((l) => ({
     id: l.id,
     timestamp: l.timestamp,
     type: l.type,
     title: l.title,
     description: l.description,
-    // The row stores whatever its writer put there, and the automated writers
-    // put internal service names in it ("Runway autopilot" via submitManagedJob's
-    // synthetic admin). Redacted HERE, at the projection, so every caller of
-    // this timeline gets it — staff keep the real name.
-    ...clientSafeActor(l.actor, l.actorRole, viewerIsClient),
+    actor: l.actor,
+    actorRole: l.actorRole,
   }));
 }
 
@@ -152,15 +178,18 @@ function eventsFromReport(report: ClientReport | null): TimelineEvent[] {
 }
 
 function buildEvents(
-  logs: ActivityLog[],
+  logs: TimelineActivity[],
   jobs: TimelineJob[],
   report: ClientReport | null,
   currentUserRole: Role,
 ): TimelineEvent[] {
   const viewerIsClient = currentUserRole === "CLIENT_USER";
-  const logEvents = eventsFromLogs(logs, viewerIsClient).filter(
-    (e) => viewerIsClient === false || e.type !== "MANUAL_NOTE",
-  );
+  // No MANUAL_NOTE filter here any more: staff notes are dropped at the server
+  // boundary, the same place the launch runs are dropped from `jobs`. Filtering
+  // a second time here would be a second answer to "may this viewer read this
+  // row", and the one that runs after the payload has shipped is the one that
+  // does not count.
+  const logEvents = eventsFromLogs(logs);
 
   // Deduplicate: if an INTEL_GENERATION log already exists for a date close to the
   // report's createdAt (within 5 min), don't also show the derived report event.
@@ -410,7 +439,7 @@ function AddNoteForm({ clientId }: { clientId: string }) {
 const PAGE_SIZE = 15;
 
 interface Props {
-  activityLogs: ActivityLog[];
+  activityLogs: TimelineActivity[];
   jobs: TimelineJob[];
   report: ClientReport | null;
   clientId: string;

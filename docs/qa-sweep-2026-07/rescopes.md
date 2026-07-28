@@ -1076,3 +1076,84 @@ across 85 files (our 1089 + his new files + 113 added here). The two
 `react-hooks/purity` eslint errors in `clients/[id]/agents/page.tsx` are
 pre-existing on the sweep branch (verified by linting the stashed tree) and were
 not introduced or touched by this merge.
+
+## Survival-lens round (2026-07-28, post-reconciliation)
+
+The survival lens re-read the merged branch (`90dc90e`) asking only "what does
+this cost a real client". Two of its findings were RULINGS THAT HAD COME BACK
+UNDONE — a decision landed in one layer while another layer, or a config file,
+kept the old behaviour. Both are fixed here; the rest of the round is hardening.
+
+### Break 1 — ruling 6 reverted inside both submit cores (`11f93bb`)
+
+Ruling 6 kept `hasLinkedInAgentIntake` 2-arg so the Path-B master
+(`karos-linkedin-agent`), which has no company form of its own, is judged on ANY
+LinkedIn intake. The card (`client-agent-rows.ts`) and the schedule gate
+(`schedule-gate.ts`) called the keyed form. **Both submit cores called it
+unkeyed** — `jobs/submit-custom.ts` and `agent-service/run-custom-agent.ts`.
+
+Cost to a seat-only LinkedIn workspace: the agents page shows the master READY,
+`unfireableScheduleReason` lets the schedule be written, and then every run and
+every fire is refused for a company page form that agent does not have. The
+refusal lands before `createJob`, so it leaves no job row, no failed status and
+no charge — the card reads live and nothing ever arrives. Three docstrings
+asserted this could not happen, including schedule-gate's "Keyed, like the
+cores".
+
+Fixed by passing `agent.key` in both cores. **And the tests that missed it:**
+
+- `agent-intake-gate.test.ts` "keeps the three refusals distinguishable" had gone
+  tautological when ruling 5 unified the copy — it compared the three messages
+  with their prefixes re-added, and the prefixes are distinct constants, so any
+  three bodies (including three identical ones) satisfied the set-size check.
+  Reworked onto what the ruling actually leaves true: the three PREFIXES are
+  distinct, none is a prefix of another (both consumers dispatch on
+  `startsWith`), and each names its agent kind.
+- Same file, "interpolates the prefix as the literal opening" asserted
+  `` `${PREFIX}${body}`.startsWith(PREFIX) ``, which is true of every body ever
+  written. Now asserted on the raw source literal, and against
+  `clientSafeRefusal` as the real consumer.
+- `agent-launch-ui.test.ts` "keeps ready answered by the submit cores' own
+  predicates" only ever read `client-agent-rows.ts`, so it stayed green through
+  the whole break. It now pins the call sites in BOTH cores plus the schedule
+  gate, and drives `buildAgentSetup` against the keyed and unkeyed predicates
+  for a seat-only fixture — the disagreement itself, reproduced as a test.
+
+### Break 2 — the 14-then-7 fill ruling reverted from config (`9e59891`)
+
+Albert's mid-merge ruling raised the runway cap so the first sweep fills the
+whole 14-day buffer. The code default was duly raised to `RUNWAY_HORIZON_DAYS`.
+`cloudbuild.yaml` still pinned `_RUNWAY_MAX_JOBS_PER_CLIENT: "2"`, and it is
+passed as an env var on every deploy — so the env var wins and the
+deficit-of-10-gets-2 behaviour would have returned the moment
+`_RUNWAY_AUTOGEN_ENABLED` was flipped to "1". Set to "14", and pinned in
+`runway.test.ts` against the horizon constant rather than the literal.
+
+### The rest of the round
+
+- **Activity logs projected at the RSC boundary** (`8ee7aac`). `TasksBody`
+  handed whole `ActivityLog` docs to a `"use client"` timeline: the stored actor
+  name (internal writers store "Runway autopilot"), staff `MANUAL_NOTE` rows,
+  `clientId` and the `metadata` bag. Actor redaction and note filtering both ran
+  in the browser, on a payload it had already downloaded. Now a
+  `TimelineActivity` projection built field-by-field beside the existing jobs
+  one. Type-checking cannot catch a regression here — `ActivityLog` is
+  structurally assignable to `TimelineActivity` — so the pins in
+  `activity-timeline-boundary.test.ts` are the only guard.
+- **A3 batch language** (`9a91021`). The copilot dock chip "AI Content Dispatch"
+  and the ticket badge "Content Dispatch" named the machinery on client
+  surfaces; now "Content Plan" and "Content", matching the board chip. The
+  copilot's own Action 4 heading followed so the assistant does not say the old
+  name back.
+- **Weakened-test sweep** (`8071592`). One more instance of the same shape in
+  `agent-intake-gate.test.ts`: `indexOf(guard) < indexOf(gate)` passes whenever
+  the guard is ABSENT, because -1 precedes every real position — so deleting the
+  enabling branch (leaving a client unable to switch off a schedule firing at
+  them) read as correctly ordered. Both indices now asserted present first.
+
+Every reworked assertion was mutation-checked: reintroducing the break fails the
+test. Details in the commit messages.
+
+**Not in this round:** the lens's `custom-agents.tsx` `refusalIsSetup`
+Reddit-prefix item. That file belongs to the archetype builder for the duration
+of its rework, so the finding went there rather than being fixed twice.
