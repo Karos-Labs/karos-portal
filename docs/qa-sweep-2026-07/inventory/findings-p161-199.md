@@ -1,20 +1,14 @@
 # QA sweep findings — pages 161–199
 
 Source: Karos-portal-QA-sweep-FULL-2026-07-27.pdf, extracted 2026-07-28.
-Section headers in this range: tail of a prior section (F99 fix tail + F100), then
+Section headers in this range: tail of a prior section (F145 fix tail + F100), then
 "Settings, credits & billing" (6 findings: #101, 102, 103, 104, 105, 141), "Calendar"
 (8 findings: #107, 108, 151, 109, 110, 111, 112, 142), "Shell: navigation,
 notifications, roles" (12 findings: #113, 115, 116, 117, 118, 119, 120, 143, 146, 121,
 122, 123), then "Killed in verification" and the closing colophon.
 
-## F99 · (severity not in range) · Track (not in range) — STARTS before p161
-**Screenshot:** screenshots/F099.png
-**Title:** (not in range — only the FIX tail appears at the top of p161; concerns needsReconnect integrations in client analytics)
-**Where:** src/lib/integration-status.ts (expired / reauthenticate states exist); src/components/integrations-tab.tsx:264-267 (the "Reconnect needed" pattern already built for Settings); src/components/client-analytics.tsx
-**What you see:** STARTS before p161 — not captured here.
-**Why wrong:** STARTS before p161 — not captured here.
-**Fix per doc:** In client-analytics.tsx, keep needsReconnect integrations in the list and render them with the warning badge and a link to Settings ("Reconnect needed →"), reusing the integrations-tab pattern. Only usable rows keep the green badge. Count both in the Channels stat with a "1 needs attention" sub-line.
-**Systems touched:** integrations, client analytics, settings
+F99 → see findings-p123-160.md
+F145 → see findings-p123-160.md
 
 ## F100 · LOW · Track A
 **Title:** British and American spellings sit side by side — "Analysing" on one screen, "Analyzing" on another, "favourites" in client draft copy

@@ -1,24 +1,10 @@
 # QA sweep findings — pages 123-160
 
-Extracted from `Karos-portal-QA-sweep-FULL-2026-07-27.pdf`. Covers the tail of the Documents section, the full AI Copilot section (9 findings: #87-95), and the start of the Client dashboard section (7 findings: #97, 125, 99, 124, 126, 145, 100 — of which 100 falls past p160).
+Extracted from `Karos-portal-QA-sweep-FULL-2026-07-27.pdf`. Covers the tail of the Documents section (F78-F86, F138-F140), the full AI Copilot section (9 findings: #87-95), and the start of the Client dashboard section (section lists 7 findings: #97, 125, 99, 124, 126, 145, 100 — #100 sits wholly on p161 and is owned by findings-p161-199.md). F77 starts before p123 and is owned by findings-p085-122.md. F145's WHERE tail and FIX were stitched in from p161; this file is its sole owner.
 
 ---
 
-## F77 · (severity/track on earlier page) · STARTS before p123
-**Screenshot:** screenshots/F077.png
-**Title:** (title/severity/track are on a page before 123; p123-124 carry the body — regenerate wipes corrections, no version history)
-**Where:**
-- `src/lib/data.ts:1301-1309` — replaceClientContextDocs deletes all rows for the client, then writes new ones
-- `src/lib/intel/pipeline.ts:904` — the pipeline's only write is that wholesale replace
-- `src/lib/intel/pipeline.ts:893-901` — every new doc written with version: 1
-- `src/lib/actions/intel-actions.ts:432-441` — corrections logged to the feedbacks store via logFeedback
-- `src/app/(app)/admin/analytics/page.tsx:56` — listFeedbacks has exactly one caller, and it is not the pipeline
-- `src/components/client-documents.tsx:446` — Regenerate modal body text says nothing about replacement
-- `src/components/client-documents.tsx:599` — Schedule modal describes the same run as recurring
-**What you see:** The Regenerate modal only says you may optionally add run-specific context for this regeneration. Nothing tells you the run deletes and re-creates every document. Corrections a client applied through Correct Info are gone afterwards, and there is nowhere in the product to see a previous version, a comparison, or even how many times a document has changed.
-**Why wrong:** The pipeline's final step deletes every context-document row for the client in one batch and writes fresh ones stamped as version 1 — so the content, the version counter and every hand-applied correction are wiped together. Corrections are written to a separate feedback store, but nothing in the intel pipeline ever reads that store back (its only reader is the admin analytics page), so the next run has no memory of them and confidently restores the wrong facts. The Schedule modal makes this recurring and unattended, so a client's corrections evaporate on a cadence nobody warned them about.
-**Fix per doc:** Two parts. (1) In the RegenerateModal body in src/components/client-documents.tsx (around line 446), add a plain sentence: "This replaces all documents. Corrections applied since the last run will be lost." (2) In runOnboardPipeline (src/lib/intel/pipeline.ts:726), load this client's feedback rows — add a data.ts reader alongside listFeedbacks that filters by clientId and scope single_doc/global — and append them to the per-document generation prompt as verified client ground truth, using the same ABSOLUTE GROUND TRUTH framing applyDocCorrections already applies to correction text. If a fuller fix is wanted, keep the prior row instead of deleting it in replaceClientContextDocs (src/lib/data.ts:1301) so a previous version survives.
-**Systems touched:** intel pipeline, documents/regenerate modal, corrections/feedback store, versioning
+F77 → see findings-p085-122.md
 
 ---
 
@@ -482,15 +468,16 @@ Extracted from `Karos-portal-QA-sweep-FULL-2026-07-27.pdf`. Covers the tail of t
 
 ---
 
-## F145 · MEDIUM · Track A · CONTINUES past p160
+## F145 · MEDIUM · Track A
 **Screenshot:** screenshots/F145.png
 **Title:** A channel whose token dies silently vanishes from "Connected channels" instead of asking to be reconnected
-**Where (as visible through p160):**
+**Where:**
 - `src/components/client-analytics.tsx:32` — activeChannels = integrations.filter(integrationIsUsable) — dead channels dropped
 - `src/components/client-analytics.tsx:110-113` — hardcoded neon "Connected" badge for every remaining row
-- (WHERE list and FIX continue past p160)
+- `src/lib/integration-status.ts` — expired / reauthenticate states exist
+- `src/components/integrations-tab.tsx:264-267` — the "Reconnect needed" pattern already built for Settings
 **Location in app:** Client dashboard (/clients/[id]) → Connected channels
 **What you see:** The card lists Google, Linkedin, Youtube — every row with the same green "Connected" badge. The card asked: "Connected channels — is this accurate or not? Is LinkedIn actually working?" The honest answer: rows that show are genuinely usable, but a channel whose token has expired is filtered out of the list entirely — it just disappears, and the "Channels" stat drops by one with no explanation.
 **Why wrong:** The health truth exists — the integration layer has expired/reauthenticate states and the Settings tab renders a "Reconnect needed" chip — but the dashboard shows only healthy rows, so a dead LinkedIn reads as "not set up" rather than "broken, click to fix". The client's first question ("is LinkedIn working?") is exactly the one this card silently refuses to answer. Bonus: the badge's icon name CheckCircle2 is one of the eight missing lucide names, so the check mark is actually the sparkle fallback (finding 63).
-**Fix per doc:** CONTINUES past p160 — fix text not in this page range.
+**Fix per doc:** In client-analytics.tsx, keep needsReconnect integrations in the list and render them with the warning badge and a link to Settings ("Reconnect needed →"), reusing the integrations-tab pattern. Only usable rows keep the green badge. Count both in the Channels stat with a "1 needs attention" sub-line.
 **Systems touched:** client dashboard, connected channels card, integrations health states, icons

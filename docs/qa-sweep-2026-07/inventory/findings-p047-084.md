@@ -3,19 +3,13 @@
 Source: Karos-portal-QA-sweep-FULL-2026-07-27.pdf, pages 47-84. Extracted 2026-07-28.
 
 Boundary notes:
-- Page 47 opens with the tail (WHERE + FIX) of **F127** — the finding itself STARTS before p47.
-- Page 84 opens the "Workspace, tasks & deliverables" section (28 findings: #46, 47, 48, 50, 51, 53, 54, 55, 56, 57, 58, 149, 150, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 136, 71, 72, 73) and the start of **F46** — its FIX CONTINUES past p84.
+- Page 47 opens with the tail (WHERE + FIX) of **F127** — the finding STARTS before p47 and is owned by findings-p009-046.md. No stub is kept here.
+- Page 84 opens the "Workspace, tasks & deliverables" section (28 findings: #46, 47, 48, 50, 51, 53, 54, 55, 56, 57, 58, 149, 150, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 136, 71, 72, 73) and the start of **F46**, whose FIX runs onto p85. F46 is complete here (stitched from p84-85) and this file is its sole owner.
+- The next finding, F47, starts on p85 and is owned by the following file.
 
 ---
 
-## F127 · (severity not in range) · Track (not in range) — STARTS before p47
-**Screenshot:** screenshots/F127.png
-**Title:** (not in range — per context: agent card descriptions render the internal lab-manifest string verbatim, with codes like "(e18)", "sub-skill", engine-architecture notes)
-**Where:** src/components/custom-agents.tsx — card body renders agent.description verbatim; src/lib/lab-outputs.ts — the import path that stores the manifest string as description; customAgents documents — description holds the lab manifest, with no client-facing alternative field
-**What you see:** (before p47)
-**Why wrong:** (before p47)
-**Fix per doc:** Add a clientBlurb field (1–2 sentences, sentence case, no codes) to the customAgents document and render that on the card and in the run dialog; keep description as the internal field, shown only to staff. Backfill the seven existing agents by hand. Add a guard in the lab-import path that refuses or flags any blurb matching /\be\d{1,2}\)|sub-skill|tonemap|FORGE|Path [A-Z]\b/i so the next import cannot reintroduce it.
-**Systems touched:** custom agents catalog, lab import path, agent cards UI
+F127 → see findings-p009-046.md
 
 ## F131 · BLOCKER · Track A
 **Screenshot:** screenshots/F131.png
@@ -268,12 +262,13 @@ Boundary notes:
 **Fix per doc:** Pluralise from the value: `${n} ${n === 1 ? "output" : "outputs"}`.
 **Systems touched:** schedule-run modal copy
 
-## F46 · BLOCKER · Track B — CONTINUES past p84
+## F46 · BLOCKER · Track B
 **Title:** A client can never act on a draft — the pick/post/skip loop the intake copy promises does not exist for them, and their copy of the draft is an unformatted text dump
 **Where:** Workspace → Archive tab (/tasks) — where the agent forms tell clients their drafts land. src/components/x-agent-intake.tsx:670-673; src/components/linkedin-agent-intake.tsx:622-625; src/components/reddit-agent-intake.tsx:297-301; src/components/archive-view.tsx:84; archive-view.tsx:90; src/components/asset-detail-modal.tsx:211; src/components/asset-card.tsx:433-457; asset-card.tsx:712-764; +12 further references in the verification record
 **What you see:** The X, LinkedIn and Reddit forms tell the client that picking, editing or skipping individual drafts happens on the drafts themselves, in their Workspace archive. The client opens Workspace, goes to the Archive tab, clicks the tile for the batch, and gets one wall of text with every hash mark, asterisk, backtick and quote arrow showing exactly as typed. No cards, no thread link to click, no Post / Posted with edits / Didn't post / Request a change buttons. Nothing to do but read it and close.
 **Why wrong:** The whole per-draft loop — the four outcome actions that train the agent, the copy-the-reply-and-open-the-thread hand-off, the LinkedIn compose prefill — is built and wired, but it is mounted only inside the asset card. The only two places that render an asset card are the staff-only job detail page and the staff Assets library, and both client routes into that library redirect client users away. The Archive tab instead opens a read-only detail modal that prints the asset's text verbatim. So the promise on three intake surfaces cannot be kept, the deliverable reaches the client as unrendered source (house rule: never render raw model copy to a client), and the outcome rows the Reddit contract calls the only copy of the client's outcomes can in practice only be written by staff — even though the server action behind them already accepts client callers.
-**Fix per doc:** (CONTINUES past p84 — FIX not in this range.)
+**Fix per doc:** Mount the drafts readers on a surface a client can reach. Preferred: in src/components/asset-detail-modal.tsx run the same three sniffs the card runs (parseLiDrafts / parseRedditDrafts / parseXDrafts, in that order — asset-card.tsx:433-457, order is load-bearing) and render LiDraftsBatch / RedditDraftsBatch / XDraftsBatch in place of the plain content paragraph at line 211, passing clientId, jobId, assetId exactly as asset-card.tsx:712-764 does. Alternative: have src/components/archive-view.tsx open AssetCard instead of AssetDetailModal when the content parses as a batch. No server change is needed — addRedditDraftFeedbackAction and its LinkedIn/X twins already authorize with requireClientAccess. Until one of those ships, reword x-agent-intake.tsx:670-673, linkedin-agent-intake.tsx:622-625 and reddit-agent-intake.tsx:297-301 so they stop promising per-draft actions.
+**Also reported as:** The only deliverable viewer a client can reach shows the agent's raw formatting marks on screen
 **Systems touched:** workspace archive, asset detail modal, asset-card drafts review, agent intake copy, draft outcome actions
 
 ---
