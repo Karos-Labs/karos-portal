@@ -169,7 +169,7 @@ are tracked in the CD table at the bottom.
 | CD-B3 | SEO | 2 | RESOLVED | Category-queries-only measurement; branded queries never feed client-vs-competitor score |
 | CD-B4 | SEO | 2 | RESOLVED | Mark pre-2026-07-23 snapshots stale/legacy in UI |
 | CD-C1 | — | loop | OPEN | Mock-client pass sanity-checks competitor/citation data vs stored snapshots |
-| CD-D1 | ARCH | 3/4 | OPEN | Video deliverables: portal renders storage-URL field; GCP wiring → Tomer |
+| CD-D1 | ARCH | 3/4 | RESOLVED-PORTAL / TOMER-INFRA | Video: portal half complete (videoUrl type, resolver, 3 render surfaces); bucket/upload/access = Tomer T5 |
 | CD-D2 | AGENTS | 2 | RESOLVED | TikTok connector state shown as pending verification, not pretending |
 | CD-E1 | SHELL | 2 | RESOLVED | Remove "Agent-specific documents" section from the client rail (setup lives on AI Agents cards) |
 | CD-E2 | SHELL | 2 | RESOLVED | Brand colors: 3-4 swatches + internal usage-percentage catalog (staff-visible %, client sees swatches) |
@@ -186,6 +186,14 @@ are tracked in the CD table at the bottom.
 | CD-G9 | SHELL | 3 | RESOLVED | Bottom tab bar below md in client-context staff shell; copilot outside-click dismissal; support/theme/bell move into Company (overrules F116 bell placement) |
 | CD-G10 | WORKSPACE | 3 | RESOLVED | Board toolbar one straight row; run-pending CTA placed without distorting it |
 | CD-G11 | SHELL | 3 | RESOLVED | Brand color swatch click copies hex to clipboard with visual confirmation |
+| CD-H1 | DASHBOARD | audit | RESOLVED | Counter tiles first section under Overview (client) |
+| CD-H2 | SHELL | audit | OPEN-ALBERT | Rails fit 1440×900 after inline Brand Colors; 1280×800 still 56/80px over — accept scroll or authorize compression |
+| CD-H3 | SHELL | audit | RESOLVED | Competitor ↗ derives via favicon's domainFromName when url absent |
+| CD-H4 | SHELL | audit | RESOLVED | Client overview cards min-w-0, no 375px clipping |
+| CD-H5 | SHELL | audit | RESOLVED | Client bell into Company sheet + dot; slim logo/credits strip kept (flagged to Albert) |
+| CD-H6 | SHELL | audit | RESOLVED | Company sheet closes on md crossing; no orphan click catchers |
+| CD-H7 | WORKSPACE/SHELL | audit | RESOLVED | a) container-query toolbar (deviation flagged) b) one badgeLabel c) one-clock calendar d) Landing Builder blurb |
+| CD-H8 | AGENTS | audit | RESOLVED | Legacy live-schedule detail page: run gesture, pace, deliverables |
 | CD-G7 | — | end-loop | OPEN | Fleet COMPLETION refresh: one team per client, keep existing data, internal Claude agents, --apply-gated Firestore writes; runs after CD-G1..G6 |
 
 ## Guard zones (all phases)

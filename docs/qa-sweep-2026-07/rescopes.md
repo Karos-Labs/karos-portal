@@ -872,3 +872,22 @@ the condensation code bug will re-corrupt on the next Regenerate. End-loop item:
 find + fix the off-by-one in the pipeline's condense step (src/lib/intel) and
 add a meta-commentary scrubber. Also: stored palettes matched no live-site hex
 for 2/2 clients — the palette extractor is unreliable.
+
+## CD-G7 refresh — state of record (orchestrator, 2026-07-28)
+- Export: 7/7 clients dumped read-only (scratchpad refresh-export/, index.json
+  2026-07-28T16:15Z). This export is the rollback backup per PLAN §5.
+- Proposals: 7/7 written + validated through refresh-apply's dry-run gate.
+- APPLIED: Karos Labs (iZLc0mtwSFXNKE2KkC2d) — 14 docs, 16 competitor rows,
+  1 client doc, committed atomically 2026-07-28T16:50:35Z. Albert-authorized
+  pilot; portal reads it live.
+- QUEUED behind Albert: Hanky Panky, Pitch by Deel, XO Digital, Geektime,
+  Sitti ("apply the rest"); Kindly Yours additionally gated on Albert
+  confirming the client is kindlyyours.co (gifting) not the Walmart intimates
+  brand the stored data described.
+- Fill-only manual edits the applies will skip-and-report: font fields for
+  Karos Labs (Spectral/Hanken Grotesk), Geektime (Open Sans — Inter has no
+  Hebrew glyphs), Pitch (Bagoss), Sitti (Gaegu), Kindly Yours (Playfair/
+  Poppins), XO (Plus Jakarta Sans); plus Karos "no bright accents" guideline.
+- Pass-1 audit no-home items now homed: CD-H rows added to LEDGER; CD-D2's
+  promised Phase-3 agent representation logged as an OPEN Tomer-adjacent item
+  in the handover's residuals (not built, no row claimed it built).
