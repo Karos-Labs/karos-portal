@@ -725,3 +725,26 @@ completion refresh lands. Scope (two consecutive clean passes required):
 - Albert: "implement with an agent that reviews at the end if it matches
   what I asked" — a dedicated Albert-match review lens runs over the whole
   CD-G wave after merge, checking his verbatim feedback against localhost.
+
+### CD-G9 — Narrow-viewport shell contract + copilot dismissal + chrome relocation (Albert, fourth batch)
+- **CD-G9a — bottom bar everywhere below md.** Any view showing the client
+  4-tab nav (the client shell AND the staff shell in client context) renders
+  the SAME bottom tab bar at narrow width: Dashboard · AI Agents · Calendar ·
+  Workspace · Company (Company LAST; it opens the sheet with profile,
+  documents, competitor track, brand colors, settings). NO top menu/hamburger
+  pattern at narrow width — "We don't want a top menu-like thing." The client
+  shell already has this (client-rail.tsx mobile bar + Company sheet); the
+  staff shell must adopt it in client context. Staff full-admin nav at narrow
+  width is out of scope for now (more tabs than fit a bar) — flagged, not ruled.
+- **CD-G9b — copilot dismissal.** The expanded copilot closes on ANY click
+  outside it; it stays open only while the user is clicking/typing within it.
+  The explicit close control also remains. The collapsed strip sits directly
+  ABOVE the bottom tab bar at narrow width (54px offset contract), and pops
+  up from there.
+- **CD-G9c — chrome relocation in full view.** The top-right icon cluster
+  (support/contact, light-dark theme switch, notifications) moves into the
+  Company/settings area (account-menu zone) instead of a floating top bar.
+  NOTE: this consciously overrules F116's "badge visible without opening a
+  menu" rationale for the bell — Albert's ruling wins; record in ledger. An
+  unread-count dot may surface on the Company/account trigger so the signal
+  survives without the floating bar.
