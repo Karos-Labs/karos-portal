@@ -401,6 +401,57 @@ describe("QA Fix 1/2: tracked roster dedup + category-only comparison", () => {
   });
 });
 
+describe("lever comes from the registry, not the id prefix (QA F16)", () => {
+  const failing = (defs: typeof SEO_CHECKS): SeoGeoCheck[] =>
+    defs.map((d) => ({
+      id: d.id, bucket: d.bucket, label: d.label, evidence: "failing", norm: 0,
+      tier: "MEASURED", confidence: "CONFIRMED",
+    }));
+
+  it("keeps GEO-prefixed SEARCH checks on the search channel", () => {
+    // The four the finding names: GEO-01, GEO-02, GEO-17, GEO-20 all live in
+    // SEO_CHECKS, and prefix-reading filed them as AI-only.
+    const gaps = computeCheckGaps(SEO_CHECKS, failing(SEO_CHECKS), "SEO");
+    for (const id of ["GEO-01", "GEO-02", "GEO-17", "GEO-20"]) {
+      expect(gaps.find((g) => g.id === id)!.lever).toBe("SEO");
+    }
+  });
+
+  it("still honours a BOTH- prefix for a check that lives in one registry only", () => {
+    // BOTH-05 is in SEO_CHECKS alone; forcing the registry lever would hide it
+    // from the AI tab — the same mis-filing in the other direction.
+    const gaps = computeCheckGaps(SEO_CHECKS, failing(SEO_CHECKS), "SEO");
+    expect(gaps.find((g) => g.id === "BOTH-05")!.lever).toBe("BOTH");
+  });
+
+  it("ends up as BOTH for a check scored in both registries", () => {
+    const merged = dedupeGapsByRecId([
+      ...computeCheckGaps(SEO_CHECKS, failing(SEO_CHECKS), "SEO"),
+      ...computeCheckGaps(GEO_READINESS_CHECKS, failing(GEO_READINESS_CHECKS), "GEO"),
+    ]);
+    for (const id of ["GEO-01", "GEO-02", "GEO-17", "GEO-20"]) {
+      expect(merged.find((g) => g.id === id)!.lever).toBe("BOTH");
+    }
+    // A search-only check stays search-only.
+    expect(merged.find((g) => g.id === "SEO-04a")!.lever).toBe("SEO");
+    // An AI-only check stays AI-only.
+    expect(merged.find((g) => g.id === "GEO-18")!.lever).toBe("GEO");
+  });
+
+  it("files no check under a channel its registry never scored", () => {
+    const seoIds = new Set(SEO_CHECKS.map((d) => d.id));
+    const geoIds = new Set(GEO_READINESS_CHECKS.map((d) => d.id));
+    const merged = dedupeGapsByRecId([
+      ...computeCheckGaps(SEO_CHECKS, failing(SEO_CHECKS), "SEO"),
+      ...computeCheckGaps(GEO_READINESS_CHECKS, failing(GEO_READINESS_CHECKS), "GEO"),
+    ]);
+    for (const gap of merged) {
+      if (gap.lever === "SEO") expect(seoIds.has(gap.id)).toBe(true);
+      if (gap.lever === "GEO") expect(geoIds.has(gap.id)).toBe(true);
+    }
+  });
+});
+
 describe("duplicate cards across the two registries (QA F11)", () => {
   /** The nine ids that live in both SEO_CHECKS and GEO_READINESS_CHECKS. */
   const SHARED_IDS = ["BOTH-01", "BOTH-02", "BOTH-03", "BOTH-09", "BOTH-16", "GEO-01", "GEO-02", "GEO-17", "GEO-20"];

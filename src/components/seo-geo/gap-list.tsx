@@ -105,35 +105,42 @@ function GapCard({ gap }: { gap: GapView }) {
   );
 }
 
+const matchesFilter = (g: GapView, filter: "all" | GapChannel) =>
+  filter === "all" || g.channel === filter || g.channel === "both";
+
 export function GapList({ gaps }: { gaps: GapView[] }) {
   const [filter, setFilter] = useState<"all" | GapChannel>("all");
   const [showAll, setShowAll] = useState(false);
 
-  const filtered = gaps.filter(
-    (g) => filter === "all" || g.channel === filter || g.channel === "both",
-  );
+  const filtered = gaps.filter((g) => matchesFilter(g, filter));
   const visible = showAll ? filtered : filtered.slice(0, COLLAPSED_COUNT);
   const hidden = filtered.length - visible.length;
 
   return (
     <div>
       <div className="mb-3 inline-flex rounded-md border border-border bg-surface-2 p-1">
-        {FILTERS.map((f) => (
-          <button
-            key={f.id}
-            type="button"
-            aria-pressed={filter === f.id}
-            onClick={() => setFilter(f.id)}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
-              filter === f.id
-                ? "bg-surface text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.3)]"
-                : "text-muted hover:text-foreground",
-            )}
-          >
-            {f.label}
-          </button>
-        ))}
+        {FILTERS.map((f) => {
+          // Row counts (F16): a tab that quietly holds fewer rows than you expect
+          // is exactly how mis-filed checks stayed invisible.
+          const count = gaps.filter((g) => matchesFilter(g, f.id)).length;
+          return (
+            <button
+              key={f.id}
+              type="button"
+              aria-pressed={filter === f.id}
+              onClick={() => setFilter(f.id)}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
+                filter === f.id
+                  ? "bg-surface text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.3)]"
+                  : "text-muted hover:text-foreground",
+              )}
+            >
+              {f.label}
+              <span className="ml-1.5 font-mono text-[10px] text-muted-2">{count}</span>
+            </button>
+          );
+        })}
       </div>
 
       {filtered.length === 0 ? (

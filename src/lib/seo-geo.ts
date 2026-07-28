@@ -819,10 +819,23 @@ export function normalizeEvidence(raw: string): string {
   return s;
 }
 
-/** Derive the lever from an a3 rec id prefix (BOTH-* → BOTH), falling back per registry. */
+/**
+ * Derive the lever for a check (QA F16).
+ *
+ * The channel is a property of the REGISTRY the check is scored in, not of its id
+ * prefix. GEO-01, GEO-02, GEO-17 and GEO-20 are entries in the SEARCH score
+ * registry (eligibility, on-page, structure buckets), but reading the prefix made
+ * them AI-only — the presenter mapped that to the AI channel and the "Search
+ * engines" tab silently dropped four of its seventeen checks, so a client reading
+ * that tab believed the category was clean when it wasn't.
+ *
+ * A "BOTH-" prefix is still authoritative: BOTH-05 lives only in SEO_CHECKS, and
+ * demoting it to search-only would be the same mis-filing in the other direction.
+ * Ids that sit in BOTH registries come out with a different lever per registry and
+ * are promoted to "BOTH" by dedupeGapsByRecId, which is where they belong.
+ */
 export function leverFromId(id: string, fallback: Lever): Lever {
-  const prefix = id.split(/[-:]/)[0].toUpperCase();
-  return prefix === "BOTH" ? "BOTH" : prefix === "SEO" ? "SEO" : prefix === "GEO" ? "GEO" : fallback;
+  return id.split(/[-:]/)[0].toUpperCase() === "BOTH" ? "BOTH" : fallback;
 }
 
 /** Deterministic check-id → actuator fix_action map (machine-appliable fixes only). */
