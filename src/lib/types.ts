@@ -143,8 +143,20 @@ export interface Client {
    * Cleared the moment a new run acquires the lock. Lets the UI show what went
    * wrong and that Regenerate/Refresh Task Map are open again, instead of the
    * run just silently vanishing.
+   *
+   * STAFF-ONLY: this is a raw provider error, and only the admin branch of the
+   * banner ever paints it. `toClientPortalView` projects the boolean below in
+   * its place — see F69.
    */
   aiProcessingError?: string;
+  /**
+   * THAT the last run failed, without saying how. The client portal projection
+   * sets this instead of `aiProcessingError`: both client-side readers only ever
+   * tested the error for truthiness, so the raw provider string was crossing the
+   * RSC boundary — readable from view-source — to decide a single branch (F69).
+   * Never stored; it exists only on the projected view.
+   */
+  aiProcessingFailed?: boolean;
   /**
    * Epoch millis the Intel Report + SEO/GEO pipeline last completed successfully,
    * from ANY of its three triggers (new client, admin Regenerate, or the

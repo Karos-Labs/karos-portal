@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toClientPortalView } from "@/lib/client-visibility";
+import { hasAiProcessingFailure, toClientPortalView } from "@/lib/client-visibility";
 import type { Client } from "@/lib/types";
 
 function makeClient(patch: Partial<Client> = {}): Client {
@@ -49,7 +49,29 @@ describe("toClientPortalView", () => {
     expect(view.website).toBe("https://acme.test");
     expect(view.brandVoice).toBe("warm");
     expect(view.isAiProcessing).toBe(true);
-    expect(view.aiProcessingError).toBe("out of credits");
+  });
+
+  // F69: both client-side readers only ever asked WHETHER the last run failed,
+  // and aiProcessingError is a raw provider string (500 chars of it).
+  it("tells the client THAT generation failed, never why", () => {
+    const view = toClientPortalView(makeClient());
+    expect(view.aiProcessingFailed).toBe(true);
+    expect(view.aiProcessingError).toBeUndefined();
+    expect(JSON.stringify(view)).not.toContain("out of credits");
+  });
+
+  it("sets no failure flag when the last run did not fail", () => {
+    const view = toClientPortalView(makeClient({ aiProcessingError: undefined }));
+    expect(view.aiProcessingFailed).toBeUndefined();
+  });
+
+  it("hasAiProcessingFailure answers the same on either side of the boundary", () => {
+    const staff = makeClient();
+    expect(hasAiProcessingFailure(staff)).toBe(true);
+    expect(hasAiProcessingFailure(toClientPortalView(staff))).toBe(true);
+    const healthy = makeClient({ aiProcessingError: undefined });
+    expect(hasAiProcessingFailure(healthy)).toBe(false);
+    expect(hasAiProcessingFailure(toClientPortalView(healthy))).toBe(false);
   });
 
   it("is built by construction — an unknown future field is excluded by default", () => {

@@ -998,7 +998,7 @@ export function ClientDocuments({
   isAdmin,
   clientId,
   isAiProcessing,
-  aiProcessingError,
+  aiProcessingFailed,
   intelSchedule,
   allowInternalFallback = false,
   correctionPricing,
@@ -1008,8 +1008,12 @@ export function ClientDocuments({
   clientId?: string;
   /** True while a background AI generation cycle is running — locks the Regenerate button. */
   isAiProcessing?: boolean;
-  /** Set when the last generation cycle failed — the empty state says so (QA F69). */
-  aiProcessingError?: string | null;
+  /**
+   * True when the last generation cycle failed — the empty state says so (QA
+   * F69). A BOOLEAN, not the reason: this rail mounts for client viewers, and
+   * all it ever did with the raw provider error was test it for truthiness.
+   */
+  aiProcessingFailed?: boolean;
   /** Admin-only recurring regeneration schedule. Only meaningful (and only ever rendered) when isAdmin. */
   intelSchedule?: IntelScheduleInfo;
   /**
@@ -1075,7 +1079,7 @@ export function ClientDocuments({
         <p className="px-1 py-1.5 text-xs text-muted-2">
           {isAiProcessing
             ? "Karos Agents are writing your documents now — this takes a few minutes."
-            : aiProcessingError
+            : aiProcessingFailed
               ? "Generation stopped early. Your Karos team is on it."
               : "Your brand and strategy documents will appear here once onboarding completes."}
         </p>

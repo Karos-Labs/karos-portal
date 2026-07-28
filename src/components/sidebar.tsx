@@ -20,6 +20,7 @@ import { ContactUsButton } from "@/components/contact-us-modal";
 import { LogoutButton } from "@/components/logout-button";
 import { MobileCompanySheet, MobileTabBar, useCompanySheet } from "@/components/mobile-shell";
 import { isAiProcessingLockActive } from "@/lib/constants";
+import { hasAiProcessingFailure } from "@/lib/client-visibility";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
@@ -545,7 +546,7 @@ export function Sidebar({
           isAdmin={activeClient.isAdmin}
           clientId={activeClient.client.id}
           isAiProcessing={isAiProcessingLockActive(activeClient.client)}
-          aiProcessingError={activeClient.client.aiProcessingError ?? null}
+          aiProcessingFailed={hasAiProcessingFailure(activeClient.client)}
           intelSchedule={clientIntelSchedule(activeClient.client)}
           /* Staff-only shell: internal-tier documents are readable here. */
           allowInternalFallback
@@ -668,7 +669,7 @@ export function Sidebar({
                 isAdmin={clientCtx.isAdmin}
                 clientId={clientCtx.client.id}
                 isAiProcessing={isAiProcessingLockActive(clientCtx.client)}
-                aiProcessingError={clientCtx.client.aiProcessingError ?? null}
+                aiProcessingFailed={hasAiProcessingFailure(clientCtx.client)}
                 intelSchedule={clientIntelSchedule(clientCtx.client)}
                 /* Staff-only shell: internal-tier documents are readable here. */
                 allowInternalFallback
