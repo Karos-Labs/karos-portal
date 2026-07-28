@@ -735,14 +735,25 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
             search and the status filter stayed top-right, with the card
             floating between them. No wrap here any more; the phone layout is an
             explicit column instead of whatever wrapping happened to produce. */}
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-          {/* Full width on a phone so the two tabs split it evenly instead of
-              "Depending on you" wrapping to a second line inside its own pill. */}
-          <div className="inline-flex w-full shrink-0 items-center gap-1 self-start rounded-md border border-border bg-surface p-1 sm:w-auto sm:self-auto">
+        {/* CD-H7a: the one-line arrangement engages off the CONTENT COLUMN, not
+            the viewport. `sm:` only knows the window is 640+, so with the
+            copilot rail out at 1280 the row still tried to fit tabs (336px) +
+            search + filters into 548-580px: the search field was squeezed to
+            41px in the client shell and to ZERO — with the row overflowing by
+            29px — in the staff shell, which carries a second select. The (app)
+            shells wrap every page in @container, so @3xl (768px of actual
+            column) is a width the row can honestly hold; below it the toolbar
+            uses the column layout CD-G10 already defines, rather than a
+            straight row with an unusable control in it. */}
+        <div className="flex flex-col gap-2 @3xl:flex-row @3xl:items-center @3xl:gap-3">
+          {/* Full width in the column layout so the two tabs split it evenly
+              instead of "Depending on you" wrapping to a second line inside its
+              own pill. */}
+          <div className="inline-flex w-full shrink-0 items-center gap-1 self-start rounded-md border border-border bg-surface p-1 @3xl:w-auto @3xl:self-auto">
             <button
               onClick={() => setActiveTab("karos")}
               className={cn(
-                "inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors sm:flex-none sm:justify-start",
+                "inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors @3xl:flex-none @3xl:justify-start",
                 activeTab === "karos" ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground",
               )}
             >
@@ -755,7 +766,7 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
             <button
               onClick={() => setActiveTab("client")}
               className={cn(
-                "inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors sm:flex-none sm:justify-start",
+                "inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors @3xl:flex-none @3xl:justify-start",
                 activeTab === "client" ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground",
               )}
             >
@@ -770,11 +781,14 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
           {/* min-w-0 on the group and the field is what actually keeps the row
               straight: without it the search input's own minimum width wins
               over flex shrinking and pushes its siblings out of the line. */}
-          {/* Phone: search takes its own line and the selects share the one
-              below, rather than three controls fighting over 343px and leaving
-              the search box showing four characters. */}
-          <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-            <div className="relative min-w-0 w-full sm:max-w-[320px] sm:flex-1">
+          {/* Narrow column: search takes its own line and the selects share the
+              one below, rather than three controls fighting over 343px and
+              leaving the search box showing four characters. */}
+          <div className="flex min-w-0 flex-1 flex-col gap-2 @3xl:flex-row @3xl:items-center @3xl:justify-end">
+            {/* The floor that makes the row honest: once it IS a row, the field
+                never shrinks past 8rem — below that the placeholder is cut and
+                the control stops reading as a search box. */}
+            <div className="relative min-w-0 w-full @3xl:min-w-[8rem] @3xl:max-w-[320px] @3xl:flex-1">
               <Icon name="Search" className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-2" />
               <input
                 value={search}
@@ -787,7 +801,7 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-                className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground sm:flex-none sm:shrink-0"
+                className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground @3xl:flex-none @3xl:shrink-0"
               >
                 <option value="all">All statuses</option>
                 <option value="pending">Pending</option>
@@ -799,7 +813,7 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
                 <select
                   value={clientFilter}
                   onChange={(e) => setClientFilter(e.target.value)}
-                  className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground sm:flex-none sm:shrink-0"
+                  className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground @3xl:flex-none @3xl:shrink-0"
                 >
                   <option value="all">All clients</option>
                   {clientOptions.map((name) => (

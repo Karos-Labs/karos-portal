@@ -51,9 +51,16 @@ export function ClientHomeOverview({
     .slice(0, 5);
 
   return (
+    /* CD-H4: `min-w-0` on the cards, not decoration. A grid item's automatic
+       minimum size is its MIN-CONTENT, so at 375 the track stayed 343 while the
+       cards sized themselves to the longest deliverable title — 465px here,
+       381px in the reviewer's capture — and the status badges and "Open
+       archive" were cut off by the shell's overflow-x-clip. With the floor at 0
+       the card takes the track and the rows' existing min-w-0/truncate chain
+       does the shortening it was always meant to do. */
     <div className="grid gap-6 lg:grid-cols-2">
       {/* Needs your attention */}
-      <Card>
+      <Card className="min-w-0">
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Needs your attention</CardTitle>
           {attentionCount > 0 && (
@@ -109,7 +116,7 @@ export function ClientHomeOverview({
       </Card>
 
       {/* Recent activity */}
-      <Card>
+      <Card className="min-w-0">
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Recent activity</CardTitle>
           <Link

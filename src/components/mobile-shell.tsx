@@ -34,8 +34,24 @@ function isTabActive(pathname: string, item: MobileTabItem): boolean {
 }
 
 /**
+ * Tailwind's `md`, as a media query. The sheet and the bar exist only below it
+ * — above it both shells show a rail instead — so this is the width at which
+ * the sheet stops being a thing that can be open.
+ */
+const MD_QUERY = "(min-width: 48rem)";
+
+/**
  * Company-sheet open state that closes itself on navigation — tapping a link
- * inside the sheet has to reveal the page it just routed to.
+ * inside the sheet has to reveal the page it just routed to — and on crossing
+ * `md`.
+ *
+ * The breakpoint half is CD-H6: `md:hidden` stops PAINTING the sheet at desktop
+ * width but leaves it mounted and `open`, so the sheet and any panel opened
+ * inside it park their `fixed inset-0` layers over the desktop UI with no
+ * on-screen control left to dismiss them, and shrinking the window back below
+ * `md` re-reveals a sheet the reader never asked for. Both shells take their
+ * state from this hook, so closing it here covers the client rail and the
+ * staff sidebar at once.
  */
 export function useCompanySheet(): [boolean, (open: boolean) => void] {
   const pathname = usePathname();
@@ -45,6 +61,18 @@ export function useCompanySheet(): [boolean, (open: boolean) => void] {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    // Mount-time sync is unnecessary: `open` starts false, so there is nothing
+    // to close until someone opens it — and this listener fires the moment the
+    // viewport crosses the boundary after that.
+    const mq = window.matchMedia(MD_QUERY);
+    const closeAboveMd = () => {
+      if (mq.matches) setOpen(false);
+    };
+    mq.addEventListener("change", closeAboveMd);
+    return () => mq.removeEventListener("change", closeAboveMd);
+  }, []);
 
   return [open, setOpen];
 }

@@ -13,7 +13,7 @@ import { computeTrackedCompetitors } from "@/lib/competitor-priority";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { PageHeader } from "@/components/ui";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
-import { ClientAnalytics } from "@/components/client-analytics";
+import { ClientAnalytics, ClientAnalyticsStats } from "@/components/client-analytics";
 import { AiInsights } from "@/components/ai-insights";
 import { ClientHomeOverview } from "@/components/client-home-overview";
 import { SeoGeoPanel, SeoGeoScores, SeoGeoPlan } from "@/components/seo-geo-panel";
@@ -79,6 +79,10 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       assets={analyticsAssets}
       jobs={jobs}
       integrations={integrations}
+      // CD-H1: for a client the counter row is lifted to the top of Overview
+      // (below), so the Performance tab must not repeat it — the same
+      // hide-what-was-lifted contract the visibility panel already uses.
+      hideStats={isClientViewer}
     />
   );
 
@@ -181,7 +185,18 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       <div className="space-y-8">
         <section className="space-y-3">
           <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Overview</p>
-          <ClientHomeOverview tasks={tasks} assets={overviewAssets} />
+          {/* CD-H1: the five counters open the page. F99 left them inside the
+              Performance tab, which put them ~1000px down behind AI Insights —
+              the exact complaint CD-G6 struck F124 over. The rest of F99's
+              arrangement is untouched; only the stat row moves. */}
+          <div className="space-y-6">
+            <ClientAnalyticsStats
+              assets={analyticsAssets}
+              jobs={jobs}
+              integrations={integrations}
+            />
+            <ClientHomeOverview tasks={tasks} assets={overviewAssets} />
+          </div>
         </section>
         <section className="space-y-3">
           <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">AI Insights</p>
