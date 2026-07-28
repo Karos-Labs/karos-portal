@@ -24,6 +24,8 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Textarea } from "@/components/ui";
 import { Icon, LinkedInLogo } from "@/components/icon";
 import { addLiDraftFeedbackAction } from "@/lib/actions/linkedin-agent-actions";
+import { laneLabel } from "@/lib/draft-lane-label";
+import { stripInlineMarkdown } from "@/lib/doc-render";
 import type { LiParsedAccount, LiParsedDraft } from "@/lib/li-drafts";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
@@ -149,7 +151,7 @@ function DraftCard({
   return (
     <div className="rounded-lg border border-border bg-surface-2 p-4">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium">{draft.lane}</p>
+        <p className="text-sm font-medium">{laneLabel(draft.lane)}</p>
         <div className="flex items-center gap-2">
           {charLabel(draft.chars) ? (
             <span title="Character count. LinkedIn posts cap at 3,000 characters.">
@@ -169,7 +171,9 @@ function DraftCard({
           ) : null}
         </div>
       </div>
-      {draft.laneNote ? <p className="mt-1 text-xs text-muted">{draft.laneNote}</p> : null}
+      {draft.laneNote ? (
+        <p className="mt-1 text-xs text-muted">{stripInlineMarkdown(draft.laneNote)}</p>
+      ) : null}
 
       <div className="mt-3 rounded-md border border-border bg-background p-4">
         <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{draft.text}</p>
@@ -203,7 +207,7 @@ function DraftCard({
         <ul className="mt-2 space-y-0.5">
           {draft.meta.map((m, i) => (
             <li key={i} className="text-xs text-muted">
-              {m}
+              {stripInlineMarkdown(m)}
             </li>
           ))}
         </ul>

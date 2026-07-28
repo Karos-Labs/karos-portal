@@ -19,6 +19,8 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Textarea } from "@/components/ui";
 import { Icon, XLogo } from "@/components/icon";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
+import { laneLabel } from "@/lib/draft-lane-label";
+import { stripInlineMarkdown } from "@/lib/doc-render";
 import type { XParsedAccount, XParsedDraft } from "@/lib/x-drafts";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted";
@@ -119,7 +121,7 @@ function DraftCard({
   return (
     <div className="rounded-lg border border-border bg-surface-2 p-4">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium">{draft.avenue}</p>
+        <p className="text-sm font-medium">{laneLabel(draft.avenue)}</p>
         <div className="flex items-center gap-2">
           {isThread ? (
             <span title="A connected thread, written to post in order.">
@@ -137,7 +139,9 @@ function DraftCard({
           ) : null}
         </div>
       </div>
-      {draft.laneNote ? <p className="mt-1 text-xs text-muted">{draft.laneNote}</p> : null}
+      {draft.laneNote ? (
+        <p className="mt-1 text-xs text-muted">{stripInlineMarkdown(draft.laneNote)}</p>
+      ) : null}
 
       <div className="mt-3 space-y-2">
         {draft.posts.map((post, i) => (
@@ -162,7 +166,7 @@ function DraftCard({
         <ul className="mt-2 space-y-0.5">
           {draft.meta.map((m, i) => (
             <li key={i} className="text-xs text-muted">
-              {m}
+              {stripInlineMarkdown(m)}
             </li>
           ))}
         </ul>
