@@ -418,12 +418,29 @@ describe("engine views (SCRUM-52 fixes 2 + 4)", () => {
   });
 
   it("only surfaces ghost citations when the rate is above zero", () => {
+    const base = engineRow();
     const [withGhost] = buildEngineViews(
-      insights({ perEngine: [engineRow({ ghostCitationRate: 33.3 })] }),
+      insights({
+        perEngine: [{ ...base, category: { ...base.category!, ghostCitationRate: 33.3 } }],
+      }),
     );
     expect(withGhost.ghost?.label).toBe("linked but not named · 33% of your citations");
     const [without] = buildEngineViews(insights());
     expect(without.ghost).toBeNull();
+  });
+
+  it("reads the ghost chip from the category denominator, not the full set (F10)", () => {
+    // The chip sits in the same card as "cited as a source: N of M", which is
+    // category-only. Feeding it the full-set rate is how the card contradicted itself.
+    const base = engineRow();
+    const [view] = buildEngineViews(
+      insights({
+        perEngine: [
+          { ...base, ghostCitationRate: 80, category: { ...base.category!, ghostCitationRate: 0 } },
+        ],
+      }),
+    );
+    expect(view.ghost).toBeNull();
   });
 });
 

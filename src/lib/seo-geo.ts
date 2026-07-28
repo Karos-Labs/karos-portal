@@ -442,14 +442,54 @@ function clamp01(v: number): number {
   return Math.min(Math.max(v, 0), 1);
 }
 
-/** Per-engine geo-score-v3 sub-score, 0..1 (each signal normalized to 0..1 first). */
-export function engineVisibilityScore(e: PerEngineVisibility): number {
+/**
+ * The CATEGORY sub-metrics for an engine row, with a fallback to the full-prompt
+ * figures for snapshots captured before `category` existed on this record. One
+ * definition, shared by the scoring maths and the presenter, so the headline tile
+ * and the cards under it can never disagree about their denominator (QA F10 / CD-B3).
+ */
+export function categoryMetrics(e: PerEngineVisibility): SubMetrics {
   return (
-    APPEARANCE_LED_WEIGHTS.appearance * clamp01(e.mentionRate) +
-    APPEARANCE_LED_WEIGHTS.citation * clamp01(e.citationRate) +
-    APPEARANCE_LED_WEIGHTS.firstPosition * clamp01(e.firstPositionRate) +
-    APPEARANCE_LED_WEIGHTS.shareOfRoster * clamp01(e.shareOfVoice / 100) +
-    APPEARANCE_LED_WEIGHTS.sentiment * clamp01((e.netSentiment + 1) / 2)
+    e.category ?? {
+      promptsMeasured: e.promptsMeasured,
+      mentionRate: e.mentionRate,
+      citationRate: e.citationRate,
+      firstPositionRate: e.firstPositionRate,
+      shareOfVoice: e.shareOfVoice,
+      netSentiment: e.netSentiment,
+      ghostCitationRate: e.ghostCitationRate,
+      topCompetitor: e.topCompetitor,
+      brandMentions: e.brandMentions,
+    }
+  );
+}
+
+/**
+ * Per-engine geo-score-v3 sub-score, 0..1 (each signal normalized to 0..1 first).
+ *
+ * QA F10 — two corrections to the ported model, both about honesty rather than
+ * weighting:
+ *  (1) Inputs are the CATEGORY sub-metrics, not the full prompt set. The brand and
+ *      navigational questions name the client by construction, so the headline used
+ *      to show a positive grade next to an engine card of zeros, while claiming to
+ *      be "the number the fixes below are designed to move" — those fixes derive
+ *      from the category metrics. Also the CD-B3 rule: branded queries never feed a
+ *      client-vs-competitor number.
+ *  (2) The sentiment term only counts when the brand was actually mentioned.
+ *      netSentiment is 0 for an unmentioned brand, which maps to the neutral 0.5
+ *      midpoint and awarded 5/100 for having no presence at all — contradicting
+ *      this file's own rule, stated three times, that ESTIMATED signals never enter
+ *      a grade. The weights themselves are untouched (the a3 model is the recorded
+ *      baseline); zero presence now scores zero.
+ */
+export function engineVisibilityScore(e: PerEngineVisibility): number {
+  const c = categoryMetrics(e);
+  return (
+    APPEARANCE_LED_WEIGHTS.appearance * clamp01(c.mentionRate) +
+    APPEARANCE_LED_WEIGHTS.citation * clamp01(c.citationRate) +
+    APPEARANCE_LED_WEIGHTS.firstPosition * clamp01(c.firstPositionRate) +
+    APPEARANCE_LED_WEIGHTS.shareOfRoster * clamp01(c.shareOfVoice / 100) +
+    (c.mentionRate > 0 ? APPEARANCE_LED_WEIGHTS.sentiment * clamp01((c.netSentiment + 1) / 2) : 0)
   );
 }
 
@@ -480,7 +520,11 @@ export function computeVisibilityIndex(
   perEngine: PerEngineVisibility[],
   enginesTotal = perEngine.length,
 ): VisibilityIndexResult {
-  const live = perEngine.filter((e) => e.captureTier !== "UNAVAILABLE" && e.promptsMeasured > 0);
+  // Scored on CATEGORY questions (F10), so an engine that only answered branded
+  // questions contributes nothing rather than a guaranteed-hit inflation.
+  const live = perEngine.filter(
+    (e) => e.captureTier !== "UNAVAILABLE" && categoryMetrics(e).promptsMeasured > 0,
+  );
   const index = live.length
     ? Math.round((live.reduce((a, e) => a + engineVisibilityScore(e), 0) / live.length) * 100)
     : 0;

@@ -9,8 +9,10 @@ import {
   buildAnswerGrid,
   buildGazetteer,
   buildRecommendations,
+  categoryMetrics,
   classifyIntent,
   countBrandInAnswers,
+  engineVisibilityScore,
   normalizeBrandKey,
   dedupeNearDuplicates,
   selectByIntentQuota,
@@ -174,11 +176,63 @@ describe("visibility index (appearance-led geo-score-v3, PR#6 contract)", () => 
   });
 
   it("returns zero index and coverage when no engine measured", () => {
-    const vis = computePerEngineVisibility("perplexity", [], gaz);
+    const vis = computePerEngineVisibility("claude", [], gaz);
     const result = computeVisibilityIndex([vis], 5);
     expect(result.index).toBe(0);
     expect(result.enginesScored).toBe(0);
     expect(result.dataCoveragePct).toBe(0);
+  });
+
+  /** QA F10 — the headline used the FULL prompt set while every card below it used
+   *  the category subset, and the sentiment term gave 5/100 to a brand with no
+   *  presence at all. Both are grade-honesty defects, not weighting preferences. */
+  it("scores zero for a brand with no presence, instead of a 5-point sentiment floor", () => {
+    const isCategory = (p: string) => !/acme/i.test(p);
+    const vis = computePerEngineVisibility(
+      "chatgpt",
+      [analyzeAnswer(answer({ prompt: "best fintech app?", answerText: "Rival One leads." }), gaz)],
+      gaz,
+      isCategory,
+    );
+    expect(vis.category.mentionRate).toBe(0);
+    expect(engineVisibilityScore(vis)).toBe(0);
+    expect(computeVisibilityIndex([vis], 5).index).toBe(0);
+  });
+
+  it("scores the index on category questions, so tile and cards share a denominator", () => {
+    const isCategory = (p: string) => !/acme/i.test(p);
+    const probes = [
+      // Branded question: named by construction, guaranteed hit.
+      analyzeAnswer(answer({ prompt: "is Acme Fintech good?", answerText: "Acme Fintech is great.", citations: ["acmefintech.com"] }), gaz),
+      // Category question: only the competitor is named.
+      analyzeAnswer(answer({ prompt: "best fintech app?", answerText: "Rival One leads the space." }), gaz),
+    ];
+    const vis = computePerEngineVisibility("chatgpt", probes, gaz, isCategory);
+    // Full-set metrics still see the branded hit...
+    expect(vis.mentionRate).toBeGreaterThan(0);
+    // ...but the grade follows the category questions the fixes are designed to move.
+    expect(vis.category.mentionRate).toBe(0);
+    expect(computeVisibilityIndex([vis], 5).index).toBe(0);
+  });
+
+  it("still keeps the sentiment term once the brand is actually mentioned", () => {
+    const vis = computePerEngineVisibility(
+      "chatgpt",
+      [analyzeAnswer(answer({ answerText: "Acme Fintech is the best choice.", citations: ["acmefintech.com"] }), gaz)],
+      gaz,
+    );
+    expect(engineVisibilityScore(vis)).toBeCloseTo(1, 10);
+  });
+
+  it("falls back to full-set metrics for snapshots captured before `category` existed", () => {
+    const vis = computePerEngineVisibility(
+      "chatgpt",
+      [analyzeAnswer(answer({ answerText: "Acme Fintech is the best choice.", citations: ["acmefintech.com"] }), gaz)],
+      gaz,
+    );
+    const legacy = { ...vis, category: undefined as unknown as typeof vis.category };
+    expect(categoryMetrics(legacy).mentionRate).toBe(vis.mentionRate);
+    expect(engineVisibilityScore(legacy)).toBeCloseTo(1, 10);
   });
 });
 

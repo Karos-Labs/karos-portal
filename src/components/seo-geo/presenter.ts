@@ -19,6 +19,7 @@ import {
   REC_COPY,
   SEO_CHECKS,
   brandKeys,
+  categoryMetrics,
   computeCheckScore,
   engineVisibilityScore,
   findMention,
@@ -126,6 +127,10 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   const seoMeasured = insights.seoDataCoveragePct > 0;
   const readinessMeasured = insights.geoReadinessCoveragePct > 0;
   const visibilityMeasured = insights.geoVisibilityEnginesScored > 0;
+  // State the denominator (QA F10): the index is scored on the CATEGORY questions,
+  // the same set every card and gap below uses — not the full prompt set, which
+  // includes the questions that name the client and hit by construction.
+  const categoryCount = insights.categoryPresence?.total ?? 0;
 
   return [
     {
@@ -157,7 +162,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
     {
       key: "visibility",
       label: "AI visibility today",
-      explainer: `How often AI assistants actually name or recommend you right now, when we ask them ${promptCount || "real"} buyer questions. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we can measure. This is the number the fixes below are designed to move.`,
+      explainer: `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand — the questions new customers ask. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we can measure. This is the number the fixes below are designed to move.`,
       value: visibilityMeasured ? insights.geoVisibilityIndex : null,
       tone: visibilityMeasured ? visBand.tone : "neutral",
       bandLabel: visibilityMeasured ? visBand.label : "no engines measured this run",
@@ -168,7 +173,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       coverageLine: `based on ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} AI engines`,
       breakdownTitle: "Score by engine",
       breakdown: insights.perEngine
-        .filter((e) => e.captureTier !== "UNAVAILABLE" && e.promptsMeasured > 0)
+        .filter((e) => e.captureTier !== "UNAVAILABLE" && categoryMetrics(e).promptsMeasured > 0)
         .map((e) => ({
           label: ENGINE_LABELS[e.engine] ?? "Engine",
           pct: Math.round(engineVisibilityScore(e) * 100),
@@ -399,23 +404,14 @@ export function buildEngineViews(
       };
     }
 
-    // Client-vs-competitor comparison uses CATEGORY prompts only — the 6 branded
-    // questions name the client by construction and guarantee it mentions, which
-    // would otherwise inflate every stat here to a near-meaningless number even
-    // when every tracked competitor sits at 0 (QA Fix 2). Older persisted snapshots
-    // were captured before `category` existed on this record, so fall back to the
-    // full (all-prompts) metrics rather than crashing on the missing field.
-    const cat: SubMetrics = row.category ?? {
-      promptsMeasured: row.promptsMeasured,
-      mentionRate: row.mentionRate,
-      citationRate: row.citationRate,
-      firstPositionRate: row.firstPositionRate,
-      shareOfVoice: row.shareOfVoice,
-      netSentiment: row.netSentiment,
-      ghostCitationRate: row.ghostCitationRate,
-      topCompetitor: row.topCompetitor,
-      brandMentions: row.brandMentions,
-    };
+    // Client-vs-competitor comparison uses CATEGORY prompts only — the branded
+    // questions name the client by construction and guarantee mentions, which would
+    // otherwise inflate every stat here to a near-meaningless number even when every
+    // tracked competitor sits at 0 (QA Fix 2 / CD-B3). `categoryMetrics` carries the
+    // legacy fallback for snapshots captured before `category` existed on this record,
+    // and is the SAME accessor the scoring maths uses, so the tile and these cards
+    // can never drift apart again (QA F10).
+    const cat: SubMetrics = categoryMetrics(row);
     const n = cat.promptsMeasured;
     const citedCount = Math.round(cat.citationRate * n);
     const firstCount = Math.round(cat.firstPositionRate * n);
@@ -454,10 +450,12 @@ export function buildEngineViews(
             "When the answer listed brands, how often yours came first. First mention carries the most weight with buyers skimming an answer.",
         },
       ],
+      // F10: `cat.`, not `row.` — the chip sat in the same card as "cited as a
+      // source: 0 of 14", which is category-only, and read from the full set.
       ghost:
-        row.ghostCitationRate > 0
+        cat.ghostCitationRate > 0
           ? {
-              label: `linked but not named · ${Math.round(row.ghostCitationRate)}% of your citations`,
+              label: `linked but not named · ${Math.round(cat.ghostCitationRate)}% of your citations`,
               explainer:
                 "The engine used your website as a source but never said your name. Your content is doing the work while your brand stays invisible. Usually fixable with clearer branding on the cited pages.",
             }
