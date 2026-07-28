@@ -305,10 +305,15 @@ function PlatformCard({
           />
         )}
 
-        {/* Admin-only hint when OAuth flow exists but env vars aren't configured yet */}
-        {isAdmin && hasOAuthSupport && !isOAuthEnabled && (
+        {/* The Connect button is shown to everyone regardless of server config,
+            so the "this will fail" hint has to be shown to everyone too — it
+            used to be admin-only, leaving clients and employees with a branded
+            button whose entire behaviour was a blank popup (QA F55). */}
+        {hasOAuthSupport && !isOAuthEnabled && (
           <p className="text-[11px] text-warning/80">
-            OAuth env vars not set. The button above will fail until configured.
+            {isAdmin
+              ? "OAuth env vars not set. The button above will fail until configured."
+              : "This channel isn't connectable yet — ask your Karos team to finish setting it up."}
           </p>
         )}
 
@@ -659,10 +664,14 @@ function GoogleUnifiedCard({
           {isConnecting ? "Connecting…" : anyConnected ? "Reconnect Google Suite" : "Connect Google Suite"}
         </button>
 
-        {isAdmin && !isOAuthEnabled && (
+        {/* Same rule as the platform cards: everyone who can press the button
+            gets told it can't work yet (QA F55) — only admins get the env-var
+            detail. */}
+        {!isOAuthEnabled && (
           <p className="text-[11px] text-warning/80">
-            OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). The button above will
-            fail until configured.
+            {isAdmin
+              ? "OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). The button above will fail until configured."
+              : "Google Suite isn't connectable yet — ask your Karos team to finish setting it up."}
           </p>
         )}
 
