@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 
 import { createAsset, getAsset } from "@/lib/data";
-import { getAgentSlot, getClientAgent, updateAgentSlot } from "@/lib/data-client-agents";
+import {
+  claimAgentSlotOptionPick,
+  getAgentSlot,
+  getClientAgent,
+  updateAgentSlot,
+} from "@/lib/data-client-agents";
 import { resolveUmbrellaSchedule } from "@/lib/client-agent-slots";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
@@ -31,9 +36,12 @@ const MAX_PICK_CHARS = 4_000;
  * post. The batch asset stays staff-side history. Without this, every one of
  * those surfaces would need a second code path for X.
  *
- * IDEMPOTENT PER SLOT. A double-press, a retry after a flaky response, or two
- * tabs must not mint two assets for one day: the slot's own optionPick is the
- * lock, re-read here rather than trusted from the browser.
+ * IDEMPOTENT PER SLOT, by CLAIM. A double-press, a retry after a flaky response
+ * or two tabs must not mint two assets for one day — and a read-then-write
+ * check cannot promise that, since both callers read "not picked yet" before
+ * either writes. The winner is decided inside a transaction on the slot doc
+ * (claimAgentSlotOptionPick), the same shape as claimExternalJobCompletion,
+ * which exists for the identical single-delivery problem on jobs.
  *
  * THE NEGATIVE SIGNALS ARE WRITTEN AT PICK TIME, not asked for later. The
  * client already told us everything by choosing — the unchosen options are
@@ -97,6 +105,22 @@ export async function pickAgentSlotOptionAction(input: {
   if (!content) return { error: "A post can't be empty." };
 
   const now = Date.now();
+
+  // THE CLAIM (B6). The optionPick check above is a pre-flight courtesy that
+  // gives a fast, friendly error; it is NOT the guard. Two tabs both read null
+  // before either writes, and both would mint a post for the same day. The
+  // winner is decided inside a transaction on the slot doc, and the asset is
+  // created only after winning it: an orphan claim with no asset is recoverable,
+  // an orphan asset with no claim is a duplicate post nobody asked for.
+  const claimed = await claimAgentSlotOptionPick(slot.id, {
+    optionRef: chosen.ref,
+    ...(chosen.direction ? { direction: chosen.direction } : {}),
+    pickedAt: now,
+    pickedBy: user.uid,
+    edited,
+  });
+  if (!claimed) return { error: "You've already chosen for that day." };
+
   // Dated to the slot's DAY, and never into the future: markAssetPostedAction
   // refuses an asset whose day has not arrived, so a materialized post the
   // client cannot then mark as posted would be a dead end. The pick already
@@ -127,12 +151,9 @@ export async function pickAgentSlotOptionAction(input: {
     updatedAt: now,
   });
 
-  // The slot now points at the materialized post, not the batch.
-  await updateAgentSlot(slot.id, {
-    assetId,
-    status: "generated",
-    optionPick: { optionRef: chosen.ref, pickedAt: now, pickedBy: user.uid, edited },
-  });
+  // The slot now points at the materialized post, not the batch. The pick
+  // itself was already written by the claim above — this only completes it.
+  await updateAgentSlot(slot.id, { assetId, status: "generated" });
 
   // Negative signals for everything they did not choose — final at pick time.
   // Best-effort: a learning-log write must never cost the client their post.

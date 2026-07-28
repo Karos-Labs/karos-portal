@@ -88,6 +88,8 @@ beforeEach(() => {
   (data.getAsset as any).mockResolvedValue({ id: "batch-1", clientId: "c1", content: BATCH });
   (data.createAsset as any).mockResolvedValue("new-asset");
   (xActions.addXDraftFeedbackAction as any).mockResolvedValue({});
+  // The CAS claim succeeds by default; the concurrency case below flips it.
+  (dataClientAgents.claimAgentSlotOptionPick as any).mockResolvedValue(true);
 });
 
 describe("pickAgentSlotOptionAction", () => {
@@ -110,13 +112,15 @@ describe("pickAgentSlotOptionAction", () => {
         content: "Ship it weekly.",
       }),
     );
-    // The slot re-points at the materialized post and records the pick.
+    // The pick is written by the CLAIM, inside a transaction.
+    expect(dataClientAgents.claimAgentSlotOptionPick).toHaveBeenCalledWith(
+      "ca1__2026-07-28",
+      expect.objectContaining({ optionRef: REF_A, edited: false }),
+    );
+    // The slot then re-points at the materialized post.
     expect(dataClientAgents.updateAgentSlot).toHaveBeenCalledWith(
       "ca1__2026-07-28",
-      expect.objectContaining({
-        assetId: "new-asset",
-        optionPick: expect.objectContaining({ optionRef: REF_A, edited: false }),
-      }),
+      expect.objectContaining({ assetId: "new-asset" }),
     );
   });
 
@@ -149,9 +153,9 @@ describe("pickAgentSlotOptionAction", () => {
     expect(data.createAsset).toHaveBeenCalledWith(
       expect.objectContaining({ content: "My own words." }),
     );
-    expect(dataClientAgents.updateAgentSlot).toHaveBeenCalledWith(
+    expect(dataClientAgents.claimAgentSlotOptionPick).toHaveBeenCalledWith(
       "ca1__2026-07-28",
-      expect.objectContaining({ optionPick: expect.objectContaining({ edited: true }) }),
+      expect.objectContaining({ edited: true }),
     );
   });
 
@@ -184,6 +188,39 @@ describe("pickAgentSlotOptionAction", () => {
 
     expect(result.error).toMatch(/already chosen/i);
     expect(data.createAsset).not.toHaveBeenCalled();
+  });
+
+  it("loses cleanly when a concurrent pick won the claim first (B6)", async () => {
+    // Both tabs read an unpicked slot — the pre-flight check passes for both.
+    // Only the transaction can decide, and the loser must mint nothing.
+    (dataClientAgents.claimAgentSlotOptionPick as any).mockResolvedValue(false);
+    const { pickAgentSlotOptionAction } = await import("@/lib/actions/slot-option-actions");
+
+    const result = await pickAgentSlotOptionAction({
+      clientId: "c1",
+      slotId: "ca1__2026-07-28",
+      optionRef: REF_A,
+    });
+
+    expect(result.error).toMatch(/already chosen/i);
+    expect(data.createAsset).not.toHaveBeenCalled();
+    expect(dataClientAgents.updateAgentSlot).not.toHaveBeenCalled();
+    // The loser must not write the winner's rivals off either.
+    expect(xActions.addXDraftFeedbackAction).not.toHaveBeenCalled();
+  });
+
+  it("stores the humanised direction on the pick, never raw lane vocabulary (B3)", async () => {
+    const { pickAgentSlotOptionAction } = await import("@/lib/actions/slot-option-actions");
+
+    await pickAgentSlotOptionAction({
+      clientId: "c1",
+      slotId: "ca1__2026-07-28",
+      optionRef: REF_A,
+    });
+
+    const pick = (dataClientAgents.claimAgentSlotOptionPick as any).mock.calls[0][1];
+    expect(pick.direction).toBeTruthy();
+    expect(pick.direction).not.toMatch(/^Avenue \d/);
   });
 
   it("refuses a ref that is not one of that day's options", async () => {
