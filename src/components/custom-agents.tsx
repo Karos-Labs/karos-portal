@@ -1040,7 +1040,7 @@ function RunCustomAgentModal({
     return (
       <Modal open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3 text-center">
-          <Icon name="CheckCircle2" className="mx-auto h-8 w-8 text-success" />
+          <Icon name="CircleCheck" className="mx-auto h-8 w-8 text-success" />
           <p className="text-sm text-foreground">Run started</p>
           {/* Drafts no longer reach the client archive at all: F149 filters it
               to approved, non-future items. phase3-design §3's sentence is for
@@ -1458,7 +1458,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
 
         {agent?.source?.status === "blocked" && (
           <p className="rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
-            <Icon name="AlertTriangle" className="mr-1 inline h-3.5 w-3.5 text-warning" />
+            <Icon name="TriangleAlert" className="mr-1 inline h-3.5 w-3.5 text-warning" />
             The repo catalog marks this skill blocked. Review before enabling.
           </p>
         )}
@@ -1552,7 +1552,7 @@ function ImportAgentsModal({ onClose }: { onClose: () => void }) {
       <div className="mt-4 space-y-4">
         {!candidates && !error && (
           <p className="py-8 text-center text-sm text-muted">
-            <Icon name="Loader2" className="mr-2 inline h-4 w-4 animate-spin" />
+            <Icon name="LoaderCircle" className="mr-2 inline h-4 w-4 animate-spin" />
             Scanning the repo catalog…
           </p>
         )}
