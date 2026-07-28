@@ -622,7 +622,8 @@ describe("tracked-list alignment (competitor side-by-side)", () => {
     const views = buildDiscoveredViews(trackedInsights(), [{ name: "Rival" }]);
     expect(views).toHaveLength(1);
     expect(views[0].name).toBe("NewRival");
-    expect(views[0].line).toBe("named in 4 of 12 answers");
+    // CD-B3: both sides of the fraction are category answers, and the copy says so.
+    expect(views[0].line).toBe("named in 4 of 12 category answers");
   });
 
   it("builds roster chips from the tracked list with pending flags", () => {

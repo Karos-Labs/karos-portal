@@ -483,8 +483,11 @@ async function discoverAnswerBrands(
 ): Promise<DiscoveredBrand[]> {
   const usable = answers.filter((a) => a.captureTier !== "UNAVAILABLE" && a.answerText.trim());
   if (usable.length === 0) return [];
-  // Per-engine counts are category-only so the panel can compare them 1:1 with
-  // the roster rows (same denominators); the total keeps every prompt intent.
+  // CD-B3: discovery counts — total AND per-engine — are category-only, so "Also
+  // named by the engines" shares its denominator with the comparison rows and no
+  // branded question can promote a brand into the candidate list. The full answer
+  // corpus is still what the extraction pass reads (more text, better candidates);
+  // only the counting is scoped.
   const usableCategory = usable.filter((a) => isCategoryPrompt(a.prompt));
 
   const rosterKeys = new Set<string>([
@@ -545,9 +548,9 @@ async function discoverAnswerBrands(
       const aliases = [name, ...(domain ? [domain] : [])];
       const label = domain?.split(".")[0];
       if (label && label.length >= 4) aliases.push(label);
-      const counts = countBrandInAnswers(usable, aliases);
+      const counts = countBrandInAnswers(usableCategory, aliases);
       if (counts.mentions < DISCOVERY_MIN_MENTIONS) continue;
-      const categoryCounts = countBrandInAnswers(usableCategory, aliases);
+      const categoryCounts = counts;
 
       // URL fallback: a cited domain whose label matches the brand key.
       let url = domain ?? undefined;
@@ -622,14 +625,14 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
   const cs = insights.citationSummary;
   lines.push(
     "",
-    `**Your citations:** cited as a source in ${cs.answersCited} of ${cs.totalMeasuredAnswers} measured answers, named in ${cs.answersNamed}. That leaves ${cs.ghostCitations} ghost citations (your content used without crediting you) to convert into named recommendations.`,
+    `**Your citations:** cited as a source in ${cs.answersCited} of ${cs.totalMeasuredAnswers} measured CATEGORY answers, named in ${cs.answersNamed}. That leaves ${cs.ghostCitations} ghost citations (your content used without crediting you) to convert into named recommendations.`,
   );
 
   // "Who the engines quote instead" — citation-domain leaderboard.
   if (insights.citationLeaderboard.length) {
     lines.push(
       "",
-      "## Who the engines quote (citation leaderboard, across all measured answers)",
+      "## Who the engines quote (citation leaderboard, across measured CATEGORY answers)",
       ...insights.citationLeaderboard.map(
         (r) => `- ${r.domain}${r.isClient ? " (you)" : ""}: ${r.citations} citation${r.citations === 1 ? "" : "s"}`,
       ),
@@ -638,14 +641,14 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
   if (insights.competitorsNamed.length) {
     lines.push(
       "",
-      "Competitors named in the answers: " +
+      "Competitors named in the category answers: " +
         insights.competitorsNamed.map((c) => `${c.name} (${c.mentions})`).join(", "),
     );
   }
   if (insights.discoveredBrands?.length) {
     lines.push(
       "",
-      "Brands named by the engines that are NOT on the tracked roster (measured mention counts — candidates for competitor tracking): " +
+      "Brands named by the engines that are NOT on the tracked roster (measured category mention counts — candidates for competitor tracking): " +
         insights.discoveredBrands.map((b) => `${b.name} (${b.mentions})`).join(", "),
     );
   }
@@ -767,11 +770,19 @@ export async function runSeoGeoResearch(
 
   // PDF/report contract: intent-tagged prompts, the per-question × per-engine grid,
   // the citation-domain leaderboard, ghost-citation summary, and competitors named.
+  //
+  // CD-B3: every client-vs-competitor number is measured on CATEGORY questions only.
+  // Branded and navigational prompts name the client (and often only the client) by
+  // construction, so counting them hands the client an unfair advantage over every
+  // tracked competitor and shows them a biased score. The answer grid keeps the FULL
+  // prompt set — it is the methodology exhibit, and its whole job is to show which
+  // questions were asked and how each one landed, branded ones included.
+  const categoryProbes = capture.probes.filter((p) => isCategoryPrompt(p.prompt));
   const intentPrompts: IntentPrompt[] = tagPromptIntents(capture.promptSet, gazetteer);
   const answerGrid = buildAnswerGrid(intentPrompts, ENGINE_ROSTER, capture.probes);
-  const citationLeaderboard = computeCitationLeaderboard(capture.probes, gazetteer);
-  const citationSummary = computeCitationSummary(capture.probes);
-  const competitorsNamed = computeCompetitorsNamed(capture.probes, gazetteer);
+  const citationLeaderboard = computeCitationLeaderboard(categoryProbes, gazetteer);
+  const citationSummary = computeCitationSummary(categoryProbes);
+  const competitorsNamed = computeCompetitorsNamed(categoryProbes, gazetteer);
 
   const gaps: VisibilityGap[] = [
     ...computeCheckGaps(SEO_CHECKS, audit.seoChecks, "SEO"),

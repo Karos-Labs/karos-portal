@@ -590,6 +590,8 @@ export function buildDiscoveredViews(
   tracked?: TrackedCompetitorRef[],
 ): DiscoveredView[] {
   const trackedKeys = new Set((tracked ?? []).flatMap(refKeys));
+  // Both sides of this fraction are CATEGORY answers (CD-B3) — the same scope the
+  // comparison rows use, so a discovered brand's count is read like-for-like.
   const total = insights.citationSummary?.totalMeasuredAnswers ?? 0;
   return (insights.discoveredBrands ?? [])
     .filter((d) => !brandKeys(d.name, d.url).some((k) => trackedKeys.has(k)))
@@ -597,7 +599,10 @@ export function buildDiscoveredViews(
       name: d.name,
       url: d.url ?? null,
       mentions: d.mentions,
-      line: total > 0 ? `named in ${fraction(d.mentions, total, "answers")}` : `named ${d.mentions} times`,
+      line:
+        total > 0
+          ? `named in ${fraction(d.mentions, total, "category answers")}`
+          : `named ${d.mentions} times`,
     }));
 }
 
