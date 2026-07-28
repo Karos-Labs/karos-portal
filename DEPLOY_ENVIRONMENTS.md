@@ -1,0 +1,265 @@
+# Deploy environments — prep & production
+
+Two independent GCP projects, one shared Firebase project.
+
+|                          | **prep**                                   | **production**                     |
+|--------------------------|---------------------------------------------|-------------------------------------|
+| GCP project              | separate (e.g. `karoscmo-prep`)             | existing project (e.g. `karoscmo`)  |
+| Cloud Run service        | own, in its own project                     | own, in its own project             |
+| Artifact Registry        | own repo                                    | own repo                            |
+| Secret Manager           | own secrets (same *names*, own *values*)    | own secrets                         |
+| Firebase project (Auth + Firestore) | **same as production** — `karoscmo` | same                        |
+| Deploy trigger           | automatic, on every push to `main`          | **manual only** — a person runs it  |
+
+Firebase Auth and Firestore are shared on purpose (per your call), so prep and production
+see the same users and the same client/job/asset data. Everything else — compute, build,
+secrets — is fully isolated, so a bad prep deploy, a leaked prep secret, or a runaway prep
+process can't touch production infrastructure or its IAM.
+
+## ⚠️ Shared data — what this means in practice
+
+Because Firestore/Auth are shared, prep is not a sandbox with fake data — it's a second
+frontend on top of the *real* clients/jobs/assets. Anything prep does that reaches outside
+the app (send an email, publish a scheduled post, spend agent credits) is a real action
+against a real client. The deploy config in this repo defaults prep to **not** be able to
+do those things automatically:
+
+- **`AGENT_SERVICE_URL` is left empty for prep** — same mechanism the app already uses to
+  hide the managed-products UI when the agent service isn't configured (see
+  `cloudbuild.yaml`'s comment on `_AGENT_SERVICE_URL`). No agent service URL configured for
+  prep means jobs can't be submitted from prep, so no duplicate/double-billed AI runs.
+- **No Cloud Scheduler job should point at prep's `/api/publish`, `/api/analytics/sync`,
+  `/api/*/reconcile`, etc.** Only wire Cloud Scheduler to production. Prep's `CRON_SECRET`
+  exists so those routes don't 503, but nothing should ever call them there — don't create
+  a scheduler job against the prep URL.
+- **Use a separate, unverified Resend API key for prep's `RESEND_API_KEY`.** A Resend key
+  with no verified sending domain can only deliver to the account owner's own verified
+  addresses — so if a prep test run does hit `sendEmail()`, it physically cannot reach a
+  real client inbox. Don't reuse the production Resend key in prep.
+- **`TOKEN_ENCRYPTION_KEY` must be the *same value* in both environments.** It encrypts
+  LinkedIn seat OAuth tokens at rest in the shared Firestore — if prep ever wrote with a
+  different key, production would fail to decrypt those tokens. Copy this one value
+  verbatim into both projects' Secret Manager.
+- Everything else that's Firebase-specific (`FIREBASE_SERVICE_ACCOUNT_KEY`,
+  `NEXT_PUBLIC_FIREBASE_*`) is also identical in both environments, since it's the same
+  Firebase project.
+
+If you later want prep to exercise real publishing/agent flows deliberately, that's a
+one-line env var change (set `AGENT_SERVICE_URL` / add the scheduler job) — just do it
+knowingly.
+
+---
+
+## One-time setup
+
+`deploy/bootstrap-prep-gcp.sh` runs everything below in one idempotent pass (same pattern as
+`agent-service/deploy/bootstrap-gcp.sh`) — on a machine with `gcloud` authenticated:
+
+```bash
+PREP_PROJECT_ID=karoscmo-prep PROD_PROJECT_ID=karoscmo \
+BILLING_ACCOUNT_ID=XXXXXX-XXXXXX-XXXXXX \
+  ./deploy/bootstrap-prep-gcp.sh
+```
+
+It prompts (hidden input) for the handful of real secret values it can't generate itself,
+skips anything that already exists, and prints the `gh variable set` commands you still need
+to run at the end. The steps below are the same thing spelled out manually, if you'd rather
+run them one at a time or the script hits something environment-specific.
+
+Run once, in order. `$PROD_PROJECT_ID` is your existing project (the one `cloudbuild.yaml`
+already deploys to today). Pick a `$PREP_PROJECT_ID` (e.g. `karoscmo-prep`).
+
+### 1. Create the prep project
+
+```bash
+gcloud projects create $PREP_PROJECT_ID --name="Karos CMO (prep)"
+gcloud billing projects link $PREP_PROJECT_ID --billing-account=<YOUR_BILLING_ACCOUNT_ID>
+
+gcloud services enable \
+  run.googleapis.com \
+  cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com \
+  secretmanager.googleapis.com \
+  --project=$PREP_PROJECT_ID
+```
+
+### 2. Artifact Registry repo (prep)
+
+```bash
+gcloud artifacts repositories create karos-cmo \
+  --repository-format=docker --location=us-central1 --project=$PREP_PROJECT_ID
+```
+
+### 3. Grant prep's Cloud Build service account deploy rights
+
+Same three bindings the original `cloudbuild.yaml` header already documents for
+production — repeat them for prep:
+
+```bash
+PREP_PROJECT_NUMBER=$(gcloud projects describe $PREP_PROJECT_ID --format='value(projectNumber)')
+
+gcloud projects add-iam-policy-binding $PREP_PROJECT_ID \
+  --member="serviceAccount:${PREP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+  --role="roles/run.admin"
+
+gcloud iam service-accounts add-iam-policy-binding \
+  "${PREP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --member="serviceAccount:${PREP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser" --project=$PREP_PROJECT_ID
+
+gcloud projects add-iam-policy-binding $PREP_PROJECT_ID \
+  --member="serviceAccount:${PREP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+### 4. Prep secrets
+
+Same secret *names* as production (`cloudbuild.yaml`'s `--set-secrets` list), own values:
+
+```bash
+echo -n "sk_..."           | gcloud secrets create KAROS_STAFF_KEY --data-file=- --project=$PREP_PROJECT_ID
+echo -n "sk-ant-..."       | gcloud secrets create ANTHROPIC_API_KEY --data-file=- --project=$PREP_PROJECT_ID
+echo -n "re_..."           | gcloud secrets create RESEND_API_KEY --data-file=- --project=$PREP_PROJECT_ID   # separate, unverified-domain key — see warning above
+echo -n "..."              | gcloud secrets create FIREFLIES_API_KEY --data-file=- --project=$PREP_PROJECT_ID
+echo -n "..."              | gcloud secrets create FIREFLIES_WEBHOOK_SECRET --data-file=- --project=$PREP_PROJECT_ID
+echo -n "<own value>"      | gcloud secrets create CRON_SECRET --data-file=- --project=$PREP_PROJECT_ID       # do not wire a scheduler to it — see warning above
+echo -n "dev-token"        | gcloud secrets create agent-service-tokens --data-file=- --project=$PREP_PROJECT_ID
+echo -n "dev-webhook-secret" | gcloud secrets create agent-webhook-secret --data-file=- --project=$PREP_PROJECT_ID
+
+# SAME value as production — copy it, don't regenerate:
+cat serviceAccount.json    | gcloud secrets create FIREBASE_SERVICE_ACCOUNT_KEY --data-file=- --project=$PREP_PROJECT_ID
+gcloud secrets versions access latest --secret=TOKEN_ENCRYPTION_KEY --project=$PROD_PROJECT_ID \
+  | gcloud secrets create TOKEN_ENCRYPTION_KEY --data-file=- --project=$PREP_PROJECT_ID
+```
+
+(If `TOKEN_ENCRYPTION_KEY` isn't in Secret Manager yet in production, pull it from wherever
+it's currently stored — the requirement is just that both projects end up with the exact
+same bytes.)
+
+### 5. Cross-project read access, for promotion later
+
+Production's Cloud Build service account needs to be able to `docker pull` from *prep's*
+Artifact Registry when promoting:
+
+```bash
+PROD_PROJECT_NUMBER=$(gcloud projects describe $PROD_PROJECT_ID --format='value(projectNumber)')
+
+gcloud artifacts repositories add-iam-policy-binding karos-cmo \
+  --project=$PREP_PROJECT_ID --location=us-central1 \
+  --member="serviceAccount:${PROD_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+  --role="roles/artifactregistry.reader"
+```
+
+### 6. Workload Identity Federation (GitHub Actions → GCP, no key files)
+
+Create the pool once (in the prep project — it just needs to live somewhere; it grants
+roles cross-project):
+
+```bash
+gcloud iam workload-identity-pools create github \
+  --project=$PREP_PROJECT_ID --location=global --display-name="GitHub Actions"
+
+gcloud iam workload-identity-pools providers create-oidc github \
+  --project=$PREP_PROJECT_ID --location=global --workload-identity-pool=github \
+  --display-name="GitHub" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='karoslabs/karosCMO'" \
+  --issuer-uri="https://token.actions.githubusercontent.com"
+
+WIF_POOL_ID=$(gcloud iam workload-identity-pools describe github \
+  --project=$PREP_PROJECT_ID --location=global --format="value(name)")
+```
+
+Create the deployer service account and let GitHub Actions impersonate it:
+
+```bash
+gcloud iam service-accounts create github-actions-deployer \
+  --project=$PREP_PROJECT_ID --display-name="GitHub Actions deployer"
+
+DEPLOYER_SA="github-actions-deployer@${PREP_PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud iam service-accounts add-iam-policy-binding $DEPLOYER_SA \
+  --project=$PREP_PROJECT_ID \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/${WIF_POOL_ID}/attribute.repository/karoslabs/karosCMO"
+```
+
+Grant it exactly what it needs — submit builds in both projects (the actual build/deploy
+permissions live on each project's *own* Cloud Build SA, already granted above):
+
+```bash
+gcloud projects add-iam-policy-binding $PREP_PROJECT_ID \
+  --member="serviceAccount:${DEPLOYER_SA}" --role="roles/cloudbuild.builds.editor"
+
+gcloud projects add-iam-policy-binding $PROD_PROJECT_ID \
+  --member="serviceAccount:${DEPLOYER_SA}" --role="roles/cloudbuild.builds.editor"
+```
+
+Get the WIF provider's full resource name (you'll need it for a GitHub variable):
+
+```bash
+gcloud iam workload-identity-pools providers describe github \
+  --project=$PREP_PROJECT_ID --location=global --workload-identity-pool=github \
+  --format="value(name)"
+# → projects/<number>/locations/global/workloadIdentityPools/github/providers/github
+```
+
+### 7. GitHub repo configuration
+
+Set these as **repository variables** (Settings → Secrets and variables → Actions →
+Variables, or `gh variable set NAME --body value`) — none of these are secret values, which
+is the point of using WIF:
+
+```bash
+gh variable set GCP_WIF_PROVIDER --body "projects/<number>/locations/global/workloadIdentityPools/github/providers/github"
+gh variable set GCP_DEPLOYER_SA --body "github-actions-deployer@$PREP_PROJECT_ID.iam.gserviceaccount.com"
+gh variable set PREP_PROJECT_ID --body "$PREP_PROJECT_ID"
+gh variable set PROD_PROJECT_ID --body "$PROD_PROJECT_ID"
+gh variable set PREP_APP_URL --body "https://<prep-cloud-run-url>"
+gh variable set PROD_APP_URL --body "https://<prod-cloud-run-url-or-custom-domain>"
+gh variable set PREP_AGENT_SERVICE_URL --body ""
+gh variable set PROD_AGENT_SERVICE_URL --body "<existing prod agent service URL, if any>"
+gh variable set PREP_EMAIL_FROM --body "Karos CMO Prep <onboarding@resend.dev>"
+gh variable set PROD_EMAIL_FROM --body "Karos CMO <donotreply@karoslabs.com>"
+gh variable set PREP_ADMIN_EMAIL --body "hello@karoslabs.com"
+gh variable set PROD_ADMIN_EMAIL --body "hello@karoslabs.com"
+```
+
+`PREP_APP_URL` won't be known until the first prep deploy finishes (Cloud Run assigns the
+URL) — run the first `deploy-prep` build manually once to learn it, then set the variable
+and let subsequent pushes use it.
+
+Optional but recommended: add a **required reviewer** on the `production` GitHub
+Environment (Settings → Environments → production → Deployment protection rules) as a
+second manual gate on top of "someone has to click Run workflow" — belt-and-suspenders on
+the manual-only promotion.
+
+### 8. Firebase-side checklist (shared project — do these once)
+
+- **Authorized domains**: Firebase console → Authentication → Settings → Authorized
+  domains → add the prep Cloud Run URL's domain, or login will fail there.
+- **API key restrictions**: if `NEXT_PUBLIC_FIREBASE_API_KEY` has HTTP-referrer
+  restrictions in Google Cloud Console → APIs & Services → Credentials, add the prep
+  domain to the allow-list too.
+- **firestore.rules**: nothing to do — one shared Firestore, deploy rules once as today.
+- **Social OAuth "Connect" flows** (LinkedIn/Twitter/Google/etc.): each provider's app
+  console has its own redirect-URI allow-list, keyed by `NEXT_PUBLIC_APP_URL`. Only add
+  prep's callback URL there if you actually plan to exercise those connect flows from prep.
+
+---
+
+## Day to day
+
+1. Push to `main` → `quality` job runs (lint/type-check/test) → on success, `deploy-prep.yml`
+   builds and deploys to the prep Cloud Run service. Nothing reaches production.
+2. Poke around at `PREP_APP_URL`, confirm the change looks right.
+3. GitHub → Actions → **Promote to Production** → Run workflow → enter the commit SHA you
+   just verified in prep → it copies that exact image into production's registry and
+   deploys it. No rebuild, no drift between what you tested and what ships.
+
+### Rollback
+
+Re-run **Promote to Production** with an earlier commit SHA that's still tagged in prep's
+Artifact Registry — Cloud Run keeps prior revisions too, so `gcloud run services
+update-traffic karos-cmo --project=$PROD_PROJECT_ID --to-revisions=<prev-revision>=100` also
+works for an instant rollback without going through the pipeline at all.

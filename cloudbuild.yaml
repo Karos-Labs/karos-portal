@@ -1,10 +1,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Karos CMO — Google Cloud Build CI/CD pipeline
+# Karos CMO — build image → push to Artifact Registry → deploy to Cloud Run.
 #
-# Triggers on push to main → builds image → pushes to Artifact Registry
-# → deploys to Cloud Run.
+# This file is environment-agnostic: it's invoked once per environment,
+# pointed at a different GCP project each time, with different substitution
+# values. The automatic path is GitHub Actions, not a GCP-side trigger — see
+# .github/workflows/deploy-prep.yml (auto, on push to main → prep project) and
+# DEPLOY_ENVIRONMENTS.md (full two-environment runbook, incl. production,
+# which is promoted from the built prep image via cloudbuild.promote.yaml
+# rather than rebuilt from this file).
 #
-# One-time setup (run these in your terminal before first deploy):
+# One-time setup per project (run these in your terminal before first deploy):
 #
 #   # 1. Enable required APIs
 #   gcloud services enable \
@@ -42,15 +47,15 @@
 #   cat serviceAccount.json | gcloud secrets create FIREBASE_SERVICE_ACCOUNT_KEY --data-file=-
 #
 #   # Note: NEXT_PUBLIC_FIREBASE_* are public Firebase Web SDK config. They live
-#   # in .env.production (committed to git) and are picked up by Next.js at build
-#   # time automatically — no Secret Manager secrets needed for them.
+#   # in .env.production (committed to git, shared by every environment since
+#   # they all point at the same Firebase project) and are picked up by
+#   # Next.js at build time automatically — no Secret Manager secrets needed.
 #
-#   # 6. Connect this cloudbuild.yaml to a Cloud Build trigger (GitHub / manual)
-#   gcloud builds triggers create github \
-#     --repo-name=karos-cmo \
-#     --repo-owner=<your-github-org> \
-#     --branch-pattern="^main$" \
-#     --build-config=cloudbuild.yaml
+#   # 6. No GCP-side Cloud Build trigger is created — GitHub Actions is the
+#   #    automatic path (deploy-prep.yml on push to main; promote-production.yml
+#   #    is the manual production gate). Grant the deployer service account
+#   #    roles/cloudbuild.builds.editor on this project so it can submit builds.
+#   #    Full runbook: DEPLOY_ENVIRONMENTS.md.
 #
 # ── Workload Identity (recommended — avoids storing the SA key) ───────────────
 # Instead of FIREBASE_SERVICE_ACCOUNT_KEY, bind the Cloud Run service account
@@ -90,7 +95,11 @@ substitutions:
   # _RUNWAY_AUTOGEN_ENABLED was flipped to "1".
   # Keep in step with RUNWAY_HORIZON_DAYS; runway.test.ts pins the two together.
   _RUNWAY_MAX_JOBS_PER_CLIENT: "14"
-  # Override at trigger level: --substitutions _REGION=europe-west1,...
+  # Per-environment sender identity — override for prep so test sends never
+  # look like production mail (see DEPLOY_ENVIRONMENTS.md).
+  _EMAIL_FROM: "Karos CMO <donotreply@karoslabs.com>"
+  _ADMIN_EMAIL: "hello@karoslabs.com"
+  # Override at submit time: --substitutions _REGION=europe-west1,...
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -149,7 +158,7 @@ steps:
       # (both empty until the agent service is deployed; the managed-products UI
       # stays hidden until AGENT_SERVICE_URL is set). NEXT_PUBLIC_APP_URL is the
       # webhook callback base.
-      - --set-env-vars=EMAIL_FROM=Karos CMO <donotreply@karoslabs.com>,ADMIN_EMAIL=hello@karoslabs.com,NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},NEXT_PUBLIC_APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT}
+      - --set-env-vars=EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},NEXT_PUBLIC_APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT}
     waitFor: [docker-push]
 
 images:

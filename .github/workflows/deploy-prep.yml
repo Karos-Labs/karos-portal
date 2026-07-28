@@ -1,0 +1,51 @@
+name: Deploy to Prep
+
+# Automatic path: every push to main that passes quality checks is built and
+# deployed to the prep Cloud Run service (separate GCP project from
+# production — see DEPLOY_ENVIRONMENTS.md). Production is never touched here;
+# promoting a verified prep build to production is a separate manual workflow
+# (promote-production.yml).
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-prep
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # Workload Identity Federation — no service-account key needed
+
+jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+
+  deploy:
+    name: Build & deploy (prep)
+    needs: quality
+    runs-on: ubuntu-latest
+    environment: prep
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Reuses the existing build+push+deploy recipe in cloudbuild.yaml,
+      # unchanged, just pointed at the prep project with prep substitutions.
+      # Cloud Build itself does the docker build (fast machine type, separate
+      # from the GitHub-hosted runner).
+      - name: Build & deploy via Cloud Build
+        run: |
+          gcloud builds submit \
+            --project="${{ vars.PREP_PROJECT_ID }}" \
+            --config=cloudbuild.yaml \
+            --substitutions=_APP_URL="${{ vars.PREP_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PREP_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PREP_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PREP_ADMIN_EMAIL }}"

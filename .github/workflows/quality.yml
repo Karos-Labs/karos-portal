@@ -1,0 +1,61 @@
+name: Quality checks
+
+# Reusable workflow — the single source of truth for "does this commit pass
+# lint/type-check/tests". Called by ci.yml (PR/push status checks) and by
+# deploy-prep.yml (which gates the prep deploy on the same checks).
+on:
+  workflow_call:
+
+jobs:
+  quality:
+    name: Type-check · Lint · Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type-check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run test suite
+        run: npm test
+
+  agent-service:
+    name: Agent service · Type-check · Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-service
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: agent-service/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type-check
+        run: npm run typecheck
+
+      - name: Run test suite
+        run: npm test

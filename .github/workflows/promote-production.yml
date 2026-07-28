@@ -1,0 +1,48 @@
+name: Promote to Production
+
+# Manual path only — never triggered by a push. Run this from the Actions tab
+# (or `gh workflow run promote-production.yml -f sha=<sha>`) after you've
+# verified the corresponding prep deploy. It does NOT rebuild from source: it
+# copies the exact image already built and tested in prep into production's
+# own Artifact Registry, then deploys that image. What you approved in prep is
+# byte-for-byte what ships to production.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA already built & deployed to prep (the tag on the prep image)"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  promote:
+    name: Promote prep image → production
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # cloudbuild.promote.yaml copies the prep-tagged image into production's
+      # own Artifact Registry (no rebuild) and deploys it to Cloud Run.
+      - name: Copy image & deploy via Cloud Build
+        run: |
+          gcloud builds submit \
+            --project="${{ vars.PROD_PROJECT_ID }}" \
+            --config=cloudbuild.promote.yaml \
+            --no-source \
+            --substitutions=_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ inputs.sha }}",_APP_URL="${{ vars.PROD_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PROD_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PROD_ADMIN_EMAIL }}"

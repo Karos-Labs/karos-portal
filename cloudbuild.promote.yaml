@@ -1,0 +1,93 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Karos CMO — promote a prep-built image to production. No rebuild from
+# source: copies the exact image already built + deployed to prep (tagged
+# with the git commit SHA) into this project's own Artifact Registry, then
+# deploys that same image to Cloud Run. Production always runs the identical
+# bits that were verified in prep.
+#
+# Invoked by .github/workflows/promote-production.yml:
+#   gcloud builds submit --project=<PROD_PROJECT_ID> --config=cloudbuild.promote.yaml \
+#     --no-source --substitutions=_PREP_PROJECT_ID=...,_SHA=<commit-sha>,...
+#
+# One-time setup — grant *this* (production) project's Cloud Build service
+# account read access to the *prep* project's Artifact Registry repo, so the
+# pull-from-prep step below can reach it:
+#
+#   PROD_PROJECT_NUMBER=$(gcloud projects describe $PROD_PROJECT_ID --format='value(projectNumber)')
+#   gcloud artifacts repositories add-iam-policy-binding karos-cmo \
+#     --project=$PREP_PROJECT_ID --location=us-central1 \
+#     --member="serviceAccount:${PROD_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+#     --role="roles/artifactregistry.reader"
+#
+# The cloud-run-deploy step's flags (--set-secrets, --memory, etc.) mirror
+# cloudbuild.yaml's own deploy step — keep the two in sync.
+# ─────────────────────────────────────────────────────────────────────────────
+
+substitutions:
+  _REGION: us-central1
+  _REPO: karos-cmo
+  _SERVICE: karos-cmo
+  _PREP_PROJECT_ID: ""
+  _PREP_REGION: us-central1
+  _SHA: ""
+  _APP_URL: ""
+  _AGENT_SERVICE_URL: ""
+  _EMAIL_FROM: "Karos CMO <donotreply@karoslabs.com>"
+  _ADMIN_EMAIL: "hello@karoslabs.com"
+  # Runway autopilot — keep in step with cloudbuild.yaml's own substitutions.
+  _RUNWAY_AUTOGEN_ENABLED: ""
+  _RUNWAY_MAX_JOBS_PER_CLIENT: "14"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  # ── 1. Pull the prep-tagged image from the PREP project's registry ─────────
+  - id: pull-from-prep
+    name: gcr.io/cloud-builders/docker
+    args:
+      - pull
+      - ${_PREP_REGION}-docker.pkg.dev/${_PREP_PROJECT_ID}/${_REPO}/${_SERVICE}:${_SHA}
+
+  # ── 2. Re-tag it into THIS (production) project's registry ─────────────────
+  - id: tag-for-production
+    name: gcr.io/cloud-builders/docker
+    args:
+      - tag
+      - ${_PREP_REGION}-docker.pkg.dev/${_PREP_PROJECT_ID}/${_REPO}/${_SERVICE}:${_SHA}
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:${_SHA}
+    waitFor: [pull-from-prep]
+
+  # ── 3. Push into production's Artifact Registry ────────────────────────────
+  - id: push-to-production
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:${_SHA}
+    waitFor: [tag-for-production]
+
+  # ── 4. Deploy to Cloud Run (same flags as cloudbuild.yaml's deploy step) ───
+  - id: cloud-run-deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:${_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=3000
+      - --min-instances=1
+      - --max-instances=10
+      - --memory=1Gi
+      - --cpu=1
+      - --timeout=300
+      - --concurrency=80
+      - --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest,CRON_SECRET=CRON_SECRET:latest,AGENT_SERVICE_TOKEN=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest
+      - --set-env-vars=EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},NEXT_PUBLIC_APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT}
+    waitFor: [push-to-production]
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:${_SHA}
