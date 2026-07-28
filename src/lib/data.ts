@@ -1551,6 +1551,26 @@ export async function listFeedbacks(agentId?: string, limit = 200): Promise<Feed
   return snap.docs.map((d) => withId<Feedback>(d));
 }
 
+/**
+ * Corrections a client (or staff on their behalf) has applied to this client's
+ * context documents, newest first. Read back by the intel pipeline so a
+ * regeneration — which replaces every document wholesale — does not restore
+ * facts the client has already told us are wrong.
+ *
+ * Sorted in memory rather than with orderBy so no composite index is required.
+ */
+export async function listClientDocCorrections(
+  clientId: string,
+  limit = 100,
+): Promise<Feedback[]> {
+  const snap = await col.feedbacks().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<Feedback>(d))
+    .filter((f) => f.scope === "single_doc" || f.scope === "global")
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit);
+}
+
 /* -------------------- client access requests ------------------------ */
 
 export async function createClientRequest(data: Omit<ClientRequest, "id">): Promise<string> {

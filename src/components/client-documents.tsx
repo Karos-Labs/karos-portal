@@ -466,6 +466,9 @@ function RegenerateModal({
 
         {/* Body */}
         <div className="space-y-4 px-5 py-4">
+          <p className="rounded-[8px] border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
+            This replaces all documents. Corrections applied since the last run will be lost.
+          </p>
           <p className="text-sm text-muted">
             Optionally add run-specific context for this regeneration. These instructions apply
             to{" "}
