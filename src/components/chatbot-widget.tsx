@@ -23,19 +23,22 @@ interface ProactiveAction {
   icon: string;
   label: string;
   sublabel: string;
-  trigger: string;
+  /** Chat message this chip sends. Omitted for chips handled by a dedicated UI. */
+  trigger?: string;
   color: string;
 }
 
-function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[] {
+function buildProactiveActions(): ProactiveAction[] {
   return [
     {
+      // Handled by the Strategy War Room, not the chat path — so no trigger.
+      // The swarm reads the client's calendar gaps, brand guidance, past
+      // engagement and custom agents; it does NOT look at the web, the client's
+      // site or the inbox, so the label must not promise a market scan (QA F50).
       id: "scan_inbox",
-      icon: hasGoogleIntegration ? "Globe" : "ListTodo",
+      icon: "ListTodo",
       label: "Refresh Task Map",
-      sublabel: "Scan market footprint & surface operational priorities",
-      trigger:
-        "Scan the web and analyze our market footprint for operational action items. Build a comprehensive task map covering website optimizations, content opportunities, and strategic priorities.",
+      sublabel: "Rebuild your task map from calendar gaps and past performance",
       color: "#FF6B2C",
     },
     {
@@ -200,7 +203,11 @@ function ProactiveWelcome({
   /** True while a background AI generation cycle is running — locks the Refresh Task Map chip. */
   isAiProcessing?: boolean;
 }) {
-  const actions = buildProactiveActions(hasGoogleIntegration);
+  const actions = buildProactiveActions();
+  // Kept on the prop chain (layout → dock → widget) but no longer decorates the
+  // Refresh Task Map chip: a Google connection changed the icon to a globe while
+  // nothing in the run ever looked outside the account (QA F50).
+  void hasGoogleIntegration;
   const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
 
   const [taskText, setTaskText] = useState("");
@@ -307,7 +314,7 @@ function ProactiveWelcome({
             <button
               key={action.id}
               disabled={locked}
-              onClick={() => (action.id === "scan_inbox" ? onRefreshTaskMap() : send(action.trigger))}
+              onClick={() => (action.trigger ? send(action.trigger) : onRefreshTaskMap())}
               title={locked ? "Karos Agents are already building your workspace strategy" : undefined}
               className={cn(
                 "group flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150",
