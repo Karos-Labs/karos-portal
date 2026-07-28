@@ -13,7 +13,7 @@ are tracked in the CD table at the bottom.
 | F1 | BLOCKER | A | SEO | 1 | RESOLVED | yes | A finished client-facing action plan with a working Approve button is rendered on no page, whil | findings-p009-046.md |
 | F3 | HIGH | B | SEO | 2 | OPEN | yes | Card bodies are raw audit-model prose, and "What good looks like" just repeats the card title | findings-p009-046.md |
 | F4 | HIGH | A | SEO | 2 | OPEN | yes | Cards promise Karos will apply the fix "automatically" — no such code path exists and there is  | findings-p009-046.md |
-| F5 | HIGH | A | SEO | 2 | OPEN | — | Grids split into multiple columns at window widths where the side rail and copilot dock have al | findings-p009-046.md |
+| F5 | HIGH | A | WORKSPACE | 2 | OPEN | — | Grids split into multiple columns at window widths where the side rail and copilot dock have al | findings-p009-046.md |
 | F7 | HIGH | B | SEO | 2 | OPEN | yes | No "What we're fixing" card can hand off to an agent — the one link built for it can never rend | findings-p009-046.md |
 | F9 | HIGH | B | SEO | 2 | OPEN | yes | The "What we're fixing" cards show clients raw engineering check labels — the plain-English rew | findings-p009-046.md |
 | F10 | HIGH | B | SEO | 2 | OPEN | yes | The headline AI-visibility score uses a different question set from every number below it, and  | findings-p009-046.md |
@@ -21,7 +21,7 @@ are tracked in the CD table at the bottom.
 | F12 | HIGH | B | SEO | 2 | OPEN | yes | There is no way to see what any AI engine actually answered — the per-question answer grid is c | findings-p009-046.md |
 | F133 | HIGH | B | SEO | 2 | OPEN | yes | The report says the site was never cited and cited 11 times, on the same screen | findings-p009-046.md |
 | F152 | HIGH | B | SEO | 2 | OPEN | — | Two of the nine signed-off v1 fixes shipped and were silently reverted by a merge the same day | findings-p009-046.md |
-| F15 | MEDIUM | B | SEO | 2 | OPEN | — | Clicking an AI action posts a fabricated message in the client's own voice, stage directions in | findings-p009-046.md |
+| F15 | MEDIUM | B | COPILOT | 2 | OPEN | — | Clicking an AI action posts a fabricated message in the client's own voice, stage directions in | findings-p009-046.md |
 | F16 | MEDIUM | B | SEO | 2 | OPEN | yes | The "Search engines" filter files four search checks under "AI answers" instead | findings-p009-046.md |
 | F17 | MEDIUM | A | SEO | 2 | OPEN | yes | The "mentions you" chip does nothing, and the number of chips contradicts the sentence above it | findings-p009-046.md |
 | F18 | MEDIUM | A | SEO | 2 | OPEN | yes | The buyer-questions list is an unpunctuated flat dump, and it hides the competitor roster and t | findings-p009-046.md |
@@ -58,7 +58,7 @@ are tracked in the CD table at the bottom.
 | F43 | LOW | A | AGENTS | 2 | OPEN | — | Staff land on a completely blank AI Agents page for any client whose agent list is empty | findings-p047-084.md |
 | F44 | LOW | A | AGENTS | 2 | OPEN | yes | The client AI Agents page stacks two near-identical headings and taglines on top of each other | findings-p047-084.md |
 | F45 | LOW | A | AGENTS | 2 | OPEN | — | Two managed-product run components and their submit action are dead code — the four catalog pro | findings-p047-084.md |
-| F135 | LOW | A | AGENTS | 2 | OPEN | yes | "3 runs × 1 outputs × 25 credits" — unpluralised units in the cost line | findings-p047-084.md |
+| F135 | LOW | A | CALENDAR | 2 | OPEN | yes | "3 runs × 1 outputs × 25 credits" — unpluralised units in the cost line | findings-p047-084.md |
 | F147 | HIGH | B | ARCH | 3 | OPEN | yes | One content stream, two agent identities: "Instagram Agent" and "Social posts (IG/TikTok)" run  | findings-p047-084.md |
 | F148 | HIGH | B | ARCH | 3 | OPEN | — | The portal has no launch-vs-runs model — the architecture the team decided on has nowhere to li | findings-p047-084.md |
 | F46 | BLOCKER | B | WORKSPACE | 1 | OPEN | — | A client can never act on a draft — the pick/post/skip loop the intake copy promises does not e | findings-p047-084.md |
@@ -100,7 +100,7 @@ are tracked in the CD table at the bottom.
 | F82 | MEDIUM | B | DOCS | 2 | OPEN | — | Exported PDFs silently swallow any text in angle brackets, including the templates' unfilled pl | findings-p123-160.md |
 | F83 | MEDIUM | A | DOCS | 2 | OPEN | yes | Raw markdown leaks into the document viewer: literal hash marks, orphaned nested bullets, and u | findings-p123-160.md |
 | F84 | MEDIUM | B | DOCS | 2 | OPEN | yes | The Schedule modal shows the wrong "Next run" date for any cadence longer than monthly | findings-p123-160.md |
-| F85 | MEDIUM | A | DOCS | 2 | OPEN | yes | The client is billed 2 credits for a correction with no price shown anywhere in the flow | findings-p123-160.md |
+| F85 | MEDIUM | A | CREDITS | 2 | OPEN | yes | The client is billed 2 credits for a correction with no price shown anywhere in the flow | findings-p123-160.md |
 | F138 | MEDIUM | B | DOCS | 2 | OPEN | yes | Document body numbering starts at "2." and the numbers are baked into the text | findings-p123-160.md |
 | F86 | LOW | B | DOCS | 2 | OPEN | yes | No document tells you how old it is — no last-updated, no version, and no way to navigate a fou | findings-p123-160.md |
 | F139 | LOW | A | DOCS | 2 | OPEN | yes | A teammate's real name is used as the example of a wrong fact in client-facing copy | findings-p123-160.md |
@@ -131,7 +131,7 @@ are tracked in the CD table at the bottom.
 | F108 | HIGH | B | CALENDAR | 2 | OPEN | — | Scheduled runs are previewed in your timezone but stored and printed in the server's | findings-p161-199.md |
 | F151 | HIGH | A | CALENDAR | 2 | OPEN | yes | The calendar day detail prints the raw run record — internal status, product code, job hash, ma | findings-p161-199.md |
 | F109 | MEDIUM | A | CALENDAR | 2 | OPEN | yes | A calendar run badged "Ready to review" has nothing to click | findings-p161-199.md |
-| F110 | MEDIUM | B | CALENDAR | 2 | OPEN | — | Pause and Cancel on a scheduled run fail silently, and Cancel deletes it forever with no confir | findings-p161-199.md |
+| F110 | MEDIUM | B | AGENTS | 2 | OPEN | — | Pause and Cancel on a scheduled run fail silently, and Cancel deletes it forever with no confir | findings-p161-199.md |
 | F111 | MEDIUM | A | CALENDAR | 2 | OPEN | yes | The month calendar is a fixed seven-column grid at every screen size, with chips well under the | findings-p161-199.md |
 | F112 | LOW | A | CALENDAR | 2 | OPEN | yes | A client's Calendar is read-only and its empty state offers no next step | findings-p161-199.md |
 | F142 | LOW | A | CALENDAR | 2 | OPEN | yes | The calendar's primary button wraps to two lines | findings-p161-199.md |
@@ -147,6 +147,10 @@ are tracked in the CD table at the bottom.
 | F121 | LOW | B | SHELL | 2 | OPEN | yes | Dismissing a "new content ready" notification only hides it until the next page load | findings-p161-199.md |
 | F122 | LOW | A | SHELL | 2 | OPEN | yes | Platform names are title-cased from their ids: "Linkedin", "Youtube" | findings-p161-199.md |
 | F123 | LOW | A | SHELL | 2 | OPEN | yes | "20 agent runs · last 9h ago." | findings-p161-199.md |
+
+**Cluster reassignments (2026-07-28, file-ownership rule):** F110→AGENTS
+(custom-agents.tsx), F135→CALENDAR (schedule-run-modal), F15→COPILOT
+(chatbot-widget), F85→CREDITS (client-rail), F5→WORKSPACE (archive-view grids).
 
 ## Call-directive items (no PDF finding number)
 
