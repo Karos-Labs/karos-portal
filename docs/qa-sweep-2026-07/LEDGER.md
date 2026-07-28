@@ -17,25 +17,25 @@ are tracked in the CD table at the bottom.
 | F# | Sev | Trk | Cluster | Phase | Status | Shot | Title | Spec file |
 |---|---|---|---|---|---|---|---|---|
 | F1 | BLOCKER | A | SEO | 1 | RESOLVED | yes | A finished client-facing action plan with a working Approve button is rendered on no page, whil | findings-p009-046.md |
-| F3 | HIGH | B | SEO | 2 | OPEN | yes | Card bodies are raw audit-model prose, and "What good looks like" just repeats the card title | findings-p009-046.md |
-| F4 | HIGH | A | SEO | 2 | OPEN | yes | Cards promise Karos will apply the fix "automatically" — no such code path exists and there is  | findings-p009-046.md |
+| F3 | HIGH | B | SEO | 2 | RESOLVED | yes | Card bodies are raw audit-model prose, and "What good looks like" just repeats the card title | findings-p009-046.md |
+| F4 | HIGH | A | SEO | 2 | RESOLVED | yes | Cards promise Karos will apply the fix "automatically" — no such code path exists and there is  | findings-p009-046.md |
 | F5 | HIGH | A | WORKSPACE | 2 | OPEN | — | Grids split into multiple columns at window widths where the side rail and copilot dock have al | findings-p009-046.md |
-| F7 | HIGH | B | SEO | 2 | OPEN | yes | No "What we're fixing" card can hand off to an agent — the one link built for it can never rend | findings-p009-046.md |
-| F9 | HIGH | B | SEO | 2 | OPEN | yes | The "What we're fixing" cards show clients raw engineering check labels — the plain-English rew | findings-p009-046.md |
-| F10 | HIGH | B | SEO | 2 | OPEN | yes | The headline AI-visibility score uses a different question set from every number below it, and  | findings-p009-046.md |
-| F11 | HIGH | B | SEO | 2 | OPEN | yes | The same problem appears as two cards with contradictory priority chips | findings-p009-046.md |
-| F12 | HIGH | B | SEO | 2 | OPEN | yes | There is no way to see what any AI engine actually answered — the per-question answer grid is c | findings-p009-046.md |
-| F133 | HIGH | B | SEO | 2 | OPEN | yes | The report says the site was never cited and cited 11 times, on the same screen | findings-p009-046.md |
-| F152 | HIGH | B | SEO | 2 | OPEN | — | Two of the nine signed-off v1 fixes shipped and were silently reverted by a merge the same day | findings-p009-046.md |
+| F7 | HIGH | B | SEO | 2 | RESOLVED | yes | No "What we're fixing" card can hand off to an agent — the one link built for it can never rend | findings-p009-046.md |
+| F9 | HIGH | B | SEO | 2 | RESOLVED | yes | The "What we're fixing" cards show clients raw engineering check labels — the plain-English rew | findings-p009-046.md |
+| F10 | HIGH | B | SEO | 2 | RESOLVED | yes | The headline AI-visibility score uses a different question set from every number below it, and  | findings-p009-046.md |
+| F11 | HIGH | B | SEO | 2 | RESOLVED | yes | The same problem appears as two cards with contradictory priority chips | findings-p009-046.md |
+| F12 | HIGH | B | SEO | 2 | RESOLVED | yes | There is no way to see what any AI engine actually answered — the per-question answer grid is c | findings-p009-046.md |
+| F133 | HIGH | B | SEO | 2 | RESOLVED | yes | The report says the site was never cited and cited 11 times, on the same screen | findings-p009-046.md |
+| F152 | HIGH | B | SEO | 2 | RESOLVED | — | Two of the nine signed-off v1 fixes shipped and were silently reverted by a merge the same day | findings-p009-046.md |
 | F15 | MEDIUM | B | COPILOT | 2 | OPEN | — | Clicking an AI action posts a fabricated message in the client's own voice, stage directions in | findings-p009-046.md |
-| F16 | MEDIUM | B | SEO | 2 | OPEN | yes | The "Search engines" filter files four search checks under "AI answers" instead | findings-p009-046.md |
-| F17 | MEDIUM | A | SEO | 2 | OPEN | yes | The "mentions you" chip does nothing, and the number of chips contradicts the sentence above it | findings-p009-046.md |
-| F18 | MEDIUM | A | SEO | 2 | OPEN | yes | The buyer-questions list is an unpunctuated flat dump, and it hides the competitor roster and t | findings-p009-046.md |
-| F19 | MEDIUM | A | SEO | 2 | OPEN | yes | The citation leaderboard silently truncates, and the whole citation story disappears in the cas | findings-p009-046.md |
-| F20 | MEDIUM | A | SEO | 2 | OPEN | yes | The snapshot date is a bare machine date with no staleness cue, and the client has no way to ge | findings-p009-046.md |
-| F22 | MEDIUM | B | SEO | 2 | OPEN | yes | Urgent cards sort below important ones under a header that says the list is ordered by impact | findings-p009-046.md |
-| F23 | MEDIUM | B | SEO | 2 | OPEN | yes | When the AI capture fails, the report tells the client it asked zero buyer questions | findings-p009-046.md |
-| F144 | LOW | A | SEO | 2 | OPEN | yes | Rename the "Search engines" label — the call agreed it reads as AI search | findings-p009-046.md |
+| F16 | MEDIUM | B | SEO | 2 | RESOLVED | yes | The "Search engines" filter files four search checks under "AI answers" instead | findings-p009-046.md |
+| F17 | MEDIUM | A | SEO | 2 | RESOLVED | yes | The "mentions you" chip does nothing, and the number of chips contradicts the sentence above it | findings-p009-046.md |
+| F18 | MEDIUM | A | SEO | 2 | RESOLVED | yes | The buyer-questions list is an unpunctuated flat dump, and it hides the competitor roster and t | findings-p009-046.md |
+| F19 | MEDIUM | A | SEO | 2 | RESOLVED | yes | The citation leaderboard silently truncates, and the whole citation story disappears in the cas | findings-p009-046.md |
+| F20 | MEDIUM | A | SEO | 2 | RESOLVED | yes | The snapshot date is a bare machine date with no staleness cue, and the client has no way to ge | findings-p009-046.md |
+| F22 | MEDIUM | B | SEO | 2 | RESOLVED | yes | Urgent cards sort below important ones under a header that says the list is ordered by impact | findings-p009-046.md |
+| F23 | MEDIUM | B | SEO | 2 | RESOLVED | yes | When the AI capture fails, the report tells the client it asked zero buyer questions | findings-p009-046.md |
+| F144 | LOW | A | SEO | 2 | RESOLVED | yes | Rename the "Search engines" label — the call agreed it reads as AI search | findings-p009-046.md |
 | F24 | BLOCKER | A | AGENTS | 1 | RESOLVED | yes | An always-on agent that has failed every single run still shows a green pulsing "Live" badge | findings-p009-046.md |
 | F127 | BLOCKER | B | AGENTS | 1 | OPS-PENDING | yes | Agent descriptions are raw lab-repo skill manifests, shipped to clients unedited | findings-p009-046.md |
 | F131 | BLOCKER | A | AGENTS | 1 | RESOLVED | yes | "Run now" is fully enabled on an agent whose own card says "Setup needed" | findings-p047-084.md |
@@ -165,9 +165,9 @@ are tracked in the CD table at the bottom.
 | CD-A2 | ARCH | 3 | OPEN | Two-level feedback model: global (parent agent) + per-template |
 | CD-A3 | ARCH | 3 | OPEN | Per-slot calendar notes consumed by run-day generation |
 | CD-A5 | ARCH | 3 | OPEN | Analytics/credits: launch cost vs recurring-run cost split per agent umbrella |
-| CD-B2 | SEO | 2 | OPEN | Remove Perplexity + Copilot from tracked engines (set, chips, scoring) |
-| CD-B3 | SEO | 2 | OPEN | Category-queries-only measurement; branded queries never feed client-vs-competitor score |
-| CD-B4 | SEO | 2 | OPEN | Mark pre-2026-07-23 snapshots stale/legacy in UI |
+| CD-B2 | SEO | 2 | RESOLVED | Remove Perplexity + Copilot from tracked engines (set, chips, scoring) |
+| CD-B3 | SEO | 2 | RESOLVED | Category-queries-only measurement; branded queries never feed client-vs-competitor score |
+| CD-B4 | SEO | 2 | RESOLVED | Mark pre-2026-07-23 snapshots stale/legacy in UI |
 | CD-C1 | — | loop | OPEN | Mock-client pass sanity-checks competitor/citation data vs stored snapshots |
 | CD-D1 | ARCH | 3/4 | OPEN | Video deliverables: portal renders storage-URL field; GCP wiring → Tomer |
 | CD-D2 | AGENTS | 2 | OPEN | TikTok connector state shown as pending verification, not pretending |
