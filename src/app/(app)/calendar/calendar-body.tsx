@@ -13,6 +13,7 @@ import { integrationIsUsable } from "@/lib/integration-status";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
+import { isValidTimeZone } from "@/lib/run-cadence";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -50,6 +51,25 @@ function describeRunOutput(views: RunAssetView[]): string | undefined {
   const [one, many] =
     types.size === 1 ? OUTPUT_NOUN[[...types][0]] ?? ["item", "items"] : ["item", "items"];
   return `${views.length} ${views.length === 1 ? one : many}`;
+}
+
+/**
+ * The zone a scheduled run's wall clock actually means (CD-H7c).
+ *
+ * The run card printed "…09:00 · next 11:00 AM": describeCadence renders the
+ * STORED hour, while the next-run time was formatted in whatever zone the
+ * renderer happened to be in — two clocks, neither labelled, disagreeing by the
+ * offset between them. A row written before `timeZone` existed had its
+ * nextRunAt computed against the runtime's own zone (see the timezone contract
+ * in lib/scheduled-runs), so that is the zone its hour was always expressed in.
+ * Resolving it here means both halves of the line, the day bucket and the
+ * printed zone suffix all come off the same clock, and a row WITH a stored zone
+ * is unaffected.
+ */
+const RUNTIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+function runZone(stored: string | undefined): string {
+  return isValidTimeZone(stored) ? stored : RUNTIME_ZONE;
 }
 
 /** Titles come straight from the agent — a leading `#` or `**` is not a title. */
@@ -202,12 +222,13 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         productColor: r.agentColor,
         productIcon: r.agentIcon,
         cadence: r.cadence,
-        cadenceLabel: describeCadence(r),
+        cadenceLabel: describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
         // The zone the schedule's wall clock was set in. Sent to the browser so
         // the chip's day bucket and printed time are computed there exactly as
-        // they were on the server — a schedule with no stored zone (written
-        // before the field existed) keeps the old runtime-local behaviour.
-        ...(r.timeZone ? { timeZone: r.timeZone, zoneLabel: shortZoneLabel(r.timeZone, r.nextRunAt) } : {}),
+        // they were on the server — and so the card's cadence label and its
+        // "next" time are read off ONE clock (CD-H7c).
+        timeZone: runZone(r.timeZone),
+        zoneLabel: shortZoneLabel(runZone(r.timeZone), r.nextRunAt),
         // The schedule's standing instruction is staff-authored direction —
         // run-calendar paints it under "Will run", so a client would read the
         // internal brief verbatim. Same shape as staffRef below (delta-lens).
