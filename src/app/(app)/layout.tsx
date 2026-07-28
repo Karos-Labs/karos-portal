@@ -23,6 +23,7 @@ import { CopilotDock } from "@/components/copilot-dock";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { AppHeader } from "@/components/app-header";
+import { ClientContextBar } from "@/components/client-context-bar";
 import { StaffCopilotDock } from "@/components/staff-chatbot-widget";
 import type { ActionItemNotification, AgentReviewNotification, Client, ClientTask } from "@/lib/types";
 
@@ -153,6 +154,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {isImpersonating && realAdmin && (
             <ImpersonationBanner realAdmin={realAdmin} viewingAs={user} />
           )}
+          {/* Client-context mode gets its own persistent bar — see F60. */}
+          <ClientContextBar />
           <AppHeader
             actionItems={actionItems as ActionItemNotification[]}
             reviewJobs={reviewJobs}

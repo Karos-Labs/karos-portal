@@ -97,7 +97,7 @@ function ClientContextPicker({ clients }: { clients: Client[] }) {
       >
         <Icon name="Eye" className="h-4 w-4 shrink-0 text-muted-2" />
         <span className="min-w-0 flex-1 truncate text-left">
-          {activeClient ? activeClient.client.name : "View as client"}
+          {activeClient ? activeClient.client.name : "Client context"}
         </span>
         {activeClient ? (
           <span
