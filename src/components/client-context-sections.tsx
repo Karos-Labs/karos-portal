@@ -228,19 +228,19 @@ export function CompetitorTrack({
             return (
               <li
                 key={c.id}
-                className="group flex items-center gap-1 rounded-md px-2 py-0.5 transition-colors hover:bg-surface-2"
+                className="group flex items-center gap-1 rounded-md px-2 py-1 transition-colors hover:bg-surface-2"
               >
                 {href ? (
                   <a
                     href={href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex min-w-0 flex-1 items-center gap-2"
+                    className="flex min-w-0 flex-1 items-center gap-2.5"
                   >
                     {linkContent}
                   </a>
                 ) : (
-                  <div className="flex min-w-0 flex-1 items-center gap-2">{linkContent}</div>
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">{linkContent}</div>
                 )}
                 {(isStaff || c.source === "manual") && (
                 <button
@@ -325,7 +325,7 @@ export function BrandColorsSection({
           {effective.map((color, i) => (
             <div key={i} className="group relative">
               <div
-                className="h-6 w-6 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110"
+                className="h-7 w-7 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110"
                 style={{ backgroundColor: color.hex }}
                 title={color.role ? `${color.role} · ${color.hex}` : color.hex}
               />
