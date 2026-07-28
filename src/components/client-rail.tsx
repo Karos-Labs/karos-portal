@@ -47,6 +47,7 @@ export function ClientRail({
   reviewJobs,
   taskAlerts,
   spendableCredits,
+  correctionPricing,
 }: {
   user: AppUser;
   client: Client;
@@ -63,6 +64,13 @@ export function ClientRail({
    * transaction would honour. Shown as a pill linking to settings; hidden when null.
    */
   spendableCredits?: number | null;
+  /**
+   * Price of a targeted document correction, for the Correct Info modal the
+   * rail's document panel opens. Resolved server-side and present ONLY for a
+   * billable client viewer, so staff never see a charge they don't incur;
+   * `blockReason` is the server's own refusal line when the cost won't fit.
+   */
+  correctionPricing?: { cost: number; blockReason?: string };
 }) {
   const pathname = usePathname();
   const home = `/clients/${client.id}`;
@@ -146,6 +154,7 @@ export function ClientRail({
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
                 intelSchedule={clientIntelSchedule(client)}
+                correctionPricing={correctionPricing}
               />
             </div>
 
@@ -270,6 +279,7 @@ export function ClientRail({
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
                 intelSchedule={clientIntelSchedule(client)}
+                correctionPricing={correctionPricing}
               />
             </div>
 

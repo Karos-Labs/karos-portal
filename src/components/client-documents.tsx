@@ -384,12 +384,14 @@ function DocOverlay({
   doc,
   label,
   clientId,
+  correctionPricing,
   onClose,
   onDocUpdated,
 }: {
   doc: ClientContextDoc;
   label: string;
   clientId?: string;
+  correctionPricing?: { cost: number; blockReason?: string };
   onClose: () => void;
   onDocUpdated?: () => void;
 }) {
@@ -574,6 +576,7 @@ function DocOverlay({
       <CorrectInfoModal
         documentId={doc.id}
         docLabel={label}
+        correctionPricing={correctionPricing}
         open={correcting}
         onClose={() => setCorrecting(false)}
         onSuccess={() => {
@@ -966,6 +969,7 @@ export function ClientDocuments({
   isAiProcessing,
   intelSchedule,
   allowInternalFallback = false,
+  correctionPricing,
 }: {
   contextDocs: ClientContextDoc[];
   isAdmin?: boolean;
@@ -980,6 +984,12 @@ export function ClientDocuments({
    * a client-facing mount can never opt in by omission.
    */
   allowInternalFallback?: boolean;
+  /**
+   * Price of a targeted correction, for the Correct Info modal. Server-resolved
+   * and passed only for billable client viewers — omitted on the staff shell,
+   * whose corrections are agency overhead and cost the client nothing.
+   */
+  correctionPricing?: { cost: number; blockReason?: string };
 }) {
   const router = useRouter();
   const [openDoc, setOpenDoc] = useState<{ doc: ClientContextDoc; label: string } | null>(null);
@@ -1104,6 +1114,7 @@ export function ClientDocuments({
           doc={openDoc.doc}
           label={openDoc.label}
           clientId={clientId}
+          correctionPricing={correctionPricing}
           onClose={() => setOpenDoc(null)}
           onDocUpdated={() => {
             setOpenDoc(null);

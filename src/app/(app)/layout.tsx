@@ -14,7 +14,12 @@ import {
   listClientCompetitors,
 } from "@/lib/data";
 import { ActiveClientProvider } from "@/lib/active-client-context";
-import { availableCredits } from "@/lib/credits";
+import {
+  CREDIT_COSTS,
+  availableCredits,
+  creditBlockReason,
+  isBillableClientActor,
+} from "@/lib/credits";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldBlockForOnboarding } from "@/lib/onboarding";
@@ -91,7 +96,22 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       // balance clipped by the weekly/monthly caps. This is the same call the
       // Agents page makes, so the rail and that page can no longer print two
       // different "available" numbers for the same second.
-      const spendableCredits = availableCredits(credits, Date.now());
+      const now = Date.now();
+      const spendableCredits = availableCredits(credits, now);
+
+      // Price + refusal for a targeted doc correction, resolved HERE rather than
+      // in the modal — same shape as the Agents page's creditBlockReasons map:
+      // the reason comes from the server's own ladder, so the modal can't invent
+      // a different one. Present only for a billable client viewer; staff and
+      // admins in "View as Client" are never charged, so they see no price.
+      const correctionPricing = isBillableClientActor(user)
+        ? {
+            cost: CREDIT_COSTS.targetedCorrection,
+            ...(spendableCredits < CREDIT_COSTS.targetedCorrection
+              ? { blockReason: creditBlockReason(credits, CREDIT_COSTS.targetedCorrection, now) }
+              : {}),
+          }
+        : undefined;
 
       return (
         <ActiveClientProvider>
@@ -106,6 +126,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               reviewJobs={reviewJobs}
               taskAlerts={taskAlerts}
               spendableCredits={spendableCredits}
+              correctionPricing={correctionPricing}
             />
 
             <div className="flex min-w-0 flex-1 flex-col">
