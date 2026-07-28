@@ -109,7 +109,17 @@ export interface ClientAgentCardRow {
    * would say out loud that production is not day-of — the exact tell §4.1
    * removes the batch rows to hide.
    */
-  activeRun: { status: "queued" | "running"; templateName: string | null } | null;
+  activeRun: {
+    /**
+     * The job's own id, so the client can STOP a run they just started (F30).
+     * Not a new disclosure: client run rows have always carried job ids (only
+     * the /jobs link target is staff-gated), and the cancel action authorizes
+     * on the job's stored clientId rather than anything the browser sends.
+     */
+    id: string;
+    status: "queued" | "running";
+    templateName: string | null;
+  } | null;
   /** The bound lab agent, for the existing schedule dialog ("Adjust pace"). */
   runnable: RunnableAgentSummary | null;
   /** Its weekly schedule row, already redacted for client viewers. */

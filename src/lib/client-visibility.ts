@@ -20,6 +20,21 @@ function toClientBrandingView(g: BrandingGuidelines): BrandingGuidelines {
 }
 
 /**
+ * Whether the last workspace-generation run failed, asked the one way that
+ * works on BOTH sides of the boundary (F69).
+ *
+ * Staff hold the raw reason; a client viewer holds only the flag. Every surface
+ * that renders for both — the banner, the documents rail — asks this instead of
+ * testing the string, so neither one has to know which projection it is looking
+ * at, and neither one can start painting a reason a client should not receive.
+ */
+export function hasAiProcessingFailure(
+  c: Pick<Client, "aiProcessingError" | "aiProcessingFailed">,
+): boolean {
+  return c.aiProcessingFailed === true || Boolean(c.aiProcessingError);
+}
+
+/**
  * The Client projection a CLIENT_USER's browser may receive.
  *
  * The client shell hands the whole client document to ClientRail, which is a
@@ -64,7 +79,13 @@ export function toClientPortalView(c: Client): Client {
     ...(c.aiProcessingStartedAt != null
       ? { aiProcessingStartedAt: c.aiProcessingStartedAt }
       : {}),
-    ...(c.aiProcessingError ? { aiProcessingError: c.aiProcessingError } : {}),
+    // THAT the run failed, never WHY (F69). aiProcessingError is a raw provider
+    // error — truncated at 500 chars, so a stack-ish fragment fits comfortably —
+    // and both client-side readers of it only ever asked whether it was set. A
+    // string that crosses this boundary is readable from view-source whether or
+    // not anything paints it, so the boolean is what crosses and the reason
+    // stays staff-side. hasAiProcessingFailure is how every reader asks.
+    ...(c.aiProcessingError ? { aiProcessingFailed: true } : {}),
     // assignedEmployeeIds is required on the type; the client's own view is empty.
     assignedEmployeeIds: [],
     createdAt: c.createdAt,

@@ -14,6 +14,7 @@ import { NotificationBell } from "@/components/notification-bell";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { isAiProcessingLockActive } from "@/lib/constants";
+import { hasAiProcessingFailure } from "@/lib/client-visibility";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
@@ -160,7 +161,7 @@ export function ClientRail({
                 isAdmin={isAdmin}
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
-                aiProcessingError={client.aiProcessingError ?? null}
+                aiProcessingFailed={hasAiProcessingFailure(client)}
                 intelSchedule={clientIntelSchedule(client)}
                 correctionPricing={correctionPricing}
               />
@@ -262,7 +263,7 @@ export function ClientRail({
             isAdmin={isAdmin}
             clientId={client.id}
             isAiProcessing={isAiProcessingLockActive(client)}
-            aiProcessingError={client.aiProcessingError ?? null}
+            aiProcessingFailed={hasAiProcessingFailure(client)}
             intelSchedule={clientIntelSchedule(client)}
             correctionPricing={correctionPricing}
           />

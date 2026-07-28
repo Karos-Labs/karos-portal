@@ -46,30 +46,34 @@ import { cn, formatDate, relativeTime } from "@/lib/utils";
  * The slice of a CustomAgent that may be serialized to client-user browsers.
  * Deliberately excludes instructions (the system prompt), skill paths, and
  * repo provenance — pages map full docs down to this before passing them.
+ *
+ * `description` is NOT on it (F127). It is the lab repo's own skill manifest,
+ * no surface that receives this summary reads it, and this module's whole
+ * doctrine is that a field which crosses the boundary is readable from
+ * view-source whether or not anything paints it. The staff agent LIBRARY still
+ * shows it — that surface takes the full CustomAgent, which is the honest place
+ * for manifest text to live.
  */
 export type RunnableAgentSummary = Pick<
   CustomAgent,
-  "id" | "key" | "name" | "description" | "clientBlurb" | "icon" | "color"
+  "id" | "key" | "name" | "clientBlurb" | "icon" | "color"
 > & {
   creditCost?: number | null;
 };
 
 /**
- * What a client is allowed to read about an agent. `description` is the lab
- * repo's own skill manifest — product codes, pipeline architecture, gate names
- * — so client surfaces render `clientBlurb` instead.
+ * What a client is allowed to read about an agent: the curated `clientBlurb`,
+ * then the keyed fallback.
  *
- * Agents imported before that field existed used to fall back to the manifest.
- * That is the defect Albert screenshotted (CD-G2): cards on his own client
- * pages reading "Master content-social skill. Given a brand's guidelines + any
- * past competitor research…". The fallback is now the keyed blurb map, which
- * always has a sentence written for a buyer — so the manifest is no longer in
- * the chain at all, and the staff library still flags agents with no curated
- * blurb for a rewrite.
+ * Agents imported before that field existed used to fall back to the manifest
+ * `description`. That is the defect Albert screenshotted (CD-G2): cards on his
+ * own client pages reading "Master content-social skill. Given a brand's
+ * guidelines + any past competitor research…". The fallback is now the keyed
+ * blurb map, which always has a sentence written for a buyer — so the manifest
+ * is no longer in the chain at all, nor in the payload, and the staff library
+ * still flags agents with no curated blurb for a rewrite.
  */
-function agentBlurb(
-  agent: Pick<RunnableAgentSummary, "key" | "name" | "description" | "clientBlurb">,
-): string {
+function agentBlurb(agent: Pick<RunnableAgentSummary, "key" | "name" | "clientBlurb">): string {
   return clientAgentBlurb({
     key: agent.key,
     name: agent.name,
@@ -741,13 +745,21 @@ export function ClientCustomAgents({
 }
 
 /**
- * Stop an in-flight run from the run row. The only cancel control used to live
- * on the staff run-detail page, so a client who mis-fired a twenty-five-minute
- * billable run could not stop it and could not reach the page that could. The
- * confirm step is deliberate: cancelling costs the run, and the row sits one
- * pixel from rows that are merely history.
+ * Stop an in-flight run. The only cancel control used to live on the staff
+ * run-detail page, so a client who mis-fired a twenty-five-minute billable run
+ * could not stop it and could not reach the page that could. The confirm step
+ * is deliberate: cancelling costs the run, and on the staff hub the row sits
+ * one pixel from rows that are merely history.
+ *
+ * EXPORTED because CD-G1 took the client's only mount away with it (F30
+ * regression). Dropping ClientCustomAgents from the client branch left this
+ * control mounted on the staff hub alone, so the client-authorized action
+ * behind it — cancelClientAgentJobAction, which authorizes on the JOB's own
+ * clientId — had no surface. The agent DETAIL page is where a client now meets
+ * their in-flight run, so that is where the control goes: one implementation,
+ * one action, one confirm step, on both panels.
  */
-function CancelRunControl({ runId }: { runId: string }) {
+export function CancelRunControl({ runId }: { runId: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [confirming, setConfirming] = useState(false);

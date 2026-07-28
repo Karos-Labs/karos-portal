@@ -38,13 +38,22 @@ import type { ClientAgent, CustomAgent, Job } from "@/lib/types";
 /** How many days of the plan the live card's "Coming up" strip shows. */
 export const WEEK_STRIP_DAYS = 7;
 
-/** Strip an agent to the client-safe summary — never the instructions/skill paths. */
+/**
+ * Strip an agent to the client-safe summary — never the instructions/skill paths.
+ *
+ * And never `description` (F127). It is the lab manifest's own line, written for
+ * the people who build agents, and it shipped in this projection unread: every
+ * surface that takes a RunnableAgentSummary renders the curated `clientBlurb`
+ * instead (CD-G2 removed the manifest from that fallback chain), so the field
+ * reached client browsers doing nothing but sitting in the RSC payload. This
+ * module's doctrine says redaction belongs at the boundary rather than at
+ * render, and a field nothing paints is exactly the case that rule is for.
+ */
 export function toSummary(agent: CustomAgent): RunnableAgentSummary {
   return {
     id: agent.id,
     key: agent.key,
     name: agent.name,
-    description: agent.description,
     clientBlurb: agent.clientBlurb ?? null,
     icon: agent.icon,
     color: agent.color,
@@ -256,6 +265,11 @@ export async function toClientAgentRows(args: {
         const templateGate = evaluateTemplateRunGate({
           launchState: umbrella.launchState,
           templateStatus: template.status,
+          // The SAME resolved intake the launch gate above just used, and the
+          // same one the legacy ladder takes. A live umbrella does not exempt an
+          // agent from its intake — the submit core hard-gates on it either way
+          // (F131 re-entry).
+          setup,
           cost: runCost,
           ...(args.spendable !== undefined ? { availableCredits: args.spendable } : {}),
           creditBlockReason: args.creditBlockReasons[agent.id] ?? null,
@@ -431,6 +445,7 @@ export async function toClientAgentRows(args: {
       })),
       activeRun: pending
         ? {
+            id: pending.id,
             status: pending.status === "running" ? "running" : "queued",
             templateName: pending.templateKey
               ? (templateNames.get(pending.templateKey) ?? null)

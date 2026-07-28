@@ -225,7 +225,7 @@ function DraftCard({
               />
               {finalText.trim().length > LINKEDIN_POST_CAP ? (
                 <p className="text-xs text-red-400">
-                  {finalText.trim().length.toLocaleString()} characters - LinkedIn posts cap at
+                  {finalText.trim().length.toLocaleString()} characters — LinkedIn posts cap at
                   3,000. Trim it before posting.
                 </p>
               ) : null}

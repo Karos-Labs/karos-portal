@@ -1,8 +1,12 @@
 import { Icon } from "@/components/icon";
 import { isAiProcessingLockActive } from "@/lib/constants";
+import { hasAiProcessingFailure } from "@/lib/client-visibility";
 import type { Client } from "@/lib/types";
 
-type BannerClient = Pick<Client, "isAiProcessing" | "aiProcessingStartedAt" | "aiProcessingError">;
+type BannerClient = Pick<
+  Client,
+  "isAiProcessing" | "aiProcessingStartedAt" | "aiProcessingError" | "aiProcessingFailed"
+>;
 
 /**
  * Shown on the Dashboard, Task Map, and Settings views while the client's
@@ -42,14 +46,18 @@ export function AiProcessingBanner({
     );
   }
 
-  if (client.aiProcessingError) {
+  // F69: THAT it failed is what a client viewer receives; the reason below is
+  // staff-side and only the admin branch paints it.
+  if (hasAiProcessingFailure(client)) {
     return (
       <div className="mb-4 flex items-center gap-2.5 rounded-md border border-danger/25 bg-danger/10 px-3.5 py-2.5 text-sm text-foreground">
         <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-danger" />
         {isAdmin ? (
           <p>
             <span className="font-medium">Workspace generation failed:</span>{" "}
-            <span className="text-muted">{client.aiProcessingError}</span>{" "}
+            {client.aiProcessingError && (
+              <span className="text-muted">{client.aiProcessingError} </span>
+            )}
             <span className="text-muted">Fix the underlying issue, then Regenerate / Refresh Task Map are available again.</span>
           </p>
         ) : isClientViewer ? (

@@ -66,12 +66,22 @@ export function umbrellaRunBlock(state: ClientAgentLaunchState): UmbrellaRunBloc
 
 /* ───────────────────────── the per-template run gate ────────────────────── */
 
-export type TemplateRunBlockCode = UmbrellaRunBlockCode | "template_paused" | "credits_short";
+export type TemplateRunBlockCode =
+  | UmbrellaRunBlockCode
+  | "template_paused"
+  | "setup_missing"
+  | "credits_short";
 
 export interface TemplateRunGateInput {
   launchState: ClientAgentLaunchState;
   /** Registry status of the template being run. */
   templateStatus: ClientAgentTemplate["status"];
+  /**
+   * This agent's intake, when it has one (X / LinkedIn). Same shape and same
+   * resolved value evaluateLegacyRunGate takes — see the rung below for why a
+   * live umbrella still needs it.
+   */
+  setup?: { ready: boolean; label: string; href: string } | null;
   /**
    * What one run of this agent costs. Per-agent flat price (Q6): templates
    * inherit the agent's `creditCost`, there is no per-template pricing.
@@ -93,11 +103,25 @@ export type TemplateRunGateResult =
 
 /**
  * Evaluated in the server's own order: the umbrella must be live, the template
- * must be active, and only then does the price matter.
+ * must be active, the agent's intake must exist, and only then does the price
+ * matter.
  *
  * Order is the point. A client whose agent is mid-setup AND out of credits must
  * be told about the setup — that is what the server refuses on, and "top up
  * your credits" would send them to buy something that still would not run.
+ *
+ * The INTAKE rung is the sibling of evaluateLegacyRunGate's, and it sits in the
+ * same place in the ladder: above credits, for the same reason — do not sell a
+ * run that cannot happen. It was missing here, and the gap was visible on one
+ * screen (F131 re-entry): a LIVE X/LinkedIn umbrella whose intake had never been
+ * filled in painted "Set it up" in the detail page's sidebar while "Create new
+ * post" sat there enabled, because the only ladder that knew about intake was
+ * the legacy one. The submit core hard-gates on the same intake and refuses
+ * before charging, so the press produced a refusal rather than a post.
+ *
+ * Note the submit core checks intake AFTER the action has cleared credits; this
+ * gate deliberately puts it BEFORE. A surface may refuse earlier than the server
+ * does — what it may never do is offer a press the server would turn away.
  */
 export function evaluateTemplateRunGate(input: TemplateRunGateInput): TemplateRunGateResult {
   const umbrella = umbrellaRunBlock(input.launchState);
@@ -114,6 +138,17 @@ export function evaluateTemplateRunGate(input: TemplateRunGateInput): TemplateRu
     };
   }
 
+  if (input.setup && !input.setup.ready) {
+    return {
+      allowed: false,
+      code: "setup_missing",
+      // Word for word the legacy ladder's line: the two gates guard the same
+      // refusal on the same agent, and a client who meets one on the roster and
+      // the other on the detail page must not read two different explanations.
+      reason: `This agent writes from your ${input.setup.label} — it needs that before it can make a post.`,
+    };
+  }
+
   // Staff / impersonated sessions never charge, so no price can block them.
   if (input.availableCredits === undefined) return { allowed: true, cost: 0 };
 
@@ -126,6 +161,33 @@ export function evaluateTemplateRunGate(input: TemplateRunGateInput): TemplateRu
     };
   }
   return { allowed: true, cost: input.cost };
+}
+
+/**
+ * Why "Create a new post" is off when NO template gate has an opinion.
+ *
+ * The detail panel picks the first template whose gate allows a run, and paints
+ * the first blocked gate's reason when none does. A live umbrella with an EMPTY
+ * registry has neither: no runnable template and no gate to quote, so the button
+ * went dead with nothing beside it — the F25 failure (a disabled control whose
+ * reason nobody can read is the same as no reason at all), reached by both of
+ * the two shapes that legitimately have no templates.
+ *
+ * Options-mode (X) is the FINAL state of that shape, not a gap: its product is
+ * the daily pick, so there is no per-format run to offer and never will be. The
+ * single-mode empty registry is the temporary one — a grandfathered bind (W6) or
+ * the §9 backfill before templates are seeded.
+ *
+ * Neither line may say anything about what has or has not been produced (A3/A4).
+ */
+export function noRunnableTemplateReason(input: {
+  optionsMode: boolean;
+  hasTemplates: boolean;
+}): string | null {
+  if (input.hasTemplates) return null;
+  return input.optionsMode
+    ? "This agent writes one post a day and you choose its direction — there is no separate format to run on demand."
+    : "Your Karos team is still setting up the formats this agent writes. Making a post now works once they are in place.";
 }
 
 /* ─────────────────────────── the pinned run prompt ──────────────────────── */

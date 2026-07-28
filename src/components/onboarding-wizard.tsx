@@ -192,8 +192,14 @@ export function OnboardingWizard({
 
             <div>
               <Label>Resume / CV (optional)</Label>
+              {/* F67: this used to claim the resume was "used to write LinkedIn
+                  content in your authentic voice". It reaches no model — the
+                  upload route stores a URL on the user record and the prompt
+                  branch that once read it is gone — so the promise was for a
+                  feature that does not exist. Same sentence the Settings card
+                  already tells the truth with. */}
               <p className="mb-2 text-[11px] text-muted-2">
-                Used to write LinkedIn content in your authentic voice.
+                Stored for your Karos team — they use it when writing your LinkedIn advocacy posts.
               </p>
               <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
             </div>

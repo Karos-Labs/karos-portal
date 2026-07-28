@@ -87,8 +87,12 @@ export async function logGenerationFailure(clientId: string, failure?: string): 
     // log crosses into the client's RSC payload (the timeline filters only
     // MANUAL_NOTE for client viewers), and these strings are stack-ish
     // internals — provider errors, model ids, payload fragments. The reason
-    // stays on the client record, whose readers are staff-only: the admin
-    // banner and the /clients "Generation failed" badge.
+    // stays on the client record, and toClientPortalView keeps it there: a
+    // client viewer's projection carries only the `aiProcessingFailed` boolean,
+    // so the readers of the string really are staff-only — the admin banner and
+    // the /clients "Generation failed" badge. (It was NOT staff-only when this
+    // comment was written: the projection opted the raw string into the client
+    // portal view, where both readers merely tested it for truthiness.)
     description: "Your Karos team can see the details and is on it.",
     actor: "System AI",
     actorRole: "system",
