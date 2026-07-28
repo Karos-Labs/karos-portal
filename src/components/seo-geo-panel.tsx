@@ -3,6 +3,7 @@ import { Icon } from "@/components/icon";
 import { BrandFavicon } from "@/components/brand-favicon";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 import {
+  buildAnswerGridViews,
   buildContextLine,
   buildDiscoveredViews,
   buildEngineViews,
@@ -14,6 +15,8 @@ import {
   buildScoreViews,
   genericFlagPrefill,
   unwiredRequestPrefill,
+  type AnswerCellView,
+  type AnswerGridView,
   type EngineView,
   type ScoreView,
   type TrackedCompetitorRef,
@@ -50,6 +53,88 @@ function InfoTip({ text }: { text: string }) {
         {text}
       </span>
     </span>
+  );
+}
+
+/** One matrix cell: a dot carrying its plain-English outcome as accessible text. */
+function AnswerDot({ mark, tone, label }: { mark: AnswerCellView["mark"]; tone: string; label: string }) {
+  const color = TONE_COLORS[tone as keyof typeof TONE_COLORS] ?? "var(--muted-2)";
+  return (
+    <span className="inline-flex items-center justify-center" title={label}>
+      <span className="sr-only">{label}</span>
+      {mark === "none" ? (
+        <span aria-hidden className="text-[11px] text-muted-2">
+          &ndash;
+        </span>
+      ) : (
+        <span
+          aria-hidden
+          className="block h-2.5 w-2.5 rounded-full"
+          style={
+            mark === "solid"
+              ? { background: color }
+              : mark === "ring"
+                ? { border: `2px solid ${color}` }
+                : { border: "1px solid var(--border)" }
+          }
+        />
+      )}
+    </span>
+  );
+}
+
+/**
+ * The per-question × per-engine matrix (QA F12) — the exhibit behind every
+ * aggregate on the page. Horizontally scrollable in its own container so it never
+ * pushes the page sideways.
+ */
+function AnswerGrid({ view }: { view: AnswerGridView }) {
+  return (
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[420px] border-collapse text-xs">
+          <thead>
+            <tr>
+              <th className="py-1.5 pr-3 text-left font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2">
+                Question
+              </th>
+              {view.engines.map((e) => (
+                <th
+                  key={e.engine}
+                  className="px-2 py-1.5 text-center font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
+                >
+                  {e.name}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {view.rows.map((row, i) => (
+              <tr key={`${row.prompt}-${i}`} className="border-t border-border">
+                <td className="py-1.5 pr-3 align-middle text-muted">{row.prompt}</td>
+                {row.cells.map((cell) => (
+                  <td key={cell.engine} className="px-2 py-1.5 text-center align-middle">
+                    <AnswerDot mark={cell.mark} tone={cell.tone} label={`${cell.engineName}: ${cell.label}`} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-2">
+        {view.legend.map((l) => (
+          <span key={l.label} className="inline-flex items-center gap-1.5">
+            <AnswerDot mark={l.mark} tone={l.tone} label={l.label} />
+            <span aria-hidden>{l.label}</span>
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1.5">
+          <AnswerDot mark="none" tone="neutral" label="Not measured" />
+          <span aria-hidden>Not measured</span>
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -265,6 +350,11 @@ export function SeoGeoPanel({
   // "nothing to fix" — say the plan lands on the next refresh.
   const planPendingRefresh = recommendations.length === 0 && gaps.length > 0;
   const prompts = buildPromptViews(insights);
+  // QA F12: the per-question × per-engine matrix the pipeline has been computing and
+  // persisting on every run since SCRUM-52, read by no component until now. It is the
+  // exhibit behind every aggregate above; without it the "no black box" claim on this
+  // card is unsupported. Null on pre-grid snapshots — the flat list stays the fallback.
+  const answerGrid = buildAnswerGridViews(insights);
   const generic = genericFlagPrefill(insights);
   const citationLeaderboard = insights.citationLeaderboard ?? [];
 
@@ -466,18 +556,27 @@ export function SeoGeoPanel({
       {/* 6 · Methodology: the exact questions and roster, no black box */}
       <Card>
         <Disclosure summary={`The ${prompts.length} buyer questions we asked`}>
-          <ul className="space-y-1.5">
-            {prompts.map((p, i) => (
-              <li key={`q-${i}`} className="flex items-center justify-between gap-2 text-xs">
-                <span className="text-muted">{p.text}</span>
-                {p.tagLabel && (
-                  <span className="shrink-0 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
-                    {p.tagLabel}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
+          {answerGrid ? (
+            <>
+              <p className="mb-2 text-xs text-muted-2">
+                What each engine did with each question this run.
+              </p>
+              <AnswerGrid view={answerGrid} />
+            </>
+          ) : (
+            <ul className="space-y-1.5">
+              {prompts.map((p, i) => (
+                <li key={`q-${i}`} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted">{p.text}</span>
+                  {p.tagLabel && (
+                    <span className="shrink-0 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                      {p.tagLabel}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
           <div className="mt-3 border-t border-border pt-3">
             <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
               Who we compare you against

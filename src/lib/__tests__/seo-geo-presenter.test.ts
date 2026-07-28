@@ -3,6 +3,7 @@ import {
   AGENT_MAPPED_IDS,
   agentLabelFor,
   bucketLabel,
+  buildAnswerGridViews,
   buildContextLine,
   buildDiscoveredViews,
   buildRosterChips,
@@ -519,6 +520,86 @@ describe("presence + prompts", () => {
       }),
     );
     expect(view.takeaway).toContain("Strengthening your brand signals");
+  });
+});
+
+describe("answer grid (QA F12)", () => {
+  const grid = () =>
+    insights({
+      answerGrid: [
+        {
+          prompt: "best fintech tool for startups",
+          intent: "discovery",
+          cells: [
+            { engine: "chatgpt", source: "OpenAI", tier: "MEASURED", state: "named_first" },
+            { engine: "gemini", source: "Gemini", tier: "MEASURED", state: "absent" },
+            { engine: "claude", source: null, tier: "UNAVAILABLE", state: "unavailable" },
+          ],
+        },
+        {
+          prompt: "Is Acme legit?",
+          intent: "brand",
+          cells: [
+            { engine: "chatgpt", source: "OpenAI", tier: "MEASURED", state: "cited_not_named" },
+            { engine: "gemini", source: "Gemini", tier: "MEASURED", state: "named" },
+            { engine: "claude", source: null, tier: "UNAVAILABLE", state: "unavailable" },
+          ],
+        },
+      ],
+    });
+
+  it("maps every cell state through plain English and keeps the panel's engine order", () => {
+    const view = buildAnswerGridViews(grid())!;
+    // Claude answered nothing this run → no empty column.
+    expect(view.engines.map((e) => e.name)).toEqual(["ChatGPT", "Gemini"]);
+    expect(view.rows[0].cells.map((c) => c.label)).toEqual(["Named first", "Not named"]);
+    expect(view.rows[1].cells.map((c) => c.label)).toEqual([
+      "Used your site, didn't name you",
+      "Named",
+    ]);
+  });
+
+  it("never leaks a raw cell state or intent code", () => {
+    const rendered = JSON.stringify(buildAnswerGridViews(grid()));
+    for (const token of ["named_first", "cited_not_named", "unavailable", "DISC", "BRAND", "MEASURED"]) {
+      expect(rendered).not.toContain(token);
+    }
+    expect(buildAnswerGridViews(grid())!.rows[1].intentLabel).toBe("Questions that name you");
+  });
+
+  it("maps an unknown state to 'not measured' instead of echoing it", () => {
+    const weird = insights({
+      answerGrid: [
+        {
+          prompt: "q",
+          intent: "discovery",
+          cells: [
+            { engine: "chatgpt", source: "OpenAI", tier: "MEASURED", state: "vibes" as never },
+            { engine: "gemini", source: "Gemini", tier: "MEASURED", state: "named" },
+          ],
+        },
+      ],
+    });
+    const view = buildAnswerGridViews(weird)!;
+    expect(view.rows[0].cells[0].label).toBe("Not measured");
+    expect(JSON.stringify(view)).not.toContain("vibes");
+  });
+
+  it("returns null when there is no grid, or nothing was measured", () => {
+    expect(buildAnswerGridViews(insights({ answerGrid: [] }))).toBeNull();
+    expect(
+      buildAnswerGridViews(
+        insights({
+          answerGrid: [
+            {
+              prompt: "q",
+              intent: "discovery",
+              cells: [{ engine: "chatgpt", source: null, tier: "UNAVAILABLE", state: "unavailable" }],
+            },
+          ],
+        }),
+      ),
+    ).toBeNull();
   });
 });
 

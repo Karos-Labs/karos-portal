@@ -818,6 +818,112 @@ export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[
     });
 }
 
+/* ── Answer grid (QA F12) ─────────────────────────────────────────── */
+
+/**
+ * The per-question × per-engine matrix the pipeline computes and persists on every
+ * run (`insights.answerGrid`) and which, until now, no component read. It is the
+ * exhibit behind every aggregate on the page — "named in 3 of 14 answers" without it
+ * is an assertion, and the panel's own "no black box" claim was unsupported.
+ *
+ * The raw answer TEXT is deliberately never persisted (src/lib/intel/seo-geo.ts),
+ * so this shows the outcome per question, not the answer. Surfacing the text would
+ * be a separate data-retention decision.
+ */
+export interface AnswerCellView {
+  engine: EngineId;
+  engineName: string;
+  /** Plain-English outcome, from a CLOSED map — never the raw CellState. */
+  label: string;
+  tone: Tone;
+  /** Filled / ring / hollow / none — the dot rendered in the matrix. */
+  mark: "solid" | "ring" | "hollow" | "none";
+}
+
+export interface AnswerGridRow {
+  prompt: string;
+  /** Plain-English intent heading ("Category questions"), never DISC/COMP/PROB. */
+  intentLabel: string;
+  cells: AnswerCellView[];
+}
+
+export interface AnswerGridView {
+  engines: Array<{ engine: EngineId; name: string }>;
+  rows: AnswerGridRow[];
+  legend: Array<{ label: string; tone: Tone; mark: AnswerCellView["mark"] }>;
+}
+
+/** Closed CellState → client copy. Unknown states get the safe "not measured". */
+const CELL_VIEW: Record<string, { label: string; tone: Tone; mark: AnswerCellView["mark"] }> = {
+  named_first: { label: "Named first", tone: "success", mark: "solid" },
+  named: { label: "Named", tone: "info", mark: "solid" },
+  cited_not_named: { label: "Used your site, didn't name you", tone: "warning", mark: "ring" },
+  absent: { label: "Not named", tone: "neutral", mark: "hollow" },
+  unavailable: { label: "Not measured", tone: "neutral", mark: "none" },
+};
+const CELL_VIEW_DEFAULT = CELL_VIEW.unavailable;
+
+/**
+ * Plain-English headings for the buyer-intent taxonomy. Closed map — the stored
+ * DISC / COMP / PROB / BRAND / NAV codes never reach a client screen. Order here is
+ * the display order: the questions that win new customers first.
+ */
+export const INTENT_VIEW: Record<string, string> = {
+  discovery: "Category questions",
+  comparison: "Comparison questions",
+  problem: "Problem questions",
+  brand: "Questions that name you",
+  navigational: "People looking for your site",
+};
+export const INTENT_VIEW_ORDER = ["discovery", "comparison", "problem", "brand", "navigational"];
+const INTENT_VIEW_DEFAULT = "Other questions";
+
+export function intentLabel(intent: string): string {
+  return INTENT_VIEW[intent] ?? INTENT_VIEW_DEFAULT;
+}
+
+/**
+ * Build the answer matrix. Columns are the engines that actually answered something
+ * this run, in the panel's fixed engine order; an engine with nothing but
+ * "not measured" cells is dropped rather than shown as an empty column. Returns
+ * null when there is no grid at all (pre-grid snapshots, or a failed capture).
+ */
+export function buildAnswerGridViews(insights: SeoGeoInsights): AnswerGridView | null {
+  const grid = insights.answerGrid ?? [];
+  if (grid.length === 0) return null;
+
+  const answered = new Set<EngineId>();
+  for (const row of grid) {
+    for (const cell of row.cells ?? []) {
+      if (cell.state !== "unavailable") answered.add(cell.engine);
+    }
+  }
+  const engines = ENGINE_ORDER.filter((e) => answered.has(e)).map((engine) => ({
+    engine,
+    name: ENGINE_LABELS[engine] ?? "Engine",
+  }));
+  if (engines.length === 0) return null;
+
+  const rows: AnswerGridRow[] = grid.map((row) => {
+    const byEngine = new Map((row.cells ?? []).map((c) => [c.engine, c] as const));
+    return {
+      prompt: row.prompt,
+      intentLabel: intentLabel(row.intent),
+      cells: engines.map(({ engine, name }) => {
+        const state = byEngine.get(engine)?.state;
+        const view = (state && CELL_VIEW[state]) || CELL_VIEW_DEFAULT;
+        return { engine, engineName: name, ...view };
+      }),
+    };
+  });
+
+  return {
+    engines,
+    rows,
+    legend: [CELL_VIEW.named_first, CELL_VIEW.named, CELL_VIEW.cited_not_named, CELL_VIEW.absent],
+  };
+}
+
 /* ── Prompt set ───────────────────────────────────────────────────── */
 
 export interface PromptView {
