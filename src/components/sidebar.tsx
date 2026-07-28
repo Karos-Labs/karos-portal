@@ -394,7 +394,11 @@ export function Sidebar({
         />
       </div>
 
+      {/* key: switching client context must reset the panel's local state —
+          an optimistically added row otherwise stayed on screen for the NEXT
+          client's rail until a reload (QA F62 flag). */}
       <CompetitorTrack
+        key={activeClient.client.id}
         competitors={activeClient.competitors}
         clientId={activeClient.client.id}
         isStaff={true}

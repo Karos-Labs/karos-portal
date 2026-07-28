@@ -49,10 +49,12 @@ export function CompetitorTrack({
 
   const active = useMemo(() => {
     const serverIds = new Set(competitors.map((c) => c.id));
-    return [...competitors, ...addedRows.filter((c) => !serverIds.has(c.id))].filter(
-      (c) => !removedIds.has(c.id),
-    );
-  }, [addedRows, competitors, removedIds]);
+    // Belt and braces on the clientId: the staff rail keeps this component
+    // mounted across a client-context switch, and an optimistic row must never
+    // appear in another client's list (QA F62 flag; the mount is also keyed).
+    const pending = addedRows.filter((c) => c.clientId === clientId && !serverIds.has(c.id));
+    return [...competitors, ...pending].filter((c) => !removedIds.has(c.id));
+  }, [addedRows, clientId, competitors, removedIds]);
   const displayed = useMemo(() => computeTrackedCompetitors(active), [active]);
 
   function handleRemove(competitor: ClientCompetitor) {
