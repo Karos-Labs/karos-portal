@@ -282,9 +282,8 @@ export function Sidebar({
   clients?: Client[];
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [open, setOpen] = useState(false);
-  const { activeClient, setActiveClient } = useActiveClient();
+  const { activeClient } = useActiveClient();
 
   const clientHomePath =
     user.role === "CLIENT_USER" && user.clientId ? `/clients/${user.clientId}` : null;
@@ -312,31 +311,15 @@ export function Sidebar({
 
   // In Client View mode show the 4 client-facing tabs; otherwise show the full admin nav.
   // Using (isStaff && activeClient) so TS narrows activeClient to non-null in the truthy branch.
-  const inClientView = Boolean(isStaff && activeClient);
   const items: NavItem[] = (isStaff && activeClient) ? clientViewNav(activeClient.client.id) : adminItems;
 
-  // Client view is seeded merely by opening any /clients/[id] route, so every
-  // staff member needs a labelled way out. Before QA F113 the only control that
-  // cleared the context lived inside the admin-only picker, making the swap a
-  // one-way door for employees (escapable only by a full reload).
-  function exitClientView() {
-    setActiveClient(null);
-    setOpen(false);
-    // Navigate away so ClientContextSync unmounts and cannot re-seed on refresh.
-    router.push("/clients");
-  }
-
+  // QA F113 (staff stranded in client view) is answered by the ClientContextPicker
+  // at the foot of the rail: its ✕ clears the context AND routes to /clients, and
+  // it renders for every staff member, not just admins. A second labelled exit in
+  // the nav was redundant — three controls for one action, and one more row
+  // competing for the rail's fixed height.
   const nav = (
     <nav className="flex flex-col gap-1">
-      {inClientView && (
-        <button
-          onClick={exitClientView}
-          className="group mb-1 flex items-center gap-3 rounded-[10px] px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-        >
-          <Icon name="ArrowLeft" className="h-4 w-4 text-muted-2 group-hover:text-foreground" />
-          <span className="flex-1 text-left">Back to workspace</span>
-        </button>
-      )}
       {items.map((item) => {
         const itemPath = item.href.split("?")[0];
         const active = item.exact
