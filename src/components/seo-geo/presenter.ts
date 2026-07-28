@@ -683,6 +683,14 @@ const SEVERITY_VIEW: Record<string, { label: string; tone: Tone }> = {
   low: { label: "minor", tone: "neutral" },
 };
 
+/** Display order for the priority chips (QA F22). Unknown severities sort last. */
+const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const SEVERITY_RANK_DEFAULT = 4;
+
+function severityRank(severity: string): number {
+  return SEVERITY_RANK[severity] ?? SEVERITY_RANK_DEFAULT;
+}
+
 const CHANNEL_VIEW: Record<string, { channel: GapChannel; label: string }> = {
   SEO: { channel: "search", label: "search engines" },
   GEO: { channel: "ai", label: "AI answers" },
@@ -781,7 +789,10 @@ export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[
   // snapshot persisted before that still carries both copies — dedupe at render
   // too, so no UI consumer can show one defect as two contradictory cards.
   return dedupeGapsByRecId(gaps)
-    .sort((a, b) => b.scoreLift - a.scoreLift)
+    // F22: the header promises "ordered by expected impact", so the chip a client
+    // reads must agree with the rank they see. Severity first, lift as the
+    // tie-breaker — scanning top-down now gives the urgent things first.
+    .sort((a, b) => severityRank(a.severity) - severityRank(b.severity) || b.scoreLift - a.scoreLift)
     .map((g, i) => {
       const severity = SEVERITY_VIEW[g.severity] ?? SEVERITY_VIEW.low;
       const channel = CHANNEL_VIEW[g.lever] ?? CHANNEL_VIEW.BOTH;

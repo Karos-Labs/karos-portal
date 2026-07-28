@@ -401,6 +401,65 @@ describe("QA Fix 1/2: tracked roster dedup + category-only comparison", () => {
   });
 });
 
+describe("one severity scale for every gap type (QA F22)", () => {
+  const catMetrics = (patch: Record<string, unknown> = {}) => ({
+    promptsMeasured: 10, mentionRate: 0, citationRate: 0, firstPositionRate: 0,
+    shareOfVoice: 0, netSentiment: 0, ghostCitationRate: 0, topCompetitor: null,
+    brandMentions: [], ...patch,
+  });
+  const engine = (patch: Record<string, unknown> = {}) =>
+    ({
+      engine: "chatgpt", source: "OpenAI", captureTier: "MEASURED", promptsMeasured: 10,
+      promptsTotal: 10, mentionRate: 0, citationRate: 0, firstPositionRate: 0, shareOfVoice: 0,
+      netSentiment: 0, ghostCitationRate: 0, topCompetitor: null, brandMentions: [],
+      brandNamed: 0, brandPromptsMeasured: 0, category: catMetrics(), ...patch,
+    }) as Parameters<typeof computeVisibilityGaps>[0][number];
+
+  it("lands every visibility gap in the 0-10 band the site checks use", () => {
+    const gaps = computeVisibilityGaps([
+      engine({ category: catMetrics({ topCompetitor: { name: "Rival", mentionRate: 1, shareOfVoice: 100 } }) }),
+    ]);
+    for (const g of gaps) {
+      expect(g.scoreLift).toBeGreaterThanOrEqual(0);
+      expect(g.scoreLift).toBeLessThanOrEqual(10);
+    }
+  });
+
+  it("derives the chip from the number the list is sorted by", () => {
+    const gaps = computeVisibilityGaps([
+      engine({ category: catMetrics({ topCompetitor: { name: "Rival", mentionRate: 1, shareOfVoice: 100 } }) }),
+    ]);
+    const bySeverity = { critical: 7, high: 4, medium: 2, low: 0 } as const;
+    for (const g of gaps) expect(g.scoreLift).toBeGreaterThanOrEqual(bySeverity[g.severity]);
+  });
+
+  it("keeps a total miss at the severity the product intends", () => {
+    const gaps = computeVisibilityGaps([
+      engine({ category: catMetrics({ topCompetitor: { name: "Rival", mentionRate: 1, shareOfVoice: 100 } }) }),
+    ]);
+    // Never named at all: urgent. Never cited at all: important.
+    expect(gaps.find((g) => g.id.startsWith("GEO-35"))!.severity).toBe("critical");
+    expect(gaps.find((g) => g.id.startsWith("GEO-11"))!.severity).toBe("high");
+    // Leader holding 100% to your 0%: urgent.
+    expect(gaps.find((g) => g.id.startsWith("GEO-27"))!.severity).toBe("critical");
+  });
+
+  it("orders the client plan by impact, not by a lift on another scale", () => {
+    const g = (patch: Partial<Parameters<typeof buildRecommendations>[0][number]>) => ({
+      id: "SEO-02", lever: "SEO" as const, title: "t", severity: "low" as const, evidence: "",
+      confidence: "CONFIRMED" as const, fixAction: "manual" as const, target: "site-wide",
+      delivery: "agent-direct" as const, benchmark: "", measured: "", scoreLift: 1, ...patch,
+    });
+    const recs = buildRecommendations([
+      // Higher lift, lower severity — used to sort above the urgent row.
+      g({ id: "SEO-02", severity: "medium", scoreLift: 6 }),
+      g({ id: "GEO-35:chatgpt", severity: "critical", scoreLift: 4.5 }),
+    ]);
+    expect(recs.map((r) => r.impact)).toEqual(["high", "medium"]);
+    expect(recs[0].recId).toBe("GEO-35:chatgpt");
+  });
+});
+
 describe("lever comes from the registry, not the id prefix (QA F16)", () => {
   const failing = (defs: typeof SEO_CHECKS): SeoGeoCheck[] =>
     defs.map((d) => ({

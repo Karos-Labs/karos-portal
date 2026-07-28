@@ -785,11 +785,34 @@ export interface VisibilityGap {
   artifactRef?: string | null;
 }
 
+/**
+ * ONE severity scale for every gap type (QA F22). Site checks derive their lift from
+ * registry weight, which runs 0–10; the competitor-visibility gaps used to set their
+ * chip independently and produce much smaller numbers on unrelated scales, so a
+ * half-failing site check scoring 5 and tagged "important" out-ranked a genuinely
+ * urgent visibility gap whose number topped out at 4.5 — under a header promising
+ * the list was ordered by impact.
+ *
+ * Known ceiling, unchanged and deliberate: a site check whose registry weight is
+ * below 7 can never reach "urgent" however completely it fails. Changing that means
+ * re-tuning the a3 weights, which is out of scope here.
+ */
 function severityFromLift(lift: number): GapSeverity {
   if (lift >= 7) return "critical";
   if (lift >= 4) return "high";
   if (lift >= 2) return "medium";
   return "low";
+}
+
+/**
+ * Normalize a visibility shortfall onto the same 0–10 band computeCheckGaps uses.
+ * `weight` is chosen so a TOTAL miss lands in the severity the product intends:
+ * never named at all is urgent (10), never cited is important (6), and a category
+ * leader holding 100% of the conversation to your 0% is urgent (10).
+ */
+function visibilityLift(shortfall: number, target: number, weight: number): number {
+  const ratio = target > 0 ? clamp01(shortfall / target) : 0;
+  return Math.round(ratio * weight * 10) / 10;
 }
 
 /**
@@ -974,43 +997,51 @@ export function computeVisibilityGaps(perEngine: PerEngineVisibility[]): Visibil
 
     if (c.topCompetitor && c.topCompetitor.shareOfVoice > c.shareOfVoice) {
       const delta = c.topCompetitor.shareOfVoice - c.shareOfVoice;
+      // F22: one scale. A leader holding 100% to your 0% is the total miss = 10.
+      const sovLift = visibilityLift(delta, 100, 10);
       gaps.push({
         ...base,
         id: `GEO-27:${e.engine}`,
         lever: "GEO",
         title: `Share-of-voice gap on ${label}: ${c.topCompetitor.name} leads by ${Math.round(delta)} pts`,
-        severity: delta >= 40 ? "critical" : delta >= 20 ? "high" : delta >= 10 ? "medium" : "low",
+        severity: severityFromLift(sovLift),
         measured: `${Math.round(c.shareOfVoice)}% share of voice (vs ${c.topCompetitor.name} at ${Math.round(c.topCompetitor.shareOfVoice)}%)`,
         benchmark: `≥ ${Math.round(c.topCompetitor.shareOfVoice)}% (match category leader)`,
-        scoreLift: Math.round(delta) / 10,
+        scoreLift: sovLift,
         evidence: `Measured across ${c.promptsMeasured} category questions answered by ${label}`,
       });
     }
     if (c.mentionRate < TARGET_MENTION) {
+      // Never named at all is the total miss = 10 → urgent, as before, but now
+      // derived from the number the list is sorted by rather than set beside it.
+      const mentionLift = visibilityLift(TARGET_MENTION - c.mentionRate, TARGET_MENTION, 10);
       gaps.push({
         ...base,
         id: `GEO-35:${e.engine}`,
         lever: "GEO",
         title: `Low named-mention rate on ${label}`,
-        severity: c.mentionRate === 0 ? "critical" : c.mentionRate < 0.15 ? "high" : "medium",
+        severity: severityFromLift(mentionLift),
         // F133: counts, with the denominator, in the same unit the engine cards and
         // the citation footer use — never a bare percentage against an unstated set.
         measured: `Named in ${Math.round(c.mentionRate * c.promptsMeasured)} of ${c.promptsMeasured} ${label} category answers`,
         benchmark: `≥ ${TARGET_MENTION * 100}% of category answers`,
-        scoreLift: Math.round((TARGET_MENTION - c.mentionRate) * 15 * 10) / 10,
+        scoreLift: mentionLift,
         evidence: `${c.promptsMeasured} category questions probed on ${label}`,
       });
     }
     if (c.citationRate < TARGET_CITE) {
+      // Never cited at all is important, not urgent — weight 6 puts a total miss
+      // at the top of the "high" band, matching the severity this gap always had.
+      const citeLift = visibilityLift(TARGET_CITE - c.citationRate, TARGET_CITE, 6);
       gaps.push({
         ...base,
         id: `GEO-11:${e.engine}`,
         lever: "GEO",
         title: `Site never cited as a source by ${label}`,
-        severity: c.citationRate === 0 ? "high" : "medium",
+        severity: severityFromLift(citeLift),
         measured: `Cited in ${Math.round(c.citationRate * c.promptsMeasured)} of ${c.promptsMeasured} ${label} category answers`,
         benchmark: `≥ ${TARGET_CITE * 100}% citation share`,
-        scoreLift: Math.round((TARGET_CITE - c.citationRate) * 35 * 10) / 10,
+        scoreLift: citeLift,
         evidence: `${c.promptsMeasured} category questions probed on ${label}`,
       });
     }
@@ -1151,10 +1182,21 @@ function ownerFor(actionKind: ActionKind): string {
  * lift (highest impact first). The internal gap fields never cross into the returned
  * objects — only the §3b render contract does; titles/descriptions are plain-English.
  */
+/** Display order for the plan's impact badges (QA F22). */
+const SEVERITY_ORDER: Record<GapSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
 export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recommendation[] {
   const seen = new Set<string>();
   const out: Recommendation[] = [];
-  for (const gap of [...gaps].sort((a, b) => b.scoreLift - a.scoreLift)) {
+  // F22: the client's plan is headed "Ordered by expected impact on your scores",
+  // so the impact badge on a row must agree with where that row sits. Severity
+  // first, lift as the tie-breaker — same rule as the staff gap list.
+  const ordered = [...gaps].sort(
+    (a, b) =>
+      (SEVERITY_ORDER[a.severity] ?? 4) - (SEVERITY_ORDER[b.severity] ?? 4) ||
+      b.scoreLift - a.scoreLift,
+  );
+  for (const gap of ordered) {
     // REC_COPY covers every registry id (pinned by test); REC_FALLBACK catches
     // model-invented ids so a raw engineering label can never become a card title (F9).
     const copy = REC_COPY[gap.id.split(":")[0]] ?? REC_FALLBACK;

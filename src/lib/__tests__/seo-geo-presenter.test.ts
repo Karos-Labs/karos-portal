@@ -243,6 +243,40 @@ describe("leak guard (SCRUM-52 fix 1)", () => {
   });
 });
 
+describe("gap ordering (QA F22)", () => {
+  it("sorts by severity first, lift second, under an 'ordered by impact' header", () => {
+    const views = buildGapViews(
+      [
+        gap({ id: "SEO-02", severity: "high", scoreLift: 5 }),
+        gap({ id: "GEO-35:chatgpt", severity: "critical", scoreLift: 4.5 }),
+        gap({ id: "GEO-11:chatgpt", severity: "high", scoreLift: 6 }),
+        gap({ id: "GEO-18", severity: "medium", scoreLift: 9 }),
+      ],
+      "c",
+    );
+    // The urgent row leads even though two rows carry a bigger lift.
+    expect(views.map((v) => v.severityLabel)).toEqual([
+      "urgent",
+      "important",
+      "important",
+      "moderate",
+    ]);
+    // Within a severity, the bigger lift still wins.
+    expect(views[1].key.startsWith("GEO-11")).toBe(true);
+  });
+
+  it("sorts an unknown severity last instead of to the top", () => {
+    const views = buildGapViews(
+      [
+        gap({ id: "GEO-18", severity: "weird" as VisibilityGap["severity"], scoreLift: 10 }),
+        gap({ id: "SEO-02", severity: "low", scoreLift: 1 }),
+      ],
+      "c",
+    );
+    expect(views[0].key.startsWith("SEO-02")).toBe(true);
+  });
+});
+
 describe("gap copy (QA F3)", () => {
   it("resolves the card title through REC_COPY and demotes the registry label", () => {
     const [view] = buildGapViews(
