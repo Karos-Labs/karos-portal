@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_MAPPED_IDS,
   agentLabelFor,
   bucketLabel,
   buildContextLine,
@@ -19,7 +20,9 @@ import {
 } from "@/components/seo-geo/presenter";
 import {
   GEO_READINESS_CHECKS,
+  REC_COPY,
   SEO_CHECKS,
+  computeCheckGaps,
   type PerEngineVisibility,
   type SeoGeoInsights,
   type VisibilityGap,
@@ -278,32 +281,59 @@ describe("gap copy (QA F3)", () => {
   });
 });
 
-describe("funnel chip (SCRUM-52 amendment)", () => {
-  it("routes known rec ids to their executing agent on existing-product gaps", () => {
+describe("funnel chip (QA F7)", () => {
+  /**
+   * The regression this whole block exists for: the old suite hand-constructed
+   * `delivery: "existing-product"` gaps carrying GEO-16 / GEO-31 / BOTH-08 — a
+   * combination the pipeline never produces — so it passed while the chip was
+   * structurally unreachable in production. Every id below is emitted by a real
+   * registry, and none of them is forced onto the existing-product route.
+   */
+  it("routes real registry ids to their executing agent, whatever the delivery route", () => {
     const views = buildGapViews(
       [
-        gap({ id: "GEO-20", delivery: "existing-product", scoreLift: 9 }),
-        gap({ id: "BOTH-13", delivery: "existing-product", scoreLift: 8 }),
-        gap({ id: "GEO-16", delivery: "existing-product", scoreLift: 7 }),
-        gap({ id: "BOTH-08", delivery: "existing-product", scoreLift: 6 }),
+        gap({ id: "GEO-20", delivery: "agent-direct", scoreLift: 9 }),
+        gap({ id: "BOTH-13", delivery: "agent-direct", scoreLift: 8 }),
+        gap({ id: "SEO-02", delivery: "agent-direct", scoreLift: 7 }),
+        gap({ id: "GEO-22", delivery: "agent-direct", scoreLift: 6 }),
       ],
       "client-9",
     );
     expect(views.map((v) => v.agentChip?.label)).toEqual([
       "Handled by your Blog agent",
       "Handled by your Blog agent",
-      "Handled by your Reddit agent",
       "Handled by your Website agent",
+      "Handled by your Blog agent",
     ]);
     for (const v of views) expect(v.agentChip?.href).toBe("/clients/client-9/agents");
   });
 
-  it("only renders the chip for existing-product delivery", () => {
-    const [direct] = buildGapViews([gap({ id: "GEO-20", delivery: "agent-direct" })], "c");
-    expect(direct.agentChip).toBeNull();
+  it("maps only ids the producers actually emit — no phantom keys", () => {
+    const emitted = new Set([
+      ...SEO_CHECKS.map((d) => d.id),
+      ...GEO_READINESS_CHECKS.map((d) => d.id),
+      ...Object.keys(REC_COPY),
+    ]);
+    for (const id of AGENT_MAPPED_IDS) expect(emitted.has(id)).toBe(true);
+  });
+
+  it("resolves the chip on a real pipeline gap, not just a hand-built one", () => {
+    // Straight from the producer: model checks → computeCheckGaps → buildGapViews.
+    const gaps = computeCheckGaps(
+      SEO_CHECKS,
+      [{ id: "SEO-02", bucket: "onPage", label: "Title tags", evidence: "74 chars", norm: 0, tier: "MEASURED", confidence: "CONFIRMED" }],
+      "SEO",
+    );
+    const [view] = buildGapViews(gaps, "c");
+    expect(view.agentChip?.label).toBe("Handled by your Website agent");
+  });
+
+  it("keeps the route sentence alongside the chip instead of replacing it", () => {
+    const [view] = buildGapViews([gap({ id: "GEO-20", delivery: "agent-direct" })], "c");
     // QA F4: no apply path exists (both producers hardcode artifactRef: null), so
     // this route promises a draft-for-approval, never an automatic fix.
-    expect(direct.fixRoute).toBe("Karos drafts this fix for your approval.");
+    expect(view.fixRoute).toBe("Karos drafts this fix for your approval.");
+    expect(view.agentChip).not.toBeNull();
   });
 
   it("never promises an automatic fix on any delivery route (QA F4)", () => {
@@ -314,6 +344,15 @@ describe("funnel chip (SCRUM-52 amendment)", () => {
       "c",
     );
     for (const v of views) expect(v.fixRoute.toLowerCase()).not.toContain("automatic");
+  });
+
+  it("leaves advisory off-site and visibility gaps without an agent chip", () => {
+    // Naming an agent the client may not have is the defect F7 reports; these
+    // routes stay on the honest "our team will handle it" sentence.
+    for (const id of ["GEO-04", "GEO-14", "GEO-25", "GEO-11:chatgpt", "GEO-27:gemini", "GEO-35:claude"]) {
+      const [view] = buildGapViews([gap({ id, delivery: "advisory" })], "c");
+      expect(view.agentChip).toBeNull();
+    }
   });
 
   it("falls back to the plain route sentence when no route resolves (closed map)", () => {
@@ -341,7 +380,7 @@ describe("funnel chip (SCRUM-52 amendment)", () => {
   });
 
   it("strips engine suffixes from rec ids before the lookup", () => {
-    expect(agentLabelFor(gap({ id: "GEO-16:chatgpt" }))).toBe("Reddit agent");
+    expect(agentLabelFor(gap({ id: "GEO-20:chatgpt" }))).toBe("Blog agent");
   });
 });
 

@@ -719,17 +719,39 @@ const QUALIFIERS: Record<string, string | null> = {
 const QUALIFIER_DEFAULT = "Under review by the Karos team";
 
 /**
- * SCRUM-52 amendment: rec id → executing agent, for the cross-product routes
- * where the analysis funnels into an agent the client already has. CLOSED map:
- * unknown ids fall back to the plain fix-route sentence, never a broken link.
+ * Rec id → executing agent (QA F7). CLOSED map: unknown ids fall back to the plain
+ * fix-route sentence, never a broken link.
+ *
+ * The original map keyed GEO-16 / GEO-31 / BOTH-08 — ids no producer in this repo
+ * emits — and the chip was additionally gated on `delivery === "existing-product"`,
+ * which only the four indexReach checks ever get (GEO-24/23/41/BOTH-09). Zero
+ * overlap, so the chip was structurally unreachable. Keyed off the rec id now, and
+ * only onto ids the registries actually emit (pinned in seo-geo-presenter.test.ts).
+ *
+ * Deliberately NOT mapped: the off-site entity/review checks (GEO-04, GEO-14,
+ * GEO-25) and the competitor-visibility gaps (GEO-11, GEO-27, GEO-35). Those are
+ * `advisory` outreach work; the only agents that could own them are the per-client
+ * LinkedIn (e10) custom agent — honest only if it is in `client.customAgentIds`,
+ * which this panel does not receive — and a Reddit agent that does not exist in this
+ * repo. Naming an agent a client doesn't have is the exact defect F7 reports.
  */
 const REC_AGENT_LABELS: Record<string, string> = {
-  "GEO-16": "Reddit agent",
+  // Content-shaped checks → the blog_article product.
+  "GEO-02": "Blog agent",
+  "GEO-03": "Blog agent",
+  "GEO-09": "Blog agent",
   "GEO-20": "Blog agent",
+  "GEO-22": "Blog agent",
   "BOTH-13": "Blog agent",
-  "GEO-31": "LinkedIn agent",
-  "BOTH-08": "Website agent",
+  "BOTH-16": "Blog agent",
+  // Page-level title / description / canonical work → the landing_page product.
+  "SEO-02": "Website agent",
+  "SEO-06": "Website agent",
+  "BOTH-07": "Website agent",
 };
+
+/** Exported for the regression pin: every key must be an id a producer emits (F7). */
+export const AGENT_MAPPED_IDS = Object.keys(REC_AGENT_LABELS);
 
 /** Managed-product task types (agent-service catalog) → agent label. */
 const PRODUCT_AGENT_LABELS: Record<string, string> = {
@@ -757,7 +779,10 @@ export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[
     .map((g, i) => {
       const severity = SEVERITY_VIEW[g.severity] ?? SEVERITY_VIEW.low;
       const channel = CHANNEL_VIEW[g.lever] ?? CHANNEL_VIEW.BOTH;
-      const agentLabel = g.delivery === "existing-product" ? agentLabelFor(g) : null;
+      // F7: keyed off the rec id, NOT `delivery` — the delivery gate made this
+      // permanently null (only indexReach is "existing-product", and none of those
+      // ids are in the agent map).
+      const agentLabel = agentLabelFor(g);
       // F3c: the registry/model label is never the headline. REC_COPY covers every
       // registry id (pinned in seo-geo.test.ts); the raw title is the last resort and
       // is demoted to a secondary technical line when the lookup succeeds.
