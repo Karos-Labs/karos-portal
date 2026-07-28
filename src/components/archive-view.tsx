@@ -27,8 +27,9 @@ interface AgentGroup {
 /**
  * The Workspace "Archive" tab: every asset the agents have produced for this
  * client, grouped per agent and carrying the agent's real platform mark.
- * Read-only — review/approval stays on the staff Library; a tile opens the
- * same detail modal the calendar uses.
+ * A tile opens the same detail modal the calendar uses — which mounts the
+ * per-draft reader for agent draft batches (pick / edit / skip) and is
+ * otherwise read-only; approval itself stays on the staff Library.
  */
 export function ArchiveView({
   assets,

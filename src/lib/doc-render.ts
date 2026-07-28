@@ -25,6 +25,32 @@ export function stripDocPreamble(content: string): string {
     .trim();
 }
 
+/**
+ * Does this text carry Markdown structure worth rendering?
+ *
+ * Guard for surfaces that show arbitrary agent output (asset content) where
+ * most items are plain captions: a caption must keep its exact line breaks and
+ * must not be reflowed, but a structured deliverable must never reach a client
+ * with its hash marks, pipes and asterisks on screen. Deliberately narrow —
+ * block-level marks plus `**bold**`, tables and inline code. Single-asterisk
+ * emphasis is NOT a signal (captions use `*` as a literal character far more
+ * often than as markup).
+ */
+export function looksLikeMarkdown(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return (
+    /^#{1,6}\s+\S/m.test(text) || // headings
+    /^[-*+]\s+\S/m.test(text) || // bullet list
+    /^\d+\.\s+\S[\s\S]*?^\d+\.\s+\S/m.test(text) || // ordered list (2+ items: a
+    // lone "2026. What a year" opening a caption is not a list)
+    /^>\s+\S/m.test(text) || // blockquote
+    /^\|.*\|\s*$/m.test(text) || // table row
+    /^---+\s*$/m.test(text) || // horizontal rule / frontmatter fence
+    /\*\*[^\n*]+\*\*/.test(text) || // bold
+    /`[^\n`]+`/.test(text) // inline code
+  );
+}
+
 /** Split a context doc into `## heading` sections, dropping empty/placeholder ones. */
 export function parseDocSections(content: string): DocSection[] {
   const clean = stripDocPreamble(content);
@@ -48,7 +74,9 @@ export function parseDocSections(content: string): DocSection[] {
 export function renderSectionBody(md: string): string {
   // HTML-escape the raw Markdown before processing so any user-supplied < > & "
   // in the source text cannot break out into the surrounding HTML structure.
-  let out = esc(md).replace(/^---+$/gm, "");
+  // A horizontal rule is a real separator in agent output (it divides one draft
+  // from the next), so it renders rather than vanishing.
+  let out = esc(md).replace(/^---+\s*$/gm, '<hr class="my-4 border-0 border-t border-border" />');
 
   out = out.replace(
     /^###\s+(.+)$/gm,
@@ -109,8 +137,12 @@ export function renderSectionBody(md: string): string {
     },
   );
 
+  // Matches the ESCAPED marker: esc() above has already turned a leading ">"
+  // into "&gt;", so a `^>` rule here can never fire and every quoted line keeps
+  // its arrow on screen — which is exactly the raw-formatting symptom this
+  // renderer exists to prevent, and X/LinkedIn draft text is all blockquotes.
   out = out.replace(
-    /^>\s+(.+)$/gm,
+    /^&gt;\s+(.+)$/gm,
     '<blockquote class="border-l-2 border-border-strong pl-3 py-0.5 text-xs italic text-muted-2 my-2">$1</blockquote>',
   );
 
@@ -122,10 +154,14 @@ export function renderSectionBody(md: string): string {
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
-/** Full-document HTML: `## headings` become labelled sections. */
-export function renderFullDoc(content: string): string {
-  const clean = stripDocPreamble(content);
-  const headingRe = /^##\s+(.+)$/gm;
+/**
+ * Shared body renderer: `#` and `##` headings become labelled sections,
+ * everything between them goes through renderSectionBody. Takes text that has
+ * ALREADY had whatever preamble handling its caller wants — the two entry
+ * points below differ only in that.
+ */
+function renderBlocks(clean: string): string {
+  const headingRe = /^(#{1,2})\s+(.+)$/gm;
   let out = "";
   let cursor = 0;
   let match: RegExpExecArray | null;
@@ -135,7 +171,10 @@ export function renderFullDoc(content: string): string {
     if (match.index > cursor) {
       out += renderSectionBody(clean.slice(cursor, match.index));
     }
-    out += `<h2 class="text-base font-semibold mt-7 mb-2.5 text-neon/90">${esc(match[1])}</h2>`;
+    out +=
+      match[1].length === 1
+        ? `<h2 class="text-lg font-semibold mt-6 mb-2.5 text-foreground">${esc(match[2])}</h2>`
+        : `<h2 class="text-base font-semibold mt-7 mb-2.5 text-neon/90">${esc(match[2])}</h2>`;
     cursor = match.index + match[0].length;
   }
 
@@ -145,4 +184,27 @@ export function renderFullDoc(content: string): string {
   }
 
   return out;
+}
+
+/**
+ * Full-document HTML for a stored context doc: the YAML frontmatter and the
+ * H1 title are dropped (the surrounding chrome prints the title separately).
+ */
+export function renderFullDoc(content: string): string {
+  return renderBlocks(stripDocPreamble(content));
+}
+
+/**
+ * Deliverable HTML for asset content — NOT the same job as renderFullDoc.
+ *
+ * An asset body is the agent's output, not a doc with a known preamble, so
+ * stripDocPreamble must not run over it. Two ways it destroys content here:
+ * the first line is usually the deliverable's OWN headline (the modal title is
+ * the job/agent title, not that headline), and a leading `---` — the rule
+ * agents put between drafts — is read as a frontmatter fence, silently eating
+ * every line up to the next `---`. So this entry point strips nothing: an H1
+ * renders as a heading and a rule renders as a rule.
+ */
+export function renderAssetBody(content: string): string {
+  return renderBlocks(content.replace(/^﻿/, "").trim());
 }
