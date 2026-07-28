@@ -244,6 +244,11 @@ export async function toClientAgentRows(args: {
         const templateGate = evaluateTemplateRunGate({
           launchState: umbrella.launchState,
           templateStatus: template.status,
+          // The SAME resolved intake the launch gate above just used, and the
+          // same one the legacy ladder takes. A live umbrella does not exempt an
+          // agent from its intake — the submit core hard-gates on it either way
+          // (F131 re-entry).
+          setup,
           cost: runCost,
           ...(args.spendable !== undefined ? { availableCredits: args.spendable } : {}),
           creditBlockReason: args.creditBlockReasons[agent.id] ?? null,

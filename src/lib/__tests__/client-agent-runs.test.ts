@@ -3,6 +3,7 @@ import {
   evaluateLegacyRunGate,
   evaluateTemplateRunGate,
   moveTemplateKey,
+  noRunnableTemplateReason,
   templateRunPrompt,
   umbrellaOwnsClientCard,
   umbrellaRunBlock,
@@ -119,6 +120,119 @@ describe("evaluateTemplateRunGate", () => {
     expect(
       evaluateTemplateRunGate({ ...base, launchState: "live", availableCredits: 25 }),
     ).toEqual({ allowed: true, cost: 25 });
+  });
+
+  /*
+   * The intake rung (F131 re-entry). A LIVE X/LinkedIn umbrella with no intake
+   * used to clear this gate entirely, so the detail page painted "Set it up" in
+   * its sidebar while "Create new post" sat enabled next to it — and the submit
+   * core then refused, pre-charge, on exactly that intake.
+   */
+  const intake = { ready: false, label: "X agent data", href: "/clients/c1/x-agent" };
+
+  it("blocks a live umbrella whose intake was never filled in", () => {
+    const gate = evaluateTemplateRunGate({
+      ...base,
+      launchState: "live",
+      setup: intake,
+      availableCredits: 500,
+    });
+    expect(gate.allowed === false && gate.code).toBe("setup_missing");
+    expect(gate.allowed === false && gate.reason).toContain("X agent data");
+  });
+
+  it("lets a ready intake through", () => {
+    expect(
+      evaluateTemplateRunGate({
+        ...base,
+        launchState: "live",
+        setup: { ...intake, ready: true },
+        availableCredits: 25,
+      }),
+    ).toEqual({ allowed: true, cost: 25 });
+  });
+
+  it("blocks a non-billable actor too — the submit core hard-gates intake for staff as well", () => {
+    const gate = evaluateTemplateRunGate({ ...base, launchState: "live", setup: intake });
+    expect(gate.allowed === false && gate.code).toBe("setup_missing");
+  });
+
+  // Ladder ordering, both directions around the new rung.
+  it("puts the missing intake ABOVE credits — do not sell a run that cannot happen", () => {
+    const gate = evaluateTemplateRunGate({
+      ...base,
+      launchState: "live",
+      setup: intake,
+      availableCredits: 0,
+      creditBlockReason: "Weekly cap reached.",
+    });
+    expect(gate.allowed === false && gate.code).toBe("setup_missing");
+  });
+
+  it("puts the umbrella's own setup ABOVE the intake — the launch card is that story", () => {
+    const gate = evaluateTemplateRunGate({
+      ...base,
+      launchState: "launching",
+      setup: intake,
+      availableCredits: 0,
+    });
+    expect(gate.allowed === false && gate.code).toBe("setup_running");
+  });
+
+  it("puts a paused format ABOVE the intake — the row's own switch is the nearer fix", () => {
+    const gate = evaluateTemplateRunGate({
+      ...base,
+      templateStatus: "paused",
+      launchState: "live",
+      setup: intake,
+      availableCredits: 0,
+    });
+    expect(gate.allowed === false && gate.code).toBe("template_paused");
+  });
+
+  it("matches evaluateLegacyRunGate's own intake ordering", () => {
+    const template = evaluateTemplateRunGate({
+      ...base,
+      launchState: "live",
+      setup: intake,
+      availableCredits: 0,
+    });
+    const legacy = evaluateLegacyRunGate({
+      serviceConfigured: true,
+      setup: intake,
+      cost: base.cost,
+      availableCredits: 0,
+    });
+    expect(template.allowed === false && template.code).toBe(legacy.code);
+    expect(template.allowed === false && template.reason).toBe(legacy.reason);
+  });
+});
+
+/* ───────────── no template to run at all (empty live registry) ──────────── */
+
+describe("noRunnableTemplateReason", () => {
+  it("says nothing while the agent HAS formats — a gate is what explains those", () => {
+    expect(noRunnableTemplateReason({ optionsMode: false, hasTemplates: true })).toBeNull();
+    expect(noRunnableTemplateReason({ optionsMode: true, hasTemplates: true })).toBeNull();
+  });
+
+  it("explains the options-mode agent as a final shape, not a gap", () => {
+    const reason = noRunnableTemplateReason({ optionsMode: true, hasTemplates: false });
+    expect(reason).toContain("one post a day");
+  });
+
+  it("explains an unseeded registry as setup still in progress", () => {
+    const reason = noRunnableTemplateReason({ optionsMode: false, hasTemplates: false });
+    expect(reason).toContain("Karos team");
+  });
+
+  it("never says anything about work that may already exist (A3/A4)", () => {
+    for (const optionsMode of [true, false]) {
+      const reason = noRunnableTemplateReason({ optionsMode, hasTemplates: false }) ?? "";
+      expect(reason.toLowerCase(), String(optionsMode)).not.toMatch(
+        /draft|batch|queue|already (made|written|produced)/,
+      );
+    }
   });
 });
 

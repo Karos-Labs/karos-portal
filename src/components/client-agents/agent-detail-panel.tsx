@@ -10,7 +10,7 @@ import { ClientAgentFeedbackModal } from "./feedback-modal";
 import { OptionsRow, TemplateRows, WeekStrip } from "./live-card";
 import { SlotNoteModal } from "./slot-note-modal";
 import { OptionPicked, OptionPicker } from "./option-picker";
-import { visibleTemplates } from "@/lib/client-agent-runs";
+import { noRunnableTemplateReason, visibleTemplates } from "@/lib/client-agent-runs";
 import { runClientAgentTemplateAction } from "@/lib/actions/client-agent-run-actions";
 import type { ClientAgentCardRow } from "./types";
 
@@ -66,6 +66,13 @@ export function AgentDetailPanel({
   const firstBlock = templates
     .map((t) => agent.templateGates[t.key])
     .find((gate) => gate && !gate.allowed);
+  // An empty registry produces NO gate to quote, so the two shapes that
+  // legitimately have no templates — options-mode (final) and a live umbrella
+  // whose formats are not seeded yet (temporary) — used to get a dead button
+  // with nothing beside it. Same F25 rule: paint the reason or do not disable.
+  const blockReason =
+    firstBlock?.reason ??
+    noRunnableTemplateReason({ optionsMode: agent.optionsMode, hasTemplates: templates.length > 0 });
 
   function createPost() {
     if (!runnableTemplate) return;
@@ -126,10 +133,20 @@ export function AgentDetailPanel({
         {/* The reason it is off, PAINTED. The Button primitive sets
             disabled:pointer-events-none, so a title on a disabled control can
             never be read, and a reason nobody can read is the same as none. */}
-        {!runnableTemplate && firstBlock?.reason && (
+        {!runnableTemplate && blockReason && (
           <div className="mt-2 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-2.5">
-            <p className="text-xs text-warning">{firstBlock.reason}</p>
-            {firstBlock.code === "credits_short" && viewer && (
+            <p className="text-xs text-warning">{blockReason}</p>
+            {/* The intake rung links the page that fixes it, the same way the
+                launch card does for its own intake block. */}
+            {firstBlock?.code === "setup_missing" && agent.setupHref && (
+              <a
+                href={agent.setupHref}
+                className="mt-1 inline-block text-xs text-neon hover:underline"
+              >
+                Set up your {agent.setupLabel ?? "agent data"} →
+              </a>
+            )}
+            {firstBlock?.code === "credits_short" && viewer && (
               <div className="-mx-4">
                 <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
               </div>
