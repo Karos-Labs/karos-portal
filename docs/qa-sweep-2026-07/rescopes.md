@@ -416,3 +416,7 @@ starting. Updated by the orchestrator after each verification gate.
 - Phase-3 design v2 committed: launch client+staff triggered, client-billed
   gated-until-priced (Q10 pending Albert veto), per-agent pricing, X daily
   3-option slots with pick/edit/post telemetry (WP-9, seam T7).
+- F53 split executed: WORKSPACE did linkedin-seats-workspace.tsx:126; credits.ts
+  half (reason template :122 + stale comment :58-62 + F71 hyphen) handed to
+  CREDITS with test note (seat-architecture.test.ts). Ledger F53 flips only when
+  BOTH halves merge.
