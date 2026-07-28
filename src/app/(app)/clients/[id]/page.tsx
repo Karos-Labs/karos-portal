@@ -108,6 +108,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             insights={seoGeo}
             trackedCompetitors={trackedCompetitorRefs}
             clientWebsite={client.website}
+            isClientViewer={isClientViewer}
           />
         </section>
         <section className="space-y-3">

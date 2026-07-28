@@ -22,6 +22,7 @@ import { TONE_COLORS } from "@/components/seo-geo/tones";
 import { Disclosure } from "@/components/seo-geo/disclosure";
 import { FlagButton } from "@/components/seo-geo/flag-button";
 import { GapList } from "@/components/seo-geo/gap-list";
+import { SeoGeoActionPlan } from "@/components/seo-geo-action-plan";
 
 /**
  * SEO & GEO insights panel (SCRUM-52 redesign). Server component: all domain
@@ -219,6 +220,7 @@ export function SeoGeoPanel({
   insights,
   trackedCompetitors,
   clientWebsite,
+  isClientViewer = false,
 }: {
   insights: SeoGeoInsights | null;
   /** The CURRENT tracked-5 (same selector as the sidebar) — keeps every panel
@@ -227,6 +229,10 @@ export function SeoGeoPanel({
   trackedCompetitors?: TrackedCompetitorRef[];
   /** Client website — drives the client's own favicon in the comparison rows. */
   clientWebsite?: string | null;
+  /** True when the viewer is the client. Gates the internal gap list, which
+   *  `SeoGeoInsights.gaps` is explicitly documented as never being rendered raw
+   *  to a client (dev-handoff §4). */
+  isClientViewer?: boolean;
 }) {
   if (!insights) {
     return (
@@ -252,6 +258,12 @@ export function SeoGeoPanel({
   const engines = buildEngineViews(insights, trackedCompetitors, clientWebsite);
   const presence = buildPresence(insights);
   const gaps = buildGapViews(insights.gaps, insights.clientId);
+  // The client-facing plan (dev-handoff §3b) — built and persisted on every capture run.
+  // `?? []` covers snapshots captured before the plan existed.
+  const recommendations = insights.recommendations ?? [];
+  // Pre-plan snapshot: gaps exist but no plan was built. Don't tell the client
+  // "nothing to fix" — say the plan lands on the next refresh.
+  const planPendingRefresh = recommendations.length === 0 && gaps.length > 0;
   const prompts = buildPromptViews(insights);
   const generic = genericFlagPrefill(insights);
   const citationLeaderboard = insights.citationLeaderboard ?? [];
@@ -418,18 +430,36 @@ export function SeoGeoPanel({
         </Card>
       )}
 
-      {/* 5 · The prioritized action plan, in the client's language */}
+      {/* 5 · The prioritized action plan, in the client's language.
+          The client-facing `recommendations[]` (plain-English title + what it entails +
+          owner, each row with a real Approve control that persists and posts to the
+          activity timeline) is the primary view — `gaps[]` is documented INTERNAL and is
+          demoted to a staff-only technical disclosure (dev-handoff §3b/§4, QA Fix 6/7). */}
       <Card>
         <CardTitle className="mb-1">What we&apos;re fixing</CardTitle>
-        <p className="mb-4 text-xs text-muted-2">Ordered by expected impact on your scores.</p>
-        {gaps.length === 0 ? (
+        <p className="mb-4 text-xs text-muted-2">
+          Ordered by expected impact on your scores. Approve an item and your Karos team executes it.
+        </p>
+        {planPendingRefresh ? (
           <EmptyState
-            icon={<Icon name="CheckCircle2" className="h-6 w-6" />}
-            title="Nothing to fix right now"
-            description="Every check we measured passed and no tracked competitor out-ranks you in this snapshot. We keep monitoring every run."
+            icon={<Icon name="Radar" className="h-6 w-6" />}
+            title="Your action plan is being prepared"
+            description="This snapshot was captured before we started writing the plan in plain English. Your next visibility refresh will list the actions here."
           />
         ) : (
-          <GapList gaps={gaps} />
+          <SeoGeoActionPlan
+            clientId={insights.clientId}
+            recommendations={recommendations}
+            approvedRecIds={insights.approvedRecIds ?? []}
+          />
+        )}
+        {!isClientViewer && gaps.length > 0 && (
+          <Disclosure
+            className="mt-4 border-t border-border pt-3"
+            summary={`Technical detail — the ${gaps.length} measured gap${gaps.length === 1 ? "" : "s"} behind this plan (staff only)`}
+          >
+            <GapList gaps={gaps} />
+          </Disclosure>
         )}
       </Card>
 
