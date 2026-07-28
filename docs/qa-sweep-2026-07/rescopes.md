@@ -862,3 +862,13 @@ MISMATCH shortlist → mop-up round (CD-H series):
 - Environmental, report-only: 10px right gutter persists wherever classic
   scrollbars are on (scrollbar-gutter: stable) — needs Albert's eye on his
   machine.
+
+### SYSTEMIC pipeline bug found by refresh teams (2 of 2 clients so far)
+Every client-tier doc twin is missing its FIRST `##` section (target-audience@client
+opens mid-doc on "### Secondary ICP" in both Hanky Panky and Pitch by Deel) —
+an off-by-one truncation in the condensation pass, plus leaked template
+instructions / LLM meta-commentary in stored docs. The refresh fixes the DATA;
+the condensation code bug will re-corrupt on the next Regenerate. End-loop item:
+find + fix the off-by-one in the pipeline's condense step (src/lib/intel) and
+add a meta-commentary scrubber. Also: stored palettes matched no live-site hex
+for 2/2 clients — the palette extractor is unreliable.
