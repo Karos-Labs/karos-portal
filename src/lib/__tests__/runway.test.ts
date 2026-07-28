@@ -6,7 +6,13 @@ import {
   isInternalActor,
   RUNWAY_ACTOR_NAME,
 } from "@/lib/activity-actors";
-import { computeRunway, FAMILY_PRODUCT, RUNWAY_HORIZON_DAYS } from "@/lib/runway";
+import {
+  computeRunway,
+  dispatchesFor,
+  FAMILY_PRODUCT,
+  resolveMaxJobs,
+  RUNWAY_HORIZON_DAYS,
+} from "@/lib/runway";
 import { startOfDayMs } from "@/lib/post-chain";
 import type { Asset } from "@/lib/types";
 
@@ -167,5 +173,87 @@ describe("the autopilot never signs a client's activity feed", () => {
     for (const phrase of ["runway", "top-up", "next two weeks", "automated"]) {
       expect(brief.toLowerCase()).not.toContain(phrase);
     }
+  });
+});
+
+
+/**
+ * The FILL policy (Albert's ruling, 2026-07-28). One managed run yields one
+ * asset, so a family that is 14 days short needs 14 dispatches to be full. The
+ * original cap of 2 turned "every client always has a visible runway" into "two
+ * more posts a week", which never catches up on a client who starts empty.
+ */
+describe("runway dispatch budget", () => {
+  it("defaults to a full 14-day fill", () => {
+    expect(resolveMaxJobs(undefined)).toBe(RUNWAY_HORIZON_DAYS);
+    expect(resolveMaxJobs("")).toBe(RUNWAY_HORIZON_DAYS);
+  });
+
+  it("honours an explicit zero instead of inverting it", () => {
+    // `Number(raw) || DEFAULT` read 0 as absent and substituted the default, so
+    // the one value an operator uses to say "dispatch nothing this sweep" was
+    // the value that dispatched the most.
+    expect(resolveMaxJobs("0")).toBe(0);
+  });
+
+  it("takes an operator's explicit ceiling", () => {
+    expect(resolveMaxJobs("3")).toBe(3);
+    expect(resolveMaxJobs("30")).toBe(30);
+  });
+
+  it("falls back on anything that is not a whole non-negative count", () => {
+    for (const raw of ["-1", "2.5", "lots", "NaN"]) {
+      expect(resolveMaxJobs(raw)).toBe(RUNWAY_HORIZON_DAYS);
+    }
+  });
+});
+
+describe("dispatchesFor", () => {
+  it("fires one job per missing day", () => {
+    // A deficit of 10 gets 10 dispatches under a 14 cap — not 1, and not one
+    // job carrying "make 10 posts" (the managed schemas take no count field,
+    // and a prose request for ten posts returns ten versions of one idea).
+    expect(dispatchesFor(10, 14)).toBe(10);
+  });
+
+  it("never exceeds what is left of the client's budget", () => {
+    expect(dispatchesFor(14, 3)).toBe(3);
+    expect(dispatchesFor(10, 0)).toBe(0);
+  });
+
+  it("treats a family with no deficit as nothing to do", () => {
+    expect(dispatchesFor(0, 14)).toBe(0);
+    expect(dispatchesFor(-2, 14)).toBe(0);
+  });
+
+  it("shares one budget across two short families", () => {
+    // The second family gets what the first left, so a client short on both
+    // does not spend the whole sweep on whichever came first.
+    let remaining = 14;
+    const social = dispatchesFor(10, remaining);
+    remaining -= social;
+    const email = dispatchesFor(8, remaining);
+    expect([social, email]).toEqual([10, 4]);
+    expect(social + email).toBe(14);
+  });
+});
+
+describe("the sweep stays off until Tomer flips it", () => {
+  it("keeps the flag check, the report-only path and per-client isolation", () => {
+    const src = readFileSync(join(process.cwd(), "src/app/api/runway/route.ts"), "utf8");
+    expect(src).toContain('process.env.RUNWAY_AUTOGEN_ENABLED === "1"');
+    expect(src).toContain("if (!enabled || !serviceReady || dryRun)");
+    expect(src).toContain("RUNWAY_AUTOGEN_ENABLED not set — report only");
+    // One client's failure must not end the sweep for the rest.
+    expect(src).toContain("} catch (e) {");
+    expect(src).toContain('operation: "runway_autopilot"');
+  });
+
+  it("fills the deficit rather than slicing the family list", () => {
+    const src = readFileSync(join(process.cwd(), "src/app/api/runway/route.ts"), "utf8");
+    expect(src).toContain("dispatchesFor(runway.deficitByFamily[family] ?? 0, remaining)");
+    // The old shape capped by SLICING the candidate families, which is what
+    // made a 14-day hole a 2-post top-up.
+    expect(src).not.toContain(".slice(0, maxJobsPerClient)");
   });
 });

@@ -4,7 +4,14 @@ import { listClients, listClientIntegrations, listAssets, listJobs } from "@/lib
 import { integrationIsUsable } from "@/lib/integration-status";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
-import { computeRunway, FAMILY_PRODUCT, RUNWAY_HORIZON_DAYS, type RunwayProduct } from "@/lib/runway";
+import {
+  computeRunway,
+  dispatchesFor,
+  FAMILY_PRODUCT,
+  resolveMaxJobs,
+  RUNWAY_HORIZON_DAYS,
+  type RunwayProduct,
+} from "@/lib/runway";
 import { RUNWAY_ACTOR_NAME } from "@/lib/activity-actors";
 import type { AppUser } from "@/lib/types";
 import type { ChainFamily } from "@/lib/post-chain";
@@ -18,10 +25,16 @@ export const maxDuration = 300;
  * Runway autopilot — the generation half of "every client always has a visible
  * runway of posts." On each run it walks every ACTIVE client, measures how far
  * their content calendar is filled against the RUNWAY_HORIZON_DAYS (14) horizon,
- * and — for any short family — fires ONE managed product run to refill it. The
- * webhook turns those into draft assets and reflowClientChain dates them onto
- * the empty upcoming days, so the calendar never silently runs dry (the Karos
- * Labs "nothing after Friday" gap).
+ * and — for any short family — fires one managed product run PER MISSING DAY to
+ * refill it. The webhook turns those into draft assets and reflowClientChain
+ * dates them onto the empty upcoming days, so the calendar never silently runs
+ * dry (the Karos Labs "nothing after Friday" gap).
+ *
+ * Fill policy: the first sweep fills the whole 14-day buffer, and weekly sweeps
+ * after it top back up to the same horizon (~7 once a week has passed), so every
+ * client keeps at least a week of runway in hand. One run yields one asset, so
+ * a deficit of 10 is 10 dispatches — dispatching one per family per sweep meant
+ * a client who started empty never caught up.
  *
  * This replaces per-client manual "Refresh Task Map" clicks with a single
  * all-clients sweep — the missing orchestration that let generation scale past
@@ -41,7 +54,6 @@ export const maxDuration = 300;
  * GET, Authorization: Bearer <CRON_SECRET>.
  */
 
-const HARD_CAP_DEFAULT = 2;
 
 /**
  * Families the autopilot may auto-dispatch. social_post and newsletter_issue
@@ -55,8 +67,8 @@ const IN_FLIGHT: ReadonlySet<string> = new Set(["queued", "running"]);
 
 // System actor: makes every dispatch free agency overhead, like a staff run.
 // The name is a STAFF-facing codename — submitManagedJob logs it as the
-// activity actor, and the client timeline redacts it through clientSafeActor
-// (activity-actors.ts), which reads this same constant.
+// activity actor, and the client timeline redacts it through
+// clientSafeActor (activity-actors.ts), which reads this same constant.
 const SYSTEM_USER: AppUser = {
   uid: "system-runway",
   email: "runway@karoslabs.internal",
@@ -82,7 +94,12 @@ export async function GET(req: NextRequest) {
   const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
   const enabled = process.env.RUNWAY_AUTOGEN_ENABLED === "1";
   const serviceReady = isAgentServiceConfigured();
-  const maxJobsPerClient = Number(process.env.RUNWAY_MAX_JOBS_PER_CLIENT) || HARD_CAP_DEFAULT;
+  // Explicit undefined check, not `||`: RUNWAY_MAX_JOBS_PER_CLIENT=0 is how an
+  // operator says "dispatch nothing this sweep" while leaving the report on,
+  // and `|| HARD_CAP_DEFAULT` turned that into the default — the one value
+  // whose meaning is exactly inverted. A non-numeric or negative value falls
+  // back to the default; zero is honoured.
+  const maxJobsPerClient = resolveMaxJobs(process.env.RUNWAY_MAX_JOBS_PER_CLIENT);
   const now = Date.now();
 
   const clients = await listClients();
@@ -134,8 +151,7 @@ export async function GET(req: NextRequest) {
       );
       const candidates = runway.shortFamilies
         .filter((f) => AUTOGEN_FAMILIES.includes(f))
-        .filter((f) => !inFlightProducts.has(FAMILY_PRODUCT[f]))
-        .slice(0, maxJobsPerClient);
+        .filter((f) => !inFlightProducts.has(FAMILY_PRODUCT[f]));
 
       // Explain every short family this run does NOT dispatch for, so a
       // deficit alongside "skipped" never reads as unexplained inaction: a
@@ -151,30 +167,39 @@ export async function GET(req: NextRequest) {
       ];
 
       const dispatched: ClientResult["dispatched"] = [];
+      // Fill the deficit, not one job per family. The budget is shared across
+      // the short families in the order computeRunway reports them, so a client
+      // short on both does not spend the whole cap on the first.
+      let remaining = maxJobsPerClient;
       for (const family of candidates) {
         const product = FAMILY_PRODUCT[family];
-        if (!enabled || !serviceReady || dryRun) {
-          dispatched.push({ family, product }); // intended only
-          continue;
+        const wanted = dispatchesFor(runway.deficitByFamily[family] ?? 0, remaining);
+        for (let i = 0; i < wanted; i++) {
+          remaining--;
+          if (!enabled || !serviceReady || dryRun) {
+            dispatched.push({ family, product }); // intended only
+            continue;
+          }
+          const res = await submitManagedJob(SYSTEM_USER, {
+            clientId: client.id,
+            taskType: product,
+            // "notes" (plural) is the only free-text field either schema
+            // recognizes (both are additionalProperties:false) — a "note" or
+            // any other unrecognized key gets the whole request 422'd.
+            //
+            // The brief is MODEL INPUT, and a model repeats what it is given.
+            // An agent told this is an "automated weekly runway top-up"
+            // covering "the next two weeks" can echo either phrase into a
+            // caption, a subject line or a sign-off — internal operations
+            // vocabulary, on the client's own post. Say what to write, not why
+            // we are asking for it.
+            brief: {
+              notes: "Create on-brand content for this client's upcoming schedule.",
+            },
+          });
+          if (res.jobId && !res.error) jobsDispatched++;
+          dispatched.push({ family, product, jobId: res.jobId, error: res.error });
         }
-        const res = await submitManagedJob(SYSTEM_USER, {
-          clientId: client.id,
-          taskType: product,
-          // "notes" (plural) is the only free-text field either schema
-          // recognizes (both are additionalProperties:false) — a "note" or
-          // any other unrecognized key gets the whole request 422'd.
-          //
-          // The brief is MODEL INPUT, and a model repeats what it is given. An
-          // agent told this is an "automated weekly runway top-up" covering
-          // "the next two weeks" can echo either phrase into a caption, a
-          // subject line or a sign-off — internal operations vocabulary, on the
-          // client's own post. Say what to write, not why we are asking for it.
-          brief: {
-            notes: "Create on-brand content for this client's upcoming schedule.",
-          },
-        });
-        if (res.jobId && !res.error) jobsDispatched++;
-        dispatched.push({ family, product, jobId: res.jobId, error: res.error });
       }
 
       // submitManagedJob returns a jobId even when the agent-service rejects the
