@@ -228,15 +228,22 @@ function UserMenu({
   user,
   realAdmin,
   feeds,
+  showChrome = true,
 }: {
   user: AppUser;
   realAdmin?: AppUser;
   feeds: NotificationFeeds;
+  /**
+   * False inside the mobile drawer, which already surfaces the three rows one
+   * level up — the menu is itself a tap deep there, so nesting them would put
+   * support and the bell three taps from a page.
+   */
+  showChrome?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const unread = unreadTotal(feeds);
+  const unread = showChrome ? unreadTotal(feeds) : 0;
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -304,14 +311,16 @@ function UserMenu({
             <div className="p-1">
               {/* Panel opens UPWARD out of the menu: the menu itself already
                   hangs off the foot of the rail, and "right" would push a
-                  320px panel off-screen inside the narrow mobile drawer. */}
-              <NotificationBell
-                actionItems={feeds.actionItems}
-                reviewJobs={feeds.reviewJobs}
-                taskAlerts={feeds.taskAlerts}
-                variant="row"
-                panelPlacement="up"
-              />
+                  320px panel off-screen at narrow width. */}
+              {showChrome && (
+                <NotificationBell
+                  actionItems={feeds.actionItems}
+                  reviewJobs={feeds.reviewJobs}
+                  taskAlerts={feeds.taskAlerts}
+                  variant="row"
+                  panelPlacement="up"
+                />
+              )}
               <Link
                 href="/settings"
                 onClick={() => setOpen(false)}
@@ -320,8 +329,12 @@ function UserMenu({
                 <Icon name="Settings" className="h-4 w-4" />
                 Settings
               </Link>
-              <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
-              <ThemeSwitch />
+              {showChrome && (
+                <>
+                  <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
+                  <ThemeSwitch />
+                </>
+              )}
               <div className="my-1 h-px bg-border" />
               <button
                 onClick={handleLogout}
@@ -548,7 +561,10 @@ export function Sidebar({
     </div>
   ) : null;
 
-  const content = (
+  // `inDrawer` — the same tree serves the desktop rail and the narrow-width
+  // drawer, but the drawer is itself one tap deep, so the chrome CD-G9c moved
+  // into the account menu is surfaced a level higher there (see the footer).
+  const shellContent = (inDrawer: boolean) => (
     <div className="flex h-full flex-col">
       {/* Logo — fixed top */}
       <div className="shrink-0 px-4 pb-2 pt-4">
@@ -588,7 +604,28 @@ export function Sidebar({
         {isStaff && (
           <ClientContextPicker clients={clients} isAdmin={user.role === "KAROS_ADMIN"} />
         )}
-        <UserMenu user={user} realAdmin={realAdmin} feeds={feeds} />
+        {/* Notifications / support / theme inline rather than inside the menu:
+            opening the drawer is already one tap, so nesting them would leave
+            them three taps from a page and break CD-G9c's ≤2-click floor. */}
+        {inDrawer && (
+          <div className="space-y-0.5">
+            <NotificationBell
+              actionItems={actionItems}
+              reviewJobs={reviewJobs}
+              taskAlerts={taskAlerts}
+              variant="row"
+              panelPlacement="up"
+            />
+            <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
+            <ThemeSwitch />
+          </div>
+        )}
+        <UserMenu
+          user={user}
+          realAdmin={realAdmin}
+          feeds={feeds}
+          showChrome={!inDrawer}
+        />
       </div>
     </div>
   );
@@ -704,7 +741,7 @@ export function Sidebar({
                 onClick={() => setOpen(false)}
               />
               <div className="absolute left-0 top-0 h-full w-64 overflow-y-auto border-r border-border bg-surface">
-                {content}
+                {shellContent(true)}
               </div>
             </div>
           )}
@@ -713,7 +750,7 @@ export function Sidebar({
 
       {/* Desktop sidebar */}
       <aside className="hidden w-64 shrink-0 border-r border-border bg-background md:block">
-        <div className="sticky top-0 h-screen">{content}</div>
+        <div className="sticky top-0 h-screen">{shellContent(false)}</div>
       </aside>
     </>
   );
