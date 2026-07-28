@@ -188,7 +188,7 @@ export function AddCompetitorModal({ open, onClose, clientId }: Props) {
             <textarea
               value={form.keyStrengths}
               onChange={(e) => set("keyStrengths", e.target.value)}
-              placeholder={"Mobile app\nZero fees\nCentral Bank licence"}
+              placeholder={"Mobile app\nZero fees\nCentral Bank license"}
               className="h-24 w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm placeholder:text-muted-2 focus:outline-none focus:ring-1 focus:ring-neon/40 resize-none"
             />
           </div>

@@ -16,6 +16,13 @@ import { requireClientAccess, requireStaff } from "./_shared";
  * src/lib/mcp/tools.ts start work only through `run_agent` (QA F118).
  */
 
+/**
+ * ONE line for every outcome a caller is not entitled to tell apart: the job
+ * does not exist, belongs to another client, or is not a managed run. Distinct
+ * messages here are an existence oracle over a global id space.
+ */
+const NOT_FOUND = "This run could not be found.";
+
 /** Requests cancellation of a running agent-service job (managed or custom). */
 export async function cancelManagedJobAction(jobId: string): Promise<{ error?: string }> {
   await requireStaff();
@@ -33,8 +40,23 @@ export async function cancelManagedJobAction(jobId: string): Promise<{ error?: s
  */
 export async function cancelClientAgentJobAction(jobId: string): Promise<{ error?: string }> {
   const job = await getJob(jobId);
-  if (!job?.external) return { error: "Not a managed job." };
-  await requireClientAccess(job.clientId);
+  // AUTHORIZE BEFORE ANSWERING ABOUT EXISTENCE. This used to return "Not a
+  // managed job." for an unknown id and only THEN authorize — so the two
+  // outcomes had different shapes, and a client could walk job ids and learn
+  // which ones exist on other clients' accounts from the difference. Every
+  // path a caller is not entitled to see now returns the same line, whether
+  // the job is missing, belongs to someone else, or is not a managed run.
+  if (!job) return { error: NOT_FOUND };
+  try {
+    await requireClientAccess(job.clientId);
+  } catch (e) {
+    // A missing/disabled SESSION is the caller's own problem and says nothing
+    // about anyone else's data, so it keeps its own message. "Forbidden" — the
+    // foreign-client case — collapses into the not-found shape.
+    if (e instanceof Error && e.message === "Unauthorized") return { error: "Unauthorized" };
+    return { error: NOT_FOUND };
+  }
+  if (!job.external) return { error: NOT_FOUND };
   if (job.status !== "queued" && job.status !== "running") {
     return { error: "This run has already finished." };
   }

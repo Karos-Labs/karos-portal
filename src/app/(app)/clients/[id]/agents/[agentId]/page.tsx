@@ -220,6 +220,23 @@ export default async function ClientAgentDetailPage({
   // Attribution matches the "what it has made" join above — customAgentId is
   // authoritative, agentName keeps runs fired before that field existed. Launch
   // runs are excluded by construction: this shape has no umbrella to launch.
+  //
+  // ONLY A RUN THIS VIEWER STARTED. The banner this feeds says "Making your
+  // next post now" and offers a Cancel whose confirm promises the credits back,
+  // and it was matching ANY in-flight run on the agent — including a SCHEDULED
+  // fire. Two things were wrong with that. The copy: a cron tick is not
+  // something the reader just asked for, and the umbrella card next door has
+  // always held the opposite line ("the one run the card acknowledges: a 'Run
+  // now' the viewer just pressed" — client-agent-rows.ts), which is also the
+  // A3/A4 rule that scheduled production stays invisible. And the money: a
+  // scheduled fire charges the client only when the SCHEDULE was theirs
+  // (run-scheduled/route.ts bills on `billClientCredits` and acts as the
+  // schedule's creator), so for a staff-set schedule nothing was charged and
+  // the refund promise was simply false.
+  //
+  // `createdBy === user.uid` answers both at once: the manual press is theirs,
+  // and their own schedule's fire is theirs and IS billed, while a staff-set
+  // schedule's fire is not shown to them at all.
   const legacyRun = umbrella
     ? null
     : (jobs
@@ -228,6 +245,7 @@ export default async function ClientAgentDetailPage({
             job.external?.taskType === "custom" &&
             (job.status === "queued" || job.status === "running") &&
             job.runType !== "launch" &&
+            job.createdBy === user.uid &&
             (job.customAgentId === agent.id ||
               (!job.customAgentId && job.agentName === agent.name)),
         )
@@ -309,7 +327,14 @@ export default async function ClientAgentDetailPage({
               {...(spendable !== undefined ? { availableCredits: spendable } : {})}
               activeRun={
                 legacyRun
-                  ? { id: legacyRun.id, status: legacyRun.status === "running" ? "running" : "queued" }
+                  ? {
+                      id: legacyRun.id,
+                      status: legacyRun.status === "running" ? "running" : "queued",
+                      // Whether stopping it actually returns credits. `spendable`
+                      // is resolved only for a billable actor, so it IS the
+                      // "was this viewer charged" answer, already computed.
+                      refunds: spendable !== undefined,
+                    }
                   : null
               }
             />

@@ -759,7 +759,20 @@ export function ClientCustomAgents({
  * their in-flight run, so that is where the control goes: one implementation,
  * one action, one confirm step, on both panels.
  */
-export function CancelRunControl({ runId }: { runId: string }) {
+export function CancelRunControl({
+  runId,
+  refunds = true,
+}: {
+  runId: string;
+  /**
+   * Whether stopping this run actually returns credits — i.e. whether the
+   * viewer was charged for it. Staff and impersonated sessions never spend
+   * (isBillableClientActor), so promising them a refund describes a ledger
+   * entry that does not exist. Default true: the client pressing their own
+   * Run button is the common case and it IS billed.
+   */
+  refunds?: boolean;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [confirming, setConfirming] = useState(false);
@@ -768,13 +781,24 @@ export function CancelRunControl({ runId }: { runId: string }) {
   function cancel() {
     setError(null);
     startTransition(async () => {
-      const result = await cancelClientAgentJobAction(runId);
-      if (result.error) {
-        setError(result.error);
+      // The action does not only RETURN errors — requireClientAccess throws
+      // ("Unauthorized" / "Forbidden"), and a network failure on the server
+      // action itself rejects. Unhandled, that escaped the transition and took
+      // the whole route to the error boundary: a client whose session had
+      // expired mid-run lost the page instead of reading one line. The row
+      // already has somewhere to say so.
+      try {
+        const result = await cancelClientAgentJobAction(runId);
+        if (result.error) {
+          setError(result.error);
+          setConfirming(false);
+          return;
+        }
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't stop this run.");
         setConfirming(false);
-        return;
       }
-      router.refresh();
     });
   }
 
@@ -782,7 +806,9 @@ export function CancelRunControl({ runId }: { runId: string }) {
     <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
       {confirming ? (
         <>
-          <span className="text-[11px] text-muted">Stop this run? Credits for it are returned.</span>
+          <span className="text-[11px] text-muted">
+            {refunds ? "Stop this run? Credits for it are returned." : "Stop this run?"}
+          </span>
           <Button size="sm" variant="danger" onClick={cancel} loading={pending}>
             Stop run
           </Button>

@@ -284,6 +284,44 @@ describe("client action-plan lever badge (QA F144 / CD-B1)", () => {
       expect(view.channelLabel).toBe(LEVER_LABELS[lever]);
     }
   });
+
+  /**
+   * The agreement tests above pin the two maps to EACH OTHER, not to the words.
+   * Change both to "search engines" and every assertion above stays green —
+   * which is the one change CD-B1 exists to prevent. The team paused on exactly
+   * that phrasing ("search engines also sounds like AI") and settled the
+   * vocabulary: classic ranked results vs assistant answers, and "search
+   * results" rather than "Google search" because the checks behind the channel
+   * cover Bing and Brave too (GEO-23, GEO-24). So the words themselves are
+   * pinned here — a rewrite has to come back through this test and the ruling.
+   */
+  it("pins the settled CD-B1 wording, not merely the agreement", () => {
+    expect(LEVER_LABELS).toEqual({
+      SEO: "search results",
+      GEO: "AI answers",
+      BOTH: "search + AI answers",
+    });
+  });
+
+  it("never names a single engine, and never says 'search engines'", () => {
+    for (const label of Object.values(LEVER_LABELS)) {
+      expect(label).not.toMatch(/search engines/i);
+      expect(label).not.toMatch(/\b(google|bing|brave)\b/i);
+    }
+  });
+
+  it("US spelling on every word a client reads here", () => {
+    const BRITISH =
+      /\b\w*(?:isation|our\b|ise\b|ised\b|ising\b|centre|licence|programme|whilst|amongst)\w*\b/i;
+    for (const label of [...Object.values(LEVER_LABELS), ...ALL_LEVERS.map((l) => l)]) {
+      expect(label).not.toMatch(BRITISH);
+    }
+    // The plan component's own copy travels with the badge — same rule.
+    for (const line of ACTION_PLAN.split("\n")) {
+      const strings = line.match(/"[^"]{4,}"/g) ?? [];
+      for (const s of strings) expect(s).not.toMatch(BRITISH);
+    }
+  });
 });
 
 describe("gap ordering (QA F22)", () => {
