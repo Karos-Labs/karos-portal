@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { BrandFavicon } from "@/components/brand-favicon";
+import { cn } from "@/lib/utils";
 import { BrandingModal } from "@/components/branding-modal";
 import { addCompetitorByNameAction, removeCompetitorAction } from "@/lib/actions";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
@@ -228,19 +229,19 @@ export function CompetitorTrack({
             return (
               <li
                 key={c.id}
-                className="group flex items-center gap-1 rounded-md px-2 py-0.5 transition-colors hover:bg-surface-2"
+                className="group flex items-center gap-1 rounded-md px-2 py-1 transition-colors hover:bg-surface-2"
               >
                 {href ? (
                   <a
                     href={href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex min-w-0 flex-1 items-center gap-2"
+                    className="flex min-w-0 flex-1 items-center gap-2.5"
                   >
                     {linkContent}
                   </a>
                 ) : (
-                  <div className="flex min-w-0 flex-1 items-center gap-2">{linkContent}</div>
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">{linkContent}</div>
                 )}
                 {(isStaff || c.source === "manual") && (
                 <button
@@ -305,8 +306,8 @@ export function BrandColorsSection({
   const showUsage = isStaff && effective.some((c) => c.usagePct != null);
 
   return (
-    <div className="border-t border-border pt-3">
-      <div className="mb-1 flex items-center justify-between px-1">
+    <div className="border-t border-border pb-1 pt-2.5">
+      <div className="mb-2 flex items-center justify-between px-1">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
           Brand Colors
         </p>
@@ -321,11 +322,11 @@ export function BrandColorsSection({
       </div>
 
       {effective.length > 0 ? (
-        <div className="flex items-start gap-2 px-1">
+        <div className="flex items-start gap-2.5 px-1 pb-0.5">
           {effective.map((color, i) => (
             <div key={i} className="group relative">
               <div
-                className="h-6 w-6 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110"
+                className="h-7 w-7 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110"
                 style={{ backgroundColor: color.hex }}
                 title={color.role ? `${color.role} · ${color.hex}` : color.hex}
               />
@@ -336,8 +337,19 @@ export function BrandColorsSection({
                   {color.usagePct != null ? `${color.usagePct}%` : "—"}
                 </p>
               )}
-              <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 whitespace-nowrap opacity-0 transition-opacity group-hover:opacity-100">
-                <div className="rounded-md border border-border bg-surface-3 px-2 py-1 font-mono text-[11px] text-foreground shadow-lg">
+              {/* Anchored to the near edge, not centred: a centred tooltip on the
+                  first swatch ran off the left of the rail. Swatches past the
+                  midpoint flip to the right edge for the same reason. */}
+              <div
+                className={cn(
+                  "pointer-events-none absolute bottom-full z-20 mb-2 w-max opacity-0 transition-opacity group-hover:opacity-100",
+                  // Widest that still clears the rail from the last swatch's
+                  // left edge; the label wraps rather than running off-screen.
+                  "max-w-[9.5rem]",
+                  i >= 2 ? "right-0" : "left-0",
+                )}
+              >
+                <div className="rounded-md border border-border bg-surface-3 px-2 py-1 font-mono text-[11px] leading-snug text-foreground shadow-lg">
                   {color.hex}
                   {color.role && (
                     <span className="ml-1 font-sans text-muted-2">· {color.role}</span>

@@ -91,8 +91,8 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       intelScheduleEnabled={client.intelScheduleEnabled ?? false}
       intelScheduleNextRunAt={client.intelScheduleNextRunAt ?? null}
       isRefreshing={isAiProcessingLockActive(client)}
-      // QA F99/F124: for the client the scores and the plan are lifted above
-      // the fold (below), so the panel must not repeat them here.
+      // QA F99/F124: for the client the scores and the plan are lifted to the
+      // top of the visibility tab (below), so the panel must not repeat them.
       hideScores={isClientViewer && !!seoGeo}
       hidePlan={isClientViewer && !!seoGeo}
     />
@@ -118,12 +118,41 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     );
   }
 
+  // The whole search-and-AI-visibility story, in reading order, INSIDE its tab:
+  // headline scores first (F124's lift — and CD-B4's legacy-snapshot notice rides
+  // with them, since SeoGeoScores renders the two together), then the fix list,
+  // then the full report with those two suppressed so nothing renders twice.
+  //
+  // The scores and the plan used to sit outside the tabs, above the segmented
+  // control. That put ~1.6 screens of visibility content AHEAD of the control,
+  // and selecting "Search & AI visibility" then appended the rest of the report
+  // BELOW it — the client read the same subject twice, in two presentations, on
+  // one scroll. A tab control has to sit above everything it switches, and
+  // nothing behind a tab may also render outside it.
+  const visibility = seoGeo ? (
+    <div className="space-y-8">
+      <section className="space-y-3">
+        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+          Visibility scores
+        </p>
+        <SeoGeoScores insights={seoGeo} />
+      </section>
+      <section className="space-y-3">
+        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Action plan</p>
+        <SeoGeoPlan insights={seoGeo} isClientViewer />
+      </section>
+      {visibilityPanel}
+    </div>
+  ) : (
+    visibilityPanel
+  );
+
   // QA F99/F124 — client dashboard, in value order. What needs the client now
-  // (attention + recent), then the plain-English briefing, then the scores and
-  // the fix list those two are about. Everything heavy (the full performance
-  // breakdown and the full visibility report) moves behind a segmented control
-  // instead of five screens of always-expanded detail. The oversized "Welcome
-  // back" banner — the shallowest element on the page — becomes one line.
+  // (attention + recent), then the plain-English briefing. Everything heavy (the
+  // full performance breakdown and the full visibility report) sits behind a
+  // segmented control instead of five screens of always-expanded detail. The
+  // oversized "Welcome back" banner — the shallowest element on the page —
+  // becomes one line.
   return (
     <>
       <p className="mb-6 text-sm text-muted">
@@ -139,23 +168,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">AI Insights</p>
           <AiInsights clientId={client.id} />
         </section>
-        {seoGeo && (
-          <>
-            <section className="space-y-3">
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                Visibility scores
-              </p>
-              <SeoGeoScores insights={seoGeo} />
-            </section>
-            <section className="space-y-3">
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                Action plan
-              </p>
-              <SeoGeoPlan insights={seoGeo} isClientViewer />
-            </section>
-          </>
-        )}
-        <ClientDashboardTabs performance={analytics} visibility={visibilityPanel} />
+        <ClientDashboardTabs performance={analytics} visibility={visibility} />
       </div>
     </>
   );

@@ -221,14 +221,14 @@ export function ClientProfilePanel({ client, compact = false }: { client: Client
   return (
     <div className="px-1">
       {/* Company header */}
-      <div className={cn("flex items-center gap-2.5", compact ? "mb-1.5" : "mb-2.5")}>
+      <div className={cn("flex items-center gap-2.5", compact ? "mb-2.5 py-1" : "mb-2.5")}>
         <BrandFavicon
           src={client.logoUrl || client.brandingGuidelines?.logoUrl}
           website={client.website}
           name={client.name}
           accentColor={client.accentColor ?? "#2dff9e"}
           faviconSize={64}
-          className={cn("rounded-md text-xs", compact ? "h-7 w-7" : "h-8 w-8")}
+          className={cn("rounded-md text-xs", compact ? "h-8 w-8" : "h-8 w-8")}
           imgClassName="border border-border bg-surface-2 object-contain"
         />
         <span className="flex-1 truncate text-sm font-semibold text-foreground">{client.name}</span>

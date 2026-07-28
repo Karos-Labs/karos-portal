@@ -100,8 +100,8 @@ export function ClientRail({
       <aside className="relative z-30 hidden w-72 shrink-0 border-r border-border bg-background md:block">
         <div className="sticky top-0 flex h-screen flex-col">
           {/* Logo */}
-          <div className="shrink-0 px-4 pt-2.5">
-            <Link href={home} className="flex items-center gap-2.5 px-2 py-0.5">
+          <div className="shrink-0 px-4 pt-4">
+            <Link href={home} className="flex items-center gap-2.5 px-2 py-1">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/brand/kairos-head-disc-dark.svg"
@@ -121,7 +121,7 @@ export function ClientRail({
               swatches), so the compacted stack fits; overflow-y-auto remains
               the safety valve for genuinely short windows rather than clipping
               a whole section away. */}
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-4 py-1.5">
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-4 pb-0 pt-4">
             <nav className="flex flex-col gap-0.5">
               {primaryNav.map((item) => {
                 const active = isActive(pathname, item);
@@ -130,7 +130,7 @@ export function ClientRail({
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "group flex items-center gap-3 rounded-md px-3 py-1 text-sm transition-colors",
+                      "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
                       active
                         ? "bg-surface-2 text-foreground"
                         : "text-muted hover:bg-surface-2 hover:text-foreground",
@@ -149,11 +149,11 @@ export function ClientRail({
               })}
             </nav>
 
-            <div className="border-t border-border pt-2.5">
-              <ClientProfilePanel client={client} compact />
+            <div className="mt-4 border-t border-border pt-4">
+              <ClientProfilePanel client={client} />
             </div>
 
-            <div className="border-t border-border pt-3">
+            <div className="mt-4 border-t border-border pt-4">
               <ClientDocuments
                 contextDocs={contextDocs}
                 isAdmin={isAdmin}
@@ -179,7 +179,7 @@ export function ClientRail({
           </div>
 
           {/* Bottom account menu */}
-          <div className="shrink-0 border-t border-border p-2">
+          <div className="shrink-0 border-t border-border p-3">
             {/* The bell sits ON the rail, not inside the account dropdown — a
                 badge only signals if it is visible without opening a menu, and
                 staff get exactly that in the workspace header (QA F116). */}

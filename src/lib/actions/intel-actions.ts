@@ -23,6 +23,7 @@ import { getCurrentUser } from "@/lib/auth";
 import type { AppUser, ContextDocTier } from "@/lib/types";
 import { requireStaff, requireAdmin, logActivity, logGenerationFailure } from "./_shared";
 import { MODELS } from "@/lib/constants";
+import { stripPipelineMarkers } from "@/lib/doc-render";
 import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import {
   computeFirstIntelScheduleRun,
@@ -398,7 +399,13 @@ export async function generateDocSummaryAction(
     messages: [
       {
         role: "user",
-        content: doc.content.replace(/^---[\s\S]*?---\n?/, "").slice(0, 4000),
+        // Markers out before the slice: the brand sync block sits at the top of
+        // the brand-voice document, so its sentinels were inside the 4,000
+        // characters the summariser reads and could be echoed into a bullet the
+        // client reads under "In short".
+        content: stripPipelineMarkers(doc.content)
+          .replace(/^---[\s\S]*?---\n?/, "")
+          .slice(0, 4000),
       },
     ],
     maxOutputTokens: 450,

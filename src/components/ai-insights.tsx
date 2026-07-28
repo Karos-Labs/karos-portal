@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardTitle, Badge, EmptyState, Skeleton } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { stripPipelineMarkers } from "@/lib/doc-render";
 
 /**
  * AI Insights — the client-facing readout of the Self-Improving Marketing Loop.
@@ -253,7 +254,11 @@ export function renderInline(line: string, keyPrefix: string, depth = 0): React.
 }
 
 export function renderBriefing(text: string): React.ReactNode {
-  const lines = text.split("\n");
+  // The briefing is written over the client's context documents, so anything
+  // the pipeline wrote into those can be quoted back into it. This renderer
+  // emits React nodes, which means a comment would be shown as text rather
+  // than parsed away — same reason doc-render.ts drops them.
+  const lines = stripPipelineMarkers(text).split("\n");
 
   // Drop a leading H1 — it's the model restating a title ("# CLIENT - WEEKLY
   // BRIEFING") that only duplicates the card's own "AI Insights" header.

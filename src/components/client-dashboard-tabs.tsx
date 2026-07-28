@@ -26,6 +26,11 @@ function parseTab(value: string | null): Tab {
  *
  * Both halves are rendered on the server and passed in as nodes, so switching
  * tabs is instant and neither half is re-fetched.
+ *
+ * Invariant for callers: everything a tab shows must be passed IN, not also
+ * rendered above this component. Hoisting a slice of one half out to the page
+ * (the visibility scores and action plan were, briefly) strands the control
+ * below content it claims to switch and shows the client the same subject twice.
  */
 export function ClientDashboardTabs({
   performance,

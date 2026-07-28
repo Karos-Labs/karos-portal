@@ -580,7 +580,13 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           </div>
         }
       />
-      {!agentServiceConfigured ? (
+      {/* An unconfigured service must NOT hide the roster. F34's banner above
+          says "everything below is unaffected", and replacing the whole grid
+          with an empty state made that a lie — the client's granted agents,
+          their schedules and their run history simply vanished. The banner
+          carries the outage; the cards stay, with their run controls disabled
+          by the same readiness gate that already handles setup and credits. */}
+      {nothingToShow && !agentServiceConfigured ? (
         <EmptyState
           icon={<Icon name="Bot" className="h-7 w-7" />}
           title="Agent service not configured"

@@ -606,3 +606,85 @@ Remaining WP-2..WP-9 obligations carried forward:
   launching; W8 option label from optionRefs.length.
 - D3 note: error redaction is broader than launch-only (all client-visible job
   errors now go through clientSafeRefusal) — accepted, same leak same door.
+
+## Albert directives 2026-07-28 (third batch — AI Agents surface rework + sidebar + dashboard revert)
+
+Source: two localhost review messages (screenshots: staff sidebar side-by-side,
+chip ↗ zoom, client dashboard stat row, AI Agents header, Client agents bind UI).
+These OVERRIDE the PDF and phase3-design §7.1 where they conflict.
+
+### CD-G1 — Agents roster → full-page detail (rescopes WP-2's client surface)
+- The roster card carries NO "Run Now" button. A card is: agent name/mark,
+  short blurb, live/not-live status. Hover = clear click affordance; click
+  opens a FULL PAGE (`/clients/[id]/agents/[agentId]` route), never a popup.
+- The detail page is the agent's home: overview + what it produces, live
+  status, its template set, "Create new post" (the run gesture, with cost,
+  where context explains what it does), two-level feedback (agent + template),
+  documents this agent produced, the data/context the client gave it,
+  connectors helping it, and the schedule/pace controls (Adjust pace moves
+  here). Phase3 §7.1 card states 1-5 map onto this page, not onto roster cards.
+- Verbatim: "they can just click on it, and then it opens… over the whole
+  page. That whole page should be like the Instagram Agent."
+
+### CD-G2 — Blurbs: concrete, salesy-short, no buzzwords
+- Pattern: "Improve your Instagram reach with a daily post, different
+  templates, and an agent that scans." Kill "Master Content Social Skill"-style
+  naming in client copy. Draft all 7 in scripts/backfill-agent-blurbs.ts
+  (--apply stays Albert-gated; roster falls back to these in code until run).
+
+### CD-G3 — "One agent per platform this client buys" copy DIES
+- All current agents are granted to all clients (27e89e6 applied). The bind
+  dropdown + that section header confused Albert on sight. Bind stays as staff
+  plumbing but demoted (small control, honest label like "Bind a lab agent for
+  setup"); the client-visible framing is simply the roster of their agents.
+- Verbatim: "They should be able to run every single agent if they want to."
+
+### CD-G4 — Staff sidebar (sidebar.tsx, NOT client-rail): top block = baseline
+- All prior CD-E3 top-block restoration landed in client-rail.tsx; Albert's
+  screenshots are the STAFF shell's client-context rail. In sidebar.tsx:
+  logo block, nav spacing, and the client chip row must match the baseline
+  (36a5200) measurement-for-measurement down to the DOCUMENTS header;
+  DOCUMENTS and below keep the approved compaction.
+- Chip ↗ opens the client's actual WEBSITE (external, new tab) — not
+  /clients/[id] (nav's Dashboard already goes there in client view).
+- Every Competitor Track row gets the same ↗ to the competitor's site;
+  hover trash is preserved exactly as before.
+
+### CD-G5 — Regenerate is admin-only + gets a dashboard-view button
+- Schedule/Regenerate in the docs header: confirmed admin-only (already
+  gated by isAdmin) — real clients must never see them; verify impersonation.
+- ADD a Regenerate entry point on the staff client dashboard view: it
+  regenerates docs + SEO/geo intel, so it belongs at client level, not
+  buried in the docs header only. Same modal/action, admin-gated.
+
+### CD-G6 — F124 REVERTED by Albert (dashboard first view)
+- "Why did you change the first view? … Now it looks super messy." The
+  SummaryStat collapse is struck; restore the baseline (36a5200) counter
+  tiles on the client dashboard. F99's tab-position fix STAYS. F124 →
+  STRUCK-BY-ALBERT in the ledger.
+
+### CD-G7 — Fleet refresh is a COMPLETION pass, run internally (reshapes CD-F1)
+- One parallel team per client. NOT from scratch: keep existing data,
+  complete + update it (new doc structures, SEO/geo, competitors, brand
+  colors w/ percentages). Done by local Claude agents using the same
+  processes/prompts as the pipeline — NOT via the external Anthropic-API
+  regenerate path (no key top-up needed). Writes land in Firestore via a
+  dry-run-default --apply script so localhost shows the result. Runs LAST,
+  after CD-G1..G6 merge. Albert authorized the writes explicitly.
+
+### Phase 3 WP-2/WP-3 lens bounces (D1-D7) — dispatched with CD-G1 to the same builder
+- D1 HIGH: task-board/copilot dispatch path bypasses the §2 guard rail —
+  TASK_ENGINE_ACTOR is a synthetic KAROS_ADMIN, so a client-charged run of a
+  non-live umbrella proceeds unguarded (execution-actions.ts →
+  execution-engine.ts). The guard must key on the BILLED actor, not the
+  dispatching actor.
+- D2: setPlannedRunStatusAction lets a client re-arm the schedule on a
+  non-live umbrella.
+- D3: Adjust-pace modal copy states the batch shape = churn tell → rewrite
+  within A3/A4 (orchestrator ruling: the modal may name pace, never
+  generation batching).
+- D4: 200-row feedback cap counts resolved rows; no delete exists; copy
+  advises an impossible action.
+- D5: 500-char feedback cap not re-applied at context_files injection.
+- D6: options card promises the WP-9 picker before it exists.
+- D7: Withdraw renders as "Resolved" in the feedback list.

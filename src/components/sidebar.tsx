@@ -332,7 +332,7 @@ export function Sidebar({
             href={item.href}
             onClick={() => setOpen(false)}
             className={cn(
-              "group flex items-center gap-3 rounded-[10px] px-3 py-1 text-sm transition-all duration-150 active:scale-[0.97]",
+              "group flex items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-all duration-150 active:scale-[0.97]",
               active
                 ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]"
                 : "text-muted hover:bg-surface-2 hover:text-foreground",
@@ -361,7 +361,7 @@ export function Sidebar({
   const clientSections = activeClient ? (
     <div className="mt-1.5 space-y-1.5">
       {/* Client header */}
-      <div className="border-t border-border pt-2.5">
+      <div className="border-t border-border pt-1.5">
         <div className="flex items-center gap-2 px-1">
           <BrandFavicon
             src={activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl}
@@ -386,7 +386,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="border-t border-border pt-3">
+      <div className="border-t border-border pt-1.5">
         <ClientDocuments
           contextDocs={activeClient.contextDocs}
           isAdmin={activeClient.isAdmin}
@@ -444,7 +444,7 @@ export function Sidebar({
           client tabs, ≤6 documents, ≤5 tracked competitors, ≤4 swatches — so
           the compacted stack fits; overflow-y-auto stays as the safety valve
           for genuinely short windows rather than clipping a section away. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-1">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-0 pt-4">
         {nav}
         {clientSections}
       </div>
