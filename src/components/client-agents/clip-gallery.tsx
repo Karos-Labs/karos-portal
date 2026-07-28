@@ -21,10 +21,10 @@ import type { Asset } from "@/lib/types";
  *
  * NOTHING IS RE-IMPLEMENTED HERE. The tiles are the archive tile's treatment
  * (poster + play badge), and opening one mounts the SAME AssetDetailModal every
- * other deliverable surface opens — which already carries the F150 `<video
- * controls>` render, the caption copy button and the download affordances. A
- * second player on this page would be a second place for the video path to
- * drift, and F150 exists precisely because that path was missing once already.
+ * other deliverable surface opens — which already carries the F150 video-player
+ * render, the caption copy button and the download affordances. A second player
+ * on this page would be a second place for the video path to drift, and F150
+ * exists precisely because that path was missing once already.
  *
  * SAFE BY CONSTRUCTION for a client viewer: the assets reaching this component
  * have passed `getClientArchiveAssets`, so drafts, launch deliverables and
