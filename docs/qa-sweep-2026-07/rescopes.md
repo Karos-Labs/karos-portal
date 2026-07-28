@@ -434,3 +434,21 @@ starting. Updated by the orchestrator after each verification gate.
   resolution (likely missing domain/favicon field or failed fetch; add
   domain-based fallback e.g. google s2 service, cache result). SHELL wave C
   (sidebar files). Also part of end-loop visual pass: "everything looks good".
+
+## DASHBOARD cluster report highlights (pre-verification)
+- F123 (SHELL) resolved-by-F99 (the raw-count card deleted; hint now "Last run
+  9h ago") — SHELL adds nothing, pending drift confirmation.
+- Real bug found+fixed: failed insight streams returned 200-empty and POISONED
+  the digest cache (empty text stored, replayed forever). isCacheable guard +
+  poisoned-entry-as-miss self-heal + onError logging.
+- Client dashboard is now TABBED (Overview → Performance / Search & AI
+  visibility segmented control) — Albert will see a layout change on localhost
+  at merge.
+- SHELL notes: F122 capitalize("linkedin")→"Linkedin" confirmed live on
+  channels card; icon-name misses (CheckCircle2/CheckCircle absent in lucide
+  1.21) in integrations-tab:274/594, client-home-overview:69, tasks-board →
+  fold into F63 (WORKSPACE owns F63; send if still open).
+- Walk observation (b) diagnosis: pending-count mismatch is BOARD-side
+  (owner-tab chips count completed tasks; Done column) — tasks-board =
+  WORKSPACE F136/F72 territory; client-home-overview karos_managed
+  overstatement folds into F149/A4 notes.
