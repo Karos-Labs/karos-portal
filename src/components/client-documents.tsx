@@ -1064,7 +1064,7 @@ export function ClientDocuments({
                   }
                   /* Compact rows: the rail is a no-scroll fixed layout (CD-E3),
                      and seven of these were its single tallest block. */
-                  className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
+                  className="group flex w-full items-center gap-2.5 rounded-md px-2 py-[5px] text-left transition-colors hover:bg-surface-2"
                 >
                   <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
                   <span className="flex-1 truncate text-[13px] leading-5 text-muted group-hover:text-foreground">
@@ -1075,7 +1075,7 @@ export function ClientDocuments({
             ) : (
               <li key={item.docType}>
                 <div
-                  className="flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left"
+                  className="flex w-full items-center gap-2.5 rounded-md px-2 py-[5px] text-left"
                   title="This document is being rebuilt — check back shortly."
                 >
                   <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2/60" />

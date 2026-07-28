@@ -361,7 +361,7 @@ export function Sidebar({
   const clientSections = activeClient ? (
     <div className="mt-1.5 space-y-1.5">
       {/* Client header */}
-      <div className="border-t border-border pt-2.5">
+      <div className="border-t border-border pt-1.5">
         <div className="flex items-center gap-2 px-1">
           <BrandFavicon
             src={activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl}
@@ -386,7 +386,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="border-t border-border pt-3">
+      <div className="border-t border-border pt-1.5">
         <ClientDocuments
           contextDocs={activeClient.contextDocs}
           isAdmin={activeClient.isAdmin}
