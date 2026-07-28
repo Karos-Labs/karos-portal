@@ -259,3 +259,33 @@ starting. Updated by the orchestrator after each verification gate.
   Phase 3 / handover.
 - Wave-A base hazard RESOLVED: all four fixers self-reset to integration head;
   fixer-brief now carries Step 0. Future spawns must verify ancestry of 36a5200.
+
+## CALENDAR verification rulings (lens pair complete)
+- **F120 (SHELL) MUST consume JOB_STATUS_META** exported by job-status.tsx (F151
+  created it) — do not add a second JOB_STATUS_LABEL map. Include "cancelled"
+  (F30) as terminal.
+- **F107 ledger**: "resolved via calendar surface; assets-list Publish Now still
+  unreachable" — WORKSPACE wave B owns part 1 (connectedPlatforms into AssetCard
+  from assets-view.tsx:113 / jobs/[id]/page.tsx:61); no other finding owns it.
+- **F109 ledger**: partially resolved for client lens — a run in review has zero
+  client-visible assets (webhook creates drafts; clients don't get drafts), so
+  the client Review affordance only appears post-approval. Dissolves with
+  F149/A4.
+- **F108 ledger**: legacy zone-less rows keep old behavior until re-saved (by
+  design); posts/past-runs/today-highlight still bucket runtime-local (residual
+  half, low).
+- Merge conflict map (orchestrator executes): job-status.tsx (AGENTS F30
+  "cancelled" row + CALENDAR MAP→JOB_STATUS_META rename — keep BOTH);
+  calendar-body.tsx (F30 PAST_JOB_STATUSES + CALENDAR imports — keep both);
+  planned-run-actions.ts (CALENDAR wholesale, keep AGENTS custom-agents call-site
+  arg; verify timeZone consumed); task-ticket-modal.tsx + integrations-tab.tsx
+  (different regions, low risk).
+- Known cosmetic (accepted): INTERNAL_TOKEN_RE fail-closed can blank legitimate
+  8+digit-number lines from run teasers; INTERNAL_KEY_LINE_RE drops legit
+  "Source:" caption lines from teasers (modal unaffected). Revisit only if
+  clients complain.
+- Watch-items logged, not bounced: PublishNowRow status gate broader than map
+  filter (unreachable today); dayKey/timeStr lack isValidTimeZone guard
+  (unreachable — action boundary validates); past-day prefill forces
+  cadence-once discoverable only on submit; ~30 extra tab stops on staff
+  calendar empty cells.
