@@ -55,7 +55,7 @@ are tracked in the CD table at the bottom.
 | F35 | MEDIUM | A | AGENTS | 2 | OPEN | — | On the staff Agents page you can only discover an agent's client binding and its missing setup  | findings-p047-084.md |
 | F36 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Pressing "Start run" on the LinkedIn or Reddit agent without typing anything is refused — even  | findings-p047-084.md |
 | F37 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Staff cross-client lists render every row in the database with no search, filter, sort or pagin | findings-p047-084.md |
-| F38 | MEDIUM | B | AGENTS | 2 | OPEN | — | The Agents hub offers agent-and-client pairings the server is guaranteed to refuse, after the w | findings-p047-084.md |
+| F38 | MEDIUM | B | AGENTS | 2 | STRUCK | — | The Agents hub offers agent-and-client pairings the server is guaranteed to refuse, after the w | findings-p047-084.md |
 | F39 | MEDIUM | B | AGENTS | 2 | OPEN | — | The four managed lab products (Social, Newsletter, Blog, Landing page) cannot be run from anywh | findings-p047-084.md |
 | F40 | MEDIUM | A | AGENTS | 2 | OPEN | yes | The schedule dialog's "Posts per week" is actually runs per week — the cost line one paragraph  | findings-p047-084.md |
 | F130 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Every agent is priced identically at "25 credits per output" | findings-p047-084.md |

@@ -224,3 +224,14 @@ starting. Updated by the orchestrator after each verification gate.
   on failure with only publishError recorded — no attempt log/idempotency key.
 - F110 deviation pending drift ruling: pause extended to clients
   (canManageRuns), delete stays staff.
+- **F38 STRUCK** (orchestrator, on AGENTS evidence): perClientAgentSlug /
+  agentKeyMatchesClientSlug never existed here; submit-custom.ts has no
+  per-client agent binding, so the "guaranteed refusal pairing" premise is false.
+  Sweep-branch phantom.
+- **F35 half-N/A**: binding display impossible (see F38); delivered half = staff
+  hub badges "Needs X/LinkedIn agent data" before brief-writing.
+- **MERGE INSTRUCTION (orchestrator executes)**: planned-run-actions.ts will
+  conflict between AGENTS (9-line no-consumer optional timeZone field) and
+  CALENDAR (full F108 implementation). CALENDAR wins WHOLESALE (interface+body);
+  keep AGENTS' custom-agents.tsx call-site timeZone argument. Post-merge check:
+  timeZone must be CONSUMED (recompute path), not accepted-and-ignored.
