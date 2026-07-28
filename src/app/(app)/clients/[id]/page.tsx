@@ -195,7 +195,11 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               jobs={jobs}
               integrations={integrations}
             />
-            <ClientHomeOverview tasks={tasks} assets={overviewAssets} />
+            <ClientHomeOverview
+              tasks={tasks}
+              assets={overviewAssets}
+              viewerIsClient={isClientViewer}
+            />
           </div>
         </section>
         <section className="space-y-3">

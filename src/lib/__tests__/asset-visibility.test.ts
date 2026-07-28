@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CLIENT_ARCHIVE_WINDOW_MS,
+  clientDeliveryStamp,
   getClientArchiveAssets,
   getClientLibraryAssets,
   isInClientArchive,
@@ -166,5 +169,73 @@ describe("isInClientArchive", () => {
       expect(asset.status).not.toBe("draft");
       expect(isInClientArchive(asset, now)).toBe(false);
     }
+  });
+});
+
+/**
+ * The client home's "Recent activity" list.
+ *
+ * It listed every asset, drafts included, stamped `updatedAt ?? createdAt`. A
+ * fire mints its drafts in one second and nothing moves them until a staff
+ * member approves, so five rows carried the same stamp — the generation run's
+ * shape, on the client's home screen (A3/A4), for work that has not reached
+ * them at all. Membership is now the archive's own predicate and the stamp is
+ * the archive's own stamp, so the row, its link and the screen it links to
+ * cannot disagree.
+ */
+describe("the client home's recent list", () => {
+  const now = 1_000_000_000_000;
+
+  it("excludes the drafts whose stamp is the fire", () => {
+    // The set the old list rendered, minted together: same createdAt, same
+    // updatedAt, five rows reading "3 hours ago".
+    const fire = now - 3 * 60 * 60 * 1000;
+    const drafts = [1, 2, 3, 4, 5].map((n) =>
+      makeAsset({ id: `draft-${n}`, status: "draft", createdAt: fire, updatedAt: fire }),
+    );
+    for (const draft of drafts) expect(isInClientArchive(draft, now)).toBe(false);
+    // And a row that survives is one the client has actually been given.
+    const approved = makeAsset({ id: "approved-1", status: "approved", updatedAt: now - 60_000 });
+    expect(isInClientArchive(approved, now)).toBe(true);
+  });
+
+  it("stamps a delivered row by delivery, not by generation", () => {
+    // Same fire, delivered on different days: the stamp that separates them is
+    // the one the archive already sorts by.
+    const fire = now - 5 * 24 * 60 * 60 * 1000;
+    const first = makeAsset({
+      id: "a",
+      status: "published",
+      createdAt: fire,
+      updatedAt: fire + 1000,
+      publishedAt: now - 2 * 24 * 60 * 60 * 1000,
+    });
+    const second = makeAsset({
+      id: "b",
+      status: "approved",
+      createdAt: fire,
+      updatedAt: now - 60 * 60 * 1000,
+    });
+    expect(clientDeliveryStamp(first)).toBe(first.publishedAt);
+    expect(clientDeliveryStamp(second)).toBe(second.updatedAt);
+    expect(clientDeliveryStamp(second)).toBeGreaterThan(clientDeliveryStamp(first));
+    // Both are generation-stamped identically — which is the whole problem.
+    expect(first.createdAt).toBe(second.createdAt);
+  });
+
+  it("is wired to those two helpers, and only for a client viewer", () => {
+    const src = readFileSync(
+      join(process.cwd(), "src/components/client-home-overview.tsx"),
+      "utf8",
+    );
+    expect(src).toMatch(/\.filter\(\(a\) => !viewerIsClient \|\| isInClientArchive\(a, now\)\)/);
+    expect(src).toMatch(
+      /viewerIsClient \? clientDeliveryStamp\(a\) : a\.updatedAt \?\? a\.createdAt/,
+    );
+    expect(src).toMatch(/relativeTime\(stampOf\(a\)\)/);
+    // Staff pass nothing and keep the full list: the prop defaults to false.
+    expect(src).toContain("viewerIsClient = false");
+    const page = readFileSync(join(process.cwd(), "src/app/(app)/clients/[id]/page.tsx"), "utf8");
+    expect(page).toMatch(/viewerIsClient=\{isClientViewer\}/);
   });
 });
