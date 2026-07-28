@@ -64,7 +64,7 @@ const SYSTEM_USER: AppUser = {
 type ClientResult = {
   clientId: string;
   clientName: string;
-  status: "topped_up" | "on_track" | "skipped";
+  status: "topped_up" | "on_track" | "skipped" | "failed";
   coveredThroughMs: number | null;
   deficit: Partial<Record<ChainFamily, number>>;
   dispatched: Array<{ family: ChainFamily; product: RunwayProduct; jobId?: string; error?: string }>;
@@ -138,19 +138,27 @@ export async function GET(req: NextRequest) {
         const res = await submitManagedJob(SYSTEM_USER, {
           clientId: client.id,
           taskType: product,
+          // "notes" (plural) is the only free-text field either schema
+          // recognizes (both are additionalProperties:false) — a "note" or
+          // any other unrecognized key gets the whole request 422'd.
           brief: {
-            note: "Automated weekly runway top-up — keep the calendar filled with on-brand content through the next two weeks.",
+            notes: "Automated weekly runway top-up — keep the calendar filled with on-brand content through the next two weeks.",
           },
         });
         if (res.jobId && !res.error) jobsDispatched++;
         dispatched.push({ family, product, jobId: res.jobId, error: res.error });
       }
 
-      const didFire = dispatched.some((d) => d.jobId);
-      if (didFire) toppedUp++;
+      // submitManagedJob returns a jobId even when the agent-service rejects the
+      // submission (the mirrored Firestore job doc is created either way, then
+      // marked failed) — so "did this actually work" must check for the absence
+      // of an error, not just the presence of a jobId.
+      const succeeded = dispatched.some((d) => d.jobId && !d.error);
+      const attemptedButFailed = !succeeded && dispatched.some((d) => d.error);
+      if (succeeded) toppedUp++;
       results.push({
         ...base,
-        status: didFire ? "topped_up" : "skipped",
+        status: succeeded ? "topped_up" : attemptedButFailed ? "failed" : "skipped",
         coveredThroughMs: runway.coveredThroughMs,
         deficit,
         dispatched,
