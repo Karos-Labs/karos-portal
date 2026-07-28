@@ -15,6 +15,13 @@ const PRIORITY_COLOR: Record<string, string> = {
   low:    "#9c9ca3",
 };
 
+/**
+ * Anything older than this is still shown — dropping work silently is worse
+ * than showing it — but visually stepped back, so a 19-day-old row stops
+ * reading as something that just happened (QA F143).
+ */
+const STALE_MS = 7 * 24 * 60 * 60 * 1000;
+
 interface Props {
   actionItems: ActionItemNotification[];
   reviewJobs: AgentReviewNotification[];
@@ -50,7 +57,11 @@ export function NotificationBell({
   const visibleActions = actionItems.filter(
     (n) => !dismissed.has(`action-${n.transcriptId}-${n.itemIndex}`),
   );
-  const visibleJobs = reviewJobs.filter((j) => !dismissed.has(`job-${j.jobId}`));
+  // Review rows have no dismiss control: the X used to write nothing but local
+  // state, so the row (and the count) came back on the next page load — a badge
+  // that lies (QA F121). listReviewJobs queries status == "review", so the row
+  // clears by itself the moment the job is approved, exactly like the task rows.
+  const visibleJobs = reviewJobs;
 
   // Task alerts: review_pending tasks are surfaced first (need immediate attention),
   // then pending tasks. No local dismissal — they disappear when status changes.
@@ -58,6 +69,10 @@ export function NotificationBell({
   const pendingTasks = taskAlerts.filter((t) => t.status === "pending");
 
   const total = visibleActions.length + visibleJobs.length + taskAlerts.length;
+
+  // eslint-disable-next-line react-hooks/purity -- Date.now() intentional: rows
+  // are stepped back once they age past STALE_MS; recomputed on every open.
+  const now = Date.now();
 
   function dismissTranscriptItem(transcriptId: string, itemIndex: number) {
     const key = `action-${transcriptId}-${itemIndex}`;
@@ -71,9 +86,6 @@ export function NotificationBell({
     });
   }
 
-  function dismissJob(jobId: string) {
-    setDismissed((prev) => new Set([...prev, `job-${jobId}`]));
-  }
 
   return (
     <div className="relative">
@@ -170,7 +182,7 @@ export function NotificationBell({
                         </p>
                       </div>
                       {reviewPendingTasks.map((t) => (
-                        <TaskAlertRow key={t.id} task={t} onClose={() => setOpen(false)} />
+                        <TaskAlertRow key={t.id} task={t} now={now} onClose={() => setOpen(false)} />
                       ))}
                     </>
                   )}
@@ -184,7 +196,7 @@ export function NotificationBell({
                         </p>
                       </div>
                       {pendingTasks.map((t) => (
-                        <TaskAlertRow key={t.id} task={t} onClose={() => setOpen(false)} />
+                        <TaskAlertRow key={t.id} task={t} now={now} onClose={() => setOpen(false)} />
                       ))}
                     </>
                   )}
@@ -193,37 +205,32 @@ export function NotificationBell({
                   {visibleJobs.map((j) => (
                     <div
                       key={j.jobId}
-                      className="flex items-start gap-1 px-4 py-3 transition-colors hover:bg-surface-2"
+                      className={cn(
+                        "flex items-start gap-1 transition-colors hover:bg-surface-2",
+                        now - j.updatedAt > STALE_MS && "opacity-60",
+                      )}
                     >
                       <Link
                         href={viewerIsClient ? "/tasks?tab=archive" : `/jobs/${j.jobId}`}
                         onClick={() => setOpen(false)}
-                        className="flex min-w-0 flex-1 gap-3"
+                        className="flex min-w-0 flex-1 gap-3 px-4 py-3"
                       >
                         <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
                           <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="line-clamp-2 text-xs font-medium text-foreground">
-                            New content ready: <span className="text-foreground">{j.title}</span>
+                          <p className="text-xs font-medium text-foreground">
+                            {j.agentName} finished a draft
                           </p>
-                          <p className="mt-0.5 text-[10px] text-muted-2">
+                          <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted">
+                            {j.title}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-muted-2">
                             {j.clientName ? `${j.clientName} · ` : ""}
-                            {j.agentName} · Pending review · {relativeTime(j.updatedAt)}
+                            Waiting for your review · {relativeTime(j.updatedAt)}
                           </p>
                         </div>
                       </Link>
-                      <button
-                        onClick={() => dismissJob(j.jobId)}
-                        className={cn(
-                          "mt-0.5 shrink-0 rounded-[6px] p-1 text-muted-2",
-                          "transition-colors hover:bg-surface-3 hover:text-foreground",
-                        )}
-                        aria-label="Dismiss"
-                        title="Dismiss"
-                      >
-                        <Icon name="X" className="h-3.5 w-3.5" />
-                      </button>
                     </div>
                   ))}
 
@@ -231,17 +238,25 @@ export function NotificationBell({
                   {visibleActions.map((n) => (
                     <div
                       key={`${n.transcriptId}-${n.itemIndex}`}
-                      className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
+                      className={cn(
+                        "flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2",
+                        n.meetingDate != null && now - n.meetingDate > STALE_MS && "opacity-60",
+                      )}
                     >
                       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success/10">
                         <Icon name="SquareCheck" className="h-3.5 w-3.5 text-success" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="line-clamp-2 text-xs font-medium text-foreground">{n.text}</p>
+                        <p className="text-xs font-medium text-foreground">
+                          A meeting assigned you an action item
+                        </p>
+                        <p className="mt-0.5 line-clamp-3 break-words text-[11px] text-muted">
+                          {n.text}
+                        </p>
                         <Link
                           href={`/transcripts/${n.transcriptId}`}
                           onClick={() => setOpen(false)}
-                          className="mt-0.5 inline-block text-[10px] text-muted-2 hover:text-foreground"
+                          className="mt-0.5 inline-block text-[11px] text-muted-2 hover:text-foreground"
                         >
                           {n.transcriptTitle}
                           {n.meetingDate ? ` · ${relativeTime(n.meetingDate)}` : ""}
@@ -264,10 +279,12 @@ export function NotificationBell({
               )}
             </div>
 
-            {/* Footer */}
+            {/* Footer — one link per KIND of row actually in the feed. A panel
+                of meeting action items used to be footed "View workspace →"
+                and vice versa (QA F143). */}
             {total > 0 && (
-              <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
-                {taskAlerts.length > 0 || visibleJobs.length > 0 ? (
+              <div className="flex items-center gap-4 border-t border-border px-4 py-2.5">
+                {(taskAlerts.length > 0 || visibleJobs.length > 0) && (
                   <Link
                     href="/tasks"
                     onClick={() => setOpen(false)}
@@ -275,7 +292,8 @@ export function NotificationBell({
                   >
                     View workspace →
                   </Link>
-                ) : (
+                )}
+                {visibleActions.length > 0 && (
                   <Link
                     href="/transcripts"
                     onClick={() => setOpen(false)}
@@ -297,9 +315,11 @@ export function NotificationBell({
 
 function TaskAlertRow({
   task,
+  now,
   onClose,
 }: {
   task: ClientTask & { _clientName?: string };
+  now: number;
   onClose: () => void;
 }) {
   const isReview = task.status === "review_pending";
@@ -315,7 +335,10 @@ function TaskAlertRow({
     <Link
       href={href}
       onClick={onClose}
-      className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
+      className={cn(
+        "flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2",
+        now - task.createdAt > STALE_MS && "opacity-60",
+      )}
     >
       <div
         className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
@@ -328,12 +351,17 @@ function TaskAlertRow({
         />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="line-clamp-2 text-xs font-medium text-foreground leading-snug">
+        {/* Subject + verb first, the task's own wording second — a raw task
+            description is not an event and read as a clipped sentence. */}
+        <p className="text-xs font-medium leading-snug text-foreground">
+          {isReview ? "A task is ready for your review" : "A task is waiting on you"}
+        </p>
+        <p className="mt-0.5 line-clamp-3 break-words text-[11px] leading-snug text-muted">
           {task.title}
         </p>
-        <p className="mt-0.5 text-[10px] text-muted-2">
+        <p className="mt-0.5 text-[11px] text-muted-2">
           {task._clientName ? `${task._clientName} · ` : ""}
-          {isReview ? "Review pending" : "Pending"} · {task.priority} priority · {relativeTime(task.createdAt)}
+          {task.priority} priority · {relativeTime(task.createdAt)}
         </p>
       </div>
       <Icon name="ArrowRight" className="mt-1 h-3 w-3 shrink-0 text-muted-2" />

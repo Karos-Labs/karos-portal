@@ -11,9 +11,18 @@ import type { BrandColor, BrandingGuidelines, ClientCompetitor } from "@/lib/typ
 
 /* ── Competitor favicon with fallback ────────────────────────────────── */
 
-export function CompetitorFavicon({ url }: { url?: string }) {
+export function CompetitorFavicon({ url, company }: { url?: string; company?: string }) {
   return (
-    <BrandFavicon website={url} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+    <BrandFavicon
+      website={url}
+      /* Two jobs (CD-F2): a name that IS a domain resolves a real favicon when
+         the row has no url, and anything left over gets an initials chip
+         instead of the anonymous building glyph. */
+      name={company}
+      accentColor="#ff6b2c"
+      faviconSize={32}
+      className="h-4 w-4 rounded-[3px] text-[8px]"
+    />
   );
 }
 
@@ -204,7 +213,7 @@ export function CompetitorTrack({
             const isRemoving = removingId === c.id;
             const linkContent = (
               <>
-                <CompetitorFavicon url={c.url} />
+                <CompetitorFavicon url={c.url} company={c.company} />
                 <span className="flex-1 truncate text-xs text-muted group-hover:text-foreground">
                   {c.company}
                 </span>
@@ -266,15 +275,22 @@ export function BrandColorsSection({
   guidelines,
   clientId,
   hasWebsite,
+  isStaff = false,
 }: {
   guidelines: BrandingGuidelines | undefined;
   clientId: string;
   hasWebsite: boolean;
+  /**
+   * Staff shells only. Gates the internal usage-percentage display and the
+   * matching editor field (CD-E2). This is defence in depth, not the boundary:
+   * a client's payload has no usagePct at all — toClientPortalView strips it.
+   */
+  isStaff?: boolean;
 }) {
   const [brandingOpen, setBrandingOpen] = useState(false);
 
   const colors: BrandColor[] = guidelines?.dominantColors?.slice(0, 4) ?? [];
-  const effective: { hex: string; role?: string }[] =
+  const effective: { hex: string; role?: string; usagePct?: number }[] =
     colors.length > 0
       ? colors
       : (
@@ -285,6 +301,8 @@ export function BrandColorsSection({
             { hex: guidelines?.brandNeutralLight, role: "Neutral light" },
           ] as { hex: string | undefined; role: string }[]
         ).filter((c): c is { hex: string; role: string } => Boolean(c.hex));
+
+  const showUsage = isStaff && effective.some((c) => c.usagePct != null);
 
   return (
     <div className="border-t border-border pt-4">
@@ -303,7 +321,7 @@ export function BrandColorsSection({
       </div>
 
       {effective.length > 0 ? (
-        <div className="flex items-center gap-2 px-1">
+        <div className="flex items-start gap-2 px-1">
           {effective.map((color, i) => (
             <div key={i} className="group relative">
               <div
@@ -311,8 +329,15 @@ export function BrandColorsSection({
                 style={{ backgroundColor: color.hex }}
                 title={color.role ? `${color.role} · ${color.hex}` : color.hex}
               />
+              {/* Internal mix share — staff only; a client's payload never
+                  carries the number (CD-E2). */}
+              {showUsage && (
+                <p className="mt-1 text-center font-mono text-[11px] leading-none text-muted-2">
+                  {color.usagePct != null ? `${color.usagePct}%` : "—"}
+                </p>
+              )}
               <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 whitespace-nowrap opacity-0 transition-opacity group-hover:opacity-100">
-                <div className="rounded-md border border-border bg-surface-3 px-2 py-1 text-[10px] font-mono text-foreground shadow-lg">
+                <div className="rounded-md border border-border bg-surface-3 px-2 py-1 font-mono text-[11px] text-foreground shadow-lg">
                   {color.hex}
                   {color.role && (
                     <span className="ml-1 font-sans text-muted-2">· {color.role}</span>
@@ -332,6 +357,7 @@ export function BrandColorsSection({
         clientId={clientId}
         existing={guidelines}
         hasWebsite={hasWebsite}
+        allowUsagePct={isStaff}
       />
     </div>
   );

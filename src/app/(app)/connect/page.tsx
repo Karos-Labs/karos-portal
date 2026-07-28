@@ -17,7 +17,7 @@ export default async function ConnectPage() {
     <>
       <PageHeader
         title="Connect Claude Code"
-        description="Drive Karos from your own terminal. Karos exposes an MCP server your Claude Code can use to read client data, browse jobs & assets, submit managed jobs, and upload files."
+        description="Drive Karos from your own terminal. Karos exposes an MCP server your Claude Code can use to read client data, browse jobs & assets, run repo agents, and upload files."
       />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -59,12 +59,14 @@ export default async function ConnectPage() {
             <CardTitle>3. Work by chatting</CardTitle>
             <p className="text-sm text-muted">Once connected, just talk to Claude Code. For example:</p>
             <blockquote className="rounded-md border-l-2 border-neon bg-neon-soft/40 px-4 py-3 text-sm">
-              “Pull <em>Acme Co</em>&apos;s brand voice and recent assets, then submit a 3-post Instagram job
-              focused on their summer launch and tell me the job id.”
+              “Pull <em>Acme Co</em>&apos;s brand voice and recent assets, then run their content agent
+              with a prompt for three Instagram posts about the summer launch, and tell me the job id.”
             </blockquote>
             <p className="text-sm text-muted">
-              Claude Code will read the client&apos;s context, submit the managed job to the agent service,
-              and you can poll it; results land in Jobs and Assets for review as usual.
+              Claude Code will read the client&apos;s context, start the repo agent through the agent
+              service, and you can poll it; results land in Jobs and Assets for review as usual.
+              Running an agent is the only thing the server starts — the catalog products run from
+              the client&apos;s own task board, not over MCP.
             </p>
           </Card>
         </div>

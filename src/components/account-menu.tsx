@@ -6,31 +6,23 @@ import { useState } from "react";
 import { Icon } from "@/components/icon";
 import { cn, initials } from "@/lib/utils";
 import { ThemeSwitch } from "@/components/theme-switch";
-import { NotificationBell } from "@/components/notification-bell";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { LogoutButton } from "@/components/logout-button";
-import type {
-  ActionItemNotification,
-  AgentReviewNotification,
-  AppUser,
-  Client,
-  ClientTask,
-} from "@/lib/types";
+import type { AppUser, Client } from "@/lib/types";
 
+/**
+ * Notifications deliberately do NOT live in here — the bell is rendered on the
+ * rail itself so its count is ambient (QA F116). A badge behind a dropdown is
+ * not a badge.
+ */
 export function AccountMenu({
   user,
   client,
   settingsHref,
-  actionItems,
-  reviewJobs,
-  taskAlerts,
 }: {
   user: AppUser;
   client: Client;
   settingsHref: string;
-  actionItems: ActionItemNotification[];
-  reviewJobs: AgentReviewNotification[];
-  taskAlerts: ClientTask[];
 }) {
   const [open, setOpen] = useState(false);
 
@@ -92,13 +84,6 @@ export function AccountMenu({
             {/* Actions */}
             <div className="p-1">
               <ThemeSwitch />
-              <NotificationBell
-                variant="row"
-                panelPlacement="right"
-                actionItems={actionItems}
-                reviewJobs={reviewJobs}
-                taskAlerts={taskAlerts}
-              />
               <Link
                 href={settingsHref}
                 className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"

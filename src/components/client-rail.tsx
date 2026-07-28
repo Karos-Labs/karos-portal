@@ -174,26 +174,31 @@ export function ClientRail({
 
           {/* Bottom account menu */}
           <div className="shrink-0 border-t border-border p-3">
-            {spendableCredits != null && (
-              <Link
-                href={settingsItem.href}
-                className="mb-2 flex items-center justify-between rounded-md border border-border px-3 py-2 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground"
-              >
-                <span className="flex items-center gap-1.5">
-                  <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
-                  Credits
-                </span>
-                <span className="font-mono font-medium text-foreground">{spendableCredits}</span>
-              </Link>
-            )}
-            <AccountMenu
-              user={user}
-              client={client}
-              settingsHref={settingsItem.href}
-              actionItems={actionItems}
-              reviewJobs={reviewJobs}
-              taskAlerts={taskAlerts}
-            />
+            {/* The bell sits ON the rail, not inside the account dropdown — a
+                badge only signals if it is visible without opening a menu, and
+                staff get exactly that in the workspace header (QA F116). */}
+            <div className="mb-2 flex items-center gap-2">
+              {spendableCredits != null && (
+                <Link
+                  href={settingsItem.href}
+                  className="flex min-w-0 flex-1 items-center justify-between rounded-md border border-border px-3 py-2 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
+                    Credits
+                  </span>
+                  <span className="font-mono font-medium text-foreground">{spendableCredits}</span>
+                </Link>
+              )}
+              <NotificationBell
+                actionItems={actionItems}
+                reviewJobs={reviewJobs}
+                taskAlerts={taskAlerts}
+                panelPlacement="up"
+                viewerIsClient
+              />
+            </div>
+            <AccountMenu user={user} client={client} settingsHref={settingsItem.href} />
           </div>
         </div>
       </aside>

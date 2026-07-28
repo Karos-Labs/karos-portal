@@ -12,7 +12,8 @@ import { requireClientAccess, requireStaff } from "./_shared";
  * submitManagedJob CORE is untouched — execution-engine.ts calls it when a
  * content_generation task resolves to a catalog product, so Social posts,
  * Newsletter issue, Blog article and Landing page still run from the client's
- * task board. The MCP `submit_job` tool runs that same core.
+ * task board. There is NO MCP entry point to that core: the twelve tools in
+ * src/lib/mcp/tools.ts start work only through `run_agent` (QA F118).
  */
 
 /** Requests cancellation of a running agent-service job (managed or custom). */

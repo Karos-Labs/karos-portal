@@ -773,7 +773,10 @@ export async function listTranscripts(opts?: {
   return snap.docs
     .map((d) => withId<Transcript>(d))
     .filter((t) => !opts?.excludeHiddenFromClient || !t.hiddenFromClient)
-    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    // Sort by when the meeting HAPPENED, not when Fireflies synced it — a
+    // backfill otherwise drops old meetings at the top of the list (QA F146).
+    // Matches the row's own displayed date (meetingDate ?? createdAt).
+    .sort((a, b) => (b.meetingDate ?? b.createdAt ?? 0) - (a.meetingDate ?? a.createdAt ?? 0));
 }
 
 export async function getTranscript(id: string): Promise<Transcript | null> {

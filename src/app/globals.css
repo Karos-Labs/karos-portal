@@ -26,7 +26,14 @@
   --border-strong: #45454e;
   --foreground: #f2f1ec;   /* warm paper white */
   --muted: #9c9ca3;
-  --muted-2: #77777e;
+  /* 4.8:1 on --surface. Was #77777e — ~3.5:1, under the 4.5:1 floor, and it
+     carried the smallest type in the app (10-11px captions, stat sub-labels,
+     per-million pricing, relative timestamps), so the large-text exemption
+     never applied (QA F119). */
+  --muted-2: #8f8f97;
+  /* The old value, kept for DECORATIVE use only — icon strokes, dividers,
+     disabled states, meter fills. Text must never use it. */
+  --muted-3: #77777e;
 
   /* THE orange — emphasis only (markers, eyebrows, hovers, live signals) */
   --neon: #ff6b2c;
@@ -61,6 +68,7 @@
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-muted-2: var(--muted-2);
+  --color-muted-3: var(--muted-3);
   --color-neon: var(--neon);
   --color-neon-bright: var(--neon-bright);
   --color-neon-dim: var(--neon-dim);
@@ -139,7 +147,8 @@ body {
   border: 2px solid var(--background);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-2);
+  /* Decorative fill, not text — pinned to the old value (QA F119). */
+  background: var(--muted-3);
 }
 
 /* ── The marker — signature highlight (§6) ───────────────────────────── */
@@ -209,7 +218,9 @@ body {
   --border-strong: #c8c3b6;
   --foreground: #1a1a1a;
   --muted: #6b6a63;
-  --muted-2: #8a887f;
+  /* 4.7:1 on white. Was #8a887f — ~3.6:1 (QA F119). */
+  --muted-2: #767469;
+  --muted-3: #8a887f;
 
   /* The orange never changes between modes */
   --neon: #ff6b2c;
@@ -248,7 +259,8 @@ body {
   border-color: var(--background);
 }
 .light ::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-2);
+  /* Decorative fill, not text — pinned to the old value (QA F119). */
+  background: var(--muted-3);
 }
 
 /* ── Keyframes ────────────────────────────────────────────────────────── */

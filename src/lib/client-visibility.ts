@@ -1,4 +1,23 @@
-import type { Client } from "@/lib/types";
+import type { BrandingGuidelines, Client } from "@/lib/types";
+
+/**
+ * BrandColor.usagePct is the agency's internal mix guidance (CD-E2). Clients
+ * get swatches only, so it is removed HERE — at the boundary — not hidden
+ * behind a render conditional: the rail is a "use client" component, so a
+ * field that reaches it is readable from view-source whether or not it is
+ * painted. Same rule as the rest of this projection: build by construction.
+ */
+function toClientBrandingView(g: BrandingGuidelines): BrandingGuidelines {
+  if (!g.dominantColors?.length) return g;
+  return {
+    ...g,
+    dominantColors: g.dominantColors.map(({ hex, dominanceRank, role }) => ({
+      hex,
+      dominanceRank,
+      ...(role ? { role } : {}),
+    })),
+  };
+}
 
 /**
  * The Client projection a CLIENT_USER's browser may receive.
@@ -37,7 +56,9 @@ export function toClientPortalView(c: Client): Client {
     ...(c.brandVoice ? { brandVoice: c.brandVoice } : {}),
     ...(c.logoUrl ? { logoUrl: c.logoUrl } : {}),
     ...(c.accentColor ? { accentColor: c.accentColor } : {}),
-    ...(c.brandingGuidelines ? { brandingGuidelines: c.brandingGuidelines } : {}),
+    ...(c.brandingGuidelines
+      ? { brandingGuidelines: toClientBrandingView(c.brandingGuidelines) }
+      : {}),
     // Workspace-generation state the rail reads for the banner + empty states.
     ...(c.isAiProcessing != null ? { isAiProcessing: c.isAiProcessing } : {}),
     ...(c.aiProcessingStartedAt != null

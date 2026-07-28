@@ -91,3 +91,15 @@ export const ACTION_ITEM_STATUS_LABELS = {
 } as const;
 
 export const ACTION_ITEM_STATUSES = ["open", "in_progress", "in_review", "done"] as const;
+
+/**
+ * Spendable-credit level at or below which the agency should act BEFORE the
+ * client hits a wall. Matches the copilot's own "under 20" prompt rule
+ * (src/app/api/clients/[id]/chat/route.ts) so the staff-facing warning and the
+ * client-facing nudge fire on the same number.
+ *
+ * Lives here rather than in credits.ts only because that module is the
+ * client-safe pricing surface owned by the billing work; fold the two together
+ * when they next meet.
+ */
+export const LOW_CREDIT_THRESHOLD = 20;
