@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ENGAGEMENT_WEIGHTS,
   VIDEO_REFERENCE_SECONDS,
+  engagementIsMockOrStale,
   engagementScore,
   mockRawMetrics,
   normalizePlatformMetrics,
@@ -167,5 +168,54 @@ describe("mockRawMetrics", () => {
     expect(m.impressions).toBeGreaterThan(0);
     expect(engagementScore(m)).toBeGreaterThanOrEqual(0);
     expect(engagementScore(m)).toBeLessThanOrEqual(100);
+  });
+});
+
+/**
+ * The AI Insights gate (QA F125 blocker + F145 verifier bounce). Everything here
+ * protects one rule: a client is never shown a performance briefing unless some
+ * row in it can honestly describe how they are doing RIGHT NOW.
+ */
+describe("engagementIsMockOrStale", () => {
+  const row = (platform: string, source: "mock" | "live") => ({ platform, source });
+
+  it("holds the gate when an expired channel's live rows sit beside all-mock healthy ones", () => {
+    // The exact config the F145 bounce named: LinkedIn's token died (analytics
+    // stopped writing on the 401, so its real rows are frozen in place) while
+    // every healthy channel only has mock metrics. Before the fix, LinkedIn's
+    // stale live rows flipped this false and released a full unbadged briefing
+    // over invented figures.
+    const records = [
+      row("linkedin", "live"),
+      row("linkedin", "live"),
+      row("instagram", "mock"),
+      row("youtube", "mock"),
+    ];
+    expect(engagementIsMockOrStale(records, ["linkedin"])).toBe(true);
+  });
+
+  it("releases the briefing as soon as one healthy channel has live rows", () => {
+    const records = [row("linkedin", "live"), row("instagram", "mock"), row("youtube", "live")];
+    expect(engagementIsMockOrStale(records, ["linkedin"])).toBe(false);
+  });
+
+  it("still holds on the all-mock case with no stale channels at all (F125)", () => {
+    expect(engagementIsMockOrStale([row("instagram", "mock")], [])).toBe(true);
+  });
+
+  it("does not hold on live rows from healthy channels", () => {
+    expect(engagementIsMockOrStale([row("instagram", "live")], [])).toBe(false);
+  });
+
+  it("is false on an empty set — no rows means the digest is empty, not dishonest", () => {
+    // The route's own next branch (sampleSize === 0) owns that case: it falls
+    // back to the content-pipeline summary rather than the connect empty state.
+    expect(engagementIsMockOrStale([], ["linkedin"])).toBe(false);
+    expect(engagementIsMockOrStale([], [])).toBe(false);
+  });
+
+  it("holds when every row belongs to stale channels, live or not", () => {
+    const records = [row("linkedin", "live"), row("facebook", "mock")];
+    expect(engagementIsMockOrStale(records, ["linkedin", "facebook"])).toBe(true);
   });
 });

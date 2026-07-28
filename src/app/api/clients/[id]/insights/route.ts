@@ -11,7 +11,7 @@ import {
   getClientInsightsCache,
   upsertClientInsightsCache,
 } from "@/lib/data";
-import { rankByEngagement } from "@/lib/analytics";
+import { engagementIsMockOrStale, rankByEngagement } from "@/lib/analytics";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { logger } from "@/services/logger";
 import { MODELS } from "@/lib/constants";
@@ -82,7 +82,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   // so judging provenance on the unscoped set would let live rows on a dropped platform
   // vouch for a briefing made entirely of mock rows (analytics/sync leaves real historical
   // rows behind when an integration expires).
-  const engagementIsMock = scopedRecords.length > 0 && scopedRecords.every((r) => r.source === "mock");
+  // QA F145 verifier bounce: readmitting expired platforms above means their
+  // leftover LIVE rows re-enter scopedRecords, and analytics/sync stops writing
+  // on a 401/403 — so those rows persist indefinitely and one of them would flip
+  // this gate false, releasing a full unbadged briefing over otherwise-mock
+  // figures (F125's blocker symptom, narrowed but reachable). A stale channel's
+  // history is real but frozen, so it cannot vouch for freshness either:
+  // `every(r => r.source === "mock" || staleSet.has(r.platform))`.
+  const engagementIsMock = engagementIsMockOrStale(scopedRecords, stalePlatforms);
   const dataSourceHeaders = engagementIsMock ? { "X-Insights-Data-Source": "mock" } : undefined;
 
   // QA F125: a "Demo data" badge does not offset paragraphs of specific, numbered budget
