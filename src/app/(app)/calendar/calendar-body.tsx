@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   listAssets,
   listClientIntegrations,
@@ -284,9 +285,36 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     }
   }
 
+  // ── Empty state ─────────────────────────────────────────────────────
+  // A month of blank squares under a header promising "what your agents will
+  // run" is a dead end: clicking a day does nothing, and nothing says where
+  // schedules come from. Clients CAN set one up — one item up the same rail —
+  // via configureClientAgentScheduleAction, so this hands off rather than
+  // apologising.
+  const scopedClientId = singleFilter?.clientId;
+  const isEmpty = runs.length + posts.length === 0;
+
   return (
     <>
       <PageHeader title={title} description={description} />
+      {isEmpty && scopedClientId && (
+        <div className="mb-4">
+          <EmptyState
+            icon={<Icon name="CalendarClock" className="h-7 w-7" />}
+            title="No runs on the calendar yet"
+            description="Schedules are set on the AI Agents page. Once an agent has one, its runs and everything they produce show up here."
+            action={
+              <Link
+                href={`/clients/${scopedClientId}/agents`}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-neon px-4 text-sm font-semibold text-accent-ink transition-all duration-200 hover:-translate-y-0.5"
+              >
+                <Icon name="Bot" className="h-4 w-4" />
+                Set up an agent schedule
+              </Link>
+            }
+          />
+        </div>
+      )}
       <RunCalendar
         runs={runs}
         posts={posts}

@@ -17,26 +17,39 @@ const WEEKDAYS = [
   { value: 6, label: "Saturday" },
 ];
 
+/** `YYYY-MM-DDTHH:mm` in the browser's zone — the format datetime-local wants. */
+function toLocalInputValue(at: number): string {
+  const d = new Date(at);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function ScheduleRunModal({
   clients,
   agents,
   defaultClientId,
+  prefillAt,
   onClose,
 }: {
   clients: CalendarClientOption[];
   agents: ScheduleAgentOption[];
   defaultClientId?: string;
+  /** The day the user clicked on the calendar (epoch millis, 09:00 local). */
+  prefillAt?: number;
   onClose: () => void;
 }) {
   const router = useRouter();
+  const prefill = prefillAt != null ? new Date(prefillAt) : null;
   const [clientId, setClientId] = useState(defaultClientId ?? clients[0]?.id ?? "");
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
   const [prompt, setPrompt] = useState("");
-  const [cadence, setCadence] = useState<PlannedRunCadence>("weekly");
+  const [cadence, setCadence] = useState<PlannedRunCadence>(prefill ? "once" : "weekly");
   const [time, setTime] = useState("09:00");
-  const [weekday, setWeekday] = useState(1);
-  const [dayOfMonth, setDayOfMonth] = useState(1);
-  const [runAt, setRunAt] = useState(""); // datetime-local string for "once"
+  const [weekday, setWeekday] = useState(prefill ? prefill.getDay() : 1);
+  const [dayOfMonth, setDayOfMonth] = useState(prefill ? prefill.getDate() : 1);
+  // Clicking an empty day is a statement about WHEN, so the day carries into
+  // the form instead of being thrown away.
+  const [runAt, setRunAt] = useState(prefillAt != null ? toLocalInputValue(prefillAt) : "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

@@ -481,6 +481,8 @@ export function RunCalendar({
   const [lightbox, setLightbox] = useState<{ images: AssetImage[]; index: number } | null>(null);
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  /** Day clicked on an empty cell, carried into the schedule form as a prefill. */
+  const [schedulePrefillAt, setSchedulePrefillAt] = useState<number | null>(null);
   const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
   const openAsset = openAssetId ? assetById.get(openAssetId) ?? null : null;
 
@@ -616,20 +618,31 @@ export function RunCalendar({
             const isLastCol = (i + 1) % 7 === 0;
             const isSelected = key !== "" && key === selectedKey;
 
+            // An empty day is where staff want to PUT something — clicking one
+            // opens the schedule form with that date already filled in.
+            const canScheduleHere = isValid && chipCount === 0 && canSchedule;
+            const activate = () => {
+              if (!isValid) return;
+              if (chipCount > 0) setSelectedKey(key);
+              else if (canScheduleHere) {
+                setSchedulePrefillAt(new Date(viewYear, viewMonth, day, 9, 0, 0, 0).getTime());
+                setScheduleOpen(true);
+              }
+            };
+            const interactive = isValid && (chipCount > 0 || canScheduleHere);
+
             return (
               <div
                 key={i}
-                onClick={() => {
-                  if (!isValid || chipCount === 0) return;
-                  setSelectedKey(key);
-                }}
-                role={isValid && chipCount > 0 ? "button" : undefined}
-                tabIndex={isValid && chipCount > 0 ? 0 : -1}
+                onClick={activate}
+                role={interactive ? "button" : undefined}
+                tabIndex={interactive ? 0 : -1}
+                aria-label={canScheduleHere ? `Schedule a run on ${MONTH_NAMES[viewMonth]} ${day}` : undefined}
                 onKeyDown={(event) => {
-                  if (!isValid || chipCount === 0) return;
+                  if (!interactive) return;
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    setSelectedKey(key);
+                    activate();
                   }
                 }}
                 className={cn(
@@ -637,7 +650,7 @@ export function RunCalendar({
                   !isValid && "bg-surface-deep",
                   isToday && "bg-foreground/[0.04]",
                   isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
-                  isValid && chipCount > 0 && "cursor-pointer hover:bg-surface-2",
+                  interactive && "cursor-pointer hover:bg-surface-2",
                   isLastCol && "border-r-0",
                 )}
               >
@@ -785,7 +798,11 @@ export function RunCalendar({
           clients={clients}
           agents={agents}
           defaultClientId={defaultClientId}
-          onClose={() => setScheduleOpen(false)}
+          {...(schedulePrefillAt != null ? { prefillAt: schedulePrefillAt } : {})}
+          onClose={() => {
+            setScheduleOpen(false);
+            setSchedulePrefillAt(null);
+          }}
         />
       )}
     </div>
