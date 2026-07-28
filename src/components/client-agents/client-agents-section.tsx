@@ -169,7 +169,8 @@ function BindAgentControl({
         <div className="max-w-sm rounded-[var(--radius)] border border-warning/30 bg-warning/10 p-2.5 text-right">
           <p className="text-[11px] text-warning">
             {selectedName} is already producing for this client. Binding it as new hides its Run
-            button, its schedule and its run history from the client until you launch it.
+            button, its schedule row and its run history from the client until you launch it — its
+            weekly schedule keeps firing, so pause that too if you mean to stop it.
           </p>
           <div className="mt-1.5 flex justify-end gap-1.5">
             <Button size="sm" variant="ghost" disabled={pending} onClick={() => setConfirming(false)}>
