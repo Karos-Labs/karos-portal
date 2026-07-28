@@ -30,6 +30,12 @@ import {
   clampScheduleDayOfMonth,
 } from "@/lib/intel-schedule";
 
+const CONTEXT_DOC_TIERS: ContextDocTier[] = ["internal", "client", "internal-only"];
+
+function isContextDocTier(value: string): value is ContextDocTier {
+  return (CONTEXT_DOC_TIERS as string[]).includes(value);
+}
+
 /**
  * Charge a client user for a doc correction (staff + impersonated sessions are
  * free). Throws CreditError on denial. Returns the charge timestamp when a
@@ -94,9 +100,14 @@ export async function generateClientBriefAction(
   if (!client) return { ok: false, error: "Client not found" };
   if (client.brief && !force) return { ok: true, brief: client.brief };
 
-  const docs = await listClientContextDocs(clientId);
+  // Client tier only, for every caller — not just client ones. This action is
+  // network-reachable by a CLIENT_USER for their own account, and the brief it
+  // writes is persisted on client.brief and rendered to the client whoever
+  // triggered it. The old `?? docs.find(byDocType)` fallback pulled the internal
+  // analyst copy into that prompt whenever a client-tier row was missing.
+  const docs = await listClientContextDocs(clientId, "client");
   const source = ["product-information", "brand-voice", "market-strategy"]
-    .map((dt) => docs.find((d) => d.docType === dt && d.tier === "client") ?? docs.find((d) => d.docType === dt))
+    .map((dt) => docs.find((d) => d.docType === dt))
     .filter(Boolean)
     .map((d) => d!.content.replace(/^---[\s\S]*?---\n?/, "").slice(0, 1800))
     .join("\n\n");
@@ -338,7 +349,12 @@ export async function refreshClientContextDocsAction(clientId: string): Promise<
 
 /**
  * Generate a 4-5 bullet executive summary for a context document using Claude Haiku.
- * Results are ephemeral — cached in client component state per session, not persisted.
+ * Cached on the doc row and served without a model call while the version is
+ * unchanged.
+ *
+ * `tier` is honoured for staff and IGNORED for a client caller, who always gets
+ * the "client" tier. Returns an empty array when that tier has no such document
+ * — this never falls back to another tier.
  */
 export async function generateDocSummaryAction(
   clientId: string,
@@ -349,10 +365,19 @@ export async function generateDocSummaryAction(
   if (!user || user.disabled) throw new Error("Unauthorized");
   if (user.role === "CLIENT_USER" && user.clientId !== clientId) throw new Error("Forbidden");
 
-  const docs = await listClientContextDocs(clientId);
-  const doc =
-    docs.find((d) => d.docType === docType && d.tier === tier) ??
-    docs.find((d) => d.docType === docType);
+  // Tier is resolved STRICTLY — no cross-tier fallback. A server action is
+  // network-reachable, so with a fallback a client could name a docType that has
+  // no client-tier row and be handed an LLM summary of the internal analyst
+  // copy, uncharged. A client caller's tier argument is ignored outright: their
+  // summaries come from the published tier or not at all.
+  const requested = isContextDocTier(tier) ? tier : null;
+  const effectiveTier: ContextDocTier | null =
+    user.role === "CLIENT_USER" ? "client" : requested;
+  if (!effectiveTier) return [];
+
+  const docs = await listClientContextDocs(clientId, effectiveTier);
+  const doc = docs.find((d) => d.docType === docType);
+  // No summary available for that tier — never reach for another one.
   if (!doc) return [];
 
   // Serve cached summary if the doc content hasn't changed since last generation.
