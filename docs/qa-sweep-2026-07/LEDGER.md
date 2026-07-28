@@ -174,6 +174,8 @@ are tracked in the CD table at the bottom.
 | CD-E1 | SHELL | 2 | OPEN | Remove "Agent-specific documents" section from the client rail (setup lives on AI Agents cards) |
 | CD-E2 | SHELL | 2 | OPEN | Brand colors: 3-4 swatches + internal usage-percentage catalog (staff-visible %, client sees swatches) |
 | CD-E3 | SHELL | 2 | OPEN | Sidebar must never scroll: fixed sections (nav, client, docs compact, competitors, colors) fit viewport |
+| CD-F1 | — | end-loop | OPEN | Fleet regenerate: script + execute — re-run intel pipeline for ALL clients (concurrency-limited) after all tweaks merge; Anthropic key top-up first (Albert) |
+| CD-F2 | SHELL | 2 | OPEN | Competitor Track favicons: every row shows the real favicon (fix resolution/fallback for rows showing the generic building icon) |
 
 ## Guard zones (all phases)
 - No deep rework of AI Insights (fix listed defects only) — call directive B5.

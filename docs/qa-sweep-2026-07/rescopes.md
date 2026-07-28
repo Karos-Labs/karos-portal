@@ -420,3 +420,17 @@ starting. Updated by the orchestrator after each verification gate.
   half (reason template :122 + stale comment :58-62 + F71 hyphen) handed to
   CREDITS with test note (seat-architecture.test.ts). Ledger F53 flips only when
   BOTH halves merge.
+
+## Albert directives 2026-07-28 (second batch)
+- CD-F1 fleet regenerate (Albert-authorized, execute at end-loop): build
+  scripts/regenerate-all-clients.ts — enumerate clients, per-client
+  runOnboardPipeline-equivalent honoring the per-client AI-processing lock,
+  concurrency-limited (2-3), dry-run default + --apply, per-client
+  success/failure + USD report. Execution order: after Wave C + end-loop pass 1,
+  AFTER Albert tops up the Anthropic API key (C2). Est. ~$8-9/client. On credit
+  errors: stop and surface, don't retry-storm.
+- CD-F2 favicons: sidebar Competitor Track rows Okara.ai + ploy.ai render the
+  generic building icon while others show real favicons — fix favicon
+  resolution (likely missing domain/favicon field or failed fetch; add
+  domain-based fallback e.g. google s2 service, cache result). SHELL wave C
+  (sidebar files). Also part of end-loop visual pass: "everything looks good".
