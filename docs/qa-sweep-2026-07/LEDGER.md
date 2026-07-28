@@ -81,7 +81,7 @@ are tracked in the CD table at the bottom.
 | F57 | HIGH | A | DOCS | 2 | RESOLVED | — | The AI Execution Guide shows clients raw markup — "## Overview", "**Task**" and all | findings-p085-122.md |
 | F58 | HIGH | B | WORKSPACE | 2 | RESOLVED | — | The Autopilot switch spends the client's credits and fires five agent runs with no label, no pr | findings-p085-122.md |
 | F149 | HIGH | B | WORKSPACE | 2 | RESOLVED | — | Nothing marks a post as posted, so the archive shows everything the moment it is generated | findings-p085-122.md |
-| F150 | HIGH | B | WORKSPACE | 2 | OPS-PENDING | — | Video deliverables have no path into the portal — clips are hand-delivered by email — portal render half shipped; clip ingestion/upload = CD-D1 Tomer seam | findings-p085-122.md |
+| F150 | HIGH | B | WORKSPACE | 2 | DEFERRED-TOMER | — | Video deliverables have no path into the portal — clips are hand-delivered by email — portal render half shipped; clip ingestion/upload = CD-D1 Tomer seam | findings-p085-122.md |
 | F60 | MEDIUM | A | WORKSPACE | 2 | RESOLVED | yes | "View as client" mode is invisible — real impersonation gets a banner, the client switcher gets | findings-p085-122.md |
 | F61 | MEDIUM | B | WORKSPACE | 2 | RESOLVED | — | A task the platform then refuses still costs the client a credit | findings-p085-122.md |
 | F62 | MEDIUM | B | WORKSPACE | 2 | RESOLVED | yes | Adding a competitor from the sidebar does nothing visible when you are not on a client page | findings-p085-122.md |
@@ -196,7 +196,7 @@ are tracked in the CD table at the bottom.
 | CD-H6 | SHELL | audit | RESOLVED | Company sheet closes on md crossing; no orphan click catchers |
 | CD-H7 | WORKSPACE/SHELL | audit | RESOLVED | a) container-query toolbar (deviation flagged) b) one badgeLabel c) one-clock calendar d) Landing Builder blurb |
 | CD-H8 | AGENTS | audit | RESOLVED | Legacy live-schedule detail page: run gesture, pace, deliverables |
-| CD-I1 | AGENTS | 5 | OPEN | Per-archetype agent detail pages (template-calendar / clip-maker / daily-finder) + staff parity; after Tomer merge |
+| CD-I1 | AGENTS | 5 | RESOLVED | Per-archetype agent detail pages (template-calendar / clip-maker / daily-finder) + staff parity; after Tomer merge |
 | CD-G7 | — | end-loop | OPEN | Fleet COMPLETION refresh: one team per client, keep existing data, internal Claude agents, --apply-gated Firestore writes; runs after CD-G1..G6 |
 
 ## Guard zones (all phases)
