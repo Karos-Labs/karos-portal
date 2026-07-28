@@ -13,7 +13,8 @@ import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { markAssetPostedAction } from "@/lib/actions";
-import { PLATFORM_LABELS } from "@/lib/integrations/platforms";
+import { publishAssetNowAction } from "@/lib/actions/asset-actions";
+import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { assetImages } from "@/lib/asset-images";
 import { cn } from "@/lib/utils";
 import { templateForAsset } from "@/lib/post-chain";
@@ -88,10 +89,20 @@ export function AssetDetailModal({
   asset,
   open,
   onClose,
+  canPublish = false,
+  connectedPlatforms,
 }: {
   asset: Asset | null;
   open: boolean;
   onClose: () => void;
+  /**
+   * Staff viewer. `publishAssetNowAction` is `requireStaff()`, so a client-facing
+   * Publish Now here could only ever error — the client's path is Mark as posted.
+   * Never inferred from the asset: the caller knows the viewer's role.
+   */
+  canPublish?: boolean;
+  /** The asset owner's usable publish integrations — staff payload only. */
+  connectedPlatforms?: string[];
 }) {
   const [tab, setTab] = useState<"details" | "simulation">("details");
 
@@ -328,6 +339,11 @@ export function AssetDetailModal({
           </div>
         )}
 
+        <PublishNowRow
+          asset={asset}
+          canPublish={canPublish}
+          connectedPlatforms={connectedPlatforms ?? []}
+        />
         <MarkPostedRow asset={asset} />
       </div>
       )}
@@ -357,6 +373,81 @@ function AssetContentBody({ content }: { content: string }) {
       className="break-words [&_code]:break-all [&_table]:min-w-0"
       dangerouslySetInnerHTML={{ __html: renderAssetBody(content) }}
     />
+  );
+}
+
+/**
+ * Manual push, from the calendar — the control three separate strings tell the
+ * user to use here ("On the calendar, you push it live with Publish Now").
+ *
+ * Staff only, and deliberately so: `publishAssetNowAction` is `requireStaff()`,
+ * so a client-facing button could only ever error. It sits ABOVE MarkPostedRow
+ * and does not replace it — the two answer different questions. Publish Now is
+ * "Karos pushes this through the connected integration now"; Mark as posted is
+ * the client's attestation that they posted it by hand, and stays the only
+ * control a client sees.
+ */
+function PublishNowRow({
+  asset,
+  canPublish,
+  connectedPlatforms,
+}: {
+  asset: Asset;
+  canPublish: boolean;
+  connectedPlatforms: string[];
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(asset.publishError ?? null);
+
+  // Same gate as the asset card: a connected platform must be able to carry this
+  // asset type. Placeholders are excluded — a roadmap entry was never meant to
+  // go out, and "Karos never posts it" is the tier's own promise.
+  const compatibleConnected = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).filter((p) =>
+    connectedPlatforms.includes(p),
+  );
+  const eligible =
+    canPublish &&
+    compatibleConnected.length > 0 &&
+    asset.status !== "published" &&
+    asset.publishMode !== "placeholder";
+  if (!eligible) return null;
+
+  const target = asset.scheduledPlatform ?? compatibleConnected[0];
+
+  async function publishNow() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await publishAssetNowAction(asset.id, asset.scheduledPlatform);
+      if (res.ok) router.refresh();
+      else setError(res.error);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't publish this asset");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-border pt-3">
+      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+        Manual push
+      </p>
+      <button
+        type="button"
+        onClick={publishNow}
+        disabled={busy}
+        className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
+      >
+        <Icon name="Send" className="h-3.5 w-3.5" />
+        {busy ? "Publishing…" : "Publish Now"}
+      </button>
+      <p className="mt-1.5 text-[11px] text-muted-2">
+        Pushes it live via {PLATFORM_LABELS[target] ?? target} right now, whatever the schedule says.
+      </p>
+      {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
+    </div>
   );
 }
 

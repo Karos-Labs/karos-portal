@@ -232,7 +232,7 @@ function ReviewPanel({
             </span>
             <span className="block text-[11px] text-muted">
               Requires the target channel to be connected with auto-publish enabled - otherwise it
-              lands on the calendar for a manual Publish Now.
+              lands on the calendar, where you open the post and press Publish Now.
             </span>
           </span>
         </label>

@@ -310,7 +310,8 @@ function PlatformCard({
         )}
 
         {/* Three-tier publishing control: on = the cron auto-posts scheduled
-            content here; off = content goes out only via manual Publish Now.
+            content here; off = content goes out only via the manual Publish Now
+            in the calendar's post detail panel (staff).
             Hidden for read/analytics-only platforms — there's nothing to publish. */}
         {isConnected && !READ_ONLY_PLATFORM_IDS.has(platform.id) && (
           <button
@@ -320,7 +321,7 @@ function PlatformCard({
             title={
               autoPublish
                 ? "Scheduled content posts automatically at its slot"
-                : "Auto-posting is off. Publish through the Publish Now button only"
+                : "Auto-posting is off. Scheduled content waits on the calendar until someone opens it and presses Publish Now"
             }
           >
             <span className="flex items-center gap-1.5 text-xs text-muted">

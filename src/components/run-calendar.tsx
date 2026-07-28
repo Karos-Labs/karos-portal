@@ -333,6 +333,7 @@ export function RunCalendar({
   canSchedule = false,
   clients = [],
   agents = [],
+  connectedPlatformsByClient,
   defaultClientId,
 }: {
   runs: CalendarRun[];
@@ -342,6 +343,12 @@ export function RunCalendar({
   canSchedule?: boolean;
   clients?: CalendarClientOption[];
   agents?: ScheduleAgentOption[];
+  /**
+   * clientId → usable publish platforms. Feeds the staff-only Publish Now in the
+   * asset detail modal; the page never builds it for a client viewer, so nothing
+   * extra reaches a client's payload.
+   */
+  connectedPlatformsByClient?: Record<string, string[]>;
   defaultClientId?: string;
 }) {
   const today = useMemo(() => new Date(), []);
@@ -575,7 +582,13 @@ export function RunCalendar({
         />
       )}
 
-      <AssetDetailModal asset={openAsset} open={openAsset != null} onClose={() => setOpenAssetId(null)} />
+      <AssetDetailModal
+        asset={openAsset}
+        open={openAsset != null}
+        onClose={() => setOpenAssetId(null)}
+        canPublish={canSchedule}
+        connectedPlatforms={openAsset ? connectedPlatformsByClient?.[openAsset.clientId] ?? [] : []}
+      />
 
       {scheduleOpen && (
         <ScheduleRunModal

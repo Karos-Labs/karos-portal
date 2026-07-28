@@ -1,6 +1,15 @@
-import { listAssets, listClients, listCustomAgents, listJobs, listPlannedScheduledRuns } from "@/lib/data";
+import {
+  listAssets,
+  listClientIntegrations,
+  listClients,
+  listCustomAgents,
+  listJobs,
+  listPlannedScheduledRuns,
+} from "@/lib/data";
 import { assetImages } from "@/lib/asset-images";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import { integrationIsUsable } from "@/lib/integration-status";
+import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { describeCadence } from "@/lib/scheduled-runs";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -202,6 +211,39 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     })
     .filter((p): p is CalendarPost => p != null);
 
+  // ── Manual push ("Publish Now") — staff only ────────────────────────
+  // The approve panel's "Manual push" tier tells the user they push the post
+  // live from the calendar, so the calendar's detail panel needs the control.
+  // publishAssetNowAction is requireStaff(), so this is built ONLY for staff —
+  // a client viewer's payload gains nothing. Integrations are read for the
+  // clients that actually own a pushable post, not for every client in scope.
+  let connectedPlatformsByClient: Record<string, string[]> | undefined;
+  if (!isClient) {
+    const pushableClientIds = [
+      ...new Set(
+        assets
+          .filter(
+            (a) =>
+              (a.status === "approved" || a.status === "scheduled") &&
+              a.publishMode !== "placeholder" &&
+              (PUBLISHABLE_PLATFORMS[a.type] ?? []).length > 0,
+          )
+          .map((a) => a.clientId),
+      ),
+    ];
+    if (pushableClientIds.length > 0) {
+      const perClient = await Promise.all(
+        pushableClientIds.map(async (id) => {
+          const integrations = await listClientIntegrations(id);
+          // Platform ids only — never the integration records, which carry
+          // decrypted OAuth credentials.
+          return [id, integrations.filter(integrationIsUsable).map((i) => i.platform)] as const;
+        }),
+      );
+      connectedPlatformsByClient = Object.fromEntries(perClient);
+    }
+  }
+
   return (
     <>
       <PageHeader title={title} description={description} />
@@ -212,6 +254,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         canSchedule={canSchedule}
         clients={clientOptions}
         agents={agentOptions}
+        {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
         defaultClientId={defaultClientId}
       />
     </>
