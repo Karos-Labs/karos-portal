@@ -553,3 +553,21 @@ excludes completed (benign).
   harmless); streaming markdown flicker on unclosed ** (resolves on completion);
   sheetOpen persists across reload on mobile.
 - campaign-engine.ts is owned by no cluster; F92 edits landed there by necessity.
+
+## Phase 3 WP-0/WP-1 landed (pre-verification)
+- New pure modules: client-agents.ts (gate ladder evaluateLaunchGate shared by
+  action+card), slot-plan.ts, agent-identity-map.ts (F147 resolver);
+  data-client-agents.ts sibling (data.ts was hands-off; data-analytics.ts
+  precedent). 69 new tests, 703 total.
+- Refund coverage verified by builder: newestUnrefundedCharge filters
+  kind===charge, so agent_launch is refunded by the EXISTING webhook path.
+- Deferred deliberately: the §2 server guard refusing client runs while an
+  umbrella is not live — would create an F131-class enabled-button/server-refuses
+  state before WP-2 renders the paired disabled control. Interim: not-yet-live
+  umbrellas drop their run cards entirely. WP-2 must land the guard WITH the card.
+- Seam constraint added: T1 templates.json must be a CLIENT-FACING artifact
+  (webhook only fetches those); launch brief states the contract in-band so the
+  lab skill carries it. T2 (progress events) → strip is time-split until wired.
+- chainFamilyForAgent is module-local; WP-8 backfill will need it exported.
+- WP-4 must read slots directly (slot instants use zonedWallToUtc per F108),
+  not re-derive days from scheduledAt.
