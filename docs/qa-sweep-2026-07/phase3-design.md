@@ -631,14 +631,15 @@ line linking up to the umbrella feedback modal — no new promises.
 
 ## 6. Credits: launch-vs-run split (A5, extends F130)
 
-### 6.1 Charging
+### 6.1 Charging (Q1 ruling: launch is client-billed, priced above a run)
 
 | Run | Charged? | Price | Ledger operation |
 |---|---|---|---|
-| Launch, staff-fired (default) | No (staff never charge — existing rule) | — | — (job cost still tracked in USD) |
-| Launch, client-billable (if Q1 = yes) | isBillableClientActor only | `CustomAgent.launchCreditCost` | `agent_launch` |
+| Launch, client-fired | yes (`isBillableClientActor`) | `CustomAgent.launchCreditCost` — admin-set from the measured ratio (§6.3); unset ⇒ client launch gated | `agent_launch` |
+| Launch, staff-fired | No (staff never charge — existing rule); these ARE the measurement runs | — (job cost tracked in USD) | — |
 | Scheduled recurring fire | per existing `billClientCredits` on the schedule | `creditCost` × outputs | `custom_agent_run` |
-| Manual template run | yes (client) | `creditCost` (default 25) | `custom_agent_run` |
+| Manual template run | yes (client) | `creditCost` (per-agent flat price — **Q6 ruling confirmed**: templates inherit the agent price, no per-template overrides) | `custom_agent_run` |
+| Options-slot pick / Mark-as-posted (§4.5) | free — picking is feedback, not generation | — | — |
 | Revision pass (note, path 2) | policy per Q4 | `creditCost` | `custom_agent_run` |
 
 No changes to `assessCharge`/`applyCredit`/caps — pricing stays pure in
@@ -662,10 +663,42 @@ Two audiences, two sources, both already captured:
   scoped per client agent. Legacy untyped jobs render as their own bucket,
   honestly labeled "before run-type tracking".
 
+### 6.3 Launch-price calibration from measured cost (Q1 ruling)
+
+Albert's intent: template runs ≈ 25 credits; the launch price must reflect the
+**actual measured ratio** of what a setup run costs vs a template run — not a
+guessed multiplier. Mechanics:
+
+- **Measurement surface** (part of the staff economics card, per lab agent
+  across clients): avg `totalCostUsd` of `runType="launch"` jobs vs avg of
+  `runType∈{scheduled,manual_template}` jobs for the same `agentKey`, the
+  resulting ratio, sample sizes, and a **suggested launch price** =
+  `round(ratio × creditCost)`, displayed next to the current
+  `launchCreditCost`. Data source is entirely `jobs.external.totalCostUsd` —
+  already captured by the webhook, no service change.
+- **Setting the price** is an admin action on the agent editor
+  (`updateCustomAgentAction` already exists; add the field), validated
+  `launchCreditCost > creditCost` (priced ABOVE a template run, per the
+  ruling).
+- **Safe default while unmeasured — GATED, not provisional** (chosen and
+  justified): while `launchCreditCost` is null, the client's self-serve
+  Launch button is disabled with the visible reason "Launch pricing is being
+  finalized"; staff launches remain available (free) and are precisely the
+  runs that produce the measurement. Justification: the first launches are
+  staff-fired onboarding work anyway, and billing a client an invented
+  provisional number that later changes is the F130 placeholder-pricing
+  failure re-created at the most expensive SKU — never charge a price nobody
+  consciously set. Flagged as Q10 for Albert to veto if he prefers a
+  provisional price.
+- **Ops step** (LEDGER discipline, like F127/C2): after a few measured
+  launches per agent, Albert/admin sets `launchCreditCost` from the surfaced
+  suggestion — until then the row stays "code merged, pricing ops pending".
+
 F130 ledger note: the flat "25 credits per output" card line is AGENTS-cluster
 work (per-agent `creditCost` display); Phase 3's live view repeats the same
-per-agent number on the template rows ("Run now · 25 credits") — one price per
-agent, not per template (Q6).
+per-agent number on the template rows ("Run now · 25 credits") — **Q6 ruling
+confirmed: one flat price per agent, templates inherit it, no per-template
+pricing.**
 
 ---
 
@@ -680,16 +713,23 @@ and shrinks by delegation; the page decides which card renders per agent.
 
 Per granted agent, exactly one card:
 
-1. **Umbrella, not_launched** — platform card, "Being prepared" state, no run
-   controls (F131 rule at umbrella level). TikTok additionally shows the
+1. **Umbrella, not_launched** — platform card with the primary **"Launch
+   <name>" CTA** (Q2 ruling: client self-serve). Shows what launching does
+   ("We research your brand, then design your posting templates"), the launch
+   price ("<launchCreditCost> credits, one time"), and the estimate. Gated
+   states render the button disabled with a visible reason line (F25/F131
+   pattern): intake missing → the setup block (§2 gate 2); price uncalibrated
+   → "Launch pricing is being finalized — ask your Karos team" (§6.3);
+   credits short → the standard denial wording. TikTok additionally shows the
    connector chip "Pending TikTok verification" (CD-D2 state; connector state
    is orthogonal to launch state and both render — a TikTok agent can be
    launched and producing manual-post content while the connector waits).
 2. **Umbrella, launching/curating** — `LaunchProgressCard`: 3-phase guided
    progress (§2), estimate, AutoRefresh. Never a Run button.
 3. **Umbrella, launch_failed** — neutral "Setup needs another pass — your
-   Karos team is on it" (clientSafeRefusal on the stored error; internal text
-   staff-only, F127 discipline).
+   credits were returned" for client-fired launches / "your Karos team is on
+   it" (clientSafeRefusal on the stored error; internal text staff-only, F127
+   discipline). Client may relaunch (§2).
 4. **Umbrella, live** — `ClientAgentCard`:
    - Header: platform mark, name, Live badge (AGENTS F24/F129 precedence
      rules inherited: refusal on the linked schedule outranks Live).
@@ -700,10 +740,17 @@ Per granted agent, exactly one card:
    - Week strip: next 7 days of slots (template names only).
    - Footer: "Give feedback on this agent" + "Adjust pace" (existing schedule
      modal) + credits line.
-5. **Non-umbrella custom agents** — today's card, untouched (AGENTS cluster
+5. **Umbrella, live, options mode (X)** — `ClientAgentCard` variant: instead
+   of template rows, a **"Today's pick"** row (opens the option picker when
+   today's slot is `generated`, else "Today's options arrive each morning"),
+   the week strip shows "Daily post · pick of 3" chips, and the footer keeps
+   agent-level feedback + pace. No per-template Run buttons (options are the
+   daily product; manual extra runs stay possible via the generic run dialog
+   for staff).
+6. **Non-umbrella custom agents** — today's card, untouched (AGENTS cluster
    owns its fixes).
 
-Client calendar: §4.1. Client archive: §3.
+Client calendar: §4.1 (+ §4.5 picker on the day card). Client archive: §3.
 
 ### 7.2 Staff
 

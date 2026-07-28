@@ -39,32 +39,32 @@ are tracked in the CD table at the bottom.
 | F24 | BLOCKER | A | AGENTS | 1 | RESOLVED | yes | An always-on agent that has failed every single run still shows a green pulsing "Live" badge | findings-p009-046.md |
 | F127 | BLOCKER | B | AGENTS | 1 | OPS-PENDING | yes | Agent descriptions are raw lab-repo skill manifests, shipped to clients unedited | findings-p009-046.md |
 | F131 | BLOCKER | A | AGENTS | 1 | RESOLVED | yes | "Run now" is fully enabled on an agent whose own card says "Setup needed" | findings-p047-084.md |
-| F25 | HIGH | A | AGENTS | 2 | OPEN | yes | A client who hits their spend cap gets a greyed-out Run button, no explanation, and advice that | findings-p047-084.md |
-| F27 | HIGH | B | AGENTS | 2 | OPEN | yes | The Reddit agent's schedule dialog offers up to 35 replies a week and bills for them — the prod | findings-p047-084.md |
-| F28 | HIGH | B | AGENTS | 2 | OPEN | — | The agent intake pages tell clients to pick, edit and skip drafts "in your Workspace archive" — | findings-p047-084.md |
-| F29 | HIGH | B | AGENTS | 2 | OPEN | yes | The amber "3 ready" badge on an agent card never goes away, no matter how many times you review | findings-p047-084.md |
-| F128 | HIGH | A | AGENTS | 2 | OPEN | yes | Agent descriptions are cut off mid-word, with no ellipsis and no way to read the rest | findings-p047-084.md |
-| F129 | HIGH | A | AGENTS | 2 | OPEN | yes | "Ready to build your weekly content queue." sits on all seven cards — including the one that sa | findings-p047-084.md |
-| F132 | HIGH | A | AGENTS | 2 | OPEN | yes | Run history rows are labelled with the operator's raw typing, typos included | findings-p047-084.md |
-| F134 | HIGH | A | AGENTS | 2 | OPEN | yes | An unfilled template placeholder is shown to the user: "Focus this batch on [person]'s seat." | findings-p047-084.md |
-| F30 | MEDIUM | B | AGENTS | 2 | OPEN | yes | A run you cancelled on purpose comes back as a red "Failed", and a client cannot cancel at all | findings-p047-084.md |
-| F31 | MEDIUM | B | AGENTS | 2 | OPEN | yes | After a client presses Run, the page never updates again — no progress, no completion signal | findings-p047-084.md |
-| F32 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Dialogs cap at 720 pixels tall with one scroll box and no fixed action bar, so Start run scroll | findings-p047-084.md |
-| F33 | MEDIUM | A | AGENTS | 2 | OPEN | — | Every agent deliverable is titled "<Agent name> - <Client name>" — the client sees their own co | findings-p047-084.md |
-| F34 | MEDIUM | A | AGENTS | 2 | OPEN | — | If the agent service is unconfigured, a client's agents silently vanish behind "No active agent | findings-p047-084.md |
-| F35 | MEDIUM | A | AGENTS | 2 | OPEN | — | On the staff Agents page you can only discover an agent's client binding and its missing setup  | findings-p047-084.md |
-| F36 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Pressing "Start run" on the LinkedIn or Reddit agent without typing anything is refused — even  | findings-p047-084.md |
-| F37 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Staff cross-client lists render every row in the database with no search, filter, sort or pagin | findings-p047-084.md |
+| F25 | HIGH | A | AGENTS | 2 | RESOLVED | yes | A client who hits their spend cap gets a greyed-out Run button, no explanation, and advice that | findings-p047-084.md |
+| F27 | HIGH | B | AGENTS | 2 | RESOLVED | yes | The Reddit agent's schedule dialog offers up to 35 replies a week and bills for them — the prod | findings-p047-084.md |
+| F28 | HIGH | B | AGENTS | 2 | RESOLVED | — | The agent intake pages tell clients to pick, edit and skip drafts "in your Workspace archive" — | findings-p047-084.md |
+| F29 | HIGH | B | AGENTS | 2 | RESOLVED | yes | The amber "3 ready" badge on an agent card never goes away, no matter how many times you review | findings-p047-084.md |
+| F128 | HIGH | A | AGENTS | 2 | RESOLVED | yes | Agent descriptions are cut off mid-word, with no ellipsis and no way to read the rest | findings-p047-084.md |
+| F129 | HIGH | A | AGENTS | 2 | RESOLVED | yes | "Ready to build your weekly content queue." sits on all seven cards — including the one that sa | findings-p047-084.md |
+| F132 | HIGH | A | AGENTS | 2 | RESOLVED | yes | Run history rows are labelled with the operator's raw typing, typos included | findings-p047-084.md |
+| F134 | HIGH | A | AGENTS | 2 | RESOLVED | yes | An unfilled template placeholder is shown to the user: "Focus this batch on [person]'s seat." | findings-p047-084.md |
+| F30 | MEDIUM | B | AGENTS | 2 | RESOLVED | yes | A run you cancelled on purpose comes back as a red "Failed", and a client cannot cancel at all | findings-p047-084.md |
+| F31 | MEDIUM | B | AGENTS | 2 | RESOLVED | yes | After a client presses Run, the page never updates again — no progress, no completion signal | findings-p047-084.md |
+| F32 | MEDIUM | A | AGENTS | 2 | RESOLVED | yes | Dialogs cap at 720 pixels tall with one scroll box and no fixed action bar, so Start run scroll | findings-p047-084.md |
+| F33 | MEDIUM | A | AGENTS | 2 | OPS-PENDING | — | Every agent deliverable is titled "<Agent name> - <Client name>" — the client sees their own co | findings-p047-084.md |
+| F34 | MEDIUM | A | AGENTS | 2 | RESOLVED | — | If the agent service is unconfigured, a client's agents silently vanish behind "No active agent | findings-p047-084.md |
+| F35 | MEDIUM | A | AGENTS | 2 | RESOLVED | — | On the staff Agents page you can only discover an agent's client binding and its missing setup  | findings-p047-084.md |
+| F36 | MEDIUM | A | AGENTS | 2 | RESOLVED | yes | Pressing "Start run" on the LinkedIn or Reddit agent without typing anything is refused — even  | findings-p047-084.md |
+| F37 | MEDIUM | A | AGENTS | 2 | RESOLVED | yes | Staff cross-client lists render every row in the database with no search, filter, sort or pagin | findings-p047-084.md |
 | F38 | MEDIUM | B | AGENTS | 2 | STRUCK | — | The Agents hub offers agent-and-client pairings the server is guaranteed to refuse, after the w | findings-p047-084.md |
-| F39 | MEDIUM | B | AGENTS | 2 | OPEN | — | The four managed lab products (Social, Newsletter, Blog, Landing page) cannot be run from anywh | findings-p047-084.md |
-| F40 | MEDIUM | A | AGENTS | 2 | OPEN | yes | The schedule dialog's "Posts per week" is actually runs per week — the cost line one paragraph  | findings-p047-084.md |
-| F130 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Every agent is priced identically at "25 credits per output" | findings-p047-084.md |
-| F41 | LOW | A | AGENTS | 2 | OPEN | yes | Clients are shown the raw internal status word for their agent runs — "Run 2026-07-27 · review" | findings-p047-084.md |
-| F42 | LOW | A | AGENTS | 2 | OPEN | — | Seat forms refuse to save over a field that is not marked required | findings-p047-084.md |
-| F43 | LOW | A | AGENTS | 2 | OPEN | — | Staff land on a completely blank AI Agents page for any client whose agent list is empty | findings-p047-084.md |
-| F44 | LOW | A | AGENTS | 2 | OPEN | yes | The client AI Agents page stacks two near-identical headings and taglines on top of each other | findings-p047-084.md |
-| F45 | LOW | A | AGENTS | 2 | OPEN | — | Two managed-product run components and their submit action are dead code — the four catalog pro | findings-p047-084.md |
-| F135 | LOW | A | AGENTS | 2 | OPEN | yes | "3 runs × 1 outputs × 25 credits" — unpluralised units in the cost line | findings-p047-084.md |
+| F39 | MEDIUM | B | AGENTS | 2 | RESOLVED | — | The four managed lab products (Social, Newsletter, Blog, Landing page) cannot be run from anywh | findings-p047-084.md |
+| F40 | MEDIUM | A | AGENTS | 2 | RESOLVED | yes | The schedule dialog's "Posts per week" is actually runs per week — the cost line one paragraph  | findings-p047-084.md |
+| F130 | MEDIUM | A | AGENTS | 2 | OPS-PENDING | yes | Every agent is priced identically at "25 credits per output" | findings-p047-084.md |
+| F41 | LOW | A | AGENTS | 2 | RESOLVED | yes | Clients are shown the raw internal status word for their agent runs — "Run 2026-07-27 · review" | findings-p047-084.md |
+| F42 | LOW | A | AGENTS | 2 | RESOLVED | — | Seat forms refuse to save over a field that is not marked required | findings-p047-084.md |
+| F43 | LOW | A | AGENTS | 2 | RESOLVED | — | Staff land on a completely blank AI Agents page for any client whose agent list is empty | findings-p047-084.md |
+| F44 | LOW | A | AGENTS | 2 | RESOLVED | yes | The client AI Agents page stacks two near-identical headings and taglines on top of each other | findings-p047-084.md |
+| F45 | LOW | A | AGENTS | 2 | RESOLVED | — | Two managed-product run components and their submit action are dead code — the four catalog pro | findings-p047-084.md |
+| F135 | LOW | A | AGENTS | 2 | RESOLVED | yes | "3 runs × 1 outputs × 25 credits" — unpluralised units in the cost line | findings-p047-084.md |
 | F147 | HIGH | B | ARCH | 3 | OPEN | yes | One content stream, two agent identities: "Instagram Agent" and "Social posts (IG/TikTok)" run  | findings-p047-084.md |
 | F148 | HIGH | B | ARCH | 3 | OPEN | — | The portal has no launch-vs-runs model — the architecture the team decided on has nowhere to li | findings-p047-084.md |
 | F46 | BLOCKER | B | WORKSPACE | 1 | RESOLVED | — | A client can never act on a draft — the pick/post/skip loop the intake copy promises does not e | findings-p047-084.md |
@@ -147,7 +147,7 @@ are tracked in the CD table at the bottom.
 | F117 | MEDIUM | B | SHELL | 2 | OPEN | yes | No admin surface shows any client's credit balance, yet every denial tells the client to "ask y | findings-p161-199.md |
 | F118 | MEDIUM | A | SHELL | 2 | OPEN | — | The Connect page promises "submit managed jobs" and walks through an Instagram job the MCP serv | findings-p161-199.md |
 | F119 | MEDIUM | A | SHELL | 2 | OPEN | — | The smallest type in the portal sits below the accessibility contrast floor in 143 places | findings-p161-199.md |
-| F120 | MEDIUM | A | SHELL | 2 | OPEN | yes | The three agent pages print the raw database job status "review" to clients, when the portal al | findings-p161-199.md |
+| F120 | MEDIUM | A | SHELL | 2 | RESOLVED | yes | The three agent pages print the raw database job status "review" to clients, when the portal al | findings-p161-199.md |
 | F143 | MEDIUM | A | SHELL | 2 | OPEN | yes | Every notification is truncated mid-sentence and none of them are notifications | findings-p161-199.md |
 | F146 | MEDIUM | A | SHELL | 2 | OPEN | yes | The Meetings list is not in date order — synced meetings land wherever the sync ran | findings-p161-199.md |
 | F121 | LOW | B | SHELL | 2 | OPEN | yes | Dismissing a "new content ready" notification only hides it until the next page load | findings-p161-199.md |
@@ -170,7 +170,7 @@ are tracked in the CD table at the bottom.
 | CD-B4 | SEO | 2 | RESOLVED | Mark pre-2026-07-23 snapshots stale/legacy in UI |
 | CD-C1 | — | loop | OPEN | Mock-client pass sanity-checks competitor/citation data vs stored snapshots |
 | CD-D1 | ARCH | 3/4 | OPEN | Video deliverables: portal renders storage-URL field; GCP wiring → Tomer |
-| CD-D2 | AGENTS | 2 | OPEN | TikTok connector state shown as pending verification, not pretending |
+| CD-D2 | AGENTS | 2 | RESOLVED | TikTok connector state shown as pending verification, not pretending |
 
 ## Guard zones (all phases)
 - No deep rework of AI Insights (fix listed defects only) — call directive B5.
