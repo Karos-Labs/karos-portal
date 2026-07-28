@@ -12,7 +12,8 @@ import { assetImages } from "@/lib/asset-images";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import {
   identitiesByClient,
-  resolveContentIdentity,
+  runRowLabel,
+  scheduleRowLabel,
   type ClientAgentIdentity,
 } from "@/lib/agent-identity-map";
 import { integrationIsUsable } from "@/lib/integration-status";
@@ -240,7 +241,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         clientId: r.clientId,
         clientName: single ? undefined : nameOf(r.clientId),
         at: r.nextRunAt,
-        productName: resolveContentIdentity({ scheduledRun: r }, umbrellasFor(r.clientId)).label,
+        productName: scheduleRowLabel(r, umbrellasFor(r.clientId)),
         productColor: r.agentColor,
         productIcon: r.agentIcon,
         cadence: r.cadence,
@@ -303,7 +304,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         // the deliverables in would let an asset-derived label outrank it.
         // The family rule still fires from the job's own `external.taskType`,
         // which is what a managed "Social posts (IG/TikTok)" run carries.
-        productName: resolveContentIdentity({ job: j }, umbrellasFor(j.clientId)).label,
+        productName: runRowLabel(j, umbrellasFor(j.clientId)),
         productColor: agent?.color ?? "#FF6B2C",
         productIcon: agent?.icon ?? "Bot",
         jobStatus: j.status,

@@ -5,10 +5,10 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { TasksBoard } from "@/components/tasks-board";
-import { ActivityTimeline } from "@/components/activity-timeline";
+import { ActivityTimeline, type TimelineJob } from "@/components/activity-timeline";
 import { ArchiveView } from "@/components/archive-view";
 import { QuickAddTaskBar } from "@/components/quick-add-task-bar";
-import type { ActivityLog, Asset, ClientReport, ClientTask, Job, Role } from "@/lib/types";
+import type { ActivityLog, Asset, ClientReport, ClientTask, Role } from "@/lib/types";
 
 const VIEWS = ["board", "activity", "archive"] as const;
 type View = (typeof VIEWS)[number];
@@ -41,7 +41,8 @@ export function ProgressView({
   currentUserRole: Role;
   clientId: string;
   activityLogs: ActivityLog[];
-  jobs: Job[];
+  /** Projected to the five fields the timeline renders — never whole Job docs. */
+  jobs: TimelineJob[];
   report: ClientReport | null;
   /** Pre-redacted per viewer role (see TasksBody) — feeds the Archive tab. */
   assets: Asset[];

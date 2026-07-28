@@ -1,25 +1,37 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   contentLabelsByAsset,
   identitiesByClient,
-  resolveContentIdentity,
+  runRowLabel,
+  scheduleRowLabel,
   type ClientAgentIdentity,
 } from "@/lib/agent-identity-map";
-import type { Asset, ClientAgent, Job, PlannedScheduledRun } from "@/lib/types";
+import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import type { ChainFamily } from "@/lib/post-chain";
+import type { Asset, ClientAgent, Job, ManagedTaskType, PlannedScheduledRun } from "@/lib/types";
 
 /**
  * WP-7: the SURFACES, not the resolver.
  *
- * agent-identity-map.test.ts proves the rules. This file proves the wiring —
+ * agent-identity-map.test.ts proves the rules. This file proves the WIRING —
  * that the calendar's two run mappings, the archive's group headings, the /jobs
  * rows and the agent run-history rows all reach the same answer for one stream,
  * because that agreement (not any single label) is what F147 asked for: Albert's
  * 27 Jul screenshot had "Instagram Agent" and "Social posts (IG/TikTok)" stacked
  * on the same day, describing the same work.
  *
- * Each block below reproduces the exact call its surface makes, so a surface
- * that later stops calling the helper fails here rather than silently drifting.
+ * It used to do that by RE-DECLARING each surface's call as a local closure,
+ * which proves nothing: a surface that went back to printing `job.agentName`
+ * would leave every assertion here green. So the surfaces' label decision is now
+ * two exported functions (`runRowLabel` / `scheduleRowLabel`) that the surfaces
+ * import, this file drives THOSE, and the wiring block at the bottom asserts —
+ * from the surface sources themselves — that each one still calls them.
  */
+
+const REPO = path.resolve(__dirname, "../..", "..");
+const source = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
 
 const instagramUmbrella: ClientAgent & ClientAgentIdentity = {
   id: "c1__instagram-agent",
@@ -89,34 +101,23 @@ const umbrellaSchedule: Pick<
 const umbrellas = [instagramUmbrella];
 
 describe("calendar-body run mappings (§7.3)", () => {
-  // calendar-body.tsx — pastEntries: resolveContentIdentity({ job: j }, umbrellasFor(j.clientId))
-  const pastLabel = (job: Job, forClient: ClientAgentIdentity[]) =>
-    resolveContentIdentity({ job }, forClient).label;
-
-  // calendar-body.tsx — scheduledEntries: resolveContentIdentity({ scheduledRun: r }, …)
-  const scheduledLabel = (
-    run: typeof umbrellaSchedule,
-    forClient: ClientAgentIdentity[],
-  ) => resolveContentIdentity({ scheduledRun: run }, forClient).label;
-
   it("labels a managed social run with the umbrella that owns the stream", () => {
-    expect(pastLabel(managedRun, umbrellas)).toBe("Instagram Agent");
+    expect(runRowLabel(managedRun, umbrellas)).toBe("Instagram Agent");
   });
 
   it("labels the umbrella's own schedule the same way", () => {
     // The schedule carries the lab agent's repo name; printing it verbatim is
     // the same defect wearing a third name.
-    expect(scheduledLabel(umbrellaSchedule, umbrellas)).toBe("Instagram Agent");
+    expect(scheduleRowLabel(umbrellaSchedule, umbrellas)).toBe("Instagram Agent");
   });
 
   it("the two cards that used to disagree now read identically", () => {
-    expect(pastLabel(managedRun, umbrellas)).toBe(scheduledLabel(umbrellaSchedule, umbrellas));
+    expect(runRowLabel(managedRun, umbrellas)).toBe(scheduleRowLabel(umbrellaSchedule, umbrellas));
   });
 
   it("keeps today's label for a client with no umbrella", () => {
-    expect(pastLabel({ ...managedRun, clientId: OTHER_CLIENT }, [])).toBe(
-      "Social posts (IG/TikTok)",
-    );
+    const otherClientRun: Job = { ...managedRun, clientId: OTHER_CLIENT };
+    expect(runRowLabel(otherClientRun, [])).toBe("Social posts (IG/TikTok)");
   });
 });
 
@@ -180,15 +181,13 @@ describe("cross-client staff surfaces (§7.3)", () => {
   // jobs/page.tsx + calendar-body.tsx both index one scoped read this way.
   it("resolves each row against ITS OWN client's umbrellas", () => {
     const byClient = identitiesByClient([instagramUmbrella]);
-    const rowLabel = (job: Job) =>
-      resolveContentIdentity({ job }, byClient.get(job.clientId) ?? []).label;
+    const rowLabel = (job: Job) => runRowLabel(job, byClient.get(job.clientId) ?? []);
 
     expect(rowLabel(managedRun)).toBe("Instagram Agent");
     // Same job shape, different client: c2 has no umbrella, so nothing of c1's
     // identity may bleed onto its row.
-    expect(rowLabel({ ...managedRun, id: "job-2", clientId: OTHER_CLIENT })).toBe(
-      "Social posts (IG/TikTok)",
-    );
+    const otherClientRun: Job = { ...managedRun, id: "job-2", clientId: OTHER_CLIENT };
+    expect(rowLabel(otherClientRun)).toBe("Social posts (IG/TikTok)");
   });
 
   it("indexes every umbrella exactly once", () => {
@@ -217,16 +216,13 @@ describe("one identity across every surface (F147)", () => {
     const byClient = identitiesByClient([instagramUmbrella]);
     const forClient = byClient.get("c1") ?? [];
 
-    const calendarRun = resolveContentIdentity({ job: managedRun }, forClient).label;
-    const calendarSchedule = resolveContentIdentity(
-      { scheduledRun: umbrellaSchedule },
-      forClient,
-    ).label;
+    const calendarRun = runRowLabel(managedRun, forClient);
+    const calendarSchedule = scheduleRowLabel(umbrellaSchedule, forClient);
     const archiveHeading = contentLabelsByAsset([managedPost], [managedRun], forClient)[
       managedPost.id
     ];
     // jobs/page.tsx row + client-agent-rows.ts toRunRows both make this call.
-    const jobsRow = resolveContentIdentity({ job: managedRun }, forClient).label;
+    const jobsRow = runRowLabel(managedRun, forClient);
 
     expect(
       new Set([calendarRun, calendarSchedule, archiveHeading, jobsRow]),
@@ -236,9 +232,117 @@ describe("one identity across every surface (F147)", () => {
   it("without the umbrella the surfaces genuinely disagreed — the fixture is live", () => {
     // Guard against a test that would pass on any input: with no umbrella the
     // same fixture produces the two names from the screenshot.
-    const calendarRun = resolveContentIdentity({ job: managedRun }, []).label;
-    const calendarSchedule = resolveContentIdentity({ scheduledRun: umbrellaSchedule }, []).label;
+    const calendarRun = runRowLabel(managedRun, []);
+    const calendarSchedule = scheduleRowLabel(umbrellaSchedule, []);
     expect(calendarRun).not.toBe(calendarSchedule);
     expect(calendarRun).toBe("Social posts (IG/TikTok)");
   });
+});
+
+/**
+ * The exhaustiveness guard.
+ *
+ * Rung 3 — content family → the client's live umbrella that owns it — is the
+ * rung that actually kills the double identity, and it is driven by a hand-kept
+ * map (FAMILY_BY_TASK_TYPE). Add a fifth managed product and nothing breaks:
+ * its runs quietly fall through to rung 4 and start printing the catalog name
+ * beside the umbrella's own, which is F147 exactly, re-entered in silence.
+ *
+ * So every product in the catalog is enumerated here. A new one is either given
+ * a family (and this passes) or declared family-less on purpose (and named
+ * below) — there is no third outcome that leaves the suite green.
+ */
+describe("every managed product resolves through the family rung (F147 guard)", () => {
+  /**
+   * Products that belong to NO content chain, deliberately. A landing page is a
+   * one-off asset, not a stream any umbrella runs, so there is nothing for rung
+   * 3 to resolve it to and rung 4 (the catalog name) is the right answer.
+   */
+  const NO_CHAIN_FAMILY = new Set<ManagedTaskType>(["landing_page"]);
+
+  const familyUmbrella = (family: ChainFamily, id: string, name: string): ClientAgentIdentity => ({
+    id,
+    agentKey: id,
+    customAgentId: `ca-${id}`,
+    displayName: name,
+    // No social platform: this fixture is about the family rung, not the mark.
+    platform: "",
+    chainFamily: family,
+    launchState: "live",
+  });
+
+  const allFamilies: ClientAgentIdentity[] = [
+    familyUmbrella("social", "u-social", "Social Umbrella"),
+    familyUmbrella("email", "u-email", "Email Umbrella"),
+    familyUmbrella("article", "u-article", "Article Umbrella"),
+  ];
+  const umbrellaNames = allFamilies.map((u) => u.displayName);
+
+  it("the family-less list only names products that still exist", () => {
+    const catalog = new Set(MANAGED_PRODUCTS.map((p) => p.taskType));
+    for (const taskType of NO_CHAIN_FAMILY) expect(catalog.has(taskType)).toBe(true);
+  });
+
+  for (const product of MANAGED_PRODUCTS) {
+    it(`${product.taskType}: a run resolves to the umbrella that owns its stream`, () => {
+      const job: Job = {
+        ...managedRun,
+        agentName: product.name,
+        external: { serviceJobId: "svc", taskType: product.taskType },
+      };
+      const label = runRowLabel(job, allFamilies);
+
+      if (NO_CHAIN_FAMILY.has(product.taskType)) {
+        expect(label).toBe(product.name);
+        return;
+      }
+      // The failure a NEW product would produce: `label` stays the catalog name
+      // because no family maps its task type, so the client reads the product
+      // name beside their umbrella's own — F147.
+      expect(umbrellaNames).toContain(label);
+      expect(label).not.toBe(product.name);
+    });
+
+    it(`${product.taskType}: a deliverable resolves the same way from the asset alone`, () => {
+      // The archive can hold an asset whose job never crossed the boundary, so
+      // the asset's own `meta.taskType` has to reach the same rung.
+      const asset: Asset = {
+        ...managedPost,
+        type: "note", // no chain family from the TYPE — forces the meta path
+        meta: { taskType: product.taskType },
+      };
+      const label = contentLabelsByAsset([asset], [], allFamilies)[asset.id];
+
+      if (NO_CHAIN_FAMILY.has(product.taskType)) {
+        expect(umbrellaNames).not.toContain(label);
+        return;
+      }
+      expect(umbrellaNames).toContain(label);
+    });
+  }
+});
+
+/**
+ * The wiring itself. The behavioural blocks above can only prove the shared
+ * functions are right; these prove the surfaces still call them, which is the
+ * half that silently rotted before.
+ */
+describe("the surfaces route through the shared label functions", () => {
+  const SURFACES: Array<{ file: string; calls: string[] }> = [
+    {
+      file: "src/app/(app)/calendar/calendar-body.tsx",
+      calls: ["runRowLabel(", "scheduleRowLabel("],
+    },
+    { file: "src/app/(app)/jobs/page.tsx", calls: ["runRowLabel("] },
+    { file: "src/app/(app)/tasks/tasks-body.tsx", calls: ["runRowLabel(", "contentLabelsByAsset("] },
+    { file: "src/lib/client-agent-rows.ts", calls: ["runRowLabel("] },
+  ];
+
+  for (const surface of SURFACES) {
+    it(`${surface.file} imports and calls the helper`, () => {
+      const src = source(surface.file);
+      expect(src).toContain('from "@/lib/agent-identity-map"');
+      for (const call of surface.calls) expect(src).toContain(call);
+    });
+  }
 });

@@ -1,7 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { listJobs, listClients } from "@/lib/data";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { identitiesByClient, resolveContentIdentity } from "@/lib/agent-identity-map";
+import { identitiesByClient, runRowLabel } from "@/lib/agent-identity-map";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { JobsList, type JobListRow } from "@/components/jobs-list";
@@ -30,7 +30,7 @@ export default async function JobsPage() {
       // the client surfaces, so a run has to be called here what the client is
       // told it is called. The job doc keeps its own agentName untouched — /jobs/[id]
       // is the forensic view of the record and still prints it verbatim.
-      agentName: resolveContentIdentity({ job }, umbrellasByClient.get(job.clientId) ?? []).label,
+      agentName: runRowLabel(job, umbrellasByClient.get(job.clientId) ?? []),
       title: job.title,
       clientId: job.clientId,
       clientName: nameById.get(job.clientId)!,
