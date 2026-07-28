@@ -100,8 +100,8 @@ export function ClientRail({
       <aside className="relative z-30 hidden w-72 shrink-0 border-r border-border bg-background md:block">
         <div className="sticky top-0 flex h-screen flex-col">
           {/* Logo */}
-          <div className="shrink-0 px-4 pb-2 pt-3">
-            <Link href={home} className="flex items-center gap-2.5 px-2 py-0.5">
+          <div className="shrink-0 px-4 pt-4">
+            <Link href={home} className="flex items-center gap-2.5 px-2 py-1">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/brand/kairos-head-disc-dark.svg"
@@ -130,7 +130,7 @@ export function ClientRail({
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "group flex items-center gap-3 rounded-md px-3 py-1 text-sm transition-colors",
+                      "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
                       active
                         ? "bg-surface-2 text-foreground"
                         : "text-muted hover:bg-surface-2 hover:text-foreground",
@@ -149,7 +149,7 @@ export function ClientRail({
               })}
             </nav>
 
-            <div className="border-t border-border pt-1.5">
+            <div className="border-t border-border pt-4">
               <ClientProfilePanel client={client} compact />
             </div>
 

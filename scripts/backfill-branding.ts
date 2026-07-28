@@ -265,7 +265,14 @@ function buildBrandVoiceSection(g: BrandingGuidelines): string {
   if (g.fontHeading) lines.push(`- **Heading Font:** ${g.fontHeading}`);
   if (g.fontBody) lines.push(`- **Body Font:** ${g.fontBody}`);
   if (g.toneKeywords?.length) lines.push(`- **Tone Keywords:** ${g.toneKeywords.join(", ")}`);
-  lines.push("", "_Auto-synced. Edit via the Branding Guidelines UI._", "<!-- BRAND_SYNC_END -->");
+  // Note lives in a comment, not on the page — the renderers drop comments, and
+  // "edit it in the guidelines UI" is for whoever opens the stored document,
+  // not for the client reading this in the portal. Mirrors src/lib/branding.ts.
+  lines.push(
+    "",
+    "<!-- Auto-synced from the Branding Guidelines UI. Edits made here are overwritten on the next sync. -->",
+    "<!-- BRAND_SYNC_END -->",
+  );
   return lines.join("\n");
 }
 

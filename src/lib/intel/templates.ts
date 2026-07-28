@@ -248,8 +248,6 @@ consumed_by: [e12, e13, e14, a3, s5]
 **Threat level:** MEDIUM — <>
 **How to beat them:** <>
 
----
-
 ### Competitor 3: <Name> (<domain.com>)
 **Category:** direct / secondary / indirect
 **Their positioning:** <>

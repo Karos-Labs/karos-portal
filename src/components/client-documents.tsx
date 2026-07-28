@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import {
+  GENERATED_BLOCK_LINE_RE,
   isSafeHref,
   LINK_RE,
   parseDocSections,
@@ -13,6 +14,7 @@ import {
   renderSectionBody,
   stripDocPreamble,
   stripHeadingNumber,
+  stripPipelineMarkers,
 } from "@/lib/doc-render";
 import {
   generateDocSummaryAction,
@@ -120,9 +122,15 @@ function esc(s: string): string {
  * document would have executed in the print window.
  */
 function renderForPrint(markdown: string): string {
-  let out = esc(markdown)
-    // Separator lines
-    .replace(/^---+$/gm, "")
+  // Markers before the escape, same as the on-screen renderer: once `<!-- … -->`
+  // has become `&lt;!-- … --&gt;` nothing downstream recognises it, and the PDF
+  // is the copy a client is most likely to forward.
+  let out = esc(stripPipelineMarkers(markdown))
+    // Separator lines. A rule is a real separator, so it prints as one — the
+    // screen has rendered it since the asset-renderer fix and a PDF that
+    // silently drops it does not match the document the client just read.
+    // Trailing spaces are matched too; without that they left a literal "---".
+    .replace(/^---+[ \t]*$/gm, "<hr />")
     // H4+ sub-headings — the Market Strategy template's persona headings
     .replace(/^#{4,6}\s+(.+)$/gm, "<h4>$1</h4>")
     // H2 headings — legacy literal numbers stripped; documents generated before
@@ -130,9 +138,18 @@ function renderForPrint(markdown: string): string {
     .replace(/^##\s+(.+)$/gm, (_m, h: string) => `<h2>${stripHeadingNumber(h)}</h2>`)
     // H3 sub-headings
     .replace(/^###\s+(.+)$/gm, "<h3>$1</h3>")
-    // Bold / italic / code
+    // H1 LAST of the heading rules. buildPrintWindow prints per section, so a
+    // `#` title that ended up inside a section body (the brand sync block is
+    // injected above the document title, which pushes the title down into the
+    // first section) reached this renderer and printed its hash mark.
+    .replace(/^#\s+(.+)$/gm, "<h2>$1</h2>")
+    // Bold / italic / code. The underscore forms are guarded at word boundaries
+    // so the rule cannot open inside snake_case; without them `_Last updated: …_`
+    // printed its underscores.
+    .replace(/(?<!\w)__([^_\n]+)__(?!\w)/g, "<strong>$1</strong>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<em>$1</em>")
     .replace(/`(.+?)`/g, "<code>$1</code>");
 
   // Tables
@@ -185,8 +202,13 @@ function renderForPrint(markdown: string): string {
   // quoted line would keep its arrow on the page. Same rule as doc-render.ts.
   out = out.replace(/^&gt;\s+(.+)$/gm, "<blockquote>$1</blockquote>");
 
-  // Remaining plain lines → paragraphs
-  out = out.replace(/^(?!<[a-zA-Z/]|$|\s*$)(.+)$/gm, "<p>$1</p>");
+  // Remaining plain lines → paragraphs. Skips only the BLOCK tags generated
+  // above, not any tag: the inline passes run first, so a `**Label:** value`
+  // line already starts with `<strong>` and used to fall out of this pass
+  // entirely — printing at the browser default instead of the 11pt body size.
+  out = out.replace(/^(?!\s*$).+$/gm, (line) =>
+    GENERATED_BLOCK_LINE_RE.test(line) ? line : `<p>${line}</p>`,
+  );
 
   // Links, last — same rule and same scheme guard as the on-screen renderer, so
   // the PDF matches the screen instead of printing bracket-and-parenthesis text.
@@ -255,6 +277,7 @@ function buildPrintWindow(content: string, title: string): void {
            background: #f5f5f5; padding: 1px 4px; border-radius: 2px; }
     strong { font-weight: 600; }
     em { font-style: italic; }
+    hr { border: 0; border-top: 1px solid #ddd; margin: 18px 0; }
     @media print {
       body { padding: 0; max-width: none; }
     }
@@ -277,6 +300,9 @@ function buildPrintWindow(content: string, title: string): void {
 }
 
 function downloadMarkdown(content: string, label: string): void {
+  // stripDocPreamble already drops pipeline markers, so the .md a client keeps
+  // does not carry the sync sentinels either — they are invisible in a markdown
+  // preview but plain text in any editor, which is where the file gets opened.
   const clean = stripDocPreamble(content);
   const titled = `# ${label}\n\n${clean}`;
   const slug = label.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
@@ -339,7 +365,7 @@ function ExportMenu({
             }}
             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
-            <DocIcon className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+            <Icon name="FileText" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
             <div>
               <p className="font-medium text-foreground">Export PDF</p>
               <p className="text-[11px] text-muted-2">Opens print dialog</p>
@@ -964,31 +990,6 @@ function ScheduleModal({
 
 /* ── Documents list ───────────────────────────────────────────────────── */
 
-/**
- * Document glyph: lucide's FileText draws three rules, which read as noise at
- * 16px in a six-row list; a bare File loses the signal that the document has
- * text in it. Two rules keep the signal and drop the clutter. Same 24px grid,
- * stroke and cap style as the lucide set so it sits correctly beside them.
- */
-function DocIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-      <path d="M8 13h8" />
-      <path d="M8 17h5" />
-    </svg>
-  );
-}
 
 export function ClientDocuments({
   contextDocs,
@@ -1092,7 +1093,7 @@ export function ClientDocuments({
                      and seven of these were its single tallest block. */
                   className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
                 >
-                  <DocIcon className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
+                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
                   <span className="flex-1 truncate text-[13px] leading-5 text-muted group-hover:text-foreground">
                     {item.label}
                   </span>
@@ -1104,7 +1105,7 @@ export function ClientDocuments({
                   className="flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left"
                   title="This document is being rebuilt — check back shortly."
                 >
-                  <DocIcon className="h-4 w-4 shrink-0 text-muted-2/60" />
+                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2/60" />
                   <span className="flex-1 truncate text-[13px] leading-5 text-muted-2">{item.label}</span>
                   <span className="shrink-0 text-[11px] text-muted-2">Rebuilding</span>
                 </div>

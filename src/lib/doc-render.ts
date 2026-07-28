@@ -10,6 +10,36 @@ export interface DocSection {
 }
 
 /**
+ * Markup the pipeline addresses to itself, removed before anything renders.
+ *
+ * `<!-- BRAND_SYNC_START -->` / `<!-- BRAND_SYNC_END -->` are written INTO the
+ * stored brand-voice document by the branding sync (`injectBrandVoiceSection`)
+ * so a re-sync can find and replace its own block. Every renderer here escapes
+ * before it formats — by design, so document text cannot inject markup — which
+ * turned the marker into `&lt;!-- BRAND_SYNC_START --&gt;`, a line the paragraph
+ * rule then wrapped in a `<p>` and a client read as part of their own document
+ * (photographed 2026-07-28). Escaping is what makes an HTML comment VISIBLE
+ * here rather than invisible, so it has to be dropped, not escaped.
+ *
+ * Written against the `<!-- … -->` form rather than the two marker strings:
+ * models emit comments of their own, and the next sentinel someone adds should
+ * not need a second fix. An unterminated opener is dropped only to end of line
+ * — a browser would eat the rest of the document, and truncated stored content
+ * is exactly when that happens.
+ *
+ * The control-byte clause is not cosmetic: `renderSectionBody` pairs \x02–\x06
+ * sentinels around list items, so a stray one arriving IN the content could
+ * pair with a generated one and swallow the text between them.
+ */
+export function stripPipelineMarkers(text: string): string {
+  return text
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/^[ \t]*<!--[^\n]*$/gm, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+}
+
+/**
  * Drop a literal "3. " / "3) " prefix from a section heading.
  *
  * Documents generated before the numbers came out of the templates have them
@@ -49,9 +79,14 @@ const PLACEHOLDER_RE =
  * Strip a leading YAML frontmatter block (module/client/version/status/etc.) and
  * the H1 title. Tolerant of leading whitespace / BOM so the block never leaks
  * into the rendered document.
+ *
+ * Pipeline markers go first, before the frontmatter and title rules: the brand
+ * sync block is injected BETWEEN the two, so with the comment still in place
+ * every caller downstream of this — the section index, the "does this document
+ * have a body" check, the lead-in — saw the marker as document text.
  */
 export function stripDocPreamble(content: string): string {
-  return content
+  return stripPipelineMarkers(content)
     .replace(/^﻿/, "")
     .replace(/^\s*---[\s\S]*?\n---[ \t]*\r?\n?/, "")
     .replace(/^\s*#\s+.+\r?\n?/, "")
@@ -108,6 +143,17 @@ const INTERNAL_KEY_LINE_RE =
 const INTERNAL_TOKEN_RE =
   /\b(?:[0-9a-f]{8,}|product[\s:*_-]*e\d+|job[\s:*_-]*[0-9a-f]{6,})\b/i;
 
+/**
+ * A line that a renderer here has already turned into a block element, and so
+ * must not be wrapped in a paragraph. Shared by both paragraph passes (this
+ * file and the print renderer) — keep the two in step.
+ *
+ * Block tags only. `<strong>`, `<em>`, `<code>` and `<a>` are inline and their
+ * lines DO need the wrapper.
+ */
+export const GENERATED_BLOCK_LINE_RE =
+  /^\s*(?:<\/|<(?:p|h[1-6]|ul|ol|li|hr|div|table|thead|tbody|tr|th|td|blockquote)\b)/;
+
 /** Is this line the record's own bookkeeping rather than prose for the reader? */
 function isInternalLine(line: string): boolean {
   return INTERNAL_KEY_LINE_RE.test(line) || INTERNAL_TOKEN_RE.test(line);
@@ -119,7 +165,7 @@ function isInternalLine(line: string): boolean {
  * far more often than it is markup (same reasoning as looksLikeMarkdown).
  */
 export function stripInlineMarkdown(line: string): string {
-  return line
+  return stripPipelineMarkers(line)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1") // images → alt text
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // links → label
     .replace(/\*\*([^*]+)\*\*/g, "$1")
@@ -142,7 +188,7 @@ export function stripInlineMarkdown(line: string): string {
  */
 export function toPlainSummary(text: string | null | undefined, maxChars = 240): string {
   if (!text) return "";
-  const body = text
+  const body = stripPipelineMarkers(text)
     .replace(/^﻿/, "")
     .replace(/```[a-zA-Z]*\r?\n([\s\S]*?)```/g, "$1") // keep fenced text, drop the fence
     .replace(/^\s*---[\s\S]*?\n---[ \t]*\r?\n?/, ""); // YAML frontmatter
@@ -201,11 +247,20 @@ export function parseDocSections(content: string): DocSection[] {
 
 /** Render a single section body (no `##` headings expected inside) to HTML. */
 export function renderSectionBody(md: string): string {
+  // Pipeline markers come out BEFORE the escape: after it, `<!-- … -->` is
+  // `&lt;!-- … --&gt;` and no longer looks like a comment to any rule below.
+  //
   // HTML-escape the raw Markdown before processing so any user-supplied < > & "
   // in the source text cannot break out into the surrounding HTML structure.
   // A horizontal rule is a real separator in agent output (it divides one draft
-  // from the next), so it renders rather than vanishing.
-  let out = esc(md).replace(/^---+\s*$/gm, '<hr class="my-4 border-0 border-t border-border" />');
+  // from the next), so it renders rather than vanishing. The trailing `[ \t]*`
+  // is load-bearing — a trailing space is invisible in the source and used to
+  // leave a literal "---" on screen — and it is spaces/tabs rather than `\s`
+  // so the match cannot run past the end of its own line.
+  let out = esc(stripPipelineMarkers(md)).replace(
+    /^---+[ \t]*$/gm,
+    '<hr class="my-4 border-0 border-t border-border" />',
+  );
 
   // Deeper headings FIRST: `^###\s` cannot match "#### Persona" (the fourth
   // character is a hash, not a space), so without this rule the shipped Market
@@ -221,9 +276,32 @@ export function renderSectionBody(md: string): string {
     '<p class="mt-4 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">$1</p>',
   );
 
+  // `#` and `##` LAST of the heading rules, and they have to be here at all:
+  // renderBlocks consumes those two levels before it calls this function, but
+  // the drawer and the copilot do not go through renderBlocks. The drawer
+  // splits on `##` only, so a `#` title sitting mid-document (the brand sync
+  // block is injected ABOVE the title, which pushes the title into the first
+  // section's body) reached renderSectionBody, and the copilot hands over raw
+  // model text. Both printed the hash marks verbatim. Classes match the ones
+  // renderBlocks uses so a heading looks the same wherever it is rendered.
   out = out
+    .replace(
+      /^##\s+(.+)$/gm,
+      '<h2 class="text-base font-semibold mt-7 mb-2.5 text-neon/90">$1</h2>',
+    )
+    .replace(/^#\s+(.+)$/gm, '<h2 class="text-lg font-semibold mt-6 mb-2.5 text-foreground">$1</h2>');
+
+  // Underscore emphasis, with word-boundary guards. `_Last updated: …_` is
+  // written by the branding context-doc builder and `_This section is
+  // auto-synced…_` by the brand sync, so the underscores were on screen in the
+  // client's own documents. The `(?<!\w)`/`(?!\w)` pair is what keeps the rule
+  // off ordinary snake_case (`pending_review`, `system_of_record`), which is
+  // the reason a lone underscore was left alone in the first place.
+  out = out
+    .replace(/(?<!\w)__([^_\n]+)__(?!\w)/g, "<strong>$1</strong>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<em>$1</em>")
     .replace(
       /`(.+?)`/g,
       '<code class="rounded bg-surface-3 px-1 py-0.5 font-mono text-[10px]">$1</code>',
@@ -264,12 +342,20 @@ export function renderSectionBody(md: string): string {
   out = out.replace(/^([ \t]+)?[-*+]\s+(.+)$/gm, (_m, indent: string | undefined, text: string) =>
     indent ? `\x02\x06${text}\x03` : `\x02${text}\x03`,
   );
+  // Each item's text is wrapped in ONE span. The `<li>` is a flex row so the
+  // ▸ marker can hang beside a wrapping paragraph — but a flex container makes
+  // every child its own flex item, including each contiguous run of bare text.
+  // So `- **Precise** — Every sentence carries weight` became TWO items, the
+  // bold word and the rest, with the row's gap wedged between them: the em dash
+  // opened a second column and read as a detached mark instead of punctuation
+  // inside the sentence. With the span, the row has exactly two items — marker
+  // and text — and everything inside the item stays inline.
   out = out.replace(
     /(\x02[\s\S]*?\x03\n?)+/g,
     (block) => {
       const items = block
-        .replace(/\x02\x06([\s\S]*?)\x03/g, '<li class="ml-4">$1</li>')
-        .replace(/\x02([\s\S]*?)\x03/g, "<li>$1</li>");
+        .replace(/\x02\x06([\s\S]*?)\x03/g, '<li class="ml-4"><span class="min-w-0 flex-1">$1</span></li>')
+        .replace(/\x02([\s\S]*?)\x03/g, '<li><span class="min-w-0 flex-1">$1</span></li>');
       return `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-neon/50 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${items}</ul>\n`;
     },
   );
@@ -297,9 +383,17 @@ export function renderSectionBody(md: string): string {
     '<blockquote class="border-l-2 border-border-strong pl-3 py-0.5 text-xs italic text-muted-2 my-2">$1</blockquote>',
   );
 
-  out = out.replace(
-    /^(?!<[a-zA-Z/]|$|\s*$)(.+)$/gm,
-    '<p class="text-sm text-muted leading-[1.7] my-1">$1</p>',
+  // Paragraph wrapper. The skip test names the BLOCK tags this function
+  // generates, rather than "starts with any tag": the inline passes above run
+  // first, so `**Their positioning:** …` — every line of the Competitor
+  // Analysis deep dives, and every `_italic_` line — already began with
+  // `<strong>`/`<em>` by the time the old `<[a-zA-Z/]` lookahead saw it. Those
+  // lines fell out of the paragraph pass and rendered as bare unstyled text at
+  // the browser's default size, next to properly styled prose.
+  out = out.replace(/^(?!\s*$).+$/gm, (line) =>
+    GENERATED_BLOCK_LINE_RE.test(line)
+      ? line
+      : `<p class="text-sm text-muted leading-[1.7] my-1">${line}</p>`,
   );
 
   // Links, last: by now every block wrapper is in place, so a line that is only
@@ -322,7 +416,11 @@ export function renderSectionBody(md: string): string {
  * ALREADY had whatever preamble handling its caller wants — the two entry
  * points below differ only in that.
  */
-function renderBlocks(clean: string): string {
+function renderBlocks(source: string): string {
+  // Also here, not only in renderSectionBody: heading text is escaped straight
+  // into the `<h2>` below without passing through the body renderer, so a
+  // marker sitting on a heading line would survive that path alone.
+  const clean = stripPipelineMarkers(source);
   const headingRe = /^(#{1,2})\s+(.+)$/gm;
   let out = "";
   let cursor = 0;

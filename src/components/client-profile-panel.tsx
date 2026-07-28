@@ -221,7 +221,7 @@ export function ClientProfilePanel({ client, compact = false }: { client: Client
   return (
     <div className="px-1">
       {/* Company header */}
-      <div className={cn("flex items-center gap-2.5", compact ? "mb-2 py-1" : "mb-2.5")}>
+      <div className={cn("flex items-center gap-2.5", compact ? "mb-2.5 py-1" : "mb-2.5")}>
         <BrandFavicon
           src={client.logoUrl || client.brandingGuidelines?.logoUrl}
           website={client.website}

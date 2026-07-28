@@ -141,9 +141,15 @@ export function buildBrandVoiceSection(g: BrandingGuidelines): string {
   if (g.fontHeading) lines.push(`- **Heading Font:** ${g.fontHeading}`);
   if (g.fontBody) lines.push(`- **Body Font:** ${g.fontBody}`);
   if (g.toneKeywords?.length) lines.push(`- **Tone Keywords:** ${g.toneKeywords.join(", ")}`);
+  // The "edit it in the guidelines UI instead" note is for whoever opens the
+  // stored document, not for the client reading it in the portal — so it goes
+  // inside a comment, which the renderers drop, rather than on the page as the
+  // italic line it used to be. The END sentinel keeps its exact text:
+  // injectBrandVoiceSection finds an already-stored block by that string, and a
+  // reworded one would append a second block instead of replacing the first.
   lines.push(
     "",
-    "_This section is auto-synced when branding guidelines are updated. Edit the guidelines UI to change it._",
+    "<!-- Auto-synced from the Branding Guidelines UI whenever guidelines change. Edits made here are overwritten on the next sync. -->",
     "<!-- BRAND_SYNC_END -->",
   );
   return lines.join("\n");

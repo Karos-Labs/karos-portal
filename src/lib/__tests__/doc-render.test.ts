@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   isSafeHref,
   looksLikeMarkdown,
+  parseDocSections,
   renderAssetBody,
   renderFullDoc,
   renderSectionBody,
+  stripDocPreamble,
   stripInlineMarkdown,
+  stripPipelineMarkers,
   toPlainSummary,
 } from "@/lib/doc-render";
 
