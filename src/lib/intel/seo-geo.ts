@@ -12,6 +12,7 @@ import {
   SEO_GEO_PIPELINE_VERSION,
   analyzeAnswer,
   buildGazetteer,
+  categoryMetrics,
   computeCheckGaps,
   computeCheckScore,
   countBrandInAnswers,
@@ -611,7 +612,13 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
     `- Roster share of voice (client vs tracked competitors): ${insights.rosterSharePct}%`,
     `- Brand-query presence: named in ${insights.brandPresence.named}/${insights.brandPresence.total} brand prompts · Category presence: ${insights.categoryPresence.named}/${insights.categoryPresence.total} non-brand prompts`,
     "",
-    "| Engine | Provider (source) | Tier | Named in answers | Share of voice | Cited as source | Ranked first | Leading competitor |",
+    // CD-B3: every rate in this table is CATEGORY-scoped. Branded prompts name
+    // the client by construction, so the full-set figures ran high and disagreed
+    // with the tile, the engine cards and the score, all of which read
+    // `categoryMetrics` — the same accessor used here, legacy fallback included.
+    "All rates below are measured over CATEGORY (non-brand) prompts only — branded questions name the client by construction and never feed a client-vs-competitor number.",
+    "",
+    "| Engine | Provider (source) | Tier | Named in category answers | Share of voice | Cited as source | Ranked first | Leading competitor |",
     "|---|---|---|---|---|---|---|---|",
   ];
   for (const e of insights.perEngine) {
@@ -619,8 +626,9 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
       lines.push(`| ${ENGINE_LABELS[e.engine]} | ${e.source ?? "—"} | UNAVAILABLE | — | — | — | — | — |`);
       continue;
     }
+    const c = categoryMetrics(e);
     lines.push(
-      `| ${ENGINE_LABELS[e.engine]} | ${e.source} | ${e.captureTier} | ${pct(e.mentionRate)} | ${Math.round(e.shareOfVoice)}% | ${pct(e.citationRate)} | ${pct(e.firstPositionRate)} | ${e.topCompetitor ? `${e.topCompetitor.name} (${Math.round(e.topCompetitor.shareOfVoice)}% SOV)` : "—"} |`,
+      `| ${ENGINE_LABELS[e.engine]} | ${e.source} | ${e.captureTier} | ${pct(c.mentionRate)} | ${Math.round(c.shareOfVoice)}% | ${pct(c.citationRate)} | ${pct(c.firstPositionRate)} | ${c.topCompetitor ? `${c.topCompetitor.name} (${Math.round(c.topCompetitor.shareOfVoice)}% SOV)` : "—"} |`,
     );
   }
 
