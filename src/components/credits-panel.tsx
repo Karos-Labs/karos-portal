@@ -25,6 +25,18 @@ import type { ClientCredits, CreditLedgerEntry, Role } from "@/lib/types";
  * CustomAgent.creditCost overrides the flat default per agent, so the real price
  * lives on the agent card, not here.
  */
+/**
+ * The rate card. These labels are BILLING vocabulary — the priced units a
+ * client is charged in — and the §7.3 identity helper deliberately does not
+ * touch them (F147/WP-7).
+ *
+ * The boundary: identity answers "who made this thing in front of me", so a
+ * post, a run row and an archive group all have to say the same name. A price
+ * list answers "what does one of these cost", which is a question about the
+ * product line and has no piece of content and no agent to attribute. Resolving
+ * these through an umbrella would price "Instagram Agent" and leave a client
+ * with a social umbrella unable to find the social-post rate at all.
+ */
 const PRICE_ROWS: Array<{ label: string; price: string; note?: string }> = [
   { label: "Copilot message", price: `${CREDIT_COSTS.chatMessage}` },
   { label: "Correct one document", price: `${CREDIT_COSTS.targetedCorrection}` },

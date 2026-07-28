@@ -80,7 +80,14 @@ function agentBlurb(
 /** One run-history row, pre-filtered and stripped server-side. */
 export interface CustomAgentRunRow {
   id: string;
+  /** The run's STORED agent name. A join key — the card matches its own runs on it. */
   agentName: string;
+  /**
+   * The ONE name this row prints, resolved server-side through the §7.3
+   * identity helper (F147). Equal to `agentName` for an agent with no
+   * umbrella; the umbrella's own display name when one owns this stream.
+   */
+  label: string;
   status: JobStatus;
   createdAt: number;
   assetCount: number;
@@ -656,10 +663,12 @@ export function ClientCustomAgents({
                       size="sm"
                     />
                   ) : (
-                    <AgentIdentity identity={run.agentName} icon="Bot" size="sm" />
+                    <AgentIdentity identity={run.label} icon="Bot" size="sm" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm">{run.agentName}</p>
+                    {/* The resolved identity, never the stored name — see
+                        CustomAgentRunRow.label (F147). */}
+                    <p className="truncate text-sm">{run.label}</p>
                     {/* What the run produced — never what somebody typed to start
                         it. `prompt` is present only for staff viewers; the page
                         leaves it out of the client payload entirely. */}

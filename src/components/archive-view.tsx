@@ -84,12 +84,18 @@ const STATUS_ORDER: Asset["status"][] = ["draft", "approved", "scheduled", "publ
  */
 export function ArchiveView({
   assets,
-  agentNameByJobId,
+  agentLabelByAssetId,
   viewerIsClient = false,
 }: {
   assets: Asset[];
-  /** jobId → agent display name, for attributing job-produced assets. */
-  agentNameByJobId: Record<string, string>;
+  /**
+   * assetId → the ONE name this asset's group heading carries, resolved on the
+   * server through the §7.3 identity helper (F147). The join used to happen
+   * here, off a jobId → job.agentName map, which is how the archive came to
+   * head a group "Social posts (IG/TikTok)" while the same client's agent page
+   * called that stream "Instagram Agent".
+   */
+  agentLabelByAssetId: Record<string, string>;
   /** Drives the copy only — the posted-only filter is applied on the server. */
   viewerIsClient?: boolean;
 }) {
@@ -114,12 +120,13 @@ export function ArchiveView({
     );
   }
 
+  // The resolver already answered for every asset in the payload and never
+  // returns an empty label; the local fallbacks stay only so a hand-assembled
+  // caller can't render a blank heading.
   const agentNameFor = useCallback(
     (asset: Asset) =>
-      (asset.jobId ? agentNameByJobId[asset.jobId] : undefined) ??
-      agentLabelForAsset(asset) ??
-      "Other content",
-    [agentNameByJobId],
+      agentLabelByAssetId[asset.id] ?? agentLabelForAsset(asset) ?? "Other content",
+    [agentLabelByAssetId],
   );
 
   const agentNames = useMemo(

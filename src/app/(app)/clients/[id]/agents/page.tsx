@@ -121,7 +121,9 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // a week of daily slots is the tell that the days are a presentation of a
     // batch. Staff rows are unchanged.
     const runnableNames = new Set(runnableAgents.map((a) => a.name));
-    const runs = toRunRows(jobs, false).filter((r) => runnableNames.has(r.agentName));
+    // Still filtered on the STORED name (that is the join to the runnable set);
+    // what each row prints is its resolved §7.3 identity (F147).
+    const runs = toRunRows(jobs, false, umbrellas).filter((r) => runnableNames.has(r.agentName));
     const clientScheduleRows = toScheduleRows(scheduledRuns, true);
     const clientAgentRows = await toClientAgentRows({
       umbrellas: ownedByUmbrella,
@@ -234,7 +236,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
 
   const staffAgents = customAgents.filter((a) => a.enabled).map(toSummary);
   const agentSetup = await buildAgentSetup(id, staffAgents);
-  const staffRuns = toRunRows(jobs, true);
+  const staffRuns = toRunRows(jobs, true, umbrellas);
   // Staff see every umbrella in every state (including live) — this is where
   // the launch is fired for a client who cannot yet self-serve, and where the
   // template set is curated before the client ever sees it.

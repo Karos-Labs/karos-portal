@@ -7,8 +7,14 @@ import {
   listJobs,
   listPlannedScheduledRuns,
 } from "@/lib/data";
+import { listClientAgents } from "@/lib/data-client-agents";
 import { assetImages } from "@/lib/asset-images";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import {
+  identitiesByClient,
+  resolveContentIdentity,
+  type ClientAgentIdentity,
+} from "@/lib/agent-identity-map";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
@@ -147,11 +153,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
 
   // ── Fetch (single-client scope uses a Firestore filter; broader scopes
   //    fetch-then-filter, matching the assets page) ─────────────────────
-  const [runsRaw, jobsRaw, assetsRaw, customAgents] = await Promise.all([
+  const [runsRaw, jobsRaw, assetsRaw, customAgents, umbrellasRaw] = await Promise.all([
     listPlannedScheduledRuns(singleFilter),
     listJobs(singleFilter),
     listAssets(singleFilter),
     listCustomAgents(),
+    // §7.3. One scoped read for the whole page — the cross-client overview
+    // labels rows of many clients, and a per-row umbrella query would be one
+    // Firestore read per printed card.
+    listClientAgents(singleFilter),
   ]);
   const inScope = <T extends { clientId: string }>(arr: T[]): T[] =>
     idSet ? arr.filter((x) => idSet!.has(x.clientId)) : arr;
@@ -168,9 +178,21 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     : scopedAssets;
 
   // Agent lookups: by id for scheduled runs, by name for past jobs (jobs store
-  // the agent's name, not its id).
+  // the agent's name, not its id). These stay JOIN keys — what a card PRINTS
+  // comes off the identity helper below, never off the stored name.
   const agentById = new Map(customAgents.map((a) => [a.id, a]));
   const agentByName = new Map(customAgents.map((a) => [a.name, a]));
+
+  // §7.3 identity (F147). The calendar is where Albert saw one stream named two
+  // ways on the same day — a run row reading "Instagram Agent" stacked over a
+  // post card reading "Social posts (IG/TikTok)". Both mappings below now name
+  // their row through the one resolver, which maps a run onto the umbrella that
+  // owns its content family. Stored `agentName` is untouched: it is the record
+  // of what fired, and this is the display of who it belongs to.
+  const NO_UMBRELLAS: ClientAgentIdentity[] = [];
+  const umbrellasByClient = identitiesByClient(inScope(umbrellasRaw));
+  const umbrellasFor = (clientId: string): ClientAgentIdentity[] =>
+    umbrellasByClient.get(clientId) ?? NO_UMBRELLAS;
   // `description` here is the internal lab manifest and this array is serialized
   // into the payload the browser receives, rendered or not — so client viewers
   // get the written blurb, or the keyed fallback, never the manifest.
@@ -218,7 +240,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         clientId: r.clientId,
         clientName: single ? undefined : nameOf(r.clientId),
         at: r.nextRunAt,
-        productName: r.agentName,
+        productName: resolveContentIdentity({ scheduledRun: r }, umbrellasFor(r.clientId)).label,
         productColor: r.agentColor,
         productIcon: r.agentIcon,
         cadence: r.cadence,
@@ -260,7 +282,12 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         clientId: j.clientId,
         clientName: single ? undefined : nameOf(j.clientId),
         at: j.createdAt,
-        productName: j.agentName,
+        // The job alone, deliberately — not its assets. This card IS the run,
+        // so its fallback rung must stay the run's own recorded name; feeding
+        // the deliverables in would let an asset-derived label outrank it.
+        // The family rule still fires from the job's own `external.taskType`,
+        // which is what a managed "Social posts (IG/TikTok)" run carries.
+        productName: resolveContentIdentity({ job: j }, umbrellasFor(j.clientId)).label,
         productColor: agent?.color ?? "#FF6B2C",
         productIcon: agent?.icon ?? "Bot",
         jobStatus: j.status,
@@ -275,6 +302,10 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   const runs = [...scheduledEntries, ...pastEntries];
 
   // ── Post publish events (auto-placed + manually scheduled + published) ──
+  // No identity call here on purpose: a CalendarPost carries a title, a day and
+  // a kind, and names no agent at all. F147's second name entered this surface
+  // through the RUN cards above, which is where the resolver belongs. Give a
+  // post an agent line later and it takes the same call.
   const posts: CalendarPost[] = assets
     .map((a): CalendarPost | null => {
       const kind = postKind(a);
