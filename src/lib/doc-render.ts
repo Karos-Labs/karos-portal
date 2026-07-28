@@ -25,6 +25,32 @@ export function stripDocPreamble(content: string): string {
     .trim();
 }
 
+/**
+ * Does this text carry Markdown structure worth rendering?
+ *
+ * Guard for surfaces that show arbitrary agent output (asset content) where
+ * most items are plain captions: a caption must keep its exact line breaks and
+ * must not be reflowed, but a structured deliverable must never reach a client
+ * with its hash marks, pipes and asterisks on screen. Deliberately narrow —
+ * block-level marks plus `**bold**`, tables and inline code. Single-asterisk
+ * emphasis is NOT a signal (captions use `*` as a literal character far more
+ * often than as markup).
+ */
+export function looksLikeMarkdown(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return (
+    /^#{1,6}\s+\S/m.test(text) || // headings
+    /^[-*+]\s+\S/m.test(text) || // bullet list
+    /^\d+\.\s+\S[\s\S]*?^\d+\.\s+\S/m.test(text) || // ordered list (2+ items: a
+    // lone "2026. What a year" opening a caption is not a list)
+    /^>\s+\S/m.test(text) || // blockquote
+    /^\|.*\|\s*$/m.test(text) || // table row
+    /^---+\s*$/m.test(text) || // horizontal rule / frontmatter fence
+    /\*\*[^\n*]+\*\*/.test(text) || // bold
+    /`[^\n`]+`/.test(text) // inline code
+  );
+}
+
 /** Split a context doc into `## heading` sections, dropping empty/placeholder ones. */
 export function parseDocSections(content: string): DocSection[] {
   const clean = stripDocPreamble(content);

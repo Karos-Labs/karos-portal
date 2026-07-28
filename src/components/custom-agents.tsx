@@ -723,8 +723,8 @@ function RunCustomAgentModal({
           <Icon name="CheckCircle2" className="mx-auto h-8 w-8 text-success" />
           <p className="text-sm text-foreground">Run started</p>
           <p className="text-xs text-muted">
-            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Deliverables appear in your
-            Workspace archive once your Karos team approves them.
+            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Deliverables land in your
+            Workspace archive as soon as the run finishes, marked as drafts until your Karos team approves them.
           </p>
           <Button variant="subtle" onClick={onClose}>
             Done

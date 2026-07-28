@@ -11,6 +11,7 @@ import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
+import { looksLikeMarkdown, renderFullDoc } from "@/lib/doc-render";
 import { markAssetPostedAction } from "@/lib/actions";
 import { PLATFORM_LABELS } from "@/lib/integrations/platforms";
 import { assetImages } from "@/lib/asset-images";
@@ -283,7 +284,7 @@ export function AssetDetailModal({
                   the card's hover-revealed icon. */}
               <CopyCaptionButton asset={asset} variant="full" />
             </div>
-            <p className="whitespace-pre-wrap text-sm text-foreground/90">{asset.content}</p>
+            <AssetContentBody content={asset.content} />
           </div>
         )}
 
@@ -331,6 +332,29 @@ export function AssetDetailModal({
       </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * The deliverable body for everything that isn't a parsed drafts batch.
+ *
+ * This modal is the only viewer a client can reach, so it may not print
+ * machine formatting on screen: an agent deliverable that carries Markdown
+ * structure (headings, bullets, tables, bold) goes through the same
+ * client-safe renderer the context docs use — which HTML-escapes the source
+ * before it touches any markup. Plain captions keep the verbatim
+ * whitespace-pre-wrap paragraph: their line breaks are the content, and
+ * reflowing them would misrepresent what gets posted.
+ */
+function AssetContentBody({ content }: { content: string }) {
+  if (!looksLikeMarkdown(content)) {
+    return <p className="whitespace-pre-wrap text-sm text-foreground/90">{content}</p>;
+  }
+  return (
+    <div
+      className="break-words [&_code]:break-all [&_table]:min-w-0"
+      dangerouslySetInnerHTML={{ __html: renderFullDoc(content) }}
+    />
   );
 }
 
