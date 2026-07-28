@@ -20,6 +20,7 @@ import {
   classifyIntent,
   dedupeNearDuplicates,
   normalizeBrandKey,
+  normalizeEvidence,
   rootDomain,
   selectByIntentQuota,
   computeCitationLeaderboard,
@@ -169,7 +170,10 @@ function sanitizeChecks(raw: unknown): SeoGeoCheck[] {
       id: c.id,
       bucket: typeof c.bucket === "string" ? c.bucket : "",
       label: typeof c.label === "string" ? c.label : c.id,
-      evidence: typeof c.evidence === "string" ? c.evidence : "",
+      // QA F3a: the model's free-text evidence is markdown-stripped and
+      // sentence-cased HERE (server boundary), never at render — it lands on the
+      // persisted snapshot and every downstream surface reads it.
+      evidence: normalizeEvidence(typeof c.evidence === "string" ? c.evidence : ""),
       norm: Math.min(Math.max(norm, 0), 1),
       tier: VALID_TIERS.has(String(c.tier)) ? (c.tier as SeoGeoCheck["tier"]) : "PENDING",
       confidence: VALID_CONFIDENCE.has(String(c.confidence))

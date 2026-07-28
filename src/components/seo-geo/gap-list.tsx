@@ -44,6 +44,11 @@ function GapCard({ gap }: { gap: GapView }) {
             <Badge tone="neutral">{gap.channelLabel}</Badge>
             <span className="text-sm font-medium text-foreground">{gap.title}</span>
           </span>
+          {open && gap.technicalLabel && (
+            <span className="mt-0.5 block font-mono text-[10px] text-muted-2">
+              {gap.technicalLabel}
+            </span>
+          )}
           {!open && (
             <span className="mt-1 block truncate text-xs text-muted">
               What we found: {gap.foundLine}
@@ -65,10 +70,12 @@ function GapCard({ gap }: { gap: GapView }) {
             <p className="mt-0.5 text-xs text-muted">{gap.foundLine}</p>
             {gap.evidence && <p className="mt-0.5 text-xs text-muted-2">{gap.evidence}</p>}
           </div>
-          <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">What good looks like</p>
-            <p className="mt-0.5 text-xs text-muted">{gap.goalLine}</p>
-          </div>
+          {gap.goalLine && (
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">What good looks like</p>
+              <p className="mt-0.5 text-xs text-muted">{gap.goalLine}</p>
+            </div>
+          )}
           <div>
             <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">How it gets fixed</p>
             {gap.fixArea && (

@@ -23,6 +23,7 @@ import {
   computeVisibilityGaps,
   computeVisibilityIndex,
   findMention,
+  normalizeEvidence,
   ratioClamp,
   rootDomain,
   tagPromptIntents,
@@ -422,6 +423,22 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
       expect(labels.has(rec.description)).toBe(false);
       expect(rec.description.length).toBeGreaterThan(10);
     }
+  });
+
+  /** QA F3a: markdown + free-form casing from the audit model, normalized once at
+   *  the server boundary so no downstream surface renders raw model formatting. */
+  it("normalizes audit-model evidence at the persistence boundary", () => {
+    expect(normalizeEvidence("**robots.txt** (fetched today) has _no_ `Disallow` for ClaudeBot")).toBe(
+      "Robots.txt (fetched today) has no Disallow for ClaudeBot.",
+    );
+    expect(normalizeEvidence("- homepage title is 74 chars:  'Acme — the best'")).toBe(
+      "Homepage title is 74 chars: 'Acme — the best'",
+    );
+    expect(normalizeEvidence("## Findings\n\nsitemap returns 404")).toBe("Findings sitemap returns 404.");
+    expect(normalizeEvidence("[the sitemap](https://x.com/sitemap.xml) is valid")).toBe(
+      "The sitemap is valid.",
+    );
+    expect(normalizeEvidence("   ")).toBe("");
   });
 
   it("falls back to neutral copy for an id the model invented, never its own label", () => {

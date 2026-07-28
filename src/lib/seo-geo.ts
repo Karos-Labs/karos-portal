@@ -748,6 +748,33 @@ function severityFromLift(lift: number): GapSeverity {
   return "low";
 }
 
+/**
+ * Normalize an audit-model evidence string before it is persisted (QA F3a).
+ * The model writes free-text markdown ("**robots.txt** (fetched today) has _no_
+ * `Disallow` for ClaudeBot"); this strips the markup, collapses whitespace,
+ * sentence-cases the opening and gives it terminal punctuation, so no raw model
+ * formatting survives into any rendered surface. Pure — applied at the server
+ * boundary in intel/seo-geo.ts sanitizeChecks, never at render.
+ */
+export function normalizeEvidence(raw: string): string {
+  let s = (raw ?? "").trim();
+  if (!s) return "";
+  s = s
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1") // [text](url) / ![alt](src) → text
+    .replace(/`{1,3}([^`]*)`{1,3}/g, "$1") // `code` → code
+    .replace(/\*\*([^*]+)\*\*/g, "$1") // **bold** → bold
+    .replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,;:!?]|$)/g, "$1$2") // *em* / _em_ → em
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, "") // list bullets
+    .replace(/^\s*#{1,6}\s*/gm, "") // headings
+    .replace(/^\s*>\s*/gm, "") // blockquote markers
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return "";
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  if (!/[.!?)\]"']$/.test(s)) s += ".";
+  return s;
+}
+
 /** Derive the lever from an a3 rec id prefix (BOTH-* → BOTH), falling back per registry. */
 export function leverFromId(id: string, fallback: Lever): Lever {
   const prefix = id.split(/[-:]/)[0].toUpperCase();

@@ -237,6 +237,47 @@ describe("leak guard (SCRUM-52 fix 1)", () => {
   });
 });
 
+describe("gap copy (QA F3)", () => {
+  it("resolves the card title through REC_COPY and demotes the registry label", () => {
+    const [view] = buildGapViews(
+      [gap({ id: "SEO-04a", title: "LCP p75 ≤ 2.5s", benchmark: "LCP p75 ≤ 2.5s" })],
+      "c",
+    );
+    expect(view.title).toBe("Speed up how fast your pages appear");
+    expect(view.technicalLabel).toBe("LCP p75 ≤ 2.5s");
+  });
+
+  it("drops the goal line when the benchmark just repeats the title", () => {
+    // computeCheckGaps sets benchmark = def.label = title for EVERY site check,
+    // so "what good looks like" printed the card title back verbatim.
+    const [same] = buildGapViews(
+      [gap({ id: "SEO-04a", title: "LCP p75 ≤ 2.5s", benchmark: "LCP p75 ≤ 2.5s" })],
+      "c",
+    );
+    expect(same.goalLine).toBeNull();
+
+    const [differs] = buildGapViews(
+      [gap({ id: "GEO-35:chatgpt", title: "Low named-mention rate", benchmark: "≥ 30% of category answers" })],
+      "c",
+    );
+    expect(differs.goalLine).toBe("≥ 30% of category answers");
+  });
+
+  it("never carries an unmapped model label into the title when copy exists", () => {
+    for (const def of [...SEO_CHECKS, ...GEO_READINESS_CHECKS]) {
+      const [view] = buildGapViews([gap({ id: def.id, title: def.label, benchmark: def.label })], "c");
+      expect(view.title).not.toBe(def.label);
+      expect(view.goalLine).toBeNull();
+    }
+  });
+
+  it("still shows something for an id with no copy at all", () => {
+    const [view] = buildGapViews([gap({ id: "GEO-999", title: "Vibes score" })], "c");
+    expect(view.title).toBe("Vibes score");
+    expect(view.technicalLabel).toBeNull();
+  });
+});
+
 describe("funnel chip (SCRUM-52 amendment)", () => {
   it("routes known rec ids to their executing agent on existing-product gaps", () => {
     const views = buildGapViews(

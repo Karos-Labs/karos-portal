@@ -16,6 +16,7 @@ import {
   ENGINE_LABELS,
   ENGINE_PROVIDERS,
   GEO_READINESS_CHECKS,
+  REC_COPY,
   SEO_CHECKS,
   brandKeys,
   computeCheckScore,
@@ -651,6 +652,10 @@ export interface GapView {
   /** React key only. Never rendered. */
   key: string;
   title: string;
+  /** The registry's own check label, when it differs from the resolved plain-English
+   *  title. Staff-only surface (F1 demoted GapList behind an isClientViewer gate), so
+   *  the technical precision stays available without becoming a card headline (F3c). */
+  technicalLabel: string | null;
   severityLabel: string;
   severityTone: Tone;
   channel: GapChannel;
@@ -658,7 +663,9 @@ export interface GapView {
   foundLine: string;
   /** Extra evidence when it adds detail beyond foundLine. */
   evidence: string | null;
-  goalLine: string;
+  /** null when the benchmark is just the title again (F3b) — the registry sets
+   *  `benchmark = def.label = title` for every site check, so it always was. */
+  goalLine: string | null;
   fixArea: { label: string; gloss: string } | null;
   fixRoute: string;
   /** SCRUM-52 amendment: funnel into the executing agent. */
@@ -744,16 +751,24 @@ export function buildGapViews(gaps: VisibilityGap[], clientId: string): GapView[
       const severity = SEVERITY_VIEW[g.severity] ?? SEVERITY_VIEW.low;
       const channel = CHANNEL_VIEW[g.lever] ?? CHANNEL_VIEW.BOTH;
       const agentLabel = g.delivery === "existing-product" ? agentLabelFor(g) : null;
+      // F3c: the registry/model label is never the headline. REC_COPY covers every
+      // registry id (pinned in seo-geo.test.ts); the raw title is the last resort and
+      // is demoted to a secondary technical line when the lookup succeeds.
+      const copy = REC_COPY[g.id.split(":")[0]];
+      const title = copy?.title ?? g.title;
       return {
         key: `${g.id}-${i}`,
-        title: g.title,
+        title,
+        technicalLabel: g.title && g.title !== title ? g.title : null,
         severityLabel: severity.label,
         severityTone: severity.tone,
         channel: channel.channel,
         channelLabel: channel.label,
         foundLine: g.measured,
         evidence: g.evidence && g.evidence !== g.measured ? g.evidence : null,
-        goalLine: g.benchmark,
+        // F3b: `benchmark` is `def.label` for every site check, i.e. the same string
+        // as the title — the existing evidence-vs-measured guard, applied here too.
+        goalLine: g.benchmark && g.benchmark !== g.title && g.benchmark !== title ? g.benchmark : null,
         fixArea: FIX_AREAS[g.fixAction] ?? null,
         fixRoute: FIX_ROUTES[g.delivery] ?? FIX_ROUTE_DEFAULT,
         agentChip: agentLabel
