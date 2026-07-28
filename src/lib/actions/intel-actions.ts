@@ -25,6 +25,7 @@ import { requireStaff, requireAdmin, logActivity, logGenerationFailure } from ".
 import { MODELS } from "@/lib/constants";
 import { stripPipelineMarkers } from "@/lib/doc-render";
 import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
+import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
 import {
   computeFirstIntelScheduleRun,
   clampIntervalMonths,
@@ -254,7 +255,7 @@ export async function generateIntelReportAction(
         type: "INTEL_GENERATION",
         title: "Intel Report generated",
         description: `Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical)${ctxNote}`,
-        actor: "System AI",
+        actor: SYSTEM_AI_ACTOR_NAME,
         actorRole: "system",
       });
     } catch (e) {

@@ -28,15 +28,33 @@
  */
 export const RUNWAY_ACTOR_NAME = "Runway autopilot";
 
+/** The name the AI-authored rows are signed with (intel, competitor analysis). */
+export const SYSTEM_AI_ACTOR_NAME = "System AI";
+/** The cron that fires due scheduled runs, agency-billed. */
+export const SCHEDULER_ACTOR_NAME = "Scheduler";
+/** The same cron when the run is billed to the client's own credits. */
+export const CLIENT_SCHEDULE_ACTOR_NAME = "Client schedule";
+
 /**
  * Internal actors that must never reach a client's timeline under their own
  * name. Matched case-insensitively on the stored string, because that is all
  * the row carries.
+ *
+ * Every writer of one of these names imports it from here rather than typing
+ * the string, and a guard test (activity-actors.test.ts) fails on any bare
+ * `actor: "…"` literal outside the client-safe display names. A registry that
+ * writers can drift away from is a registry that redacts the names nobody uses
+ * any more.
  */
+export const INTERNAL_ACTOR_NAMES: readonly string[] = [
+  RUNWAY_ACTOR_NAME,
+  SYSTEM_AI_ACTOR_NAME,
+  SCHEDULER_ACTOR_NAME,
+  CLIENT_SCHEDULE_ACTOR_NAME,
+];
+
 const INTERNAL_ACTORS: ReadonlySet<string> = new Set(
-  [RUNWAY_ACTOR_NAME, "System AI", "Scheduler", "Client schedule"].map((name) =>
-    name.toLowerCase(),
-  ),
+  INTERNAL_ACTOR_NAMES.map((name) => name.toLowerCase()),
 );
 
 /** What a client-facing row says instead — the same name the job rows use. */

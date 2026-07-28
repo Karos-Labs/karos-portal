@@ -9,6 +9,7 @@ import { logActivity, logGenerationFailure } from "@/lib/actions/_shared";
 import { requireCronSecret } from "@/lib/cron-auth";
 import { computeNextIntelScheduleRun } from "@/lib/intel-schedule";
 
+import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
 export const maxDuration = 300;
 
 /**
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
         type: "INTEL_GENERATION",
         title: "Intel Report generated (scheduled)",
         description: "Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical) - recurring schedule",
-        actor: "System AI",
+        actor: SYSTEM_AI_ACTOR_NAME,
         actorRole: "system",
       });
       results.push({ clientId: client.id, status: "ran" });

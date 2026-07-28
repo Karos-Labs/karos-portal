@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { AgentMark } from "@/components/agent-identity";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { CLIENT_SAFE_ACTOR, SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
 import { addActivityNoteAction } from "@/lib/actions";
 import type { ActivityEventType, ClientReport, Job, Role } from "@/lib/types";
 
@@ -135,7 +136,7 @@ function clientEventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
         title: `${j.agentName} couldn't finish a run`,
         // Already routed through clientSafeRefusal at the server boundary.
         description: j.error ?? undefined,
-        actor: "Karos",
+        actor: CLIENT_SAFE_ACTOR,
         actorRole: "system",
         agentIdentity: j.agentName,
       });
@@ -153,7 +154,7 @@ function clientEventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
       timestamp: day.at,
       type: "CAMPAIGN_CREATED",
       title: `${day.agentName} worked on your content`,
-      actor: "Karos",
+      actor: CLIENT_SAFE_ACTOR,
       actorRole: "system",
       agentIdentity: day.agentName,
     });
@@ -162,7 +163,18 @@ function clientEventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
   return events;
 }
 
-function eventsFromReport(report: ClientReport | null): TimelineEvent[] {
+/**
+ * The one row on this timeline with no stored actor.
+ *
+ * Everything else arrives already redacted from the server projection, which is
+ * where a STORED actor has to be decided — a name redacted after the payload
+ * shipped has already shipped. This row is derived here, from the report prop,
+ * and it signed itself "System AI": an INTERNAL_ACTORS name, reaching a
+ * client's timeline through the one door that projection does not cover. Same
+ * registry, same answer; the split is by viewer, so staff still see which
+ * system wrote it.
+ */
+function eventsFromReport(report: ClientReport | null, viewerIsClient: boolean): TimelineEvent[] {
   if (!report) return [];
   return [
     {
@@ -171,7 +183,7 @@ function eventsFromReport(report: ClientReport | null): TimelineEvent[] {
       type: "INTEL_GENERATION" as ActivityEventType,
       title: "Research report ready",
       description: `Full competitive analysis · Score: ${report.overallScore}/100 (${report.overallGrade}) · ${report.reportDate}`,
-      actor: "System AI",
+      actor: viewerIsClient ? CLIENT_SAFE_ACTOR : SYSTEM_AI_ACTOR_NAME,
       actorRole: "system" as const,
     },
   ];
@@ -194,7 +206,7 @@ function buildEvents(
   // Deduplicate: if an INTEL_GENERATION log already exists for a date close to the
   // report's createdAt (within 5 min), don't also show the derived report event.
   const hasIntelLog = logEvents.some((e) => e.type === "INTEL_GENERATION");
-  const reportEvents = hasIntelLog ? [] : eventsFromReport(report);
+  const reportEvents = hasIntelLog ? [] : eventsFromReport(report, viewerIsClient);
 
   const jobEvents =
     viewerIsClient ? clientEventsFromJobs(jobs) : eventsFromJobs(jobs);

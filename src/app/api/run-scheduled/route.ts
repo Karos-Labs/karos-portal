@@ -4,6 +4,7 @@ import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { computeNextRun } from "@/lib/scheduled-runs";
 import type { AppUser, PlannedScheduledRun } from "@/lib/types";
 
+import { CLIENT_SCHEDULE_ACTOR_NAME, SCHEDULER_ACTOR_NAME } from "@/lib/activity-actors";
 export const maxDuration = 120;
 
 /** A stored refusal is one readable sentence on the schedule row, not a log. */
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
     const stored = await getUser(run.createdBy);
     const user = stored ?? ({
       uid: run.createdBy || "scheduler",
-      name: run.billClientCredits ? "Client schedule" : "Scheduler",
+      name: run.billClientCredits ? CLIENT_SCHEDULE_ACTOR_NAME : SCHEDULER_ACTOR_NAME,
       ...(run.billClientCredits
         ? { role: "CLIENT_USER", clientId: run.clientId }
         : { role: "KAROS_ADMIN" }),
