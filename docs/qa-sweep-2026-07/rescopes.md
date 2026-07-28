@@ -1214,3 +1214,10 @@ Verbatim directives:
 6. APPROVE MECHANISM: verify + surface what approve actually does (persist →
    activity log → staff execute) so the flow is understood.
 Then: handover to Tomer includes the methodology as his SEO/geo section.
+
+- **Change Log preservation** — the pipeline now carries an existing
+  `## Change Log` forward across a regeneration (`src/lib/intel/changelog.ts`,
+  wired at the Phase 4 doc-write path): the generator's output is stripped of any
+  log it invented, then the stored document's section is re-attached, matched on
+  docType + tier. `refresh-apply-core.ts`'s "the pipeline drops it" warning is
+  therefore stale — retiring it is the ops-builder's round.
