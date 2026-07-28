@@ -155,6 +155,19 @@ export function buildBrandVoiceSection(g: BrandingGuidelines): string {
   return lines.join("\n");
 }
 
+/**
+ * Insert (or refresh) the auto-synced block inside a stored context document.
+ *
+ * Landing point, in order: an existing block is replaced where it stands; else
+ * the block goes after the `# ` title; else after the YAML frontmatter; else at
+ * the top.
+ *
+ * The title step is the one that matters. Inserting between the frontmatter and
+ * the title put a `## ` heading ABOVE the title, and stripDocPreamble's title
+ * rule is anchored at the top of the document — so the title stopped being
+ * stripped, fell into the first section's body, and the client read it there
+ * with its hash mark. Below the title, the rule reaches it again.
+ */
 export function injectBrandVoiceSection(content: string, section: string): string {
   const START = "<!-- BRAND_SYNC_START -->";
   const END = "<!-- BRAND_SYNC_END -->";
@@ -162,6 +175,11 @@ export function injectBrandVoiceSection(content: string, section: string): strin
   const endIdx = content.indexOf(END);
   if (startIdx !== -1 && endIdx !== -1) {
     return content.slice(0, startIdx) + section + content.slice(endIdx + END.length);
+  }
+  const titleMatch = content.match(/^[\s\S]*?^#[ \t]+.+\r?\n/m);
+  if (titleMatch) {
+    const offset = titleMatch[0].length;
+    return content.slice(0, offset) + "\n" + section + "\n\n" + content.slice(offset);
   }
   const fmMatch = content.match(/^---[\s\S]*?---\n/);
   if (fmMatch) {

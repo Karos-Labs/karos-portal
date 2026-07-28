@@ -284,6 +284,14 @@ function injectBrandVoiceSection(content: string, section: string): string {
   if (startIdx !== -1 && endIdx !== -1) {
     return content.slice(0, startIdx) + section + content.slice(endIdx + END.length);
   }
+  // Below the `# ` title, not above it — a `## ` heading above the title stops
+  // stripDocPreamble reaching the title, which then reads as body text inside
+  // the first section. Mirrors src/lib/branding.ts.
+  const titleMatch = content.match(/^[\s\S]*?^#[ \t]+.+\r?\n/m);
+  if (titleMatch) {
+    const offset = titleMatch[0].length;
+    return content.slice(0, offset) + "\n" + section + "\n\n" + content.slice(offset);
+  }
   const fmMatch = content.match(/^---[\s\S]*?---\n/);
   if (fmMatch) {
     const offset = fmMatch[0].length;

@@ -12,6 +12,7 @@ vi.mock("@/lib/data", () => ({
 }));
 
 import type { BrandingGuidelines } from "@/lib/types";
+import { stripDocPreamble } from "@/lib/doc-render";
 import {
   normalizeHex,
   brandingToContextDocContent,
@@ -217,6 +218,34 @@ describe("injectBrandVoiceSection", () => {
     const result = injectBrandVoiceSection(content, newSection);
     expect(result.startsWith("BEFORE\n")).toBe(true);
     expect(result.endsWith("AFTER")).toBe(true);
+  });
+
+  /**
+   * Below the title, not above it. The block opens with a `## ` heading, and a
+   * `## ` above the `# ` title puts the title out of reach of
+   * stripDocPreamble's title rule, which is anchored at the top of the
+   * document. The title then fell into the first section's body and the client
+   * read it there, hash mark and all.
+   */
+  const TITLED_DOC =
+    "---\nmodule: brand-voice\n---\n\n# Brand Voice — Acme\n\n## Voice in one line\nWarm.";
+
+  it("inserts after the document title, not above it", () => {
+    const result = injectBrandVoiceSection(TITLED_DOC, newSection);
+    expect(result.indexOf("# Brand Voice — Acme")).toBeLessThan(
+      result.indexOf("<!-- BRAND_SYNC_START -->"),
+    );
+    expect(result.indexOf("<!-- BRAND_SYNC_END -->")).toBeLessThan(
+      result.indexOf("## Voice in one line"),
+    );
+    expect(result).toContain("Warm.");
+  });
+
+  it("leaves the title where the preamble strip can still reach it", () => {
+    const clean = stripDocPreamble(injectBrandVoiceSection(TITLED_DOC, newSection));
+    expect(clean).not.toContain("Brand Voice — Acme");
+    expect(clean).not.toMatch(/^#[ \t]/m); // no H1 left to render as body text
+    expect(clean).toContain("Voice in one line");
   });
 
   it("inserts after YAML frontmatter when present (no existing block)", () => {
