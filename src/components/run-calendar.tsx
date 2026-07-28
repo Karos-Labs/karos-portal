@@ -551,15 +551,17 @@ export function RunCalendar({
   return (
     <div className="space-y-4">
       <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04]">
+        {/* Header — wraps as a row before it wraps a control's label. Nothing
+            here had a minimum width, so at laptop width the primary action
+            broke first and read "Schedule a / run" beside a two-line heading. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04]">
               <Icon name="CalendarClock" className="h-3.5 w-3.5 text-foreground/70" />
             </div>
-            <div>
-              <p className="text-sm font-medium leading-tight">Agent Calendar</p>
-              <p className="text-[11px] text-muted-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium leading-tight">Agent Calendar</p>
+              <p className="truncate text-[11px] text-muted-2">
                 {upcomingCount === 0 && pastCount === 0
                   ? "No runs yet"
                   : [
@@ -570,19 +572,24 @@ export function RunCalendar({
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
             {canSchedule && (
-              <Button size="sm" variant="accent" onClick={() => setScheduleOpen(true)}>
+              <Button
+                size="sm"
+                variant="accent"
+                className="shrink-0 whitespace-nowrap"
+                onClick={() => setScheduleOpen(true)}
+              >
                 <Icon name="Plus" className="h-3.5 w-3.5" />
                 Schedule a run
               </Button>
             )}
             <div className="flex items-center gap-1">
-              <button onClick={prevMonth} className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
+              <button onClick={prevMonth} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
                 <Icon name="ChevronLeft" className="h-4 w-4" />
               </button>
-              <span className="w-[130px] text-center text-sm font-medium">{MONTH_NAMES[viewMonth]} {viewYear}</span>
-              <button onClick={nextMonth} className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
+              <span className="w-[130px] shrink-0 whitespace-nowrap text-center text-sm font-medium">{MONTH_NAMES[viewMonth]} {viewYear}</span>
+              <button onClick={nextMonth} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
                 <Icon name="ChevronRight" className="h-4 w-4" />
               </button>
             </div>
