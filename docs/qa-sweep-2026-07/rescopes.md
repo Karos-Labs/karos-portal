@@ -483,3 +483,4 @@ starting. Updated by the orchestrator after each verification gate.
   :155) drop $29/mo when WORKSPACE merges.
 - Accepted: F104 static reset clause (no computed dates — single-phrasing rule);
   admin sees client blocked strip + support button (nit, end-loop).
+- Browser-floor note (handover): F126 fix uses regex lookbehind in a module-scope literal — parse-throws (blank page) below Safari 16.4 (Mar 2023). Acceptable for this portal; document as the explicit browser floor.
