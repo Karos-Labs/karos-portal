@@ -256,6 +256,11 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
 
   const staffAgents = customAgents.filter((a) => a.enabled).map(toSummary);
   const agentSetup = await buildAgentSetup(id, staffAgents);
+  const staffRuns = toRunRows(jobs, true);
+  // ClientCustomAgents renders nothing at all with no agents and no history, so
+  // a brand-new client showed staff a header and then white space to the bottom
+  // of the viewport — no cards, no empty state, no next action.
+  const nothingToShow = staffAgents.length === 0 && staffRuns.length === 0;
 
   return (
     <>
@@ -275,22 +280,44 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           </div>
         }
       />
-      {agentServiceConfigured ? (
+      {!agentServiceConfigured ? (
+        <EmptyState
+          icon={<Icon name="Bot" className="h-7 w-7" />}
+          title="Agent service not configured"
+          description="Run controls are unavailable until the agent-service environment variables are set. Existing deliverables and calendars above are unaffected."
+        />
+      ) : nothingToShow ? (
+        <EmptyState
+          icon={<Icon name="Bot" className="h-7 w-7" />}
+          title="No agents available for this client yet"
+          description={
+            client.agentsRepoSlug
+              ? "No custom agent in the library is enabled, so there is nothing to run here. Import or enable one on the Agents page."
+              : "No custom agent in the library is enabled, so there is nothing to run here. Import or enable one on the Agents page — and set this client's lab-repo slug in Settings, or runs go out without their client context."
+          }
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <a href="/agents" className="text-xs text-neon hover:underline">
+                Import or enable an agent →
+              </a>
+              {!client.agentsRepoSlug && (
+                <a href={`/clients/${id}/settings`} className="text-xs text-muted hover:text-foreground">
+                  Set the lab-repo slug →
+                </a>
+              )}
+            </div>
+          }
+        />
+      ) : (
         <ClientCustomAgents
           clientId={id}
           agents={staffAgents}
-          runs={toRunRows(jobs, true)}
+          runs={staffRuns}
           schedules={toScheduleRows(scheduledRuns, false)}
           contextItems={contextItems}
           viewerIsClient={false}
           agentSetup={agentSetup}
           viewer={{ name: user.name, email: user.email }}
-        />
-      ) : (
-        <EmptyState
-          icon={<Icon name="Bot" className="h-7 w-7" />}
-          title="Agent service not configured"
-          description="Run controls are unavailable until the agent-service environment variables are set. Existing deliverables and calendars above are unaffected."
         />
       )}
     </>
