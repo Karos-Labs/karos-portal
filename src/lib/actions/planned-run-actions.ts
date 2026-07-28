@@ -13,6 +13,7 @@ import {
 } from "@/lib/data";
 import { CREDIT_COSTS, isBillableClientActor, scheduledAgentWeeklyCost } from "@/lib/credits";
 import { computeNextRun, weeklyCadenceDays } from "@/lib/scheduled-runs";
+import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
 import type { PlannedRunCadence } from "@/lib/types";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
 
@@ -34,6 +35,13 @@ export interface PlannedRunInput {
   dayOfMonth?: number;
   /** "once" cadence: explicit target time (epoch millis). */
   runAt?: number;
+  /**
+   * IANA zone the hour/minute are meant in — send the browser's
+   * (`Intl.DateTimeFormat().resolvedOptions().timeZone`) so the form's preview
+   * and the stored fire time are the same clock. Falls back to the server's own
+   * zone, which is what happened implicitly before.
+   */
+  timeZone?: string;
 }
 
 export interface ClientAgentScheduleInput {
@@ -44,6 +52,13 @@ export interface ClientAgentScheduleInput {
   prompt: string;
   hour?: number;
   minute?: number;
+  /** IANA zone the hour/minute are meant in — see PlannedRunInput.timeZone. */
+  timeZone?: string;
+}
+
+/** The zone a schedule's wall clock is stored in: the caller's, else this runtime's. */
+function resolveTimeZone(requested: string | undefined): string {
+  return isValidTimeZone(requested) ? requested : runtimeTimeZone();
 }
 
 /** Staff can act on a client only if admin, or an employee assigned to it. */
@@ -74,6 +89,7 @@ export async function createPlannedRunAction(
   }
 
   const now = Date.now();
+  const timeZone = resolveTimeZone(input.timeZone);
   let nextRunAt: number;
   let hour: number;
   let minute: number;
@@ -85,15 +101,32 @@ export async function createPlannedRunAction(
       return { error: "Pick a future date and time for a one-off run." };
     }
     nextRunAt = input.runAt;
-    const d = new Date(input.runAt);
-    hour = d.getHours();
-    minute = d.getMinutes();
+    // A one-off already carries the right instant (the browser resolved the
+    // datetime-local field). Only the PRINTED hour was wrong before, because it
+    // was re-derived here in the server's zone; read it back in the caller's.
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(input.runAt));
+    const at = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+    hour = at("hour") % 24;
+    minute = at("minute");
   } else {
     hour = clampInt(input.hour ?? 9, 0, 23);
     minute = clampInt(input.minute ?? 0, 0, 59);
     if (input.cadence === "weekly") weekday = clampInt(input.weekday ?? 1, 0, 6);
     if (input.cadence === "monthly") dayOfMonth = clampInt(input.dayOfMonth ?? 1, 1, 31);
-    nextRunAt = computeNextRun({ cadence: input.cadence, hour, minute, weekday, dayOfMonth, from: now });
+    nextRunAt = computeNextRun({
+      cadence: input.cadence,
+      hour,
+      minute,
+      weekday,
+      dayOfMonth,
+      from: now,
+      timeZone,
+    });
   }
 
   const id = await createPlannedScheduledRun({
@@ -106,6 +139,7 @@ export async function createPlannedRunAction(
     cadence: input.cadence,
     hour,
     minute,
+    timeZone,
     ...(weekday != null ? { weekday } : {}),
     ...(dayOfMonth != null ? { dayOfMonth } : {}),
     nextRunAt,
@@ -170,12 +204,14 @@ export async function configureClientAgentScheduleAction(
   const minute = clampInt(input.minute ?? 0, 0, 59);
   const weekdays = weeklyCadenceDays(postsPerWeek);
   const now = Date.now();
+  const timeZone = resolveTimeZone(input.timeZone);
   const nextRunAt = computeNextRun({
     cadence: "weekly",
     hour,
     minute,
     weekdays,
     from: now,
+    timeZone,
   });
   const billClientCredits = isBillableClientActor(user);
   const weeklyCredits = scheduledAgentWeeklyCost(
@@ -196,6 +232,7 @@ export async function configureClientAgentScheduleAction(
     cadence: "weekly" as const,
     hour,
     minute,
+    timeZone,
     weekday: weekdays[0],
     weekdays,
     outputsPerRun,
@@ -235,14 +272,24 @@ export async function configureClientAgentScheduleAction(
   return { id, weeklyCredits };
 }
 
-/** Pause, resume, or cancel a scheduled run. Clients may control their own. */
+/**
+ * Pause, resume, or retire a scheduled run.
+ *
+ * Clients may pause and resume their own — that is reversible, and the calendar
+ * and the AI Agents page both offer it. "completed" is NOT client-callable:
+ * it retires the schedule and drops it off the calendar for good, which is the
+ * same irreversible outcome as a delete wearing a different word.
+ */
 export async function setPlannedRunStatusAction(
   id: string,
   status: "active" | "paused" | "completed",
 ): Promise<{ error?: string }> {
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
-  await requireClientAccess(run.clientId);
+  const user = await requireClientAccess(run.clientId);
+  if (user.role === "CLIENT_USER" && status !== "paused" && status !== "active") {
+    return { error: "Ask your Karos contact to retire this schedule." };
+  }
 
   const patch: Record<string, unknown> = { status, updatedAt: Date.now() };
   // Resuming a recurring run: re-anchor its next fire to the future so a stale
@@ -256,6 +303,8 @@ export async function setPlannedRunStatusAction(
       weekdays: run.weekdays,
       dayOfMonth: run.dayOfMonth,
       from: Date.now(),
+      // Re-anchor in the zone the schedule was set in, not this container's.
+      ...(run.timeZone ? { timeZone: run.timeZone } : {}),
     });
   }
   await updatePlannedScheduledRun(id, patch);
@@ -263,11 +312,15 @@ export async function setPlannedRunStatusAction(
   return {};
 }
 
-/** Deletes a scheduled run outright. Clients may delete their own. */
+/**
+ * Deletes a scheduled run outright. STAFF ONLY — a client's undo for a deleted
+ * schedule is a staff member, so the UI's client-facing controls stop at Pause
+ * and the server enforces the same rule rather than trusting the button.
+ */
 export async function deletePlannedRunAction(id: string): Promise<{ error?: string }> {
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
-  await requireClientAccess(run.clientId);
+  await requireStaff();
   await deletePlannedScheduledRun(id);
   revalidatePath("/calendar");
   return {};

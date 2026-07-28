@@ -1,7 +1,18 @@
-import { listAssets, listClients, listCustomAgents, listJobs, listPlannedScheduledRuns } from "@/lib/data";
+import Link from "next/link";
+import {
+  listAssets,
+  listClientIntegrations,
+  listClients,
+  listCustomAgents,
+  listJobs,
+  listPlannedScheduledRuns,
+} from "@/lib/data";
 import { assetImages } from "@/lib/asset-images";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
-import { describeCadence } from "@/lib/scheduled-runs";
+import { integrationIsUsable } from "@/lib/integration-status";
+import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
+import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
 import { PageHeader, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
@@ -12,10 +23,36 @@ import {
   type RunAssetView,
   type ScheduleAgentOption,
 } from "@/components/run-calendar";
-import type { Asset, AppUser } from "@/lib/types";
+import type { Asset, AppUser, AssetType } from "@/lib/types";
 
 // Jobs that have actually run (produced or attempted output).
 const PAST_JOB_STATUSES = new Set(["review", "approved", "delivered", "failed"]);
+
+/** Plain-English noun for what a run actually produced. */
+const OUTPUT_NOUN: Record<AssetType, [string, string]> = {
+  instagram_post: ["post", "posts"],
+  social_post: ["post", "posts"],
+  article: ["article", "articles"],
+  email: ["email", "emails"],
+  note: ["note", "notes"],
+};
+
+/**
+ * "drafted 8 posts" — composed from the run's own deliverables instead of
+ * echoing the record's internal summary text.
+ */
+function describeRunOutput(views: RunAssetView[]): string | undefined {
+  if (views.length === 0) return undefined;
+  const types = new Set(views.map((v) => v.type));
+  const [one, many] =
+    types.size === 1 ? OUTPUT_NOUN[[...types][0]] ?? ["item", "items"] : ["item", "items"];
+  return `${views.length} ${views.length === 1 ? one : many}`;
+}
+
+/** Titles come straight from the agent — a leading `#` or `**` is not a title. */
+function cleanTitle(title: string): string {
+  return stripInlineMarkdown(title.replace(/^#{1,6}\s+/, "")) || title;
+}
 
 function postKind(a: Asset): CalendarPost["kind"] | null {
   if (a.status === "published" && (a.scheduledAt != null || a.publishedAt != null)) return "published";
@@ -148,6 +185,11 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         productIcon: r.agentIcon,
         cadence: r.cadence,
         cadenceLabel: describeCadence(r),
+        // The zone the schedule's wall clock was set in. Sent to the browser so
+        // the chip's day bucket and printed time are computed there exactly as
+        // they were on the server — a schedule with no stored zone (written
+        // before the field existed) keeps the old runtime-local behaviour.
+        ...(r.timeZone ? { timeZone: r.timeZone, zoneLabel: shortZoneLabel(r.timeZone, r.nextRunAt) } : {}),
         prompt: r.prompt,
         ...(blurb ? { agentDescription: blurb } : {}),
       };
@@ -159,11 +201,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     .filter((j) => !(isClient && j.status === "failed")) // hide internal failures from clients
     .map((j) => {
       const agent = agentByName.get(j.agentName);
+      // Sanitized here, at the server boundary, not at render: slicing raw
+      // content shipped the run record's own bookkeeping — markdown syntax, the
+      // internal status word, the lab product code and the job hash — into the
+      // payload of the panel a client opens to see what ran.
       const views: RunAssetView[] = (assetsByJob.get(j.id) ?? []).map((a) => ({
         id: a.id,
         type: a.type,
-        title: a.title,
-        textPreview: (a.content ?? "").slice(0, 240),
+        title: cleanTitle(a.title),
+        textPreview: toPlainSummary(a.content, 240),
         images: assetImages(a),
       }));
       return {
@@ -176,6 +222,9 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         productColor: agent?.color ?? "#FF6B2C",
         productIcon: agent?.icon ?? "Bot",
         jobStatus: j.status,
+        ...(describeRunOutput(views) ? { outputSummary: describeRunOutput(views) } : {}),
+        // Job id is staff bookkeeping: a tooltip for them, absent for clients.
+        ...(isClient ? {} : { staffRef: `Job ${j.id}${agent ? ` · agent ${agent.id}` : ""}` }),
         assets: views,
         images: views.flatMap((v) => v.images),
       };
@@ -193,25 +242,92 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         assetId: a.id,
         clientId: a.clientId,
         clientName: single ? undefined : nameOf(a.clientId),
-        title: a.title,
+        title: cleanTitle(a.title),
         at,
         kind,
         images: assetImages(a),
-        textPreview: (a.content ?? "").slice(0, 160),
+        // Same leak class as the run cards above — same treatment.
+        textPreview: toPlainSummary(a.content, 160),
       };
     })
     .filter((p): p is CalendarPost => p != null);
 
+  // ── Manual push ("Publish Now") — staff only ────────────────────────
+  // The approve panel's "Manual push" tier tells the user they push the post
+  // live from the calendar, so the calendar's detail panel needs the control.
+  // publishAssetNowAction is requireStaff(), so this is built ONLY for staff —
+  // a client viewer's payload gains nothing. Integrations are read for the
+  // clients that actually own a pushable post, not for every client in scope.
+  let connectedPlatformsByClient: Record<string, string[]> | undefined;
+  if (!isClient) {
+    const pushableClientIds = [
+      ...new Set(
+        assets
+          .filter(
+            (a) =>
+              (a.status === "approved" || a.status === "scheduled") &&
+              a.publishMode !== "placeholder" &&
+              (PUBLISHABLE_PLATFORMS[a.type] ?? []).length > 0,
+          )
+          .map((a) => a.clientId),
+      ),
+    ];
+    if (pushableClientIds.length > 0) {
+      const perClient = await Promise.all(
+        pushableClientIds.map(async (id) => {
+          const integrations = await listClientIntegrations(id);
+          // Platform ids only — never the integration records, which carry
+          // decrypted OAuth credentials.
+          return [id, integrations.filter(integrationIsUsable).map((i) => i.platform)] as const;
+        }),
+      );
+      connectedPlatformsByClient = Object.fromEntries(perClient);
+    }
+  }
+
+  // ── Empty state ─────────────────────────────────────────────────────
+  // A month of blank squares under a header promising "what your agents will
+  // run" is a dead end: clicking a day does nothing, and nothing says where
+  // schedules come from. Clients CAN set one up — one item up the same rail —
+  // via configureClientAgentScheduleAction, so this hands off rather than
+  // apologising.
+  const scopedClientId = singleFilter?.clientId;
+  const isEmpty = runs.length + posts.length === 0;
+
   return (
     <>
       <PageHeader title={title} description={description} />
+      {isEmpty && scopedClientId && (
+        <div className="mb-4">
+          <EmptyState
+            icon={<Icon name="CalendarClock" className="h-7 w-7" />}
+            title="No runs on the calendar yet"
+            description="Schedules are set on the AI Agents page. Once an agent has one, its runs and everything they produce show up here."
+            action={
+              <Link
+                href={`/clients/${scopedClientId}/agents`}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-neon px-4 text-sm font-semibold text-accent-ink transition-all duration-200 hover:-translate-y-0.5"
+              >
+                <Icon name="Bot" className="h-4 w-4" />
+                Set up an agent schedule
+              </Link>
+            }
+          />
+        </div>
+      )}
       <RunCalendar
         runs={runs}
         posts={posts}
         assets={assets}
         canSchedule={canSchedule}
+        // Pausing is not a staff privilege — a client owns their own schedules
+        // and the server action already authorizes them. Deleting stays behind
+        // canSchedule.
+        canManageRuns
+
         clients={clientOptions}
         agents={agentOptions}
+        {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
         defaultClientId={defaultClientId}
       />
     </>

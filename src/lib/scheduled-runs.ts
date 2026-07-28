@@ -1,12 +1,24 @@
 /**
- * Pure scheduling maths for planned agent runs (ScheduledRun). Client-safe — no
- * server-only imports — so the schedule form can preview the next fire time and
- * the /api/run-scheduled cron can advance a recurring run with identical logic.
+ * Pure scheduling maths for planned agent runs (PlannedScheduledRun).
+ * Client-safe — no server-only imports — so the schedule form can preview the
+ * next fire time and the /api/run-scheduled cron can advance a recurring run
+ * with identical logic.
  *
- * All times are computed in the server's local timezone, matching how the
- * datetime-local form interprets times for staff (see lib/scheduling.ts).
+ * ── Timezone contract ────────────────────────────────────────────────────
+ * A schedule's INTENT is a wall clock: "weekly, Monday, 09:00". That intent is
+ * only meaningful paired with a zone, so PlannedScheduledRun carries
+ * `timeZone` (IANA) alongside hour/minute/weekday/dayOfMonth, and `nextRunAt`
+ * stays a DERIVED epoch-millis instant (repo convention: all timestamps are
+ * epoch millis).
+ *
+ * Every recompute site — create, cron advance, resume — must pass the stored
+ * zone, or the browser's preview and the server's stored instant disagree by
+ * the offset between the two runtimes (a hosted container is UTC; the team is
+ * not). Rows written before this field existed have no zone; they fall back to
+ * the runtime's local timezone, which is exactly the old behaviour.
  */
 
+import { localYMD, isValidTimeZone, weekdayOf, zonedWallToUtc } from "@/lib/run-cadence";
 import type { PlannedRunCadence } from "@/lib/types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -17,6 +29,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Not used for "once" — a one-off run stores its explicit target time directly.
  * Scans forward day by day (bounded) so month-length clamping and skipped
  * weekdays fall out naturally.
+ *
+ * With `timeZone` the walk happens over that zone's calendar days and each
+ * candidate wall clock is converted through the DST-correct helper shared with
+ * the other scheduler; without it the walk uses the runtime's local calendar
+ * (legacy rows only).
  */
 export function computeNextRun(opts: {
   cadence: Exclude<PlannedRunCadence, "once">;
@@ -26,12 +43,37 @@ export function computeNextRun(opts: {
   weekdays?: number[];
   dayOfMonth?: number;
   from?: number;
+  /** IANA zone the hour/minute are expressed in. */
+  timeZone?: string;
 }): number {
   const from = opts.from ?? Date.now();
   const weeklyDays =
     opts.weekdays && opts.weekdays.length > 0
       ? new Set(opts.weekdays)
       : new Set([opts.weekday ?? 1]);
+
+  if (isValidTimeZone(opts.timeZone)) {
+    const zone = opts.timeZone;
+    const start = localYMD(zone, from);
+    for (let i = 0; i < 400; i++) {
+      // Walk plain calendar dates. Date.UTC + i days never skips or repeats a
+      // date the way a local-time walk does across a DST transition.
+      const cursor = new Date(Date.UTC(start.y, start.mo - 1, start.d) + i * DAY_MS);
+      const y = cursor.getUTCFullYear();
+      const mo = cursor.getUTCMonth() + 1;
+      const d = cursor.getUTCDate();
+
+      if (opts.cadence === "weekly" && !weeklyDays.has(weekdayOf(y, mo, d))) continue;
+      if (opts.cadence === "monthly") {
+        const lastDay = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+        if (d !== Math.min(opts.dayOfMonth ?? 1, lastDay)) continue;
+      }
+
+      const at = zonedWallToUtc(y, mo, d, opts.hour, opts.minute, zone);
+      if (at > from) return at;
+    }
+    return from + DAY_MS;
+  }
 
   for (let i = 0; i < 400; i++) {
     const d = new Date(from);
@@ -60,7 +102,24 @@ const CADENCE_LABEL: Record<PlannedRunCadence, string> = {
 
 const WEEKDAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/** Human summary of a run's cadence, e.g. "Weekly · Mon 09:00" or "One-off". */
+/**
+ * Short label for a zone, e.g. "GMT-3" — what goes next to a wall-clock time so
+ * a preview and a stored schedule can never silently disagree about which
+ * clock they mean. Falls back to the raw IANA id if the runtime can't abbreviate.
+ */
+export function shortZoneLabel(timeZone: string | undefined, at: number = Date.now()): string {
+  if (!isValidTimeZone(timeZone)) return "";
+  const part = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" })
+    .formatToParts(new Date(at))
+    .find((p) => p.type === "timeZoneName");
+  return part?.value ?? timeZone;
+}
+
+/**
+ * Human summary of a run's cadence, e.g. "Weekly · Mon 09:00 GMT-3" or "One-off".
+ * The wall clock is printed verbatim from the stored intent; the zone suffix is
+ * what makes it readable by someone in a different one.
+ */
 export function describeCadence(run: {
   cadence: PlannedRunCadence;
   hour: number;
@@ -69,11 +128,17 @@ export function describeCadence(run: {
   weekdays?: number[];
   dayOfMonth?: number;
   nextRunAt: number;
+  timeZone?: string;
 }): string {
-  const time = `${String(run.hour).padStart(2, "0")}:${String(run.minute).padStart(2, "0")}`;
+  const zone = isValidTimeZone(run.timeZone) ? ` ${shortZoneLabel(run.timeZone, run.nextRunAt)}` : "";
+  const time = `${String(run.hour).padStart(2, "0")}:${String(run.minute).padStart(2, "0")}${zone}`;
   switch (run.cadence) {
     case "once":
-      return `One-off · ${new Date(run.nextRunAt).toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+      return `One-off · ${new Date(run.nextRunAt).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        ...(isValidTimeZone(run.timeZone) ? { timeZone: run.timeZone } : {}),
+      })} ${time}`;
     case "daily":
       return `Daily · ${time}`;
     case "weekly":

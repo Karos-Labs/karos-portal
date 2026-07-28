@@ -7,7 +7,7 @@ import { Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AgentMark } from "@/components/agent-identity";
 import { createPlannedRunAction } from "@/lib/actions/planned-run-actions";
-import { computeNextRun, describeCadence } from "@/lib/scheduled-runs";
+import { computeNextRun, describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
 import type { CalendarClientOption, ScheduleAgentOption } from "@/components/run-calendar";
 import type { PlannedRunCadence } from "@/lib/types";
 
@@ -17,43 +17,63 @@ const WEEKDAYS = [
   { value: 6, label: "Saturday" },
 ];
 
+/** `YYYY-MM-DDTHH:mm` in the browser's zone — the format datetime-local wants. */
+function toLocalInputValue(at: number): string {
+  const d = new Date(at);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function ScheduleRunModal({
   clients,
   agents,
   defaultClientId,
+  prefillAt,
   onClose,
 }: {
   clients: CalendarClientOption[];
   agents: ScheduleAgentOption[];
   defaultClientId?: string;
+  /** The day the user clicked on the calendar (epoch millis, 09:00 local). */
+  prefillAt?: number;
   onClose: () => void;
 }) {
   const router = useRouter();
+  const prefill = prefillAt != null ? new Date(prefillAt) : null;
   const [clientId, setClientId] = useState(defaultClientId ?? clients[0]?.id ?? "");
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
   const [prompt, setPrompt] = useState("");
-  const [cadence, setCadence] = useState<PlannedRunCadence>("weekly");
+  const [cadence, setCadence] = useState<PlannedRunCadence>(prefill ? "once" : "weekly");
   const [time, setTime] = useState("09:00");
-  const [weekday, setWeekday] = useState(1);
-  const [dayOfMonth, setDayOfMonth] = useState(1);
-  const [runAt, setRunAt] = useState(""); // datetime-local string for "once"
+  const [weekday, setWeekday] = useState(prefill ? prefill.getDay() : 1);
+  const [dayOfMonth, setDayOfMonth] = useState(prefill ? prefill.getDate() : 1);
+  // Clicking an empty day is a statement about WHEN, so the day carries into
+  // the form instead of being thrown away.
+  const [runAt, setRunAt] = useState(prefillAt != null ? toLocalInputValue(prefillAt) : "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const agent = useMemo(() => agents.find((a) => a.id === agentId), [agents, agentId]);
   const [hour, minute] = time.split(":").map((n) => parseInt(n, 10));
+  // The zone this preview is computed in. It travels with the schedule so the
+  // server stores the same clock the person just read, instead of recomputing
+  // the wall time in the container's zone (UTC in production).
+  const timeZone = useMemo(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    [],
+  );
 
   const preview = useMemo(() => {
     if (cadence === "once") {
       if (!runAt) return null;
       const at = new Date(runAt).getTime();
       if (Number.isNaN(at)) return null;
-      return `Fires ${new Date(at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
+      return `Fires ${new Date(at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} ${shortZoneLabel(timeZone, at)}`;
     }
-    const nextRunAt = computeNextRun({ cadence, hour: hour || 0, minute: minute || 0, weekday, dayOfMonth });
-    const label = describeCadence({ cadence, hour: hour || 0, minute: minute || 0, weekday, dayOfMonth, nextRunAt });
+    const nextRunAt = computeNextRun({ cadence, hour: hour || 0, minute: minute || 0, weekday, dayOfMonth, timeZone });
+    const label = describeCadence({ cadence, hour: hour || 0, minute: minute || 0, weekday, dayOfMonth, nextRunAt, timeZone });
     return `${label} · next ${new Date(nextRunAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
-  }, [cadence, hour, minute, weekday, dayOfMonth, runAt]);
+  }, [cadence, hour, minute, weekday, dayOfMonth, runAt, timeZone]);
 
   async function submit() {
     setError(null);
@@ -65,6 +85,7 @@ export function ScheduleRunModal({
       customAgentId: agentId,
       prompt,
       cadence,
+      timeZone,
       ...(cadence === "once"
         ? { runAt: runAt ? new Date(runAt).getTime() : undefined }
         : { hour: hour || 0, minute: minute || 0, weekday, dayOfMonth }),

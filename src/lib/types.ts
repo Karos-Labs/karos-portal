@@ -514,6 +514,13 @@ export interface PlannedScheduledRun {
   weekdays?: number[];
   /** monthly cadence: 1–31 (clamped to the month's length). */
   dayOfMonth?: number;
+  /**
+   * IANA zone the hour/minute above are expressed in — the schedule's intent,
+   * captured from whoever set it. `nextRunAt` is derived from (wall clock +
+   * this zone), so every recompute must pass it. Absent on rows written before
+   * the field existed: those fall back to the runtime's local timezone.
+   */
+  timeZone?: string;
   /** Distinct deliverables requested from each scheduled run. Defaults to 1. */
   outputsPerRun?: number;
   /** Whether each scheduled fire spends the client's credits. */

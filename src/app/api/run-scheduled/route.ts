@@ -91,6 +91,9 @@ export async function GET(req: NextRequest) {
           weekdays: run.weekdays,
           dayOfMonth: run.dayOfMonth,
           from: now,
+          // Advance in the zone the schedule's wall clock was set in. Without
+          // it every recurrence drifts to this container's zone (UTC in prod).
+          ...(run.timeZone ? { timeZone: run.timeZone } : {}),
         });
       }
       await updatePlannedScheduledRun(run.id, advance);
