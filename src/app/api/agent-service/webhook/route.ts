@@ -24,6 +24,7 @@ import { orderKeyForCreatedAt } from "@/lib/post-chain";
 import { reflowClientChain } from "@/lib/chain";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { applyLaunchOutcome, isLaunchTemplatesArtifact } from "@/lib/jobs/launch-outcome";
+import { getClientAgent } from "@/lib/data-client-agents";
 import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
 import { logger } from "@/services/logger";
 
@@ -230,6 +231,20 @@ export async function POST(req: NextRequest) {
     (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(clientAgentId);
   let launchTemplatesJson: string | null = null;
 
+  // The template stream this run was fired against, WHITELISTED against the
+  // umbrella's own registry (§8.2). The key is trusted from our own job doc
+  // first and the metadata echo second, but either way it is only accepted if
+  // the umbrella actually has that template — a stale or hand-crafted key must
+  // never write a stream name onto a client's deliverable that their agent
+  // does not have, since the archive groups by exactly this field.
+  const runTemplateKey = job.templateKey ?? payload.metadata?.karos_template_key ?? null;
+  let runTemplate: { key: string; name?: string } | null = null;
+  if (runTemplateKey && clientAgentId && !isLaunchRun) {
+    const umbrella = await getClientAgent(clientAgentId).catch(() => null);
+    const match = umbrella?.templates?.find((t) => t.key === runTemplateKey);
+    if (match) runTemplate = { key: match.key, name: match.name };
+  }
+
   const artifacts: ExternalJobArtifact[] = [];
   const assetIds: string[] = [...job.assetIds];
   let rehostedTotal = 0;
@@ -369,9 +384,22 @@ export async function POST(req: NextRequest) {
         imageUrl: orderedImageUrls[0] ?? null,
         ...(platform ? { channels: [platform] } : {}),
         status: "draft",
+        // Template attribution, in precedence order. A managed product IS its
+        // own template. A custom run fired against one of the umbrella's
+        // template streams carries the key on the job (submit-custom stores it
+        // and echoes karos_template_key) — and until now the webhook dropped it
+        // on the floor, so every post a per-template run produced arrived with
+        // no template at all. That is the join the archive groups by, the chip
+        // the calendar paints and the key per-template feedback is scoped to:
+        // without it a client's own streams are invisible on their deliverables.
         ...(managedProduct
           ? { templateKey: payload.task_type, templateName: managedProduct.name }
-          : {}),
+          : runTemplate
+            ? {
+                templateKey: runTemplate.key,
+                ...(runTemplate.name ? { templateName: runTemplate.name } : {}),
+              }
+            : {}),
         orderKey: orderKeyForCreatedAt(now, job.id),
         ...recommendedScheduleFields(assetType, 0, platform),
         createdBy: "agent-service",

@@ -11,6 +11,7 @@ import {
   reconcileAssetPublished,
 } from "@/lib/data";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
+import { syncSlotPostedForAsset } from "@/lib/client-agent-slots";
 import { DEFAULT_PLATFORM_FOR_TYPE } from "@/lib/scheduling";
 import { blockingPredecessor } from "@/lib/post-chain";
 import { fetchPlatformMetrics, fetchSeatMetrics } from "@/lib/integrations/analytics-providers";
@@ -90,6 +91,11 @@ export async function GET(req: NextRequest) {
         try {
           const r = await reconcileAssetPublished(a.id, now);
           if (r.changed) {
+            // The slot this asset fulfils records that its day happened (§3).
+            // Best-effort: a missed stamp costs nothing and re-derives later.
+            await syncSlotPostedForAsset({ clientId: client.id, assetId: a.id, now }).catch(
+              () => {},
+            );
             publishedReconciled++;
             results.push({ clientId: client.id, platform: a.scheduledPlatform ?? "-", assetId: a.id, action: "published" });
           }

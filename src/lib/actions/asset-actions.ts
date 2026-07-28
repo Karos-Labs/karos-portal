@@ -28,6 +28,7 @@ import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
+import { syncSlotPostedForAsset } from "@/lib/client-agent-slots";
 import type { Asset, PublishMode } from "@/lib/types";
 
 /** Load the asset and verify the caller may act on it. Shared guard for the actions below. */
@@ -294,6 +295,13 @@ export async function markAssetPostedAction(
 
   const { changed } = await reconcileAssetPublished(id, Date.now(), null, { force: true });
   if (!changed) return { ok: false, error: "Already marked as posted" };
+
+  // The slot this asset fulfils records that its day happened (§3). Derived,
+  // out-of-band and best-effort: the asset is live either way, and a slot that
+  // misses the stamp is re-derived on the next pass.
+  await syncSlotPostedForAsset({ clientId: asset.clientId, assetId: id }).catch((e) =>
+    console.error("[assets] slot posted sync failed:", e),
+  );
 
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);

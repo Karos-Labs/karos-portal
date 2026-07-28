@@ -37,7 +37,9 @@ export async function GET(
   // (server-local midnight) — same gate as the library's redaction layer.
   if (!isStaff(user) && !isAssetUnlockedForClient(asset, Date.now())) {
     return NextResponse.json(
-      { error: "This deliverable unlocks on its scheduled date." },
+      // Creation language (§4.1 item 1): "unlocks" tells the caller the file
+      // exists and is being withheld. This body reaches a client.
+      { error: "This post is created on its scheduled day. It'll be available here that morning." },
       { status: 403 },
     );
   }

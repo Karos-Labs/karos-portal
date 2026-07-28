@@ -1,7 +1,12 @@
 import "server-only";
 
 import { listPlannedScheduledRuns, updatePlannedScheduledRun } from "@/lib/data";
-import { createAgentSlots, listAgentSlots, updateClientAgent } from "@/lib/data-client-agents";
+import {
+  createAgentSlots,
+  listAgentSlots,
+  updateAgentSlot,
+  updateClientAgent,
+} from "@/lib/data-client-agents";
 import {
   effectiveRotation,
   isOptionsMode,
@@ -127,4 +132,34 @@ export async function upcomingSlots(
   return slots
     .filter((slot) => horizon.has(slot.dateKey) && slot.status !== "skipped")
     .sort((a, b) => (a.dateKey < b.dateKey ? -1 : 1));
+}
+
+/**
+ * Flip the slot that a now-published asset fulfils to `posted` (§3, §1.2).
+ *
+ * The slot's status is DERIVED — the asset is the source of truth for content
+ * state, the slot is the source of truth for intent (template + day + note) —
+ * so nothing reads slot.status to decide what a client may see. It exists so
+ * the plan can say "this day happened" without re-deriving it from assets on
+ * every read, and so a re-planned day never silently overwrites a day the
+ * client already posted (slot-plan's reorder validator refuses a posted day;
+ * until now nothing could ever reach that state, which made the guard dead
+ * code).
+ *
+ * BEST-EFFORT and OUT-OF-BAND, deliberately. reconcileAssetPublished is a
+ * transaction, and Firestore forbids a query inside one — the slot has to be
+ * found by asset id, which is a query. A failure here must never fail the
+ * publish: the asset is live either way, and the next horizon pass or reader
+ * re-derives it. Same contract the webhook's chain reflow already runs under.
+ */
+export async function syncSlotPostedForAsset(input: {
+  clientId: string;
+  assetId: string;
+  now?: number;
+}): Promise<{ changed: boolean }> {
+  const slots = await listAgentSlots({ clientId: input.clientId });
+  const slot = slots.find((s) => s.assetId === input.assetId);
+  if (!slot || slot.status === "posted") return { changed: false };
+  await updateAgentSlot(slot.id, { status: "posted" });
+  return { changed: true };
 }
