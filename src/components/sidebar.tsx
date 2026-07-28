@@ -307,7 +307,12 @@ function UserMenu({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 overflow-hidden rounded-[12px] border border-border bg-surface shadow-xl">
+          {/* NOT overflow-hidden: the notification panel below is `absolute
+              bottom-full`, i.e. entirely outside this box, so an ancestor clip
+              erased it — the row opened onto nothing. The rounding needs no
+              clip of its own, every child row is rounded-[8px] inside p-1 and
+              nothing reaches the corners. */}
+          <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 rounded-[12px] border border-border bg-surface shadow-xl">
             <div className="p-1">
               {/* Panel opens UPWARD out of the menu: the menu itself already
                   hangs off the foot of the rail, and "right" would push a
@@ -319,6 +324,11 @@ function UserMenu({
                   taskAlerts={feeds.taskAlerts}
                   variant="row"
                   panelPlacement="up"
+                  /* The anchor sits ~300px off the bottom of the rail, so a
+                     full-height panel (header + 480px feed + footer = 561px)
+                     ran off the TOP of the viewport at 1280x800 — measured
+                     -21px. 45vh keeps it clear down to ~600px of viewport. */
+                  panelClassName="max-h-[45vh]"
                 />
               )}
               <Link
@@ -377,8 +387,9 @@ export function Sidebar({
   taskAlerts?: (ClientTask & { _clientName?: string })[];
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
-  const { activeClient } = useActiveClient();
+  const { activeClient, setActiveClient } = useActiveClient();
   const [companyOpen, setCompanyOpen] = useCompanySheet();
 
   const feeds: NotificationFeeds = { actionItems, reviewJobs, taskAlerts };
@@ -609,12 +620,16 @@ export function Sidebar({
             them three taps from a page and break CD-G9c's ≤2-click floor. */}
         {inDrawer && (
           <div className="space-y-0.5">
+            {/* w-full, not the default w-80: the drawer is w-64 with
+                overflow-y-auto, which forces overflow-x to auto — a 320px
+                panel would be clipped and drag in a horizontal scrollbar. */}
             <NotificationBell
               actionItems={actionItems}
               reviewJobs={reviewJobs}
               taskAlerts={taskAlerts}
               variant="row"
               panelPlacement="up"
+              panelClassName="w-full max-h-[45vh]"
             />
             <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
             <ThemeSwitch />
@@ -680,8 +695,12 @@ export function Sidebar({
             {/* Tail mirrors the client sheet's, plus the chrome CD-G9c moved off
                 the retired top bar and the sign-out the drawer used to carry. */}
             <div className="space-y-0.5 border-t border-border pt-4">
+              {/* Explicit close: the sheet otherwise closes on navigation, and
+                  tapping Settings while already ON /settings routes nowhere —
+                  the sheet just sat there over the page it had reached. */}
               <Link
                 href="/settings"
+                onClick={() => setCompanyOpen(false)}
                 className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
               >
                 <Icon name="Settings" className="h-4 w-4 text-muted-2" />
@@ -693,9 +712,28 @@ export function Sidebar({
                 taskAlerts={taskAlerts}
                 variant="row"
                 panelPlacement="up"
+                panelClassName="max-h-[45vh]"
               />
               <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
               <ThemeSwitch />
+              {/* The staff escape hatch, and STAFF-ONLY — this branch never
+                  renders for a client. At phone width in client context the
+                  nav is five client tabs and nothing else, so the only way
+                  back to the agency workspace was the F60 strip at the top of
+                  the page, which scrolls away. The bar always reaches this.
+                  Same body as the strip's exit: clear the context, then leave
+                  so ClientContextSync cannot re-set it on refresh. */}
+              <button
+                onClick={() => {
+                  setCompanyOpen(false);
+                  setActiveClient(null);
+                  router.push("/clients");
+                }}
+                className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+              >
+                <Icon name="LogOut" className="h-4 w-4 text-muted-2" />
+                Exit client view
+              </button>
               <LogoutButton compact />
             </div>
           </MobileCompanySheet>

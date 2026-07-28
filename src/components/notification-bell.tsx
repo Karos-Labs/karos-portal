@@ -32,6 +32,13 @@ interface Props {
   taskAlerts: (ClientTask & { _clientName?: string })[];
   /** Where the panel opens relative to the trigger. */
   panelPlacement?: "down" | "up" | "right";
+  /**
+   * Extra classes for the panel, merged last so a width here beats the default
+   * w-80. Needed where the trigger sits inside a narrow scroll container: the
+   * mobile drawer is w-64 with overflow-y-auto, which forces overflow-x to
+   * auto, so a 320px panel is clipped AND grows a horizontal scrollbar.
+   */
+  panelClassName?: string;
   /** Render trigger as an icon button (default) or a full-width labeled row (account menu). */
   variant?: "icon" | "row";
   /**
@@ -47,6 +54,7 @@ export function NotificationBell({
   reviewJobs,
   taskAlerts,
   panelPlacement = "down",
+  panelClassName,
   variant = "icon",
   viewerIsClient = false,
 }: Props) {
@@ -146,10 +154,16 @@ export function NotificationBell({
                   ? "bottom-0 left-full ml-2"
                   : "right-0 top-full mt-2",
               "rounded-md border border-border glass-surface shadow-2xl",
+              // Column so a caller-supplied max-height squeezes the FEED rather
+              // than truncating the panel — the header and footer stay put and
+              // the rows scroll. No effect on mounts that set no height: with
+              // nothing to shrink against, the feed keeps its own max-h.
+              "flex flex-col",
+              panelClassName,
             )}
           >
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
               <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
               {total > 0 ? (
                 <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-semibold text-muted">
@@ -161,7 +175,7 @@ export function NotificationBell({
             </div>
 
             {/* Feed */}
-            <div className="max-h-[480px] overflow-y-auto">
+            <div className="min-h-0 flex-1 max-h-[480px] overflow-y-auto">
               {total === 0 ? (
                 <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
@@ -283,7 +297,7 @@ export function NotificationBell({
                 of meeting action items used to be footed "View workspace →"
                 and vice versa (QA F143). */}
             {total > 0 && (
-              <div className="flex items-center gap-4 border-t border-border px-4 py-2.5">
+              <div className="flex shrink-0 items-center gap-4 border-t border-border px-4 py-2.5">
                 {(taskAlerts.length > 0 || visibleJobs.length > 0) && (
                   <Link
                     href="/tasks"
