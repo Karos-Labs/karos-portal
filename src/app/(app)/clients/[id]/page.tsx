@@ -91,8 +91,8 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       intelScheduleEnabled={client.intelScheduleEnabled ?? false}
       intelScheduleNextRunAt={client.intelScheduleNextRunAt ?? null}
       isRefreshing={isAiProcessingLockActive(client)}
-      // QA F99/F124: for the client the scores and the plan are lifted to the
-      // top of the visibility tab (below), so the panel must not repeat them.
+      // QA F99: for the client the scores and the plan are lifted to the top of
+      // the visibility tab (below), so the panel must not repeat them.
       hideScores={isClientViewer && !!seoGeo}
       hidePlan={isClientViewer && !!seoGeo}
     />
@@ -119,9 +119,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   }
 
   // The whole search-and-AI-visibility story, in reading order, INSIDE its tab:
-  // headline scores first (F124's lift — and CD-B4's legacy-snapshot notice rides
-  // with them, since SeoGeoScores renders the two together), then the fix list,
-  // then the full report with those two suppressed so nothing renders twice.
+  // headline scores first (and CD-B4's legacy-snapshot notice rides with them,
+  // since SeoGeoScores renders the two together), then the fix list, then the
+  // full report with those two suppressed so nothing renders twice.
   //
   // The scores and the plan used to sit outside the tabs, above the segmented
   // control. That put ~1.6 screens of visibility content AHEAD of the control,
@@ -147,7 +147,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     visibilityPanel
   );
 
-  // QA F99/F124 — client dashboard, in value order. What needs the client now
+  // QA F99 — client dashboard, in value order. What needs the client now
   // (attention + recent), then the plain-English briefing. Everything heavy (the
   // full performance breakdown and the full visibility report) sits behind a
   // segmented control instead of five screens of always-expanded detail. The
