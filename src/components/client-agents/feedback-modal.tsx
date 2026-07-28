@@ -196,7 +196,12 @@ export function ClientAgentFeedbackModal({
                         <span className="text-[11px] text-muted-2">
                           {row.authorName} · {relativeTime(row.createdAt)}
                         </span>
+                        {/* Two closed states, two labels (D7). "Resolved" is a
+                            claim that Karos acted on the note; a client's own
+                            withdrawal is not that, and saying so told them their
+                            note had been handled when nobody had read it. */}
                         {row.status === "resolved" && <Badge tone="neutral">Resolved</Badge>}
+                        {row.status === "withdrawn" && <Badge tone="neutral">Withdrawn</Badge>}
                         {row.editable && (
                           <>
                             <button

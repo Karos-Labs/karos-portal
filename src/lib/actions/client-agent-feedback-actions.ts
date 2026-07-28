@@ -33,8 +33,18 @@ import type { AppUser, ClientAgent, ClientAgentFeedback } from "@/lib/types";
  * can make, and it silently stops the row being injected into runs.
  */
 
-/** Per umbrella, so one client cannot make another client's agent unwritable. */
-const MAX_ROWS_PER_UMBRELLA = 200;
+/**
+ * Per umbrella, so one client cannot make another client's agent unwritable.
+ *
+ * Counted over OPEN rows only (D4). Counting every row ever written made the
+ * cap a lifetime quota: an agent that had been given feedback and had all of it
+ * addressed for a year would refuse new notes forever, and the only advice the
+ * error could offer — resolve some — would already be done. Resolved and
+ * withdrawn rows are history; they cost nothing at run time (they are not
+ * injected) and they are not what the cap is defending against, which is an
+ * unbounded ACTIVE set inflating every read.
+ */
+const MAX_OPEN_ROWS_PER_UMBRELLA = 200;
 
 async function loadUmbrella(
   clientAgentId: string,
@@ -78,10 +88,18 @@ export async function addClientAgentFeedbackAction(input: {
 
   // A bound collection, not a bounded injection only: the injection cap (50)
   // stops a huge list inflating every prompt, but without a write cap the
-  // collection itself grows forever behind it and every read pays for it.
-  const existing = await listClientAgentFeedback({ clientAgentId: umbrella.id });
-  if (existing.length >= MAX_ROWS_PER_UMBRELLA) {
-    return { error: "This agent has all the feedback it can hold — resolve some older notes first." };
+  // active set grows forever behind it and every read pays for it.
+  const open = await listClientAgentFeedback({ clientAgentId: umbrella.id, status: "active" });
+  if (open.length >= MAX_OPEN_ROWS_PER_UMBRELLA) {
+    // Names actions that EXIST for the person reading it: a client can withdraw
+    // their own notes, staff can mark any of them resolved. The old copy told
+    // clients to "resolve" — a control they have never been shown.
+    return {
+      error:
+        user.role === "CLIENT_USER"
+          ? "This agent is holding as many open notes as it can. Withdraw a few you no longer need, or ask your Karos team to close some out."
+          : "This agent is holding as many open notes as it can. Mark some resolved to make room.",
+    };
   }
 
   const now = Date.now();
@@ -134,7 +152,13 @@ export async function updateClientAgentFeedbackAction(input: {
     return { error: "Only the person who wrote a note can change it." };
   }
   const text = clampFeedbackText(input.text);
-  if (!text) return { error: `Write up to ${MAX_FEEDBACK_CHARS} characters, or delete the note.` };
+  // "or delete the note" advised an action that does not exist anywhere (D4):
+  // there is no delete, by design — see withdrawClientAgentFeedbackAction.
+  if (!text) {
+    return {
+      error: `Write up to ${MAX_FEEDBACK_CHARS} characters, or withdraw the note if you no longer want it applied.`,
+    };
+  }
   await updateClientAgentFeedback(row.id, { text });
   revalidatePath(`/clients/${input.clientId}/agents`);
   return {};
@@ -142,13 +166,18 @@ export async function updateClientAgentFeedbackAction(input: {
 
 /**
  * Withdraw your own note: it stops shaping runs immediately and stays in the
- * list marked resolved.
+ * list marked withdrawn.
  *
  * Not a hard delete, deliberately. A note the client wrote and then took back
  * is part of the record of what they asked for — staff may have already acted
  * on it — and the injection cap is what the withdrawal is actually for. Only
  * the author may withdraw; staff use `setClientAgentFeedbackStatusAction`,
  * which says "we addressed this" rather than "this was never said".
+ *
+ * It writes `withdrawn`, not `resolved` (D7). Both stop injection, so the two
+ * behave identically at run time — but "resolved" is a claim that Karos acted,
+ * and stamping it on the client's own retraction told them their note had been
+ * handled when nobody had looked at it.
  */
 export async function withdrawClientAgentFeedbackAction(input: {
   clientId: string;
@@ -160,7 +189,7 @@ export async function withdrawClientAgentFeedbackAction(input: {
   if (row.createdBy !== user.uid) {
     return { error: "Only the person who wrote a note can withdraw it — staff can resolve it instead." };
   }
-  await updateClientAgentFeedback(row.id, { status: "resolved" });
+  await updateClientAgentFeedback(row.id, { status: "withdrawn" });
   revalidatePath(`/clients/${input.clientId}/agents`);
   return {};
 }
@@ -170,14 +199,23 @@ export async function withdrawClientAgentFeedbackAction(input: {
 /**
  * Staff mark a note resolved (kept in the list, no longer injected into runs)
  * or re-open it.
+ *
+ * The status is narrowed to the two states staff may actually author: only the
+ * note's writer can withdraw, so staff cannot stamp someone's note "withdrawn"
+ * — and a note the client has already withdrawn cannot be re-opened by staff
+ * either, since that would put words back into every future run that the person
+ * who wrote them has explicitly taken back.
  */
 export async function setClientAgentFeedbackStatusAction(input: {
   feedbackId: string;
-  status: ClientAgentFeedback["status"];
+  status: Extract<ClientAgentFeedback["status"], "active" | "resolved">;
 }): Promise<{ error?: string }> {
   await requireStaff();
   const row = await getClientAgentFeedback(input.feedbackId);
   if (!row) return { error: "Feedback not found." };
+  if (row.status === "withdrawn") {
+    return { error: "The person who wrote this note withdrew it — only they can raise it again." };
+  }
   await updateClientAgentFeedback(row.id, { status: input.status });
   revalidatePath(`/clients/${row.clientId}/agents`);
   return {};

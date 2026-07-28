@@ -147,3 +147,38 @@ describe("renderFeedbackMarkdown", () => {
     expect(text).toContain("(Karos team)");
   });
 });
+
+/**
+ * D5 — the length cap is a cap on the PROMPT, not on the textarea.
+ *
+ * clampFeedbackText runs in the two write actions, so anything typed through
+ * the modal is bounded on the way in. What is READ is not: rows predating the
+ * cap, rows written by any future path that forgets to clamp, and rows edited
+ * directly in Firestore all reach the serializer unbounded — and its output
+ * goes verbatim into the prompt of every run the agent makes from then on.
+ */
+describe("renderFeedbackMarkdown — re-clamps at the injection boundary (D5)", () => {
+  it("truncates an over-long stored row instead of injecting it whole", () => {
+    const oversized = "x".repeat(MAX_FEEDBACK_CHARS * 3);
+    const markdown = renderFeedbackMarkdown({
+      agentName: "Instagram agent",
+      rows: [row({ text: oversized })],
+      templates: [],
+    }) as string;
+
+    expect(markdown).toContain("x".repeat(MAX_FEEDBACK_CHARS));
+    expect(markdown).not.toContain("x".repeat(MAX_FEEDBACK_CHARS + 1));
+  });
+});
+
+describe("selectInjectedFeedback — only active rows reach a run (D7)", () => {
+  it("drops withdrawn rows the same way it drops resolved ones", () => {
+    const rows = [
+      row({ id: "a" }),
+      row({ id: "b", status: "resolved" }),
+      row({ id: "c", status: "withdrawn" }),
+    ];
+
+    expect(selectInjectedFeedback(rows).map((r) => r.id)).toEqual(["a"]);
+  });
+});

@@ -67,9 +67,11 @@ export function validateFeedbackScope(input: {
 /**
  * What a run actually receives: active rows only, newest first, capped.
  *
- * `resolved` rows are kept in the collection (they are the record of what the
- * client asked for and when it was addressed) but stop being injected — that
- * is the whole difference between the two statuses.
+ * `resolved` and `withdrawn` rows are kept in the collection (they are the
+ * record of what the client asked for and how it ended) but stop being injected
+ * — only `active` reaches a run, which is the whole difference between the
+ * statuses. The filter is written as an allowlist for exactly that reason: a
+ * new status added later must be opted IN to injection, never default into it.
  */
 export function selectInjectedFeedback(rows: ClientAgentFeedback[]): ClientAgentFeedback[] {
   return rows
@@ -78,10 +80,23 @@ export function selectInjectedFeedback(rows: ClientAgentFeedback[]): ClientAgent
     .slice(0, MAX_INJECTED_FEEDBACK);
 }
 
+/**
+ * D5: the length cap is re-applied HERE, at the injection boundary, not only at
+ * write time.
+ *
+ * `clampFeedbackText` runs in the two actions that accept typed text, which
+ * bounds everything written through the modal. It does not bound what is
+ * READ: rows predating the cap, rows written by any future path that forgets to
+ * clamp, and rows edited directly in Firestore all reach this function
+ * unbounded, and this function's output goes verbatim into the prompt of every
+ * run the agent makes from here on. A cap enforced only on the way in is a cap
+ * on the UI, not on the prompt — so the boundary that actually matters re-does
+ * it. Clamping twice is free; clamping once in the wrong place is the bug.
+ */
 function formatRow(row: ClientAgentFeedback): string {
   const when = new Date(row.createdAt).toISOString().slice(0, 10);
   const who = row.creatorRole === "client" ? "client" : "Karos team";
-  return `- ${when} (${who}): ${row.text.trim()}`;
+  return `- ${when} (${who}): ${clampFeedbackText(row.text)}`;
 }
 
 /**

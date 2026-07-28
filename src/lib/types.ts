@@ -1800,8 +1800,19 @@ export interface ClientAgentFeedback {
   templateKey?: string | null;
   /** ≤ 500 chars, plain text (server-clamped). */
   text: string;
-  /** active = injected into every future run; resolved = kept, not injected. */
-  status: "active" | "resolved";
+  /**
+   * active    = injected into every future run.
+   * resolved  = STAFF addressed it. Kept, not injected.
+   * withdrawn = the AUTHOR took it back. Kept, not injected.
+   *
+   * The last two are deliberately not one state (D7). "Resolved" is a claim
+   * about Karos having acted; a client who withdraws their own note has made no
+   * such claim, and collapsing the two told them their note had been handled
+   * when nobody had touched it. Only `active` is ever injected, so the run-side
+   * behaviour of the two is identical — the difference is entirely about who
+   * did it and what the list is therefore allowed to say.
+   */
+  status: "active" | "resolved" | "withdrawn";
   createdBy: string;
   /**
    * Display name of the author, denormalized at write time. Stored so the

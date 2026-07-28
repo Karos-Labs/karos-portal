@@ -103,7 +103,9 @@ export interface ClientAgentFeedbackRow {
   scope: "agent" | "template";
   templateKey: string | null;
   text: string;
-  status: "active" | "resolved";
+  /** Mirrors ClientAgentFeedback["status"] — "withdrawn" is the author's own
+   *  retraction and must never be painted as "Resolved" (D7). */
+  status: "active" | "resolved" | "withdrawn";
   authorName: string;
   creatorRole: "client" | "staff";
   createdAt: number;
