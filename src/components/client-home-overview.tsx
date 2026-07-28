@@ -87,9 +87,15 @@ export function ClientHomeOverview({
                 // Approval is staff-only by design (approveAssetAction calls
                 // requireStaff so a client can't approve and arm auto-publish),
                 // so this row reports status rather than asking for a sign-off.
-                // /assets bounces client users to /tasks and drops the filter —
-                // link straight at the Archive tab where the drafts live.
-                href="/tasks?tab=archive"
+                //
+                // Deliberately NOT a link (F97 × F149). It counts drafts, and no
+                // surface a client can reach lists a draft: the archive excludes
+                // them by design (asset-visibility.ts getClientArchiveAssets),
+                // the calendar filters them out, and /assets redirects clients
+                // to /tasks. The Workspace board holds tasks, not deliverables,
+                // so it does not contain these either — the count and every
+                // candidate destination are provably disjoint. The hint already
+                // says the right thing: they show up once the team is done.
                 icon="Sparkles"
                 label={`${deliverablesInReview.length} deliverable${deliverablesInReview.length === 1 ? "" : "s"} in review`}
                 hint="Your Karos team is reviewing these — they'll appear in your archive when ready."
@@ -139,12 +145,13 @@ export function ClientHomeOverview({
           </div>
         ) : (
           <ul className="space-y-2">
-            {recentAssets.map((a) => (
-              <li key={a.id}>
-                <Link
-                  href="/tasks?tab=archive"
-                  className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2 transition-colors hover:border-border-strong"
-                >
+            {recentAssets.map((a) => {
+              // Same rule as the attention row above: a draft is not in the
+              // archive, so a draft row links nowhere rather than landing the
+              // client on a screen that provably excludes the item they clicked.
+              const inArchive = a.status !== "draft";
+              const body = (
+                <>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-foreground">{a.title}</p>
                     <p className="mt-0.5 text-xs text-muted-2">
@@ -154,9 +161,22 @@ export function ClientHomeOverview({
                   <Badge tone={ASSET_STATUS_TONE[a.status] ?? "neutral"} className="capitalize">
                     {a.status}
                   </Badge>
-                </Link>
-              </li>
-            ))}
+                </>
+              );
+              const base =
+                "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2";
+              return (
+                <li key={a.id}>
+                  {inArchive ? (
+                    <Link href="/tasks?tab=archive" className={`${base} transition-colors hover:border-border-strong`}>
+                      {body}
+                    </Link>
+                  ) : (
+                    <div className={base}>{body}</div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </Card>
@@ -164,32 +184,47 @@ export function ClientHomeOverview({
   );
 }
 
+const ATTENTION_ROW_BASE =
+  "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5";
+
+/**
+ * `href` is optional: a row whose items have no screen a client can open is
+ * rendered as a plain status line, with no arrow and no hover affordance, so it
+ * does not promise a destination it cannot deliver (F97 × F149).
+ */
 function AttentionRow({
   href,
   icon,
   label,
   hint,
 }: {
-  href: string;
+  href?: string;
   icon: string;
   label: string;
   hint: string;
 }) {
+  const body = (
+    <>
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning/10">
+        <Icon name={icon} className="h-4 w-4 text-warning" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-foreground">{label}</p>
+        <p className="text-xs text-muted-2">{hint}</p>
+      </div>
+      {href && <Icon name="ArrowRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />}
+    </>
+  );
+
   return (
     <li>
-      <Link
-        href={href}
-        className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5 transition-colors hover:border-border-strong"
-      >
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning/10">
-          <Icon name={icon} className="h-4 w-4 text-warning" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-foreground">{label}</p>
-          <p className="text-xs text-muted-2">{hint}</p>
-        </div>
-        <Icon name="ArrowRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
-      </Link>
+      {href ? (
+        <Link href={href} className={`${ATTENTION_ROW_BASE} transition-colors hover:border-border-strong`}>
+          {body}
+        </Link>
+      ) : (
+        <div className={ATTENTION_ROW_BASE}>{body}</div>
+      )}
     </li>
   );
 }
