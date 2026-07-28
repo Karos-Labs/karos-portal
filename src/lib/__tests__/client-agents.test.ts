@@ -229,8 +229,15 @@ describe("template registry", () => {
     expect(effectiveRotation(agent)).toEqual(["numbers", "playbook"]);
   });
 
-  it("treats a chain-family-less umbrella as options mode (X)", () => {
-    expect(isOptionsMode({ chainFamily: undefined })).toBe(true);
-    expect(isOptionsMode({ chainFamily: "social" })).toBe(false);
+  // W3: mode is a decision made at bind time, not a leftover. Inferring it
+  // from a missing chainFamily made every agent the family classifier could
+  // not place (research, SEO, an unfamiliar import) an options-mode umbrella.
+  it("reads options mode from the stored slot mode, never from a missing chain family", () => {
+    expect(isOptionsMode({ slotMode: "options" })).toBe(true);
+    expect(isOptionsMode({ slotMode: "single" })).toBe(false);
+    // An unclassifiable agent bound before the field existed reads as single —
+    // the safe answer: an empty rotation plans no days at all, where a wrongly
+    // inferred options mode would plan days it has no candidates for.
+    expect(isOptionsMode({ slotMode: undefined })).toBe(false);
   });
 });

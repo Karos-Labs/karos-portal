@@ -27,10 +27,22 @@ import type { AgentSetupState } from "@/components/custom-agents";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import type { ClientAgent, CustomAgent, Job } from "@/lib/types";
 import type { ClientAgentScheduleRow } from "@/components/custom-agents";
-import { listClientAgents } from "@/lib/data-client-agents";
-import { evaluateLaunchGate, isLaunchInFlight } from "@/lib/client-agents";
+import { listClientAgentFeedback, listClientAgents } from "@/lib/data-client-agents";
+import {
+  dateKeyInZone,
+  evaluateLaunchGate,
+  isLaunchInFlight,
+  isOptionsMode,
+} from "@/lib/client-agents";
+import { evaluateTemplateRunGate, umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
+import { upcomingSlots } from "@/lib/client-agent-slots";
+import { OPTIONS_PER_SLOT } from "@/lib/slot-plan";
+import { runtimeTimeZone } from "@/lib/run-cadence";
 import { ClientAgentsSection } from "@/components/client-agents/client-agents-section";
 import type { ClientAgentCardRow } from "@/components/client-agents/types";
+
+/** How many days of the plan the live card's "Coming up" strip shows. */
+const WEEK_STRIP_DAYS = 7;
 
 /** Strip an agent to the client-safe summary — never the instructions/skill paths. */
 function toSummary(agent: CustomAgent): RunnableAgentSummary {
@@ -110,6 +122,26 @@ function toScheduleRows(
 }
 
 /**
+ * Firing zone per custom agent, from its weekly schedule row.
+ *
+ * The week strip's day boundaries come from the SCHEDULE's stored IANA zone,
+ * not the container's — the F108 contract, and the same source
+ * `slotScheduleFor` uses when the slots were planned. Reading them in a
+ * different zone than they were written in shifts the whole strip by a day for
+ * any client who is not in the server's timezone.
+ */
+function scheduleZonesByAgent(
+  runs: Awaited<ReturnType<typeof listPlannedScheduledRuns>>,
+): Map<string, string> {
+  const zones = new Map<string, string>();
+  for (const run of runs) {
+    if (run.cadence !== "weekly" || run.status === "completed") continue;
+    if (run.timeZone) zones.set(run.customAgentId, run.timeZone);
+  }
+  return zones;
+}
+
+/**
  * Intake readiness, resolved once per agent with the SAME call the submit core
  * makes (submitCustomAgentJob → hasXAgentIntake / hasLinkedInAgentIntake). The
  * LinkedIn check answers differently per agent key — the multi-seat agent runs
@@ -160,7 +192,7 @@ async function buildAgentSetup(
  * so an internal string handed to a client component is readable whether or
  * not it is ever painted.
  */
-function toClientAgentRows(args: {
+async function toClientAgentRows(args: {
   umbrellas: ClientAgent[];
   agentsById: Map<string, CustomAgent>;
   viewerIsClient: boolean;
@@ -168,7 +200,17 @@ function toClientAgentRows(args: {
   agentSetup: Record<string, AgentSetupState>;
   spendable?: number;
   creditBlockReasons: Record<string, string>;
-}): ClientAgentCardRow[] {
+  /** Weekly schedule rows, ALREADY redacted for this viewer (toScheduleRows). */
+  scheduleRows: ClientAgentScheduleRow[];
+  /** Firing zones by customAgentId, for the week strip's day boundaries. */
+  scheduleZones: Map<string, string>;
+  /** This client's jobs — read only for in-flight manual template runs. */
+  jobs: Job[];
+  viewerUid: string;
+  viewerIsStaff: boolean;
+  now: number;
+}): Promise<ClientAgentCardRow[]> {
+  const scheduleByAgentId = new Map(args.scheduleRows.map((row) => [row.agentId, row]));
   const rows: ClientAgentCardRow[] = [];
   for (const umbrella of args.umbrellas) {
     const agent = args.agentsById.get(umbrella.customAgentId);
@@ -187,6 +229,58 @@ function toClientAgentRows(args: {
       ...(args.spendable !== undefined ? { availableCredits: args.spendable } : {}),
       creditBlockReason: args.creditBlockReasons[agent.id] ?? null,
     });
+
+    // ── The LIVE view's own projections (WP-2) ──
+    // Built here, on the server, for the same reason the launch gate is: the
+    // card must never offer a Run the action would refuse, and it can only be
+    // sure of that if the same pure gate decided both.
+    const live = umbrella.launchState === "live";
+    const optionsMode = isOptionsMode(umbrella);
+    const runCost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+    const templateGates: ClientAgentCardRow["templateGates"] = {};
+    if (live) {
+      for (const template of umbrella.templates) {
+        const templateGate = evaluateTemplateRunGate({
+          launchState: umbrella.launchState,
+          templateStatus: template.status,
+          cost: runCost,
+          ...(args.spendable !== undefined ? { availableCredits: args.spendable } : {}),
+          creditBlockReason: args.creditBlockReasons[agent.id] ?? null,
+        });
+        templateGates[template.key] = {
+          allowed: templateGate.allowed,
+          ...(templateGate.allowed
+            ? {}
+            : { code: templateGate.code, reason: templateGate.reason }),
+        };
+      }
+    }
+
+    // The week strip and the feedback list only exist for a live umbrella —
+    // and the strip carries a DAY and a LABEL, nothing else. An asset id or a
+    // fulfilment status here would let a client tell a pre-generated day from a
+    // day-of one, which is precisely the distinction the slot model exists to
+    // erase (§4.1).
+    const zone = args.scheduleZones.get(umbrella.customAgentId) ?? runtimeTimeZone();
+    const [slots, feedbackRows] = live
+      ? await Promise.all([
+          upcomingSlots(umbrella.id, dateKeyInZone(args.now, zone), WEEK_STRIP_DAYS),
+          listClientAgentFeedback({ clientAgentId: umbrella.id }),
+        ])
+      : [[], []];
+    const templateNames = new Map(umbrella.templates.map((t) => [t.key, t.name]));
+
+    // The one run the card acknowledges: a "Run now" the viewer just pressed.
+    // Scheduled fires are deliberately invisible here (see ClientAgentCardRow).
+    const pending = live
+      ? args.jobs.find(
+          (job) =>
+            job.clientAgentId === umbrella.id &&
+            job.runType === "manual_template" &&
+            (job.status === "queued" || job.status === "running"),
+        )
+      : undefined;
+
     rows.push({
       id: umbrella.id,
       clientId: umbrella.clientId,
@@ -216,6 +310,46 @@ function toClientAgentRows(args: {
       // unconfirmed AI-written names and rationales in the RSC payload.
       templates:
         args.viewerIsClient && umbrella.launchState !== "live" ? [] : (umbrella.templates ?? []),
+
+      optionsMode,
+      // Staff never pay for a run, so quoting them a price would be a lie —
+      // the same rule the launch price already follows.
+      runCost: args.spendable !== undefined ? runCost : null,
+      templateGates,
+      week: slots.map((slot) => ({
+        dateKey: slot.dateKey,
+        // A constant label per mode, deliberately. Deriving "pick of N" from a
+        // slot's assigned optionRefs would paint a future day differently
+        // depending on whether its candidates had been picked out yet — a
+        // difference the client can see and the churn rule forbids.
+        label: optionsMode
+          ? `Daily post · pick of ${OPTIONS_PER_SLOT}`
+          : (templateNames.get(slot.templateKey) ?? slot.templateKey),
+      })),
+      feedback: feedbackRows.map((row) => ({
+        id: row.id,
+        scope: row.scope,
+        templateKey: row.templateKey ?? null,
+        text: row.text,
+        status: row.status,
+        // Denormalized at write time — a client viewer never receives the uid
+        // of the staff member who answered them.
+        authorName: row.createdByName ?? (row.creatorRole === "client" ? "Your team" : "Karos"),
+        creatorRole: row.creatorRole,
+        createdAt: row.createdAt,
+        editable: args.viewerIsStaff || row.createdBy === args.viewerUid,
+      })),
+      activeRun: pending
+        ? {
+            status: pending.status === "running" ? "running" : "queued",
+            templateName: pending.templateKey
+              ? (templateNames.get(pending.templateKey) ?? null)
+              : null,
+          }
+        : null,
+      runnable: live ? toSummary(agent) : null,
+      schedule: scheduleByAgentId.get(agent.id) ?? null,
+      ...(args.spendable !== undefined ? { availableCredits: args.spendable } : {}),
     });
   }
   return rows;
@@ -264,10 +398,6 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     const agents = allAgents
       .filter((agent) => agent.enabled && (allowedIds.has(agent.id) || completedAgentIds.has(agent.id)))
       .map(toSummary);
-    // Client viewers see only runs of agents they're allowed — not the
-    // history of staff-fired agents outside their allowlist.
-    const allowedNames = new Set(agents.map((a) => a.name));
-    const runs = toRunRows(jobs, false).filter((r) => allowedNames.has(r.agentName));
     // Impersonating admins see the client view but never spend real credits —
     // show the gate only to billable client actors. `now` rolls the spend
     // windows on read: a schedule doc read after a week rollover would otherwise
@@ -288,24 +418,44 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       }
     }
     const agentSetup = await buildAgentSetup(id, agents);
-    // Client-agent umbrellas. A launch is a bigger, slower thing than a run, so
-    // its card owns the agent while it is being set up: an agent that is not
-    // live yet is dropped from the run cards below rather than showing a client
-    // a Run button beside a "not set up yet" state. Live umbrellas keep today's
-    // card until WP-2 replaces it.
-    const clientAgentRows = toClientAgentRows({
-      umbrellas,
+    // ── Card selection: exactly one card per agent ──
+    // An umbrella owns its agent's card as soon as it is bound — the launch
+    // card while it is being set up, the live card once it is producing. The
+    // agent is dropped from the generic run cards below, so a client is never
+    // offered a Run button beside a "not set up yet" state, and never sees the
+    // same agent twice under two identities.
+    //
+    // The one exception is deliberate (`umbrellaOwnsClientCard`): a LIVE
+    // umbrella with no templates yet — the grandfathered bind of an
+    // already-producing agent — keeps today's card, because replacing a working
+    // Run button with a card that has no rows in it is the F131 failure with
+    // the roles reversed.
+    const ownedByUmbrella = umbrellas.filter((u) => umbrellaOwnsClientCard(u));
+    const ownedAgentIds = new Set(ownedByUmbrella.map((u) => u.customAgentId));
+    const runnableAgents = agents.filter((agent) => !ownedAgentIds.has(agent.id));
+    // Client viewers see only runs of agents they're allowed — not the history
+    // of staff-fired agents outside their allowlist, and (§4.1 item 3) not the
+    // batch rows of an umbrella-owned agent: "ran 2 hours ago · 7 drafts" beside
+    // a week of daily slots is the tell that the days are a presentation of a
+    // batch. Staff rows are unchanged.
+    const runnableNames = new Set(runnableAgents.map((a) => a.name));
+    const runs = toRunRows(jobs, false).filter((r) => runnableNames.has(r.agentName));
+    const clientScheduleRows = toScheduleRows(scheduledRuns, true);
+    const clientAgentRows = await toClientAgentRows({
+      umbrellas: ownedByUmbrella,
       agentsById: new Map(allAgents.map((a) => [a.id, a])),
       viewerIsClient: true,
       grantedAgentIds: new Set([...allowedIds, ...completedAgentIds]),
       agentSetup,
       ...(spendable !== undefined ? { spendable } : {}),
       creditBlockReasons,
+      scheduleRows: clientScheduleRows,
+      scheduleZones: scheduleZonesByAgent(scheduledRuns),
+      jobs,
+      viewerUid: user.uid,
+      viewerIsStaff: false,
+      now,
     });
-    const preLaunchAgentIds = new Set(
-      umbrellas.filter((u) => u.launchState !== "live").map((u) => u.customAgentId),
-    );
-    const runnableAgents = agents.filter((agent) => !preLaunchAgentIds.has(agent.id));
     // A client run takes 10–20 minutes and the client's rows carry no link, so
     // without this the page never moved again after "Start run". Mounted only
     // while something is actually in flight; it unmounts when the server
@@ -313,7 +463,10 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // the same way — it is the same medicine for a longer wait.
     const runInFlight =
       runs.some((run) => run.status === "queued" || run.status === "running") ||
-      umbrellas.some((u) => isLaunchInFlight(u.launchState));
+      umbrellas.some((u) => isLaunchInFlight(u.launchState)) ||
+      // An umbrella agent has no run row to watch any more, so its in-flight
+      // template run has to be what moves the page.
+      clientAgentRows.some((row) => row.activeRun !== null);
     return (
       <>
         {runInFlight && <AutoRefresh />}
@@ -347,7 +500,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             clientId={id}
             agents={runnableAgents}
             runs={runs}
-            schedules={toScheduleRows(scheduledRuns, true)}
+            schedules={clientScheduleRows}
             contextItems={contextItems}
             viewerIsClient
             agentSetup={agentSetup}
@@ -384,13 +537,20 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // Staff see every umbrella in every state (including live) — this is where
   // the launch is fired for a client who cannot yet self-serve, and where the
   // template set is curated before the client ever sees it.
-  const staffAgentRows = toClientAgentRows({
+  const staffScheduleRows = toScheduleRows(scheduledRuns, false);
+  const staffAgentRows = await toClientAgentRows({
     umbrellas,
     agentsById: new Map(customAgents.map((a) => [a.id, a])),
     viewerIsClient: false,
     grantedAgentIds: null,
     agentSetup,
     creditBlockReasons: {},
+    scheduleRows: staffScheduleRows,
+    scheduleZones: scheduleZonesByAgent(scheduledRuns),
+    jobs,
+    viewerUid: user.uid,
+    viewerIsStaff: true,
+    now: Date.now(),
   });
   const boundAgentIds = new Set(umbrellas.map((u) => u.customAgentId));
   const bindable = customAgents
@@ -462,7 +622,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             clientId={id}
             agents={staffAgents}
             runs={staffRuns}
-            schedules={toScheduleRows(scheduledRuns, false)}
+            schedules={staffScheduleRows}
             contextItems={contextItems}
             viewerIsClient={false}
             agentSetup={agentSetup}

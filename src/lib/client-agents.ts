@@ -141,6 +141,15 @@ export const LAUNCH_STAGE_SPLIT_MS = 12 * 60 * 1000;
 /** ~How long a setup run takes, in the client's words. */
 export const LAUNCH_ESTIMATE = "~20–40 min";
 
+/**
+ * Past this, a launch still sitting in `launching` is more likely stuck than
+ * slow — the webhook never arrived, the service dropped the job, a deploy ate
+ * the callback. Comfortably longer than the quoted window so a genuinely slow
+ * setup is never called stuck (W7: staff get a reset either way; this only
+ * decides whether the card says so out loud).
+ */
+export const LAUNCH_STUCK_MS = 60 * 60 * 1000;
+
 export const CLIENT_LAUNCH_PHASE_COPY: Record<
   Exclude<ClientLaunchPhase, "not_started" | "failed">,
   { title: string; detail: string }
@@ -338,9 +347,22 @@ export interface ClientAgentTemplateInput {
   status?: ClientAgentTemplate["status"];
 }
 
-/** The umbrella's slot mode. X-style umbrellas own no chain family. */
-export function isOptionsMode(agent: Pick<ClientAgent, "chainFamily">): boolean {
-  return agent.chainFamily == null;
+/**
+ * The umbrella's slot mode, read from the field the BIND set (W3).
+ *
+ * This used to answer `chainFamily == null`, which is true of the X agent AND
+ * of every agent the family classifier could not place — a research agent, an
+ * SEO agent, a freshly imported lab skill with an unfamiliar name. Those would
+ * have been handed the daily pick-of-3 product (a picker with no candidates, a
+ * "pick of 3" chip on every calendar day) purely because nobody could tell
+ * what family they wrote into. Mode is now a decision, not a leftover.
+ *
+ * Absent ⇒ "single", the safe answer: a single-mode umbrella with an empty
+ * rotation generates no slots at all, where a wrongly-inferred options mode
+ * generates days the agent cannot fill.
+ */
+export function isOptionsMode(agent: Pick<ClientAgent, "slotMode">): boolean {
+  return agent.slotMode === "options";
 }
 
 /** The stable template key an options slot carries, so chips still have a label. */

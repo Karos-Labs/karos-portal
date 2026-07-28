@@ -21,6 +21,7 @@ import {
   type CustomAgentImportCandidate,
 } from "@/lib/agent-service/custom-agent-import";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
+import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { clientSafeRunError } from "@/lib/custom-agent-launch";
 import { isBillableClientActor } from "@/lib/credits";
 import { requireAdmin, requireClientAccess } from "./_shared";
@@ -329,6 +330,17 @@ export async function runCustomAgentAction(input: {
   contextItemIds?: string[];
 }): Promise<{ jobId?: string; error?: string }> {
   const user = await requireClientAccess(input.clientId);
+  // §2 guard rail: an agent owned by a client-agent umbrella is not the
+  // client's to run until that umbrella is live. Their surface for it is the
+  // launch card, and a run fired here would charge for an agent that has no
+  // confirmed template set to produce from. Staff are unaffected — they are
+  // the ones who get it live.
+  const blocked = await clientAgentRunRefusal({
+    user,
+    clientId: input.clientId,
+    customAgentId: input.agentId,
+  });
+  if (blocked) return { error: blocked };
   const result = await submitCustomAgentJob(user, input);
   if (result.jobId && !result.error) {
     revalidatePath("/jobs");

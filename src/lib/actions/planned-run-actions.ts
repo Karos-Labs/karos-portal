@@ -19,6 +19,7 @@ import {
   weeklyCadenceDays,
 } from "@/lib/scheduled-runs";
 import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
+import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import type { PlannedRunCadence } from "@/lib/types";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
 
@@ -196,6 +197,18 @@ export async function configureClientAgentScheduleAction(
     );
     if (!activated) return { error: "Agent not found." };
   }
+
+  // §2 guard rail: setting a pace for an umbrella-bound agent is the client's
+  // to do once the agent is live, not before. A schedule written against a
+  // not-yet-launched umbrella would start firing paid runs of an agent whose
+  // template set nobody has confirmed — and it would do it from a card that is
+  // simultaneously telling the client the agent is still being set up.
+  const blocked = await clientAgentRunRefusal({
+    user,
+    clientId: input.clientId,
+    customAgentId: input.customAgentId,
+  });
+  if (blocked) return { error: blocked };
 
   // Clamped to exactly what the dialog offers. outputsPerRun was capped at 10
   // here while the dialog offered 5, so a stale page or a direct call could

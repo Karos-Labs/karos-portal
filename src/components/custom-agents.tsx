@@ -763,7 +763,12 @@ function CancelRunControl({ runId }: { runId: string }) {
   );
 }
 
-function AgentScheduleModal({
+/**
+ * Exported so the live client-agent card's "Adjust pace" reuses THIS dialog
+ * rather than growing a second schedule UI over the same action. One dialog,
+ * one `configureClientAgentScheduleAction`, one set of clamps.
+ */
+export function AgentScheduleModal({
   agent,
   clientId,
   schedule,
