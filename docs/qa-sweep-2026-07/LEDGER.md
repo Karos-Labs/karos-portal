@@ -65,7 +65,7 @@ are tracked in the CD table at the bottom.
 | F44 | LOW | A | AGENTS | 2 | RESOLVED | yes | The client AI Agents page stacks two near-identical headings and taglines on top of each other | findings-p047-084.md |
 | F45 | LOW | A | AGENTS | 2 | RESOLVED | — | Two managed-product run components and their submit action are dead code — the four catalog pro | findings-p047-084.md |
 | F135 | LOW | A | AGENTS | 2 | RESOLVED | yes | "3 runs × 1 outputs × 25 credits" — unpluralised units in the cost line | findings-p047-084.md |
-| F147 | HIGH | B | ARCH | 3 | IN-PROGRESS | yes | One content stream, two agent identities: "Instagram Agent" and "Social posts (IG/TikTok)" run  | findings-p047-084.md |
+| F147 | HIGH | B | ARCH | 3 | RESOLVED | yes | One content stream, two agent identities: "Instagram Agent" and "Social posts (IG/TikTok)" run  | findings-p047-084.md |
 | F148 | HIGH | B | ARCH | 3 | RESOLVED | — | The portal has no launch-vs-runs model — the architecture the team decided on has nowhere to li | findings-p047-084.md |
 | F46 | BLOCKER | B | WORKSPACE | 1 | RESOLVED | — | A client can never act on a draft — the pick/post/skip loop the intake copy promises does not e | findings-p047-084.md |
 | F47 | BLOCKER | B | WORKSPACE | 1 | RESOLVED | — | The client's Archive shows the agent deliverable as raw text with all its formatting symbols on | findings-p085-122.md |
