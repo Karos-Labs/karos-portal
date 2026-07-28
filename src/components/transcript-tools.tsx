@@ -105,7 +105,7 @@ export function ManualIngestButton() {
         open={open}
         onClose={() => { setOpen(false); reset(); }}
         title="Ingest a transcript"
-        description="Paste a meeting transcript or import a Fireflies JSON export. Karos will summarise it and auto-route it to the matching client."
+        description="Paste a meeting transcript or import a Fireflies JSON export. Karos will summarize it and auto-route it to the matching client."
       >
         <div className="space-y-3">
           {/* Mode toggle */}
@@ -176,7 +176,7 @@ export function ManualIngestButton() {
 
           {error && <p className="text-xs text-danger">{error}</p>}
           <Button className="w-full" loading={loading} onClick={submit}>
-            {loading ? "Analysing…" : "Ingest & analyse"}
+            {loading ? "Analyzing…" : "Ingest & analyze"}
           </Button>
         </div>
       </Modal>
