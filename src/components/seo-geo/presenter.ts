@@ -841,14 +841,20 @@ export interface AnswerCellView {
 
 export interface AnswerGridRow {
   prompt: string;
-  /** Plain-English intent heading ("Category questions"), never DISC/COMP/PROB. */
-  intentLabel: string;
+  /** Typographically presentable form of `prompt` (F18) — quoted, punctuated. */
+  displayText: string;
   cells: AnswerCellView[];
+}
+
+/** Rows under one plain-English intent heading (F18). */
+export interface AnswerGridGroup {
+  intentLabel: string;
+  rows: AnswerGridRow[];
 }
 
 export interface AnswerGridView {
   engines: Array<{ engine: EngineId; name: string }>;
-  rows: AnswerGridRow[];
+  groups: AnswerGridGroup[];
   legend: Array<{ label: string; tone: Tone; mark: AnswerCellView["mark"] }>;
 }
 
@@ -881,6 +887,30 @@ export function intentLabel(intent: string): string {
   return INTENT_VIEW[intent] ?? INTENT_VIEW_DEFAULT;
 }
 
+/** Prompts that open with one of these read as questions and earn a "?" (F18). */
+const INTERROGATIVE =
+  /^(what|which|who|whom|whose|where|when|why|how|is|are|was|were|do|does|did|can|could|should|would|will|has|have|am)\b/i;
+
+/**
+ * Typographic treatment for a stored prompt (QA F18). The questions rendered as
+ * bare unpunctuated text — "Top-rated dental clinics", "Karos alternatives",
+ * "karoslabs.com" — reading as a dump rather than a deliberate set, even though
+ * the markdown brief for the same run already quotes each one.
+ *
+ * Quotes make every row read as a query that was typed into an engine. The "?" is
+ * added only to prompts that actually open interrogatively: the deterministic
+ * fallback set deliberately contains bare keyword strings and a bare domain, and
+ * "karoslabs.com?" would be a new defect, not a fix. (The spec's shorthand was
+ * "append a question mark when there is no terminal punctuation" — narrowed here
+ * for that reason.)
+ */
+export function formatPrompt(prompt: string): string {
+  const text = prompt.trim();
+  if (!text) return text;
+  const punctuated = /[.?!]$/.test(text) || !INTERROGATIVE.test(text) ? text : `${text}?`;
+  return `“${punctuated}”`;
+}
+
 /**
  * Build the answer matrix. Columns are the engines that actually answered something
  * this run, in the panel's fixed engine order; an engine with nothing but
@@ -903,24 +933,67 @@ export function buildAnswerGridViews(insights: SeoGeoInsights): AnswerGridView |
   }));
   if (engines.length === 0) return null;
 
-  const rows: AnswerGridRow[] = grid.map((row) => {
+  const toRow = (row: (typeof grid)[number]): AnswerGridRow => {
     const byEngine = new Map((row.cells ?? []).map((c) => [c.engine, c] as const));
     return {
       prompt: row.prompt,
-      intentLabel: intentLabel(row.intent),
+      displayText: formatPrompt(row.prompt),
       cells: engines.map(({ engine, name }) => {
         const state = byEngine.get(engine)?.state;
         const view = (state && CELL_VIEW[state]) || CELL_VIEW_DEFAULT;
         return { engine, engineName: name, ...view };
       }),
     };
-  });
+  };
+
+  // Grouped under plain-English intent headings (F18), in the display order that
+  // puts the questions winning new customers first. Unknown intents fall into one
+  // trailing "Other questions" group rather than vanishing.
+  const known = new Set(INTENT_VIEW_ORDER);
+  const order = [...INTENT_VIEW_ORDER, ...new Set(grid.map((r) => r.intent).filter((i) => !known.has(i)))];
+  const groups: AnswerGridGroup[] = [];
+  for (const intent of order) {
+    const rows = grid.filter((r) => r.intent === intent).map(toRow);
+    if (rows.length > 0) groups.push({ intentLabel: intentLabel(intent), rows });
+  }
 
   return {
     engines,
-    rows,
+    groups,
     legend: [CELL_VIEW.named_first, CELL_VIEW.named, CELL_VIEW.cited_not_named, CELL_VIEW.absent],
   };
+}
+
+/* ── Grouped question list (pre-grid snapshots) ───────────────────── */
+
+export interface IntentPromptGroup {
+  intentLabel: string;
+  prompts: PromptView[];
+}
+
+/**
+ * The questions grouped under plain-English intent headings, for snapshots with no
+ * persisted answer grid (QA F18). Mirrors the grouping the markdown brief has
+ * always used (intel/seo-geo.ts), reusing INTENT_LABELS' ordering but never its
+ * DISC/COMP/PROB codes. Returns a single unlabelled group when nothing is tagged.
+ */
+export function buildIntentPromptViews(insights: SeoGeoInsights): IntentPromptGroup[] {
+  const views = new Map(buildPromptViews(insights).map((v) => [v.text, v] as const));
+  const intents = insights.intentPrompts ?? [];
+  if (intents.length === 0) {
+    return [{ intentLabel: "", prompts: [...views.values()] }];
+  }
+  const known = new Set(INTENT_VIEW_ORDER);
+  const order = [...INTENT_VIEW_ORDER, ...new Set(intents.map((p) => p.intent).filter((i) => !known.has(i)))];
+  const groups: IntentPromptGroup[] = [];
+  for (const intent of order) {
+    const prompts = intents
+      .filter((p) => p.intent === intent)
+      .map((p) => views.get(p.prompt))
+      .filter((v): v is PromptView => !!v);
+    if (prompts.length > 0) groups.push({ intentLabel: intentLabel(intent), prompts });
+  }
+  return groups;
 }
 
 /* ── Prompt set ───────────────────────────────────────────────────── */

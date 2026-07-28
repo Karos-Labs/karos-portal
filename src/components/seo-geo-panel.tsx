@@ -8,11 +8,13 @@ import {
   buildDiscoveredViews,
   buildEngineViews,
   buildGapViews,
+  buildIntentPromptViews,
   buildPresence,
   buildPromptViews,
   buildRosterChips,
   buildRosterDrift,
   buildScoreViews,
+  formatPrompt,
   genericFlagPrefill,
   unwiredRequestPrefill,
   type AnswerCellView,
@@ -108,18 +110,31 @@ function AnswerGrid({ view }: { view: AnswerGridView }) {
               ))}
             </tr>
           </thead>
-          <tbody>
-            {view.rows.map((row, i) => (
-              <tr key={`${row.prompt}-${i}`} className="border-t border-border">
-                <td className="py-1.5 pr-3 align-middle text-muted">{row.prompt}</td>
-                {row.cells.map((cell) => (
-                  <td key={cell.engine} className="px-2 py-1.5 text-center align-middle">
-                    <AnswerDot mark={cell.mark} tone={cell.tone} label={`${cell.engineName}: ${cell.label}`} />
-                  </td>
-                ))}
+          {/* One tbody per intent group (F18): the questions carry a five-way
+              taxonomy the pipeline already persists, and the old flat dump threw
+              that hierarchy away. */}
+          {view.groups.map((group) => (
+            <tbody key={group.intentLabel}>
+              <tr>
+                <th
+                  colSpan={view.engines.length + 1}
+                  className="border-t border-border pb-1 pt-3 text-left font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
+                >
+                  {group.intentLabel}
+                </th>
               </tr>
-            ))}
-          </tbody>
+              {group.rows.map((row, i) => (
+                <tr key={`${row.prompt}-${i}`} className="border-t border-border">
+                  <td className="py-1.5 pr-3 align-middle text-muted">{row.displayText}</td>
+                  {row.cells.map((cell) => (
+                    <td key={cell.engine} className="px-2 py-1.5 text-center align-middle">
+                      <AnswerDot mark={cell.mark} tone={cell.tone} label={`${cell.engineName}: ${cell.label}`} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          ))}
         </table>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-2">
@@ -350,6 +365,9 @@ export function SeoGeoPanel({
   // "nothing to fix" — say the plan lands on the next refresh.
   const planPendingRefresh = recommendations.length === 0 && gaps.length > 0;
   const prompts = buildPromptViews(insights);
+  // Grouped under plain-English intent headings (F18) — the fallback list for
+  // snapshots with no persisted answer grid.
+  const promptGroups = buildIntentPromptViews(insights);
   // QA F12: the per-question × per-engine matrix the pipeline has been computing and
   // persisting on every run since SCRUM-52, read by no component until now. It is the
   // exhibit behind every aggregate above; without it the "no black box" claim on this
@@ -568,9 +586,14 @@ export function SeoGeoPanel({
         )}
       </Card>
 
-      {/* 6 · Methodology: the exact questions and roster, no black box */}
+      {/* 6 · Methodology (QA F18): three named sections, three Cards. These used to
+          be one Card whose only affordance was a collapsed row labelled "The 20
+          buyer questions we asked" — so the competitor roster and the citation
+          leaderboard, both named sections of this report, were children of a
+          disclosure that didn't mention them and was closed by default. A client
+          asking "who are you comparing me to?" could never find the answer. */}
       <Card>
-        <Disclosure summary={`The ${prompts.length} buyer questions we asked`}>
+        <Disclosure summary={`The ${prompts.length} questions we asked`}>
           {answerGrid ? (
             <>
               <p className="mb-2 text-xs text-muted-2">
@@ -579,67 +602,29 @@ export function SeoGeoPanel({
               <AnswerGrid view={answerGrid} />
             </>
           ) : (
-            <ul className="space-y-1.5">
-              {prompts.map((p, i) => (
-                <li key={`q-${i}`} className="flex items-center justify-between gap-2 text-xs">
-                  <span className="text-muted">{p.text}</span>
-                  {p.tagLabel && (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
-                      {p.tagLabel}
-                      {p.tagExplainer && <InfoTip text={p.tagExplainer} />}
-                    </span>
+            <div className="space-y-3">
+              {promptGroups.map((group, gi) => (
+                <div key={group.intentLabel || `g-${gi}`}>
+                  {group.intentLabel && (
+                    <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                      {group.intentLabel}
+                    </p>
                   )}
-                </li>
+                  <ul className="space-y-1.5">
+                    {group.prompts.map((p, i) => (
+                      <li key={`q-${gi}-${i}`} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-muted">{formatPrompt(p.text)}</span>
+                        {p.tagLabel && (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                            {p.tagLabel}
+                            {p.tagExplainer && <InfoTip text={p.tagExplainer} />}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ))}
-            </ul>
-          )}
-          <div className="mt-3 border-t border-border pt-3">
-            <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
-              Who we compare you against
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {rosterChips.map((chip, i) => (
-                <span
-                  key={`${chip.name}-${i}`}
-                  className={
-                    chip.isClient
-                      ? "inline-flex items-center gap-1 rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-neon"
-                      : "inline-flex items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted"
-                  }
-                >
-                  <BrandFavicon website={chip.url} faviconSize={32} className="h-3 w-3 rounded-[2px]" />
-                  {chip.name}
-                  {chip.isClient && <span>(you)</span>}
-                  {chip.pending && <span className="text-muted-2">· next snapshot</span>}
-                </span>
-              ))}
-            </div>
-          </div>
-          {quotedInstead.length > 0 && (
-            <div className="mt-3 border-t border-border pt-3">
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
-                Who the engines quote as sources
-              </p>
-              {/* The bars count citations, the sentence below counts answers — say
-                  which is which, so two honest numbers don't read as a contradiction. */}
-              <p className="mb-1.5 text-[11px] text-muted-2">
-                How many times each domain was cited across the category answers we measured.
-              </p>
-              <ul className="space-y-1.5">
-                {quotedInstead.slice(0, 8).map((r) => (
-                  <li key={r.domain} className="flex items-center gap-2 text-xs">
-                    <BrandFavicon website={r.domain} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
-                    <span className="min-w-0 flex-1 truncate text-muted">{r.domain}</span>
-                    <span className="w-20 shrink-0">
-                      <Meter pct={(r.citations / leaderboardMax) * 100} color="var(--info)" />
-                    </span>
-                    <span className="w-6 shrink-0 text-right font-mono text-[11px] text-muted-2">
-                      {r.citations}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-1.5 text-[11px] text-muted-2">{clientCitationLine}</p>
             </div>
           )}
           <p className="mt-3 text-[11px] text-muted-2">
@@ -648,6 +633,56 @@ export function SeoGeoPanel({
           </p>
         </Disclosure>
       </Card>
+
+      <Card>
+        <CardTitle className="mb-1">Who we compare you against</CardTitle>
+        <p className="mb-3 text-xs text-muted-2">
+          The brands your visibility is measured against on every snapshot.
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {rosterChips.map((chip, i) => (
+            <span
+              key={`${chip.name}-${i}`}
+              className={
+                chip.isClient
+                  ? "inline-flex items-center gap-1 rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-neon"
+                  : "inline-flex items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted"
+              }
+            >
+              <BrandFavicon website={chip.url} faviconSize={32} className="h-3 w-3 rounded-[2px]" />
+              {chip.name}
+              {chip.isClient && <span>(you)</span>}
+              {chip.pending && <span className="text-muted-2">· next snapshot</span>}
+            </span>
+          ))}
+        </div>
+      </Card>
+
+      {quotedInstead.length > 0 && (
+        <Card>
+          <CardTitle className="mb-1">Who the engines quote as sources</CardTitle>
+          {/* The bars count citations, the sentence below counts answers — say
+              which is which, so two honest numbers don't read as a contradiction. */}
+          <p className="mb-3 text-xs text-muted-2">
+            How many times each domain was cited across the category answers we measured.
+          </p>
+          <ul className="space-y-1.5">
+            {quotedInstead.slice(0, 8).map((r) => (
+              <li key={r.domain} className="flex items-center gap-2 text-xs">
+                <BrandFavicon website={r.domain} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+                <span className="min-w-0 flex-1 truncate text-muted">{r.domain}</span>
+                <span className="w-20 shrink-0">
+                  <Meter pct={(r.citations / leaderboardMax) * 100} color="var(--info)" />
+                </span>
+                <span className="w-6 shrink-0 text-right font-mono text-[11px] text-muted-2">
+                  {r.citations}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-muted-2">{clientCitationLine}</p>
+        </Card>
+      )}
 
       {/* 7 · Catch-all flag affordance */}
       <div className="flex justify-end">

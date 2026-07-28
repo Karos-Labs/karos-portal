@@ -5,6 +5,8 @@ import {
   bucketLabel,
   buildAnswerGridViews,
   buildContextLine,
+  buildIntentPromptViews,
+  formatPrompt,
   buildDiscoveredViews,
   buildRosterChips,
   buildRosterDrift,
@@ -593,14 +595,29 @@ describe("answer grid (QA F12)", () => {
       ],
     });
 
+  const rowsOf = (v: ReturnType<typeof buildAnswerGridViews>) =>
+    (v?.groups ?? []).flatMap((g) => g.rows);
+
   it("maps every cell state through plain English and keeps the panel's engine order", () => {
     const view = buildAnswerGridViews(grid())!;
     // Claude answered nothing this run → no empty column.
     expect(view.engines.map((e) => e.name)).toEqual(["ChatGPT", "Gemini"]);
-    expect(view.rows[0].cells.map((c) => c.label)).toEqual(["Named first", "Not named"]);
-    expect(view.rows[1].cells.map((c) => c.label)).toEqual([
+    const rows = rowsOf(view);
+    expect(rows.find((r) => r.prompt === "best fintech tool for startups")!.cells.map((c) => c.label)).toEqual([
+      "Named first",
+      "Not named",
+    ]);
+    expect(rows.find((r) => r.prompt === "Is Acme legit?")!.cells.map((c) => c.label)).toEqual([
       "Used your site, didn't name you",
       "Named",
+    ]);
+  });
+
+  it("groups rows under plain-English intent headings, category questions first", () => {
+    const view = buildAnswerGridViews(grid())!;
+    expect(view.groups.map((g) => g.intentLabel)).toEqual([
+      "Category questions",
+      "Questions that name you",
     ]);
   });
 
@@ -609,7 +626,23 @@ describe("answer grid (QA F12)", () => {
     for (const token of ["named_first", "cited_not_named", "unavailable", "DISC", "BRAND", "MEASURED"]) {
       expect(rendered).not.toContain(token);
     }
-    expect(buildAnswerGridViews(grid())!.rows[1].intentLabel).toBe("Questions that name you");
+    expect(buildAnswerGridViews(grid())!.groups[1].intentLabel).toBe("Questions that name you");
+  });
+
+  it("keeps rows with an unrecognized intent instead of dropping them", () => {
+    const view = buildAnswerGridViews(
+      insights({
+        answerGrid: [
+          {
+            prompt: "q",
+            intent: "mystery" as never,
+            cells: [{ engine: "chatgpt", source: "OpenAI", tier: "MEASURED", state: "named" }],
+          },
+        ],
+      }),
+    )!;
+    expect(view.groups.map((g) => g.intentLabel)).toEqual(["Other questions"]);
+    expect(JSON.stringify(view)).not.toContain("mystery");
   });
 
   it("maps an unknown state to 'not measured' instead of echoing it", () => {
@@ -626,7 +659,7 @@ describe("answer grid (QA F12)", () => {
       ],
     });
     const view = buildAnswerGridViews(weird)!;
-    expect(view.rows[0].cells[0].label).toBe("Not measured");
+    expect(rowsOf(view)[0].cells[0].label).toBe("Not measured");
     expect(JSON.stringify(view)).not.toContain("vibes");
   });
 
@@ -645,6 +678,45 @@ describe("answer grid (QA F12)", () => {
         }),
       ),
     ).toBeNull();
+  });
+});
+
+describe("question typography + grouping (QA F18)", () => {
+  it("quotes every question and adds a mark only to the ones that ask one", () => {
+    expect(formatPrompt("Is Acme legit")).toBe("“Is Acme legit?”");
+    expect(formatPrompt("what is the best fintech app")).toBe("“what is the best fintech app?”");
+    expect(formatPrompt("How do I compare providers?")).toBe("“How do I compare providers?”");
+    // The deterministic fallback set deliberately contains bare keyword strings
+    // and a bare domain — "karoslabs.com?" would be a new defect, not a fix.
+    expect(formatPrompt("Top-rated dental clinics")).toBe("“Top-rated dental clinics”");
+    expect(formatPrompt("karoslabs.com")).toBe("“karoslabs.com”");
+    expect(formatPrompt("Acme alternatives")).toBe("“Acme alternatives”");
+  });
+
+  it("groups the fallback list by intent, in display order", () => {
+    const groups = buildIntentPromptViews(
+      insights({
+        promptSet: ["best fintech app", "Is Acme legit?", "acme.com"],
+        intentPrompts: [
+          { prompt: "Is Acme legit?", intent: "brand" },
+          { prompt: "acme.com", intent: "navigational" },
+          { prompt: "best fintech app", intent: "discovery" },
+        ],
+      }),
+    );
+    expect(groups.map((g) => g.intentLabel)).toEqual([
+      "Category questions",
+      "Questions that name you",
+      "People looking for your site",
+    ]);
+    expect(groups[0].prompts.map((p) => p.text)).toEqual(["best fintech app"]);
+  });
+
+  it("falls back to one unlabelled group when nothing is tagged", () => {
+    const groups = buildIntentPromptViews(insights({ intentPrompts: [] }));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].intentLabel).toBe("");
+    expect(groups[0].prompts).toHaveLength(2);
   });
 });
 
