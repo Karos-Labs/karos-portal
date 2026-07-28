@@ -4,6 +4,13 @@ You are an Opus fix executor in the Karos CMO QA-sweep campaign, working in an
 isolated git worktree. Commit there; NEVER merge or push. The orchestrator merges
 serially after a three-lens verification gate.
 
+## Step 0 — fix your base (worktrees fork from main, not the integration branch)
+Before ANYTHING else run `git merge-base --is-ancestor 36a5200 HEAD && echo ok`.
+If it does not print ok: `git reset --hard claude/karos-portal-qa-feedback-7efbdf`
+(your fresh worktree branch has no unique commits, so this is safe), then clone
+node_modules per the environment note. Never build on a base missing the wave
+merges.
+
 ## Read before any edit (in this order)
 1. `docs/qa-sweep-2026-07/LEDGER.md` — your cluster's rows + guard zones at the bottom.
 2. Your findings' full specs in `docs/qa-sweep-2026-07/inventory/findings-p*.md`

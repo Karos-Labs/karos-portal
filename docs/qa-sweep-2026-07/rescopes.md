@@ -242,3 +242,20 @@ starting. Updated by the orchestrator after each verification gate.
   of the retirement commit. Phase 3: managed-product run UI returns under the
   unified launch-vs-runs model, never as the old four cards. TOMER-HANDOVER must
   carry this note.
+
+## DOCS cluster report highlights (pre-verification)
+- New defect (whoever wires it): applyGlobalDocCorrection repeats F74's
+  charge-without-changed-flag shape; currently zero callers. Do not mount
+  without an F74-style {changed} + refund.
+- client-guidelines is a permanently dead DOC_TABS row (tier internal-only,
+  pickDoc never surfaces it) — end-loop cleanup or product call.
+- AiProcessingBanner only mounts on dashboard/settings; after F78 the only
+  regenerate progress signal on other /clients/[id]/* routes is a greyed button
+  — candidate: mount banner in client layout (end-loop or DASHBOARD).
+- PRODUCT CALL for Albert: branding writes now deterministically target the
+  internal tier; client-tier Branding doc lags until next condensation run.
+- F77 corrections enter generation via the internal source only; standalone
+  condensation (refreshClientContextDocsAction) would miss them — noted for
+  Phase 3 / handover.
+- Wave-A base hazard RESOLVED: all four fixers self-reset to integration head;
+  fixer-brief now carries Step 0. Future spawns must verify ancestry of 36a5200.
