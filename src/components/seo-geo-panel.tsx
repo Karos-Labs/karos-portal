@@ -658,31 +658,48 @@ export function SeoGeoPanel({
         </div>
       </Card>
 
-      {quotedInstead.length > 0 && (
-        <Card>
-          <CardTitle className="mb-1">Who the engines quote as sources</CardTitle>
-          {/* The bars count citations, the sentence below counts answers — say
-              which is which, so two honest numbers don't read as a contradiction. */}
-          <p className="mb-3 text-xs text-muted-2">
-            How many times each domain was cited across the category answers we measured.
+      {/* QA F19: this Card is NOT gated on there being citations. The client's own
+          citation sentence used to be nested inside a `quotedInstead.length > 0`
+          check, so the single most important line in the section — your site was
+          never cited, and earning citations is what moves the score — was exactly
+          the line that could not render when there were no citations at all. The
+          zero state deleted its own explanation while the engine cards above kept
+          saying "cited as a source: 0 of 14" with nothing to explain it. */}
+      <Card>
+        <CardTitle className="mb-1">Who the engines quote as sources</CardTitle>
+        {quotedInstead.length > 0 ? (
+          <>
+            {/* The bars count citations, the sentence below counts answers — say
+                which is which, so two honest numbers don't read as a contradiction. */}
+            <p className="mb-3 text-xs text-muted-2">
+              How many times each of these {quotedInstead.length} domains was cited across the
+              category answers we measured.
+            </p>
+            {/* Every row the data layer returns — the old hard `.slice(0, 8)` against
+                a limit of 12 dropped up to four competitor source domains with no
+                count, no "show all", and no hint there were more. */}
+            <ul className="space-y-1.5">
+              {quotedInstead.map((r) => (
+                <li key={r.domain} className="flex items-center gap-2 text-xs">
+                  <BrandFavicon website={r.domain} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+                  <span className="min-w-0 flex-1 truncate text-muted">{r.domain}</span>
+                  <span className="w-20 shrink-0">
+                    <Meter pct={(r.citations / leaderboardMax) * 100} color="var(--info)" />
+                  </span>
+                  <span className="w-6 shrink-0 text-right font-mono text-[11px] text-muted-2">
+                    {r.citations}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p className="mb-1 text-xs text-muted-2">
+            No engine cited any source domain on the answers we measured this run.
           </p>
-          <ul className="space-y-1.5">
-            {quotedInstead.slice(0, 8).map((r) => (
-              <li key={r.domain} className="flex items-center gap-2 text-xs">
-                <BrandFavicon website={r.domain} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
-                <span className="min-w-0 flex-1 truncate text-muted">{r.domain}</span>
-                <span className="w-20 shrink-0">
-                  <Meter pct={(r.citations / leaderboardMax) * 100} color="var(--info)" />
-                </span>
-                <span className="w-6 shrink-0 text-right font-mono text-[11px] text-muted-2">
-                  {r.citations}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-[11px] text-muted-2">{clientCitationLine}</p>
-        </Card>
-      )}
+        )}
+        <p className="mt-2 text-[11px] text-muted-2">{clientCitationLine}</p>
+      </Card>
 
       {/* 7 · Catch-all flag affordance */}
       <div className="flex justify-end">
