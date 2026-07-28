@@ -779,3 +779,16 @@ completion refresh lands. Scope (two consecutive clean passes required):
 - shell3 applied CD-G9c staff-wide (AppHeader was one mount serving both
   context modes) — accepted; staff no-context narrow keeps hamburger but
   gains the unread dot + drawer rows so nothing went 3 taps deep.
+
+### P3 builder deferrals (carry into WP-4+ / end loop)
+- WP-9 options picker still to build (D6 removed only the premature promise).
+- Clients lost the cross-agent "recent runs" list (runs now live per-agent on
+  detail pages). Acceptable under CD-G1; surface to Albert in the wave report.
+- Client run gesture takes no attachments — generic dialog's picker now
+  unreachable for clients. Needs a design call if client attachments matter.
+- Staff keep the all-in-one cards + curation pane (intentional); staff
+  roster/detail unification is future work.
+- calendar-body.tsx ~178 falls back to agent.description for a blurb — same
+  CD-G2 defect class on the calendar surface. End-loop fix via clientAgentBlurb.
+- Pre-existing react-hooks/purity lint errors (Date.now()) in agents page +
+  launch-card.tsx — pre-date this wave; end-loop sweep.
