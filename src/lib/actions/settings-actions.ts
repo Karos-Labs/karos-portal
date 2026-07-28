@@ -103,6 +103,32 @@ export async function runPendingTasksBatchAction(
 }
 
 /**
+ * Read-only price + size preview of the batch runPendingTasksBatchAction would
+ * execute right now, so the spend is announced BEFORE it happens the way the
+ * run dialog and schedule modal already do (QA F58 — this was the largest
+ * single-click spend in the portal and the only one with no price attached).
+ * Selection mirrors the runner exactly; nothing is claimed, charged or run.
+ */
+export async function previewPendingTasksBatchAction(
+  clientId: string,
+): Promise<{ ok: boolean; count?: number; credits?: number; billable?: boolean; error?: string }> {
+  const user = await requireUser();
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return { ok: false, error: "Forbidden" };
+  }
+
+  const batch = await pendingTasksBatch(clientId);
+  const billable = isBillableClientActor(user);
+  const costs = billable ? await Promise.all(batch.map((t) => plannedTaskExecutionCost(t))) : [];
+  return {
+    ok: true,
+    count: batch.length,
+    credits: costs.reduce((sum, c) => sum + c, 0),
+    billable,
+  };
+}
+
+/**
  * Toggle the client's auto-scheduling opt-in flag. This controls whether
  * approvals and chain-assigned scheduling may mark drafts as publishMode="auto".
  */

@@ -21,7 +21,12 @@ import { CSS } from "@dnd-kit/utilities";
 import { Icon } from "@/components/icon";
 import { Badge, EmptyState } from "@/components/ui";
 import { cn, relativeTime } from "@/lib/utils";
-import { deleteTaskAction, runPendingTasksBatchAction, updateTaskStatusAction } from "@/lib/actions";
+import {
+  deleteTaskAction,
+  previewPendingTasksBatchAction,
+  runPendingTasksBatchAction,
+  updateTaskStatusAction,
+} from "@/lib/actions";
 import { TaskTicketModal } from "@/components/task-ticket-modal";
 import type { ClientTask, Role, TaskOwner, TaskSource, TaskStatus } from "@/lib/types";
 
@@ -104,13 +109,29 @@ function RunPendingTasksButton({ clientId }: { clientId: string }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState<number | null>(null);
+  const [preview, setPreview] = useState<{ count: number; credits: number; billable: boolean } | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  function run() {
+  // Confirm step: nothing is claimed or charged until the client has seen the
+  // task count and the credit total (QA F58).
+  function askToRun() {
     setError(null);
     setStarted(null);
     startTransition(async () => {
+      const res = await previewPendingTasksBatchAction(clientId);
+      if (!res.ok) {
+        setError(res.error ?? "Could not check what would run");
+        return;
+      }
+      setPreview({ count: res.count ?? 0, credits: res.credits ?? 0, billable: res.billable ?? false });
+    });
+  }
+
+  function confirmRun() {
+    setError(null);
+    startTransition(async () => {
       const res = await runPendingTasksBatchAction(clientId);
+      setPreview(null);
       if (!res.ok) {
         setError(res.error ?? "Could not start the run");
         return;
@@ -123,13 +144,52 @@ function RunPendingTasksButton({ clientId }: { clientId: string }) {
   return (
     <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
       <button
-        onClick={run}
-        disabled={isPending}
+        onClick={askToRun}
+        disabled={isPending || preview !== null}
         className="flex items-center gap-2 text-xs font-medium text-foreground disabled:opacity-50"
       >
         <Icon name={isPending ? "Loader" : "Play"} className={cn("h-3.5 w-3.5 text-neon", isPending && "animate-spin")} />
         Run up to 5 pending tasks now
       </button>
+      <p className="mt-1 max-w-[260px] text-[11px] leading-relaxed text-muted-2">
+        Runs your next few pending automated tasks and charges credits for each one.
+      </p>
+
+      {preview && (
+        <div className="mt-2 rounded-md border border-border bg-surface px-2.5 py-2">
+          {preview.count === 0 ? (
+            <p className="text-[11px] text-muted">No pending automated tasks to run right now.</p>
+          ) : (
+            <p className="text-[11px] leading-relaxed text-foreground">
+              {`Runs ${preview.count} pending task${preview.count === 1 ? "" : "s"} `}
+              {preview.billable ? (
+                <span className="font-medium text-neon">{`for ${preview.credits} credits`}</span>
+              ) : (
+                <span className="font-medium text-muted">at no credit cost (staff run)</span>
+              )}
+              .
+            </p>
+          )}
+          <div className="mt-2 flex items-center gap-2">
+            {preview.count > 0 && (
+              <button
+                onClick={confirmRun}
+                disabled={isPending}
+                className="inline-flex items-center gap-1 rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1 text-[11px] font-medium text-neon hover:border-neon/50 disabled:opacity-50"
+              >
+                {preview.billable ? `Run & charge ${preview.credits} credits` : "Run now"}
+              </button>
+            )}
+            <button
+              onClick={() => setPreview(null)}
+              className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+            >
+              {preview.count > 0 ? "Cancel" : "Close"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {started !== null && !error && (
         <p className="mt-1 text-[11px] text-muted">
           {started === 0 ? "No pending automated tasks to run." : `Started ${started} task${started === 1 ? "" : "s"}.`}
