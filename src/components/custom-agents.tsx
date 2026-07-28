@@ -835,6 +835,23 @@ function AgentScheduleModal({
       onClose={onClose}
       title={`Keep ${agent.name} running`}
       description="Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
+      footer={
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            {schedule && (
+              <Button variant="ghost" onClick={togglePause} loading={pending}>
+                {schedule.status === "active" ? "Pause agent" : "Resume agent"}
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
+            <Button variant="accent" onClick={save} loading={pending} disabled={insufficient}>
+              {schedule ? "Update schedule" : "Start always-on agent"}
+            </Button>
+          </div>
+        </div>
+      }
     >
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
@@ -909,22 +926,6 @@ function AgentScheduleModal({
         </div>
 
         {error && <p className="text-xs text-danger" role="alert">{error}</p>}
-
-        <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
-          <div>
-            {schedule && (
-              <Button variant="ghost" onClick={togglePause} loading={pending}>
-                {schedule.status === "active" ? "Pause agent" : "Resume agent"}
-              </Button>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
-            <Button variant="accent" onClick={save} loading={pending} disabled={insufficient}>
-              {schedule ? "Update schedule" : "Start always-on agent"}
-            </Button>
-          </div>
-        </div>
       </div>
     </Modal>
   );
@@ -1084,8 +1085,27 @@ function RunCustomAgentModal({
   return (
     // The blurb goes in the body, not Modal's `description`: that slot is an
     // unclamped <p>, so a long fallback manifest pushed the whole brief below
-    // the fold. Same clamp + "More" as the card.
-    <Modal open onClose={onClose} title={agent.name} className="max-w-2xl">
+    // the fold. Same clamp + "More" as the card. The estimate + Start run row
+    // is the pinned footer: on the long agent briefs it used to scroll out of
+    // sight in the same box as the title.
+    <Modal
+      open
+      onClose={onClose}
+      title={agent.name}
+      className="max-w-2xl"
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-2">
+            <Icon name="Clock" className="mr-1 inline h-3 w-3" />
+            {profile.estimate}. You can leave this page; the run continues.
+            {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
+          </p>
+          <Button variant="accent" onClick={submit} loading={pending}>
+            {pending ? "Starting…" : "Start run"}
+          </Button>
+        </div>
+      }
+    >
       <div className="space-y-5">
         <AgentBlurb text={agentBlurb(agent)} />
         <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
@@ -1222,16 +1242,6 @@ function RunCustomAgentModal({
           </p>
         )}
 
-        <div className="flex items-center justify-between gap-3 pt-1">
-          <p className="text-xs text-muted-2">
-            <Icon name="Clock" className="mr-1 inline h-3 w-3" />
-            {profile.estimate}. You can leave this page; the run continues.
-            {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
-          </p>
-          <Button variant="accent" onClick={submit} loading={pending}>
-            {pending ? "Starting…" : "Start run"}
-          </Button>
-        </div>
       </div>
     </Modal>
   );
@@ -1306,6 +1316,32 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       title={agent ? `Edit ${agent.name}` : "New custom agent"}
       description="The instructions are the agent's system prompt. The run adds the client context and the user's request around them."
       className="max-w-2xl"
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          {agent ? (
+            confirmDelete ? (
+              <span className="flex items-center gap-2 text-xs">
+                Delete this agent?
+                <Button size="sm" variant="danger" onClick={remove} loading={pending}>
+                  Delete
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+                  Keep
+                </Button>
+              </span>
+            ) : (
+              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)}>
+                <Icon name="Trash2" className="h-3.5 w-3.5" /> Delete
+              </Button>
+            )
+          ) : (
+            <span />
+          )}
+          <Button variant="accent" onClick={save} loading={pending}>
+            {agent ? "Save changes" : "Create agent"}
+          </Button>
+        </div>
+      }
     >
       <div className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -1421,31 +1457,6 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           </p>
         )}
         {error && <p className="text-xs text-danger">{error}</p>}
-
-        <div className="flex items-center justify-between gap-3 pt-1">
-          {agent ? (
-            confirmDelete ? (
-              <span className="flex items-center gap-2 text-xs">
-                Delete this agent?
-                <Button size="sm" variant="danger" onClick={remove} loading={pending}>
-                  Delete
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-                  Keep
-                </Button>
-              </span>
-            ) : (
-              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)}>
-                <Icon name="Trash2" className="h-3.5 w-3.5" /> Delete
-              </Button>
-            )
-          ) : (
-            <span />
-          )}
-          <Button variant="accent" onClick={save} loading={pending}>
-            {agent ? "Save changes" : "Create agent"}
-          </Button>
-        </div>
       </div>
     </Modal>
   );
