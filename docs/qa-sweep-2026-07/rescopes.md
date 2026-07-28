@@ -571,3 +571,24 @@ excludes completed (benign).
 - chainFamilyForAgent is module-local; WP-8 backfill will need it exported.
 - WP-4 must read slots directly (slot instants use zonedWallToUtc per F108),
   not re-derive days from scheduledAt.
+
+## SHELL cluster complete + Albert directives verified live
+- CD-E3 MEASURED: before 892px content / 621px body (271px overflow). After:
+  staff 583/645 (+62 headroom) at 1280x800, 583/745 at 1440x900; client rail
+  599/651 and 599/751. No scrollbar either lens. overflow-y-auto kept as an
+  unreachable safety net.
+- CD-F2 root cause: ClientCompetitor.url is optional and routinely absent on
+  report-sourced rows; domainFromName/brandFaviconUrl added (strict
+  single-dotted-token regex so "Acme Inc." cannot fetch a stranger icon).
+  Okara.ai + ploy.ai confirmed live. Orchestrator applied the same name= prop to
+  the 4 seo-geo-panel BrandFavicon sites.
+- CD-E2: usagePct stripped at the boundary (toClientBrandingView), staff-only
+  editor with a usage-total check, server-side merge so a client edit cannot
+  blank the mix. NOT written into context docs. NOTE: mcp/tools.ts:129 returns
+  full brandingGuidelines to PAT callers so usagePct rides along (staff-only
+  surface) — end-loop consideration.
+- F113 ruled resolved-by-F60 (ClientContextBar already gives every staff member
+  a labelled exit); what was KEPT is picker parity for employees. Albert
+  independently rejected the duplicate nav button; both removals converged.
+- F119 blocked clause + CD-F2 panel props closed by orchestrator (0a518dd).
+- Dead but harmless: NotificationBell variant="row" branch now has no call site.
