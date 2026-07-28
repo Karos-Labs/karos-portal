@@ -19,6 +19,12 @@ export interface ClientCustomAgentSummary {
   id: string;
   name: string;
   description: string;
+  /**
+   * Per-run price for billable client actors; null ⇒ CREDIT_COSTS.customAgentRun.
+   * Carried so the copilot can quote the same figure the agent card shows
+   * instead of refusing or guessing (QA F95).
+   */
+  creditCost?: number | null;
 }
 
 /**
@@ -32,7 +38,12 @@ export async function getClientCustomAgents(clientId: string): Promise<ClientCus
   const agents = await listCustomAgents();
   return agents
     .filter((a) => a.enabled && allowed.has(a.id))
-    .map((a) => ({ id: a.id, name: a.name, description: a.description }));
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      creditCost: a.creditCost ?? null,
+    }));
 }
 
 /** Managed-product entries in AgentCatalogEntry form (always available). */
