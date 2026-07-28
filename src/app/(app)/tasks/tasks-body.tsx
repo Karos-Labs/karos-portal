@@ -105,7 +105,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
 
   return (
     <div>
-      <PageHeader title="Task Board" />
+      <PageHeader title="Workspace" description="Every client's board in one place." />
       <TasksBoard tasks={annotatedTasks} currentUserRole={user.role} showClientName />
     </div>
   );

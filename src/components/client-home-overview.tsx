@@ -101,7 +101,7 @@ export function ClientHomeOverview({
                 href="/tasks"
                 icon="Circle"
                 label={`${pendingTasks.length} pending task${pendingTasks.length === 1 ? "" : "s"}`}
-                hint="Open items on your task board."
+                hint="Open items on your workspace board."
               />
             )}
           </ul>

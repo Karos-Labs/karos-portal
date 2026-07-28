@@ -32,7 +32,7 @@ const NAV: NavItem[] = [
   { href: "/transcripts", label: "Meetings", icon: "Mic", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/assets", label: "Assets", icon: "FolderOpen", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/calendar", label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
-  { href: "/tasks", label: "Tasks", icon: "SquareCheck", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
+  { href: "/tasks", label: "Workspace", icon: "SquareCheck", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/team", label: "Team", icon: "Users", roles: ["KAROS_ADMIN"] },
   { href: "/connect", label: "Connect", icon: "Plug", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/admin/analytics", label: "Analytics", icon: "TrendingUp", roles: ["KAROS_ADMIN"] },
