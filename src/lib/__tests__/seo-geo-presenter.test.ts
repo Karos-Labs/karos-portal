@@ -18,6 +18,7 @@ import {
   buildPresence,
   buildPromptViews,
   buildScoreViews,
+  buildSnapshotTrust,
   formatCaptured,
   genericFlagPrefill,
   scoreBand,
@@ -26,6 +27,7 @@ import {
   GEO_READINESS_CHECKS,
   REC_COPY,
   SEO_CHECKS,
+  SEO_GEO_PIPELINE_VERSION,
   computeCheckGaps,
   type PerEngineVisibility,
   type SeoGeoInsights,
@@ -837,6 +839,63 @@ describe("snapshot age + the promised next snapshot (QA F20)", () => {
   it("reports an in-place refreshing state while a run holds the lock", () => {
     expect(buildCaptureStrip(stale(), { refreshing: true }, NOW).refreshing).toBe(true);
     expect(buildCaptureStrip(stale(), {}, NOW).refreshing).toBe(false);
+  });
+});
+
+describe("snapshot trust (CD-B4)", () => {
+  const current = (patch: Partial<SeoGeoInsights> = {}) =>
+    insights({ pipelineVersion: SEO_GEO_PIPELINE_VERSION, ...patch });
+
+  it("treats a snapshot from the current pipeline as current", () => {
+    const view = buildSnapshotTrust(current());
+    expect(view.isLegacy).toBe(false);
+    expect(view.title).toBeNull();
+    expect(view.description).toBeNull();
+  });
+
+  it("marks an unstamped snapshot legacy — every capture predating the stamp", () => {
+    const view = buildSnapshotTrust(insights({ capturedAt: Date.UTC(2026, 4, 12) }));
+    expect(view.isLegacy).toBe(true);
+    expect(view.description).toContain("May 12, 2026");
+    expect(view.description).toContain("before we rebuilt how visibility is measured");
+  });
+
+  it("marks a snapshot from a superseded pipeline version legacy", () => {
+    // Captured AFTER the 2026-07-23 redeploy, so the wording drops the
+    // "before we rebuilt" framing — but a stale stamp still means legacy.
+    const view = buildSnapshotTrust(
+      insights({ pipelineVersion: "2020-01-01", capturedAt: Date.UTC(2026, 6, 26) }),
+    );
+    expect(view.isLegacy).toBe(true);
+    expect(view.description).toContain("has changed since this snapshot");
+    expect(view.description).not.toContain("before we rebuilt");
+  });
+
+  it("generalizes F1's plan guard instead of running beside it", () => {
+    // The narrow condition (gaps but no plan) is one reason inside this view now.
+    expect(buildSnapshotTrust(current({ gaps: [gap()], recommendations: [] })).planPending).toBe(true);
+    expect(buildSnapshotTrust(current({ gaps: [], recommendations: [] })).planPending).toBe(false);
+    expect(
+      buildSnapshotTrust(
+        current({
+          gaps: [gap()],
+          recommendations: [
+            { recId: "SEO-02", title: "t", description: "d", owner: "o", vertical: "SEO", impact: "high", actionKind: "one_click", targetPlatform: "site", live: true },
+          ],
+        }),
+      ).planPending,
+    ).toBe(false);
+  });
+
+  it("never narrates product history at the client", () => {
+    for (const view of [
+      buildSnapshotTrust(insights({ capturedAt: Date.UTC(2026, 4, 12) })),
+      buildSnapshotTrust(insights({ pipelineVersion: "2020-01-01" })),
+    ]) {
+      const text = `${view.title} ${view.description}`;
+      expect(text).not.toContain("plain English");
+      expect(text).not.toContain("started writing");
+    }
   });
 });
 

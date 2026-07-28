@@ -9,6 +9,7 @@ import {
   ENGINE_PROVIDERS,
   GEO_READINESS_CHECKS,
   SEO_CHECKS,
+  SEO_GEO_PIPELINE_VERSION,
   analyzeAnswer,
   buildGazetteer,
   computeCheckGaps,
@@ -802,6 +803,9 @@ export async function runSeoGeoResearch(
   const insights: SeoGeoInsights = {
     clientId: client.id,
     capturedAt: now,
+    // CD-B4: stamp what measured this, so the panel can tell current results from
+    // ones computed under superseded rules rather than presenting both as fact.
+    pipelineVersion: SEO_GEO_PIPELINE_VERSION,
     seoScore: seoScore.score,
     seoDataCoveragePct: seoScore.dataCoveragePct,
     geoReadiness: geoReadiness.score,

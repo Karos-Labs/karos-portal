@@ -14,10 +14,11 @@
 import { competitorBrandKeys } from "@/lib/competitor-input";
 import {
   ENGINE_LABELS,
-  ENGINE_PROVIDERS,
   GEO_READINESS_CHECKS,
   REC_COPY,
   SEO_CHECKS,
+  SEO_GEO_PIPELINE_VERSION,
+  SNAPSHOT_TRUST_CUTOFF,
   brandKeys,
   categoryMetrics,
   computeCheckScore,
@@ -122,7 +123,6 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   const seoBand = scoreBand(insights.seoScore);
   const geoBand = scoreBand(insights.geoReadiness);
   const visBand = scoreBand(insights.geoVisibilityIndex);
-  const promptCount = insights.promptSet.length;
 
   const seoMeasured = insights.seoDataCoveragePct > 0;
   const readinessMeasured = insights.geoReadinessCoveragePct > 0;
@@ -247,6 +247,53 @@ export function buildContextLine(insights: SeoGeoInsights, now = Date.now()): st
     `${insights.promptSet.length} real buyer questions`,
     `${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} AI engines measured`,
   ].join(" · ");
+}
+
+/* ── Snapshot trust (CD-B4) ───────────────────────────────────────── */
+
+export interface SnapshotTrustView {
+  /** Measured under superseded rules — show it as historical, not current. */
+  isLegacy: boolean;
+  /** Banner heading; null when the snapshot is current. */
+  title: string | null;
+  /** Banner body; null when the snapshot is current. */
+  description: string | null;
+  /** No written plan on this snapshot — the action plan renders its waiting state
+   *  instead of an empty "nothing to fix", which would be a lie. */
+  planPending: boolean;
+}
+
+/**
+ * CD-B4, generalizing the narrow guard F1 added rather than adding a second
+ * mechanism beside it.
+ *
+ * F1's guard was `recommendations.length === 0 && gaps.length > 0` — one symptom
+ * (a snapshot captured before the plan was persisted) of one cause: this snapshot
+ * was produced by a pipeline that no longer matches the one describing it. The
+ * cause is now the thing we test, via the version stamp, and the missing-plan case
+ * is one reason among them. That covers the 2026-07-23/24 redeploy the team
+ * flagged, the QA-sweep measurement changes, and every future change that makes
+ * old snapshots non-comparable — without a new flag per episode.
+ *
+ * The copy deliberately does not narrate product history (F1's guard said "before
+ * we started writing the plan in plain English", which tells a client about our
+ * release schedule). It says what it means for their numbers, and what to do.
+ */
+export function buildSnapshotTrust(insights: SeoGeoInsights): SnapshotTrustView {
+  const planPending =
+    (insights.recommendations?.length ?? 0) === 0 && (insights.gaps?.length ?? 0) > 0;
+  const isLegacy = insights.pipelineVersion !== SEO_GEO_PIPELINE_VERSION;
+  if (!isLegacy) return { isLegacy: false, title: null, description: null, planPending };
+
+  const preRedeploy = Number.isFinite(insights.capturedAt) && insights.capturedAt < SNAPSHOT_TRUST_CUTOFF;
+  return {
+    isLegacy: true,
+    title: "These results are from an earlier measurement setup",
+    description: preRedeploy
+      ? `This snapshot was captured on ${formatCaptured(insights.capturedAt)}, before we rebuilt how visibility is measured. Read the numbers as history rather than your position today — a refresh re-measures everything on the current setup.`
+      : "How we measure visibility has changed since this snapshot, so these numbers aren't directly comparable with a current one. A refresh re-measures everything on the current setup.",
+    planPending,
+  };
 }
 
 /* ── Capture strip (QA F20 / CD-B4) ───────────────────────────────── */

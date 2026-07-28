@@ -1507,6 +1507,30 @@ export function countBrandInAnswers(
   };
 }
 
+/* ── Snapshot trust (call directive B4) ───────────────────────────── */
+
+/**
+ * Stamped onto every snapshot the pipeline writes. Bump this whenever a change
+ * makes older snapshots non-comparable with new ones, so the UI can say so
+ * instead of presenting stale maths as current.
+ *
+ * 2026-07-28 covers the QA-sweep measurement changes: category-only client-vs-
+ * competitor scoring and citations (CD-B3, F10), Perplexity/Copilot dropped from
+ * the engine roster (CD-B2), registry-duplicate gaps collapsed (F11), levers taken
+ * from the registry rather than the id prefix (F16), and one severity scale across
+ * all gap types (F22). A snapshot without this stamp was measured under the old
+ * rules; its numbers are historical, not wrong-but-current.
+ */
+export const SEO_GEO_PIPELINE_VERSION = "2026-07-28";
+
+/**
+ * The team treats captures before the 2026-07-23/24 SEO/GEO redeploy as
+ * unreliable (call directive B4). Used only to word the legacy notice — the
+ * version stamp above is what decides trust, because a hardcoded date stops being
+ * meaningful the moment the pipeline changes again.
+ */
+export const SNAPSHOT_TRUST_CUTOFF = Date.UTC(2026, 6, 23);
+
 /* ── Stored insights record ───────────────────────────────────────── */
 
 /**
@@ -1517,6 +1541,9 @@ export function countBrandInAnswers(
 export interface SeoGeoInsights {
   clientId: string;
   capturedAt: number;
+  /** Pipeline that produced this snapshot (CD-B4). Absent on anything captured
+   *  before version stamping — those are shown as legacy, never as current. */
+  pipelineVersion?: string;
   /** Headline KPIs (0–100 ints, measured-only per the grade rule). */
   seoScore: number;
   seoDataCoveragePct: number;

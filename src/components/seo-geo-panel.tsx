@@ -14,6 +14,7 @@ import {
   buildRosterChips,
   buildRosterDrift,
   buildScoreViews,
+  buildSnapshotTrust,
   capturedNothing,
   formatPrompt,
   genericFlagPrefill,
@@ -372,9 +373,11 @@ export function SeoGeoPanel({
   // The client-facing plan (dev-handoff §3b) — built and persisted on every capture run.
   // `?? []` covers snapshots captured before the plan existed.
   const recommendations = insights.recommendations ?? [];
-  // Pre-plan snapshot: gaps exist but no plan was built. Don't tell the client
-  // "nothing to fix" — say the plan lands on the next refresh.
-  const planPendingRefresh = recommendations.length === 0 && gaps.length > 0;
+  // CD-B4: one snapshot-trust view generalizing F1's narrow planPendingRefresh
+  // guard. It answers both "were these numbers produced by the current pipeline?"
+  // and "does this snapshot carry a written plan?" — the second being one symptom
+  // of the first.
+  const trust = buildSnapshotTrust(insights);
   const prompts = buildPromptViews(insights);
   // Grouped under plain-English intent headings (F18) — the fallback list for
   // snapshots with no persisted answer grid.
@@ -440,6 +443,19 @@ export function SeoGeoPanel({
 
   return (
     <div className="space-y-6">
+      {/* 0 · CD-B4: say it once, at the top, when this snapshot was produced by a
+          measurement setup we've since replaced — rather than presenting
+          superseded maths as the client's position today. */}
+      {trust.isLegacy && (
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-3.5 py-2.5">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-warning">
+            <Icon name="TriangleAlert" className="h-4 w-4 shrink-0" />
+            {trust.title}
+          </p>
+          <p className="mt-1 text-xs text-muted">{trust.description}</p>
+        </div>
+      )}
+
       {/* 1 · Headline scores, coverage shown separately from the grade */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {scores.map((view) => (
@@ -615,11 +631,11 @@ export function SeoGeoPanel({
         <p className="mb-4 text-xs text-muted-2">
           Ordered by expected impact on your scores. Approve an item and your Karos team executes it.
         </p>
-        {planPendingRefresh ? (
+        {trust.planPending ? (
           <EmptyState
             icon={<Icon name="Radar" className="h-6 w-6" />}
-            title="Your action plan is being prepared"
-            description="This snapshot was captured before we started writing the plan in plain English. Your next visibility refresh will list the actions here."
+            title="Your action plan lands on the next refresh"
+            description="We measured this snapshot but haven't written its plan yet. Your next visibility refresh will list the actions here."
           />
         ) : (
           <SeoGeoActionPlan
