@@ -357,6 +357,8 @@ export async function ingestCustomUserTaskAction(
   ok: boolean;
   taskId?: string;
   owner?: TaskOwner;
+  /** The routed title — the model rewrites what the user typed (QA F65). */
+  title?: string;
   error?: string;
   /** The refusal is informational: an equivalent task is already on the board. */
   duplicate?: boolean;
@@ -454,7 +456,7 @@ export async function ingestCustomUserTaskAction(
 
   revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
-  return { ok: true, taskId, owner: parsed.owner };
+  return { ok: true, taskId, owner: parsed.owner, title: parsed.title };
 }
 
 /** Save Google OAuth access token for a CLIENT_USER after Google sign-in. */

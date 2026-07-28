@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
@@ -217,6 +218,8 @@ function ProactiveWelcome({
   const [taskFeedback, setTaskFeedback] = useState<{
     type: "success" | "info" | "error";
     message: string;
+    /** Where the created task lives, so the confirmation can hand you off (QA F65). */
+    href?: string;
   } | null>(null);
 
   function handleTaskSubmit(e: React.FormEvent) {
@@ -227,12 +230,21 @@ function ProactiveWelcome({
     startTransition(async () => {
       const result = await ingestCustomUserTaskAction(clientId, trimmed);
       if (result.ok) {
-        const label =
-          result.owner === "karos_managed" ? "AI-managed task added" : "Action item added";
-        setTaskFeedback({ type: "success", message: label });
+        // Show the title the router actually created — it rewrites what the
+        // user typed, so the card may not carry their words (QA F65).
+        const label = result.title
+          ? `Added “${result.title}”`
+          : result.owner === "karos_managed"
+            ? "AI-managed task added"
+            : "Action item added";
+        const owner = result.owner === "client_managed" ? "client" : "karos";
+        setTaskFeedback({
+          type: "success",
+          message: label,
+          href: result.taskId ? `/tasks?owner=${owner}&task=${result.taskId}` : "/tasks",
+        });
         setTaskText("");
         onTasksCreated();
-        setTimeout(() => setTaskFeedback(null), 3000);
       } else {
         setTaskFeedback({
           type: result.duplicate ? "info" : "error",
@@ -307,7 +319,15 @@ function ProactiveWelcome({
               }
               className="h-3 w-3 shrink-0"
             />
-            {taskFeedback.message}
+            <span className="min-w-0 flex-1 truncate">{taskFeedback.message}</span>
+            {taskFeedback.href && (
+              <Link
+                href={taskFeedback.href}
+                className="shrink-0 font-semibold underline underline-offset-2 hover:opacity-80"
+              >
+                View
+              </Link>
+            )}
           </div>
         )}
       </form>

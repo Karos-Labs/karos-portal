@@ -34,8 +34,14 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
     startTransition(async () => {
       const result = await ingestCustomUserTaskAction(clientId, trimmed);
       if (result.ok) {
-        const label =
-          result.owner === "karos_managed" ? "AI-managed task added" : "Action item added";
+        // Name the card that was actually created — the router rewrites the
+        // text the user typed (QA F65). The board is already on screen here,
+        // so no link is needed.
+        const label = result.title
+          ? `Added “${result.title}”`
+          : result.owner === "karos_managed"
+            ? "AI-managed task added"
+            : "Action item added";
         setFeedback({ type: "success", message: label });
         setValue("");
         router.refresh();
