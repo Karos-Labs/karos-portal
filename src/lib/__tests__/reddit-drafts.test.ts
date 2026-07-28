@@ -378,17 +378,23 @@ describe("the Reddit intake follows them too", () => {
 
   it("renders a run's state and date through the app's own helpers", () => {
     expect(intake).toContain("<JobStatusBadge status={r.status} />");
-    expect(intake).toContain("Run {formatDate(r.createdAt)}");
+    // Staff keep the generation date; a client gets the relative, outcome-worded
+    // stamp instead (A3/A4 — four rows carrying one date is the batch tell).
+    // intake-run-rows.test.ts owns that split; this pin only holds the
+    // formatters, which is what it was written for.
+    expect(intake).toContain("`Run ${formatDate(r.createdAt)}`");
+    expect(intake).toContain("relativeTime(r.createdAt)");
     // The raw database word and the ISO machine date, both gone.
     expect(intake).not.toContain("· {r.status}");
     expect(intake).not.toContain('new Date(r.createdAt).toISOString()');
   });
 
   it("sends clients to the archive only for work that reaches it (F28)", () => {
-    // F149 filters the client archive to approved, non-future items, so a
-    // fresh batch is not there and a client sent looking for one finds an
-    // empty page. The copy names the approval step and links the destination.
-    expect(intake).toContain("Once your Karos team approves a batch");
+    // F149 filters the client archive to approved, non-future items, so freshly
+    // generated work is not there and a client sent looking for it finds an
+    // empty page. The copy names the approval step and links the destination —
+    // it no longer names the unit the work ships in.
+    expect(intake).toContain("Once your Karos team has approved the replies");
     expect(intake).toContain('href="/tasks?tab=archive"');
   });
 });

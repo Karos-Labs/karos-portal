@@ -4,11 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { AgentIdentity } from "@/components/agent-identity";
 import { ContactUsButton } from "@/components/contact-us-modal";
-import { AgentScheduleModal } from "@/components/custom-agents";
-import { ClientAgentFeedbackModal } from "./feedback-modal";
-import { moveTemplateKey, visibleTemplates } from "@/lib/client-agent-runs";
+import { moveTemplateKey } from "@/lib/client-agent-runs";
 import { markSlotNoteAppliedAction } from "@/lib/actions/slot-note-actions";
 import { relativeTime } from "@/lib/utils";
 import {
@@ -21,14 +18,15 @@ import type { ClientAgentCardRow } from "./types";
 import { cn } from "@/lib/utils";
 
 /**
- * The LIVE client agent (Phase 3 §7.1 cards 4 and 5).
+ * The parts of the LIVE client agent surface (Phase 3 §7.1 cards 4 and 5).
  *
- * This is the card the whole umbrella exists for: the client's agent, its
- * template streams, what is coming this week, and the two ways to steer it
- * (feedback and pace). It replaces today's generic custom-agent card for
- * umbrella-bound agents — the page decides which one an agent gets.
+ * The card that composed them — `ClientAgentLiveCard` — is gone: the archetype
+ * detail pages (CD-I1) took over that job, and `agent-detail-panel.tsx` mounts
+ * these pieces directly. It was exported and imported by nothing, which on a
+ * "use client" module means dead weight shipped to the browser and, worse, a
+ * second implementation of rules the live panel already has to get right.
  *
- * THE CHURN RULE (A3/A4) governs every line here. Nothing on this card may
+ * THE CHURN RULE (A3/A4) governs every line here. Nothing on this surface may
  * reveal that content for a future day already exists:
  *  • the week strip paints template NAMES on days, never posts, never counts,
  *    and never a "ready"/"generated" distinction — the server sends a label and
@@ -45,156 +43,6 @@ import { cn } from "@/lib/utils";
  * themselves are evaluated SERVER-side with the same pure function the actions
  * run (client-agent-runs.ts), so no row can offer a press the server refuses.
  */
-export function ClientAgentLiveCard({
-  agent,
-  viewerIsClient,
-  viewer,
-}: {
-  agent: ClientAgentCardRow;
-  viewerIsClient: boolean;
-  viewer?: { name: string; email: string };
-}) {
-  const [feedback, setFeedback] = useState<
-    { scope: "agent" } | { scope: "template"; key: string; name: string } | null
-  >(null);
-  const [scheduling, setScheduling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const templates = visibleTemplates(agent);
-  // A refused schedule outranks "Live" (the F24/F129 precedence the generic
-  // card already follows): an agent whose every fire is being turned away is
-  // not live, whatever its umbrella says.
-  const refusal = agent.schedule?.status === "active" ? agent.schedule.lastError?.trim() || null : null;
-
-  return (
-    <div className="card-grad group relative flex flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:border-border-strong">
-      <span
-        className="absolute inset-x-0 top-0 h-0.5 bg-foreground/40 opacity-45 transition-opacity group-hover:opacity-80"
-        aria-hidden="true"
-      />
-      <div className="flex items-start gap-3">
-        <AgentIdentity identity={agent.identity} icon={agent.icon} />
-        <div className="min-w-0 flex-1">
-          <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">
-            AI agent
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate text-base font-medium">{agent.displayName}</p>
-            {refusal ? (
-              <Badge tone="warning">Needs attention</Badge>
-            ) : (
-              <Badge tone="success">
-                <span
-                  className="h-1.5 w-1.5 rounded-full bg-success animate-pulse-neon"
-                  aria-hidden="true"
-                />
-                Live
-              </Badge>
-            )}
-          </div>
-          {agent.blurb && (
-            <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted">{agent.blurb}</p>
-          )}
-        </div>
-      </div>
-
-      {refusal && (
-        <div className="mt-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
-          <p className="text-[11px] text-warning">{refusal}</p>
-          {viewer && (
-            <div className="-mx-3">
-              <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* The only run this card acknowledges: one the viewer pressed. It takes
-          10–20 minutes and there is no run row under an umbrella card, so
-          without this "Run now" looked like it did nothing (F31's medicine).
-          The sentence is the run-STARTED form the design pins (§3 / v2.1), the
-          same one the generic run dialog uses — future tense, because nobody is
-          reviewing anything yet. */}
-      {agent.activeRun && (
-        <div className="mt-3 flex items-center gap-2 rounded-md border border-info/30 bg-info/10 px-3 py-2">
-          <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full bg-info animate-pulse-neon"
-            aria-hidden="true"
-          />
-          <p className="text-[11px] text-info">
-            Making your {agent.activeRun.templateName ?? "next"} post now — this takes 10–20
-            minutes. Your Karos team reviews it when it lands, and finished posts appear in your
-            Workspace once approved.
-          </p>
-        </div>
-      )}
-
-      {agent.optionsMode ? (
-        <OptionsRow />
-      ) : (
-        <TemplateRows
-          agent={agent}
-          templates={templates}
-          viewer={viewer}
-          onFeedback={(template) =>
-            setFeedback({ scope: "template", key: template.key, name: template.name })
-          }
-          onError={setError}
-        />
-      )}
-
-      <WeekStrip week={agent.week} />
-      {/* B2: the notes reach the people who apply them. */}
-      {!viewerIsClient && <StaffSlotNotes clientId={agent.clientId} week={agent.week} />}
-
-      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
-        <p className="text-xs text-muted-2">
-          {agent.runCost != null ? `${agent.runCost} credits per post` : "Staff runs are free"}
-        </p>
-        <div className="flex gap-1.5">
-          <Button size="sm" variant="ghost" onClick={() => setFeedback({ scope: "agent" })}>
-            <Icon name="MessageSquare" className="h-3.5 w-3.5" /> Give feedback
-          </Button>
-          {agent.runnable && (
-            <Button size="sm" variant="subtle" onClick={() => setScheduling(true)}>
-              <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" /> Adjust pace
-            </Button>
-          )}
-        </div>
-      </div>
-      {error && <p className="mt-2 text-[11px] text-warning">{error}</p>}
-
-      {feedback && (
-        <ClientAgentFeedbackModal
-          clientId={agent.clientId}
-          clientAgentId={agent.id}
-          agentName={agent.displayName}
-          scope={feedback.scope}
-          {...(feedback.scope === "template"
-            ? { templateKey: feedback.key, templateName: feedback.name }
-            : {})}
-          rows={agent.feedback}
-          viewerIsClient={viewerIsClient}
-          onClose={() => setFeedback(null)}
-        />
-      )}
-      {scheduling && agent.runnable && (
-        <AgentScheduleModal
-          agent={agent.runnable}
-          clientId={agent.clientId}
-          // Clients get the pace face of this dialog: how many posts a week,
-          // never how they are batched (D3 / A3-A4).
-          paceOnly={viewerIsClient}
-          {...(agent.schedule ? { schedule: agent.schedule } : {})}
-          {...(agent.availableCredits !== undefined
-            ? { availableCredits: agent.availableCredits }
-            : {})}
-          onClose={() => setScheduling(false)}
-        />
-      )}
-    </div>
-  );
-}
 
 /* ───────────────────────────── template rows ────────────────────────────── */
 

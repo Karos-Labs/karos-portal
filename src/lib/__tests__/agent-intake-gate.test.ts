@@ -328,7 +328,14 @@ describe("per-client agent instance binding", () => {
     );
     const start = src.indexOf("export async function bindClientAgentAction");
     expect(start).toBeGreaterThan(-1);
-    const body = src.slice(start, src.indexOf("\nexport async function ", start + 1));
+    const end = src.indexOf("\nexport async function ", start + 1);
+    // Without this, a rename of the NEXT export silently widens the slice to
+    // the rest of the file and the assertions below stop being about
+    // bindClientAgentAction at all.
+    expect(end, "bindClientAgentAction is no longer followed by another export").toBeGreaterThan(
+      start,
+    );
+    const body = src.slice(start, end);
     const guardAt = body.indexOf("agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)");
     expect(guardAt, "bindClientAgentAction does not check the binding").toBeGreaterThan(-1);
     // Ahead of the write, so a refused bind leaves nothing behind.

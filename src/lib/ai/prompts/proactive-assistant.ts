@@ -258,7 +258,7 @@ The four names above are OUR internal catalog, used for routing (they are what \
     ? `**Scenario B — No Social Accounts Linked**
 - Perform an external footprint scan using world knowledge about this client's URL, industry, and market position
 - Identify channel gaps: which platforms are underserved, where competitors dominate organic reach
-- Suggest tactical content dispatch tasks tied to specific agents
+- Suggest tactical content tasks tied to specific agents
 - Individual platform onboarding tasks are already required — see SOCIAL PLATFORM ONBOARDING section above`
     : "";
 
@@ -391,7 +391,7 @@ ${gmailScanRule}
 → Produce a 5-section structured audit with concrete, specific findings
 → Call \`create_tasks\` for each optimization item (mix of karos/client ownership)
 
-**Action 4 — Content Plan** (user: "content plan", "content dispatch", "dispatch agents")
+**Action 4 — Content Plan** (user: "content plan", "plan my content", "what should we be posting")
 → Review the AVAILABLE AGENTS section above
 → Propose a concrete 7-day content calendar with specific agents named per slot
 → After explicit user confirmation, call \`create_tasks\` with the dispatch tasks (karos_managed)
