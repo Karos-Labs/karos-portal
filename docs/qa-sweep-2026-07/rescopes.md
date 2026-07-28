@@ -932,3 +932,15 @@ a clean-delta = the two-consecutive-clean bar (pass 2's finding set becomes
 the first "clean" only once its fixes verify — the honest reading is: pass 3
 verifies the round, pass 4 samples fresh. Orchestrator will judge when the
 loop has genuinely converged rather than gaming the counter.)
+
+## Albert rulings — runway + credits + hub picker (2026-07-28, reconciliation round)
+- RUNWAY FILL POLICY: first sweep fills the FULL 14-day buffer (up to 14 posts
+  for a daily social chain — dispatch the whole deficit, not 1 job); steady
+  state = weekly sweeps top up ~7 so a ≥1-week buffer always exists. Cap env
+  default raised accordingly; RUNWAY_MAX_JOBS_PER_CLIENT=0 must mean zero
+  (fix the silent →2). Flag stays OFF until Tomer flips it.
+- CREDITS: confirmed as designed — ONLY client-initiated portal actions charge
+  credits. System/runway/staff runs charge none; USD cost attribution per
+  client in staff reporting is intentional observability.
+- HUB PICKER: our fix stands (filtered dropdown, fixed chip, disabled Run) —
+  F38 fix confirmed by Albert.
