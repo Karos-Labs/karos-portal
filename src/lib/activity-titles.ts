@@ -19,7 +19,7 @@
  *     was dispatched.
  *  2. Shape. These rows are minted one per dispatch, so a runway sweep that
  *     tops a client up writes up to fourteen of them inside the same minute
- *     (AGENT_SERVICE_RUNWAY_MAX_JOBS_PER_CLIENT). Fourteen identically-stamped
+ *     (RUNWAY_MAX_JOBS_PER_CLIENT, default 14). Fourteen identically-stamped
  *     lines IS the batch tell — the same defect the timeline's own run
  *     aggregation was added to close.
  *
