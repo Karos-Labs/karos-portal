@@ -209,6 +209,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // The template stream this run was fired against, resolved BEFORE the claim
+  // for the same reason the refund above is: the claim is single-use, so a
+  // lookup that throws after it has no retry — redelivery would short-circuit
+  // on "Already processed" and the asset would be written with no template
+  // forever. Failing the delivery (503) keeps it in the service queue instead.
+  //
+  // WHITELISTED against the umbrella's own registry, and FENCED by client: the
+  // key is trusted from our job doc first and the metadata echo second, but a
+  // stale or hand-crafted key must never write a stream name onto a client's
+  // deliverable that their agent does not have, and an umbrella id from another
+  // tenant must never be read through at all.
+  const claimClientAgentId = job.clientAgentId ?? payload.metadata?.karos_client_agent_id ?? null;
+  const claimIsLaunch =
+    (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(claimClientAgentId);
+  const runTemplateKey = job.templateKey ?? payload.metadata?.karos_template_key ?? null;
+  let runTemplate: { key: string; name?: string } | null = null;
+  if (runTemplateKey && claimClientAgentId && !claimIsLaunch) {
+    let umbrella;
+    try {
+      umbrella = await getClientAgent(claimClientAgentId);
+    } catch {
+      return NextResponse.json(
+        { error: "Template lookup failed — retry delivery" },
+        { status: 503 },
+      );
+    }
+    if (umbrella && umbrella.clientId === job.clientId) {
+      const match = umbrella.templates?.find((t) => t.key === runTemplateKey);
+      if (match) runTemplate = { key: match.key, name: match.name };
+    }
+  }
+
   // Atomic claim — makes redelivery (sender retries on timeout) idempotent:
   // exactly one delivery flips the job out of queued/running and runs the
   // side effects (asset creation, usage logging).
@@ -237,13 +269,6 @@ export async function POST(req: NextRequest) {
   // the umbrella actually has that template — a stale or hand-crafted key must
   // never write a stream name onto a client's deliverable that their agent
   // does not have, since the archive groups by exactly this field.
-  const runTemplateKey = job.templateKey ?? payload.metadata?.karos_template_key ?? null;
-  let runTemplate: { key: string; name?: string } | null = null;
-  if (runTemplateKey && clientAgentId && !isLaunchRun) {
-    const umbrella = await getClientAgent(clientAgentId).catch(() => null);
-    const match = umbrella?.templates?.find((t) => t.key === runTemplateKey);
-    if (match) runTemplate = { key: match.key, name: match.name };
-  }
 
   const artifacts: ExternalJobArtifact[] = [];
   const assetIds: string[] = [...job.assetIds];
@@ -479,6 +504,7 @@ export async function POST(req: NextRequest) {
     try {
       await applyLaunchOutcome({
         clientAgentId,
+        clientId: job.clientId,
         status: payload.status,
         error: payload.status === "done" ? null : (payload.error ?? payload.status),
         templatesJson: launchTemplatesJson,

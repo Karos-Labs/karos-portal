@@ -78,6 +78,13 @@ export function parseLaunchTemplates(raw: string, now: number): ClientAgentTempl
 export interface LaunchOutcome {
   /** The umbrella this run belongs to (job.clientAgentId, metadata fallback). */
   clientAgentId: string;
+  /**
+   * The job's own client. The umbrella id arrives partly from webhook METADATA,
+   * which is attacker-shaped input, so it is fenced against this before any
+   * launch state is written — otherwise a crafted payload could advance, fail
+   * or seed templates onto another tenant's umbrella.
+   */
+  clientId: string;
   /** Terminal webhook status. */
   status: "done" | "failed" | "cancelled" | "dead_letter";
   /** Raw service error — stored for STAFF; client surfaces redact it. */
@@ -107,6 +114,9 @@ export async function applyLaunchOutcome(
 ): Promise<{ applied: boolean; seededTemplates: number }> {
   const umbrella = await getClientAgent(outcome.clientAgentId);
   if (!umbrella) return { applied: false, seededTemplates: 0 };
+  // Tenancy fence: this is the launch path's only WRITE gate, and the id it
+  // resolves can come from webhook metadata.
+  if (umbrella.clientId !== outcome.clientId) return { applied: false, seededTemplates: 0 };
   // Only an in-flight launch may be advanced — a redelivery arriving after
   // staff already pressed "Go live" must not drag a live agent back.
   if (umbrella.launchState !== "launching") return { applied: false, seededTemplates: 0 };
