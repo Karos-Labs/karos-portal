@@ -216,6 +216,25 @@ export function rollCreditWindows(credits: ClientCredits, now: number): ClientCr
 export type CreditDenialCode = "insufficient_balance" | "weekly_limit" | "monthly_limit";
 
 /**
+ * The opening words of each denial message, one per code. assessCharge builds
+ * its messages from these, so anywhere that has only the stored string — the
+ * scheduler writes a refusal, not a code — can still tell a real credit denial
+ * from an arbitrary error by an exact prefix rather than a keyword guess. A
+ * loose /credit|limit|cap/ test would pass e.g. a GCP "Quota exceeded … limit"
+ * string straight through to a client card.
+ */
+export const CREDIT_DENIAL_PREFIX: Record<CreditDenialCode, string> = {
+  insufficient_balance: "Not enough credits - this action costs",
+  weekly_limit: "Weekly credit limit reached (",
+  monthly_limit: "Monthly credit limit reached (",
+};
+
+/** True when `message` is one of the three assessCharge denials, verbatim. */
+export function isCreditDenialMessage(message: string): boolean {
+  return Object.values(CREDIT_DENIAL_PREFIX).some((prefix) => message.startsWith(prefix));
+}
+
+/**
  * Thrown by the data layer when a charge is denied. `message` is written for
  * the client user; callers surface it verbatim (job error, 402 body, {error}).
  */
@@ -250,7 +269,7 @@ export function assessCharge(
       ok: false,
       code: "insufficient_balance",
       message:
-        `Not enough credits - this action costs ${amount} credit${amount === 1 ? "" : "s"} and ` +
+        `${CREDIT_DENIAL_PREFIX.insufficient_balance} ${amount} credit${amount === 1 ? "" : "s"} and ` +
         `${rolled.balance} ${rolled.balance === 1 ? "is" : "are"} left. Ask your Karos team for a top-up.`,
     };
   }
@@ -259,7 +278,7 @@ export function assessCharge(
       ok: false,
       code: "weekly_limit",
       message:
-        `Weekly credit limit reached (${rolled.weekSpent} of ${rolled.weeklyLimit} used). ` +
+        `${CREDIT_DENIAL_PREFIX.weekly_limit}${rolled.weekSpent} of ${rolled.weeklyLimit} used). ` +
         `It resets on Monday - or ask your Karos team to raise the limit.`,
     };
   }
@@ -268,7 +287,7 @@ export function assessCharge(
       ok: false,
       code: "monthly_limit",
       message:
-        `Monthly credit limit reached (${rolled.monthSpent} of ${rolled.monthlyLimit} used). ` +
+        `${CREDIT_DENIAL_PREFIX.monthly_limit}${rolled.monthSpent} of ${rolled.monthlyLimit} used). ` +
         `It resets on the 1st - or ask your Karos team to raise the limit.`,
     };
   }

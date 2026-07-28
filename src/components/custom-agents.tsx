@@ -113,24 +113,6 @@ export interface AgentSetupState {
   label: string;
 }
 
-/**
- * The scheduler stores whatever the submit core refused with. Setup, credit and
- * cap refusals are already written for the person reading them; anything else
- * (service URLs, tokens, stack detail) is an internal message and never reaches
- * a client card.
- */
-function refusalForViewer(refusal: string, viewerIsClient: boolean): string {
-  if (!viewerIsClient) return refusal;
-  if (
-    refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
-    refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
-    /credit|limit|cap/i.test(refusal)
-  ) {
-    return refusal;
-  }
-  return "This agent could not start on its last scheduled run. Your Karos team can unblock it.";
-}
-
 function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon">; className?: string }) {
   return (
     <AgentIdentity
@@ -374,8 +356,12 @@ export function ClientCustomAgents({
             // spend credits on a run that cannot succeed or fail unhelpfully.
             const blockedSetup = setup && !setup.ready ? setup : null;
             // A refused schedule is never "Live" — the badge and the status line
-            // both switch to the stored refusal until a fire succeeds.
-            const refusal = schedule?.lastError?.trim() || null;
+            // both switch to the stored refusal until a fire succeeds. A paused
+            // schedule reports paused: the person who paused it chose that, and
+            // a stale refusal from before the pause is not the current state.
+            // Already redacted for client viewers on the server (toScheduleRows).
+            const refusal =
+              schedule?.status === "active" ? schedule.lastError?.trim() || null : null;
             const refusalIsSetup =
               refusal !== null &&
               (refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
@@ -439,9 +425,7 @@ export function ClientCustomAgents({
                       </p>
                       {refusal ? (
                         <>
-                          <p className="mt-0.5 text-[11px] text-warning">
-                            {refusalForViewer(refusal, viewerIsClient)}
-                          </p>
+                          <p className="mt-0.5 text-[11px] text-warning">{refusal}</p>
                           {refusalIsSetup && setup ? (
                             <a
                               href={setup.href}

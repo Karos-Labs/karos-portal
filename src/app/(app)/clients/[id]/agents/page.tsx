@@ -22,7 +22,7 @@ import { LabImportButton } from "@/components/lab-import";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
-import { isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
+import { clientSafeRefusal, isLinkedInAgentIdentity, isXAgentIdentity } from "@/lib/custom-agent-launch";
 import type { AgentSetupState } from "@/components/custom-agents";
 import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
 import { assetImages } from "@/lib/asset-images";
@@ -61,8 +61,15 @@ function toRunRows(jobs: Job[], withLinks: boolean): CustomAgentRunRow[] {
     }));
 }
 
+/**
+ * `viewerIsClient` decides what the refusal may say. The redaction happens HERE,
+ * not at render: everything on a ClientAgentScheduleRow is serialized into the
+ * RSC payload the browser receives, so a raw internal string handed to a client
+ * component is readable whether or not it is ever painted.
+ */
 function toScheduleRows(
   runs: Awaited<ReturnType<typeof listPlannedScheduledRuns>>,
+  viewerIsClient: boolean,
 ): ClientAgentScheduleRow[] {
   return runs
     .filter((run) => run.cadence === "weekly" && run.status !== "completed")
@@ -78,7 +85,11 @@ function toScheduleRows(
       minute: run.minute,
       // The scheduler's refusal, so a schedule that can never fire stops
       // rendering as a healthy "Live" agent.
-      lastError: run.lastError ?? null,
+      lastError: run.lastError
+        ? viewerIsClient
+          ? clientSafeRefusal(run.lastError)
+          : run.lastError
+        : null,
       lastErrorAt: run.lastErrorAt ?? null,
     }));
 }
@@ -184,7 +195,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             clientId={id}
             agents={agents}
             runs={runs}
-            schedules={toScheduleRows(scheduledRuns)}
+            schedules={toScheduleRows(scheduledRuns, true)}
             contextItems={contextItems}
             viewerIsClient
             agentSetup={agentSetup}
@@ -257,7 +268,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           clientId={id}
           agents={staffAgents}
           runs={toRunRows(jobs, true)}
-          schedules={toScheduleRows(scheduledRuns)}
+          schedules={toScheduleRows(scheduledRuns, false)}
           contextItems={contextItems}
           viewerIsClient={false}
           agentSetup={agentSetup}
