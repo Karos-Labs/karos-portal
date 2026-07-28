@@ -23,6 +23,12 @@ export function buildCopilotSystemPrompt(
   jobs: Job[],
   assets: Asset[],
   contextDocs: ClientContextDoc[] = [],
+  /**
+   * Mirrors the tool registry the route actually hands to the model. The
+   * branding tool is staff-only (copilot-tool-access.ts), and describing a tool
+   * a client session does not have just teaches the model to promise it.
+   */
+  opts: { canUpdateBranding?: boolean } = {},
 ): string {
   const today = new Date().toLocaleDateString("en-US", {
     year: "numeric",
@@ -179,10 +185,17 @@ export function buildCopilotSystemPrompt(
     parts.push("");
   }
 
+  parts.push("## TOOLS");
+  if (opts.canUpdateBranding) {
+    parts.push(
+      "- **update_branding_guidelines** — updates brand colors, fonts, or tone keywords. Confirm the specific change with the user before calling.",
+    );
+  } else {
+    parts.push(
+      "- You cannot change this client's branding guidelines yourself. If they ask, point them at the brand panel in the left rail (the pencil beside Brand colors), or offer to escalate.",
+    );
+  }
   parts.push(
-    "## TOOLS",
-    "You have two tools:",
-    "- **update_branding_guidelines** — updates brand colors, fonts, or tone keywords. Confirm the specific change with the user before calling.",
     "- **send_support_email** — escalates issues to the Karos Labs team. Use when the user reports a problem.",
   );
 
