@@ -9,6 +9,7 @@ import { Badge, Button } from "@/components/ui";
 import { JOB_STATUS_META } from "@/components/job-status";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
+import { MarkPostedRow } from "@/components/mark-posted-row";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
 import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
 import { cn } from "@/lib/utils";
@@ -491,10 +492,13 @@ function PastRunCard({
 
 function PostCard({
   post,
+  asset,
   onOpenLightbox,
   onOpenDetails,
 }: {
   post: CalendarPost;
+  /** The underlying asset, when the viewer has it — drives Mark as posted. */
+  asset?: Asset;
   onOpenLightbox: (images: AssetImage[], index: number) => void;
   onOpenDetails: (assetId: string) => void;
 }) {
@@ -537,6 +541,9 @@ function PostCard({
         </div>
         <p className="mt-0.5 text-xs text-muted-2">{timeStr(post.at)}</p>
         {post.textPreview && <p className="mt-1 line-clamp-2 text-[11px] text-muted-2">{post.textPreview}</p>}
+        {/* Day-card attestation: the client posts by hand, then says so here —
+            the same single transition the detail modal offers (QA F149). */}
+        {asset && <MarkPostedRow asset={asset} compact />}
       </div>
     </div>
   );
@@ -874,6 +881,7 @@ export function RunCalendar({
                     <PostCard
                       key={p.assetId}
                       post={p}
+                      asset={assetById.get(p.assetId)}
                       onOpenLightbox={openLightbox}
                       onOpenDetails={setOpenAssetId}
                     />

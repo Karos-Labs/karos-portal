@@ -182,7 +182,7 @@ function ChannelSection({
       </div>
 
       {(live.length > 0 || needsReconnect.length > 0 || opened.length > 0 || leadingCards) && (
-        <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 items-start gap-6 @2xl:grid-cols-2 @4xl:grid-cols-3">
           {/* Healthy first, then the ones needing attention — both as full
               cards, so a Reconnect badge is never a click away. */}
           {live.map(renderCard)}
@@ -397,7 +397,7 @@ function PlatformCard({
                 </Badge>
               ) : (
                 <Badge tone="neon">
-                  <Icon name="CheckCircle2" className="h-3 w-3" />
+                  <Icon name="CircleCheck" className="h-3 w-3" />
                   Connected
                 </Badge>
               )
@@ -445,10 +445,15 @@ function PlatformCard({
           </p>
         )}
 
-        {/* Admin-only hint when OAuth flow exists but env vars aren't configured yet */}
-        {isAdmin && hasOAuthSupport && !isOAuthEnabled && (
+        {/* The Connect button is shown to everyone regardless of server config,
+            so the "this will fail" hint has to be shown to everyone too — it
+            used to be admin-only, leaving clients and employees with a branded
+            button whose entire behaviour was a blank popup (QA F55). */}
+        {hasOAuthSupport && !isOAuthEnabled && (
           <p className="text-[11px] text-warning/80">
-            OAuth env vars not set. The button above will fail until configured.
+            {isAdmin
+              ? "OAuth env vars not set. The button above will fail until configured."
+              : "This channel isn't connectable yet — ask your Karos team to finish setting it up."}
           </p>
         )}
 
@@ -754,7 +759,7 @@ function GoogleUnifiedCard({
                 </Badge>
               ) : (
                 <Badge tone="neon">
-                  <Icon name="CheckCircle2" className="h-3 w-3" />
+                  <Icon name="CircleCheck" className="h-3 w-3" />
                   Connected
                 </Badge>
               )
@@ -822,10 +827,14 @@ function GoogleUnifiedCard({
           {isConnecting ? "Connecting…" : anyConnected ? "Reconnect Google Suite" : "Connect Google Suite"}
         </button>
 
-        {isAdmin && !isOAuthEnabled && (
+        {/* Same rule as the platform cards: everyone who can press the button
+            gets told it can't work yet (QA F55) — only admins get the env-var
+            detail. */}
+        {!isOAuthEnabled && (
           <p className="text-[11px] text-warning/80">
-            OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). The button above will
-            fail until configured.
+            {isAdmin
+              ? "OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). The button above will fail until configured."
+              : "Google Suite isn't connectable yet — ask your Karos team to finish setting it up."}
           </p>
         )}
 
@@ -1059,7 +1068,7 @@ export function IntegrationsTab({
       {/* Popup error banner */}
       {popupError && (
         <div className="flex items-center gap-2.5 rounded-md border border-danger/30 bg-danger/10 px-4 py-3">
-          <Icon name="AlertCircle" className="h-4 w-4 shrink-0 text-danger" />
+          <Icon name="CircleAlert" className="h-4 w-4 shrink-0 text-danger" />
           <p className="text-sm text-danger">{popupError}</p>
           <button
             onClick={() => setPopupError(null)}

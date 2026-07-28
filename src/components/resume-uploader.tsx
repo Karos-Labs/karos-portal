@@ -85,7 +85,7 @@ export function ResumeUploader({
             >
               {fileNameFromUrl(value)}
             </a>
-            <p className="text-[10px] text-muted-2">Powers your LinkedIn advocacy voice</p>
+            <p className="text-[10px] text-muted-2">Stored for your Karos team</p>
           </div>
           <div className="flex shrink-0 gap-1.5">
             <button

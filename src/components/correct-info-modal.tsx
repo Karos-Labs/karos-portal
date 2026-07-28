@@ -145,7 +145,7 @@ export function CorrectInfoModal({
 
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2.5">
-              <Icon name="AlertCircle" className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+              <Icon name="CircleAlert" className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
               <p className="text-sm text-danger">{error}</p>
             </div>
           )}

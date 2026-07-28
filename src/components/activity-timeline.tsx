@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { AgentMark } from "@/components/agent-identity";
@@ -42,7 +43,7 @@ function eventsFromJobs(jobs: Job[]): TimelineEvent[] {
     id: `job:${j.id}`,
     timestamp: j.createdAt,
     type: "CAMPAIGN_CREATED" as ActivityEventType,
-    title: `${j.agentName} campaign drafted`,
+    title: `${j.agentName} delivered a draft`,
     description:
       j.status === "failed"
         ? `Failed: ${j.error ?? "Unknown error"}`
@@ -60,7 +61,7 @@ function eventsFromReport(report: ClientReport | null): TimelineEvent[] {
       id: `report:${report.id}`,
       timestamp: report.createdAt,
       type: "INTEL_GENERATION" as ActivityEventType,
-      title: "Intel Report generated",
+      title: "Research report ready",
       description: `Full competitive analysis · Score: ${report.overallScore}/100 (${report.overallGrade}) · ${report.reportDate}`,
       actor: "System AI",
       actorRole: "system" as const,
@@ -101,7 +102,7 @@ const EVENT_CONFIG: Record<
     label: "Website Scraped",
   },
   INTEL_GENERATION: {
-    icon: "BarChart2",
+    icon: "ChartNoAxesColumn",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Intel Report",
@@ -370,9 +371,21 @@ export function ActivityTimeline({
           </div>
           <div>
             <p className="text-sm font-medium text-foreground">No activity yet</p>
+            {/* Manual notes are stripped from a client's timeline, and "Intel
+                Report" is an internal product name — so neither belongs in a
+                list of what to expect (QA F73). */}
             <p className="mt-1 text-xs text-muted-2">
-              Events appear here as work is done: Intel Reports, campaigns, branding updates, and notes.
+              Every agent run, brand update, and competitor change shows up here as your team works.
             </p>
+            {!isStaff && (
+              <Link
+                href={`/clients/${clientId}/agents`}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-neon hover:underline"
+              >
+                Run an agent
+                <Icon name="ArrowRight" className="h-3 w-3" />
+              </Link>
+            )}
           </div>
         </div>
       )}

@@ -147,7 +147,7 @@ export function GapList({ gaps }: { gaps: GapView[] }) {
 
       {filtered.length === 0 ? (
         <EmptyState
-          icon={<Icon name="CheckCircle2" className="h-6 w-6" />}
+          icon={<Icon name="CircleCheck" className="h-6 w-6" />}
           title="Nothing to fix in this view"
           description="No measured gaps match this filter."
         />

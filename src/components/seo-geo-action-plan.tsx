@@ -61,7 +61,7 @@ export function SeoGeoActionPlan({
   if (recommendations.length === 0) {
     return (
       <EmptyState
-        icon={<Icon name="CheckCircle2" className="h-6 w-6" />}
+        icon={<Icon name="CircleCheck" className="h-6 w-6" />}
         title="Nothing to fix right now"
         description="Every check we measured passed, and no tracked competitor out-ranks you in this snapshot."
       />
@@ -89,7 +89,7 @@ export function SeoGeoActionPlan({
                 </div>
                 {isApproved ? (
                   <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-success">
-                    <Icon name="CheckCircle2" className="h-3.5 w-3.5" /> Approved
+                    <Icon name="CircleCheck" className="h-3.5 w-3.5" /> Approved
                   </span>
                 ) : (
                   <button

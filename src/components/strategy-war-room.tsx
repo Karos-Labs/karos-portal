@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
@@ -134,14 +135,14 @@ export function StrategyWarRoom({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [lines]);
 
-  // Graceful exit: once consensus lands, refresh the board and close.
+  // Once consensus lands, refresh the board — but stay open. The modal used to
+  // close itself after 1.6s, which left nothing to click and no way to reach
+  // the tasks it had just created (QA F65).
   useEffect(() => {
     if (status !== "done" || completedRef.current) return;
     completedRef.current = true;
     onComplete();
-    const t = setTimeout(onClose, 1600);
-    return () => clearTimeout(t);
-  }, [status, onComplete, onClose]);
+  }, [status, onComplete]);
 
   return (
     <Modal open onClose={onClose} className="max-w-2xl">
@@ -169,7 +170,7 @@ export function StrategyWarRoom({
           </h2>
         </div>
         <p className="text-xs text-muted-2">
-          Three specialist agents are debating your Task Map live - proposing, critiquing, and
+          Three specialist agents are debating your Task Map live — proposing, critiquing, and
           stress-testing against your analytics until they reach consensus.
         </p>
 
@@ -193,9 +194,18 @@ export function StrategyWarRoom({
 
         {/* Footer */}
         {status === "done" && (
-          <div className="flex items-center gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
-            <Icon name="CheckCircle" className="h-4 w-4 shrink-0" />
-            Consensus reached - {created ?? 0} task{created === 1 ? "" : "s"} locked into your map.
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
+            <p className="flex min-w-0 items-center gap-2">
+              <Icon name="CircleCheck" className="h-4 w-4 shrink-0" />
+              Consensus reached — {created ?? 0} task{created === 1 ? "" : "s"} locked into your map.
+            </p>
+            <Link
+              href="/tasks"
+              onClick={onClose}
+              className="shrink-0 font-semibold underline underline-offset-2 hover:opacity-80"
+            >
+              View task map →
+            </Link>
           </div>
         )}
         {status === "error" && (
@@ -239,7 +249,7 @@ function ConsoleLine({ line }: { line: Line }) {
     case "consensus":
       return (
         <p className="pt-1 font-semibold text-neon">
-          ✅ Consensus locked - {line.count} optimal task{line.count === 1 ? "" : "s"}.
+          ✅ Consensus locked — {line.count} optimal task{line.count === 1 ? "" : "s"}.
         </p>
       );
     case "persisted":

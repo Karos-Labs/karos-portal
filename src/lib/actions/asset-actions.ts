@@ -27,6 +27,7 @@ import {
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
+import { isAssetUnlockedForClient } from "@/lib/post-chain";
 import type { Asset, PublishMode } from "@/lib/types";
 
 /** Load the asset and verify the caller may act on it. Shared guard for the actions below. */
@@ -275,6 +276,14 @@ export async function markAssetPostedAction(
     asset.status !== "delivered"
   ) {
     return { ok: false, error: "Only an approved, scheduled, or delivered post can be marked as posted" };
+  }
+  // A post whose day hasn't come yet cannot have been posted. Without this a
+  // client could attest their way through the whole pre-generated batch — one
+  // click per future day — and each flip to published ends redactLockedAsset's
+  // redaction, revealing title, content and images ahead of time (churn rule
+  // A3/A4). The UI hides the control, but a server action is a public endpoint.
+  if (!isAssetUnlockedForClient(asset, Date.now())) {
+    return { ok: false, error: "This post is scheduled for a later day — you can mark it posted on the day it goes out." };
   }
   // Don't race an in-flight push: the auto-cron may be mid-publish under a
   // claim right now, and flipping status to published here wouldn't stop it —

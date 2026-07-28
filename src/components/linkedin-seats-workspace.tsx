@@ -152,7 +152,8 @@ export function LinkedInSeatsWorkspace({
           </div>
           {atLimit && (
             <p className="text-[11px] text-muted-2">
-              This is beyond your {seatLimit}-seat plan - adding it costs {seatCost} credits (≈ $29/mo).
+              This is beyond your {seatLimit}-seat plan — adding a seat is a one-time {seatCost}-credit
+              charge.
             </p>
           )}
           <div className="flex gap-2">
@@ -204,7 +205,7 @@ export function LinkedInSeatsWorkspace({
                 <div className="shrink-0">
                   {seat.connected ? (
                     <Badge tone="neon">
-                      <Icon name="CheckCircle2" className="h-3 w-3" />
+                      <Icon name="CircleCheck" className="h-3 w-3" />
                       Linked
                     </Badge>
                   ) : (

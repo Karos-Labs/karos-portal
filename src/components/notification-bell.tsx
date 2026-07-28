@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { dismissAssignedActionItemAction } from "@/lib/actions";
-import type { ActionItemNotification, AgentReviewNotification, ClientTask } from "@/lib/types";
+import type { ActionItemNotification, AgentReviewNotification, ClientTask, TaskOwner } from "@/lib/types";
 
 /* ── Priority colours for task alerts ───────────────────────────── */
 
@@ -18,12 +18,21 @@ const PRIORITY_COLOR: Record<string, string> = {
 interface Props {
   actionItems: ActionItemNotification[];
   reviewJobs: AgentReviewNotification[];
-  /** Pending + review_pending client tasks — server-fetched, refreshed via router.refresh(). */
-  taskAlerts: ClientTask[];
+  /**
+   * Pending + review_pending tasks — server-fetched, refreshed via
+   * router.refresh(). Staff feeds are cross-client and carry `_clientName`.
+   */
+  taskAlerts: (ClientTask & { _clientName?: string })[];
   /** Where the panel opens relative to the trigger. */
   panelPlacement?: "down" | "up" | "right";
   /** Render trigger as an icon button (default) or a full-width labeled row (account menu). */
   variant?: "icon" | "row";
+  /**
+   * True when the bell is rendered in the client shell. Review rows then point
+   * at the client's own Workspace archive — /jobs/[id] is staff-only and
+   * bounces a client back to their dashboard (QA F51).
+   */
+  viewerIsClient?: boolean;
 }
 
 export function NotificationBell({
@@ -32,6 +41,7 @@ export function NotificationBell({
   taskAlerts,
   panelPlacement = "down",
   variant = "icon",
+  viewerIsClient = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -143,7 +153,7 @@ export function NotificationBell({
               {total === 0 ? (
                 <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
-                    <Icon name="CheckCircle2" className="h-6 w-6 text-success" />
+                    <Icon name="CircleCheck" className="h-6 w-6 text-success" />
                   </div>
                   <p className="text-sm font-medium text-foreground">All caught up!</p>
                   <p className="text-xs text-muted-2">No pending tasks or reviews.</p>
@@ -183,24 +193,26 @@ export function NotificationBell({
                   {visibleJobs.map((j) => (
                     <div
                       key={j.jobId}
-                      className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
+                      className="flex items-start gap-1 px-4 py-3 transition-colors hover:bg-surface-2"
                     >
-                      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
-                        <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="line-clamp-2 text-xs font-medium text-foreground">
-                          New content ready:{" "}
-                          <span className="text-foreground">{j.title}</span>
-                        </p>
-                        <Link
-                          href={`/jobs/${j.jobId}`}
-                          onClick={() => setOpen(false)}
-                          className="mt-0.5 inline-block text-[10px] text-muted-2 hover:text-foreground"
-                        >
-                          {j.agentName} · Pending review · {relativeTime(j.updatedAt)}
-                        </Link>
-                      </div>
+                      <Link
+                        href={viewerIsClient ? "/tasks?tab=archive" : `/jobs/${j.jobId}`}
+                        onClick={() => setOpen(false)}
+                        className="flex min-w-0 flex-1 gap-3"
+                      >
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
+                          <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="line-clamp-2 text-xs font-medium text-foreground">
+                            New content ready: <span className="text-foreground">{j.title}</span>
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-muted-2">
+                            {j.clientName ? `${j.clientName} · ` : ""}
+                            {j.agentName} · Pending review · {relativeTime(j.updatedAt)}
+                          </p>
+                        </div>
+                      </Link>
                       <button
                         onClick={() => dismissJob(j.jobId)}
                         className={cn(
@@ -222,7 +234,7 @@ export function NotificationBell({
                       className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
                     >
                       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success/10">
-                        <Icon name="CheckSquare" className="h-3.5 w-3.5 text-success" />
+                        <Icon name="SquareCheck" className="h-3.5 w-3.5 text-success" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="line-clamp-2 text-xs font-medium text-foreground">{n.text}</p>
@@ -255,13 +267,13 @@ export function NotificationBell({
             {/* Footer */}
             {total > 0 && (
               <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
-                {taskAlerts.length > 0 ? (
+                {taskAlerts.length > 0 || visibleJobs.length > 0 ? (
                   <Link
                     href="/tasks"
                     onClick={() => setOpen(false)}
                     className="text-[11px] text-muted-2 transition-colors hover:text-foreground"
                   >
-                    View task board →
+                    View workspace →
                   </Link>
                 ) : (
                   <Link
@@ -283,13 +295,25 @@ export function NotificationBell({
 
 /* ── Task alert row ──────────────────────────────────────────────── */
 
-function TaskAlertRow({ task, onClose }: { task: ClientTask; onClose: () => void }) {
+function TaskAlertRow({
+  task,
+  onClose,
+}: {
+  task: ClientTask & { _clientName?: string };
+  onClose: () => void;
+}) {
   const isReview = task.status === "review_pending";
   const prioColor = PRIORITY_COLOR[task.priority] ?? PRIORITY_COLOR.low;
+  // Land on the tab that actually holds this card, and open it. The board used
+  // to always open on "Automated", so a click on one of the client's own items
+  // showed a tab that did not contain it (QA F64). `owner` is a distinct key —
+  // `tab` belongs to the Workspace's board/activity/archive toggle.
+  const owner: TaskOwner = task.owner ?? (task.source === "manual" ? "client_managed" : "karos_managed");
+  const href = `/tasks?owner=${owner === "client_managed" ? "client" : "karos"}&task=${task.id}`;
 
   return (
     <Link
-      href="/tasks"
+      href={href}
       onClick={onClose}
       className="flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
     >
@@ -308,6 +332,7 @@ function TaskAlertRow({ task, onClose }: { task: ClientTask; onClose: () => void
           {task.title}
         </p>
         <p className="mt-0.5 text-[10px] text-muted-2">
+          {task._clientName ? `${task._clientName} · ` : ""}
           {isReview ? "Review pending" : "Pending"} · {task.priority} priority · {relativeTime(task.createdAt)}
         </p>
       </div>

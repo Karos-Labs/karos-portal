@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   DndContext,
   PointerSensor,
@@ -21,7 +21,12 @@ import { CSS } from "@dnd-kit/utilities";
 import { Icon } from "@/components/icon";
 import { Badge, EmptyState } from "@/components/ui";
 import { cn, relativeTime } from "@/lib/utils";
-import { deleteTaskAction, updateAutopilotAction, updateTaskStatusAction } from "@/lib/actions";
+import {
+  deleteTaskAction,
+  previewPendingTasksBatchAction,
+  runPendingTasksBatchAction,
+  updateTaskStatusAction,
+} from "@/lib/actions";
 import { TaskTicketModal } from "@/components/task-ticket-modal";
 import type { ClientTask, Role, TaskOwner, TaskSource, TaskStatus } from "@/lib/types";
 
@@ -32,9 +37,9 @@ type BoardTask = ClientTask & { _clientName?: string };
 
 const BOARD_COLUMNS: { status: BoardStatus; label: string; icon: string }[] = [
   { status: "pending", label: "Pending", icon: "Circle" },
-  { status: "in_progress", label: "In Progress", icon: "PlayCircle" },
+  { status: "in_progress", label: "In Progress", icon: "CirclePlay" },
   { status: "review_pending", label: "Review Pending", icon: "Eye" },
-  { status: "completed", label: "Done", icon: "CheckCircle" },
+  { status: "completed", label: "Done", icon: "CircleCheck" },
 ];
 
 const SOURCE_META: Record<TaskSource, { label: string; icon: string }> = {
@@ -95,55 +100,101 @@ function findStatusFromOver(overId: string | null, tasks: BoardTask[]): BoardSta
   return overTask?.status === "archived" ? null : (overTask?.status as BoardStatus | undefined) ?? null;
 }
 
-function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boolean }) {
-  const [isOn, setIsOn] = useState(enabled);
+/**
+ * One-shot batch runner. This used to be an "Autopilot" switch that stayed on
+ * forever while nothing in the product ever ran a second batch (QA F48), so it
+ * is now labelled as what it does: run the next few pending automated tasks.
+ */
+function RunPendingTasksButton({ clientId }: { clientId: string }) {
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
+  const [started, setStarted] = useState<number | null>(null);
+  const [preview, setPreview] = useState<{ count: number; credits: number; billable: boolean } | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Store-previous-prop pattern (avoids the cascading-render setState-in-effect anti-pattern).
-  const [prevEnabled, setPrevEnabled] = useState(enabled);
-  if (prevEnabled !== enabled) {
-    setPrevEnabled(enabled);
-    setIsOn(enabled);
+  // Confirm step: nothing is claimed or charged until the client has seen the
+  // task count and the credit total (QA F58).
+  function askToRun() {
+    setError(null);
+    setStarted(null);
+    startTransition(async () => {
+      const res = await previewPendingTasksBatchAction(clientId);
+      if (!res.ok) {
+        setError(res.error ?? "Could not check what would run");
+        return;
+      }
+      setPreview({ count: res.count ?? 0, credits: res.credits ?? 0, billable: res.billable ?? false });
+    });
   }
 
-  function toggle() {
-    const next = !isOn;
-    setIsOn(next);
+  function confirmRun() {
     setError(null);
     startTransition(async () => {
-      const res = await updateAutopilotAction(clientId, next);
+      const res = await runPendingTasksBatchAction(clientId);
+      setPreview(null);
       if (!res.ok) {
-        setIsOn(!next);
-        setError(res.error ?? "Could not update Autopilot");
+        setError(res.error ?? "Could not start the run");
+        return;
       }
+      setStarted(res.started ?? 0);
+      router.refresh();
     });
   }
 
   return (
     <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
       <button
-        onClick={toggle}
-        disabled={isPending}
-        aria-checked={isOn}
-        role="switch"
-        className="flex items-center gap-2 text-xs text-muted disabled:opacity-50"
+        onClick={askToRun}
+        disabled={isPending || preview !== null}
+        className="flex items-center gap-2 text-xs font-medium text-foreground disabled:opacity-50"
       >
-        <span
-          className={cn(
-            "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
-            isOn ? "bg-success" : "bg-surface-3",
-          )}
-        >
-          <span
-            className={cn(
-              "inline-block h-4 w-4 rounded-full bg-primary shadow-sm transition-transform",
-              isOn ? "translate-x-4" : "translate-x-0.5",
-            )}
-          />
-        </span>
-        <span className="font-medium text-foreground">{isOn ? "Autopilot on" : "Autopilot off"}</span>
+        <Icon name={isPending ? "Loader" : "Play"} className={cn("h-3.5 w-3.5 text-neon", isPending && "animate-spin")} />
+        Run up to 5 pending tasks now
       </button>
+      <p className="mt-1 max-w-[260px] text-[11px] leading-relaxed text-muted-2">
+        Runs your next few pending automated tasks and charges credits for each one.
+      </p>
+
+      {preview && (
+        <div className="mt-2 rounded-md border border-border bg-surface px-2.5 py-2">
+          {preview.count === 0 ? (
+            <p className="text-[11px] text-muted">No pending automated tasks to run right now.</p>
+          ) : (
+            <p className="text-[11px] leading-relaxed text-foreground">
+              {`Runs ${preview.count} pending task${preview.count === 1 ? "" : "s"} `}
+              {preview.billable ? (
+                <span className="font-medium text-neon">{`for ${preview.credits} credits`}</span>
+              ) : (
+                <span className="font-medium text-muted">at no credit cost (staff run)</span>
+              )}
+              .
+            </p>
+          )}
+          <div className="mt-2 flex items-center gap-2">
+            {preview.count > 0 && (
+              <button
+                onClick={confirmRun}
+                disabled={isPending}
+                className="inline-flex items-center gap-1 rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1 text-[11px] font-medium text-neon hover:border-neon/50 disabled:opacity-50"
+              >
+                {preview.billable ? `Run & charge ${preview.credits} credits` : "Run now"}
+              </button>
+            )}
+            <button
+              onClick={() => setPreview(null)}
+              className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+            >
+              {preview.count > 0 ? "Cancel" : "Close"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {started !== null && !error && (
+        <p className="mt-1 text-[11px] text-muted">
+          {started === 0 ? "No pending automated tasks to run." : `Started ${started} task${started === 1 ? "" : "s"}.`}
+        </p>
+      )}
       {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
     </div>
   );
@@ -251,10 +302,17 @@ function TaskCard({
         </div>
       )}
 
-      <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{task.title}</h3>
-      {task.description && <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{task.description}</p>}
+      {/* Compact by design: title, chips, age. The description lives in the
+          ticket modal (and the hover tooltip) — its two extra lines per card
+          were what pushed the count off screen (QA F136). */}
+      <h3
+        className="line-clamp-2 text-sm font-semibold leading-snug text-foreground"
+        title={task.description || task.title}
+      >
+        {task.title}
+      </h3>
 
-      <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-2">
+      <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-2">
         {!(task.source === "copilot" || owner === "karos_managed") && (
           <div className="inline-flex min-w-0 items-center gap-1 truncate">
             <Icon name={source.icon} className="h-3 w-3 shrink-0" />
@@ -264,10 +322,11 @@ function TaskCard({
         <span className="ml-auto shrink-0 whitespace-nowrap">{relativeTime(task.updatedAt || task.createdAt)}</span>
       </div>
 
-      {/* flex-wrap: on narrow columns the buttons stack instead of spilling
-          past the card border when the hover bar appears */}
+      {/* Actions only take space while hovered/focused, so the resting card
+          height stays compact. flex-wrap: on narrow columns the buttons stack
+          instead of spilling past the card border. */}
       <div
-        className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 opacity-0 transition-opacity group-hover:opacity-100"
+        className="mt-2 hidden flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 group-hover:flex group-focus-within:flex"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -385,12 +444,12 @@ function BoardColumn({
       <div
         ref={setNodeRef}
         className={cn(
-          "min-h-[280px] rounded-lg border border-border/70 bg-surface-2/65 p-2 transition-colors",
+          "min-h-[160px] rounded-lg border border-border/70 bg-surface-2/65 p-2 transition-colors",
           isTarget && "border-neon/45 bg-neon/10",
         )}
       >
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-          <div id={droppableId} className="flex min-h-[250px] flex-col gap-2">
+          <div id={droppableId} className="flex min-h-[130px] flex-col gap-2">
             {tasks.map((task) => (
               <SortableTaskCard
                 key={task.id}
@@ -405,7 +464,7 @@ function BoardColumn({
             {tasks.length === 0 && (
               <div
                 className={cn(
-                  "flex min-h-[150px] items-center justify-center rounded-md border border-dashed text-center",
+                  "flex min-h-[110px] items-center justify-center rounded-md border border-dashed text-center",
                   isTarget ? "border-neon/50 bg-neon/10" : "border-border/90",
                 )}
               >
@@ -424,24 +483,33 @@ interface Props {
   currentUserRole: Role;
   showClientName?: boolean;
   clientId?: string;
-  autopilotEnabled?: boolean;
 }
 
-export function TasksBoard({
-  tasks,
-  currentUserRole,
-  showClientName = false,
-  clientId,
-  autopilotEnabled = false,
-}: Props) {
+export function TasksBoard({ tasks, currentUserRole, showClientName = false, clientId }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Deep link from the notification bell: ?owner= picks the tab, ?task= opens
+  // the ticket (QA F64). Distinct keys — ?tab= is the Workspace's
+  // board/activity/archive toggle and must not be re-keyed. Unknown values are
+  // ignored, so a stale link degrades to the default board.
+  const ownerParam = searchParams.get("owner");
+  const taskParam = searchParams.get("task");
+  const linkedTask = taskParam ? tasks.find((t) => t.id === taskParam) : undefined;
+  const initialTab: OwnerTab = linkedTask
+    ? inferOwner(linkedTask) === "client_managed"
+      ? "client"
+      : "karos"
+    : ownerParam === "client"
+      ? "client"
+      : "karos";
+
   const [localTasks, setLocalTasks] = useState<BoardTask[]>(tasks);
-  const [activeTab, setActiveTab] = useState<OwnerTab>("karos");
+  const [activeTab, setActiveTab] = useState<OwnerTab>(initialTab);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [clientFilter, setClientFilter] = useState<string>("all");
   const [execError, setExecError] = useState<string | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(linkedTask?.id ?? null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const dragSnapshotRef = useRef<BoardTask[] | null>(null);
   const [, startTransition] = useTransition();
@@ -459,6 +527,17 @@ export function TasksBoard({
     setLocalTasks(tasks);
   }
 
+  // Same-route navigation (bell row clicked while already on /tasks) doesn't
+  // remount, so the deep-link params have to be re-read when they change —
+  // otherwise the board keeps whatever tab it was on (QA F64 / F97 watch-item).
+  const linkSignature = `${ownerParam ?? ""}|${taskParam ?? ""}`;
+  const [prevLinkSignature, setPrevLinkSignature] = useState(linkSignature);
+  if (prevLinkSignature !== linkSignature) {
+    setPrevLinkSignature(linkSignature);
+    setActiveTab(initialTab);
+    if (taskParam) setSelectedTaskId(linkedTask?.id ?? null);
+  }
+
   const hasExecuting = localTasks.some((t) => t.metadata?.executing === true);
   const refreshBoard = useCallback(() => router.refresh(), [router]);
   useEffect(() => {
@@ -467,10 +546,15 @@ export function TasksBoard({
     return () => clearInterval(id);
   }, [hasExecuting, refreshBoard]);
 
+  // Open work only: a chip counting Done cards disagreed with every other
+  // count in the portal (dashboard attention row, notification bell).
   const tabCounts = useMemo(
     () => ({
-      karos: localTasks.filter((t) => inferOwner(t) === "karos_managed").length,
-      client: localTasks.filter((t) => inferOwner(t) === "client_managed").length,
+      karos: localTasks.filter((t) => inferOwner(t) === "karos_managed" && t.status !== "completed")
+        .length,
+      client: localTasks.filter(
+        (t) => inferOwner(t) === "client_managed" && t.status !== "completed",
+      ).length,
     }),
     [localTasks],
   );
@@ -609,6 +693,14 @@ export function TasksBoard({
 
     for (const task of visibleTasks) {
       if (task.status === "archived") continue;
+      // The "Depending on you" tab renders no Review Pending column, so any
+      // client-owned task already stuck in that state (moved there before the
+      // status machine refused it — QA F54) surfaces in Pending instead of
+      // silently disappearing while still counting in the tab total.
+      if (activeTab === "client" && task.status === "review_pending") {
+        map.pending.push(task);
+        continue;
+      }
       map[task.status].push(task);
     }
 
@@ -616,12 +708,12 @@ export function TasksBoard({
       map[key].sort(compareByWeight);
     }
     return map;
-  }, [visibleTasks]);
+  }, [activeTab, visibleTasks]);
 
   if (localTasks.length === 0) {
     return (
       <EmptyState
-        icon={<Icon name="CheckSquare" className="h-10 w-10" />}
+        icon={<Icon name="SquareCheck" className="h-10 w-10" />}
         title="No tasks yet"
         description="Tasks appear here when AI Copilot or your team creates actionable work items."
       />
@@ -696,9 +788,7 @@ export function TasksBoard({
                 ))}
               </select>
             )}
-            {activeTab === "karos" && clientId && (
-              <AutopilotToggle clientId={clientId} enabled={autopilotEnabled} />
-            )}
+            {activeTab === "karos" && clientId && <RunPendingTasksButton clientId={clientId} />}
           </div>
         </div>
 
@@ -727,7 +817,12 @@ export function TasksBoard({
         onDragCancel={handleDragCancel}
         onDragEnd={handleDragEnd}
       >
-        <div className={cn("grid grid-cols-1 gap-3", visibleColumns.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-4")}>
+        <div
+          className={cn(
+            "grid grid-cols-1 gap-3 @3xl:grid-cols-2",
+            visibleColumns.length === 3 ? "@5xl:grid-cols-3" : "@5xl:grid-cols-4",
+          )}
+        >
           {visibleColumns.map((column) => (
             <BoardColumn
               key={column.status}

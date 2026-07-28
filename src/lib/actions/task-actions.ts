@@ -18,6 +18,7 @@ import {
   listTaskComments,
   createTaskComment,
   chargeClientCredits,
+  creditClientCredits,
   claimTaskForExecution,
   releaseTaskClaim,
 } from "@/lib/data";
@@ -40,8 +41,13 @@ import type { AppUser, TaskStatus, ClientTask, TaskComment, TaskOwner } from "@/
  * custom-task classification). Staff and impersonated sessions are free.
  * Returns the denial message, or null when the charge went through.
  */
-async function chargeTaskAssist(user: AppUser, clientId: string, reason: string): Promise<string | null> {
-  if (!isBillableClientActor(user)) return null;
+async function chargeTaskAssist(
+  user: AppUser,
+  clientId: string,
+  reason: string,
+): Promise<{ denied: string | null; chargedAt: number | null }> {
+  if (!isBillableClientActor(user)) return { denied: null, chargedAt: null };
+  const chargedAt = Date.now();
   try {
     await chargeClientCredits({
       clientId,
@@ -51,10 +57,41 @@ async function chargeTaskAssist(user: AppUser, clientId: string, reason: string)
       actorUid: user.uid,
       actorName: user.name,
     });
-    return null;
+    return { denied: null, chargedAt };
   } catch (e) {
-    if (e instanceof CreditError) return e.message;
+    if (e instanceof CreditError) return { denied: e.message, chargedAt: null };
     throw e;
+  }
+}
+
+/**
+ * Hand a taskAssist charge back when the platform then refuses to create the
+ * task. The charge stays where it is, BEFORE the capacity and duplicate checks:
+ * the Haiku routing call it pays for has already cost real money by the time
+ * those checks run, and its output is what the duplicate check compares. So a
+ * refused write is refunded, not reordered (QA F61).
+ */
+async function refundTaskAssist(
+  user: AppUser,
+  clientId: string,
+  chargedAt: number | null,
+  reason: string,
+): Promise<void> {
+  if (!isBillableClientActor(user) || chargedAt == null) return;
+  try {
+    await creditClientCredits({
+      clientId,
+      amount: CREDIT_COSTS.taskAssist,
+      kind: "refund",
+      chargedAt,
+      operation: "task_execution",
+      reason,
+      actorUid: user.uid,
+      actorName: user.name,
+    });
+  } catch (e) {
+    // Never turn a refusal into a crash — the task wasn't created either way.
+    console.error("[task-assist] refund failed:", e);
   }
 }
 
@@ -80,6 +117,14 @@ export async function updateTaskStatusAction(
   // it manually, clients may not.
   if (status === "archived" && user.role === "CLIENT_USER") {
     return { ok: false, error: "Forbidden" };
+  }
+
+  // Review Pending holds AI drafts awaiting Karos review. Client-owned work has
+  // no column for it on either board, so a task landing there disappears from
+  // the board while still counting in the tab total (QA F54). Refuse the move
+  // server-side, whichever UI path asks for it.
+  if (status === "review_pending" && inferOwnerEngine(task) === "client_managed") {
+    return { ok: false, error: "Tasks you own go straight to Done — Review Pending is for Karos drafts." };
   }
 
   const triggersExecution =
@@ -265,7 +310,7 @@ export async function generateTaskPlanAction(
   const cached = task.metadata?.aiPlan;
   if (typeof cached === "string" && cached.trim()) return { plan: cached };
 
-  const denied = await chargeTaskAssist(user, clientId, `AI plan · ${task.title.slice(0, 80)}`);
+  const { denied } = await chargeTaskAssist(user, clientId, `AI plan · ${task.title.slice(0, 80)}`);
   if (denied) return { plan: "", error: denied };
 
   const client = await getClient(clientId);
@@ -308,7 +353,16 @@ export async function generateTaskPlanAction(
 export async function ingestCustomUserTaskAction(
   clientId: string,
   text: string,
-): Promise<{ ok: boolean; taskId?: string; owner?: TaskOwner; error?: string }> {
+): Promise<{
+  ok: boolean;
+  taskId?: string;
+  owner?: TaskOwner;
+  /** The routed title — the model rewrites what the user typed (QA F65). */
+  title?: string;
+  error?: string;
+  /** The refusal is informational: an equivalent task is already on the board. */
+  duplicate?: boolean;
+}> {
   const user = await requireUser();
 
   if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
@@ -325,7 +379,7 @@ export async function ingestCustomUserTaskAction(
   ]);
   if (!client) return { ok: false, error: "Client not found" };
 
-  const denied = await chargeTaskAssist(user, clientId, "Custom task ingestion");
+  const { denied, chargedAt } = await chargeTaskAssist(user, clientId, "Custom task ingestion");
   if (denied) return { ok: false, error: denied };
 
   // Build a brief capability summary for the routing prompt from the repo agents
@@ -365,6 +419,7 @@ export async function ingestCustomUserTaskAction(
   // The cap bounds the Karos AI execution queue only — apply it after routing,
   // once we know which owner the task landed on.
   if (parsed.owner === "karos_managed" && capacity.activeCount >= MAX_ACTIVE_TASKS) {
+    await refundTaskAssist(user, clientId, chargedAt, "Refund · task queue at capacity");
     return {
       ok: false,
       error: `The Karos AI queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
@@ -375,7 +430,14 @@ export async function ingestCustomUserTaskAction(
   // against the same snapshot the cap was computed from.
   const dupReason = findDuplicateReason({ title: parsed.title }, capacity.tasks);
   if (dupReason) {
-    return { ok: false, error: `A similar task already exists on your board (${dupReason}).` };
+    await refundTaskAssist(user, clientId, chargedAt, "Refund · duplicate task not created");
+    // `duplicate` lets the UI render this as information, not a red failure —
+    // nothing went wrong, the work is already on the board.
+    return {
+      ok: false,
+      duplicate: true,
+      error: `A similar task already exists on your board (${dupReason}).`,
+    };
   }
 
   const now = Date.now();
@@ -394,7 +456,7 @@ export async function ingestCustomUserTaskAction(
 
   revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
-  return { ok: true, taskId, owner: parsed.owner };
+  return { ok: true, taskId, owner: parsed.owner, title: parsed.title };
 }
 
 /** Save Google OAuth access token for a CLIENT_USER after Google sign-in. */

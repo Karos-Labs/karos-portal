@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
 import { buildSwarmContext, runSwarm, type SwarmEvent } from "@/lib/agent-swarm";
 import { tryAcquireAiProcessingLock, releaseAiProcessingLock } from "@/lib/data";
+import { logGenerationFailure } from "@/lib/actions/_shared";
 
 export const maxDuration = 120;
 
@@ -72,6 +73,7 @@ export async function GET(req: Request) {
         safeEnqueue({ type: "error", message: failure });
       } finally {
         await releaseAiProcessingLock(clientId, failure);
+        await logGenerationFailure(clientId, failure);
         try {
           controller.close();
         } catch {

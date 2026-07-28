@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
@@ -23,19 +24,22 @@ interface ProactiveAction {
   icon: string;
   label: string;
   sublabel: string;
-  trigger: string;
+  /** Chat message this chip sends. Omitted for chips handled by a dedicated UI. */
+  trigger?: string;
   color: string;
 }
 
-function buildProactiveActions(hasGoogleIntegration: boolean): ProactiveAction[] {
+function buildProactiveActions(): ProactiveAction[] {
   return [
     {
+      // Handled by the Strategy War Room, not the chat path — so no trigger.
+      // The swarm reads the client's calendar gaps, brand guidance, past
+      // engagement and custom agents; it does NOT look at the web, the client's
+      // site or the inbox, so the label must not promise a market scan (QA F50).
       id: "scan_inbox",
-      icon: hasGoogleIntegration ? "Globe" : "ListTodo",
+      icon: "ListTodo",
       label: "Refresh Task Map",
-      sublabel: "Scan market footprint & surface operational priorities",
-      trigger:
-        "Scan the web and analyze our market footprint for operational action items. Build a comprehensive task map covering website optimizations, content opportunities, and strategic priorities.",
+      sublabel: "Rebuild your task map from calendar gaps and past performance",
       color: "#FF6B2C",
     },
     {
@@ -200,14 +204,22 @@ function ProactiveWelcome({
   /** True while a background AI generation cycle is running — locks the Refresh Task Map chip. */
   isAiProcessing?: boolean;
 }) {
-  const actions = buildProactiveActions(hasGoogleIntegration);
+  const actions = buildProactiveActions();
+  // Kept on the prop chain (layout → dock → widget) but no longer decorates the
+  // Refresh Task Map chip: a Google connection changed the icon to a globe while
+  // nothing in the run ever looked outside the account (QA F50).
+  void hasGoogleIntegration;
   const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
 
   const [taskText, setTaskText] = useState("");
   const [isPending, startTransition] = useTransition();
+  // "info" is the duplicate case: nothing failed, the work is already on the
+  // board — it used to render in the red danger style (QA F61).
   const [taskFeedback, setTaskFeedback] = useState<{
-    type: "success" | "error";
+    type: "success" | "info" | "error";
     message: string;
+    /** Where the created task lives, so the confirmation can hand you off (QA F65). */
+    href?: string;
   } | null>(null);
 
   function handleTaskSubmit(e: React.FormEvent) {
@@ -218,14 +230,26 @@ function ProactiveWelcome({
     startTransition(async () => {
       const result = await ingestCustomUserTaskAction(clientId, trimmed);
       if (result.ok) {
-        const label =
-          result.owner === "karos_managed" ? "AI-managed task added" : "Action item added";
-        setTaskFeedback({ type: "success", message: label });
+        // Show the title the router actually created — it rewrites what the
+        // user typed, so the card may not carry their words (QA F65).
+        const label = result.title
+          ? `Added “${result.title}”`
+          : result.owner === "karos_managed"
+            ? "AI-managed task added"
+            : "Action item added";
+        const owner = result.owner === "client_managed" ? "client" : "karos";
+        setTaskFeedback({
+          type: "success",
+          message: label,
+          href: result.taskId ? `/tasks?owner=${owner}&task=${result.taskId}` : "/tasks",
+        });
         setTaskText("");
         onTasksCreated();
-        setTimeout(() => setTaskFeedback(null), 3000);
       } else {
-        setTaskFeedback({ type: "error", message: result.error ?? "Failed to add task" });
+        setTaskFeedback({
+          type: result.duplicate ? "info" : "error",
+          message: result.error ?? "Failed to add task",
+        });
       }
     });
   }
@@ -280,14 +304,30 @@ function ProactiveWelcome({
               "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px]",
               taskFeedback.type === "success"
                 ? "border border-success/25 bg-success/10 text-success"
-                : "border border-danger/20 bg-danger/5 text-danger",
+                : taskFeedback.type === "info"
+                  ? "border border-border bg-surface-2 text-muted"
+                  : "border border-danger/20 bg-danger/5 text-danger",
             )}
           >
             <Icon
-              name={taskFeedback.type === "success" ? "CheckCircle" : "TriangleAlert"}
+              name={
+                taskFeedback.type === "success"
+                  ? "CircleCheck"
+                  : taskFeedback.type === "info"
+                    ? "Info"
+                    : "TriangleAlert"
+              }
               className="h-3 w-3 shrink-0"
             />
-            {taskFeedback.message}
+            <span className="min-w-0 flex-1 truncate">{taskFeedback.message}</span>
+            {taskFeedback.href && (
+              <Link
+                href={taskFeedback.href}
+                className="shrink-0 font-semibold underline underline-offset-2 hover:opacity-80"
+              >
+                View
+              </Link>
+            )}
           </div>
         )}
       </form>
@@ -307,7 +347,7 @@ function ProactiveWelcome({
             <button
               key={action.id}
               disabled={locked}
-              onClick={() => (action.id === "scan_inbox" ? onRefreshTaskMap() : send(action.trigger))}
+              onClick={() => (action.trigger ? send(action.trigger) : onRefreshTaskMap())}
               title={locked ? "Karos Agents are already building your workspace strategy" : undefined}
               className={cn(
                 "group flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150",
@@ -322,7 +362,7 @@ function ProactiveWelcome({
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold text-foreground">{action.label}</p>
                 <p className="text-[11px] text-muted truncate">
-                  {locked ? "Locked - a workspace build is already running" : action.sublabel}
+                  {locked ? "Locked — a workspace build is already running" : action.sublabel}
                 </p>
               </div>
               <Icon

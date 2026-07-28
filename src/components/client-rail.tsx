@@ -153,6 +153,7 @@ export function ClientRail({
                 isAdmin={isAdmin}
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
+                aiProcessingError={client.aiProcessingError ?? null}
                 intelSchedule={clientIntelSchedule(client)}
                 correctionPricing={correctionPricing}
               />
@@ -221,7 +222,12 @@ export function ClientRail({
               <span className="font-mono font-medium text-foreground">{spendableCredits}</span>
             </Link>
           )}
-          <NotificationBell actionItems={actionItems} reviewJobs={reviewJobs} taskAlerts={taskAlerts} />
+          <NotificationBell
+            actionItems={actionItems}
+            reviewJobs={reviewJobs}
+            taskAlerts={taskAlerts}
+            viewerIsClient
+          />
         </div>
       </div>
 
@@ -278,6 +284,7 @@ export function ClientRail({
                 isAdmin={isAdmin}
                 clientId={client.id}
                 isAiProcessing={isAiProcessingLockActive(client)}
+                aiProcessingError={client.aiProcessingError ?? null}
                 intelSchedule={clientIntelSchedule(client)}
                 correctionPricing={correctionPricing}
               />

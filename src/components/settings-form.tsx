@@ -166,7 +166,7 @@ function ProfileTab({
           {error && <p className="text-xs text-danger">{error}</p>}
           {success && (
             <p className="flex items-center gap-1.5 text-xs text-neon">
-              <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+              <Icon name="CircleCheck" className="h-3.5 w-3.5" />
               Profile updated.
             </p>
           )}
@@ -185,7 +185,7 @@ function ProfileTab({
       <Card>
         <CardTitle className="mb-1">Resume / CV</CardTitle>
         <p className="mb-3 text-xs text-muted-2">
-          Used to write LinkedIn advocacy content in your authentic voice.
+          Stored for your Karos team — they use it when writing your LinkedIn advocacy posts.
         </p>
         <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
       </Card>
@@ -352,7 +352,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
             {error && <p className="text-xs text-danger">{error}</p>}
             {success && (
               <p className="flex items-center gap-1.5 text-xs text-neon">
-                <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+                <Icon name="CircleCheck" className="h-3.5 w-3.5" />
                 Password updated successfully.
               </p>
             )}

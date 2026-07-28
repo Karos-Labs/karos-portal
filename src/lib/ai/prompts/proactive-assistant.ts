@@ -630,11 +630,12 @@ export function buildArtifactGenerationPrompt(
   const advocacyBlock = employeeAdvocacy
     ? `\n\nEMPLOYEE ADVOCACY — WRITE AS THIS PERSON, NOT THE BRAND:
 This is a LinkedIn post published under ${employeeAdvocacy.name}'s PERSONAL handle. Write in ${employeeAdvocacy.name}'s authentic first-person professional voice — match the seniority, expertise, vocabulary, and industry depth implied by their background below. Do NOT use ${clientName}'s corporate/brand voice; it must read like ${employeeAdvocacy.name} personally wrote it.${
+        // Only real text shapes the voice. A bare resume URL used to be pasted
+        // in here, but generation runs with no tools, so the model could never
+        // open it — a dead line in a charged prompt (QA F67).
         employeeAdvocacy.resumeText
           ? `\n\n${employeeAdvocacy.name.toUpperCase()}'S PROFESSIONAL BACKGROUND (analyse to calibrate tone + depth):\n${employeeAdvocacy.resumeText.slice(0, 2000)}`
-          : employeeAdvocacy.resumeUrl
-            ? `\n\nBackground/resume reference on file: ${employeeAdvocacy.resumeUrl}`
-            : ""
+          : ""
       }`
     : "";
   // Advocacy overrides brand voice; otherwise keep the brand voice guidance line.

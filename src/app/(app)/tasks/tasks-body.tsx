@@ -2,7 +2,6 @@ import {
   listClientTasks,
   listClients,
   getClient,
-  getClientSettings,
   listClientActivityLogs,
   listJobs,
   listAssets,
@@ -11,7 +10,7 @@ import {
 import { TasksBoard } from "@/components/tasks-board";
 import { ProgressView } from "@/components/progress-view";
 import { PageHeader } from "@/components/ui";
-import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
 import type { AppUser, ClientTask } from "@/lib/types";
 
 /**
@@ -50,20 +49,22 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
   // Archiving is handled at query level (listClientTasks hides tasks Done ≥7d)
   // plus a physical sweep in the /api/credits/reconcile cron — no page-load work.
   if (scopedClientId) {
-    const [tasks, settings, activityLogs, jobs, report, rawAssets] = await Promise.all([
+    const [tasks, activityLogs, jobs, report, rawAssets] = await Promise.all([
       listClientTasks({ clientId: scopedClientId }),
-      getClientSettings(scopedClientId),
       listClientActivityLogs(scopedClientId),
       listJobs({ clientId: scopedClientId }),
       getClientReport(scopedClientId),
       listAssets({ clientId: scopedClientId }),
     ]);
-    // Archive tab data. Client viewers get the redacted library set (locked
-    // future posts are whitelist-stripped before crossing the RSC boundary —
-    // same rule as the old Library page); staff keep full visibility.
-    const assets = getClientLibraryAssets(rawAssets, {
-      forClient: user.role === "CLIENT_USER",
-    });
+    // Archive tab data. A client's archive is POSTED work from the last ~30
+    // days only (F149/A4) — filtered HERE, at the server boundary, so nothing
+    // unposted crosses into the RSC payload at all; redaction still runs behind
+    // it as the standing guard for anything future-dated. Staff keep the full
+    // library.
+    const isClientViewer = user.role === "CLIENT_USER";
+    const assets = isClientViewer
+      ? getClientLibraryAssets(getClientArchiveAssets(rawAssets), { forClient: true })
+      : getClientLibraryAssets(rawAssets);
     return (
       <div>
         <PageHeader
@@ -74,7 +75,6 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
           tasks={tasks}
           currentUserRole={user.role}
           clientId={scopedClientId}
-          autopilotEnabled={settings?.autopilot ?? false}
           activityLogs={activityLogs}
           jobs={jobs}
           report={report}
@@ -105,7 +105,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
 
   return (
     <div>
-      <PageHeader title="Task Board" />
+      <PageHeader title="Workspace" description="Every client's board in one place." />
       <TasksBoard tasks={annotatedTasks} currentUserRole={user.role} showClientName />
     </div>
   );

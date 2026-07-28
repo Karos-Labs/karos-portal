@@ -140,7 +140,7 @@ export function CompanyNewsBox({ clientId, rows }: { clientId: string; rows: Com
           {rows.slice(0, 6).map((r) => (
             <li key={r.id} className="text-xs text-muted">
               <span className="text-foreground">{r.date}</span>
-              {r.type ? ` · ${r.type}` : ""} - {r.title}
+              {r.type ? ` · ${r.type}` : ""} — {r.title}
             </li>
           ))}
         </ul>

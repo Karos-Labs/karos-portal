@@ -66,3 +66,31 @@ export async function logActivity(data: Omit<ActivityLog, "id">): Promise<void> 
     // Non-fatal
   }
 }
+
+/**
+ * Record a failed workspace-generation cycle.
+ *
+ * The client-facing banner says the team has been notified, but releasing the
+ * processing lock only wrote an error string onto the client record, whose only
+ * readers were that same banner and one staff page (QA F69). An activity entry
+ * puts the failure on the timeline both staff and the client already read, and
+ * the /clients list badges it.
+ */
+export async function logGenerationFailure(clientId: string, failure?: string): Promise<void> {
+  if (!failure) return;
+  await logActivity({
+    clientId,
+    timestamp: Date.now(),
+    type: "INTEL_GENERATION",
+    title: "Workspace generation stopped early",
+    // NOT the raw error text, and not in metadata either: the whole activity
+    // log crosses into the client's RSC payload (the timeline filters only
+    // MANUAL_NOTE for client viewers), and these strings are stack-ish
+    // internals — provider errors, model ids, payload fragments. The reason
+    // stays on the client record, whose readers are staff-only: the admin
+    // banner and the /clients "Generation failed" badge.
+    description: "Your Karos team can see the details and is on it.",
+    actor: "System AI",
+    actorRole: "system",
+  });
+}

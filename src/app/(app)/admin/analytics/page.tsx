@@ -267,11 +267,11 @@ function renderPage(p: {
         {/* Model breakdown */}
         <Card>
           <CardTitle className="mb-4">
-            {agentKey ? `Model breakdown - ${agentDisplayName ?? "selected agent"}` : "Model breakdown"}
+            {agentKey ? `Model breakdown — ${agentDisplayName ?? "selected agent"}` : "Model breakdown"}
           </CardTitle>
           {modelStats.length === 0 ? (
             <EmptyState
-              icon={<Icon name="BarChart2" className="h-5 w-5" />}
+              icon={<Icon name="ChartNoAxesColumn" className="h-5 w-5" />}
               title="No model usage"
               description={
                 agentKey

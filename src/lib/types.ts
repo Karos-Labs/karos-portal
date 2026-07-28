@@ -404,6 +404,15 @@ export interface Asset {
   /** Public URL of the generated visual (Vercel Blob), when one exists. */
   imageUrl?: string | null;
   /**
+   * Public URL of the deliverable's video clip (podcast cuts, branded shorts,
+   * TikTok). Video deliverables live in GCS block storage — the agent service
+   * fetches from there and writes the resulting URL here; the portal only
+   * renders it (QA F150 / call directive D1, GCP wiring is infra-side). Clips
+   * discovered in meta.videos / meta.artifacts are picked up too — see
+   * assetVideos() in lib/asset-images.
+   */
+  videoUrl?: string | null;
+  /**
    * MIME type of the primary downloadable payload, when the asset is a binary file
    * (e.g. "image/jpeg", "video/mp4"). Drives the native download action's format +
    * extension. Absent ⇒ derive from type/imageUrl (image) or fall back to text.
@@ -1150,6 +1159,9 @@ export interface AgentReviewNotification {
   title: string;
   agentName: string;
   updatedAt: number;
+  clientId: string;
+  /** Set on staff (cross-client) feeds so a row can say whose review it is. */
+  clientName?: string;
 }
 
 /**
@@ -1270,10 +1282,16 @@ export interface TaskComment {
   createdAt: number;
 }
 
-/** Per-client operational settings (e.g. Autopilot mode). Stored in `clientSettings` collection. */
+/** Per-client operational settings. Stored in `clientSettings` collection. */
 export interface ClientSettings {
   clientId: string;
-  autopilot: boolean;
+  /**
+   * @deprecated Legacy "Autopilot mode" flag. Nothing reads or writes it any
+   * more — no scheduled job ever honoured it, so the persistent "on" state was
+   * a promise the product never kept (QA F48). Batch runs are one-shot now.
+   * Retained on the type only because existing documents still carry the field.
+   */
+  autopilot?: boolean;
   /** Whether the client has opted into auto-scheduling (approve → auto when integrations exist). */
   autoScheduleEnabled?: boolean;
   updatedAt: number;

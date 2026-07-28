@@ -21,7 +21,7 @@ import {
 import { logger } from "@/services/logger";
 import { getCurrentUser } from "@/lib/auth";
 import type { AppUser, ContextDocTier } from "@/lib/types";
-import { requireStaff, requireAdmin, logActivity } from "./_shared";
+import { requireStaff, requireAdmin, logActivity, logGenerationFailure } from "./_shared";
 import { MODELS } from "@/lib/constants";
 import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import {
@@ -259,6 +259,7 @@ export async function generateIntelReportAction(
       // persists WHY it failed — the run no longer throws to the caller, so this
       // record is the only place the reason survives.
       await releaseAiProcessingLock(clientId, failure);
+      await logGenerationFailure(clientId, failure);
     }
   });
 

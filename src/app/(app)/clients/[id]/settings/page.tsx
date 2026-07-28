@@ -170,15 +170,18 @@ export default async function ClientSettingsPage({
     </Card>
   );
 
-  const teamSection = client.clientKeyId ? (
-    <Card>
-      <CardTitle className="mb-1">Invite your team</CardTitle>
-      <p className="mb-3 text-sm text-muted-2">
-        Share this key with a teammate so they can join your workspace.
-      </p>
-      <ClientKeyInline clientKeyId={client.clientKeyId} />
-    </Card>
-  ) : null;
+  // F56: the key is a standing credential — staff and the workspace's own group
+  // admin only, and whoever can see it can rotate it.
+  const teamSection =
+    client.clientKeyId && (isStaff || user.isGroupAdmin) ? (
+      <Card>
+        <CardTitle className="mb-1">Invite your team</CardTitle>
+        <p className="mb-3 text-sm text-muted-2">
+          Share this key with a teammate so they can join your workspace.
+        </p>
+        <ClientKeyInline clientKeyId={client.clientKeyId} clientId={client.id} canRotate />
+      </Card>
+    ) : null;
 
   const tabs: SettingsTab[] = [
     { id: "profile", label: "Profile", icon: "Building2", content: profileSection },

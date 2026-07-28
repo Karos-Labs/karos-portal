@@ -967,6 +967,7 @@ export function ClientDocuments({
   isAdmin,
   clientId,
   isAiProcessing,
+  aiProcessingError,
   intelSchedule,
   allowInternalFallback = false,
   correctionPricing,
@@ -976,6 +977,8 @@ export function ClientDocuments({
   clientId?: string;
   /** True while a background AI generation cycle is running — locks the Regenerate button. */
   isAiProcessing?: boolean;
+  /** Set when the last generation cycle failed — the empty state says so (QA F69). */
+  aiProcessingError?: string | null;
   /** Admin-only recurring regeneration schedule. Only meaningful (and only ever rendered) when isAdmin. */
   intelSchedule?: IntelScheduleInfo;
   /**
@@ -1022,7 +1025,7 @@ export function ClientDocuments({
               disabled={isAiProcessing}
               title={
                 isAiProcessing
-                  ? "Karos Agents are already building this workspace - please wait for it to finish"
+                  ? "Karos Agents are already building this workspace — please wait for it to finish"
                   : "Re-run the Intel Report pipeline to regenerate all documents"
               }
               className="flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-medium text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-2"
@@ -1035,8 +1038,15 @@ export function ClientDocuments({
       </div>
 
       {available.length === 0 ? (
+        // One line used to cover three different situations, so a client who
+        // finished onboarding half an hour ago was told to finish onboarding —
+        // and a failed run said the same thing (QA F69).
         <p className="px-1 py-1.5 text-xs text-muted-2">
-          Your brand and strategy documents will appear here once onboarding completes.
+          {isAiProcessing
+            ? "Karos Agents are writing your documents now — this takes a few minutes."
+            : aiProcessingError
+              ? "Generation stopped early. Your Karos team is on it."
+              : "Your brand and strategy documents will appear here once onboarding completes."}
         </p>
       ) : (
         <ul>

@@ -32,7 +32,7 @@ const NAV: NavItem[] = [
   { href: "/transcripts", label: "Meetings", icon: "Mic", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/assets", label: "Assets", icon: "FolderOpen", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/calendar", label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
-  { href: "/tasks", label: "Tasks", icon: "CheckSquare", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
+  { href: "/tasks", label: "Workspace", icon: "SquareCheck", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/team", label: "Team", icon: "Users", roles: ["KAROS_ADMIN"] },
   { href: "/connect", label: "Connect", icon: "Plug", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/admin/analytics", label: "Analytics", icon: "TrendingUp", roles: ["KAROS_ADMIN"] },
@@ -97,7 +97,7 @@ function ClientContextPicker({ clients }: { clients: Client[] }) {
       >
         <Icon name="Eye" className="h-4 w-4 shrink-0 text-muted-2" />
         <span className="min-w-0 flex-1 truncate text-left">
-          {activeClient ? activeClient.client.name : "View as client"}
+          {activeClient ? activeClient.client.name : "Client context"}
         </span>
         {activeClient ? (
           <span
@@ -387,13 +387,18 @@ export function Sidebar({
           isAdmin={activeClient.isAdmin}
           clientId={activeClient.client.id}
           isAiProcessing={isAiProcessingLockActive(activeClient.client)}
+          aiProcessingError={activeClient.client.aiProcessingError ?? null}
           intelSchedule={clientIntelSchedule(activeClient.client)}
           /* Staff-only shell: internal-tier documents are readable here. */
           allowInternalFallback
         />
       </div>
 
+      {/* key: switching client context must reset the panel's local state —
+          an optimistically added row otherwise stayed on screen for the NEXT
+          client's rail until a reload (QA F62 flag). */}
       <CompetitorTrack
+        key={activeClient.client.id}
         competitors={activeClient.competitors}
         clientId={activeClient.client.id}
         isStaff={true}

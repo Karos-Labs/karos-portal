@@ -271,7 +271,7 @@ export function HideFromClientToggle({
     <button
       onClick={toggle}
       disabled={saving}
-      title={hidden ? "Currently hidden from clients - click to make visible" : "Visible to clients - click to hide"}
+      title={hidden ? "Currently hidden from clients — click to make visible" : "Visible to clients — click to hide"}
       className={`flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-medium transition-colors disabled:opacity-50 ${
         hidden
           ? "border-warning/40 bg-warning/10 text-warning hover:bg-warning/20"
@@ -315,7 +315,7 @@ export function TranscriptSignalButton({
   if (done) {
     return (
       <div className="flex items-center gap-1.5 text-xs text-neon">
-        <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+        <Icon name="CircleCheck" className="h-3.5 w-3.5" />
         Sent to Intel
       </div>
     );

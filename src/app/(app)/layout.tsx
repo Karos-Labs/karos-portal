@@ -5,6 +5,7 @@ import {
   listClients,
   listAssignedActionItems,
   listReviewJobs,
+  listReviewJobsForClients,
   listClientTasks,
   getClient,
   getClientCredits,
@@ -20,6 +21,7 @@ import {
   creditBlockReason,
   isBillableClientActor,
 } from "@/lib/credits";
+import { toClientPortalView } from "@/lib/client-visibility";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldBlockForOnboarding } from "@/lib/onboarding";
@@ -29,6 +31,7 @@ import { CopilotDock } from "@/components/copilot-dock";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { AppHeader } from "@/components/app-header";
+import { ClientContextBar } from "@/components/client-context-bar";
 import { StaffCopilotDock } from "@/components/staff-chatbot-widget";
 import type { ActionItemNotification, AgentReviewNotification, Client, ClientTask } from "@/lib/types";
 
@@ -44,6 +47,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   let pendingCount = 0;
   let clients: Client[] = [];
 
+  // Staff bell feeds are cross-client, so they need the viewer's client scope:
+  // admins see every client, an employee only their assigned ones — the same
+  // fence /jobs, /assets and the task board use.
+  const isStaffViewer = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  const staffClients: Client[] = isStaffViewer
+    ? await listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined)
+    : [];
+  const staffClientNames = new Map(staffClients.map((c) => [c.id, c.name]));
+
   const [adminData, actionItems, reviewJobs, taskAlerts] = await Promise.all([
     user.role === "KAROS_ADMIN"
       ? Promise.all([listUsers(), listClients()]).then(([allUsers, allClients]) => ({
@@ -58,17 +70,38 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         ? listAssignedActionItems(user.uid, { forClientId: user.clientId })
         : Promise.resolve([] as ActionItemNotification[])
       : listAssignedActionItems(user.uid),
-    user.role === "CLIENT_USER" && user.clientId
-      ? listReviewJobs(user.clientId)
-      : Promise.resolve([] as AgentReviewNotification[]),
-    user.role === "CLIENT_USER" && user.clientId
-      ? listClientTasks({
-          clientId: user.clientId,
-          status: ["pending", "review_pending"],
-          limit: 50,
-        })
-      : Promise.resolve([] as ClientTask[]),
+    // Reviews + tasks: the client's own, or — for staff — everything in their
+    // client scope. These two feeds used to be handed empty arrays to staff, so
+    // "Ready for review" and "Pending tasks" were structurally unreachable for
+    // the people who run the agency, and the bell claimed "All caught up!"
+    // while drafts sat in review (QA F68).
+    user.role === "CLIENT_USER"
+      ? user.clientId
+        ? listReviewJobs(user.clientId)
+        : Promise.resolve([] as AgentReviewNotification[])
+      : listReviewJobsForClients([...staffClientNames.keys()], { limit: 15 }),
+    user.role === "CLIENT_USER"
+      ? user.clientId
+        ? listClientTasks({
+            clientId: user.clientId,
+            status: ["pending", "review_pending"],
+            limit: 50,
+          })
+        : Promise.resolve([] as ClientTask[])
+      : listClientTasks({ status: ["pending", "review_pending"], limit: 200 }),
   ]);
+
+  // Annotate staff rows with the client name (same pattern as tasks-body) and
+  // fence them to the viewer's scope.
+  const scopedReviewJobs: AgentReviewNotification[] = isStaffViewer
+    ? reviewJobs.map((j) => ({ ...j, clientName: staffClientNames.get(j.clientId) ?? undefined }))
+    : reviewJobs;
+  const scopedTaskAlerts: (ClientTask & { _clientName?: string })[] = isStaffViewer
+    ? taskAlerts
+        .filter((t) => staffClientNames.has(t.clientId))
+        .slice(0, 20)
+        .map((t) => ({ ...t, _clientName: staffClientNames.get(t.clientId) }))
+    : taskAlerts;
 
   if (adminData) {
     pendingCount = adminData.allUsers.filter((u) => u.disabled && !u.approvedAt).length;
@@ -115,13 +148,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               : {}),
           }
         : undefined;
+      // Same rule as the docs above, applied to the client record itself: the
+      // rail is a "use client" component, so the WHOLE document would be
+      // serialized into every client-portal RSC payload — including
+      // clientKeyId, the join token that auto-approves any signup into this
+      // workspace (QA F56). Whitelist-projected before it crosses.
+      const clientView = toClientPortalView(client);
 
       return (
         <ActiveClientProvider>
           <div className="flex min-h-screen flex-col md:flex-row">
             <ClientRail
               user={user}
-              client={client}
+              client={clientView}
               contextDocs={contextDocs}
               competitors={competitors}
               isAdmin={false}
@@ -139,10 +178,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               <main className="flex-1 overflow-x-clip px-4 pb-28 pt-6 md:px-8 md:pt-8 md:pb-16 lg:pb-8">
                 {/* Same cap as the staff shell — the two shells must render pages
                     at identical widths or tabs appear to change size. */}
-                <div className="mx-auto w-full max-w-6xl animate-fade-up">
+                <div className="@container mx-auto w-full max-w-6xl animate-fade-up">
                   {/* The client shell — this banner's audience is a CLIENT_USER,
                       who has neither Regenerate nor Refresh Task Map (F20). */}
-                  <AiProcessingBanner client={client} isClientViewer />
+                  <AiProcessingBanner client={clientView} isClientViewer />
                   {children}
                 </div>
               </main>
@@ -185,15 +224,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {isImpersonating && realAdmin && (
             <ImpersonationBanner realAdmin={realAdmin} viewingAs={user} />
           )}
+          {/* Client-context mode gets its own persistent bar — see F60. */}
+          <ClientContextBar />
           <AppHeader
             actionItems={actionItems as ActionItemNotification[]}
-            reviewJobs={reviewJobs}
-            taskAlerts={taskAlerts}
+            reviewJobs={scopedReviewJobs}
+            taskAlerts={scopedTaskAlerts}
             userName={user.name}
             userEmail={user.email}
           />
           <main className="flex-1 overflow-x-clip px-4 py-6 md:px-8 md:py-8">
-            <div className="mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
+            <div className="@container mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
           </main>
         </div>
         {/* Docked copilot right-rail — visible when admin selects a client via "View as Client" */}

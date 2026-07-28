@@ -15,7 +15,7 @@ import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
 import type { Client, SocialLinks } from "@/lib/types";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
-import { requireStaff } from "./_shared";
+import { requireStaff, logGenerationFailure } from "./_shared";
 
 export async function createClientAction(input: {
   name: string;
@@ -93,6 +93,7 @@ export async function createClientAction(input: {
       console.error("[onboard] Pipeline crashed unexpectedly:", e);
     } finally {
       await releaseAiProcessingLock(id, failure);
+      await logGenerationFailure(id, failure);
     }
   });
 
@@ -100,9 +101,23 @@ export async function createClientAction(input: {
   return { id };
 }
 
-/** Regenerate the clientKeyId for a client. Invalidates any previous join links. */
+/**
+ * Regenerate the clientKeyId for a client. Invalidates any previous join links.
+ *
+ * Staff, plus the workspace's OWN group admin: a valid client key auto-approves
+ * any signup straight into that workspace, so the person who can hand it out
+ * must also be able to rotate it after a leak (QA F56 — there was no
+ * remediation path on screen at all). Ordinary client users may do neither.
+ */
 export async function regenerateClientKeyAction(clientId: string): Promise<{ clientKeyId: string }> {
-  await requireStaff();
+  // Guard the id first: without it a group admin whose clientId is null would
+  // satisfy `null === null` against an empty argument.
+  if (!clientId) throw new Error("clientId required");
+  const user = await requireUser();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  const isOwnGroupAdmin =
+    user.role === "CLIENT_USER" && user.isGroupAdmin === true && user.clientId === clientId;
+  if (!isStaff && !isOwnGroupAdmin) throw new Error("Forbidden");
   const clientKeyId = `ck_${randomBytes(16).toString("base64url")}`;
   await updateClient(clientId, { clientKeyId });
   revalidatePath(`/clients/${clientId}`);

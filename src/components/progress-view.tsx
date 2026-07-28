@@ -31,7 +31,6 @@ export function ProgressView({
   tasks,
   currentUserRole,
   clientId,
-  autopilotEnabled,
   activityLogs,
   jobs,
   report,
@@ -40,7 +39,6 @@ export function ProgressView({
   tasks: ClientTask[];
   currentUserRole: Role;
   clientId: string;
-  autopilotEnabled: boolean;
   activityLogs: ActivityLog[];
   jobs: Job[];
   report: ClientReport | null;
@@ -54,6 +52,17 @@ export function ProgressView({
   // router.replace) so switching tabs doesn't re-run this force-dynamic route's
   // server data fetches on every click.
   const [view, setView] = useState<View>(() => parseView(searchParams.get("tab")));
+
+  // Same-route navigation (the client rail's "Workspace" link, or a bell row
+  // pointing at ?tab=archive, clicked while already on /tasks) re-renders this
+  // component instead of remounting it, so the tab has to follow the URL or it
+  // silently desyncs from the address bar (F97 watch-item, folded in with F64).
+  const tabParam = searchParams.get("tab");
+  const [prevTabParam, setPrevTabParam] = useState(tabParam);
+  if (prevTabParam !== tabParam) {
+    setPrevTabParam(tabParam);
+    setView(parseView(tabParam));
+  }
 
   function selectView(next: View) {
     setView(next);
@@ -98,12 +107,7 @@ export function ProgressView({
           <div className="mb-4">
             <QuickAddTaskBar clientId={clientId} />
           </div>
-          <TasksBoard
-            tasks={tasks}
-            currentUserRole={currentUserRole}
-            clientId={clientId}
-            autopilotEnabled={autopilotEnabled}
-          />
+          <TasksBoard tasks={tasks} currentUserRole={currentUserRole} clientId={clientId} />
         </>
       ) : view === "activity" ? (
         <ActivityTimeline
@@ -114,7 +118,11 @@ export function ProgressView({
           currentUserRole={currentUserRole}
         />
       ) : (
-        <ArchiveView assets={assets} agentNameByJobId={agentNameByJobId} />
+        <ArchiveView
+          assets={assets}
+          agentNameByJobId={agentNameByJobId}
+          viewerIsClient={currentUserRole === "CLIENT_USER"}
+        />
       )}
     </>
   );
