@@ -143,6 +143,21 @@ export function AiInsights({ clientId }: { clientId: string }) {
           <Skeleton className="h-3 w-1/4" />
           <Skeleton className="h-3 w-10/12" />
         </div>
+      ) : text.trim() === "" ? (
+        // A briefing that fails mid-stream still answers 200 with an empty body
+        // (the SDK masks the error into the stream), and an empty body used to
+        // render as nothing at all — a badged card with a blank 92px body, seen
+        // on the staff lens during the wave-1 walk. Say what happened instead.
+        <EmptyState
+          icon={<Icon name="Sparkles" className="h-6 w-6" />}
+          title="No briefing right now"
+          description="We couldn't put this week's briefing together. Try again in a moment."
+          action={
+            <button type="button" onClick={() => void load()} className="text-xs text-neon hover:underline">
+              Try again
+            </button>
+          }
+        />
       ) : (
         <div className="space-y-1.5 text-[13px] leading-relaxed text-muted">
           {renderBriefing(text)}

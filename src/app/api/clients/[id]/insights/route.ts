@@ -119,7 +119,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     }
 
     const digestKey = JSON.stringify(activity);
-    if (cached && cached.digestKey === digestKey) {
+    if (cached && cached.digestKey === digestKey && cached.text.trim() !== "") {
       return cachedResponse(cached.text);
     }
 
@@ -141,10 +141,13 @@ Write the update now.`;
       model: MODEL,
       system: pipelineSystem,
       prompt: pipelinePrompt,
+      onError: ({ error }) => console.error("[ai-insights] Pipeline stream failed:", error),
       onFinish: ({ text, usage }) => {
         after(async () => {
           try {
-            await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
+            if (isCacheable(text)) {
+              await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
+            }
             await logger.logUsage({
               clientId,
               agentId: null,
@@ -165,7 +168,7 @@ Write the update now.`;
   }
 
   const digestKey = JSON.stringify(digest);
-  if (cached && cached.digestKey === digestKey) {
+  if (cached && cached.digestKey === digestKey && cached.text.trim() !== "") {
     return cachedResponse(cached.text, dataSourceHeaders);
   }
 
@@ -192,10 +195,13 @@ Write the briefing now.`;
     model: MODEL,
     system,
     prompt,
+    onError: ({ error }) => console.error("[ai-insights] Briefing stream failed:", error),
     onFinish: ({ text, usage }) => {
       after(async () => {
         try {
-          await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
+          if (isCacheable(text)) {
+            await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
+          }
           await logger.logUsage({
             clientId,
             agentId: null,
@@ -213,6 +219,19 @@ Write the briefing now.`;
   });
 
   return result.toTextStreamResponse({ headers: dataSourceHeaders });
+}
+
+/**
+ * A generation that fails mid-stream finishes with empty text (the SDK masks the
+ * error into the stream, so the response is still a 200 with an empty body).
+ * Caching that would pin a blank card in place for every later load with the
+ * same digest — a poisoned cache no page load can clear. Never store one; the
+ * next load simply regenerates.
+ */
+function isCacheable(text: string): boolean {
+  if (text.trim() !== "") return true;
+  console.error("[ai-insights] Generation produced no text — not caching");
+  return false;
 }
 
 /** A cache hit is already fully generated — return it in one shot (still plain
