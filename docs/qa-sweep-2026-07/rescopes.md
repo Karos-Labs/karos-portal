@@ -453,3 +453,20 @@ starting. Updated by the orchestrator after each verification gate.
   WORKSPACE F136/F72 territory; client-home-overview karos_managed
   overstatement folds into F149/A4 notes.
 - F63 completeness ledger: WORKSPACE sweep (36 sites, 4947e51) + DASHBOARD already-done (client-analytics via F145/4d88b0a, verified) + AGENTS 3-site micro-commit (in flight). Flip F63 only when the AGENTS micro-commit merges.
+
+## DASHBOARD lens results + bounce
+- F145 route half UNSAFE (bounced): my needsReconnect-into-connectedPlatforms
+  ruling had an unexamined side effect — stale-platform live rows could unbadge
+  a mock briefing. Remedy: staleSet folded into engagementIsMock predicate.
+  RULING AMENDED: stale channels ride the digest for staleness REPORTING but
+  never vouch for freshness.
+- F126 residuals bounced as follow-up (nested/triple/__ emphasis + underscore
+  token-eating via assetLabel).
+- Logged conscious trades: CD-B4 banner covers scores above the fold; tabbed
+  panel content relies on the capture strip for dating. Dashboard lost its only
+  /clients/[id]/agents link (Agent activity card deleted per F99) — SHELL nav
+  review should restore an agents affordance somewhere sensible (fits CD-E3
+  sidebar work: AI Agents nav item already exists — verify sufficiency, else
+  add link in summary row hint).
+- F97-class soft-nav desync applies to the new /clients/[id] ?tab= — fold into
+  the same one-useEffect fix class (SHELL or end-loop).
