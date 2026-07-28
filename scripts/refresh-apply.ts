@@ -131,7 +131,8 @@ const SHRINK_FLOOR = 0.9;
 /** …or past this fraction even with a written `shrinkApproved` reason. */
 const SHRINK_FLOOR_APPROVED = 0.5;
 const MIN_DOC_CHARS = 800;
-const MIN_DOC_SECTIONS = 3;
+/** action-plan legitimately carries only "How to use this" + "Recommendations". */
+const MIN_DOC_SECTIONS = 2;
 const MAX_COMPETITORS = 40;
 
 /* ── Validation plumbing ─────────────────────────────────────────────── */
@@ -141,6 +142,12 @@ class ProposalError extends Error {}
 const errors: string[] = [];
 function fail(where: string, msg: string): void {
   errors.push(`${where}: ${msg}`);
+}
+
+/** House-style deviations that are worth a human's eye but must not block a write. */
+const warnings: string[] = [];
+function warn(where: string, msg: string): void {
+  warnings.push(`${where}: ${msg}`);
 }
 
 function isPlainObject(v: unknown): v is Row {
@@ -314,6 +321,14 @@ function buildDocPlans(raw: unknown, stored: Map<string, Row>): DocPlan[] {
       fail(`${where}.content`, `only ${sections} \`## \` sections — a pipeline document has many more`);
     }
     checkBannedPlaceholders(`${where}.content`, content);
+    // Not fatal — some lab-imported documents predate these rules, and refusing
+    // the write would leave them frozen. Flag them for the reviewer instead.
+    if (/^## Change Log\s*$/m.test(content)) {
+      warn(`${where}.content`, "carries a `## Change Log` section; the pipeline drops it (pipeline.ts:527)");
+    }
+    if (/\n---\n/.test(content.replace(/^---[\s\S]*?\n---\n/, ""))) {
+      warn(`${where}.content`, "uses `---` horizontal rules in the body; the pipeline uses blank lines (pipeline.ts:526)");
+    }
 
     const verifyTokens = (content.match(/\[VERIFY\]/g) ?? []).length;
     if (tier === "client" && verifyTokens > 0) {
@@ -845,6 +860,11 @@ async function main() {
   }
 
   printPlan(clientName, clientArg, docPlans, compPlans, clientPlan);
+
+  if (warnings.length) {
+    console.log(`\nWARNINGS (${warnings.length}) — not blocking, but read them:`);
+    for (const w of warnings) console.log(`  ! ${w}`);
+  }
 
   const docWrites = docPlans.filter((d) => d.action !== "unchanged");
   const compWrites = compPlans.filter((c) => c.action !== "unchanged");
