@@ -653,6 +653,14 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
 
     for (const task of visibleTasks) {
       if (task.status === "archived") continue;
+      // The "Depending on you" tab renders no Review Pending column, so any
+      // client-owned task already stuck in that state (moved there before the
+      // status machine refused it — QA F54) surfaces in Pending instead of
+      // silently disappearing while still counting in the tab total.
+      if (activeTab === "client" && task.status === "review_pending") {
+        map.pending.push(task);
+        continue;
+      }
       map[task.status].push(task);
     }
 
@@ -660,7 +668,7 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
       map[key].sort(compareByWeight);
     }
     return map;
-  }, [visibleTasks]);
+  }, [activeTab, visibleTasks]);
 
   if (localTasks.length === 0) {
     return (

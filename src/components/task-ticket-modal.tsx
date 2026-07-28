@@ -39,6 +39,18 @@ const STATUS_NEXT: Record<TaskStatus, TaskStatus> = {
   archived:       "pending",
 };
 
+/**
+ * Review Pending is the state an AI draft sits in while Karos reviews it, so
+ * client-owned work never belongs there — the "Depending on you" board doesn't
+ * even render that column, and a task pushed into it from this footer vanished
+ * with no way back (QA F54). Client-managed work goes straight to Done.
+ */
+function nextStatusFor(task: ClientTask): TaskStatus {
+  const next = STATUS_NEXT[task.status];
+  if (next === "review_pending" && inferOwner(task) === "client_managed") return "completed";
+  return next;
+}
+
 const STATUS_LABEL: Record<TaskStatus, string> = {
   pending:        "Pending",
   in_progress:    "In Progress",
@@ -559,7 +571,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   const isExecuting = task.metadata?.executing === true;
   const failedUpload = task.metadata?.failedUpload as boolean | undefined;
   const failedUploadError = task.metadata?.failedUploadError as string | undefined;
-  const nextStatus = STATUS_NEXT[task.status];
+  const nextStatus = nextStatusFor(task);
   // The AI plan is a guide for the client to execute the task themselves —
   // not useful for karos_managed tasks our own agents already run.
   const isClientManaged = inferOwner(task) === "client_managed";

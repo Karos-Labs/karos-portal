@@ -82,6 +82,14 @@ export async function updateTaskStatusAction(
     return { ok: false, error: "Forbidden" };
   }
 
+  // Review Pending holds AI drafts awaiting Karos review. Client-owned work has
+  // no column for it on either board, so a task landing there disappears from
+  // the board while still counting in the tab total (QA F54). Refuse the move
+  // server-side, whichever UI path asks for it.
+  if (status === "review_pending" && inferOwnerEngine(task) === "client_managed") {
+    return { ok: false, error: "Tasks you own go straight to Done — Review Pending is for Karos drafts." };
+  }
+
   const triggersExecution =
     status === "in_progress" && inferOwnerEngine(task) === "karos_managed";
 
