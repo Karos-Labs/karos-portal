@@ -151,8 +151,12 @@ function RunPendingTasksButton({ clientId }: { clientId: string }) {
         <Icon name={isPending ? "Loader" : "Play"} className={cn("h-3.5 w-3.5 text-neon", isPending && "animate-spin")} />
         Run up to 5 pending tasks now
       </button>
-      <p className="mt-1 max-w-[260px] text-[11px] leading-relaxed text-muted-2">
-        Runs your next few pending automated tasks and charges credits for each one.
+      {/* Honest about the skip the §2 guard rail introduced: a task whose agent
+          is still being set up is passed over rather than run, and the price
+          below is quoted on what will actually run. */}
+      <p className="mt-1 max-w-[420px] text-[11px] leading-relaxed text-muted-2">
+        Runs your next few pending automated tasks and charges credits for each. Anything waiting on
+        an agent that is still being set up is skipped.
       </p>
 
       {preview && (
@@ -723,12 +727,22 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
   return (
     <>
       <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border bg-surface-2/70 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex items-center gap-1 rounded-md border border-border bg-surface p-1">
+        {/* ONE straight row (CD-G10): tabs · search · status on a shared
+            baseline. It used to be `flex-wrap` with the run-pending CTA sitting
+            inside the right-hand group — and that CTA is a tall two-line card,
+            not a control. Its height plus the search field's min-width blew the
+            row apart: the tabs dropped to a second line bottom-left while
+            search and the status filter stayed top-right, with the card
+            floating between them. No wrap here any more; the phone layout is an
+            explicit column instead of whatever wrapping happened to produce. */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+          {/* Full width on a phone so the two tabs split it evenly instead of
+              "Depending on you" wrapping to a second line inside its own pill. */}
+          <div className="inline-flex w-full shrink-0 items-center gap-1 self-start rounded-md border border-border bg-surface p-1 sm:w-auto sm:self-auto">
             <button
               onClick={() => setActiveTab("karos")}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors sm:flex-none sm:justify-start",
                 activeTab === "karos" ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground",
               )}
             >
@@ -741,7 +755,7 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
             <button
               onClick={() => setActiveTab("client")}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors sm:flex-none sm:justify-start",
                 activeTab === "client" ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground",
               )}
             >
@@ -753,8 +767,14 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
             </button>
           </div>
 
-          <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
-            <div className="relative w-full min-w-[220px] max-w-[320px]">
+          {/* min-w-0 on the group and the field is what actually keeps the row
+              straight: without it the search input's own minimum width wins
+              over flex shrinking and pushes its siblings out of the line. */}
+          {/* Phone: search takes its own line and the selects share the one
+              below, rather than three controls fighting over 343px and leaving
+              the search box showing four characters. */}
+          <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+            <div className="relative min-w-0 w-full sm:max-w-[320px] sm:flex-1">
               <Icon name="Search" className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-2" />
               <input
                 value={search}
@@ -763,34 +783,45 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
                 className="h-9 w-full rounded-md border border-border bg-surface px-8 text-sm text-foreground placeholder:text-muted-2"
               />
             </div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-              className="h-9 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground"
-            >
-              <option value="all">All statuses</option>
-              <option value="pending">Pending</option>
-              <option value="in_progress">In Progress</option>
-              <option value="review_pending">Review Pending</option>
-              <option value="completed">Done</option>
-            </select>
-            {showClientName && (
+            <div className="flex min-w-0 items-center gap-2">
               <select
-                value={clientFilter}
-                onChange={(e) => setClientFilter(e.target.value)}
-                className="h-9 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground sm:flex-none sm:shrink-0"
               >
-                <option value="all">All clients</option>
-                {clientOptions.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
+                <option value="all">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="in_progress">In Progress</option>
+                <option value="review_pending">Review Pending</option>
+                <option value="completed">Done</option>
               </select>
-            )}
-            {activeTab === "karos" && clientId && <RunPendingTasksButton clientId={clientId} />}
+              {showClientName && (
+                <select
+                  value={clientFilter}
+                  onChange={(e) => setClientFilter(e.target.value)}
+                  className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground sm:flex-none sm:shrink-0"
+                >
+                  <option value="all">All clients</option>
+                  {clientOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </div>
         </div>
+
+        {/* The CTA gets its own clean row (CD-G10). It is a card that grows a
+            price-confirmation panel when pressed, so there is no width at which
+            it belongs on the filter line — inside the row it distorted the
+            toolbar, and on the row it distorted nothing. */}
+        {activeTab === "karos" && clientId && (
+          <div className="border-t border-border/60 pt-3">
+            <RunPendingTasksButton clientId={clientId} />
+          </div>
+        )}
 
         {execError && (
           <div className="flex items-start justify-between gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
