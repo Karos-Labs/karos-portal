@@ -73,6 +73,10 @@ function toScheduleRows(
       prompt: run.prompt,
       hour: run.hour,
       minute: run.minute,
+      // The scheduler's refusal, so a schedule that can never fire stops
+      // rendering as a healthy "Live" agent.
+      lastError: run.lastError ?? null,
+      lastErrorAt: run.lastErrorAt ?? null,
     }));
 }
 
@@ -148,6 +152,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             viewerIsClient
             xSetup={xSetup}
             linkedinSetup={linkedinSetup}
+            viewer={{ name: user.name, email: user.email }}
             {...(spendable !== undefined ? { availableCredits: spendable } : {})}
           />
         ) : (
@@ -218,6 +223,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           viewerIsClient={false}
           xSetup={xSetup}
           linkedinSetup={linkedinSetup}
+          viewer={{ name: user.name, email: user.email }}
         />
       ) : (
         <EmptyState

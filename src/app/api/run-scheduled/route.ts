@@ -12,6 +12,12 @@ export const maxDuration = 120;
  * (submitCustomAgentJob) — so a scheduled run is indistinguishable from a manual
  * one once it fires. One-off runs complete; recurring runs advance to their next
  * slot. The actor is the staff creator, so runs never charge client credits.
+ *
+ * Every fire that produces nothing — a credit refusal, a spend cap, missing
+ * intake, the agent service being unreachable — is recorded on the schedule row
+ * as lastError/lastErrorAt, and a fire that succeeds clears them. The agent card
+ * reads those fields, so a schedule that can never fire is visible instead of
+ * silently green.
  */
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -68,6 +74,10 @@ export async function GET(req: NextRequest) {
       const advance: Partial<PlannedScheduledRun> = {
         lastRunAt: now,
         ...(jobId ? { lastJobId: jobId } : {}),
+        // Refusals are surfaced on the client's agent card; a clean fire clears
+        // the previous one so the card stops nagging once it recovers.
+        lastError: error ?? null,
+        lastErrorAt: error ? Date.now() : null,
         updatedAt: Date.now(),
       };
       if (run.cadence === "once") {
@@ -87,8 +97,20 @@ export async function GET(req: NextRequest) {
 
       results.push(error ? { runId: run.id, status: "failed", error, jobId } : { runId: run.id, status: "submitted", jobId });
     } catch (e) {
-      // Leave the run active so the next tick retries; record nothing destructive.
-      results.push({ runId: run.id, status: "failed", error: e instanceof Error ? e.message : "Unknown error" });
+      // Leave the run active so the next tick retries, but record the refusal so
+      // the card can show it — a throw is exactly the case that would otherwise
+      // stay silently green forever.
+      const message = e instanceof Error ? e.message : "Unknown error";
+      try {
+        await updatePlannedScheduledRun(run.id, {
+          lastError: message,
+          lastErrorAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      } catch {
+        // the schedule row may be gone — nothing left to annotate
+      }
+      results.push({ runId: run.id, status: "failed", error: message });
     }
   }
 

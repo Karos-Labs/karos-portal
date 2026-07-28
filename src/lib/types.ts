@@ -513,6 +513,15 @@ export interface PlannedScheduledRun {
   lastRunAt?: number;
   /** Job id created by the most recent fire. */
   lastJobId?: string;
+  /**
+   * Human-readable refusal from the most recent fire that produced nothing
+   * (out of credits, cap reached, missing intake, service down). Cleared on the
+   * next successful fire. Rendered on the agent card so a schedule that can
+   * never fire is visible instead of silently green.
+   */
+  lastError?: string | null;
+  /** Epoch millis of that refusal. */
+  lastErrorAt?: number | null;
   createdBy: string;
   createdAt: number;
   updatedAt: number;

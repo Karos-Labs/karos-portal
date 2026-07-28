@@ -8,6 +8,7 @@ import { Icon } from "@/components/icon";
 import { AgentIdentity, AgentMark, AgentPlatformBadges } from "@/components/agent-identity";
 import { AgentInputFiles } from "@/components/agent-input-files";
 import { Modal } from "@/components/modal";
+import { ContactUsButton } from "@/components/contact-us-modal";
 import { JobStatusBadge } from "@/components/job-status";
 import {
   createCustomAgentAction,
@@ -69,10 +70,52 @@ export interface ClientAgentScheduleRow {
   prompt: string;
   hour: number;
   minute: number;
+  /**
+   * The scheduler's refusal from the last fire that produced nothing. When set,
+   * the card drops the "Live" badge — an always-on agent that is refused on
+   * every fire must never read as healthy.
+   */
+  lastError?: string | null;
+  /** Epoch millis of that refusal. */
+  lastErrorAt?: number | null;
 }
 
 function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
   return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+}
+
+/**
+ * The intake page an agent drafts from, when it has one (X e13, LinkedIn e10).
+ * `ready` is the server's answer to "has this client filled it in yet".
+ */
+function setupTargetFor(
+  agentKey: string,
+  xSetup?: { ready: boolean; href: string },
+  linkedinSetup?: { ready: boolean; href: string },
+): { ready: boolean; href: string; label: string } | null {
+  if (xSetup && isXAgentIdentity(agentKey)) return { ...xSetup, label: "X agent data" };
+  if (linkedinSetup && isLinkedInAgentIdentity(agentKey)) {
+    return { ...linkedinSetup, label: "LinkedIn agent data" };
+  }
+  return null;
+}
+
+/**
+ * The scheduler stores whatever the submit core refused with. Setup, credit and
+ * cap refusals are already written for the person reading them; anything else
+ * (service URLs, tokens, stack detail) is an internal message and never reaches
+ * a client card.
+ */
+function refusalForViewer(refusal: string, viewerIsClient: boolean): string {
+  if (!viewerIsClient) return refusal;
+  if (
+    refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
+    refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
+    /credit|limit|cap/i.test(refusal)
+  ) {
+    return refusal;
+  }
+  return "This agent could not start on its last scheduled run. Your Karos team can unblock it.";
 }
 
 function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon">; className?: string }) {
@@ -252,6 +295,7 @@ export function ClientCustomAgents({
   availableCredits,
   xSetup,
   linkedinSetup,
+  viewer,
 }: {
   clientId: string;
   agents: RunnableAgentSummary[];
@@ -261,6 +305,8 @@ export function ClientCustomAgents({
   viewerIsClient: boolean;
   /** Spendable credits right now (balance clipped by caps) — client viewers only. */
   availableCredits?: number;
+  /** Prefills the support form offered when a schedule is stuck on a refusal. */
+  viewer?: { name: string; email: string };
   /** X agent intake state: gates the X run behind the "X agent data" page. */
   xSetup?: { ready: boolean; href: string };
   /** LinkedIn agent intake state: gates e10 runs behind the "LinkedIn agent data" page. */
@@ -305,6 +351,14 @@ export function ClientCustomAgents({
               (run) => run.agentName === agent.name && run.status === "review" && run.assetCount > 0,
             );
             const readyAssetCount = reviewRuns.reduce((total, run) => total + run.assetCount, 0);
+            const setup = setupTargetFor(agent.key, xSetup, linkedinSetup);
+            // A refused schedule is never "Live" — the badge and the status line
+            // both switch to the stored refusal until a fire succeeds.
+            const refusal = schedule?.lastError?.trim() || null;
+            const refusalIsSetup =
+              refusal !== null &&
+              (refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
+                refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX));
             const reviewHref = viewerIsClient
               ? "/tasks"
               : reviewRuns[0]?.href ?? `/clients/${clientId}/assets`;
@@ -320,12 +374,14 @@ export function ClientCustomAgents({
                     <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">AI agent</p>
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="truncate text-base font-medium">{agent.name}</p>
-                      {schedule?.status === "active" && (
+                      {refusal ? (
+                        <Badge tone="warning">Needs attention</Badge>
+                      ) : schedule?.status === "active" ? (
                         <Badge tone="success">
                           <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse-neon" aria-hidden="true" />
                           Live
                         </Badge>
-                      )}
+                      ) : null}
                     </div>
                     <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agent.description}</p>
                   </div>
@@ -357,11 +413,37 @@ export function ClientCustomAgents({
                         {" · "}
                         {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
                       </p>
-                      <p className="mt-0.5 text-[11px] text-muted-2">
-                        {schedule.status === "active"
-                          ? `Working toward ${formatDate(schedule.nextRunAt)}`
-                          : "Schedule paused"}
-                      </p>
+                      {refusal ? (
+                        <>
+                          <p className="mt-0.5 text-[11px] text-warning">
+                            {refusalForViewer(refusal, viewerIsClient)}
+                          </p>
+                          {refusalIsSetup && setup ? (
+                            <a
+                              href={setup.href}
+                              className="mt-1 inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+                            >
+                              Open {setup.label}
+                              <Icon name="ArrowRight" className="h-3 w-3" />
+                            </a>
+                          ) : viewer ? (
+                            <div className="-mx-3 mt-0.5">
+                              <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
+                            </div>
+                          ) : null}
+                          {schedule.lastErrorAt ? (
+                            <p className="mt-0.5 text-[10px] text-muted-2">
+                              Last tried {relativeTime(schedule.lastErrorAt)}
+                            </p>
+                          ) : null}
+                        </>
+                      ) : (
+                        <p className="mt-0.5 text-[11px] text-muted-2">
+                          {schedule.status === "active"
+                            ? `Working toward ${formatDate(schedule.nextRunAt)}`
+                            : "Schedule paused"}
+                        </p>
+                      )}
                     </>
                   ) : (
                     <p className="text-xs text-muted-2">Ready to build your weekly content queue.</p>
