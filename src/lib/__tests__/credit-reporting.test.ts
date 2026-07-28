@@ -137,6 +137,27 @@ describe("summarizeAgentEconomics", () => {
     expect(result.totalUsd).toBe(16);
   });
 
+  it("excludes failed and cancelled runs — a dead run is partial, not cheap", () => {
+    const result = summarizeAgentEconomics([
+      job({ id: "1", runType: "launch", external: { serviceJobId: "s", taskType: "custom", totalCostUsd: 8 } }),
+      job({
+        id: "2",
+        runType: "launch",
+        status: "failed",
+        external: { serviceJobId: "s", taskType: "custom", totalCostUsd: 0.4 },
+      }),
+      job({
+        id: "3",
+        runType: "launch",
+        status: "cancelled",
+        external: { serviceJobId: "s", taskType: "custom", totalCostUsd: 0.2 },
+      }),
+    ]);
+
+    // Averaging the two dead runs in would report $2.87 and under-price setup.
+    expect(result.launch).toEqual({ runs: 1, usd: 8 });
+  });
+
   it("ignores jobs with no reported cost rather than averaging them in as zero", () => {
     const result = summarizeAgentEconomics([
       job({ id: "1", runType: "launch", external: { serviceJobId: "s", taskType: "custom", totalCostUsd: 8 } }),

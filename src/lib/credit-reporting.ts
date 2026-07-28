@@ -121,6 +121,9 @@ export interface AgentEconomics {
 
 const EMPTY_BUCKET = (): UsdBucket => ({ runs: 0, usd: 0 });
 
+/** Terminal states where the reported cost is a partial run, not a price. */
+const FAILED_STATUSES = new Set<Job["status"]>(["failed", "cancelled"]);
+
 function bucketForRunType(runType?: JobRunType | null): keyof Omit<AgentEconomics, "totalUsd"> {
   if (runType === "launch") return "launch";
   if (runType === "scheduled") return "scheduled";
@@ -147,6 +150,11 @@ export function summarizeAgentEconomics(jobs: Job[]): AgentEconomics {
   for (const job of jobs) {
     const usd = job.external?.totalCostUsd;
     if (typeof usd !== "number" || !Number.isFinite(usd)) continue;
+    // A run that DIED is not a cheap run — it is a partial one, and its cost is
+    // whatever it burned before stopping. Averaging failed and cancelled launches
+    // in drags the launch mean down and understates the very ratio §6.3 exists
+    // to measure, which would then under-price the setup a client is charged for.
+    if (FAILED_STATUSES.has(job.status)) continue;
     const bucket = out[bucketForRunType(job.runType)];
     bucket.runs += 1;
     bucket.usd += usd;
