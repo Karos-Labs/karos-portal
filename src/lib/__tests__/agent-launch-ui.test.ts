@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Hoisted: buildAgentSetup and the LinkedIn predicate are server modules, and
+// the readiness/core-agreement test below drives them for real against a
+// stubbed data layer. Every other test in this file only reads source.
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/data");
+vi.mock("@/lib/data-client-agents");
+
 import {
   ALL_LAUNCH_PROFILES,
   agentKeyMatchesClientSlug,
@@ -12,6 +20,10 @@ import {
 } from "@/lib/custom-agent-launch";
 import { CREDIT_DENIAL_PREFIX } from "@/lib/credits";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import * as data from "@/lib/data";
+import { buildAgentSetup } from "@/lib/client-agent-rows";
+import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
+import type { AgentIntake } from "@/lib/types";
 
 describe("custom agent launch profiles", () => {
   it("gives known agents purpose-built fields and attachment guidance", () => {
@@ -278,6 +290,80 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
     expect(rows).toContain("hasXAgentIntake(clientId)");
     expect(rows).toContain("hasLinkedInAgentIntake(clientId, agent.key)");
     expect(rows).toContain("hasRedditAgentIntake(clientId)");
+  });
+
+  it("carries the agent key at the CORES' call sites, not only the card's", () => {
+    // This is the assertion that binds. Pinning only client-agent-rows.ts left
+    // the gate free to drift on the side that actually refuses: both cores
+    // called hasLinkedInAgentIntake UNKEYED while the test above stayed green,
+    // so a seat-only workspace read `ready` on the card, cleared schedule-gate
+    // (which IS keyed) and then died inside the core on a company form the
+    // Path-B master does not have — after the card had promised a run. Every
+    // consumer of the keyed predicate passes the key, or they do not agree.
+    for (const file of [
+      "src/lib/client-agent-rows.ts",
+      "src/lib/jobs/submit-custom.ts",
+      "src/lib/agent-service/run-custom-agent.ts",
+      "src/lib/jobs/schedule-gate.ts",
+    ]) {
+      const src = readFileSync(join(process.cwd(), file), "utf8");
+      const calls = [...src.matchAll(/hasLinkedInAgentIntake\(([^)]*)\)/g)].map((m) => m[1]);
+      expect(calls.length, `${file} never calls hasLinkedInAgentIntake`).toBeGreaterThan(0);
+      for (const args of calls) {
+        expect(args, `${file} calls hasLinkedInAgentIntake without the agent key`).toContain(
+          "agent.key",
+        );
+      }
+    }
+  });
+
+  describe("readiness and the core predicate, driven for a seat-only workspace", () => {
+    // The source pin above is only worth its line count if the key CHANGES the
+    // answer. This drives the real functions against the exact fixture the
+    // ruling is about — a LinkedIn workspace set up on the seat side with no
+    // company page saved — and shows the two ends agreeing, and the dropped
+    // argument disagreeing.
+    const CLIENT = "client-seat-only";
+    const seatIntake = {
+      id: "i1",
+      clientId: CLIENT,
+      agent: "linkedin",
+      seatId: "seat-1",
+      handle: "https://linkedin.com/in/someone",
+      createdAt: 1,
+      updatedAt: 1,
+    } as unknown as AgentIntake;
+
+    beforeEach(() => {
+      vi.mocked(data.listPlannedScheduledRuns).mockResolvedValue([]);
+      // No company page doc; one seat's intake stored.
+      vi.mocked(data.getAgentIntake).mockResolvedValue(null);
+      vi.mocked(data.listAgentIntake).mockResolvedValue([seatIntake]);
+    });
+
+    it("shows the Path-B master ready, and the core predicate says the same", async () => {
+      const setup = await buildAgentSetup(CLIENT, [{ id: "a1", key: "karos-linkedin-agent" }]);
+      expect(setup.a1.ready).toBe(true);
+      // What the core asks, with the key it now passes.
+      await expect(hasLinkedInAgentIntake(CLIENT, "karos-linkedin-agent")).resolves.toBe(true);
+      // And what it asked before the fix. This is the disagreement itself: the
+      // card offers the run, the core refuses it. If this line ever starts
+      // returning true the fixture has stopped reproducing the bug.
+      await expect(hasLinkedInAgentIntake(CLIENT)).resolves.toBe(false);
+    });
+
+    it("still holds the company floor for a company-page instance", async () => {
+      // The key is not a blanket pass: an instance WITH a company form of its
+      // own is judged on that form, so this same workspace is not-ready there —
+      // and both ends say so.
+      const setup = await buildAgentSetup(CLIENT, [
+        { id: "a2", key: "karos-linkedin-company-karoslabs" },
+      ]);
+      expect(setup.a2.ready).toBe(false);
+      await expect(
+        hasLinkedInAgentIntake(CLIENT, "karos-linkedin-company-karoslabs"),
+      ).resolves.toBe(false);
+    });
   });
 
   it("leaves the components asking one map, not three payloads", () => {
