@@ -99,9 +99,15 @@ function buildProactiveActions(): ProactiveAction[] {
       // "Queue" claimed an execution step this path never performs: the only
       // write is pending task cards, and a run starts when a human later moves
       // a card into In Progress (QA F91).
+      //
+      // "Dispatch" was the same mistake one layer up (A3): it named the
+      // machinery — a batch being sent somewhere — on a chip a client presses.
+      // The label says what the client ends up with. Same rename as the board
+      // chip in tasks-board.tsx; neither surface branches by role, so there is
+      // no staff naming to preserve here.
       id: "content_dispatch",
       icon: "Zap",
-      label: "AI Content Dispatch",
+      label: "Content Plan",
       sublabel: "Propose this week's content plan as ready-to-run tasks",
       trigger:
         "Propose which Karos managed products (social posts, newsletter, blog article, landing page) to plan for content creation this week, and suggest a concrete content plan I can turn into tasks.",
