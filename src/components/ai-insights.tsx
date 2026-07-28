@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Card, CardTitle, Badge, Skeleton } from "@/components/ui";
+import { Card, CardTitle, Badge, EmptyState, Skeleton } from "@/components/ui";
 import { Icon } from "@/components/icon";
 
 /**
@@ -19,6 +20,10 @@ export function AiInsights({ clientId }: { clientId: string }) {
   // engagement figures are deterministic mock metrics (no live social token). Badge it so a
   // client never mistakes demo numbers for real performance.
   const [isDemoData, setIsDemoData] = useState(false);
+  // QA F125: the API refuses to narrate mock engagement figures to a client and answers
+  // X-Insights-State: needs-connection instead. Render the connect-a-channel empty state
+  // rather than any prose — a warning badge doesn't make invented budget advice safe.
+  const [needsConnection, setNeedsConnection] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   // The fetch + stream itself. Every setState here happens after the first
@@ -37,6 +42,11 @@ export function AiInsights({ clientId }: { clientId: string }) {
           throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
         }
         setIsDemoData(res.headers.get("X-Insights-Data-Source") === "mock");
+        if (res.headers.get("X-Insights-State") === "needs-connection") {
+          void res.body?.cancel();
+          setNeedsConnection(true);
+          return;
+        }
         const reader = res.body!.getReader();
         const decoder = new TextDecoder();
         let accumulated = "";
@@ -65,6 +75,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
     setLoading(true);
     setError(null);
     setText("");
+    setNeedsConnection(false);
     void run(controller, true);
   }, [run]);
 
@@ -109,6 +120,20 @@ export function AiInsights({ clientId }: { clientId: string }) {
             Try again
           </button>
         </div>
+      ) : needsConnection ? (
+        <EmptyState
+          icon={<Icon name="Plug" className="h-6 w-6" />}
+          title="No performance data yet"
+          description="Connect a social account and we'll brief you weekly on what's working."
+          action={
+            <Link
+              href={`/clients/${clientId}/settings`}
+              className="text-xs text-neon underline-offset-2 hover:underline"
+            >
+              Connect a channel
+            </Link>
+          }
+        />
       ) : loading && text === "" ? (
         <div className="space-y-2.5" aria-hidden="true">
           <Skeleton className="h-3 w-1/3" />
