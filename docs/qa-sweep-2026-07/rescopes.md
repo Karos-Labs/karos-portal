@@ -792,3 +792,14 @@ completion refresh lands. Scope (two consecutive clean passes required):
   CD-G2 defect class on the calendar surface. End-loop fix via clientAgentBlurb.
 - Pre-existing react-hooks/purity lint errors (Date.now()) in agents page +
   launch-card.tsx — pre-date this wave; end-loop sweep.
+
+### CD-G10 — Workspace board toolbar must be one straight row (Albert, fifth batch)
+Screenshots: with the "Run up to N pending tasks now" CTA present, the board
+toolbar breaks into a crooked two-row layout (tabs bottom-left, search/status
+top-right, CTA floating). Without the CTA it renders as the correct single
+straight row (tabs · search · status aligned). Ruling: the toolbar is ALWAYS
+one aligned row — tabs, search, status filter on a shared baseline exactly as
+the correct screenshot; the run-pending CTA gets a clean, non-distorting
+placement (right-aligned in the row if it fits, else its own full-width row
+below the toolbar), verified at common widths. Owner: p3-builder (same surface
+family as its settings-actions batch-runner work).
