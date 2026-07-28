@@ -313,3 +313,24 @@ starting. Updated by the orchestrator after each verification gate.
   the existing applyDocCorrections framing; tier separation intact).
 - End-loop quality nits: DocOverlay unmemoized double render; parseDocSections
   multi-line lead-in duplication (unreachable with shipped templates).
+
+## DOCS risk-lens rulings
+- F86 UNSAFE confirmed by both lenses (tier tampering) — bounce in progress;
+  bounce addendum: isSafeHref protocol-relative tightening + stale comment.
+- **PRODUCT SIGN-OFF NEEDED (Albert)**: (1) F77 gives client corrections
+  "ABSOLUTE GROUND TRUTH" authority over generation INCLUDING internal-only docs
+  (action-plan, client-guidelines premises steerable by client free text); no
+  length cap, no expiry, no supersede logic — corrections accumulate (newest
+  100) and inflate every future pipeline run at Karos's cost. Working as the
+  existing applyDocCorrections design intended, but deserves a conscious yes/no.
+  (2) Branding writes target internal tier deterministically (client-tier lags
+  until condensation).
+- End-loop hardening candidates: applyTargetedDocCorrectionAction authorizes by
+  clientId only, tier-blind (unreachable today, load-bearing gate);
+  correction-text length cap; AiProcessingBanner in client layout.
+- TOMER-HANDOVER infra: cloudbuild.yaml lacks --no-cpu-throttling / min-instances
+  — after() background work ("continues in the background" copy) is best-effort
+  on Cloud Run until that's set. Stale-lock self-heal window is 20 min.
+- chat/route.ts:237 lets client copilot write free-form guidelines text into the
+  INTERNAL branding doc (pre-existing, now deterministic) — COPILOT cluster
+  should look at it with F81's copilot half.
