@@ -13,6 +13,7 @@ import {
   updateContextDocContent,
   logFeedback,
   chargeClientCredits,
+  creditClientCredits,
   tryAcquireAiProcessingLock,
   releaseAiProcessingLock,
   approveSeoGeoRecommendation,
@@ -29,12 +30,44 @@ import {
   clampScheduleDayOfMonth,
 } from "@/lib/intel-schedule";
 
-/** Charge a client user for a doc correction (staff + impersonated sessions are free). Throws CreditError on denial. */
-async function chargeDocCorrection(user: AppUser, clientId: string, amount: number, reason: string) {
-  if (!isBillableClientActor(user)) return;
+/**
+ * Charge a client user for a doc correction (staff + impersonated sessions are
+ * free). Throws CreditError on denial. Returns the charge timestamp when a
+ * charge actually happened, so a no-op correction can be refunded against the
+ * right spend window; null means nothing was charged.
+ */
+async function chargeDocCorrection(
+  user: AppUser,
+  clientId: string,
+  amount: number,
+  reason: string,
+): Promise<number | null> {
+  if (!isBillableClientActor(user)) return null;
+  const chargedAt = Date.now();
   await chargeClientCredits({
     clientId,
     amount,
+    operation: "doc_correction",
+    reason,
+    actorUid: user.uid,
+    actorName: user.name,
+  });
+  return chargedAt;
+}
+
+/** Hand back a doc-correction charge for a correction that changed nothing. */
+async function refundDocCorrection(
+  user: AppUser,
+  clientId: string,
+  amount: number,
+  reason: string,
+  chargedAt: number,
+) {
+  await creditClientCredits({
+    clientId,
+    amount,
+    kind: "refund",
+    chargedAt,
     operation: "doc_correction",
     reason,
     actorUid: user.uid,
@@ -394,14 +427,26 @@ export async function applyTargetedDocCorrectionAction(
   // Errors (incl. credit denials) return as data — thrown server-action errors
   // are masked in production, which would hide the reason from the client UI.
   try {
-    await applyTargetedDocCorrection(documentId, corrections);
+    const { changed } = await applyTargetedDocCorrection(documentId, corrections);
+    // A correction that failed the structural checks wrote nothing. Reporting
+    // success here made the modal close the document as if it had worked, while
+    // the old text — and a 2-credit charge — stayed exactly where they were.
+    if (!changed) {
+      return {
+        error:
+          "We could not apply that correction safely — nothing was changed and you have not been charged. Try naming the fact more specifically.",
+      };
+    }
     return { ok: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Failed to apply the correction" };
   }
 }
 
-async function applyTargetedDocCorrection(documentId: string, corrections: string): Promise<void> {
+async function applyTargetedDocCorrection(
+  documentId: string,
+  corrections: string,
+): Promise<{ changed: boolean }> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
   if (!corrections.trim()) throw new Error("Corrections text is required");
@@ -417,7 +462,7 @@ async function applyTargetedDocCorrection(documentId: string, corrections: strin
   const client = await getClient(doc.clientId);
   if (!client) throw new Error("Client not found");
 
-  await chargeDocCorrection(
+  const chargedAt = await chargeDocCorrection(
     user,
     doc.clientId,
     CREDIT_COSTS.targetedCorrection,
@@ -429,7 +474,20 @@ async function applyTargetedDocCorrection(documentId: string, corrections: strin
 
   // applyDocCorrections returns the original content when structural checks fail —
   // skip the write entirely rather than bumping the version with unchanged data.
-  if (corrected.trim() === doc.content.trim()) return;
+  // The charge happens before the model call, so hand it back: a client must not
+  // pay for a correction that was discarded.
+  if (corrected.trim() === doc.content.trim()) {
+    if (chargedAt !== null) {
+      await refundDocCorrection(
+        user,
+        doc.clientId,
+        CREDIT_COSTS.targetedCorrection,
+        `Refund · discarded doc correction · ${doc.docType}`,
+        chargedAt,
+      );
+    }
+    return { changed: false };
+  }
 
   await updateContextDocContent(documentId, corrected);
 
@@ -458,6 +516,7 @@ async function applyTargetedDocCorrection(documentId: string, corrections: strin
   ]);
 
   revalidatePath(`/clients/${doc.clientId}`);
+  return { changed: true };
 }
 
 /**
