@@ -7,8 +7,10 @@ import { isAiProcessingLockActive } from "@/lib/constants";
 import {
   getClient,
   getClientSeoGeo,
+  listAssets,
   listClientCompetitors,
   listClientContextDocs,
+  listClients,
   upsertClientSeoGeo,
 } from "@/lib/data";
 import {
@@ -18,7 +20,15 @@ import {
   type RefreshPlan,
   type Row,
 } from "@/lib/refresh-apply-core";
-import { readInboxProposal, readInboxSeoGeo } from "@/lib/ops-inbox";
+import { isOpsInboxConfigured, readInboxProposal, readInboxSeoGeo } from "@/lib/ops-inbox";
+import {
+  isLabOutputsConfigured,
+  labRepoName,
+  listLabOutputRuns,
+  listLabRefreshProposals,
+  normalizeLabSlug,
+  readLabRefreshProposal,
+} from "@/lib/lab-outputs";
 import { describeProvenance, validateSeoGeoSnapshot } from "@/lib/seo-geo-import";
 import { SEO_GEO_PIPELINE_VERSION } from "@/lib/seo-geo";
 import { logActivity, requireAdmin } from "./_shared";
@@ -26,20 +36,34 @@ import { logActivity, requireAdmin } from "./_shared";
 /**
  * Admin Ops Import — land locally-produced bundles in the live portal.
  *
- * Every write here goes through src/lib/refresh-apply-core.ts, the same module
- * scripts/refresh-apply.ts uses. The safety contract (no deletes, shrink floors,
- * docType/tier no-leak table, fill-only profile fields, palette gates) is
- * therefore identical by construction rather than by review.
+ * Two discovery sources, one write path:
+ *   · "lab"   — proposals committed to the karos-agents repo at
+ *               clients/<slug>/refresh/*.json, found by "Check for updates".
+ *   · "inbox" — proposals dropped in OPS_IMPORT_DIR on the server.
+ *
+ * Both produce the SAME plan cards through the SAME validator, because every
+ * write here goes through src/lib/refresh-apply-core.ts — the module
+ * scripts/refresh-apply.ts uses. The safety contract (no deletes, shrink
+ * floors, docType/tier no-leak table, fill-only profile fields, palette gates)
+ * is identical by construction rather than by review.
  *
  * PLAN FIRST IS STRUCTURAL, NOT COPY: `applyOpsBundleAction` re-reads and
- * re-validates the bundle from disk and refuses on ANY error. The plan the page
- * showed is a rendering of that same validation, never a token that authorizes
- * a write. A file edited between preview and click is re-judged, not trusted.
+ * re-validates the bundle from its source and refuses on ANY error. The plan
+ * the page showed is a rendering of that same validation, never a token that
+ * authorizes a write. A bundle edited between preview and click is re-judged.
  *
  * Runbook: docs/qa-sweep-2026-07/refresh/OPS-IMPORT.md
  */
 
 /* ── Wire shapes ─────────────────────────────────────────────────────── */
+
+export type BundleOrigin = "inbox" | "lab";
+
+/** Where a bundle came from. `ref` is a filename (inbox) or a repo path (lab). */
+export interface BundleRef {
+  origin: BundleOrigin;
+  ref: string;
+}
 
 /**
  * What the browser gets. Deliberately NOT the RefreshPlan: that carries every
@@ -47,7 +71,10 @@ import { logActivity, requireAdmin } from "./_shared";
  * RSC payload to render a line saying "12,400 → 13,900 chars" would be absurd.
  */
 export interface PlanSummary {
-  file: string;
+  origin: BundleOrigin;
+  ref: string;
+  /** Short display name — the filename, either way. */
+  label: string;
   clientId: string;
   clientName: string;
   docs: Array<{
@@ -81,14 +108,47 @@ export interface SeoGeoPlanSummary {
   willReadAsLegacy: boolean;
 }
 
-export type PlanResult = { ok: true; plan: PlanSummary } | { ok: false; errors: string[]; file: string };
+export type PlanResult =
+  | { ok: true; plan: PlanSummary }
+  | { ok: false; errors: string[]; origin: BundleOrigin; ref: string };
 
 export interface ApplyOutcome {
-  file: string;
+  origin: BundleOrigin;
+  ref: string;
   clientName: string;
   /** Honest per-half reporting — a green refresh next to a refused snapshot. */
   refresh: { applied: boolean; docs: number; competitors: number; client: number; error: string | null };
   seoGeo: { applied: boolean; skippedReason: string | null; error: string | null };
+}
+
+/* ── Discovery ("Check for updates") ─────────────────────────────────── */
+
+export interface ScannedProposal {
+  ref: string;
+  name: string;
+  /** clientId the file declares — a mismatch shows up before any plan runs. */
+  declaredClientId: string | null;
+  error: string | null;
+}
+
+export interface ScannedClient {
+  clientId: string;
+  clientName: string;
+  slug: string;
+  proposals: ScannedProposal[];
+  /** Committed runs with client deliverables that have never been imported. */
+  newRuns: Array<{ agentFolder: string; runName: string }>;
+  error: string | null;
+}
+
+export interface UpdateScan {
+  configured: boolean;
+  repo: string | null;
+  scannedAt: number;
+  /** Clients with something new. Quiet clients are counted, not listed. */
+  clients: ScannedClient[];
+  checked: number;
+  error: string | null;
 }
 
 function truncate(v: unknown, n = 80): string {
@@ -96,7 +156,127 @@ function truncate(v: unknown, n = 80): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
+/** Bounded parallelism — a fleet scan should not open 30 GitHub sockets at once. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= items.length) return;
+        out[i] = await fn(items[i]!);
+      }
+    }),
+  );
+  return out;
+}
+
+/**
+ * One click, one answer: "is there anything new anywhere?"
+ *
+ * Scans every client with a lab repo slug for (a) committed refresh proposals
+ * and (b) output runs that have never been imported. Read-only — it lists what
+ * exists and writes nothing. Clients with nothing new are counted, not listed,
+ * so the result is a short answer rather than a fleet inventory.
+ */
+export async function scanLabForUpdatesAction(): Promise<UpdateScan> {
+  await requireAdmin();
+  const scannedAt = Date.now();
+
+  // Named explicitly: the AI Agents tab silently hides its import button when
+  // this is unset, which cost Albert a debugging session (coordinator note).
+  if (!isLabOutputsConfigured()) {
+    return {
+      configured: false,
+      repo: null,
+      scannedAt,
+      clients: [],
+      checked: 0,
+      error: "AGENTS_REPO_GITHUB_TOKEN is not set — the lab repo cannot be read.",
+    };
+  }
+
+  const clients = (await listClients())
+    .map((c) => ({ id: c.id, name: c.name, slug: normalizeLabSlug(c.agentsRepoSlug) }))
+    .filter((c): c is { id: string; name: string; slug: string } => !!c.slug)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const scanned = await mapLimit(clients, 4, async (c): Promise<ScannedClient> => {
+    const row: ScannedClient = {
+      clientId: c.id,
+      clientName: c.name,
+      slug: c.slug,
+      proposals: [],
+      newRuns: [],
+      error: null,
+    };
+    try {
+      const [files, runs, assets] = await Promise.all([
+        listLabRefreshProposals(c.slug),
+        listLabOutputRuns(c.slug),
+        listAssets({ clientId: c.id }),
+      ]);
+
+      // Read each proposal only far enough to name its client. Full validation
+      // happens in the plan card, where the diff can be shown alongside it.
+      row.proposals = await mapLimit(files, 4, async (f): Promise<ScannedProposal> => {
+        try {
+          const parsed = await readLabRefreshProposal(f.path);
+          const declared = (parsed as { clientId?: unknown })?.clientId;
+          return {
+            ref: f.path,
+            name: f.name,
+            declaredClientId: typeof declared === "string" ? declared : null,
+            error: null,
+          };
+        } catch (e) {
+          return {
+            ref: f.path,
+            name: f.name,
+            declaredClientId: null,
+            error: e instanceof Error ? e.message : "Could not read this proposal.",
+          };
+        }
+      });
+
+      // "New" means never imported, which is exactly what meta.labRun records —
+      // the same key importLabRunAction writes and de-duplicates against.
+      const imported = new Set(
+        assets
+          .map((a) => (a.meta as { labRun?: string } | undefined)?.labRun)
+          .filter((v): v is string => typeof v === "string")
+          .map((v) => v.split("#")[0]!),
+      );
+      row.newRuns = runs
+        .filter((r) => r.hasClientFolder && !imported.has(`${r.agentFolder}/${r.runName}`))
+        .map((r) => ({ agentFolder: r.agentFolder, runName: r.runName }));
+    } catch (e) {
+      row.error = e instanceof Error ? e.message : "Could not scan this client.";
+    }
+    return row;
+  });
+
+  return {
+    configured: true,
+    repo: labRepoName(),
+    scannedAt,
+    clients: scanned.filter((c) => c.proposals.length > 0 || c.newRuns.length > 0 || c.error),
+    checked: scanned.length,
+    error: null,
+  };
+}
+
 /* ── Shared plumbing ─────────────────────────────────────────────────── */
+
+/** Reads a bundle from whichever source it came from. */
+async function readBundle(b: BundleRef): Promise<unknown> {
+  return b.origin === "inbox" ? readInboxProposal(b.ref) : readLabRefreshProposal(b.ref);
+}
+
+function labelFor(b: BundleRef): string {
+  return b.origin === "inbox" ? b.ref : (b.ref.split("/").pop() ?? b.ref);
+}
 
 /** Reads the stored state a proposal is validated against. */
 async function loadCurrentState(clientId: string): Promise<
@@ -130,9 +310,11 @@ async function loadCurrentState(clientId: string): Promise<
   };
 }
 
-function summarize(file: string, plan: RefreshPlan, lockedReason: string | null): PlanSummary {
+function summarize(b: BundleRef, plan: RefreshPlan, lockedReason: string | null): PlanSummary {
   return {
-    file,
+    origin: b.origin,
+    ref: b.ref,
+    label: labelFor(b),
     clientId: plan.clientId,
     clientName: plan.clientName,
     docs: plan.docs.map((d) => ({
@@ -154,7 +336,7 @@ function summarize(file: string, plan: RefreshPlan, lockedReason: string | null)
     })),
     profileFills: plan.client.profile.map((p) => ({ field: p.field, to: truncate(p.to) })),
     skippedProfile: plan.client.skippedProfile,
-    brandingFills: plan.client.brandingFill.map((b) => b.field),
+    brandingFills: plan.client.brandingFill.map((bf) => bf.field),
     colors: plan.client.colors
       ? {
           from: plan.client.colors.from.map((c) => String(c.hex)),
@@ -168,8 +350,15 @@ function summarize(file: string, plan: RefreshPlan, lockedReason: string | null)
   };
 }
 
-/** Validates the client's seo-geo bundle, if one is filed. Never writes. */
+/**
+ * Validates the client's seo-geo bundle, if one is filed. Never writes.
+ *
+ * Snapshots live in the inbox only — the lab convention covers proposals. With
+ * no inbox configured there is simply no snapshot half, which is not an error.
+ */
 async function planSeoGeo(clientId: string, now: number): Promise<SeoGeoPlanSummary | null> {
+  if (!isOpsInboxConfigured()) return null;
+
   let raw: unknown;
   try {
     raw = await readInboxSeoGeo(clientId);
@@ -210,74 +399,82 @@ async function planSeoGeo(clientId: string, now: number): Promise<SeoGeoPlanSumm
 /* ── Actions ─────────────────────────────────────────────────────────── */
 
 /**
- * Dry run for one bundle. Reads Firestore, writes nothing. Every refusal the
- * apply would hit shows up here first — that is the whole point of the card.
+ * Dry run for one bundle, from either source. Reads Firestore, writes nothing.
+ * Every refusal the apply would hit shows up here first — that is the whole
+ * point of the card.
  */
-export async function planOpsBundleAction(file: string): Promise<PlanResult> {
+export async function planOpsBundleAction(bundle: BundleRef): Promise<PlanResult> {
   await requireAdmin();
   const now = Date.now();
+  const { origin, ref } = bundle;
 
   let proposal: unknown;
   try {
-    proposal = await readInboxProposal(file);
+    proposal = await readBundle(bundle);
   } catch (e) {
-    return { ok: false, file, errors: [e instanceof Error ? e.message : "Could not read the bundle."] };
+    return { ok: false, origin, ref, errors: [e instanceof Error ? e.message : "Could not read the bundle."] };
   }
 
   const clientId = (proposal as { clientId?: unknown })?.clientId;
   if (typeof clientId !== "string" || !clientId) {
-    return { ok: false, file, errors: ["clientId: the bundle does not name a client."] };
+    return { ok: false, origin, ref, errors: ["clientId: the bundle does not name a client."] };
   }
 
   const state = await loadCurrentState(clientId);
-  if (!state.ok) return { ok: false, file, errors: [state.error] };
+  if (!state.ok) return { ok: false, origin, ref, errors: [state.error] };
 
   const result = validateProposal(proposal, state.current);
-  if (!result.ok) return { ok: false, file, errors: result.errors };
+  if (!result.ok) return { ok: false, origin, ref, errors: result.errors };
 
-  const summary = summarize(file, result.plan, state.lockedReason);
+  const summary = summarize(bundle, result.plan, state.lockedReason);
   summary.seoGeo = await planSeoGeo(clientId, now);
   return { ok: true, plan: summary };
 }
 
 /**
  * Apply one bundle: the refresh proposal, and the SEO/GEO snapshot when the
- * client has one filed.
+ * client has one filed in the inbox.
  *
- * Re-validates from disk — the preview grants nothing. The refresh half commits
- * in a single atomic batch, exactly as the CLI does; the snapshot is a separate
- * transactional upsert, so one half failing is reported rather than hidden.
+ * Re-validates from source — the preview grants nothing. The refresh half
+ * commits in a single atomic batch, exactly as the CLI does; the snapshot is a
+ * separate transactional upsert, so one half failing is reported, not hidden.
  */
 export async function applyOpsBundleAction(input: {
-  file: string;
+  origin: BundleOrigin;
+  ref: string;
   includeSeoGeo: boolean;
-}): Promise<{ ok: true; outcome: ApplyOutcome } | { ok: false; errors: string[]; file: string }> {
+}): Promise<
+  { ok: true; outcome: ApplyOutcome } | { ok: false; errors: string[]; origin: BundleOrigin; ref: string }
+> {
   const user = await requireAdmin();
   const now = Date.now();
-  const { file } = input;
+  const bundle: BundleRef = { origin: input.origin, ref: input.ref };
+  const { origin, ref } = input;
 
   let proposal: unknown;
   try {
-    proposal = await readInboxProposal(file);
+    proposal = await readBundle(bundle);
   } catch (e) {
-    return { ok: false, file, errors: [e instanceof Error ? e.message : "Could not read the bundle."] };
+    return { ok: false, origin, ref, errors: [e instanceof Error ? e.message : "Could not read the bundle."] };
   }
 
   const clientId = (proposal as { clientId?: unknown })?.clientId;
   if (typeof clientId !== "string" || !clientId) {
-    return { ok: false, file, errors: ["clientId: the bundle does not name a client."] };
+    return { ok: false, origin, ref, errors: ["clientId: the bundle does not name a client."] };
   }
 
   const state = await loadCurrentState(clientId);
-  if (!state.ok) return { ok: false, file, errors: [state.error] };
-  if (state.lockedReason) return { ok: false, file, errors: [state.lockedReason] };
+  if (!state.ok) return { ok: false, origin, ref, errors: [state.error] };
+  if (state.lockedReason) return { ok: false, origin, ref, errors: [state.lockedReason] };
 
   const result = validateProposal(proposal, state.current);
-  if (!result.ok) return { ok: false, file, errors: result.errors };
+  if (!result.ok) return { ok: false, origin, ref, errors: result.errors };
 
   const plan = result.plan;
+  const label = labelFor(bundle);
   const outcome: ApplyOutcome = {
-    file,
+    origin,
+    ref,
     clientName: plan.clientName,
     refresh: {
       applied: false,
@@ -291,7 +488,6 @@ export async function applyOpsBundleAction(input: {
 
   /* ── Refresh half — one atomic batch, same ops as the CLI ── */
   if (plan.counts.totalWrites === 0) {
-    outcome.refresh.error = null;
     outcome.refresh.applied = true; // nothing to do IS success, and says so in the counts
   } else {
     try {
@@ -312,13 +508,17 @@ export async function applyOpsBundleAction(input: {
   }
 
   /* ── SEO/GEO half — separate transactional upsert ── */
-  if (input.includeSeoGeo) {
+  if (input.includeSeoGeo && isOpsInboxConfigured()) {
     try {
       const raw = await readInboxSeoGeo(clientId);
       if (raw === null) {
         outcome.seoGeo.skippedReason = "No snapshot bundle filed for this client.";
       } else {
-        const res = validateSeoGeoSnapshot(raw, { clientId, importedBy: user.name, file: `seo-geo/${clientId}.json` }, now);
+        const res = validateSeoGeoSnapshot(
+          raw,
+          { clientId, importedBy: user.name, file: `seo-geo/${clientId}.json` },
+          now,
+        );
         if (!res.ok) {
           outcome.seoGeo.error = res.errors.join(" · ");
         } else {
@@ -340,20 +540,22 @@ export async function applyOpsBundleAction(input: {
     }
   }
 
+  const sourceLabel = origin === "lab" ? `lab repo ${ref}` : label;
   if (outcome.refresh.applied && plan.counts.totalWrites > 0) {
     void logActivity({
       clientId,
       timestamp: Date.now(),
       type: "CONTEXT_DOC_UPDATED",
       title:
-        `Ops import from ${file}: ${plan.counts.docWrites} document(s), ` +
+        `Ops import from ${sourceLabel}: ${plan.counts.docWrites} document(s), ` +
         `${plan.counts.compWrites} competitor row(s)` +
         (plan.counts.clientTouched ? ", client profile" : "") +
         (outcome.seoGeo.applied ? ", SEO/GEO snapshot" : ""),
       actor: user.name,
       actorRole: "staff",
       metadata: {
-        file,
+        origin,
+        ref,
         docs: plan.counts.docWrites,
         competitors: plan.counts.compWrites,
         clientTouched: plan.counts.clientTouched,
@@ -365,10 +567,10 @@ export async function applyOpsBundleAction(input: {
       clientId,
       timestamp: Date.now(),
       type: "CONTEXT_DOC_UPDATED",
-      title: `Ops import from ${file}: SEO/GEO snapshot (imported, not machine-measured)`,
+      title: `Ops import from ${sourceLabel}: SEO/GEO snapshot (imported, not machine-measured)`,
       actor: user.name,
       actorRole: "staff",
-      metadata: { file, seoGeoImported: true },
+      metadata: { origin, ref, seoGeoImported: true },
     });
   }
 

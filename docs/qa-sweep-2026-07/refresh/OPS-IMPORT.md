@@ -12,13 +12,16 @@ import. There is no second implementation to drift.
 
 ## What the page imports, and from where
 
-The page has two halves, on purpose, because the sources genuinely differ.
-
 | What | Source | Mechanism |
 |---|---|---|
-| Docs · competitors · profile · palette | `OPS_IMPORT_DIR/<anything>.json` | `refresh-apply-core` (shared with the CLI) |
+| Docs · competitors · profile · palette | **lab repo** `clients/<slug>/refresh/*.json` | `refresh-apply-core` (shared with the CLI) |
+| Docs · competitors · profile · palette | **inbox** `OPS_IMPORT_DIR/<anything>.json` | the same core, the same cards |
 | SEO/GEO snapshots | `OPS_IMPORT_DIR/seo-geo/<clientId>.json` | `seo-geo-import` → `upsertClientSeoGeo` |
 | **Posts / assets** | **the karos-agents repo, over GitHub** | **the existing lab-outputs importer** |
+
+Proposals have **two** discovery sources and **one** write path. Both render
+identical plan cards through the same validator; each card carries a `lab repo`
+or `inbox` badge so you always know which file you are looking at.
 
 **Posts are not read from the inbox.** The portal already had a first-class
 importer for locally-run agent output — the lab-outputs flow
@@ -33,6 +36,47 @@ the failure this whole extraction exists to prevent.
 Requires `AGENTS_REPO_GITHUB_TOKEN`, and the client needs a **Lab repo slug**
 (set in its Edit dialog). Imported posts land as **drafts** — a client sees
 nothing until staff approve them, so the churn rules (A3/A4) still hold.
+
+---
+
+## "Check for updates" — the one-click answer
+
+The button at the top of the page scans the lab repo for every client that has
+a lab slug and answers *"is there anything new anywhere?"*:
+
+- **committed refresh proposals** at `clients/<slug>/refresh/*.json`, listed as
+  ordinary bundle cards you can review and import;
+- **output runs that have never been imported**, each with the same
+  "Import lab outputs" button the client pages use.
+
+A run counts as new when no asset carries its `meta.labRun` key — the exact key
+`importLabRunAction` writes and de-duplicates against, so the scan and the
+importer can never disagree about what "already imported" means. Clients with
+nothing new are counted, not listed.
+
+The scan is **read-only** and writes nothing. It reuses the same GitHub client,
+repo and token as the posts importer (`src/lib/lab-outputs.ts`) — there is no
+second fetch layer to get auth, timeouts or 404-handling wrong.
+
+### The `clients/<slug>/refresh/` convention
+
+Mirrors the existing outputs convention, one level up from the run tree:
+
+```
+clients/<slug>/outputs/<agent>/<run>/client/   deliverables (posts)
+clients/<slug>/refresh/<anything>.json         refresh proposals
+```
+
+The filename is free; **the client is taken from the file's `clientId`**, never
+from its name or its folder. Paths round-trip the browser, so the reader
+enforces the convention with an anchored pattern (`isLabProposalPath`): one
+path segment each for slug and filename, both starting with an alphanumeric,
+`.json` only. That last rule is load-bearing — a slug class that allowed a bare
+`..` would let `clients/../refresh/x.json` escape the folder and pull an
+arbitrary file out of the private repo through the portal's token.
+
+SEO/GEO snapshots are **inbox-only**; the lab convention covers proposals. With
+no inbox configured there is simply no snapshot half, which is not an error.
 
 ---
 
@@ -60,6 +104,21 @@ Re-importing is always possible, and an operator's files stay theirs.
 Exactly the schema `scripts/refresh-apply.ts` has always validated — see
 [BRIEF-TEMPLATE.md](./BRIEF-TEMPLATE.md). Unchanged, because it is the same
 validator.
+
+---
+
+## The config strip
+
+The top of the page names both env vars and says plainly what is unreachable
+without each one. This exists because a missing capability used to be
+*invisible*: the AI Agents tab simply hides its "Import lab outputs" button when
+`AGENTS_REPO_GITHUB_TOKEN` is unset, which is indistinguishable from a feature
+that was never built. Nobody should debug that blind again.
+
+- `AGENTS_REPO_GITHUB_TOKEN` unset → no scan, and the per-client import button
+  is hidden app-wide.
+- `OPS_IMPORT_DIR` unset → server-dropped proposals are not read and SEO/GEO
+  snapshots cannot be imported. **The lab-repo source still works.**
 
 ---
 
@@ -151,4 +210,5 @@ reports "kept the newer one" rather than claiming a write that never happened.
 - `scripts/refresh-apply.ts` — the CLI path; same core, same fences.
 - `src/lib/refresh-apply-core.ts` — where the rules actually live.
 - Tests: `src/lib/__tests__/refresh-apply-core.test.ts` (refusal rules),
-  `src/lib/__tests__/seo-geo-import.test.ts` (provenance).
+  `src/lib/__tests__/seo-geo-import.test.ts` (provenance),
+  `src/lib/__tests__/lab-refresh-proposals.test.ts` (the repo path fence).
