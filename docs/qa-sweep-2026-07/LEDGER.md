@@ -182,6 +182,7 @@ are tracked in the CD table at the bottom.
 | CD-G4 | SHELL | 3 | OPEN | STAFF sidebar top block = baseline to DOCUMENTS; chip ↗ → client website; competitor rows get ↗ + keep hover trash |
 | CD-G5 | SHELL | 3 | OPEN | Regenerate admin-only (verify) + add client-dashboard Regenerate entry point (covers docs+SEO/geo) |
 | CD-G6 | DASHBOARD | 3 | OPEN | Revert F124 counter collapse to baseline tiles; keep F99 |
+| CD-G8 | SHELL | 3 | OPEN | Copilot dock fixed to bottom, spans to right edge, no dead air in panel; phone/md/lg verified; Albert-match review lens at wave end |
 | CD-G7 | — | end-loop | OPEN | Fleet COMPLETION refresh: one team per client, keep existing data, internal Claude agents, --apply-gated Firestore writes; runs after CD-G1..G6 |
 
 ## Guard zones (all phases)

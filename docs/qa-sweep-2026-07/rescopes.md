@@ -688,3 +688,40 @@ These OVERRIDE the PDF and phase3-design §7.1 where they conflict.
 - D5: 500-char feedback cap not re-applied at context_files injection.
 - D6: options card promises the WP-9 picker before it exists.
 - D7: Withdraw renders as "Resolved" in the feedback list.
+
+## Final alignment audit — Albert mandate 2026-07-28 ("did we complete everything, are we good")
+Runs AFTER the CD-G fixers merge, their lenses pass, and the CD-G7 fleet
+completion refresh lands. Scope (two consecutive clean passes required):
+1. Every LEDGER row — all 137 findings + every CD item — re-verified against
+   the branch: RESOLVED means the fix is demonstrably on HEAD (file:line
+   evidence), STRUCK means Albert's overrule is documented in rescopes,
+   OPS-PENDING items are enumerated in the final report with exactly what
+   Albert must run/decide.
+2. Guard zones re-walked: no AI Insights rework beyond listed defects, no
+   pre-generation exposure to clients (A3/A4), CLAUDE.md conventions held.
+3. Rescopes supremacy: where rescopes.md overrode the PDF, the audit checks
+   the RULING, not the original spec (F124 is the canonical example).
+4. Screenshot cross-check: inventory before-images spot-checked against the
+   live localhost surfaces for the highest-traffic pages.
+5. TOMER-HANDOVER.md reconciled against final HEAD — every deferred seam
+   named there must still be real, every new seam (Phase 3 detail routes,
+   CD-G7 data shapes) added.
+
+### CD-G8 — Copilot dock: fixed to the bottom, full width to the right, no gaps (Albert, third batch addendum)
+- Screenshots (staff shell, narrow viewport): the AI COPILOT strip floats
+  mid-page with content visible BELOW it, and neither the strip nor the
+  expanded panel reaches the right edge. Ruling: the collapsed strip is
+  FIXED to the viewport bottom and spans the full content column to the
+  right edge (desktop: from the rail's right edge to the viewport edge;
+  phone: full width, sitting above the mobile tab bar). The expanded panel
+  anchors to the same bottom edge — never floating mid-flow.
+- The expanded panel shows a large dead region between its content and the
+  input row (h-[70dvh] with sparse content) — size to content or fill
+  deliberately; no dead air.
+- Applies to BOTH shells (client CopilotDock + StaffCopilotDock) and must
+  be verified at phone width, md, and lg+.
+- The agents page's own vertical gap (empty Client agents section + mt-10
+  stacking) belongs to the CD-G1 rework, not the dock fixer.
+- Albert: "implement with an agent that reviews at the end if it matches
+  what I asked" — a dedicated Albert-match review lens runs over the whole
+  CD-G wave after merge, checking his verbatim feedback against localhost.
