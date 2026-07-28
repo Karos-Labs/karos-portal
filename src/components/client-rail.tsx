@@ -121,7 +121,7 @@ export function ClientRail({
               swatches), so the compacted stack fits; overflow-y-auto remains
               the safety valve for genuinely short windows rather than clipping
               a whole section away. */}
-          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-4 pb-1 pt-4">
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-4 pb-0 pt-4">
             <nav className="flex flex-col gap-0.5">
               {primaryNav.map((item) => {
                 const active = isActive(pathname, item);
@@ -153,7 +153,7 @@ export function ClientRail({
               <ClientProfilePanel client={client} compact />
             </div>
 
-            <div className="border-t border-border pt-1.5">
+            <div className="mt-4 border-t border-border pt-4">
               <ClientDocuments
                 contextDocs={contextDocs}
                 isAdmin={isAdmin}
