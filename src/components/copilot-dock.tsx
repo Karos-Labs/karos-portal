@@ -72,11 +72,13 @@ export function CopilotDock({ clientId, clientName, userName, hasGoogleIntegrati
 
   return (
     <>
-      {/* Below lg: docked bottom sheet — a tab that expands to the bottom ~35% and
-          stays pinned (sits above the mobile bottom tab bar on phones). */}
+      {/* Below lg: docked bottom sheet — a tab that expands to the bottom ~70%
+          and stays pinned (sits above the mobile bottom tab bar on phones).
+          At 35vh the header and the greeting filled the whole sheet and the
+          four AI actions sat below the fold on first open (QA F94). */}
       <div className="lg:hidden">
         {sheetOpen ? (
-          <div className="fixed left-0 right-0 bottom-[54px] z-40 h-[35vh] border-t border-border bg-background shadow-[0_-8px_30px_rgba(0,0,0,0.5)] md:bottom-0 md:left-72">
+          <div className="fixed left-0 right-0 bottom-[54px] z-40 h-[70dvh] border-t border-border bg-background shadow-[0_-8px_30px_rgba(0,0,0,0.5)] md:bottom-0 md:left-72">
             <ChatbotWidget docked defaultOpen onCollapse={() => setSheetOpen(false)} {...widgetProps} />
           </div>
         ) : (

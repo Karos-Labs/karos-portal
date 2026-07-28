@@ -388,7 +388,9 @@ function ActionChips({
   isAiProcessing?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    // Two-by-two below lg so all four land above the fold in the mobile sheet;
+    // one column in the desktop rail, which is only 380px wide (QA F94).
+    <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-col">
       {buildProactiveActions().map((action) => {
         const locked = action.id === "scan_inbox" && isAiProcessing;
         return (
@@ -400,7 +402,7 @@ function ActionChips({
             }
             title={locked ? "Karos Agents are already building your workspace strategy" : undefined}
             className={cn(
-              "group flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150",
+              "group flex flex-col items-start gap-2 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150 lg:flex-row lg:items-center lg:gap-3",
               locked
                 ? "cursor-not-allowed opacity-50"
                 : "hover:border-border-strong hover:bg-surface-3 active:scale-[0.98]",
@@ -419,7 +421,7 @@ function ActionChips({
             </div>
             <Icon
               name="ArrowRight"
-              className="h-3.5 w-3.5 shrink-0 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100"
+              className="hidden h-3.5 w-3.5 shrink-0 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100 lg:block"
             />
           </button>
         );
@@ -464,11 +466,10 @@ function ProactiveWelcome({
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
           <Icon name="Sparkles" className="h-4 w-4" />
         </div>
+        {/* One line: the greeting used to run to two paragraphs, which on a
+            phone filled the sheet on its own (QA F94). */}
         <div className="rounded-md border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
           <p className="font-medium">{greeting} I&apos;m your AI Copilot for <strong>{clientName}</strong>.</p>
-          <p className="mt-1 text-xs text-muted">
-            Choose an action below or describe a task to add it directly.
-          </p>
         </div>
       </div>
 
