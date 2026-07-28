@@ -122,10 +122,10 @@ are tracked in the CD table at the bottom.
 | F95 | MEDIUM | A | COPILOT | 2 | OPEN | — | The copilot is given a credit price list that omits the most expensive thing a client can buy | findings-p123-160.md |
 | F97 | BLOCKER | B | DASHBOARD | 1 | RESOLVED | — | The client's top call to action promises an approval they cannot make, and the link lands on th | findings-p123-160.md |
 | F125 | BLOCKER | B | DASHBOARD | 1 | RESOLVED | yes | AI Insights is badged "Demo data" and still tells the client to cut LinkedIn spend | findings-p123-160.md |
-| F99 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | The client dashboard is one unbroken scroll and the plain-English weekly briefing sits dead las | findings-p123-160.md |
-| F124 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | The dashboard opens with four counters that the two cards beneath them restate | findings-p123-160.md |
-| F126 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | Single-asterisk emphasis renders as literal asterisks in AI Insights | findings-p123-160.md |
-| F145 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | A channel whose token dies silently vanishes from "Connected channels" instead of asking to be  | findings-p123-160.md |
+| F99 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | The client dashboard is one unbroken scroll and the plain-English weekly briefing sits dead las | findings-p123-160.md |
+| F124 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | The dashboard opens with four counters that the two cards beneath them restate | findings-p123-160.md |
+| F126 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | Single-asterisk emphasis renders as literal asterisks in AI Insights | findings-p123-160.md |
+| F145 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | A channel whose token dies silently vanishes from "Connected channels" instead of asking to be  | findings-p123-160.md |
 | F100 | LOW | A | DASHBOARD | 2 | OPEN | — | British and American spellings sit side by side — "Analysing" on one screen, "Analyzing" on ano | findings-p161-199.md |
 | F101 | HIGH | A | CREDITS | 2 | OPEN | — | One misclick on a trash icon destroys a LinkedIn seat — no confirm, no undo, no feedback if it  | findings-p161-199.md |
 | F102 | HIGH | B | CREDITS | 2 | OPEN | yes | The client's headline credit number is labelled "credits available" but is not what they can sp | findings-p161-199.md |
