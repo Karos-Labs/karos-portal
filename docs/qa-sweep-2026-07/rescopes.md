@@ -748,3 +748,27 @@ completion refresh lands. Scope (two consecutive clean passes required):
   menu" rationale for the bell — Albert's ruling wins; record in ledger. An
   unread-count dot may surface on the Company/account trigger so the signal
   survives without the floating bar.
+
+### CD-G8/G9b orchestrator rulings after the dock-fixer report (2026-07-28)
+- **Outside-click dismissal is scoped to the OVERLAY presentation (<lg).**
+  Albert's words described the pop-up ("it should pop up… click out, it
+  should hide"). At lg+ the copilot is a persistent side rail whose collapse
+  reflows the content column — auto-collapsing it on any page click is not
+  what he asked for. The rail keeps its explicit toggle only. (Flagged for
+  the Albert-match lens to confirm against his eye.)
+- **Right-edge gap ruling: the forced classic scrollbar goes.** globals.css
+  forces `html { overflow-y: scroll }` + root-level `::-webkit-scrollbar`
+  styling, which opts Chrome/macOS out of overlay scrollbars — every
+  `fixed right-0` element stops 10px short. Fix globally: drop the forced
+  root scrollbar, scope the custom scrollbar skin to inner scroll containers
+  only. macOS gets overlay (true edge-to-edge); other platforms unchanged in
+  substance.
+- **Merge order:** the dock branch depends on CD-G9a's staff bottom bar at
+  phone width (strip sits on the 54px bar). Shell3 merges FIRST, dock second.
+  Both read MOBILE_TAB_BAR_H / MOBILE_TAB_BAR_OFFSET_CLASS (src/lib/constants.ts).
+- **Staff `main` needs a bottom scroll reserve** (client has pb-28/md:pb-16;
+  staff has none, so last rows sit behind the strip) — assigned to shell3,
+  which owns staff chrome.
+- **Dead code found:** the non-docked floating ChatbotWidget branch
+  (floatingPosition, fixed 380px panel) is unreachable — end-loop sweep item,
+  not fixed mid-wave.
