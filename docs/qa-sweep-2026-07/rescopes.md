@@ -1,0 +1,170 @@
+# Re-scopes & intel accumulated during execution
+
+Living file — cluster fixers MUST read the entries for their findings before
+starting. Updated by the orchestrator after each verification gate.
+
+## After F1 merge (b92de80) — SEO cluster impact
+- **F9**: do NOT target presenter.ts:749 anymore. The client path is now
+  SeoGeoActionPlan ← buildRecommendations (src/lib/seo-geo.ts:986), which falls
+  back to the raw engineering label for the ~22 ids REC_COPY doesn't cover — F9's
+  symptom survives there. Fix = extend REC_COPY coverage (or a safe generic title)
+  for uncovered ids. The GapView.description clause of F9 is now staff-only work.
+- **F7**: part 2 (Approve control) satisfied by F1. Part 1 (agent-handoff chip)
+  must NOT be built into gap-list.tsx (staff-only now) — if client-visible handoff
+  is wanted it belongs on SeoGeoActionPlan rows. Decide at cluster time.
+- **F4**: part 2 satisfied. Part 1 ("Karos can apply this fix automatically" string,
+  presenter.ts:694) still real but staff-only exposure now — fix the copy, severity
+  effectively lower.
+- **F3 / F16**: surfaces demoted to staff-only by F1; still fix (raw model prose,
+  mis-filed filter chip in gap-list.tsx:18-22) but client-trust urgency gone.
+- **CD-B4**: F1's fixer added a narrow planPendingRefresh guard (recommendations
+  empty + gaps non-empty). CD-B4's fixer should GENERALIZE this into the proper
+  stale-snapshot treatment, not add a second mechanism. Copy nit: guard text
+  narrates product history ("before we started writing the plan in plain English")
+  — neutralize when CD-B4 lands.
+- Known client-facing trades made by F1's prescribed swap (log, don't "fix" back):
+  max 10 rows, no channel filter chips, no found/goal expander for clients.
+- seo-geo-panel.tsx line numbers below ~:381 shifted ~+12 (F5 re-locate).
+- seo-geo.ts is CRLF with a literal NUL at ~:1154 (map-key separator) — rg treats
+  as binary; use grep -a. Pre-existing; do not "fix" line endings.
+
+### Risk-lens watch-items from F1 (non-blocking, inherited by clusters)
+- SeoGeoPanel's `isClientViewer` prop defaults false (fail-open toward staff view).
+  Fine with today's single call site; SEO cluster: consider making it required.
+- F9 fixer: do NOT re-swap the panel back to gap rendering (F1 BLOCKER wins).
+- Approve → logActivity is unbounded/no-dedupe and directly callable by clients
+  (self-inflicted scope only). Pre-existing pattern; note for SHELL/CREDITS review.
+- Impersonated writes log actorRole as CLIENT_USER (pre-existing, all impersonated
+  writes) — candidates for a small fix in SHELL cluster or handover note.
+- True-empty state copy is staff-voiced third person ("this brand") — copy pass
+  with F9's REC_COPY work.
+- grep on src/lib/seo-geo.ts REQUIRES `LC_ALL=C grep -a` (NUL byte) — plain grep
+  silently returns nothing; false "zero importers" hazard for all agents.
+
+## After F46/F47 (271c381, 29f8c81) — AGENTS + WORKSPACE cluster impact
+- **RULING (orchestrator): Reddit clauses STRUCK from F28, F46, F70** — verified
+  via `git log --all -S"parseRedditDrafts"`: those surfaces never existed in this
+  repo (sweep ran on a tree carrying a Reddit agent ours lacks; only the OAuth
+  connector src/lib/integrations/reddit.ts exists here). Any other finding citing
+  reddit-drafts/reddit-agent-intake surfaces: verify existence first, strike if
+  absent, log in ledger notes. TOMER-HANDOVER must record: when the Reddit agent
+  lands, re-apply the established patterns (third sniff slot in
+  asset-detail-modal.tsx documented in F46's commit; F70's title fix at the
+  reader render boundary; F28's intake copy).
+- F27 (Reddit reply-cap) / F36 (Reddit Start-run): same existence check applies —
+  AgentScheduleModal may still carry Reddit cadence config even without the drafts
+  surfaces; fix what exists, strike what doesn't.
+
+### AGENTS-cluster composition rules (from F24/F131/F127 verification)
+- **F129**: status strip has prior claimants — F24's refusal line renders first
+  when schedule.lastError set; F131's chip already links to setup. Reuse
+  blockedSetup/setupTargetFor; add a "refusal" tier to F129's precedence list;
+  do NOT add a second setup link.
+- **F25**: reuse the `viewer={{name,email}}` prop F24 added (don't add
+  userName/userEmail props). When deleting the disabled-button `title`
+  (pointer-events-none makes it unreachable), render BOTH credits and setup
+  reasons as visible lines. Consider structured denial codes (CreditError.code)
+  while building blockReason — replaces F24's string matching durably.
+- **F128**: must also cover clientBlurb and the unclamped Modal description.
+- **F24 partial-coverage note (ledger)**: lastError covers submit refusals only;
+  a run that submits then FAILS at the agent service (webhook failed) still shows
+  green Live. Surface last-run outcome via F29/F132 run-history work.
+- Finding-shaped gap (log for end-loop triage): legacy /api/scheduler +
+  ScheduledRunsCard have the same silent-failure shape on the scheduledRuns
+  collection — no PDF finding covers it.
+- **F127 ops dependency**: code alone doesn't clear the symptom — existing agents
+  render manifest via fallback until scripts/backfill-agent-blurbs.ts --apply is
+  run (Albert/ops sign-off, like C2 credit reload). Ledger: F127 → "code merged,
+  ops pending" not RESOLVED.
+- Stale lastError never clears on client-side setup completion (only next clean
+  fire) — up to a week of false "Needs attention" on weekly cadence. Accepted for
+  Phase 1; candidates: clear on intake save (F25/F129 territory) or on schedule
+  edit.
+- **Phase 3 building block**: AssetDetailModal already contains MarkPostedRow →
+  markAssetPostedAction (gated approved/scheduled/delivered). A4's mark-as-posted
+  flow should extend this, not invent a new one.
+- **F47 ledger note**: took the copy option; the draft-filter option is actively
+  wrong today (webhook creates ALL deliverables as status "draft" —
+  webhook/route.ts:346). Archive=posted-only arrives with Phase 3 (A4).
+- looksLikeMarkdown sniff + AssetContentBody (doc-render.ts) now exist with unit
+  tests — reuse for any other raw-text rendering findings (F57, F83, F89 family).
+- F47 ledger tag: "resolved phase 1; copy revisit under F149/A4" — the new
+  'lands in your archive as soon as the run finishes' sentence becomes false once
+  archive = posted-only. F149 spec additions: per-batch mark-as-posted rule
+  (MarkPostedRow + per-draft outcome buttons will coexist once staff approve a
+  batch), and the F97 attention-row overstatement.
+- F150 note: the ~20-line liMedia artifact filter is duplicated verbatim in
+  asset-card.tsx and asset-detail-modal.tsx — extract a shared helper when doing
+  video work, edit both until then.
+- RESOLVED by bounce commit b8c91ce: renderAssetBody (no preamble strip) vs
+  renderFullDoc (context docs, still strips); blockquotes live on BOTH paths now;
+  `---` renders as <hr> including in context docs (small visual change to
+  client-documents rendering — expected). DOCS cluster: use renderAssetBody for
+  asset-ish content, renderFullDoc for context docs; regression tests pin the
+  split.
+- **Dead code confirmed**: src/components/client-home.tsx has zero importers
+  (ClientHome symbol unused). Remove in end-loop cleanup pass — contains a stale
+  approval-lie string (F47 class) that must not resurface via revival.
+
+## After F97 (350a1a2) — DASHBOARD cluster impact
+- progress-view.tsx tabs are now URL-driven (?tab=), set via history.replaceState
+  (deliberate: router.replace would re-run all force-dynamic server fetches per
+  click). Deep links to /tasks?tab=archive work — reuse for F64/F65 (task
+  notifications landing on wrong board tab).
+- clients/[id]/page.tsx lost the `jobs` prop on ClientHomeOverview — F99/F124
+  fixers will see a trivial conflict; theirs wins on content, keep the prop drop.
+- Client-reachable /assets redirect (assets/page.tsx:24) still drops status
+  filters for any OTHER link — known, untouched; relevant to SHELL cluster.
+- **F64 param collision (WORKSPACE cluster, act on it)**: F97 claimed `?tab=` on
+  /tasks for board/activity/archive. F64's prescribed `/tasks?tab=client` deep link
+  must use a DIFFERENT key (`?owner=client`) and TasksBoard must ignore unknown
+  values. Do not re-key F97's tabs.
+- F99 cites progress-view.tsx:42-67 for the segmented control — shifted to ~68-95
+  after F97; re-locate, don't copy the wrong hunk.
+- F66 composes: extend F97's /tasks?tab=archive with &status=draft seeding per its
+  own spec. Locked/future-dated drafts read as "in review" in the attention row —
+  slight overstatement that F149/A4 dissolves; log under F149, don't patch now.
+- Risk watch-items (F97): (a) same-route soft-nav desync — client-rail:72 and
+  notification-bell:260/292 navigate to /tasks without ?tab=, leaving tab state
+  stale vs URL; a useEffect sync on searchParams closes it — fold into F64/F66
+  work. (b) attentionCount now folds in every draft → "Needs your attention: 21
+  items" inflation possible — PRODUCT NOTE for Albert, spec-sanctioned but worth a
+  look with F149/A4. (c) consider <Suspense> around ProgressView if force-dynamic
+  is ever dropped.
+
+## After F125 (6c4b2c0) — DASHBOARD cluster impact
+- insights route now: mock data + client viewer → plain-text needs-connection
+  response (no LLM call, X-Insights-State header); digest filtered to usable
+  integrations; admin View-as-Client sees the client empty state (fidelity choice
+  — staff must exit impersonation for demo prose).
+- Behavior change: analytics rows only from non-integrated platforms → digest
+  empties → panel falls back to pipeline summary. Honest; noted for mock-client
+  regression walks.
+- F100/F126 untouched (Phase 2), B5 guard respected.
+- Walk observations for DASHBOARD cluster: (a) STAFF lens shows "DEMO DATA" badge
+  with an empty 92px card body (insights route returns 200 empty for staff on
+  Karos Labs) — staff-only, non-blocking, fix alongside F124/F99. (b) "3 pending
+  tasks" count appears to include a Done card and disagrees with the filter chips
+  — check against F17/F124 scope, else log as new. (c) Karos Labs shows
+  Google/LinkedIn/YouTube CONNECTED while insights says "connect a social
+  account" — consistent with ANALYTICS_LIVE_INGEST unset (all records mock);
+  env question for TOMER-HANDOVER. (d) Recent-activity rows all link to the
+  generic archive, not the specific deliverable — candidate polish with F66.
+- Bounced once (drift lens): mock gate must be computed on scopedRecords, not the
+  unfiltered set — correction pending in fixer worktree.
+- **F145 fixer note**: F125 scopes the briefing to `integrationIsUsable` platforms,
+  so a dead-token channel's rows silently vanish from the digest — same pathology
+  F145 fixes elsewhere. When fixing F145, consider including needsReconnect
+  platforms in connectedPlatforms and letting the mock-gate carry honesty ("LinkedIn
+  data is stale — reconnect").
+- F126: renderInline moved 139→164; F100's cited :97 is already US spelling (moved
+  to :108) — re-locate by symbol.
+- Risk-lens watch-items (F125): (a) COPILOT cluster — chat route feeds UNSCOPED
+  benchmark records into the credit-charged client prompt (chat/route.ts:74 →
+  data.ts:1062-1069): mock metrics still narratable in chat; fold into F95/F89
+  family work. (b) listClientIntegrations decrypts OAuth tokens into route memory —
+  never stringify integrations into any prompt. (c) If ANALYTICS_LIVE_INGEST is
+  unset in prod, ALL records are mock → every client sees the connect empty state
+  even with channels connected; copy nuance + env question for TOMER-HANDOVER.
+  (d) Staff with zero usable integrations lose the demo briefing + badge (falls to
+  pipeline branch) — minor, note only.

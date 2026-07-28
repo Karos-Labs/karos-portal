@@ -10,7 +10,7 @@ are tracked in the CD table at the bottom.
 
 | F# | Sev | Trk | Cluster | Phase | Status | Shot | Title | Spec file |
 |---|---|---|---|---|---|---|---|---|
-| F1 | BLOCKER | A | SEO | 1 | OPEN | yes | A finished client-facing action plan with a working Approve button is rendered on no page, whil | findings-p009-046.md |
+| F1 | BLOCKER | A | SEO | 1 | RESOLVED | yes | A finished client-facing action plan with a working Approve button is rendered on no page, whil | findings-p009-046.md |
 | F3 | HIGH | B | SEO | 2 | OPEN | yes | Card bodies are raw audit-model prose, and "What good looks like" just repeats the card title | findings-p009-046.md |
 | F4 | HIGH | A | SEO | 2 | OPEN | yes | Cards promise Karos will apply the fix "automatically" — no such code path exists and there is  | findings-p009-046.md |
 | F5 | HIGH | A | SEO | 2 | OPEN | — | Grids split into multiple columns at window widths where the side rail and copilot dock have al | findings-p009-046.md |
@@ -114,8 +114,8 @@ are tracked in the CD table at the bottom.
 | F93 | MEDIUM | A | COPILOT | 2 | OPEN | — | Escape or a stray click outside throws away a minute-long War Room run with no warning | findings-p123-160.md |
 | F94 | MEDIUM | A | COPILOT | 2 | OPEN | yes | On a phone the Copilot opens as a sliver and the four actions sit below the fold | findings-p123-160.md |
 | F95 | MEDIUM | A | COPILOT | 2 | OPEN | — | The copilot is given a credit price list that omits the most expensive thing a client can buy | findings-p123-160.md |
-| F97 | BLOCKER | B | DASHBOARD | 1 | OPEN | — | The client's top call to action promises an approval they cannot make, and the link lands on th | findings-p123-160.md |
-| F125 | BLOCKER | B | DASHBOARD | 1 | OPEN | yes | AI Insights is badged "Demo data" and still tells the client to cut LinkedIn spend | findings-p123-160.md |
+| F97 | BLOCKER | B | DASHBOARD | 1 | RESOLVED | — | The client's top call to action promises an approval they cannot make, and the link lands on th | findings-p123-160.md |
+| F125 | BLOCKER | B | DASHBOARD | 1 | RESOLVED | yes | AI Insights is badged "Demo data" and still tells the client to cut LinkedIn spend | findings-p123-160.md |
 | F99 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | The client dashboard is one unbroken scroll and the plain-English weekly briefing sits dead las | findings-p123-160.md |
 | F124 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | The dashboard opens with four counters that the two cards beneath them restate | findings-p123-160.md |
 | F126 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | Single-asterisk emphasis renders as literal asterisks in AI Insights | findings-p123-160.md |
