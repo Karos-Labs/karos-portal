@@ -1,17 +1,21 @@
 # Tomer handover — QA sweep 2026-07
 
-> **Status: v2 — 2026-07-28, reconciled against final HEAD `f7a126b`.** Section
-> numbers are stable anchors — later updates append or amend inside sections,
-> never renumber them. Every code reference is file + symbol; **the agent-service
-> contract seams in §4 additionally carry `file:line`**, because you have to build
-> a payload against them without reading the repo. Those line numbers were read
-> (not inferred) at `f7a126b` — if one has drifted, the symbol beside it is the
-> re-locator. Everywhere else the rule stands: symbols, not lines.
+> **Status: v3 — 2026-07-28, every `file:line` re-read against HEAD `9e7c46e`.**
+> Section numbers are stable anchors — later updates append or amend inside
+> sections, never renumber them. Every code reference is file + symbol; **the
+> agent-service contract seams in §4 additionally carry `file:line`**, because you
+> have to build a payload against them without reading the repo. v3 re-derived
+> **every** line number in this document mechanically (file exists · line in range
+> · the named symbol within ±10 lines) after the Tomer merge, the Reddit e15
+> landing and the CD-I1 archetype wave moved most of them. If one has drifted
+> since, the symbol beside it is still the re-locator. Everywhere else the rule
+> stands: symbols, not lines.
 
 | Version | Date | State of campaign when written |
 |---|---|---|
 | v1 (draft) | 2026-07-28 | Phase 1 merged · CALENDAR merged · DOCS merging · AGENTS / SEO / WORKSPACE / rest in flight · Phase 3 not started (`phase3-design.md` did not exist yet) |
-| **v2 (this)** | **2026-07-28** | **All Phase-2 clusters merged · Phase 3 WP-0…WP-9 merged · CD-G wave (G1–G11) merged · Albert-match review run · CD-H mop-up (H1–H8) merged at `f7a126b` · 879 tests green.** Phase-3 §8.3 seams T1–T7 are now real, verified, and expanded with everything the WP-4+ and CD-G/CD-H waves left open |
+| v2 | 2026-07-28 | All Phase-2 clusters merged · Phase 3 WP-0…WP-9 merged · CD-G wave (G1–G11) merged · Albert-match review run · CD-H mop-up (H1–H8) merged at `f7a126b` · 879 tests green. Phase-3 §8.3 seams T1–T7 became real |
+| **v3 (this)** | **2026-07-28** | **Everything above, plus the Tomer merge (origin/main: Reddit agent e15, runway autogen, per-client binding), the two audit passes, the admin Ops Import extraction, and the CD-I1 archetype wave (three agent detail shapes + staff roster parity).** v2's line numbers were written before all of that; **v3 is a citation-correctness pass** — claims re-verified, every `file:line` machine-checked. Suite is now **1,281 tests across 93 files, green at `9e7c46e`** |
 
 **Audience:** Tomer, doing the final integration mile (agent-service runtime,
 GCP infra, connectors) — plus Albert for the ops steps in §2. Read §1 to
@@ -86,14 +90,21 @@ lens pass), **COPILOT**, **DASHBOARD**, **CREDITS**, **SHELL**. Anywhere v1 said
 those sentences below have been corrected in place rather than deleted, so you
 can see what moved.
 
-At HEAD the ledger carries **no OPEN engineering rows**. What remains open is
-three OPS-PENDING rows (F127, F33, F130 — §2), two OPEN ops/loop items
-(CD-C1, CD-G7), one OPEN infra item (CD-D1 video — §3.2), and the §4 seams.
+At HEAD the ledger carries **no OPEN engineering rows** — 158 RESOLVED, 2
+RESOLVED-PARTIAL. What remains open, re-counted against `LEDGER.md` at HEAD:
+three OPS-PENDING rows (**F127, F33, F130** — §2), **one DEFERRED-TOMER row
+(F150**, video ingestion = CD-D1/T5 — §3.2), two OPEN ops/loop items (**CD-C1,
+CD-G7**), one OPEN-ALBERT ruling (**CD-H2** — the 1280×800 rail fit), and the
+rest of the §4 seams. *Ledger rows are cited by id, never by line: the tables are
+keyed on the id in column one and rows get inserted above yours.*
 
 ### 1.5 The verification system every merged fix passed
 
 1. **Deterministic gates** — `npx tsc --noEmit` · `npm run build` ·
-   `npx vitest run` (**879 tests across 71 files, green at `f7a126b`**).
+   `npx vitest run`. That was **879 tests across 71 files at `f7a126b`**; the
+   Tomer merge, the audit passes and CD-I1 have since grown it to **1,281 tests
+   across 93 files, green at `9e7c46e`**. The count is itself a gate — if your
+   branch reports fewer files, you dropped one in a merge.
 2. **Three adversarial Opus lenses**, each prompted to refute the fix:
    *risk* (blast radius: credits, roles, webhook contracts, Firestore writes),
    *drift* (matches the prescribed fix + call directives, guard zones intact),
@@ -194,24 +205,29 @@ Things to know before running:
 concrete and short ("Improve your Instagram reach with a daily post, different
 templates, and an agent that scans"), no lab vocabulary. Two things changed:
 
-- The script's `BLURBS` table (`scripts/backfill-agent-blurbs.ts:99`, 10
+- The script's `BLURBS` table (`scripts/backfill-agent-blurbs.ts:105`, 10
   entries) now has a **runtime twin in app code**: `src/lib/agent-blurbs.ts`
   (`PRODUCT_BLURBS`:36, `BLURBS`:54 — 17 entries, a superset). The resolver
   `clientAgentBlurb` (`agent-blurbs.ts:155`) prefers a curated `clientBlurb`,
   then product type, then an identity match, then an honest contentless
   fallback. So **the roster and detail pages read correctly today even before
   the script runs** — the backfill now only persists the copy.
-- Because a `scripts/` file cannot import `@/`, the two tables are
-  hand-maintained twins (documented at `backfill-agent-blurbs.ts:13-20`).
-  **Edit both or they drift.**
+- The two tables are hand-maintained twins (documented at
+  `backfill-agent-blurbs.ts:13-27`). **Edit both or they drift.** Note the
+  retraction inside that comment: **a `scripts/` file _can_ import `@/`** — tsx
+  resolves the alias through tsconfig paths, and `scripts/backfill-client-agents.ts`
+  imports the production helpers directly. The blurb tables stay twins only
+  because they are keyed differently (this one on the agent KEY, the runtime one
+  on the full identity string). Prefer a shared import whenever the logic is
+  actually shareable.
 
 ### 2.2 `scripts/backfill-asset-titles.ts` — WRITTEN (v1 said it wasn't)
 
-**Correction:** v1 called this a placeholder. It exists at HEAD (123 lines) and
+**Correction:** v1 called this a placeholder. It exists at HEAD (128 lines) and
 F33 is OPS-PENDING on running it. It rewrites only assets whose title is
 character-for-character their job's `"<Agent> - <Client>"` title — a deliberately
-conservative match (`backfill-asset-titles.ts:17-21`) so a hand-edited title is
-never touched. `--apply` at :84, `require.main` guard at :123.
+conservative match (`backfill-asset-titles.ts:17-20`, enforced at :100-114) so a
+hand-edited title is never touched. `--apply` at :84, `require.main` guard at :123.
 
 ```bash
 npx tsx scripts/backfill-asset-titles.ts
@@ -219,9 +235,9 @@ npx tsx scripts/backfill-asset-titles.ts --apply
 ```
 
 Going forward the defect is fixed at the source: the webhook strips the suffix
-via `assetTitleFromJobTitle` (`webhook/route.ts:388`, shared definition in
-`src/lib/job-title.ts`). The old code looked for an em dash while every builder
-wrote a hyphen, so it had never once fired.
+via `assetTitleFromJobTitle` (`webhook/route.ts:388`, imported at :4, shared
+definition in `src/lib/job-title.ts`). The old code looked for an em dash while
+every builder wrote a hyphen, so it had never once fired.
 
 ### 2.3 Everything in `scripts/` at HEAD (14 files, same convention)
 
@@ -366,9 +382,10 @@ What it will not do, by construction:
 removes only umbrellas it created (`createdBy: "backfill"`) plus their slots,
 and clears the two nullable linkage fields it wrote.
 
-The planning half is a pure exported function (`planClient`) covered by 16 unit
-tests against fixtures, so the decision that reaches production is checkable
-without a database. It imports the app's own helpers — identity mapping,
+The planning half is a pure exported function (`planClient`,
+`scripts/backfill-client-agents.ts:136`) covered by 16 unit tests against
+fixtures (`src/lib/__tests__/backfill-client-agents.test.ts`), so the decision
+that reaches production is checkable without a database. It imports the app's own helpers — identity mapping,
 template derivation, day-key bucketing, deterministic doc ids — rather than
 restating them, because a backfill that classified an asset differently from the
 app would build a registry the app then disagreed with.
@@ -385,21 +402,35 @@ npx tsx scripts/refresh-apply.ts --file=/abs/proposal.json --client=<id>        
 npx tsx scripts/refresh-apply.ts --file=/abs/proposal.json --client=<id> --apply  # writes
 ```
 
-`--client` is **mandatory and single**: one client per invocation, cross-checked
-against the proposal's own `clientId` (`refresh-apply.ts:809`) and client name
-(:831-837). Writes land as one atomic batch per client over `clientContextDocs`,
+**Read this before citing the script: `scripts/refresh-apply.ts` is no longer
+where the rules live.** At HEAD it is a **184-line adapter** — argument parsing,
+`.env.local` loading, Firestore reads, one batched commit, and printing. Every
+fence was extracted verbatim into **`src/lib/refresh-apply-core.ts` (993 lines,
+pure: no firebase, no `server-only`, no fs, no `process`)** so the CLI and the
+admin Ops Import page enforce ONE implementation instead of a drifting copy. The
+script's own header says so at `scripts/refresh-apply.ts:11-15`. Its three moving
+parts: `validateProposal` at :122, `formatPlanLines` at :132, and `buildWriteOps`
+→ `batch.commit()` at :163-170.
+
+`--client` is **mandatory and single**: refused outright without it
+(`refresh-apply.ts:61-69`), then cross-checked in the core against the proposal's
+own `clientId` (`refresh-apply-core.ts:783-785`) and client name (:789-795).
+Writes land as one atomic batch per client over `clientContextDocs`,
 `clientCompetitors`, and one `clients` doc.
 
 The completion semantics are **enforced in code, not merely documented**
-(`refresh-apply.ts:11-25`): nothing is ever deleted; a doc may not shrink >10%
-and may never lose a `## ` section; competitor fields may not be blanked; brand
-colors need 3–4 unique hexes with sequential `dominanceRank` and `usagePct`
-summing to exactly 100; **every other client profile field is fill-only**. That
-last rule is why §2.11 exists.
+(`refresh-apply-core.ts:15-28`): nothing is ever deleted; a doc may not shrink
+below the floor (`SHRINK_FLOOR` :115 = 10%, relaxed to `SHRINK_FLOOR_APPROVED`
+:117 = 50% only with a written reason) and may never lose a `## ` section;
+competitor fields may not be blanked; brand colors need 3–4 unique hexes with
+sequential `dominanceRank` (:691) and `usagePct` summing to exactly 100 (:711);
+**every other client profile field is fill-only**. That last rule is why §2.11
+exists. One more fence worth knowing: `LEGAL_TIERS` (:55) is the docType→tier
+no-leak table — it is what stops `client-guidelines` or `action-plan` being
+written at tier `"client"` and published to the portal.
 
-Those rules now live in `src/lib/refresh-apply-core.ts`, shared verbatim with the
-**admin Ops Import page** (`/admin/ops`) — the same import without the CLI, plus
-the SEO/GEO and posts halves. See
+That shared core is what the **admin Ops Import page** (`/admin/ops`) runs — the
+same import without the CLI, plus the SEO/GEO and posts halves. See
 [refresh/OPS-IMPORT.md](./refresh/OPS-IMPORT.md) for the inbox layout
 (`OPS_IMPORT_DIR`), what each button does, and the provenance rule that keeps a
 hand-imported SEO/GEO snapshot from reading as a fresh machine capture.
@@ -408,39 +439,47 @@ hand-imported SEO/GEO snapshot from reading as a fresh machine capture.
 
 F130 ("every agent priced identically at 25 credits per output") is OPS-PENDING,
 not code-pending: the flat price is gone from the code and the per-agent fields
-exist, but **nobody has set them**. Both live in one admin-only surface, the
-agent editor modal (`src/components/custom-agents.tsx:1366`, reachable only
-behind `isAdmin` at :251/:328):
+exist, but **nobody has set them**. Both live in one admin-only surface,
+`AgentEditorModal` (`src/components/custom-agents.tsx:1812`, mounted at :593-594
+and reachable only behind the two `isAdmin` gates at :452 — "New agent" — and
+:545 — the per-card "Edit" button):
 
 | Field | Editor | Persisted by | Validation |
 |---|---|---|---|
-| `creditCost` — credits per run | `custom-agents.tsx:1539-1553` | `custom-agent-actions.ts:152`/:188 (`requireAdmin`) | positive integer, :97 |
-| `launchCreditCost` — one-time setup price | `custom-agents.tsx:1562-1577` ("Credits for setup (one time)") | same | positive integer **and strictly greater than the effective run cost**, `custom-agent-actions.ts:109` |
+| `creditCost` — credits per run | `custom-agents.tsx:1985-1999` ("Credits per run") | `custom-agent-actions.ts:152`/:188 (`requireAdmin` at :134/:168) | non-negative integer, :97 |
+| `launchCreditCost` — one-time setup price | `custom-agents.tsx:2008-2023` ("Credits for setup (one time)"; the §6.3 rationale is the comment at :2001-2007) | same | whole number > 0, :101; **and strictly greater than the effective run cost**, :109 |
 
 **Until `launchCreditCost` is set, clients cannot launch that agent at all.**
-That is deliberate (ruling Q10): `evaluateLaunchGate` returns
-`pricing_uncalibrated` (`src/lib/client-agents.ts:275-282`) and the card paints
-a disabled CTA with the reason, rather than billing a number nobody chose.
+That is deliberate (ruling Q10): `evaluateLaunchGate`
+(`src/lib/client-agents.ts:276`) returns `pricing_uncalibrated` at :322-325
+(code declared :195, client-facing reason :208) and the card paints a disabled
+CTA with the reason, rather than billing a number nobody chose.
 Staff launches are free and proceed — they are how you accumulate the
 measurements. The staff economics card then shows the measured setup-vs-run USD
 ratio and a suggested price (`src/components/client-agents/agent-economics.tsx`,
-computed by `calibrateLaunchPrice` in `src/lib/credit-reporting.ts:198`, which
-deliberately excludes untyped legacy jobs at :194-196).
+fed by `getLaunchCalibrationAction` :6 and rendered :105-147; computed by
+`calibrateLaunchPrice` in `src/lib/credit-reporting.ts:198`, which deliberately
+excludes untyped legacy jobs at :194-196).
 
 ### 2.11 Roster grants + the fill-only manual edits
 
-- **`scripts/grant-all-agents.ts`** implements CD-G3's "they should be able to
-  run every single agent if they want to": it adds every enabled agent to each
-  client's `customAgentIds`, additively and de-duplicated (:81-87), skipping
-  disabled agents (:47). The revoke flag is **`--revoke-ids=a,b`** (:38, applied
-  :71-79) — note it is *not* a bare `--revoke`. A grant pass already ran
-  (`27e89e6`); re-run it after importing any new lab agent.
-- **Fill-only fields need a human.** `refresh-apply.ts` will not overwrite a
-  profile field a human already set, and it skips-and-reports instead
-  (`refresh-apply.ts:582`, :601). The refresh teams found the fields that are
-  simply *empty* fleet-wide and cannot be sourced automatically:
+- **`scripts/grant-all-agents.ts`** (104 lines) implements CD-G3's "they should
+  be able to run every single agent if they want to": it adds every enabled agent
+  to each client's `customAgentIds`, additively and de-duplicated
+  (`grant-all-agents.ts:81-89`, the set union at :86), skipping disabled agents
+  (:52). The revoke flag is
+  **`--revoke-ids=a,b`** (:38-39, applied :71-79) — note it is *not* a bare
+  `--revoke`. A grant pass already ran (`27e89e6`); re-run it after importing any
+  new lab agent.
+- **Fill-only fields need a human.** The refresh will not overwrite a profile
+  field a human already set; it skips-and-reports instead
+  (`refresh-apply-core.ts:626` for profile fields, :645 for social links — both
+  push onto `plan.skippedProfile`, printed by `formatPlanLines` at :983). Branding
+  fill fields take the same treatment, silently, at :744-750. The refresh teams
+  found the fields that are simply *empty* fleet-wide and cannot be sourced
+  automatically:
   - **Typography** — `fontHeading` / `fontBody` are unset for 4+ clients
-    (`BRANDING_FILL_FIELDS`, `refresh-apply.ts:95`). Either put them in the
+    (`BRANDING_FILL_FIELDS`, `refresh-apply-core.ts:80`). Either put them in the
     proposal JSON before `--apply`, or type them into the client's branding
     surface afterwards.
   - **Karos Labs' own guideline** — "no bright accents" is a house rule that
@@ -454,11 +493,12 @@ deliberately excludes untyped legacy jobs at :194-196).
 ### 3.1 Cloud Run: `after()` background work needs CPU
 
 **Re-verified at HEAD and still true.** `cloudbuild.yaml`'s `cloud-run-deploy`
-step (lines 110–138, args block :113-137) carries `--min-instances=1` (:122),
-`--max-instances=10`, `--memory=1Gi`, `--cpu=1`, `--timeout=300`,
-`--concurrency=80` — and **no CPU-allocation flag of any kind**. Several merged
+step (lines 125–153, args block :128-152) carries `--min-instances=1` (:137),
+`--max-instances=10` (:138), `--memory=1Gi` (:139), `--cpu=1` (:140),
+`--timeout=300` (:141), `--concurrency=80` (:142) — and **no CPU-allocation flag
+of any kind**. Several merged
 fixes run follow-up work in Next.js `after()` — the DOCS cluster's sibling-tier
-correction propagation, the webhook's usage logging (`webhook/route.ts:596`),
+correction propagation, the webhook's usage logging (`webhook/route.ts:596-609`),
 and UI copy that says generation "continues in the background". Under
 request-based billing the CPU is throttled once the response is sent, so all
 `after()` work is best-effort. **Add `--no-cpu-throttling` to the deploy args**
@@ -477,14 +517,14 @@ Plan agreed on the call: videos live in GCP block storage; the agent service
 fetches from there; **no media in git**. Split of labor:
 
 - **Portal side — LANDED (v1 said OPEN).** The field is
-  **`Asset.videoUrl?: string | null`** (`src/lib/types.ts:443`, with a doc
-  comment at :435-442 marking the GCP wiring as yours). The detail modal renders
+  **`Asset.videoUrl?: string | null`** (`src/lib/types.ts:459`, with a doc
+  comment at :450-458 marking the GCP wiring as yours). The detail modal renders
   `<video controls poster preload="metadata">` at
-  `src/components/asset-detail-modal.tsx:258-267`, fed by `assetVideos(asset)`
-  (:185). The resolver `assetVideos` (`src/lib/asset-images.ts:102-128`) reads
+  `src/components/asset-detail-modal.tsx:271-280`, fed by `assetVideos(asset)`
+  (:198). The resolver `assetVideos` (`src/lib/asset-images.ts:102-128`) reads
   three sources in order: `asset.videoUrl` (:112), `meta.videos` (:114), then
   `meta.files` / `meta.artifacts` (:118-125). A second surface renders it at
-  `src/components/task-ticket-modal.tsx:126`.
+  `src/components/task-ticket-modal.tsx:133`.
   **So: drop a URL into `videoUrl`, or ship a `video/*` artifact through the
   normal webhook path, and it plays.** CD-D1 stays OPEN only for your half.
 - **Tomer side:** the actual GCP bucket, upload path, and the agent-service
@@ -497,7 +537,7 @@ fetches from there; **no media in git**. Split of labor:
 - ~~Known duplication to resolve while in there~~ — **DONE, v1 is now wrong.**
   The `liMedia` filter was extracted to `assetLiMedia(meta)` at
   `src/lib/asset-images.ts:146-162`; both call sites are now four-line wrappers
-  (`asset-detail-modal.tsx:128-131`, `asset-card.tsx:448-451`). Edit the helper,
+  (`asset-detail-modal.tsx:141-144`, `asset-card.tsx:466-469`). Edit the helper,
   not the components.
 
 ### 3.3 TikTok connector (CD-D2 / call directive D2)
@@ -524,9 +564,11 @@ portal shows the TikTok agent's connector state as
 Per `master-plan.md`, a finding is deferred to you only if it needs external
 credentials/infra we don't hold, changes the agent-service runtime contract
 beyond the portal's side of the webhook, or Albert deferred it on the call.
-The ledger still carries no `DEFERRED-TOMER` row (the deferrals were tracked as
-CD items and P3 round-deferrals instead) — **this section is the authoritative
-list**, and v2 expands it from 7 subsections to 15.
+The ledger now carries **exactly one `DEFERRED-TOMER` row — F150** (in
+`LEDGER.md`; video clip ingestion, the portal render half shipped — see §3.2/T5).
+Everything
+else was tracked as a CD item or a P3 round-deferral, so **this section is still
+the authoritative list**, and v2 expanded it from 7 subsections to 15.
 
 ### 4.1 Launch-vs-runs — THE METADATA CONTRACT (built; v1's placeholder replaced)
 
@@ -543,29 +585,32 @@ whether content exists yet, which is what makes directive A3 structural.
 #### 4.1a What we send you — `metadata`, and the four keys that matter
 
 Every custom-agent submit funnels through one core:
-**`submitCustomAgentJob` in `src/lib/jobs/submit-custom.ts:132`**. It builds the
-outbound `metadata` object at **`submit-custom.ts:312-332`**. Values are always
+**`submitCustomAgentJob` in `src/lib/jobs/submit-custom.ts:144`**. It builds the
+outbound `metadata` object at **`submit-custom.ts:367-387`**. Values are always
 strings (your schema is `z.record(z.string(), z.string())`).
 
 | Key | Emitted at | Values | Meaning |
 |---|---|---|---|
-| `platform_job_id` | `submit-custom.ts:323` | our job id | Always present. The webhook's fallback identity — see 4.1c. |
-| `karos_task_id` | :324 | task id | Present when a board task dispatched the run. |
-| `karos_job_token` / `karos_mcp_url` | :325 | signed token / URL | Job-scoped MCP callback credential. |
-| **`karos_run_type`** | **:329** | `launch` \| `scheduled` \| `manual_template` \| `manual` | How the run was initiated. Union at `src/lib/types.ts:371`. Absent ⇒ legacy/untyped. |
-| **`karos_client_agent_id`** | **:330** | umbrella doc id | Which per-client umbrella this run belongs to. |
-| **`karos_template_key`** | **:331** | template key | Which template stream this run produces. |
-| **`karos_slot_id`** | — | — | **DESIGNED, NOT EMITTED.** Zero occurrences in `src/`. See §4.9. |
+| `platform_job_id` | `submit-custom.ts:378` | our job id | Always present. The webhook's fallback identity — see 4.1c. |
+| `karos_task_id` | :379 | task id | Present when a board task dispatched the run. |
+| `karos_job_token` / `karos_mcp_url` | :380 | signed token / URL | Job-scoped MCP callback credential. |
+| **`karos_run_type`** | **:384** | `launch` \| `scheduled` \| `manual_template` \| `manual` | How the run was initiated. Union at `src/lib/types.ts:387`. Absent ⇒ legacy/untyped. |
+| **`karos_client_agent_id`** | **:385** | umbrella doc id | Which per-client umbrella this run belongs to. |
+| **`karos_template_key`** | **:386** | template key | Which template stream this run produces. |
+| **`karos_slot_id`** | — | — | **DESIGNED, NOT EMITTED.** Still zero occurrences in `src/` at HEAD. See §4.9. |
 
 These same three values are also stamped on our own job doc
-(`submit-custom.ts:247-249`), and **the job doc wins over the echo** on the way
+(`submit-custom.ts:302-304`), and **the job doc wins over the echo** on the way
 back — the metadata is the fallback for jobs written before the fields existed.
 
-**Reserved keys.** `RESERVED_METADATA` (`submit-custom.ts:56-64`) lists the seven
-keys the core owns. A caller passing one through `extraMetadata` has it
-**dropped, not silently overridden** (:320-322) — deliberate, so the mistake is
-visible in the payload rather than fatal. `extraMetadata` is the sanctioned door
-for anything new (`SubmitCustomAgentInput.extraMetadata`, :95).
+**Reserved keys.** `RESERVED_METADATA` (`submit-custom.ts:68-76`) lists the seven
+keys the core owns. Caller-supplied keys go FIRST in the literal so the core's
+own routing can never be shadowed, and a caller passing a reserved key through
+`extraMetadata` has it **dropped, not silently overridden** (:375-377, rationale
+:368-374) — deliberate, so the mistake is visible in the payload rather than
+fatal. `extraMetadata` is the sanctioned door for anything new
+(`SubmitCustomAgentInput.extraMetadata`, :107 — and its own doc comment at
+:102-106 already names slot ids and revision targets as what belongs there).
 
 **What we need from you: echo `metadata` back verbatim on the webhook.** That
 round-trip is the entire contract. It is already proven in production by the
@@ -627,7 +672,7 @@ permanent. If you add work to this handler, keep that ordering.
   The flag is written **on the asset** rather than inferred later, so the
   exclusion survives whatever status or date the asset ends up with; it is
   enforced server-side in `getClientLibraryAssets`
-  (`src/lib/asset-visibility.ts:26`, predicate :40-42).
+  (`src/lib/asset-visibility.ts:16`, predicate `isLaunchDeliverable` :40-42).
 - **Options-batch slot assignment (X).** When an X drafts batch lands, its days
   are sliced into daily 3-option picks: `syncOptionsFromBatchAsset`
   (`route.ts:464`, implementation `src/lib/client-agent-slots.ts:215`). Read the
@@ -637,8 +682,8 @@ permanent. If you add work to this handler, keep that ordering.
   the job's own client, :226) and **idempotent** (assignment never touches a day
   that already has options), which is what makes it safe to run *after* the
   single-use claim. Best-effort by design: a failure retries on the next batch.
-- **Chain reflow** for everything else (:444), also best-effort — see §4.10 for
-  why that is currently a hazard rather than a nicety.
+- **Chain reflow** for everything else (`route.ts:444`), also best-effort — see
+  §4.10 for why that is currently a hazard rather than a nicety.
 
 #### 4.1e The rest of the model, unchanged from v1 but now real
 
@@ -648,9 +693,9 @@ permanent. If you add work to this handler, keep that ordering.
 - **Mark-as-posted (extend, don't reinvent):** `MarkPostedRow` was **extracted
   out of the modal** into `src/components/mark-posted-row.tsx:21` (v1's pointer
   is stale) → `markAssetPostedAction` (`src/lib/actions/asset-actions.ts:259`).
-  Mounted in the detail modal (:351) and on the calendar day card
-  (`run-calendar.tsx:546`). Client-callable by design, gated server-side to
-  approved/scheduled/delivered, raced against the publish cron via the publish
+  Mounted in the detail modal (`asset-detail-modal.tsx:374`) and on the calendar
+  day card (`run-calendar.tsx:546`). Client-callable by design, gated server-side
+  to approved/scheduled/delivered, raced against the publish cron via the publish
   claim.
 - **Cost split (A5) — built.** See §4.12 for the vocabulary you will see in the
   ledger and on jobs.
@@ -659,8 +704,8 @@ permanent. If you add work to this handler, keep that ordering.
   copy-deep: the client projection of a slot returns **intent only** — template
   key, day, whether the day has passed — and deliberately no asset id and no
   content (`upcomingSlots`, `client-agent-slots.ts:265-285`, read the comment).
-  Launch runs are hidden from clients' run lists (`client-agent-rows.ts:70`) and
-  from the archive (`tasks-body.tsx:80`). If you add a surface, add it to that
+  Launch runs are hidden from clients' run lists (`client-agent-rows.ts:100`) and
+  from the archive (`tasks-body.tsx:139`). If you add a surface, add it to that
   list.
 
 ### 4.2 Managed-products retirement (F39/F45 — DONE, commit `fbecbbf`)
@@ -672,70 +717,105 @@ still runs the four catalog products.
 **Amended for v2: the deletion has landed.** `src/components/managed-products.tsx`
 and `src/components/client-managed-agents.tsx` were both removed in **`fbecbbf`**
 ("retire dead managed-products UI (capability lives on task board)"). Restoration
-= `git revert fbecbbf`. Residue you may trip over: an explanatory comment where
-the feeder block used to be (`src/app/(app)/clients/[id]/agents/page.tsx:231-233`)
-and a stale mention of "the managed-products UI" in `cloudbuild.yaml:134`.
+= `git revert fbecbbf`. **Amended again for v3:** the explanatory comment v2
+pointed at in the agents page is gone too — that page was rewritten wholesale by
+CD-G1 and again by CD-I1, and a search for "managed-products" in
+`src/app/(app)/clients/[id]/agents/page.tsx` now returns nothing. The one residue
+left in the tree is a stale mention of "the managed-products UI" in a deploy-step
+comment, **`cloudbuild.yaml:149`**.
 
 Under Phase 3 the managed-product run UI returned inside the unified
 launch-vs-runs model — never as the old four cards. Do not resurrect the deleted
 components when wiring the service.
 
-### 4.3 Reddit agent — re-application notes for when it lands
+### 4.3 Reddit agent — LANDED (v2's "when it lands" is obsolete)
 
-The sweep PDF was taken on a tree carrying a Reddit agent this repo never had.
-Verified via `git log --all -S"parseRedditDrafts"`: the surfaces never existed
-here. What exists today: the OAuth connector `src/lib/integrations/reddit.ts`
-(+ `REDDIT_CLIENT_ID`/`SECRET`), and a "Reddit Agent" record in the
-`customAgents` collection (staff library card only — consistent with the lab
-import). Struck clauses: F38 whole (phantom pairing-refusal premise), the
-Reddit clauses of F28/F46/F70, and F35's binding-display half.
+**Rewritten for v3. Do not build any of this: it exists.** v2 was written on a
+tree where the Reddit surfaces genuinely did not exist, and its advice was
+"re-apply these patterns when you land it". The agent landed while this document
+was being written, in **`ddcef3e`** ("hook up the Reddit agent (e15) at the
+X/LinkedIn standard", #25, arriving through the `origin/main` Tomer merge
+`10b5f09`/`90dc90e`), and the sweep's own render rules were then applied to it in
+**`77df660`** (ruling 3). What v2 said was struck (F38 whole, the Reddit clauses
+of F28/F46/F70, F35's binding half) was struck against the *old* tree; those
+findings have since been re-applied against the real surfaces — see `b949563`
+(F27) and `4757ffd` (F38/F35).
 
-**When you (or a later campaign) land the Reddit agent, re-apply these
-established patterns instead of inventing new ones:**
+The surfaces at HEAD:
 
-1. **Drafts reader — third sniff slot:** `AssetDetailModal` and `AssetCard`
-   run content sniffs in a fixed order (LinkedIn first — its "## Account"
-   headings contain the X sniff's "# Account " substring — then X), rendering
-   `LiDraftsBatch` / `XDraftsBatch` in place of the caption. Add
-   `parseRedditDrafts` + `RedditDraftsBatch` as the third sniff in BOTH
-   components, same order discipline. Documented in F46's commit `271c381`.
-2. **Draft titles:** strip/translate lab-internal vocabulary ("Avenue 3 ·
-   News-reaction…") at the reader render boundary in
-   `src/components/x-drafts-review.tsx` / `li-drafts-review.tsx` — F70's
-   prescribed fix, **now merged**; apply the same boundary treatment to the
-   Reddit reader.
-3. **Intake copy:** mirror the X/LinkedIn intake pages
-   (`src/components/x-agent-intake.tsx`, `linkedin-agent-intake.tsx`) as
-   corrected by F28 (**merged** — it rewrites where drafts actually live).
-   There is no `reddit-agent-intake.tsx` today; build it from those.
-4. **Run status labels:** consume `JOB_STATUS_META` (§6.5) — never print raw
-   `job.status`.
-5. **Reply-cap economics (F27) and empty-input refusal (F36):** re-check both
-   against the Reddit product's real cadence config before exposing schedule
-   UI — the 35-replies-a-week overpromise was real on the sweep branch.
-6. Integration standard: follow `docs/agent-integration-playbook.md` and the
-   e13 X-agent reference (`docs/x-agent-portal.md`).
+| Piece | File | Notes |
+|---|---|---|
+| Parser | `src/lib/reddit-drafts.ts` (376 lines), `parseRedditDrafts` at :289 | Pure and client-safe — that is what lets the archetype code re-parse |
+| Reader | `src/components/reddit-drafts-review.tsx` (511), `RedditDraftsBatch` at :449 | |
+| Intake | `src/components/reddit-agent-intake.tsx` (408) | Route: `src/app/(app)/clients/[id]/reddit-agent/page.tsx` (48) |
+| Actions | `src/lib/actions/reddit-agent-actions.ts` (242) | Reply length cap at :213 |
+| Run context | `src/lib/agent-service/reddit-agent-context.ts` (317) | Applies the per-subreddit promo/removal rules before a run |
+| Connector | `src/lib/integrations/reddit.ts` (+ `REDDIT_CLIENT_ID`/`SECRET`) | Pre-existed |
+| Canonical spec | `docs/reddit-agent-portal.md` (207) | Pins the DRAFTS.md structure the parser reads, and the client/ vs internal/ artifact split |
+| Tests | `src/lib/__tests__/reddit-drafts.test.ts`, `reddit-intake-guards.test.ts` | |
 
-### 4.4 F107 part 1 — Publish Now unreachable from the job detail page (half closed)
+The patterns v2 told you to apply were applied, at these exact seams — read them
+before extending, because a fourth agent should copy this, not invent:
+
+1. **Drafts reader — the third sniff slot exists.** `AssetDetailModal` sniffs
+   LinkedIn first, then Reddit, then X: `asset-detail-modal.tsx:128` gates on
+   `!liBatch && content?.includes("# Reddit answer drafts")` and renders
+   `RedditDraftsBatch` at :299. `AssetCard` does the same at :448 / :717. The
+   order discipline is still load-bearing — LinkedIn's "## Account" headings
+   contain the X sniff's "# Account " substring.
+2. **Draft titles** go through `laneLabel` (`src/lib/draft-lane-label.ts`) and
+   `stripInlineMarkdown` at the render boundary, exactly as F70 prescribed for X
+   and LinkedIn: `reddit-drafts-review.tsx:228` (thread title / lane fallback),
+   :248, :251, :268, :288, :493. **The reply body and the disclosure are
+   deliberately NOT stripped** — Reddit renders markdown natively, and those two
+   are what the client actually posts.
+3. **Intake copy** mirrors the X/LinkedIn pages and carries F28's correction
+   about where drafts actually live.
+4. **Run status labels** go through `JOB_STATUS_META` (§6.5):
+   `reddit-agent-intake.tsx:345` renders `<JobStatusBadge>`, and
+   `RedditRunRowView.status` is typed `JobStatus` (:57) so a raw-string row
+   cannot compile again.
+5. **Reply-cap economics (F27)** was re-checked against the real product and
+   capped server-side in `b949563`. Reddit is **one draft per run, daily** per
+   Albert's lightweight-scope ruling — not a weekly batch, and not the
+   35-replies-a-week the sweep branch promised.
+6. **Draft-only is structural, not a setting.** There is no posting code path:
+   Reddit stays out of `PUBLISHABLE_PLATFORMS`, and a Reddit folder maps to
+   `note` rather than `social_post` (pinned by `platforms-publishable.test.ts`).
+   Every draft is a reply to an existing thread, so the hand-off copies the reply
+   and opens the thread — there is no compose deep link to prefill.
+7. **Under CD-I1 the Reddit agent is the `daily_finder` archetype**
+   (`src/lib/agent-archetype.ts:92`), so its detail page is
+   `src/components/client-agents/daily-finder-panel.tsx`, which re-renders
+   `RedditDraftsBatch` at :59 and :179. §4.14.
+8. Integration standard for the next one: `docs/agent-integration-playbook.md`,
+   plus `docs/reddit-agent-portal.md` and the e13 reference
+   (`docs/x-agent-portal.md`).
+
+### 4.4 F107 — Publish Now on every deliverable surface (CLOSED)
 
 F107's calendar surface is RESOLVED: staff-gated `PublishNowRow` in
-`AssetDetailModal` (composed with `MarkPostedRow`: Publish Now = staff push
-through our API, MarkPostedRow = client attestation), with
-`connectedPlatforms` threaded staff-only through the calendar RSC payload
-(`connectedPlatformsByClient` in `src/app/(app)/calendar/calendar-body.tsx`).
-**Half closed — amended for v2.** The assets list was fixed:
-`src/components/assets-view.tsx` now declares the prop (:35), types it (:49) and
-spreads it into `<AssetCard>` (:124-126), fed from
-`src/app/(app)/assets/page.tsx:82` (`pushablePlatformsByClient`) → :94. The
-calendar path passes it too (`calendar-body.tsx:326,372` → `run-calendar.tsx:910`).
+`AssetDetailModal` (`asset-detail-modal.tsx:369`, component at :417, composed
+with `MarkPostedRow` at :374 — Publish Now = staff push through our API,
+MarkPostedRow = client attestation), with `connectedPlatforms` threaded
+staff-only through the calendar RSC payload (`connectedPlatformsByClient`
+computed at `src/app/(app)/calendar/calendar-body.tsx:383-385`, passed at :449 →
+`run-calendar.tsx:912`).
 
-**Still open, one file:** the job detail page. `src/app/(app)/jobs/[id]/page.tsx:61`
-is still `{realAssets.map((a) => a && <AssetCard key={a.id} asset={a} canApprove />)}`
-— no `connectedPlatforms`, and the file never imports `listClientIntegrations`
-or `pushablePlatformsByClient`. `AssetCard` treats the prop as optional
-(`asset-card.tsx:416-421`, defaulting to `[]` at :461), so **Publish Now silently
-never appears on that page**. Two lines to close it; copy the pattern from
-`assets/page.tsx:82`.
+The assets list was fixed too: `src/components/assets-view.tsx` declares the prop
+(:35), types it (:49) and spreads it into `<AssetCard>` (:124-126), fed from
+`src/app/(app)/assets/page.tsx:51` (`pushablePlatformsByClient`) → :63.
+
+**Amended for v3 — the last file is closed.** v2 said the job detail page was
+still unfixed. It was fixed in **`386e5b4`** ("fix(qa-F107): show Publish Now on
+the job detail page"): `src/app/(app)/jobs/[id]/page.tsx` now imports
+`pushablePlatformsByClient` (:16), resolves this job's client's platforms
+(:37, with the F107 rationale in the comment at :32-36) and spreads
+`connectedPlatforms` into `<AssetCard>` (:74). Nothing is owed here.
+`AssetCard` still treats the prop as optional (declared :418, typed `?:` at :423,
+defaulting to `[]` at `asset-card.tsx:479` and :942), so a **new** surface that forgets to
+thread it will silently hide Publish Now rather than crash — that is the trap to
+remember, not an open item.
 
 ### 4.5 `publishAssetNowAction` — no idempotency ledger
 
@@ -788,7 +868,7 @@ all seven degraded modes are what is running at HEAD. Verified against code.
 | **T2** | **Launch progress events** — a `job.progress` webhook variant `{job_id, stage, detail?}` | Not accepted yet: the schema is `z.literal("job.completed")` (`route.ts:109`), so a progress event 400s today. Adding it is additive — a new discriminated variant plus a `JobRunEvent` append. `LaunchProgressCard` (`src/components/client-agents/launch-card.tsx`) then upgrades from 2 stages to real ones. | Service emits progress callbacks at research/template checkpoints |
 | **T3** | **Day-of single-output generation** — task accepts `template_key` + `count: 1`, produces exactly one on-template post | We already send the pinned prompt + `karos_template_key` (§4.1a) and the webhook stamps the result (`route.ts:421-428`). Missing on our side: per-slot firing (§4.9). | Lab engine honors single-slot mode — today it batches. Confirm per product |
 | **T4** | **Note revision as a cheap light run** | Portal fallback is a full custom run, behind a flag; today a note is applied by a **human** — the copy says so and must keep saying so (`src/lib/slot-notes.ts:63-76`) | A dedicated revise skill / task param |
-| **T5** | **Video deliverables (F150 / CD-D1)** | **Landed portal-side** — `Asset.videoUrl` (`types.ts:443`), `<video controls>` (`asset-detail-modal.tsx:258-267`), resolver `assetVideos` (`asset-images.ts:102-128`) | GCP block storage + upload path; service fetches from storage. §3.2 |
+| **T5** | **Video deliverables (F150 / CD-D1)** | **Landed portal-side** — `Asset.videoUrl` (`types.ts:459`), `<video controls>` (`asset-detail-modal.tsx:271-280`), resolver `assetVideos` (`asset-images.ts:102-128`). F150 is the one `DEFERRED-TOMER` row in the ledger | GCP block storage + upload path; service fetches from storage. §3.2 |
 | **T6** | **TikTok connector** | CD-D2 pending-verification chip, RESOLVED, decoupled from launch | TikTok app verification + connector. §3.3 |
 | **T7** | **X daily 3-option generation** — "produce exactly 3 distinct option drafts for `<date>`", consuming the pick/edit/posted learning log | Picker, telemetry and learning-log serialization are **live** (§4.12, `option-picker.tsx`, `slot-option-actions.ts`, `agent-service/x-agent-context.ts`). The interim **batch-slicing** selector is what runs today: a weekly batch lands and `syncOptionsFromBatchAsset` slices it across days (§4.1d) | Lab X skill gains a native daily-options mode + the pick-history optimization contract; the slicer then retires |
 
@@ -798,14 +878,16 @@ The design's highest-fidelity path, and the one thing the slot model is still
 missing. Today:
 
 - The scheduled cron is **`src/app/api/run-scheduled/route.ts`** (there is no
-  `src/app/api/cron/` directory; registered in `vercel.json` at `*/5 * * * *`).
-  It drains `listDuePlannedScheduledRuns(now, 25)` (:32) and fires **one job per
-  schedule row** (:64), stamping `runType: "scheduled"` (:80) and
-  `clientAgentId` (:81) when the row carries one.
-- **It never iterates `agentSlots` and never sends `karos_slot_id`.** The key is
-  reserved in the core (`submit-custom.ts:91` documents it as the intended use of
-  `extraMetadata`) but no caller passes one, and `RESERVED_METADATA` does not
-  list it.
+  `src/app/api/cron/` directory; registered in `vercel.json:16-17` at
+  `*/5 * * * *`). It drains `listDuePlannedScheduledRuns(now, 25)`
+  (`run-scheduled/route.ts:40`) and loops **one job per schedule row** (:69,
+  submit at :72), stamping `runType: "scheduled"` (:88) and `clientAgentId` (:89)
+  when the row carries one.
+- **It never iterates `agentSlots` and never sends `karos_slot_id`.** A grep for
+  `karos_slot_id` across `src/` still returns nothing at HEAD. The key is
+  *reserved by intent only* — `SubmitCustomAgentInput.extraMetadata`
+  (`submit-custom.ts:102-106`) names slot ids as what belongs there — but no
+  caller passes one, and `RESERVED_METADATA` does not list it.
 - The webhook therefore has **no slot branch**. `phase3-design.md` §8.2 specifies
   one: a slot-linked run should stamp `templateKey`/`templateName` from metadata
   (that half is built), link `assetId`/`jobId` onto the slot, and **skip reflow
@@ -837,13 +919,13 @@ Build order when you get here: per-slot cron firing (emit `karos_slot_id` via
 |---|---|---|
 | `matchAssetsToSlots` | `slot-plan.ts:269` | **none outside tests** |
 | `validateSlotReorder` | :350 | **none outside tests** |
-| `applySlotMatches` (the write twin) | `src/lib/data-client-agents.ts:250` | **none anywhere** |
+| `applySlotMatches` (the write twin) | `src/lib/data-client-agents.ts:262` | **none anywhere** |
 
-Wired and working, for contrast: `generateSlotHorizon` (:125) and
+Wired and working, for contrast: `generateSlotHorizon` (`slot-plan.ts:125`) and
 `slotScheduleFor` (:64) via `ensureSlotHorizon`
-(`src/lib/client-agent-slots.ts:94`), `reorderTemplateKeys` (:379) via
-`client-agent-run-actions.ts:238`, and `assignOptionRefs` (:423) via
-`client-agent-slots.ts:177`.
+(`src/lib/client-agent-slots.ts:94`), `reorderTemplateKeys` (`slot-plan.ts:379`)
+via `client-agent-run-actions.ts:252`, and `assignOptionRefs`
+(`slot-plan.ts:423`) via `client-agent-slots.ts:177`.
 
 Meanwhile **`reflowClientChain` (`src/lib/chain.ts:22`, a 35-line file) has zero
 slot awareness** — no reference to `AgentSlot`, `agentSlots`, `dateKey` or
@@ -853,10 +935,12 @@ per-day chain, and applies the assignments. Its callers:
 — **none of them fences off a live umbrella's family.**
 
 The contract that should stop the collision already exists as a *comment*:
-`ClientAgent.chainFamily` (`src/lib/types.ts:1658`) says "while it is live, the
+`ClientAgent.chainFamily` (`src/lib/types.ts:1713`) says "while it is live, the
 slot planner owns this family for this client and plain reflow must not re-date
-its assets" — but the field is read only by `agent-identity-map.ts:108`, for
-labeling. Nothing enforces it.
+its assets" — but the field is read only by `agent-identity-map.ts:138`, for
+labeling. Nothing enforces it. (Don't confuse it with `chainFamilyFor(type)` in
+`src/lib/post-chain.ts:62`, which maps an asset TYPE to a family and is wired
+everywhere — the enforcement gap is in the umbrella-level field.)
 
 So: wire `matchAssetsToSlots` on its own and every webhook delivery, import and
 staff reflow will re-date the assets the slot planner just placed — the two
@@ -871,17 +955,29 @@ planners fight, and the client watches their calendar shuffle. **Requirements:**
 
 ### 4.11 Calendar slot rendering — nothing renders a slot outside the week strip
 
-Verified: `AgentSlot` appears in exactly five non-test files, **all under
-`src/lib/`** (`types.ts`, `slot-plan.ts`, `client-agent-slots.ts`,
-`data-client-agents.ts`, `slot-notes.ts`). **Zero usages in `src/components/` or
-`src/app/`.** Components consume a flattened, server-redacted projection instead
-— `ClientAgentCardRow["week"]` (`src/components/client-agents/types.ts:71-84`),
-built at `src/lib/client-agent-rows.ts:365` from `upcomingSlots` (7 days).
+Re-verified at HEAD. The **`AgentSlot` type** is used in six non-test files, all
+under `src/lib/` — `types.ts` (the interface, :1808), `slot-plan.ts`,
+`client-agent-slots.ts`, `data-client-agents.ts`, `slot-notes.ts`, plus a comment
+mention in `client-agents.ts`. **Still zero type usages in `src/components/` or
+`src/app/`.**
+
+*Grep warning, new in v3:* a plain `grep -r AgentSlot src` now returns eleven
+files, because the action names contain the string — `pickAgentSlotOptionAction`,
+`setAgentSlotNoteAction`, `getAgentSlot`, `updateAgentSlot`,
+`claimAgentSlotOptionPick`. Those are calls, not the type. Grep for
+`AgentSlot[,>\s]` or check the import if you want the real answer.
+
+Components consume a flattened, server-redacted projection instead —
+`ClientAgentCardRow["week"]` (`src/components/client-agents/types.ts:71-84`),
+built at `src/lib/client-agent-rows.ts:440` from `upcomingSlots`
+(called :346, `WEEK_STRIP_DAYS = 7` at :49).
 
 The only surface that paints slots is **`WeekStrip`
-(`src/components/client-agents/live-card.tsx:400`)**, mounted on the live card
-(:146) and the agent detail page (`agent-detail-panel.tsx:191`). Siblings:
-`StaffSlotNotes` (`live-card.tsx:483`), `slot-note-modal.tsx:57`,
+(`src/components/client-agents/live-card.tsx:248`)**. **Changed since v2:**
+`ClientAgentLiveCard` was deleted from that file, so the week strip's *only*
+mount is now the agent detail panel (`agent-detail-panel.tsx:263`, imported :10);
+`StaffSlotNotes` (`live-card.tsx:331`) mounts beside it at
+`agent-detail-panel.tsx:268`. Siblings: `slot-note-modal.tsx:57`,
 `option-picker.tsx:50`.
 
 **The client calendar has no slot concept at all** — a case-insensitive search
@@ -890,7 +986,7 @@ nothing. Consequences:
 
 - Slots are visible on the agents surface but not on the calendar, which is
   where a client actually looks at their month.
-- **§4.4 paused-grey depends on this.** `calendar-body.tsx:200` filters
+- **Paused-grey depends on this.** `calendar-body.tsx:233` filters
   `scheduledRuns` to `status === "active"`, so a paused schedule vanishes
   entirely rather than greying. You cannot grey what you do not render — build
   calendar slot rendering first, and it depends in turn on §4.10.
@@ -899,25 +995,29 @@ nothing. Consequences:
 
 Built by WP-6; here is what the data looks like so you can read it.
 
-- **`JobRunType`** — `src/lib/types.ts:371`: `"launch" | "scheduled" |
+- **`JobRunType`** — `src/lib/types.ts:387`: `"launch" | "scheduled" |
   "manual_template" | "manual"`, stored on the job at `Job.runType`
-  (`types.ts:380`, optional — **legacy jobs have none, deliberately**: heuristic
+  (`types.ts:396`, optional — **legacy jobs have none, deliberately**: heuristic
   launch-detection is unreliable, so analytics buckets them honestly as "before
-  run-type tracking"). Stamped by four paths: `run-scheduled/route.ts:80`
-  (`scheduled`), `client-agent-actions.ts:288` (`launch`),
-  `client-agent-run-actions.ts:132` (`manual_template`),
+  run-type tracking"). Stamped by four paths: `run-scheduled/route.ts:87`
+  (`scheduled`), `client-agent-actions.ts:324` (`launch`),
+  `client-agent-run-actions.ts:146` and :167 (`manual_template`),
   `custom-agent-actions.ts:373` (`manual`). Three paths deliberately do **not**
   stamp: the task engine (`execution-engine.ts:266`), the MCP tool
-  (`mcp/tools.ts:334`), and the managed-product path (`submit-managed.ts:105`).
-- **`CreditOperation`** — `src/lib/types.ts:1369-1385`: `agent_run` (legacy),
+  (`mcp/tools.ts:334`), and the managed-product path, which has its own submit
+  core and its own `createJob` (`submit-managed.ts:118`).
+- **`CreditOperation`** — `src/lib/types.ts:1390-1406`: `agent_run` (legacy),
   `chat_message`, `task_execution`, `doc_correction`, `custom_agent_run`,
-  **`agent_launch`** (:1382), `seat_purchase`, `manual`.
+  **`agent_launch`** (:1403), `seat_purchase` (:1405), `manual`.
 - **`agent_launch` is charged in exactly one place**: the shared submit core,
-  `src/lib/jobs/submit-custom.ts:270`, with the operation coming from the
-  caller's `charge` override (:273) that `submitClientAgentLaunchAction` sets
-  (`client-agent-actions.ts:294`). It is gated by `isBillableClientActor(user)`
-  (:268), so staff and impersonated launches never charge, and a `CreditError`
-  deletes the job (:284) so no orphan survives. Because it uses the same jobId
+  `chargeClientCredits` at `src/lib/jobs/submit-custom.ts:325`, with the
+  operation coming from the caller's `charge` override
+  (`submit-custom.ts:328`). The only caller that sets it is
+  `submitClientAgentLaunchAction` (`client-agent-actions.ts:248`), whose
+  `charge` literal is at `client-agent-actions.ts:328-330`. It is gated by
+  `isBillableClientActor(user)` (`submit-custom.ts:323`), so staff and
+  impersonated launches never charge, and a `CreditError` deletes the job
+  (`submit-custom.ts:339-340`) so no orphan survives. Because it uses the same jobId
   pairing as a normal run, **the webhook's failure refund hands launch credits
   back with no extra code** (`route.ts:202-211`).
 - **Two label maps exist, and the live one is the bucket map.**
@@ -950,12 +1050,13 @@ first.
    strip no longer deletes a `# ` line found anywhere in the body. The function
    is **idempotent** — running it on its own output is a no-op — which is what
    makes the condenser's retry path safe to re-run.
-   `src/lib/__tests__/text-utils.test.ts` pins this: **39 tests**, 20 of which
-   were red before the fix.
+   `src/lib/__tests__/text-utils.test.ts` pins this: **35 tests** at HEAD
+   (`stripPreamble` at `text-utils.ts:52`, `looksLikeYamlBlock` at :20, applied
+   :90), 20 of which were red before the fix.
 
    **What is still owed here is narrow.** The trailing meta-commentary scrubber
    `stripTrailingMetaCommentary` (`src/lib/text-utils.ts:167`) is wired at the
-   **condensation** boundary only — `intel/condense.ts:90` and :117, i.e. the
+   **condensation** boundary only — `intel/condense.ts:90` and :116, i.e. the
    client-tier path. The **pipeline** side has no scrubber at all: all four
    `stripPreamble` calls in `src/lib/intel/pipeline.ts` (:592, :595, :701, :708)
    store the model's output unscrubbed, and :595 is where **internal-tier docs**
@@ -969,60 +1070,81 @@ first.
    but it runs at write time on one path only, and nothing filters at render.
    The other defenses are prompt instructions (`intel/brain.ts:184`,
    `intel/pipeline.ts:518`), which are not enforcement. The nearest thing to a
-   render-time scrubber, `isInternalLine` (`src/lib/doc-render.ts:157`), is
-   invoked **only** from the one-line teaser `toPlainSummary` (:216) —
-   `renderFullDoc` (:452) and `parseDocSections` (:229) never call it, so
+   render-time scrubber, `isInternalLine` (`src/lib/doc-render.ts:164`), is
+   invoked **only** from the one-line teaser `toPlainSummary` (:195, call at
+   :223) — `renderFullDoc` (:459) and `parseDocSections` (:236) never call it, so
    meta-commentary already sitting in a stored body still renders verbatim to
    the client.
 3. **The palette extractor is unreliable and unvalidated.** Stored palettes
    matched no live-site hex for the clients examined. `gatherSiteIntelligence`
    (`src/lib/branding.ts:326`) asks a model to *report* nav/hero/CTA colors as
-   **free text** (:372); that text is fed into a prompt and a second model call
-   emits the palette (`generateObject`, :716/:737). Validation is format-only —
-   `normalizeHex` (:21) expands 3-digit and strips alpha, and :752 falls back to
-   the raw lowercased string when it rejects. **Nothing compares the returned
-   hexes against anything observed on the site.** The one genuinely observed
-   source, `extractColorsFromSvg` (:202, logo SVG only), is passed as advisory
-   prompt text (:539). The anti-hallucination rules in the schema (:434-437) are
-   prose, not code. Until this is fixed, brand colors need the human gate that
-   `refresh-apply.ts` enforces (§2.9).
+   **free text** — the labelled report format it demands is spelled out at
+   :355-364 (`NAV_BG:` / `HERO_BG:` / `CTA_BUTTON_BG:` …); that text is fed into
+   a prompt and a second model call emits the palette (`generateObject`, :716
+   and :737). Validation is format-only — `normalizeHex` (:21) expands 3-digit
+   and strips alpha, and :752 falls back to the raw lowercased string when it
+   rejects. **Nothing compares the returned hexes against anything observed on
+   the site.** The one genuinely observed source, `extractColorsFromSvg` (:202,
+   logo SVG only), is passed as advisory prompt text (:541-547). The
+   anti-hallucination rules in the schema (:433-437, "CRITICAL RULES") are
+   prose, not code. Until this is fixed, brand colors need the human gate the
+   refresh core enforces (§2.9).
 
 ### 4.14 The route map — roster, detail, and the legacy branch
 
-CD-G1 split the agents surface in two. Knowing which page a client lands on
-explains most "why does this client not have X" questions.
+CD-G1 split the agents surface in two; **CD-I1 then split the detail page three
+ways by archetype and gave staff the same roster+detail shape**. Knowing which
+page and which archetype a client lands on explains most "why does this client
+not have X" questions.
 
-- **Roster** — `src/app/(app)/clients/[id]/agents/page.tsx` (client branch
-  :59-221, staff branch :223-366). Cards are built by
-  `src/components/client-agents/roster.tsx` and the whole card is a `<Link>` to
-  the detail route (`roster.tsx:54`, `roster-card.tsx:45-52`). **There is no Run
-  button on a roster card** — by ruling, and structurally: `AgentRosterEntry`
-  (`roster.tsx:15-24`) carries no gate, no template and no run payload, so the
-  card could not offer one.
-- **Detail** — `src/app/(app)/clients/[id]/agents/[agentId]/page.tsx:63`, a
-  server component. Auth/redirect :68-75, a 7-way parallel fetch :86-97, a
-  grant-or-earned 404 gate for client viewers :103-112, row projection via
-  `toClientAgentRows` :126-142, blurb via `clientAgentBlurb` :151-155, delivered
-  work :173-192. This page is "the agent's home" per Albert.
-- **Three hero states**, chosen by ternary. The third is the one to know:
-  **`page.tsx:265` — `) : status.tone === "live" ? (`** is the **legacy branch**:
+- **Roster** — `src/app/(app)/clients/[id]/agents/page.tsx` (417 lines: client
+  branch :63-235, staff branch :237-417 — the staff all-in-one card grid was
+  retired for roster parity in `f656481`). Cards are built by
+  `src/components/client-agents/roster.tsx` (`ClientAgentRoster` :51, mounted
+  :225 and :403) and the whole card is a `<Link>` to the detail route
+  (`roster-card.tsx:54-55`). **There is no Run button on a roster card** — by
+  ruling, and structurally: `AgentRosterEntry` (`roster.tsx:15`) carries no gate,
+  no template and no run payload, so the card could not offer one.
+- **Detail** — `src/app/(app)/clients/[id]/agents/[agentId]/page.tsx` (769
+  lines), `ClientAgentDetailPage` at :135, a server component. Auth/redirect
+  :140-147, a 7-way parallel fetch :159-169, a grant-or-earned 404 gate for
+  client viewers :172-183, row projection via `toClientAgentRows` :213-232, blurb
+  via `clientAgentBlurb` :239-243, delivered work from :245. This page is "the
+  agent's home" per Albert.
+- **The archetype fork (CD-I1, new in v3).** `agentArchetype({key, name})`
+  (`src/lib/agent-archetype.ts:90-99`, union at :42) resolves the page into one
+  of `template_calendar` (the default and today's shape), `clip_maker`, or
+  `daily_finder` (which is where the Reddit agent lands, §4.3). It is read at
+  `page.tsx:266` and branches the hero (:646-651), the deliverables heading
+  (:316) and the archive list (:592). The per-archetype view builders live in
+  `src/lib/agent-detail-archetypes.ts` — `agentProducedAssets` :47,
+  `deliverableStamp` :82, `finderDays` :118, `buildClipMakerView` :193,
+  `buildDailyFinderView` :269. **Three page shapes asking "what did this agent
+  make" three different ways is three chances to credit a post to the wrong
+  agent (F147), which is why the join lives in one module.**
+- **The hero states are chosen by ternary. The one to know is the third:**
+  **`page.tsx:512` — `) : status.tone === "live" ? (`** is the **legacy branch**:
   a client with a firing weekly schedule but **no `clientAgents` umbrella**
   (i.e. every pre-Phase-3 client, until §2.8 runs). It renders
-  `LegacyAgentPanel` (:276-287,
-  `src/components/client-agents/legacy-agent-panel.tsx`), which CD-H8 built out
-  from a stub: **Create-new-post** priced button (:84-91) with painted refusal
-  reasons (:93-107), **pace controls** (:110-131 → `AgentScheduleModal` with
-  `paceOnly` for clients), and the deliverables list (rendered by the page at
-  :296-326). Its gate is server-side: `evaluateLegacyRunGate`
-  (`src/lib/client-agent-runs.ts:258`), called at page :205-211.
-  **Deliberately absent** (documented at `legacy-agent-panel.tsx:35-38`):
-  template rows, week strip, per-template feedback, slot notes — all
-  umbrella-gated. **The backfill script (§2.8) is the real fix; this panel is
-  the bridge.**
-- Thirteen components live under `src/components/client-agents/` — roster and
-  card, `launch-card.tsx` (pre-live states), `live-card.tsx` (live card, exports
-  `TemplateRows`/`WeekStrip`/`OptionsRow`), `agent-detail-panel.tsx`,
-  `legacy-agent-panel.tsx`, `client-agents-section.tsx` (staff),
+  `LegacyAgentPanel` (:523,
+  `src/components/client-agents/legacy-agent-panel.tsx`, 197 lines), which CD-H8
+  built out from a stub: **Create-new-post** priced button (:113-132) with
+  painted refusal reasons (:133-150), **pace controls** (:149-171 →
+  `AgentScheduleModal` at :183-193, `paceOnly` for clients at :190). The
+  deliverables list is rendered by the page, not the panel
+  (`[agentId]/page.tsx:588-626`). Its gate is server-side:
+  `evaluateLegacyRunGate` (`src/lib/client-agent-runs.ts:320`), called at page
+  :370-376. **Deliberately absent** (documented at
+  `legacy-agent-panel.tsx:47-51`): template rows, week strip, per-template
+  feedback, slot notes — all umbrella-gated. **The backfill script (§2.8) is the
+  real fix; this panel is the bridge.**
+- **Fifteen** components now live under `src/components/client-agents/` (v2 said
+  thirteen; CD-I1 added the archetype set) — `roster.tsx` + `roster-card.tsx`,
+  `launch-card.tsx` (pre-live states), `live-card.tsx` (exports
+  `TemplateRows`/`OptionsRow`/`WeekStrip`/`StaffSlotNotes`; `ClientAgentLiveCard`
+  itself has since been deleted), `agent-detail-panel.tsx`,
+  `legacy-agent-panel.tsx`, **`archetype-cards.tsx`**, **`clip-gallery.tsx`**,
+  **`daily-finder-panel.tsx`**, `client-agents-section.tsx` (staff),
   `agent-economics.tsx` (staff USD + launch calibration), `feedback-modal.tsx`,
   `option-picker.tsx`, `slot-note-modal.tsx`, `types.ts`.
 
@@ -1069,15 +1191,17 @@ Small but easy to misread, because it moved during the build.
    nothing renders a slot on the calendar to grey.
 4. **Attention-count inflation (post-F97):** the dashboard attention row folded
    in every draft. **Resolved by WP-5's archive rework** — clients no longer see
-   drafts at all (`asset-visibility.ts:73`), so the count no longer inflates.
-   Kept here as history because the copy debt in §5.2 references it.
+   drafts at all (`isInClientArchive`, `asset-visibility.ts:101`, the draft
+   rejection at :106; the three rules are documented :50-64), so the count no
+   longer inflates. Kept here as history because §5.2's copy debt references it.
 5. **`ANALYTICS_LIVE_INGEST`** — §2.7.
 6. **The X learning-log window — OPEN RULING, needed before WP-9 runs at volume.**
    The learning log that teaches the X agent a client's taste is capped at
    **`FEEDBACK_ROWS_PER_ACCOUNT = 30`**
-   (`src/lib/agent-service/x-agent-context.ts:44`, applied :74) — and the window
+   (`src/lib/agent-service/x-agent-context.ts:45`, applied :75) — and the window
    is **per account bucket, not per client**, fed newest-first from
-   `listXDraftFeedback` (:155, `data.ts:2309-2317`).
+   `listXDraftFeedback` (called :156; defined `data.ts:2348-2356`, the
+   newest-first sort at :2355).
    Each daily pick auto-writes the **two** unpicked options as `not_posted` rows
    (`src/lib/actions/slot-option-actions.ts:166-179`, literal at :175), and
    marking the winner posted writes a third (`recordPostedOptionFeedback`,
@@ -1106,8 +1230,10 @@ Small but easy to misread, because it moved during the build.
   attention" on weekly cadence.
 - **F108 residuals:** legacy zone-less schedule rows keep old behavior until
   re-saved (by design); posts / past-runs / today-highlight still bucket in
-  the runtime-local zone (`dayKey` in `src/components/run-calendar.tsx` only
-  gets a zone for planned runs).
+  the runtime-local zone. `dayKey` (`src/components/run-calendar.tsx:108`) takes
+  the zone as an *optional* second argument, and only the planned-run call site
+  passes one (:603); the posts call site does not (:612). That optionality is
+  the residual — re-verified at HEAD.
 - **F109 half:** a run in review has zero client-visible assets (webhook
   creates drafts; clients don't see drafts), so the client-side Review
   affordance appears only post-approval. Dissolves with F149/A4.
@@ -1131,8 +1257,9 @@ Small but easy to misread, because it moved during the build.
   uses, so an employee's RSC payload no longer carries the ids, volumes or
   `lastRunAt` of clients outside their assignment. What remains is
   PERFORMANCE, not exposure: the page still runs unfiltered `listAssets()` and
-  `listJobs()` and reduces in memory to print two numbers per card. Replacing
-  both with a server-side `count()` per visible client is the open work.
+  `listJobs()` (`clients/page.tsx:13-14`) and reduces in memory (:36-38) to print
+  two numbers per card. Replacing both with a server-side `count()` per visible
+  client is the open work.
 - **F86 behavior change:** a client with no client-tier docs now gets "No
   documents to summarize yet." instead of an internal-derived brief —
   correct, but visible on mock-client walks.
@@ -1156,16 +1283,22 @@ Small but easy to misread, because it moved during the build.
   generation (seam T7). Churn-honest because option texts cross the RSC boundary
   only on their own day, but it is the degraded mode.
 - **Paused umbrellas cannot grey on the calendar** — §4.11, blocked twice over.
-- **`ScheduledRunsCard` toggle/delete are still silent.** The legacy
-  `/api/scheduler` route was hardened (cron auth :28, `Promise.allSettled` :44,
-  a structured `{processed, fired, skipped, failed, results}` response :93-99)
-  and the create path now surfaces errors (`scheduled-runs.tsx:85`, rendered
-  :253) — but `onToggle` (:93-98) and `onDelete` (:100-105) remain
-  fire-and-forget with no `try/catch`. Half of v1's claim closed; this half did
-  not.
-- **`asset-card.tsx:589` still calls `markAssetPostedAction` inline** rather than
-  using the extracted `MarkPostedRow`. Harmless, but it is a third code path to
-  the same action.
+- ~~**`ScheduledRunsCard` toggle/delete are still silent.**~~ **CLOSED — v2 is
+  wrong at HEAD.** It was fixed in `5d2355f` ("surface errors and confirm deletes
+  on the settings schedule rows", F110). `ScheduledRunRow`
+  (`src/components/scheduled-runs.tsx:50`) now carries per-row `busy`/`error`
+  state (:52-54); **`onToggle` (:56-76) and `onDelete` (:78-95) each wrap the
+  action in `try`/`catch`, capture `{ error }`, and render it at :163**, and the
+  delete asks for confirmation first (`confirmingDelete`, :55). The rationale is
+  the comment at :40-49. The legacy `/api/scheduler` route (120 lines) is hardened
+  the same way: cron auth :32-33 (`requireCronSecret`, imported :11),
+  `Promise.allSettled` :48, a structured
+  `{processed, fired, skipped, failed, results}` response :114-120. The create
+  path's own error state is `ScheduledRunsCard` :180, rendered :347. **Nothing
+  here is owed.**
+- **`asset-card.tsx` still calls `markAssetPostedAction` inline** — `handleMarkPosted`
+  at :599, the call at :601 — rather than using the extracted `MarkPostedRow`.
+  Harmless, but it is a third code path to the same action.
 - **Environmental, report-only:** a 10px right gutter persists wherever classic
   scrollbars are enabled (`scrollbar-gutter: stable`). The forced root scrollbar
   was removed as ruled, so macOS gets true edge-to-edge; other platforms are
@@ -1175,11 +1308,14 @@ Small but easy to misread, because it moved during the build.
 
 ### 5.3 Finding-shaped gaps logged for end-loop triage (no PDF number)
 
-- Legacy `/api/scheduler` + `ScheduledRunsCard` — **partly fixed**, see §5.2.
-  The toggle/delete silent failures survive.
-- `src/components/client-home.tsx` is **still** dead code at HEAD (zero
-  importers) carrying a stale approval-lie string — end-loop deletion;
-  **do not revive**.
+- ~~Legacy `/api/scheduler` + `ScheduledRunsCard`~~ — **fully closed**, see §5.2.
+- ~~`src/components/client-home.tsx` is still dead code at HEAD~~ — **DELETED,
+  and the entry is retired.** It went in **`94ffa14`** ("drop dead ClientHome and
+  the unreachable run-gate fallback", #23), which also removed the only caller
+  that shipped an intake gate with no inline payload — so the run dialog's
+  navigate-away setup panel and `AgentDataButton`'s anchor variant went with it.
+  **Do not resurrect it.** The live client dashboard component is the separate
+  `src/components/client-home-overview.tsx`; don't confuse the two names.
 - `client-guidelines` is a permanently dead `DOC_TABS` row (internal-only
   tier, `pickDoc` never surfaces it).
 - `AiProcessingBanner` mounts only on dashboard/settings — on other client
@@ -1190,18 +1326,22 @@ Small but easy to misread, because it moved during the build.
   (self-inflicted scope only).
 - **Copilot: both of the two are now closed** (v2 listed one as live).
   - *Benchmarks — FIXED.* The fetch is still unscoped
-    (`src/app/api/clients/[id]/chat/route.ts:80`) but a provenance filter now
+    (`getClientPerformanceBenchmarks` in the parallel block,
+    `src/app/api/clients/[id]/chat/route.ts:84`) but a provenance filter now
     sits between it and the prompt: rows whose `source !== "live"` are dropped
-    for `CLIENT_USER` and `sampleSize` is recomputed (:207-213, consumed
-    :238-242).
+    for `CLIENT_USER` and `sampleSize` is recomputed (:220-226, rationale
+    :213-219, consumed :251-254).
   - *Branding write — FIXED (035a2f6), and the remaining path is ACCEPTED.*
     v2 described `update_branding_guidelines` as registered ungated, so a
     billed `CLIENT_USER` could push free-form chat text into the
     **internal-tier** branding doc. That is closed:
     `src/lib/copilot-tool-access.ts` strips the tool out of a client session's
-    registry entirely (`copilotToolsFor`, the primary fence — an unlisted tool
-    cannot be called) and `brandingToolRefusal` refuses inside `execute` as
-    defence in depth. Impersonation does not lift it: an admin in "View as
+    registry entirely (`copilotToolsFor` :84, the primary fence — an unlisted
+    tool cannot be called; the exclusion is stated at :29) and
+    `brandingToolRefusal` (:133, message `BRANDING_TOOL_REFUSAL` :101) refuses
+    inside `execute` as defence in depth. `e440f0b` later inverted the fence from
+    a denylist to an **allowlist**, so a newly added tool is client-invisible
+    until someone lists it. Impersonation does not lift it: an admin in "View as
     Client" arrives as a `CLIENT_USER` and is denied, the same line
     `isBillableClientActor` draws for credits.
 
@@ -1209,26 +1349,36 @@ Small but easy to misread, because it moved during the build.
     do not "fix" it.** A client CAN still change their own branding, through
     BrandColorsSection → BrandingModal → `saveBrandingGuidelinesAction`
     (`src/lib/actions/branding-actions.ts:47`). That is a different act from
-    the one v2 flagged, on three counts: it **authorizes**
-    (`requireClientAccess`); it **protects the internal field** — `usagePct` is
-    the agency's mix guidance, stripped at the RSC boundary by
-    `toClientBrandingView` (`src/lib/client-visibility.ts`) so it never reaches
-    the browser, and re-applied from storage on save by `preserveInternalUsage`
-    (:27), matched on hex first and position second, so a client reordering
-    swatches cannot blank the agency's numbers; and it is **audited** — every
+    the one v2 flagged, on three counts: it **authorizes** (`requireClientAccess`
+    at `branding-actions.ts:51`); it **protects the internal field** — `usagePct`
+    is the agency's mix guidance, stripped at the RSC boundary by
+    `toClientBrandingView` (`src/lib/client-visibility.ts:23`, applied :106) so it
+    never reaches the browser, and re-applied from storage on save by
+    `preserveInternalUsage` (**`branding-actions.ts:28`**, called :58 — v2 put
+    this function in the wrong file), matched on hex first and position second,
+    so a client reordering swatches cannot blank the agency's numbers; and it is
+    **audited** — every
     save writes a `BRANDING_UPDATED` activity log naming the actor and role.
     A client owning their own colors is the product working; what §6.6 forbids
     is an *unauthorized, unaudited* write into internal-tier content, which is
     what the chat tool was and the rail is not.
 - **`assignOptionRefs`/`matchAssetsToSlots` dead-code pairs** — §4.10, §4.15.
-- The non-docked floating `ChatbotWidget` branch (`floatingPosition`, fixed
-  380px panel) is unreachable — end-loop deletion, found during CD-G8.
-- `src/components/theme-toggle.tsx` became unreferenced when the CD-G9c chrome
-  relocation landed (the relocations use labeled `ThemeSwitch` rows) — delete in
-  the end loop.
-- `calendar-body.tsx` ~:178 falls back to `agent.description` for a blurb — the
-  same CD-G2 defect class on the calendar surface. Fix via `clientAgentBlurb`
-  (`src/lib/agent-blurbs.ts:155`), which every other surface already uses.
+- The non-docked floating `ChatbotWidget` branch is **still unreachable at HEAD**
+  — both call sites pass `docked` (`copilot-dock.tsx:184`, :234), so
+  `floatingPosition` (`chatbot-widget.tsx:623`, defaulted :636) and the
+  `{!docked && …}` bubble at :688 are dead. End-loop deletion, found during CD-G8.
+- ~~`src/components/theme-toggle.tsx` became unreferenced…~~ — **DONE. The file
+  no longer exists**; it was deleted in the same commit that relocated the chrome
+  (`f254d20`, CD-G9c). The live component is
+  `src/components/theme-switch.tsx:9` (`ThemeSwitch`), mounted in `sidebar.tsx`
+  (:347, :637, :720), `client-rail.tsx:319` and `account-menu.tsx:86`.
+- ~~`calendar-body.tsx` ~:178 falls back to `agent.description` for a blurb~~ —
+  **CLOSED.** The calendar surface routes client viewers through
+  `clientAgentBlurb` in both places it needs a blurb: the schedule dialog's agent
+  options (`calendar-body.tsx:216-218`, with the payload-leak rationale at
+  :205-207) and the scheduled-run chips (:241-247, rationale :236-240). Staff
+  still get `clientBlurb || description` at :247 — that is correct, the manifest
+  is theirs to read. Resolver: `src/lib/agent-blurbs.ts:155`.
 - **Feedback-list gaps** (from the WP-2/WP-3 lens round, accepted for now): the
   200-row feedback cap counts resolved rows and no delete exists, so the copy can
   advise an impossible action; and Withdraw renders as "Resolved" in the list.
@@ -1245,8 +1395,12 @@ enforced; breaking them will fail the same review gates.
 - **All Firestore access is server-side** through `src/lib/data.ts` (Admin
   SDK). The browser uses Firebase only for auth; `firestore.rules` denies all
   direct client access.
-- **All writes go through server actions** in `src/lib/actions/*` (barrel:
-  `src/lib/actions.ts`), each authorizing via `getCurrentUser()` /
+- **All writes go through server actions** in `src/lib/actions/*` — 36 domain
+  modules. **There is no `src/lib/actions.ts`**: the `@/lib/actions` import that
+  CLAUDE.md and half the components use resolves through the directory index,
+  `src/lib/actions/index.ts:5` onwards. Each domain file carries its own
+  `"use server"`, so the re-exports stay server actions. Each authorizes via
+  `getCurrentUser()` /
   `requireStaff()` / `requireAdmin()`. A server action is a public network
   endpoint — **the UI is never the guard**.
 - **Timestamps are epoch millis** (`number`), everywhere.
@@ -1273,7 +1427,7 @@ reports false "zero matches / zero importers". Use:
 LC_ALL=C grep -an "buildRecommendations" src/lib/seo-geo.ts
 ```
 
-Re-verified at HEAD: 80,257 bytes, 1,603 CRLF pairs, **2 NUL bytes**, both the
+Re-verified at HEAD: 81,811 bytes, 1,632 CRLF pairs, **2 NUL bytes**, both the
 Map-key separator (`seo-geo.ts:1379` sets, :1384 gets; the map is built at :1378).
 A plain `grep -n "byKey" src/lib/seo-geo.ts` still exits 1 with **zero output**,
 and a recursive grep over `src/lib/` silently omits the file entirely. Only
@@ -1318,9 +1472,10 @@ goes through it — printing raw `job.status` puts the database enum ("review") 
 front of a client, which is exactly findings F41/F120. Do not add a second
 label map; re-verified at HEAD, there still isn't one (the other status maps in
 the tree are different domains: `Asset["status"]`, `TaskStatus`, `BoardStatus`).
-**`cancelled` has landed** (`job-status.tsx:19`, `JobStatus` at
-`src/lib/types.ts:210`): terminal, distinct from `failed`, because a cancel is
-not a failure (F30). The webhook maps it explicitly (`route.ts:44`).
+**`cancelled` has landed** (`job-status.tsx:19`, `JobStatus` declared at
+`src/lib/types.ts:209` with the member and its rationale at :215-222): terminal,
+distinct from `failed`, because a cancel is not a failure (F30). The webhook maps
+it explicitly (`route.ts:44`, inside `STATUS_MAP` :38-45).
 
 The credit vocabulary has the same choke-point discipline but **two** maps —
 see §4.12 before adding an operation.
@@ -1347,8 +1502,9 @@ docs. If a client's browser can see it in the payload, it's shipped.
   never written inline in app code**, because dev credentials point at
   production Firestore.
 - Verification gates before any merge: `npx tsc --noEmit` ·
-  `npm run build` · `npx vitest run` (879 tests / 71 files green at `f7a126b` —
-  if your branch reports fewer, you dropped a file).
+  `npm run build` · `npx vitest run` (**1,281 tests / 93 files green at
+  `9e7c46e`**; it was 879 / 71 at `f7a126b` — if your branch reports fewer files,
+  you dropped one in a merge).
 - Guard zones still standing: no AI Insights rework beyond listed defects
   (directive B5); never expose content pre-generation (A3/A4).
 
@@ -1379,7 +1535,8 @@ The portal's inline-markdown renderers use **regex lookbehind** — `(?<!\w)` /
 `(?<=…)` — to keep `_snake_case_` identifiers from turning into italics:
 
 - `src/components/ai-insights.tsx:201` (module-scope literal, the F126 fix)
-- `src/lib/doc-render.ts:300`, `:303`
+- `src/lib/doc-render.ts:307`, `:310` (inside `stripInlineMarkdown`; the comment
+  at :303 explains why the `(?<!\w)`/`(?!\w)` pair is there)
 - `src/components/client-documents.tsx:149`, `:152`
 
 Lookbehind is a **parse-time** feature. An engine that does not support it
@@ -1412,7 +1569,14 @@ renumber. When you close a §4 seam, say so in place with the commit rather than
 deleting the entry: half this document's value to the next reader is knowing
 what used to be true.*
 
-**Section list (v2):**
+*And re-check the line numbers. v3 found that **ten of fourteen** spot-checked
+`file:line` citations had gone stale in a single wave — a doc that points you at
+the wrong line is worse than one that points at a symbol. The rule that survived:
+**cite a line only for code, never for a `LEDGER.md`/`rescopes.md` row** (those
+are keyed by id, and rows get inserted above yours), and always keep the symbol
+beside the number so the reader can re-locate it when it drifts anyway.*
+
+**Section list (v3):**
 §1 State of the branch (1.1 campaign · 1.2 ledger · 1.3 Phase 1 · 1.4 Phase 2 ·
 1.5 verification system · **1.6 Phase 3 + CD-G/CD-H**) ·
 §2 Ops runbook (2.1 blurbs · 2.2 asset titles · 2.3 scripts inventory ·
@@ -1421,7 +1585,8 @@ what used to be true.*
 **2.9 CD-G7 refresh** · **2.10 per-agent pricing** · **2.11 grants + fill-only**) ·
 §3 Infra (3.1 CPU throttling · 3.2 video/GCP · 3.3 TikTok) ·
 §4 Deferred seams (**4.1 the metadata contract** · 4.2 managed-products retired ·
-4.3 Reddit · 4.4 Publish Now · 4.5 publish idempotency · 4.6 corrections vs
+**4.3 Reddit — LANDED, not a seam** · **4.4 Publish Now — CLOSED** ·
+4.5 publish idempotency · 4.6 corrections vs
 condensation · 4.7 global correction action · **4.8 T1–T7** ·
 **4.9 per-slot cron + slot notes** · **4.10 the two planners** ·
 **4.11 calendar slot rendering** · **4.12 credits/runType vocabulary** ·
