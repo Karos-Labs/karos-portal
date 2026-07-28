@@ -944,3 +944,18 @@ loop has genuinely converged rather than gaming the counter.)
   client in staff reporting is intentional observability.
 - HUB PICKER: our fix stands (filtered dropdown, fixed chip, disabled Run) —
   F38 fix confirmed by Albert.
+
+### CD-I1 — Per-archetype agent pages + staff parity (Albert, 2026-07-28 evening)
+Albert: "I want it to always pop up the whole thing… compiled… everything about
+that agent… documents, the archive of everything that got created, current
+outputs, the calendar… in a logical UI for each of the agents based on what
+each of the agents does." Three archetypes from his examples:
+1. Template-calendar (Instagram/LinkedIn/X/social) — today's detail shape ✓.
+2. Clip maker (TikTok/Branded Shorts) — deliverables-first video gallery
+   (F150 render path), source intake, scheduled clip slots; no template rows.
+3. Daily finder (Reddit) — today's found threads hero, DAILY calendar strip
+   (fully calendar-connected per Albert), subreddit intake, per-find feedback.
+Common chassis everywhere: status, per-agent archive, documents, data,
+connectors, feedback. STAFF PARITY: staff agent clicks open the same full
+page (retire the staff all-in-one cards deferral). Sequenced AFTER the Tomer
+reconciliation merge (same files; Reddit arrives with it).

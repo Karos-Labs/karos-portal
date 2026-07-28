@@ -194,6 +194,7 @@ are tracked in the CD table at the bottom.
 | CD-H6 | SHELL | audit | RESOLVED | Company sheet closes on md crossing; no orphan click catchers |
 | CD-H7 | WORKSPACE/SHELL | audit | RESOLVED | a) container-query toolbar (deviation flagged) b) one badgeLabel c) one-clock calendar d) Landing Builder blurb |
 | CD-H8 | AGENTS | audit | RESOLVED | Legacy live-schedule detail page: run gesture, pace, deliverables |
+| CD-I1 | AGENTS | 5 | OPEN | Per-archetype agent detail pages (template-calendar / clip-maker / daily-finder) + staff parity; after Tomer merge |
 | CD-G7 | — | end-loop | OPEN | Fleet COMPLETION refresh: one team per client, keep existing data, internal Claude agents, --apply-gated Firestore writes; runs after CD-G1..G6 |
 
 ## Guard zones (all phases)
