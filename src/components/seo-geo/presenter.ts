@@ -306,7 +306,8 @@ export function buildCaptureStrip(
 
 /* ── Engines ──────────────────────────────────────────────────────── */
 
-export type EngineStatus = "measured" | "no-data" | "not-wired";
+/** CD-B2: "not-wired" removed — every tracked engine has a provider. */
+export type EngineStatus = "measured" | "no-data";
 
 export interface EngineBrandRow {
   name: string;
@@ -344,7 +345,8 @@ export interface EngineView {
   ghost: { label: string; explainer: string } | null;
 }
 
-const ENGINE_ORDER: EngineId[] = ["chatgpt", "gemini", "claude", "perplexity", "copilot"];
+/** Display order for every engine surface. CD-B2 removed Perplexity and Copilot. */
+const ENGINE_ORDER: EngineId[] = ["chatgpt", "gemini", "claude"];
 
 /** Closed provider → "measured through …" phrase (provenance without badges). */
 const PROVIDER_PHRASES: Record<string, string> = {
@@ -362,16 +364,13 @@ function fraction(count: number, total: number, noun: string): string {
   return `${count} of ${total} ${noun}`;
 }
 
-/** Closed status → copy map for the two unmeasured states. */
+/**
+ * Copy for the one unmeasured state. CD-B2 removed the "not-wired" tier along with
+ * Perplexity and Copilot: every tracked engine has a wired provider now, so a
+ * permanently-unreachable "we can't measure this yet, flag us to add it" tier would
+ * be exactly the dead client-facing surface F7 and F152 exist to prevent.
+ */
 const UNMEASURED_COPY = {
-  "not-wired": {
-    statusLabel: "not yet measured",
-    explainer: (name: string) =>
-      `We can't measure ${name} yet. Our connection to this engine isn't built. Your scores only count the engines we can actually measure, so nothing here is guessed.`,
-    causeLine: (name: string) =>
-      `We can't ask ${name} questions yet. Our connection to this engine isn't built.`,
-    prefill: engineFlagPrefill,
-  },
   "no-data": {
     statusLabel: "no answers this run",
     explainer: (name: string) =>
@@ -488,12 +487,11 @@ export function buildEngineViews(
   return ENGINE_ORDER.map((engine) => {
     const row = byEngine.get(engine) ?? null;
     const name = ENGINE_LABELS[engine] ?? "Engine";
-    const source = row?.source ?? ENGINE_PROVIDERS[engine] ?? null;
     const measured = !!row && row.captureTier !== "UNAVAILABLE" && row.promptsMeasured > 0;
-    const status: EngineStatus = measured ? "measured" : source === null ? "not-wired" : "no-data";
+    const status: EngineStatus = measured ? "measured" : "no-data";
 
     if (status !== "measured" || !row) {
-      const copy = UNMEASURED_COPY[status === "not-wired" ? "not-wired" : "no-data"];
+      const copy = UNMEASURED_COPY["no-data"];
       return {
         engine,
         name,
@@ -1178,13 +1176,6 @@ export interface FlagPrefill {
   message: string;
 }
 
-export function engineFlagPrefill(engineName: string, insights: SeoGeoInsights): FlagPrefill {
-  return {
-    subject: `Request: measure ${engineName} in our AI visibility snapshot`,
-    message: `We'd like ${engineName} added to our AI visibility snapshot. It currently shows "not yet measured" on our dashboard (snapshot ${formatCaptured(insights.capturedAt)}).`,
-  };
-}
-
 export function noDataFlagPrefill(engineName: string, insights: SeoGeoInsights): FlagPrefill {
   return {
     subject: `Question about ${engineName} in our AI visibility snapshot`,
@@ -1192,14 +1183,10 @@ export function noDataFlagPrefill(engineName: string, insights: SeoGeoInsights):
   };
 }
 
-/** One request covering every unwired engine, for the capture-strip banner. */
-export function unwiredRequestPrefill(engineNames: string[], insights: SeoGeoInsights): FlagPrefill {
-  const names = engineNames.join(" and ");
-  return {
-    subject: `Request: measure ${names} in our AI visibility snapshot`,
-    message: `We'd like ${names} added to our AI visibility snapshot (snapshot ${formatCaptured(insights.capturedAt)}).`,
-  };
-}
+/* CD-B2 removed `engineFlagPrefill` and `unwiredRequestPrefill`. Both existed only
+   to let a client ask us to add Perplexity or Copilot coverage; with those engines
+   out of the tracked set there is no unwired engine to request, and keeping the
+   prefills would keep alive a banner that can never render. */
 
 export function genericFlagPrefill(insights: SeoGeoInsights): FlagPrefill {
   return {

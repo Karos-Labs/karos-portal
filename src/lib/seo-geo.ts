@@ -20,8 +20,20 @@
 
 /* ── Engines & provenance ─────────────────────────────────────────── */
 
-/** The five answer engines from the a3 spec. Only engines with a wired provider are probed. */
-export type EngineId = "chatgpt" | "gemini" | "claude" | "perplexity" | "copilot";
+/**
+ * The tracked answer engines. Call directive B2 (2026-07-27) removed Perplexity and
+ * Copilot from the set entirely: neither has a wired provider, so they contributed
+ * nothing but permanent "not yet measured" chips, a "0 of 5 engines measured"
+ * coverage figure that could never reach 5, and a standing flag-us-to-add-them
+ * banner for connectors nobody is building. Removing them from the TYPE is
+ * deliberate — every roster, order and label map is keyed by EngineId, so the
+ * compiler now enforces the removal rather than five separate lists agreeing.
+ *
+ * Snapshots captured before this still carry perplexity/copilot rows; they are
+ * simply not rendered (ENGINE_ORDER drives the UI) and their stored
+ * geoVisibilityEnginesTotal of 5 stands as a historical fact.
+ */
+export type EngineId = "chatgpt" | "gemini" | "claude";
 
 /** Which model provider actually produced a data point (multi-model provenance). */
 export type ProviderSource = "OpenAI" | "Gemini" | "Anthropic";
@@ -33,8 +45,6 @@ export const ENGINE_LABELS: Record<EngineId, string> = {
   chatgpt: "ChatGPT",
   gemini: "Gemini",
   claude: "Claude",
-  perplexity: "Perplexity",
-  copilot: "Copilot",
 };
 
 /** Engine → provider that answers for it in this platform (null = no connector wired yet). */
@@ -42,8 +52,6 @@ export const ENGINE_PROVIDERS: Record<EngineId, ProviderSource | null> = {
   chatgpt: "OpenAI",
   gemini: "Gemini",
   claude: "Anthropic",
-  perplexity: null,
-  copilot: null,
 };
 
 /* ── Probe & answer shapes ────────────────────────────────────────── */

@@ -61,7 +61,8 @@ import { logger } from "@/services/logger";
  */
 
 /** Engines probed per run — the a3 five-engine roster, filtered to wired connectors. */
-const ENGINE_ROSTER: EngineId[] = ["chatgpt", "gemini", "claude", "perplexity", "copilot"];
+/** Tracked engines (CD-B2: Perplexity and Copilot removed — no wired provider). */
+const ENGINE_ROSTER: EngineId[] = ["chatgpt", "gemini", "claude"];
 
 /**
  * Prompts per capture run. The a3 spec + the client report use 20 buyer-intent

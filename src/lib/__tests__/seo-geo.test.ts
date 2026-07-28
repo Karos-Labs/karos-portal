@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  ENGINE_LABELS,
+  ENGINE_PROVIDERS,
   GEO_READINESS_CHECKS,
   REC_COPY,
   SEO_CHECKS,
@@ -289,19 +291,27 @@ describe("PDF/report contract: intent taxonomy, answer grid, citations", () => {
       analyzeAnswer(answer({ engine: "gemini", source: "Gemini", prompt: "best fintech?", answerText: "Rival One is best; also see this guide.", citations: ["acmefintech.com"] }), gaz),
       analyzeAnswer(answer({ engine: "claude", source: "Anthropic", prompt: "is Acme Fintech good?", answerText: "There are other options like Rival One." }), gaz),
     ];
-    const grid = buildAnswerGrid(prompts, ["chatgpt", "gemini", "claude", "perplexity", "copilot"], probes);
+    // CD-B2: the tracked roster is the three engines with wired providers.
+    const grid = buildAnswerGrid(prompts, ["chatgpt", "gemini", "claude"], probes);
     expect(grid).toHaveLength(2);
     const row0 = grid[0];
     expect(row0.intent).toBe("discovery");
-    expect(row0.cells).toHaveLength(5);
+    expect(row0.cells).toHaveLength(3);
     // chatgpt: named + cited + sole roster mention → named_first
     expect(row0.cells.find((c) => c.engine === "chatgpt")?.state).toBe("named_first");
     // gemini: cited the client domain but named Rival One, not the client → ghost
     expect(row0.cells.find((c) => c.engine === "gemini")?.state).toBe("cited_not_named");
-    // perplexity/copilot: no connector → unavailable
-    expect(row0.cells.find((c) => c.engine === "perplexity")?.state).toBe("unavailable");
+    // claude answered the other prompt only → no cell data for this row
+    expect(row0.cells.find((c) => c.engine === "claude")?.state).toBe("unavailable");
     // claude row: named a competitor, client absent
     expect(grid[1].cells.find((c) => c.engine === "claude")?.state).toBe("absent");
+  });
+
+  it("has a wired provider for every tracked engine (CD-B2)", () => {
+    for (const engine of Object.keys(ENGINE_PROVIDERS) as Array<keyof typeof ENGINE_PROVIDERS>) {
+      expect(ENGINE_PROVIDERS[engine]).not.toBeNull();
+    }
+    expect(Object.keys(ENGINE_LABELS).sort()).toEqual(["chatgpt", "claude", "gemini"]);
   });
 
   it("computes the citation leaderboard and always keeps the client's own line", () => {

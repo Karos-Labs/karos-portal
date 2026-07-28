@@ -18,11 +18,9 @@ import {
   buildPresence,
   buildPromptViews,
   buildScoreViews,
-  engineFlagPrefill,
   formatCaptured,
   genericFlagPrefill,
   scoreBand,
-  unwiredRequestPrefill,
 } from "@/components/seo-geo/presenter";
 import {
   GEO_READINESS_CHECKS,
@@ -213,7 +211,7 @@ describe("leak guard (SCRUM-52 fix 1)", () => {
         engineRow(),
         engineRow({ engine: "gemini", source: "Gemini", captureTier: "MEASURED_grounded" }),
         engineRow({
-          engine: "perplexity",
+          engine: "claude",
           source: null,
           captureTier: "UNAVAILABLE",
           promptsMeasured: 0,
@@ -425,22 +423,37 @@ describe("funnel chip (QA F7)", () => {
 });
 
 describe("engine views (SCRUM-52 fixes 2 + 4)", () => {
-  it("always yields all five engines in fixed order, synthesizing missing rows", () => {
+  it("always yields every tracked engine in fixed order, synthesizing missing rows", () => {
     const views = buildEngineViews(insights({ perEngine: [] }));
-    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "gemini", "claude", "perplexity", "copilot"]);
-    // Wired engines with no row are "no answers"; unwired are "not yet measured".
-    expect(views.map((v) => v.status)).toEqual(["no-data", "no-data", "no-data", "not-wired", "not-wired"]);
+    // CD-B2: Perplexity and Copilot are no longer tracked engines.
+    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "gemini", "claude"]);
+    expect(views.map((v) => v.status)).toEqual(["no-data", "no-data", "no-data"]);
   });
 
-  it("synthesizes the missing copilot row from a partial capture and traces the cause", () => {
+  it("drops Perplexity and Copilot even when a legacy snapshot still carries them", () => {
+    const legacy = insights({
+      perEngine: [
+        engineRow(),
+        { ...engineRow(), engine: "perplexity" as never },
+        { ...engineRow(), engine: "copilot" as never },
+      ],
+    });
+    const views = buildEngineViews(legacy);
+    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "gemini", "claude"]);
+    const rendered = JSON.stringify(views);
+    expect(rendered).not.toContain("Perplexity");
+    expect(rendered).not.toContain("Copilot");
+  });
+
+  it("synthesizes a missing engine row from a partial capture and traces the cause", () => {
     const views = buildEngineViews(insights()); // fixture has chatgpt only
-    const copilot = views.find((v) => v.engine === "copilot");
-    expect(copilot?.status).toBe("not-wired");
-    expect(copilot?.statusLabel).toBe("not yet measured");
-    expect(copilot?.causeLine).toContain("connection to this engine isn't built");
+    const claude = views.find((v) => v.engine === "claude");
+    expect(claude?.status).toBe("no-data");
+    expect(claude?.statusLabel).toBe("no answers this run");
+    expect(claude?.causeLine).toContain("no usable answers this run");
   });
 
-  it("treats a wired engine with zero measured prompts as no-data, not not-wired", () => {
+  it("treats a wired engine with zero measured prompts as no-data", () => {
     const views = buildEngineViews(
       insights({ perEngine: [engineRow({ promptsMeasured: 0, brandMentions: [] })] }),
     );
@@ -828,26 +841,22 @@ describe("snapshot age + the promised next snapshot (QA F20)", () => {
 });
 
 describe("flag prefills (fix 4)", () => {
-  it("prefills the connector request with the engine and snapshot date", () => {
-    const prefill = engineFlagPrefill("Perplexity", insights());
-    expect(prefill.subject).toBe("Request: measure Perplexity in our AI visibility snapshot");
-    expect(prefill.message).toContain("snapshot July 12, 2026");
-  });
-
-  it("attaches the right prefill to unmeasured engine views", () => {
+  it("attaches the no-data prefill to unmeasured engine views only", () => {
     const views = buildEngineViews(insights({ perEngine: [engineRow({ promptsMeasured: 0, brandMentions: [] })] }));
     const chatgpt = views.find((v) => v.engine === "chatgpt");
-    const copilot = views.find((v) => v.engine === "copilot");
+    const claude = views.find((v) => v.engine === "claude");
     const measured = buildEngineViews(insights()).find((v) => v.engine === "chatgpt");
     expect(chatgpt?.flagPrefill?.subject).toBe("Question about ChatGPT in our AI visibility snapshot");
-    expect(copilot?.flagPrefill?.subject).toBe("Request: measure Copilot in our AI visibility snapshot");
+    expect(claude?.flagPrefill?.subject).toBe("Question about Claude in our AI visibility snapshot");
     expect(measured?.flagPrefill).toBeNull();
   });
 
-  it("builds one request covering every unwired engine", () => {
-    const prefill = unwiredRequestPrefill(["Perplexity", "Copilot"], insights());
-    expect(prefill.subject).toBe("Request: measure Perplexity and Copilot in our AI visibility snapshot");
-    expect(prefill.message).toContain("snapshot July 12, 2026");
+  it("never offers to add an engine we don't track (CD-B2)", () => {
+    // engineFlagPrefill / unwiredRequestPrefill existed only to request Perplexity
+    // and Copilot coverage; with those out of the set the request is meaningless.
+    const rendered = JSON.stringify(buildEngineViews(insights({ perEngine: [] })));
+    expect(rendered).not.toContain("Request: measure");
+    expect(rendered).not.toContain("not yet measured");
   });
 
   it("degrades gracefully when capturedAt is invalid instead of throwing", () => {

@@ -17,7 +17,6 @@ import {
   capturedNothing,
   formatPrompt,
   genericFlagPrefill,
-  unwiredRequestPrefill,
   type AnswerCellView,
   type AnswerGridView,
   type EngineView,
@@ -406,7 +405,6 @@ export function SeoGeoPanel({
 
   const measuredEngines = engines.filter((e) => e.status === "measured");
   const unmeasuredEngines = engines.filter((e) => e.status !== "measured");
-  const unwiredNames = engines.filter((e) => e.status === "not-wired").map((e) => e.name);
   // An EMPTY tracked list with a legacy snapshot still renders snapshot rows, so
   // fall back to the snapshot roster count rather than announcing "no competitors".
   const competitorCount = trackedCompetitors?.length
@@ -486,14 +484,6 @@ export function SeoGeoPanel({
             <EngineChip key={view.engine} view={view} />
           ))}
         </div>
-        {unwiredNames.length > 0 && (
-          <div className="mt-3">
-            <FlagButton
-              {...unwiredRequestPrefill(unwiredNames, insights)}
-              label={`Want ${unwiredNames.join(" or ")} coverage? Flag it to the Karos team`}
-            />
-          </div>
-        )}
         {noEnginesMeasured && (
           <p className="mt-3 rounded-md border border-info/30 bg-info/10 px-3 py-2 text-xs text-info">
             We couldn&apos;t capture any AI engine answers this run. Your search score and AI
