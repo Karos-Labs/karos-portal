@@ -235,3 +235,10 @@ starting. Updated by the orchestrator after each verification gate.
   CALENDAR (full F108 implementation). CALENDAR wins WHOLESALE (interface+body);
   keep AGENTS' custom-agents.tsx call-site timeZone argument. Post-merge check:
   timeZone must be CONSUMED (recompute path), not accepted-and-ignored.
+- **F39/F45 RETIRE signed off** (orchestrator): dead managed-products UI deleted
+  (managed-products.tsx, client-managed-agents.tsx, submitManagedJobAction, the
+  jobPreviews dead block); submitManagedJob CORE preserved (execution-engine
+  task-board path still runs the four catalog products). Restoration = git revert
+  of the retirement commit. Phase 3: managed-product run UI returns under the
+  unified launch-vs-runs model, never as the old four cards. TOMER-HANDOVER must
+  carry this note.
