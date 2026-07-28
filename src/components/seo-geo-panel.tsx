@@ -61,7 +61,7 @@ function InfoTip({ text }: { text: string }) {
 
 /** One matrix cell: a dot carrying its plain-English outcome as accessible text. */
 function AnswerDot({ mark, tone, label }: { mark: AnswerCellView["mark"]; tone: string; label: string }) {
-  const color = TONE_COLORS[tone as keyof typeof TONE_COLORS] ?? "var(--muted-2)";
+  const color = TONE_COLORS[tone as keyof typeof TONE_COLORS] ?? "var(--muted-3)";
   return (
     <span className="inline-flex items-center justify-center" title={label}>
       <span className="sr-only">{label}</span>
@@ -188,7 +188,7 @@ function ScoreTile({ view }: { view: ScoreView }) {
         {view.bandLabel}
       </p>
       <div className="mt-2.5">
-        <Meter pct={view.coveragePct} color="var(--muted-2)" />
+        <Meter pct={view.coveragePct} color="var(--muted-3)" />
         <p className="mt-1 text-[11px] text-muted-2">{view.coverageLine}</p>
       </div>
       {view.breakdown.length > 0 && (
@@ -247,7 +247,7 @@ function EngineCard({ view }: { view: EngineView }) {
             <li key={b.name} className={b.measured ? undefined : "opacity-55"}>
               <div className="mb-0.5 flex items-center justify-between gap-2 text-xs">
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <BrandFavicon website={b.url} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+                  <BrandFavicon website={b.url} name={b.name} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
                   <span
                     className={
                       (b.isClient ? "font-semibold text-foreground" : "text-muted") + " truncate"
@@ -679,7 +679,7 @@ export function SeoGeoPanel({
             {discovered.map((d) => (
               <li key={d.name} className="flex items-center justify-between gap-2 text-xs">
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <BrandFavicon website={d.url} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+                  <BrandFavicon website={d.url} name={d.name} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
                   <span className="truncate text-muted">{d.name}</span>
                 </span>
                 <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-muted-2">
@@ -760,7 +760,7 @@ export function SeoGeoPanel({
                   : "inline-flex items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted"
               }
             >
-              <BrandFavicon website={chip.url} faviconSize={32} className="h-3 w-3 rounded-[2px]" />
+              <BrandFavicon website={chip.url} name={chip.name} faviconSize={32} className="h-3 w-3 rounded-[2px]" />
               {chip.name}
               {chip.isClient && <span>(you)</span>}
               {chip.pending && <span className="text-muted-2">· next snapshot</span>}
@@ -795,7 +795,7 @@ export function SeoGeoPanel({
             <ul className="space-y-1.5">
               {quotedInstead.map((r) => (
                 <li key={r.domain} className="flex items-center gap-2 text-xs">
-                  <BrandFavicon website={r.domain} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
+                  <BrandFavicon website={r.domain} name={r.domain} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
                   <span className="min-w-0 flex-1 truncate text-muted">{r.domain}</span>
                   <span className="w-20 shrink-0">
                     <Meter pct={(r.citations / leaderboardMax) * 100} color="var(--info)" />
