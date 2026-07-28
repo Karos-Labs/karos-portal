@@ -8,6 +8,7 @@ import { Icon } from "@/components/icon";
 import { AgentIdentity, AgentMark, AgentPlatformBadges } from "@/components/agent-identity";
 import { AgentInputFiles } from "@/components/agent-input-files";
 import { Modal } from "@/components/modal";
+import { ContactUsButton } from "@/components/contact-us-modal";
 import { JobStatusBadge } from "@/components/job-status";
 import {
   createCustomAgentAction,
@@ -26,8 +27,6 @@ import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
 import {
   buildCustomAgentPrompt,
   initialAgentBrief,
-  isLinkedInAgentIdentity,
-  isXAgentIdentity,
   launchProfileFor,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
@@ -42,9 +41,23 @@ import { cn, formatDate, relativeTime } from "@/lib/utils";
  * Deliberately excludes instructions (the system prompt), skill paths, and
  * repo provenance — pages map full docs down to this before passing them.
  */
-export type RunnableAgentSummary = Pick<CustomAgent, "id" | "key" | "name" | "description" | "icon" | "color"> & {
+export type RunnableAgentSummary = Pick<
+  CustomAgent,
+  "id" | "key" | "name" | "description" | "clientBlurb" | "icon" | "color"
+> & {
   creditCost?: number | null;
 };
+
+/**
+ * What a client is allowed to read about an agent. `description` is the lab
+ * repo's own skill manifest — product codes, pipeline architecture, gate names
+ * — so client surfaces render `clientBlurb` instead. Agents imported before the
+ * field existed have none; those fall back to the manifest rather than showing
+ * a blank card, and the staff library flags them for a rewrite.
+ */
+function agentBlurb(agent: Pick<RunnableAgentSummary, "description" | "clientBlurb">): string {
+  return agent.clientBlurb?.trim() || agent.description;
+}
 
 /** One run-history row, pre-filtered and stripped server-side. */
 export interface CustomAgentRunRow {
@@ -69,10 +82,35 @@ export interface ClientAgentScheduleRow {
   prompt: string;
   hour: number;
   minute: number;
+  /**
+   * The scheduler's refusal from the last fire that produced nothing. When set,
+   * the card drops the "Live" badge — an always-on agent that is refused on
+   * every fire must never read as healthy.
+   */
+  lastError?: string | null;
+  /** Epoch millis of that refusal. */
+  lastErrorAt?: number | null;
 }
 
 function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
   return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+}
+
+/**
+ * The intake page an agent drafts from, when it has one (X e13, LinkedIn e10).
+ *
+ * Readiness is resolved PER AGENT on the server and handed down keyed by agent
+ * id. It cannot be recomputed here from one shared flag: `hasLinkedInAgentIntake`
+ * answers differently depending on the agent key it is given (the multi-seat
+ * agent accepts any stored intake; the company-page agents require the company
+ * form), and the submit core passes that key. A single shared answer would block
+ * an agent the server would happily run.
+ */
+export interface AgentSetupState {
+  ready: boolean;
+  href: string;
+  /** e.g. "X agent data" — names the intake page in copy and link labels. */
+  label: string;
 }
 
 function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon">; className?: string }) {
@@ -166,6 +204,9 @@ export function CustomAgentsHub({
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
+                  {/* No client blurb ⇒ the client's card is still falling back to
+                      the lab manifest below. Flagged here, fixed in the editor. */}
+                  {!agent.clientBlurb?.trim() && <Badge tone="warning">No client blurb</Badge>}
                   {!agent.enabled && <Badge tone="warning">Disabled</Badge>}
                   {/* Repo-catalog flag — informational until an admin reviews and enables. */}
                   {!agent.enabled && agent.source?.status === "blocked" && (
@@ -250,8 +291,8 @@ export function ClientCustomAgents({
   contextItems,
   viewerIsClient,
   availableCredits,
-  xSetup,
-  linkedinSetup,
+  agentSetup,
+  viewer,
 }: {
   clientId: string;
   agents: RunnableAgentSummary[];
@@ -261,10 +302,13 @@ export function ClientCustomAgents({
   viewerIsClient: boolean;
   /** Spendable credits right now (balance clipped by caps) — client viewers only. */
   availableCredits?: number;
-  /** X agent intake state: gates the X run behind the "X agent data" page. */
-  xSetup?: { ready: boolean; href: string };
-  /** LinkedIn agent intake state: gates e10 runs behind the "LinkedIn agent data" page. */
-  linkedinSetup?: { ready: boolean; href: string };
+  /** Prefills the support form offered when a schedule is stuck on a refusal. */
+  viewer?: { name: string; email: string };
+  /**
+   * Intake readiness per agent id, resolved server-side with the same call the
+   * submit core makes. Agents without an intake gate are simply absent.
+   */
+  agentSetup?: Record<string, AgentSetupState>;
 }) {
   const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
   const [scheduleAgent, setScheduleAgent] = useState<RunnableAgentSummary | null>(null);
@@ -305,6 +349,23 @@ export function ClientCustomAgents({
               (run) => run.agentName === agent.name && run.status === "review" && run.assetCount > 0,
             );
             const readyAssetCount = reviewRuns.reduce((total, run) => total + run.assetCount, 0);
+            const setup = agentSetup?.[agent.id] ?? null;
+            // Readiness is computed once, next to the "Setup needed" chip, and
+            // gates the run button with it: the submit core refuses these runs
+            // server-side, so an enabled Run beside a blocked chip can only
+            // spend credits on a run that cannot succeed or fail unhelpfully.
+            const blockedSetup = setup && !setup.ready ? setup : null;
+            // A refused schedule is never "Live" — the badge and the status line
+            // both switch to the stored refusal until a fire succeeds. A paused
+            // schedule reports paused: the person who paused it chose that, and
+            // a stale refusal from before the pause is not the current state.
+            // Already redacted for client viewers on the server (toScheduleRows).
+            const refusal =
+              schedule?.status === "active" ? schedule.lastError?.trim() || null : null;
+            const refusalIsSetup =
+              refusal !== null &&
+              (refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
+                refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX));
             const reviewHref = viewerIsClient
               ? "/tasks"
               : reviewRuns[0]?.href ?? `/clients/${clientId}/assets`;
@@ -320,14 +381,16 @@ export function ClientCustomAgents({
                     <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">AI agent</p>
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="truncate text-base font-medium">{agent.name}</p>
-                      {schedule?.status === "active" && (
+                      {refusal ? (
+                        <Badge tone="warning">Needs attention</Badge>
+                      ) : schedule?.status === "active" ? (
                         <Badge tone="success">
                           <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse-neon" aria-hidden="true" />
                           Live
                         </Badge>
-                      )}
+                      ) : null}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agent.description}</p>
+                    <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agentBlurb(agent)}</p>
                   </div>
                   {readyAssetCount > 0 && (
                     <Link
@@ -342,11 +405,14 @@ export function ClientCustomAgents({
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
-                  {xSetup && !xSetup.ready && isXAgentIdentity(agent.key) && (
-                    <Badge tone="warning">Setup needed</Badge>
-                  )}
-                  {linkedinSetup && !linkedinSetup.ready && isLinkedInAgentIdentity(agent.key) && (
-                    <Badge tone="warning">Setup needed</Badge>
+                  {blockedSetup && (
+                    <a
+                      href={blockedSetup.href}
+                      className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
+                      title={`Open ${blockedSetup.label} to finish setup`}
+                    >
+                      <Badge tone="warning">Setup needed</Badge>
+                    </a>
                   )}
                 </div>
                 <div className="mt-3 rounded-md border border-border bg-surface-2/70 px-3 py-2">
@@ -357,11 +423,35 @@ export function ClientCustomAgents({
                         {" · "}
                         {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
                       </p>
-                      <p className="mt-0.5 text-[11px] text-muted-2">
-                        {schedule.status === "active"
-                          ? `Working toward ${formatDate(schedule.nextRunAt)}`
-                          : "Schedule paused"}
-                      </p>
+                      {refusal ? (
+                        <>
+                          <p className="mt-0.5 text-[11px] text-warning">{refusal}</p>
+                          {refusalIsSetup && setup ? (
+                            <a
+                              href={setup.href}
+                              className="mt-1 inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+                            >
+                              Open {setup.label}
+                              <Icon name="ArrowRight" className="h-3 w-3" />
+                            </a>
+                          ) : viewer ? (
+                            <div className="-mx-3 mt-0.5">
+                              <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
+                            </div>
+                          ) : null}
+                          {schedule.lastErrorAt ? (
+                            <p className="mt-0.5 text-[10px] text-muted-2">
+                              Last tried {relativeTime(schedule.lastErrorAt)}
+                            </p>
+                          ) : null}
+                        </>
+                      ) : (
+                        <p className="mt-0.5 text-[11px] text-muted-2">
+                          {schedule.status === "active"
+                            ? `Working toward ${formatDate(schedule.nextRunAt)}`
+                            : "Schedule paused"}
+                        </p>
+                      )}
                     </>
                   ) : (
                     <p className="text-xs text-muted-2">Ready to build your weekly content queue.</p>
@@ -373,8 +463,14 @@ export function ClientCustomAgents({
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={short}
-                      title={short ? "Not enough credits. Ask your Karos team for a top-up." : undefined}
+                      disabled={short || Boolean(blockedSetup)}
+                      title={
+                        blockedSetup
+                          ? `Add your ${blockedSetup.label} first — this agent drafts from it and cannot run without it.`
+                          : short
+                            ? "Not enough credits. Ask your Karos team for a top-up."
+                            : undefined
+                      }
                       onClick={() => setRunAgent(agent)}
                     >
                       <Icon name="Play" className="h-3.5 w-3.5" /> Run now
@@ -449,8 +545,7 @@ export function ClientCustomAgents({
           clientId={clientId}
           contextItems={contextItems}
           viewerIsClient={viewerIsClient}
-          {...(xSetup ? { xSetup } : {})}
-          {...(linkedinSetup ? { linkedinSetup } : {})}
+          {...(agentSetup?.[runAgent.id] ? { setup: agentSetup[runAgent.id] } : {})}
           onClose={() => setRunAgent(null)}
         />
       )}
@@ -633,8 +728,7 @@ function RunCustomAgentModal({
   clients,
   contextItems,
   viewerIsClient,
-  xSetup,
-  linkedinSetup,
+  setup,
   onClose,
 }: {
   agent: RunnableAgentSummary;
@@ -644,10 +738,11 @@ function RunCustomAgentModal({
   clients?: Array<{ id: string; name: string }>;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
-  /** X agent intake state — when not ready, the modal routes to setup instead of running. */
-  xSetup?: { ready: boolean; href: string };
-  /** LinkedIn agent intake state — same gate for the e10 agents. */
-  linkedinSetup?: { ready: boolean; href: string };
+  /**
+   * This agent's intake readiness, resolved server-side for this exact agent.
+   * When not ready the modal routes to setup instead of running.
+   */
+  setup?: AgentSetupState;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -734,49 +829,24 @@ function RunCustomAgentModal({
     );
   }
 
-  if (isXAgentIdentity(agent.key) && xSetup && !xSetup.ready) {
+  // One gate for every intake-driven agent. `setup` is already this agent's own
+  // answer, so the modal never re-derives readiness from the agent key.
+  if (setup && !setup.ready) {
     return (
       <Modal open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
-          <p className="text-sm text-foreground">Set up the X agent data first.</p>
+          <p className="text-sm text-foreground">Set up the {setup.label} first.</p>
           <p className="text-xs leading-relaxed text-muted">
-            This agent drafts from the X agent data page: the company page, a seat per
+            This agent drafts from the {setup.label} page: the company page, a seat per
             person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
             will not run without it.
           </p>
           <div className="flex items-center gap-2 pt-1">
             <a
-              href={xSetup.href}
+              href={setup.href}
               className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
             >
-              Set up X agent data
-              <Icon name="ArrowRight" className="h-3.5 w-3.5" />
-            </a>
-            <Button variant="ghost" onClick={onClose}>
-              Not now
-            </Button>
-          </div>
-        </div>
-      </Modal>
-    );
-  }
-
-  if (isLinkedInAgentIdentity(agent.key) && linkedinSetup && !linkedinSetup.ready) {
-    return (
-      <Modal open onClose={onClose} title={agent.name}>
-        <div className="mt-4 space-y-3">
-          <p className="text-sm text-foreground">Set up the LinkedIn agent data first.</p>
-          <p className="text-xs leading-relaxed text-muted">
-            This agent drafts from the LinkedIn agent data page: the company page, a seat per
-            person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
-            will not run without it.
-          </p>
-          <div className="flex items-center gap-2 pt-1">
-            <a
-              href={linkedinSetup.href}
-              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
-            >
-              Set up LinkedIn agent data
+              Set up {setup.label}
               <Icon name="ArrowRight" className="h-3.5 w-3.5" />
             </a>
             <Button variant="ghost" onClick={onClose}>
@@ -789,7 +859,7 @@ function RunCustomAgentModal({
   }
 
   return (
-    <Modal open onClose={onClose} title={agent.name} description={agent.description} className="max-w-2xl">
+    <Modal open onClose={onClose} title={agent.name} description={agentBlurb(agent)} className="max-w-2xl">
       <div className="space-y-5">
         <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -951,6 +1021,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
   const [name, setName] = useState(agent?.name ?? "");
   const [key, setKey] = useState(agent?.key ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
+  const [clientBlurb, setClientBlurb] = useState(agent?.clientBlurb ?? "");
   const [icon, setIcon] = useState(agent?.icon ?? "Sparkles");
   const [color, setColor] = useState(agent?.color ?? "#A3E635");
   const [entrySkillDir, setEntrySkillDir] = useState(agent?.entrySkillDir ?? "");
@@ -966,6 +1037,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       name,
       key: key || name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""),
       description,
+      clientBlurb,
       icon,
       color,
       entrySkillDir,
@@ -1020,8 +1092,26 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           </div>
         </div>
         <div>
-          <Label htmlFor="ae-desc">Description</Label>
+          <Label htmlFor="ae-desc">Description (internal)</Label>
           <Textarea id="ae-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+          <p className="mt-1 text-xs text-muted-2">
+            The lab manifest blurb. Staff surfaces only — clients never see this.
+          </p>
+        </div>
+        <div>
+          <Label htmlFor="ae-blurb">Client blurb</Label>
+          <Textarea
+            id="ae-blurb"
+            rows={2}
+            maxLength={300}
+            value={clientBlurb}
+            onChange={(e) => setClientBlurb(e.target.value)}
+            placeholder="Drafts a week of on-brand posts for your team to review and publish."
+          />
+          <p className="mt-1 text-xs text-muted-2">
+            What the client reads on the agent card and in the run dialog: 1–2 sentences, sentence
+            case, no product codes. Leave empty and the card falls back to the internal description.
+          </p>
         </div>
         <div>
           <Label htmlFor="ae-entry">Entry skill dir (in karos-agents)</Label>

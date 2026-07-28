@@ -223,7 +223,19 @@ export interface CustomAgent {
   /** Stable slug (the repo skill_name for imports), unique across agents. */
   key: string;
   name: string;
+  /**
+   * INTERNAL. The lab-repo skill manifest blurb — product codes, pipeline
+   * architecture, engineering shorthand. Staff surfaces only. Client surfaces
+   * render `clientBlurb`.
+   */
   description: string;
+  /**
+   * What this agent does, in the client's language: 1–2 sentences, sentence
+   * case, no lab product codes. Rendered on the client's agent card and in the
+   * run dialog. Absent on agents imported before the field existed — surfaces
+   * fall back to `description` until an admin writes one.
+   */
+  clientBlurb?: string | null;
   /** lucide icon name (see components/icon.tsx). */
   icon: string;
   /** Badge/chip hex color. */
@@ -513,6 +525,15 @@ export interface PlannedScheduledRun {
   lastRunAt?: number;
   /** Job id created by the most recent fire. */
   lastJobId?: string;
+  /**
+   * Human-readable refusal from the most recent fire that produced nothing
+   * (out of credits, cap reached, missing intake, service down). Cleared on the
+   * next successful fire. Rendered on the agent card so a schedule that can
+   * never fire is visible instead of silently green.
+   */
+  lastError?: string | null;
+  /** Epoch millis of that refusal. */
+  lastErrorAt?: number | null;
   createdBy: string;
   createdAt: number;
   updatedAt: number;

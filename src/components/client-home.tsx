@@ -5,6 +5,7 @@ import { AgentMark } from "@/components/agent-identity";
 import { JobStatusBadge } from "@/components/job-status";
 import {
   ClientCustomAgents,
+  type AgentSetupState,
   type CustomAgentRunRow,
   type RunnableAgentSummary,
 } from "@/components/custom-agents";
@@ -46,7 +47,7 @@ export function ClientHome({
   jobs,
   assets,
   integrations,
-  xSetup,
+  agentSetup,
 }: {
   clientId: string;
   greetingTitle: string;
@@ -64,8 +65,8 @@ export function ClientHome({
   jobs: Job[];
   assets: Asset[];
   integrations: ClientIntegration[];
-  /** X agent intake state - gates the X run behind the "X agent data" page. */
-  xSetup?: { ready: boolean; href: string };
+  /** Per-agent intake readiness, resolved server-side (see ClientCustomAgents). */
+  agentSetup?: Record<string, AgentSetupState>;
 }) {
   // Resolve a job's icon/color from the runnable-agent summaries (all agents are
   // repo-imported custom agents now — no hardcoded product catalog).
@@ -90,7 +91,7 @@ export function ClientHome({
       clientId={clientId}
       agents={customAgents}
       runs={customRuns}
-      {...(xSetup ? { xSetup } : {})}
+      {...(agentSetup ? { agentSetup } : {})}
       contextItems={contextItems}
       viewerIsClient={viewerIsClient}
       {...(availableCredits !== undefined ? { availableCredits } : {})}

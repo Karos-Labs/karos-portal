@@ -8,6 +8,8 @@
  * still receive the outcome-focused fallback at the bottom of this file.
  */
 
+import { isCreditDenialMessage } from "@/lib/credits";
+
 export type AgentBriefFieldType = "text" | "textarea" | "number" | "select";
 
 export interface AgentBriefField {
@@ -740,6 +742,27 @@ export function isLinkedInAgentIdentity(key: string): boolean {
 
 /** The e10 twin of X_SETUP_REQUIRED_PREFIX. */
 export const LINKEDIN_SETUP_REQUIRED_PREFIX = "Set up the LinkedIn agent data";
+
+/**
+ * What a client is allowed to read of a scheduler refusal. The scheduler stores
+ * whatever the submit core refused with, which includes internal strings —
+ * service URLs, env var names, upstream provider errors. Only the two setup
+ * refusals and the three credit denials are written for a client to read; every
+ * other message collapses to one plain sentence.
+ *
+ * Applied server-side, before the row is serialized: a string that never leaves
+ * the server cannot be read out of the RSC payload.
+ */
+export function clientSafeRefusal(refusal: string): string {
+  if (
+    refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
+    refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
+    isCreditDenialMessage(refusal)
+  ) {
+    return refusal;
+  }
+  return "This agent could not start on its last scheduled run. Your Karos team can unblock it.";
+}
 
 export function launchProfileFor(agent: AgentIdentity): AgentLaunchProfile {
   const identity = `${agent.key} ${agent.name}`.toLowerCase();
