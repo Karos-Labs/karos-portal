@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  evaluateLegacyRunGate,
   evaluateTemplateRunGate,
   moveTemplateKey,
   templateRunPrompt,
@@ -217,5 +218,65 @@ describe("umbrellaOwnsClientCard", () => {
         slotMode: "single",
       }),
     ).toBe(false);
+  });
+});
+
+/**
+ * CD-H8 — the run gate for an agent with a live schedule and no umbrella.
+ *
+ * Karos Labs' own Instagram Agent is this shape: it predates the umbrella model
+ * and its detail page used to render a stub. The gate is the sibling of
+ * evaluateTemplateRunGate for a shape with no templates to gate on, and its
+ * ORDER is the part worth pinning.
+ */
+describe("evaluateLegacyRunGate", () => {
+  const base = { serviceConfigured: true, cost: 25, availableCredits: 100 };
+  const intake = { ready: false, label: "X agent data", href: "/clients/c1/x-agent" };
+
+  it("allows a run when the service is up, intake is ready and credits cover it", () => {
+    expect(evaluateLegacyRunGate(base)).toEqual({ allowed: true });
+  });
+
+  it("treats a missing intake as blocking, and says where to fix it", () => {
+    const gate = evaluateLegacyRunGate({ ...base, setup: intake });
+    expect(gate).toMatchObject({ allowed: false, code: "setup_missing", href: intake.href });
+    expect(gate.reason).toContain("X agent data");
+  });
+
+  it("blocks on credits with the limit that actually bit", () => {
+    const gate = evaluateLegacyRunGate({
+      ...base,
+      availableCredits: 5,
+      creditBlockReason: "Weekly cap reached.",
+    });
+    expect(gate).toMatchObject({ allowed: false, code: "credits_short" });
+    expect(gate.reason).toBe("Weekly cap reached.");
+  });
+
+  it("lets a ready intake through", () => {
+    expect(
+      evaluateLegacyRunGate({ ...base, setup: { ...intake, ready: true } }),
+    ).toEqual({ allowed: true });
+  });
+
+  it("never blocks a non-billable actor on credits", () => {
+    // Staff pay nothing, so the credit rung cannot apply to them.
+    const { availableCredits: _omitted, ...staff } = base;
+    expect(evaluateLegacyRunGate(staff)).toEqual({ allowed: true });
+  });
+
+  it("puts an outage ABOVE a missing intake — filling it in would not help", () => {
+    const gate = evaluateLegacyRunGate({
+      ...base,
+      serviceConfigured: false,
+      setup: intake,
+      availableCredits: 0,
+    });
+    expect(gate.code).toBe("service_down");
+  });
+
+  it("puts a missing intake ABOVE credits — do not sell a run that cannot happen", () => {
+    const gate = evaluateLegacyRunGate({ ...base, setup: intake, availableCredits: 0 });
+    expect(gate.code).toBe("setup_missing");
   });
 });

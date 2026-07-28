@@ -226,3 +226,68 @@ export function visibleTemplates(agent: Pick<ClientAgent, "templates">): ClientA
     .filter((t) => t.status !== "retired")
     .sort((a, b) => a.position - b.position || a.key.localeCompare(b.key));
 }
+
+/* ───────────── the legacy (no-umbrella, live-schedule) run gate ──────────── */
+
+export type LegacyRunBlockCode = "service_down" | "setup_missing" | "credits_short";
+
+export interface LegacyRunGateResult {
+  allowed: boolean;
+  code?: LegacyRunBlockCode;
+  reason?: string;
+  href?: string;
+  hrefLabel?: string;
+}
+
+/**
+ * Whether an agent with a live schedule but NO umbrella may be run right now
+ * (CD-H8).
+ *
+ * The sibling of evaluateTemplateRunGate, for the shape that has no templates
+ * to gate on. Same ladder the generic card walks, in the same order — service,
+ * then intake, then credits — so the detail page and the card can never
+ * disagree about whether a run is possible, and pure for the same reason:
+ * the surface evaluates it before painting a control, and the action re-runs
+ * the equivalent check, so no button can offer a press the server refuses.
+ *
+ * Order is deliberate. An outage outranks a missing intake because filling in
+ * the intake would not help while runs are paused; intake outranks credits
+ * because a client who cannot run at all should not first be told to buy
+ * credits for it.
+ */
+export function evaluateLegacyRunGate(input: {
+  serviceConfigured: boolean;
+  /** This agent's intake, when it has one. */
+  setup?: { ready: boolean; label: string; href: string } | null;
+  cost: number;
+  /** Undefined ⇒ the actor is not billable (staff): credits cannot block them. */
+  availableCredits?: number;
+  /** Which limit bit, resolved by the same ladder assessCharge uses. */
+  creditBlockReason?: string | null;
+}): LegacyRunGateResult {
+  if (!input.serviceConfigured) {
+    return {
+      allowed: false,
+      code: "service_down",
+      reason:
+        "Agent runs are paused right now — this will work again once your Karos team clears it.",
+    };
+  }
+  if (input.setup && !input.setup.ready) {
+    return {
+      allowed: false,
+      code: "setup_missing",
+      reason: `This agent writes from your ${input.setup.label} — it needs that before it can make a post.`,
+      href: input.setup.href,
+      hrefLabel: `Set up your ${input.setup.label}`,
+    };
+  }
+  if (input.availableCredits !== undefined && input.availableCredits < input.cost) {
+    return {
+      allowed: false,
+      code: "credits_short",
+      reason: input.creditBlockReason ?? "Not enough credits for a post right now.",
+    };
+  }
+  return { allowed: true };
+}
