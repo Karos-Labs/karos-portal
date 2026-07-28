@@ -218,9 +218,15 @@ export function CompetitorTrack({
                 <span className="flex-1 truncate text-xs text-muted group-hover:text-foreground">
                   {c.company}
                 </span>
+                {/* CD-G4: the same ↗ the client chip uses, so "opens a site in
+                    a new tab" reads identically everywhere in the rail. Shown
+                    to staff and clients alike — only the trash beside it is
+                    staff-gated. opacity-0 rather than conditional rendering so
+                    the row keeps its width on hover and the favicon never
+                    shifts. */}
                 {href && (
                   <Icon
-                    name="ExternalLink"
+                    name="ArrowUpRight"
                     className="h-3 w-3 shrink-0 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100"
                   />
                 )}
