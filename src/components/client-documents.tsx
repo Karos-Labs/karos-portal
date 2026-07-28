@@ -103,9 +103,17 @@ function esc(s: string): string {
 /**
  * Converts cleaned markdown to print-safe HTML with inline styles.
  * A standalone, Tailwind-free renderer used only for the PDF print window.
+ *
+ * Escapes FIRST, for the same reason doc-render.ts does: every tag below is
+ * generated after this point, so any `<...>` in the document body is text, not
+ * markup. Without it the browser parsed angle-bracketed text as a tag and
+ * dropped it — the templates carry ~110 angle-bracket placeholder slots, so any
+ * section the model left unfilled silently lost its text in the one file a
+ * client is most likely to forward — and a stray script or image tag reaching a
+ * document would have executed in the print window.
  */
 function renderForPrint(markdown: string): string {
-  let out = markdown
+  let out = esc(markdown)
     // Separator lines
     .replace(/^---+$/gm, "")
     // H2 headings
@@ -152,8 +160,10 @@ function renderForPrint(markdown: string): string {
     return `<ol>${items}</ol>\n`;
   });
 
-  // Blockquotes
-  out = out.replace(/^>\s+(.+)$/gm, "<blockquote>$1</blockquote>");
+  // Blockquotes — matches the ESCAPED marker: esc() above has already turned a
+  // leading ">" into "&gt;", so a `^>` rule here could never fire and every
+  // quoted line would keep its arrow on the page. Same rule as doc-render.ts.
+  out = out.replace(/^&gt;\s+(.+)$/gm, "<blockquote>$1</blockquote>");
 
   // Remaining plain lines → paragraphs
   out = out.replace(/^(?!<[a-zA-Z/]|$|\s*$)(.+)$/gm, "<p>$1</p>");
