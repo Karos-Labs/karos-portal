@@ -106,7 +106,7 @@ are tracked in the CD table at the bottom.
 | F82 | MEDIUM | B | DOCS | 2 | RESOLVED | — | Exported PDFs silently swallow any text in angle brackets, including the templates' unfilled pl | findings-p123-160.md |
 | F83 | MEDIUM | A | DOCS | 2 | RESOLVED | yes | Raw markdown leaks into the document viewer: literal hash marks, orphaned nested bullets, and u | findings-p123-160.md |
 | F84 | MEDIUM | B | DOCS | 2 | RESOLVED | yes | The Schedule modal shows the wrong "Next run" date for any cadence longer than monthly | findings-p123-160.md |
-| F85 | MEDIUM | A | CREDITS | 2 | OPEN | yes | The client is billed 2 credits for a correction with no price shown anywhere in the flow | findings-p123-160.md |
+| F85 | MEDIUM | A | CREDITS | 2 | RESOLVED | yes | The client is billed 2 credits for a correction with no price shown anywhere in the flow | findings-p123-160.md |
 | F138 | MEDIUM | B | DOCS | 2 | RESOLVED | yes | Document body numbering starts at "2." and the numbers are baked into the text | findings-p123-160.md |
 | F86 | LOW | B | DOCS | 2 | RESOLVED | yes | No document tells you how old it is — no last-updated, no version, and no way to navigate a fou | findings-p123-160.md |
 | F139 | LOW | A | DOCS | 2 | RESOLVED | yes | A teammate's real name is used as the example of a wrong fact in client-facing copy | findings-p123-160.md |
@@ -127,12 +127,12 @@ are tracked in the CD table at the bottom.
 | F126 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | Single-asterisk emphasis renders as literal asterisks in AI Insights | findings-p123-160.md |
 | F145 | MEDIUM | A | DASHBOARD | 2 | RESOLVED | yes | A channel whose token dies silently vanishes from "Connected channels" instead of asking to be  | findings-p123-160.md |
 | F100 | LOW | A | DASHBOARD | 2 | OPEN | — | British and American spellings sit side by side — "Analysing" on one screen, "Analyzing" on ano | findings-p161-199.md |
-| F101 | HIGH | A | CREDITS | 2 | OPEN | — | One misclick on a trash icon destroys a LinkedIn seat — no confirm, no undo, no feedback if it  | findings-p161-199.md |
-| F102 | HIGH | B | CREDITS | 2 | OPEN | yes | The client's headline credit number is labelled "credits available" but is not what they can sp | findings-p161-199.md |
-| F103 | MEDIUM | A | CREDITS | 2 | OPEN | yes | Client Settings is a nine-section single-column stack ending in a panel whose only content is a | findings-p161-199.md |
-| F104 | MEDIUM | A | CREDITS | 2 | OPEN | yes | Hitting a spend cap never explains itself and offers no way forward | findings-p161-199.md |
-| F105 | MEDIUM | B | CREDITS | 2 | OPEN | — | The auto-publish switch snaps back with no explanation, and Disconnect silently does nothing wh | findings-p161-199.md |
-| F141 | LOW | A | CREDITS | 2 | OPEN | yes | The credit ledger is the only place that tells a client what anything costs | findings-p161-199.md |
+| F101 | HIGH | A | CREDITS | 2 | RESOLVED | — | One misclick on a trash icon destroys a LinkedIn seat — no confirm, no undo, no feedback if it  | findings-p161-199.md |
+| F102 | HIGH | B | CREDITS | 2 | RESOLVED | yes | The client's headline credit number is labelled "credits available" but is not what they can sp | findings-p161-199.md |
+| F103 | MEDIUM | A | CREDITS | 2 | RESOLVED | yes | Client Settings is a nine-section single-column stack ending in a panel whose only content is a | findings-p161-199.md |
+| F104 | MEDIUM | A | CREDITS | 2 | RESOLVED | yes | Hitting a spend cap never explains itself and offers no way forward | findings-p161-199.md |
+| F105 | MEDIUM | B | CREDITS | 2 | RESOLVED | — | The auto-publish switch snaps back with no explanation, and Disconnect silently does nothing wh | findings-p161-199.md |
+| F141 | LOW | A | CREDITS | 2 | RESOLVED | yes | The credit ledger is the only place that tells a client what anything costs | findings-p161-199.md |
 | F107 | HIGH | B | CALENDAR | 2 | RESOLVED | — | Choosing "Manual push" when approving tells you to publish from the calendar. There is no Publi | findings-p161-199.md |
 | F108 | HIGH | B | CALENDAR | 2 | RESOLVED | — | Scheduled runs are previewed in your timezone but stored and printed in the server's | findings-p161-199.md |
 | F151 | HIGH | A | CALENDAR | 2 | RESOLVED | yes | The calendar day detail prints the raw run record — internal status, product code, job hash, ma | findings-p161-199.md |
