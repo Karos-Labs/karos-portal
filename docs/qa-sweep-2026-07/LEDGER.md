@@ -1,0 +1,168 @@
+# QA Sweep 2026-07 — Findings ledger (single source of truth)
+
+Status values: OPEN · IN-PROGRESS · RESOLVED · DEFERRED-TOMER · STRUCK.
+A row flips to RESOLVED only after the three-step gate (tsc/build → Opus
+risk+drift+mock-client lenses → Fable review) passes. Spec for each finding lives
+in inventory/ (file column); screenshots in inventory/screenshots/.
+Phase 1 = blocker wave · Phase 2 = subsystem clusters · Phase 3 = ARCH build
+(F147/F148 + call directives A1-A5). Call-directive items without a finding number
+are tracked in the CD table at the bottom.
+
+| F# | Sev | Trk | Cluster | Phase | Status | Shot | Title | Spec file |
+|---|---|---|---|---|---|---|---|---|
+| F1 | BLOCKER | A | SEO | 1 | OPEN | yes | A finished client-facing action plan with a working Approve button is rendered on no page, whil | findings-p009-046.md |
+| F3 | HIGH | B | SEO | 2 | OPEN | yes | Card bodies are raw audit-model prose, and "What good looks like" just repeats the card title | findings-p009-046.md |
+| F4 | HIGH | A | SEO | 2 | OPEN | yes | Cards promise Karos will apply the fix "automatically" — no such code path exists and there is  | findings-p009-046.md |
+| F5 | HIGH | A | SEO | 2 | OPEN | — | Grids split into multiple columns at window widths where the side rail and copilot dock have al | findings-p009-046.md |
+| F7 | HIGH | B | SEO | 2 | OPEN | yes | No "What we're fixing" card can hand off to an agent — the one link built for it can never rend | findings-p009-046.md |
+| F9 | HIGH | B | SEO | 2 | OPEN | yes | The "What we're fixing" cards show clients raw engineering check labels — the plain-English rew | findings-p009-046.md |
+| F10 | HIGH | B | SEO | 2 | OPEN | yes | The headline AI-visibility score uses a different question set from every number below it, and  | findings-p009-046.md |
+| F11 | HIGH | B | SEO | 2 | OPEN | yes | The same problem appears as two cards with contradictory priority chips | findings-p009-046.md |
+| F12 | HIGH | B | SEO | 2 | OPEN | yes | There is no way to see what any AI engine actually answered — the per-question answer grid is c | findings-p009-046.md |
+| F133 | HIGH | B | SEO | 2 | OPEN | yes | The report says the site was never cited and cited 11 times, on the same screen | findings-p009-046.md |
+| F152 | HIGH | B | SEO | 2 | OPEN | — | Two of the nine signed-off v1 fixes shipped and were silently reverted by a merge the same day | findings-p009-046.md |
+| F15 | MEDIUM | B | SEO | 2 | OPEN | — | Clicking an AI action posts a fabricated message in the client's own voice, stage directions in | findings-p009-046.md |
+| F16 | MEDIUM | B | SEO | 2 | OPEN | yes | The "Search engines" filter files four search checks under "AI answers" instead | findings-p009-046.md |
+| F17 | MEDIUM | A | SEO | 2 | OPEN | yes | The "mentions you" chip does nothing, and the number of chips contradicts the sentence above it | findings-p009-046.md |
+| F18 | MEDIUM | A | SEO | 2 | OPEN | yes | The buyer-questions list is an unpunctuated flat dump, and it hides the competitor roster and t | findings-p009-046.md |
+| F19 | MEDIUM | A | SEO | 2 | OPEN | yes | The citation leaderboard silently truncates, and the whole citation story disappears in the cas | findings-p009-046.md |
+| F20 | MEDIUM | A | SEO | 2 | OPEN | yes | The snapshot date is a bare machine date with no staleness cue, and the client has no way to ge | findings-p009-046.md |
+| F22 | MEDIUM | B | SEO | 2 | OPEN | yes | Urgent cards sort below important ones under a header that says the list is ordered by impact | findings-p009-046.md |
+| F23 | MEDIUM | B | SEO | 2 | OPEN | yes | When the AI capture fails, the report tells the client it asked zero buyer questions | findings-p009-046.md |
+| F144 | LOW | A | SEO | 2 | OPEN | yes | Rename the "Search engines" label — the call agreed it reads as AI search | findings-p009-046.md |
+| F24 | BLOCKER | A | AGENTS | 1 | OPEN | yes | An always-on agent that has failed every single run still shows a green pulsing "Live" badge | findings-p009-046.md |
+| F127 | BLOCKER | B | AGENTS | 1 | OPEN | yes | Agent descriptions are raw lab-repo skill manifests, shipped to clients unedited | findings-p009-046.md |
+| F131 | BLOCKER | A | AGENTS | 1 | OPEN | yes | "Run now" is fully enabled on an agent whose own card says "Setup needed" | findings-p047-084.md |
+| F25 | HIGH | A | AGENTS | 2 | OPEN | yes | A client who hits their spend cap gets a greyed-out Run button, no explanation, and advice that | findings-p047-084.md |
+| F27 | HIGH | B | AGENTS | 2 | OPEN | yes | The Reddit agent's schedule dialog offers up to 35 replies a week and bills for them — the prod | findings-p047-084.md |
+| F28 | HIGH | B | AGENTS | 2 | OPEN | — | The agent intake pages tell clients to pick, edit and skip drafts "in your Workspace archive" — | findings-p047-084.md |
+| F29 | HIGH | B | AGENTS | 2 | OPEN | yes | The amber "3 ready" badge on an agent card never goes away, no matter how many times you review | findings-p047-084.md |
+| F128 | HIGH | A | AGENTS | 2 | OPEN | yes | Agent descriptions are cut off mid-word, with no ellipsis and no way to read the rest | findings-p047-084.md |
+| F129 | HIGH | A | AGENTS | 2 | OPEN | yes | "Ready to build your weekly content queue." sits on all seven cards — including the one that sa | findings-p047-084.md |
+| F132 | HIGH | A | AGENTS | 2 | OPEN | yes | Run history rows are labelled with the operator's raw typing, typos included | findings-p047-084.md |
+| F134 | HIGH | A | AGENTS | 2 | OPEN | yes | An unfilled template placeholder is shown to the user: "Focus this batch on [person]'s seat." | findings-p047-084.md |
+| F30 | MEDIUM | B | AGENTS | 2 | OPEN | yes | A run you cancelled on purpose comes back as a red "Failed", and a client cannot cancel at all | findings-p047-084.md |
+| F31 | MEDIUM | B | AGENTS | 2 | OPEN | yes | After a client presses Run, the page never updates again — no progress, no completion signal | findings-p047-084.md |
+| F32 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Dialogs cap at 720 pixels tall with one scroll box and no fixed action bar, so Start run scroll | findings-p047-084.md |
+| F33 | MEDIUM | A | AGENTS | 2 | OPEN | — | Every agent deliverable is titled "<Agent name> - <Client name>" — the client sees their own co | findings-p047-084.md |
+| F34 | MEDIUM | A | AGENTS | 2 | OPEN | — | If the agent service is unconfigured, a client's agents silently vanish behind "No active agent | findings-p047-084.md |
+| F35 | MEDIUM | A | AGENTS | 2 | OPEN | — | On the staff Agents page you can only discover an agent's client binding and its missing setup  | findings-p047-084.md |
+| F36 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Pressing "Start run" on the LinkedIn or Reddit agent without typing anything is refused — even  | findings-p047-084.md |
+| F37 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Staff cross-client lists render every row in the database with no search, filter, sort or pagin | findings-p047-084.md |
+| F38 | MEDIUM | B | AGENTS | 2 | OPEN | — | The Agents hub offers agent-and-client pairings the server is guaranteed to refuse, after the w | findings-p047-084.md |
+| F39 | MEDIUM | B | AGENTS | 2 | OPEN | — | The four managed lab products (Social, Newsletter, Blog, Landing page) cannot be run from anywh | findings-p047-084.md |
+| F40 | MEDIUM | A | AGENTS | 2 | OPEN | yes | The schedule dialog's "Posts per week" is actually runs per week — the cost line one paragraph  | findings-p047-084.md |
+| F130 | MEDIUM | A | AGENTS | 2 | OPEN | yes | Every agent is priced identically at "25 credits per output" | findings-p047-084.md |
+| F41 | LOW | A | AGENTS | 2 | OPEN | yes | Clients are shown the raw internal status word for their agent runs — "Run 2026-07-27 · review" | findings-p047-084.md |
+| F42 | LOW | A | AGENTS | 2 | OPEN | — | Seat forms refuse to save over a field that is not marked required | findings-p047-084.md |
+| F43 | LOW | A | AGENTS | 2 | OPEN | — | Staff land on a completely blank AI Agents page for any client whose agent list is empty | findings-p047-084.md |
+| F44 | LOW | A | AGENTS | 2 | OPEN | yes | The client AI Agents page stacks two near-identical headings and taglines on top of each other | findings-p047-084.md |
+| F45 | LOW | A | AGENTS | 2 | OPEN | — | Two managed-product run components and their submit action are dead code — the four catalog pro | findings-p047-084.md |
+| F135 | LOW | A | AGENTS | 2 | OPEN | yes | "3 runs × 1 outputs × 25 credits" — unpluralised units in the cost line | findings-p047-084.md |
+| F147 | HIGH | B | ARCH | 3 | OPEN | yes | One content stream, two agent identities: "Instagram Agent" and "Social posts (IG/TikTok)" run  | findings-p047-084.md |
+| F148 | HIGH | B | ARCH | 3 | OPEN | — | The portal has no launch-vs-runs model — the architecture the team decided on has nowhere to li | findings-p047-084.md |
+| F46 | BLOCKER | B | WORKSPACE | 1 | OPEN | — | A client can never act on a draft — the pick/post/skip loop the intake copy promises does not e | findings-p047-084.md |
+| F47 | BLOCKER | B | WORKSPACE | 1 | OPEN | — | The client's Archive shows the agent deliverable as raw text with all its formatting symbols on | findings-p085-122.md |
+| F48 | HIGH | B | WORKSPACE | 2 | OPEN | — | "Autopilot on" stays on forever but only ever runs one batch | findings-p085-122.md |
+| F50 | HIGH | B | WORKSPACE | 2 | OPEN | — | "Refresh Task Map" promises a market-footprint scan; the run never looks outside the account | findings-p085-122.md |
+| F51 | HIGH | B | WORKSPACE | 2 | OPEN | — | A client clicking "New content ready" in their notification bell gets silently bounced to their | findings-p085-122.md |
+| F53 | HIGH | A | WORKSPACE | 2 | OPEN | yes | A one-time 100-credit charge is sold to the client as "≈ $29/mo" | findings-p085-122.md |
+| F54 | HIGH | A | WORKSPACE | 2 | OPEN | yes | A task moved to "Review Pending" from the ticket vanishes from the board with no way back | findings-p085-122.md |
+| F55 | HIGH | B | WORKSPACE | 2 | OPEN | yes | Branded "Connect with Instagram" buttons open a popup showing a bare error sentence, and only a | findings-p085-122.md |
+| F56 | HIGH | B | WORKSPACE | 2 | OPEN | — | Every client user can hand out permanent workspace access, and the key can never be rotated fro | findings-p085-122.md |
+| F57 | HIGH | A | WORKSPACE | 2 | OPEN | — | The AI Execution Guide shows clients raw markup — "## Overview", "**Task**" and all | findings-p085-122.md |
+| F58 | HIGH | B | WORKSPACE | 2 | OPEN | — | The Autopilot switch spends the client's credits and fires five agent runs with no label, no pr | findings-p085-122.md |
+| F149 | HIGH | B | WORKSPACE | 2 | OPEN | — | Nothing marks a post as posted, so the archive shows everything the moment it is generated | findings-p085-122.md |
+| F150 | HIGH | B | WORKSPACE | 2 | OPEN | — | Video deliverables have no path into the portal — clips are hand-delivered by email | findings-p085-122.md |
+| F60 | MEDIUM | A | WORKSPACE | 2 | OPEN | yes | "View as client" mode is invisible — real impersonation gets a banner, the client switcher gets | findings-p085-122.md |
+| F61 | MEDIUM | B | WORKSPACE | 2 | OPEN | — | A task the platform then refuses still costs the client a credit | findings-p085-122.md |
+| F62 | MEDIUM | B | WORKSPACE | 2 | OPEN | yes | Adding a competitor from the sidebar does nothing visible when you are not on a client page | findings-p085-122.md |
+| F63 | MEDIUM | A | WORKSPACE | 2 | OPEN | yes | Broken icon names render a sparkle glyph across 24 files — including beside the red error messa | findings-p085-122.md |
+| F64 | MEDIUM | A | WORKSPACE | 2 | OPEN | yes | Clicking a task notification drops you on a board tab that does not contain that task | findings-p085-122.md |
+| F65 | MEDIUM | A | WORKSPACE | 2 | OPEN | yes | Task-creating actions never hand you off to the board where the tasks landed | findings-p085-122.md |
+| F66 | MEDIUM | A | WORKSPACE | 2 | OPEN | — | The client's Archive is every deliverable they have ever received in one wall, with no filter,  | findings-p085-122.md |
+| F67 | MEDIUM | B | WORKSPACE | 2 | OPEN | — | The resume a client uploads is never read — but the UI says it powers their voice | findings-p085-122.md |
+| F68 | MEDIUM | B | WORKSPACE | 2 | OPEN | yes | The staff notification bell can never show a review or a task | findings-p085-122.md |
+| F69 | MEDIUM | A | WORKSPACE | 2 | OPEN | — | When generation is running or has failed, the Documents group tells the client the wrong story  | findings-p085-122.md |
+| F70 | MEDIUM | A | WORKSPACE | 2 | OPEN | — | X drafts are titled with lab-internal vocabulary — clients read "Avenue 3 · News-reaction (live | findings-p085-122.md |
+| F136 | MEDIUM | A | WORKSPACE | 2 | OPEN | yes | Task cards are a single column of tall blocks — roughly two fit on screen | findings-p085-122.md |
+| F71 | LOW | A | WORKSPACE | 2 | OPEN | — | Client-facing strings use a spaced hyphen where the rest of the UI uses an em dash — including  | findings-p085-122.md |
+| F72 | LOW | A | WORKSPACE | 2 | OPEN | yes | One page, three different names: the staff sidebar says "Tasks", the client rail says "Workspac | findings-p085-122.md |
+| F73 | LOW | A | WORKSPACE | 2 | OPEN | — | The Activity tab's empty state promises clients "notes" that are filtered out of their view, an | findings-p085-122.md |
+| F74 | HIGH | B | DOCS | 2 | OPEN | yes | "Correct Info" charges the client 2 credits and reports success even when the correction was th | findings-p085-122.md |
+| F75 | HIGH | B | DOCS | 2 | OPEN | — | After Regenerate or a correction, the staff sidebar keeps serving the OLD document — the button | findings-p085-122.md |
+| F76 | HIGH | B | DOCS | 2 | OPEN | yes | Internal, staff-only analyst documents are shipped to the client's browser — and the client nav | findings-p085-122.md |
+| F77 | HIGH | B | DOCS | 2 | OPEN | yes | Regenerate destroys every document and every correction the client ever made, with no warning a | findings-p085-122.md |
+| F78 | HIGH | B | DOCS | 2 | OPEN | yes | Regenerate runs the whole multi-minute pipeline inside one request, so it can report failure on | findings-p123-160.md |
+| F79 | MEDIUM | A | DOCS | 2 | OPEN | — | A document that generated empty still shows in the nav and opens to a completely blank panel | findings-p123-160.md |
+| F80 | MEDIUM | A | DOCS | 2 | OPEN | yes | Brand and strategy documents open as one flat wall with no section navigation, and the helper t | findings-p123-160.md |
+| F81 | MEDIUM | B | DOCS | 2 | OPEN | yes | Correcting a document does not reach the AI that quotes it — the Copilot and the X agent keep a | findings-p123-160.md |
+| F82 | MEDIUM | B | DOCS | 2 | OPEN | — | Exported PDFs silently swallow any text in angle brackets, including the templates' unfilled pl | findings-p123-160.md |
+| F83 | MEDIUM | A | DOCS | 2 | OPEN | yes | Raw markdown leaks into the document viewer: literal hash marks, orphaned nested bullets, and u | findings-p123-160.md |
+| F84 | MEDIUM | B | DOCS | 2 | OPEN | yes | The Schedule modal shows the wrong "Next run" date for any cadence longer than monthly | findings-p123-160.md |
+| F85 | MEDIUM | A | DOCS | 2 | OPEN | yes | The client is billed 2 credits for a correction with no price shown anywhere in the flow | findings-p123-160.md |
+| F138 | MEDIUM | B | DOCS | 2 | OPEN | yes | Document body numbering starts at "2." and the numbers are baked into the text | findings-p123-160.md |
+| F86 | LOW | B | DOCS | 2 | OPEN | yes | No document tells you how old it is — no last-updated, no version, and no way to navigate a fou | findings-p123-160.md |
+| F139 | LOW | A | DOCS | 2 | OPEN | yes | A teammate's real name is used as the example of a wrong fact in client-facing copy | findings-p123-160.md |
+| F140 | LOW | A | DOCS | 2 | OPEN | yes | A fill-in-the-blank label ships as "EVERY ___ MONTH(S)" | findings-p123-160.md |
+| F87 | HIGH | B | COPILOT | 2 | OPEN | — | "Competitor Deep-Dive" asks for a competitor's web address it has no way to open | findings-p123-160.md |
+| F88 | HIGH | A | COPILOT | 2 | OPEN | yes | All four AI actions disappear after the first message, and the only way back destroys the threa | findings-p123-160.md |
+| F89 | HIGH | A | COPILOT | 2 | OPEN | — | Raw model markup is shown to the client — asterisks, hashes and table pipes land in the panel | findings-p123-160.md |
+| F90 | HIGH | B | COPILOT | 2 | OPEN | — | The War Room reports "Consensus reached" when it created nothing, then closes before the reason | findings-p123-160.md |
+| F91 | MEDIUM | B | COPILOT | 2 | OPEN | — | "AI Content Dispatch" says it queues content runs; nothing is queued | findings-p123-160.md |
+| F92 | MEDIUM | B | COPILOT | 2 | OPEN | — | A War Room run can create an extra campaign the console never mentions, the count excludes, and | findings-p123-160.md |
+| F93 | MEDIUM | A | COPILOT | 2 | OPEN | — | Escape or a stray click outside throws away a minute-long War Room run with no warning | findings-p123-160.md |
+| F94 | MEDIUM | A | COPILOT | 2 | OPEN | yes | On a phone the Copilot opens as a sliver and the four actions sit below the fold | findings-p123-160.md |
+| F95 | MEDIUM | A | COPILOT | 2 | OPEN | — | The copilot is given a credit price list that omits the most expensive thing a client can buy | findings-p123-160.md |
+| F97 | BLOCKER | B | DASHBOARD | 1 | OPEN | — | The client's top call to action promises an approval they cannot make, and the link lands on th | findings-p123-160.md |
+| F125 | BLOCKER | B | DASHBOARD | 1 | OPEN | yes | AI Insights is badged "Demo data" and still tells the client to cut LinkedIn spend | findings-p123-160.md |
+| F99 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | The client dashboard is one unbroken scroll and the plain-English weekly briefing sits dead las | findings-p123-160.md |
+| F124 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | The dashboard opens with four counters that the two cards beneath them restate | findings-p123-160.md |
+| F126 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | Single-asterisk emphasis renders as literal asterisks in AI Insights | findings-p123-160.md |
+| F145 | MEDIUM | A | DASHBOARD | 2 | OPEN | yes | A channel whose token dies silently vanishes from "Connected channels" instead of asking to be  | findings-p123-160.md |
+| F100 | LOW | A | DASHBOARD | 2 | OPEN | — | British and American spellings sit side by side — "Analysing" on one screen, "Analyzing" on ano | findings-p161-199.md |
+| F101 | HIGH | A | CREDITS | 2 | OPEN | — | One misclick on a trash icon destroys a LinkedIn seat — no confirm, no undo, no feedback if it  | findings-p161-199.md |
+| F102 | HIGH | B | CREDITS | 2 | OPEN | yes | The client's headline credit number is labelled "credits available" but is not what they can sp | findings-p161-199.md |
+| F103 | MEDIUM | A | CREDITS | 2 | OPEN | yes | Client Settings is a nine-section single-column stack ending in a panel whose only content is a | findings-p161-199.md |
+| F104 | MEDIUM | A | CREDITS | 2 | OPEN | yes | Hitting a spend cap never explains itself and offers no way forward | findings-p161-199.md |
+| F105 | MEDIUM | B | CREDITS | 2 | OPEN | — | The auto-publish switch snaps back with no explanation, and Disconnect silently does nothing wh | findings-p161-199.md |
+| F141 | LOW | A | CREDITS | 2 | OPEN | yes | The credit ledger is the only place that tells a client what anything costs | findings-p161-199.md |
+| F107 | HIGH | B | CALENDAR | 2 | OPEN | — | Choosing "Manual push" when approving tells you to publish from the calendar. There is no Publi | findings-p161-199.md |
+| F108 | HIGH | B | CALENDAR | 2 | OPEN | — | Scheduled runs are previewed in your timezone but stored and printed in the server's | findings-p161-199.md |
+| F151 | HIGH | A | CALENDAR | 2 | OPEN | yes | The calendar day detail prints the raw run record — internal status, product code, job hash, ma | findings-p161-199.md |
+| F109 | MEDIUM | A | CALENDAR | 2 | OPEN | yes | A calendar run badged "Ready to review" has nothing to click | findings-p161-199.md |
+| F110 | MEDIUM | B | CALENDAR | 2 | OPEN | — | Pause and Cancel on a scheduled run fail silently, and Cancel deletes it forever with no confir | findings-p161-199.md |
+| F111 | MEDIUM | A | CALENDAR | 2 | OPEN | yes | The month calendar is a fixed seven-column grid at every screen size, with chips well under the | findings-p161-199.md |
+| F112 | LOW | A | CALENDAR | 2 | OPEN | yes | A client's Calendar is read-only and its empty state offers no next step | findings-p161-199.md |
+| F142 | LOW | A | CALENDAR | 2 | OPEN | yes | The calendar's primary button wraps to two lines | findings-p161-199.md |
+| F113 | HIGH | A | SHELL | 2 | OPEN | yes | Opening any client page swallows the whole staff sidebar — and employees have no way to get it  | findings-p161-199.md |
+| F115 | MEDIUM | B | SHELL | 2 | OPEN | — | An approved user is never told they were approved; the pending screen is a static dead end | findings-p161-199.md |
+| F116 | MEDIUM | A | SHELL | 2 | OPEN | yes | Clients get no notification badge on desktop — the bell is buried in the account menu | findings-p161-199.md |
+| F117 | MEDIUM | B | SHELL | 2 | OPEN | yes | No admin surface shows any client's credit balance, yet every denial tells the client to "ask y | findings-p161-199.md |
+| F118 | MEDIUM | A | SHELL | 2 | OPEN | — | The Connect page promises "submit managed jobs" and walks through an Instagram job the MCP serv | findings-p161-199.md |
+| F119 | MEDIUM | A | SHELL | 2 | OPEN | — | The smallest type in the portal sits below the accessibility contrast floor in 143 places | findings-p161-199.md |
+| F120 | MEDIUM | A | SHELL | 2 | OPEN | yes | The three agent pages print the raw database job status "review" to clients, when the portal al | findings-p161-199.md |
+| F143 | MEDIUM | A | SHELL | 2 | OPEN | yes | Every notification is truncated mid-sentence and none of them are notifications | findings-p161-199.md |
+| F146 | MEDIUM | A | SHELL | 2 | OPEN | yes | The Meetings list is not in date order — synced meetings land wherever the sync ran | findings-p161-199.md |
+| F121 | LOW | B | SHELL | 2 | OPEN | yes | Dismissing a "new content ready" notification only hides it until the next page load | findings-p161-199.md |
+| F122 | LOW | A | SHELL | 2 | OPEN | yes | Platform names are title-cased from their ids: "Linkedin", "Youtube" | findings-p161-199.md |
+| F123 | LOW | A | SHELL | 2 | OPEN | yes | "20 agent runs · last 9h ago." | findings-p161-199.md |
+
+## Call-directive items (no PDF finding number)
+
+| ID | Cluster | Phase | Status | Directive |
+|---|---|---|---|---|
+| CD-A2 | ARCH | 3 | OPEN | Two-level feedback model: global (parent agent) + per-template |
+| CD-A3 | ARCH | 3 | OPEN | Per-slot calendar notes consumed by run-day generation |
+| CD-A5 | ARCH | 3 | OPEN | Analytics/credits: launch cost vs recurring-run cost split per agent umbrella |
+| CD-B2 | SEO | 2 | OPEN | Remove Perplexity + Copilot from tracked engines (set, chips, scoring) |
+| CD-B3 | SEO | 2 | OPEN | Category-queries-only measurement; branded queries never feed client-vs-competitor score |
+| CD-B4 | SEO | 2 | OPEN | Mark pre-2026-07-23 snapshots stale/legacy in UI |
+| CD-C1 | — | loop | OPEN | Mock-client pass sanity-checks competitor/citation data vs stored snapshots |
+| CD-D1 | ARCH | 3/4 | OPEN | Video deliverables: portal renders storage-URL field; GCP wiring → Tomer |
+| CD-D2 | AGENTS | 2 | OPEN | TikTok connector state shown as pending verification, not pretending |
+
+## Guard zones (all phases)
+- No deep rework of AI Insights (fix listed defects only) — call directive B5.
+- Never expose pre-generation of content to clients — churn rule A3/A4.
+- CLAUDE.md conventions: server-action writes, epoch millis, credits vocabulary.

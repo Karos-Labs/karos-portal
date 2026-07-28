@@ -1,6 +1,7 @@
 # QA Sweep 2026-07 — Master plan
 
-Status: DRAFT (pending: verification pass over inventory, Albert sign-off)
+Status: READY FOR ALBERT'S REVIEW — inventory verified (137/137 coverage, 5-agent
+adversarial pass), clusters assigned in LEDGER.md.
 
 Inputs:
 - `inventory/` — 137 findings extracted from Daniel's 27 Jul PDF (+ 87 screenshots,
@@ -23,26 +24,37 @@ Clusters are **by subsystem/file first, severity second** — parallel fixers mu
 share files; merges into this branch are serial. Track A/B labels stay on each finding
 (they drive reviewer attention + the Tomer split), but phases are not tracks.
 
-### Phase 0 — Foundations (this phase is running now)
-- Extract + verify inventory, screenshots, directives, team design. ✅/🔄
-- Coverage audit: every finding number in the PDF index accounted for in the ledger.
-- `LEDGER.md`: one row per finding — status (OPEN / IN-PROGRESS / RESOLVED /
-  DEFERRED-TOMER / STRUCK), cluster, owner, evidence links. Single source of truth.
-- Dev server smoke test on the worktree; mock-client baseline walk of golden paths.
+### Phase 0 — Foundations ✅
+- Inventory extracted and adversarially verified (137/137 vs PDF index, 0 dups;
+  severity tally matches cover: 8/46/63/20). 87 screenshots mapped 1:1.
+- `LEDGER.md` generated — single source of truth, one row per finding + the
+  call-directive (CD) items with no finding number.
+- Remaining before Phase 1: dev-server smoke test; mock-client baseline walk.
 
-### Phase 1 — Repair & re-mount (highest value density)
-The dominant PDF theme: correct machinery already exists, unmounted or unreached.
-Re-mounting the action plan (F1/F152), wiring parsers/actions/prompts with zero
-callers, applying existing patterns to missed cases. Low new-code risk, big visible
-wins. Includes the 8 BLOCKERs that fall in this bucket.
+### Phase 1 — Blocker wave (8 findings)
+F1 (action plan unmounted — revert-of-a-revert), F24 (failed agent shows Live),
+F131 ("Run now" enabled on Setup-needed), F46 (client can't act on drafts),
+F47 (archive shows raw text + unapproved drafts), F97 (top CTA promises impossible
+approval), F125 (AI Insights demo-data advice), F127 (raw skill manifests shown to
+clients). Each blocker is its own fixer + full three-step gate; serial merges.
 
-### Phase 2 — Subsystem fix clusters (the long middle)
-Parallel Opus fixers, one worktree per cluster, file-disjoint. Provisional clusters
-(final assignment after verification pass): SEO/GEO panel+presenter · AI Agents
-surface (custom-agents.tsx + friends) · Workspace/tasks/deliverables · Documents
-viewer/corrections/PDF-export (incl. the XSS-shaped hole — priority) · Copilot ·
-Client dashboard · Settings/credits/billing · Calendar · Shell/nav/notifications ·
-Meetings. Each cluster passes the three-step gate before its serial merge.
+### Phase 2 — Subsystem clusters (127 findings + 3 CD items)
+One Opus fixer per cluster in its own worktree; severity order inside a cluster.
+| Cluster | Findings | Hot files |
+|---|---|---|
+| SEO (+CD-B2/B3/B4) | 19 | seo-geo-panel, presenter, gap-list, seo-geo.ts |
+| AGENTS (+CD-D2) | 27 | custom-agents.tsx, run-scheduled, webhook, intake |
+| WORKSPACE | 26 | archive-view, asset-card, chatbot-widget, notification-bell |
+| DOCS | 16 | client-documents.tsx, chat route, correct-info-modal, PDF export (XSS hole — priority) |
+| COPILOT | 9 | chatbot-widget, chat route, strategy-war-room |
+| DASHBOARD | 7 | client-analytics, ai-insights (guard zone B5) |
+| CREDITS | 6 | credits-panel, account-menu, credits.ts surfaces |
+| CALENDAR | 8 | run-calendar, schedule-run-modal, notification-bell |
+| SHELL | 12 | sidebar, app-header, globals.css (contrast), data.ts (meetings sort) |
+Shared files across clusters (chatbot-widget, chat route, notification-bell,
+client-rail, archive-view): the orchestrator computes parallel waves at execution
+time from each fixer's actual edit set — clusters sharing a file never run
+simultaneously; merges are serial for everyone regardless.
 
 ### Phase 3 — Architecture build: launch-vs-runs (F148 umbrella)
 The call's core product decision, built portal-side as far as possible:
