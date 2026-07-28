@@ -339,7 +339,7 @@ function ExportMenu({
             }}
             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
-            <Icon name="File" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+            <DocIcon className="h-3.5 w-3.5 shrink-0 text-muted-2" />
             <div>
               <p className="font-medium text-foreground">Export PDF</p>
               <p className="text-[11px] text-muted-2">Opens print dialog</p>
@@ -964,6 +964,32 @@ function ScheduleModal({
 
 /* ── Documents list ───────────────────────────────────────────────────── */
 
+/**
+ * Document glyph: lucide's FileText draws three rules, which read as noise at
+ * 16px in a six-row list; a bare File loses the signal that the document has
+ * text in it. Two rules keep the signal and drop the clutter. Same 24px grid,
+ * stroke and cap style as the lucide set so it sits correctly beside them.
+ */
+function DocIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M8 13h8" />
+      <path d="M8 17h5" />
+    </svg>
+  );
+}
+
 export function ClientDocuments({
   contextDocs,
   isAdmin,
@@ -1066,7 +1092,7 @@ export function ClientDocuments({
                      and seven of these were its single tallest block. */
                   className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
                 >
-                  <Icon name="File" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
+                  <DocIcon className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
                   <span className="flex-1 truncate text-[13px] leading-5 text-muted group-hover:text-foreground">
                     {item.label}
                   </span>
@@ -1078,7 +1104,7 @@ export function ClientDocuments({
                   className="flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left"
                   title="This document is being rebuilt — check back shortly."
                 >
-                  <Icon name="File" className="h-4 w-4 shrink-0 text-muted-2/60" />
+                  <DocIcon className="h-4 w-4 shrink-0 text-muted-2/60" />
                   <span className="flex-1 truncate text-[13px] leading-5 text-muted-2">{item.label}</span>
                   <span className="shrink-0 text-[11px] text-muted-2">Rebuilding</span>
                 </div>
