@@ -535,3 +535,21 @@ churn hole before finding them already fixed. Two gaps raised:
   jobs/[id] detail page not threaded: single-job staff view, left for end-loop.
 Non-blocking noted: F68 employee task feed fetch-200-then-filter; F136 tabCounts
 excludes completed (benign).
+
+## COPILOT cluster report (pre-verification)
+- F87 deviation: took the stop-asking-for-a-URL branch, NOT wiring Anthropic
+  server-side web_search/web_fetch — those bill per search OUTSIDE the 1-credit
+  copilot message price. PRODUCT DECISION for Albert if he wants real competitor
+  web research in the copilot: it needs a pricing model first.
+- F95: appendix says PER RUN (post-F40 reality), not the spec's per output.
+- Folded fix: mock analytics rows no longer feed the credit-charged client
+  prompt (F125 risk watch-item (a) closed).
+- Reported, not fixed (end-loop candidates): copilot branding tool lacks
+  logActivity + has no length cap on guidelines (same bloat/injection shape as
+  F77 corrections; NOT privilege escalation — the settings action already allows
+  the same write); proactive-assistant Scenario B still claims an external
+  footprint scan from world knowledge (F87 pathology on the task-map path);
+  copilot-context TOOLS block says two tools, route registers four (understates,
+  harmless); streaming markdown flicker on unclosed ** (resolves on completion);
+  sheetOpen persists across reload on mobile.
+- campaign-engine.ts is owned by no cluster; F92 edits landed there by necessity.
