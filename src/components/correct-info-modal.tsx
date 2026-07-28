@@ -104,7 +104,7 @@ export function CorrectInfoModal({
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit();
             }}
             placeholder={
-              'e.g. "Our pricing is $49/mo, not $99/mo" or\n"The founder\'s name is Tomer, not John"'
+              'e.g. "Our pricing is $49/mo, not $99/mo" or\n"Our head office is in Tel Aviv, not London"'
             }
             rows={5}
             disabled={pending}

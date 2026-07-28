@@ -876,17 +876,22 @@ function ScheduleModal({
           <div className={cn("grid grid-cols-2 gap-3", !enabled && "pointer-events-none opacity-40")}>
             <div className="space-y-1.5">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-                Every ___ month(s)
+                Repeat every
               </p>
-              <input
-                type="number"
-                min={MIN_INTERVAL_MONTHS}
-                max={MAX_INTERVAL_MONTHS}
-                value={intervalMonths}
-                onChange={(e) => setIntervalMonths(Number(e.target.value) || MIN_INTERVAL_MONTHS)}
-                disabled={running || !enabled}
-                className="w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground focus:border-neon focus:outline-none disabled:opacity-50"
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={MIN_INTERVAL_MONTHS}
+                  max={MAX_INTERVAL_MONTHS}
+                  value={intervalMonths}
+                  onChange={(e) => setIntervalMonths(Number(e.target.value) || MIN_INTERVAL_MONTHS)}
+                  disabled={running || !enabled}
+                  className="w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground focus:border-neon focus:outline-none disabled:opacity-50"
+                />
+                <span className="shrink-0 text-sm text-muted">
+                  {intervalMonths === 1 ? "month" : "months"}
+                </span>
+              </div>
             </div>
             <div className="space-y-1.5">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
