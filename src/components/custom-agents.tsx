@@ -956,9 +956,22 @@ function RunCustomAgentModal({
       setError(`Add ${profile.attachments.label.toLowerCase()} or provide the source link above.`);
       return;
     }
-    const prompt = buildCustomAgentPrompt(profile, fields);
+    // An agent whose only field is labelled "Optional" must be runnable with the
+    // form left exactly as instructed — that is the run the intake-driven
+    // agents are documented to support, and they draft from their stored data
+    // either way. The brief joins non-empty fields only, so an untouched form
+    // produced an empty prompt and a refusal naming a requirement that does not
+    // exist. Fall back to the first starting point: the same text the chips
+    // above insert, so the run is identical to clicking one.
+    let prompt = buildCustomAgentPrompt(profile, fields);
+    if (!prompt && !profile.fields.some((field) => field.required) && profile.quickStarts[0]) {
+      prompt = buildCustomAgentPrompt(profile, {
+        ...fields,
+        [primaryField.key]: profile.quickStarts[0],
+      });
+    }
     if (!prompt) {
-      setError("Complete the brief before starting the run.");
+      setError("Add at least one line to the brief before starting the run.");
       return;
     }
     if (prompt.length > 4000) {
