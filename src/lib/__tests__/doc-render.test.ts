@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  isSafeHref,
   looksLikeMarkdown,
   renderAssetBody,
   renderFullDoc,
+  renderSectionBody,
   stripInlineMarkdown,
   toPlainSummary,
 } from "@/lib/doc-render";
@@ -184,5 +186,72 @@ describe("toPlainSummary", () => {
 describe("stripInlineMarkdown", () => {
   it("unwraps paired emphasis but leaves lone marks alone", () => {
     expect(stripInlineMarkdown("**bold** and *italic* and 2 * 3")).toBe("bold and italic and 2 * 3");
+  });
+});
+
+/**
+ * Every case here is markup the client used to read verbatim inside their own
+ * strategy documents. The four-hash persona heading is not hypothetical — it is
+ * in the shipped Market Strategy template.
+ */
+describe("renderSectionBody: markup that used to leak", () => {
+  it("renders a four-hash heading instead of printing its hashes", () => {
+    const html = renderSectionBody("#### Persona name\n\nShe runs ops.");
+    expect(html).toContain("Persona name");
+    expect(html).not.toContain("#### ");
+    expect(html).not.toContain("####");
+  });
+
+  it("folds an indented sub-bullet into the list instead of a dash paragraph", () => {
+    const html = renderSectionBody("- top level\n  - nested point");
+    expect(html).toContain("nested point");
+    expect(html).not.toMatch(/<p[^>]*>\s*-\s/);
+    expect(html.match(/<ul/g) ?? []).toHaveLength(1);
+  });
+
+  it("renders link syntax as a link, not as brackets and a raw address", () => {
+    const html = renderSectionBody("See [the source](https://example.com/a).");
+    expect(html).toContain('href="https://example.com/a"');
+    expect(html).toContain(">the source</a>");
+    expect(html).not.toContain("](");
+  });
+
+  it("refuses a script-scheme href and leaves it as text", () => {
+    const html = renderSectionBody("[click](javascript:alert(1))");
+    expect(html).not.toContain("<a ");
+    expect(html).not.toContain("href=");
+  });
+});
+
+describe("isSafeHref", () => {
+  it("accepts web schemes and same-origin targets", () => {
+    for (const href of ["https://x.co", "http://x.co", "mailto:a@b.co", "/docs", "/", "#top"]) {
+      expect(isSafeHref(href)).toBe(true);
+    }
+  });
+
+  it("rejects script and data schemes", () => {
+    for (const href of ["javascript:alert(1)", " JavaScript:alert(1)", "data:text/html,x"]) {
+      expect(isSafeHref(href)).toBe(false);
+    }
+  });
+
+  /**
+   * A leading slash does not make a target same-origin: the WHATWG parser
+   * resolves both of these to https://evil.com/. Not script execution — a
+   * plantable off-site link that reads as an in-document reference, on a
+   * surface fed by client-authored corrections and by research fetched from
+   * competitor sites.
+   */
+  it("rejects protocol-relative and backslash-escaped hosts", () => {
+    for (const href of ["//evil.com", "/\\evil.com", " //evil.com", "//evil.com/a?b=c"]) {
+      expect(isSafeHref(href)).toBe(false);
+    }
+  });
+
+  it("does not turn a protocol-relative target into a link", () => {
+    const html = renderSectionBody("See [our docs](//evil.com).");
+    expect(html).not.toContain("<a ");
+    expect(html).not.toContain("href=");
   });
 });

@@ -74,7 +74,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     const client = await getClient(user.clientId);
     if (client) {
       const [contextDocs, integrations, report, competitors, credits] = await Promise.all([
-        listClientContextDocs(user.clientId),
+        // Tier-filtered at the server boundary, not at render: ClientRail is a
+        // "use client" component, so anything fetched here is serialized into the
+        // RSC payload the client's browser downloads. Internal analyst docs and
+        // never-published internal-only docs must not travel with it.
+        listClientContextDocs(user.clientId, "client"),
         listClientIntegrations(user.clientId),
         getClientReport(user.clientId),
         listClientCompetitors(user.clientId),

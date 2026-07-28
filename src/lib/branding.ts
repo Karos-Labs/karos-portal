@@ -748,9 +748,13 @@ export async function applyBrandingForClient(
   };
 
   // ── Context doc writes ───────────────────────────────────────────
+  // "internal" is the tier this write already declared as its default; naming it
+  // makes the target deterministic instead of "whichever row came back first".
+  // The internal copy is what condensation reads, so the client tier picks the
+  // change up on the next run.
   const [brandingDoc, voiceDoc] = await Promise.all([
-    getClientContextDoc(clientId, "branding-guidelines"),
-    getClientContextDoc(clientId, "brand-voice"),
+    getClientContextDoc(clientId, "branding-guidelines", "internal"),
+    getClientContextDoc(clientId, "brand-voice", "internal"),
   ]);
 
   await Promise.all([

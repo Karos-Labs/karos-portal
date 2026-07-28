@@ -13,6 +13,7 @@ import {
   updateContextDocContent,
   logFeedback,
   chargeClientCredits,
+  creditClientCredits,
   tryAcquireAiProcessingLock,
   releaseAiProcessingLock,
   approveSeoGeoRecommendation,
@@ -29,12 +30,50 @@ import {
   clampScheduleDayOfMonth,
 } from "@/lib/intel-schedule";
 
-/** Charge a client user for a doc correction (staff + impersonated sessions are free). Throws CreditError on denial. */
-async function chargeDocCorrection(user: AppUser, clientId: string, amount: number, reason: string) {
-  if (!isBillableClientActor(user)) return;
+const CONTEXT_DOC_TIERS: ContextDocTier[] = ["internal", "client", "internal-only"];
+
+function isContextDocTier(value: string): value is ContextDocTier {
+  return (CONTEXT_DOC_TIERS as string[]).includes(value);
+}
+
+/**
+ * Charge a client user for a doc correction (staff + impersonated sessions are
+ * free). Throws CreditError on denial. Returns the charge timestamp when a
+ * charge actually happened, so a no-op correction can be refunded against the
+ * right spend window; null means nothing was charged.
+ */
+async function chargeDocCorrection(
+  user: AppUser,
+  clientId: string,
+  amount: number,
+  reason: string,
+): Promise<number | null> {
+  if (!isBillableClientActor(user)) return null;
+  const chargedAt = Date.now();
   await chargeClientCredits({
     clientId,
     amount,
+    operation: "doc_correction",
+    reason,
+    actorUid: user.uid,
+    actorName: user.name,
+  });
+  return chargedAt;
+}
+
+/** Hand back a doc-correction charge for a correction that changed nothing. */
+async function refundDocCorrection(
+  user: AppUser,
+  clientId: string,
+  amount: number,
+  reason: string,
+  chargedAt: number,
+) {
+  await creditClientCredits({
+    clientId,
+    amount,
+    kind: "refund",
+    chargedAt,
     operation: "doc_correction",
     reason,
     actorUid: user.uid,
@@ -61,9 +100,14 @@ export async function generateClientBriefAction(
   if (!client) return { ok: false, error: "Client not found" };
   if (client.brief && !force) return { ok: true, brief: client.brief };
 
-  const docs = await listClientContextDocs(clientId);
+  // Client tier only, for every caller — not just client ones. This action is
+  // network-reachable by a CLIENT_USER for their own account, and the brief it
+  // writes is persisted on client.brief and rendered to the client whoever
+  // triggered it. The old `?? docs.find(byDocType)` fallback pulled the internal
+  // analyst copy into that prompt whenever a client-tier row was missing.
+  const docs = await listClientContextDocs(clientId, "client");
   const source = ["product-information", "brand-voice", "market-strategy"]
-    .map((dt) => docs.find((d) => d.docType === dt && d.tier === "client") ?? docs.find((d) => d.docType === dt))
+    .map((dt) => docs.find((d) => d.docType === dt))
     .filter(Boolean)
     .map((d) => d!.content.replace(/^---[\s\S]*?---\n?/, "").slice(0, 1800))
     .join("\n\n");
@@ -164,6 +208,17 @@ export async function addActivityNoteAction(clientId: string, text: string): Pro
 
 /**
  * Run the Intel Report pipeline for a client. Admins and employees only.
+ *
+ * The pipeline normally takes minutes and is allowed 20 before it is treated as
+ * dead, while Cloud Run kills the request at 300s — so awaiting it inside the
+ * action meant any run past five minutes reported failure for a run that may
+ * well have completed, with the stale-lock window then blocking the retry. The
+ * lock check stays synchronous (so a second click still gets the "already
+ * running" error immediately); everything after it runs in `after()`, matching
+ * the three other triggers of this same pipeline (client creation, onboarding
+ * completion, the cron). Progress is the AiProcessingBanner plus the lock, which
+ * already disables the Regenerate button.
+ *
  * @param runSpecificContext Optional run-specific instructions entered at execution time.
  *   These are threaded into the pipeline as Layer C (highest priority) and expire after this run.
  */
@@ -177,31 +232,36 @@ export async function generateIntelReportAction(
   if (!(await tryAcquireAiProcessingLock(clientId))) {
     throw new Error("AI generation is already running for this client. Please wait for it to finish.");
   }
-  let failure: string | undefined;
-  try {
-    const { runIntelReportPipeline } = await import("@/lib/intel");
-    await runIntelReportPipeline(clientId, runSpecificContext);
-    await updateClient(clientId, { lastIntelReportAt: Date.now() });
-    const ctxNote = runSpecificContext?.trim()
-      ? ` - with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
-      : "";
-    await logActivity({
-      clientId,
-      timestamp: Date.now(),
-      type: "INTEL_GENERATION",
-      title: "Intel Report generated",
-      description: `Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical)${ctxNote}`,
-      actor: "System AI",
-      actorRole: "system",
-    });
-  } catch (e) {
-    failure = e instanceof Error ? e.message : String(e);
-    throw e;
-  } finally {
-    // Persisted even though this action also throws synchronously to the modal —
-    // other tabs/teammates only learn what happened via the client doc.
-    await releaseAiProcessingLock(clientId, failure);
-  }
+
+  after(async () => {
+    let failure: string | undefined;
+    try {
+      const { runIntelReportPipeline } = await import("@/lib/intel");
+      await runIntelReportPipeline(clientId, runSpecificContext);
+      await updateClient(clientId, { lastIntelReportAt: Date.now() });
+      const ctxNote = runSpecificContext?.trim()
+        ? ` - with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
+        : "";
+      await logActivity({
+        clientId,
+        timestamp: Date.now(),
+        type: "INTEL_GENERATION",
+        title: "Intel Report generated",
+        description: `Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical)${ctxNote}`,
+        actor: "System AI",
+        actorRole: "system",
+      });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+      console.error("[intel] Regenerate pipeline failed:", e);
+    } finally {
+      // Passing `failure` (undefined on success) both releases the lock and
+      // persists WHY it failed — the run no longer throws to the caller, so this
+      // record is the only place the reason survives.
+      await releaseAiProcessingLock(clientId, failure);
+    }
+  });
+
   revalidatePath(`/clients/${clientId}`);
 }
 
@@ -289,7 +349,12 @@ export async function refreshClientContextDocsAction(clientId: string): Promise<
 
 /**
  * Generate a 4-5 bullet executive summary for a context document using Claude Haiku.
- * Results are ephemeral — cached in client component state per session, not persisted.
+ * Cached on the doc row and served without a model call while the version is
+ * unchanged.
+ *
+ * `tier` is honoured for staff and IGNORED for a client caller, who always gets
+ * the "client" tier. Returns an empty array when that tier has no such document
+ * — this never falls back to another tier.
  */
 export async function generateDocSummaryAction(
   clientId: string,
@@ -300,10 +365,19 @@ export async function generateDocSummaryAction(
   if (!user || user.disabled) throw new Error("Unauthorized");
   if (user.role === "CLIENT_USER" && user.clientId !== clientId) throw new Error("Forbidden");
 
-  const docs = await listClientContextDocs(clientId);
-  const doc =
-    docs.find((d) => d.docType === docType && d.tier === tier) ??
-    docs.find((d) => d.docType === docType);
+  // Tier is resolved STRICTLY — no cross-tier fallback. A server action is
+  // network-reachable, so with a fallback a client could name a docType that has
+  // no client-tier row and be handed an LLM summary of the internal analyst
+  // copy, uncharged. A client caller's tier argument is ignored outright: their
+  // summaries come from the published tier or not at all.
+  const requested = isContextDocTier(tier) ? tier : null;
+  const effectiveTier: ContextDocTier | null =
+    user.role === "CLIENT_USER" ? "client" : requested;
+  if (!effectiveTier) return [];
+
+  const docs = await listClientContextDocs(clientId, effectiveTier);
+  const doc = docs.find((d) => d.docType === docType);
+  // No summary available for that tier — never reach for another one.
   if (!doc) return [];
 
   // Serve cached summary if the doc content hasn't changed since last generation.
@@ -378,14 +452,26 @@ export async function applyTargetedDocCorrectionAction(
   // Errors (incl. credit denials) return as data — thrown server-action errors
   // are masked in production, which would hide the reason from the client UI.
   try {
-    await applyTargetedDocCorrection(documentId, corrections);
+    const { changed } = await applyTargetedDocCorrection(documentId, corrections);
+    // A correction that failed the structural checks wrote nothing. Reporting
+    // success here made the modal close the document as if it had worked, while
+    // the old text — and a 2-credit charge — stayed exactly where they were.
+    if (!changed) {
+      return {
+        error:
+          "We could not apply that correction safely — nothing was changed and you have not been charged. Try naming the fact more specifically.",
+      };
+    }
     return { ok: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Failed to apply the correction" };
   }
 }
 
-async function applyTargetedDocCorrection(documentId: string, corrections: string): Promise<void> {
+async function applyTargetedDocCorrection(
+  documentId: string,
+  corrections: string,
+): Promise<{ changed: boolean }> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
   if (!corrections.trim()) throw new Error("Corrections text is required");
@@ -401,7 +487,7 @@ async function applyTargetedDocCorrection(documentId: string, corrections: strin
   const client = await getClient(doc.clientId);
   if (!client) throw new Error("Client not found");
 
-  await chargeDocCorrection(
+  const chargedAt = await chargeDocCorrection(
     user,
     doc.clientId,
     CREDIT_COSTS.targetedCorrection,
@@ -413,9 +499,51 @@ async function applyTargetedDocCorrection(documentId: string, corrections: strin
 
   // applyDocCorrections returns the original content when structural checks fail —
   // skip the write entirely rather than bumping the version with unchanged data.
-  if (corrected.trim() === doc.content.trim()) return;
+  // The charge happens before the model call, so hand it back: a client must not
+  // pay for a correction that was discarded.
+  if (corrected.trim() === doc.content.trim()) {
+    if (chargedAt !== null) {
+      await refundDocCorrection(
+        user,
+        doc.clientId,
+        CREDIT_COSTS.targetedCorrection,
+        `Refund · discarded doc correction · ${doc.docType}`,
+        chargedAt,
+      );
+    }
+    return { changed: false };
+  }
 
   await updateContextDocContent(documentId, corrected);
+
+  // A correction edits exactly one stored row — the one the viewer opened, which
+  // the picker resolves to the client-facing copy. Its internal twin is what the
+  // copilot and the agents read, so without this the AI keeps quoting the fact
+  // the client just told us was wrong. Runs after the response so the modal is
+  // not held open for a second model call, and never fails the correction that
+  // already landed.
+  const siblingTier: ContextDocTier | null =
+    doc.tier === "client" ? "internal" : doc.tier === "internal" ? "client" : null;
+  if (siblingTier) {
+    const { clientId: docClientId, docType } = doc;
+    after(async () => {
+      try {
+        const sibling = await getClientContextDocByTier(docClientId, docType, siblingTier);
+        if (!sibling) return;
+        const correctedSibling = await applyDocCorrections(
+          client,
+          docType,
+          sibling.content,
+          corrections,
+        );
+        if (correctedSibling.trim() !== sibling.content.trim()) {
+          await updateContextDocContent(sibling.id, correctedSibling);
+        }
+      } catch (e) {
+        console.error(`[intel] Could not propagate correction to ${siblingTier} ${docType}:`, e);
+      }
+    });
+  }
 
   const actorRole = user.role === "CLIENT_USER" ? "client" : "staff";
   const now = Date.now();
@@ -442,6 +570,7 @@ async function applyTargetedDocCorrection(documentId: string, corrections: strin
   ]);
 
   revalidatePath(`/clients/${doc.clientId}`);
+  return { changed: true };
 }
 
 /**

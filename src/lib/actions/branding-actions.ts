@@ -34,8 +34,9 @@ export async function saveBrandingGuidelinesAction(
   const [, client, brandingDoc, voiceDoc] = await Promise.all([
     updateClient(clientId, { brandingGuidelines: fullGuidelines }),
     getClient(clientId),
-    getClientContextDoc(clientId, "branding-guidelines"),
-    getClientContextDoc(clientId, "brand-voice"),
+    // Deterministic tier — see the matching write in src/lib/branding.ts.
+    getClientContextDoc(clientId, "branding-guidelines", "internal"),
+    getClientContextDoc(clientId, "brand-voice", "internal"),
   ]);
 
   const clientName = client?.name ?? clientId;

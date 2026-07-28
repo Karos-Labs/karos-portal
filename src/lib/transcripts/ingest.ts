@@ -192,7 +192,8 @@ export async function appendMeetingSignalToContextDoc(
   if (transcript.keywords?.length) lines.push("", `**Topics:** ${transcript.keywords.join(", ")}`);
 
   const signal = lines.join("\n");
-  const existingDoc = await getClientContextDoc(clientId, "meeting-notes");
+  // meeting-notes is written back as "internal-only" below — read the same tier.
+  const existingDoc = await getClientContextDoc(clientId, "meeting-notes", "internal-only");
   const now = Date.now();
 
   await upsertClientContextDoc({

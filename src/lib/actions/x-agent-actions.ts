@@ -189,9 +189,12 @@ export async function proposeXRosterAction(input: {
   const client = await getClient(input.clientId);
   if (!client) return { error: "Client not found." };
 
+  // Client tier: this suggestion runs for client users too, so it must read the
+  // published copy — the one a correction updates and the one that carries no
+  // internal analyst notes.
   const [audience, strategy] = await Promise.all([
-    getClientContextDoc(input.clientId, "target-audience"),
-    getClientContextDoc(input.clientId, "market-strategy"),
+    getClientContextDoc(input.clientId, "target-audience", "client"),
+    getClientContextDoc(input.clientId, "market-strategy", "client"),
   ]);
   const context = [
     `Company: ${client.name}${client.industry ? ` (${client.industry})` : ""}${client.website ? ` — ${client.website}` : ""}`,

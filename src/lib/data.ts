@@ -1240,17 +1240,19 @@ export async function listClientContextDocs(
   return snap.docs.map((d) => withId<ClientContextDoc>(d));
 }
 
+/**
+ * Get a single context doc. The tier is REQUIRED: a client-facing document and
+ * its internal twin share a docType, and this used to be a bare .limit(1) on an
+ * unordered query — so callers silently drew whichever row Firestore happened to
+ * return first, which is how a corrected document and an uncorrected one could
+ * both be "the" document depending on the caller.
+ */
 export async function getClientContextDoc(
   clientId: string,
   docType: string,
+  tier: ContextDocTier,
 ): Promise<ClientContextDoc | null> {
-  const snap = await col
-    .clientContextDocs()
-    .where("clientId", "==", clientId)
-    .where("docType", "==", docType)
-    .limit(1)
-    .get();
-  return snap.empty ? null : withId<ClientContextDoc>(snap.docs[0]);
+  return getClientContextDocByTier(clientId, docType, tier);
 }
 
 /** Get a single context doc by clientId + docType + tier. */
@@ -1549,6 +1551,26 @@ export async function listFeedbacks(agentId?: string, limit = 200): Promise<Feed
     : col.feedbacks().orderBy("createdAt", "desc");
   const snap = await q.limit(limit).get();
   return snap.docs.map((d) => withId<Feedback>(d));
+}
+
+/**
+ * Corrections a client (or staff on their behalf) has applied to this client's
+ * context documents, newest first. Read back by the intel pipeline so a
+ * regeneration — which replaces every document wholesale — does not restore
+ * facts the client has already told us are wrong.
+ *
+ * Sorted in memory rather than with orderBy so no composite index is required.
+ */
+export async function listClientDocCorrections(
+  clientId: string,
+  limit = 100,
+): Promise<Feedback[]> {
+  const snap = await col.feedbacks().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<Feedback>(d))
+    .filter((f) => f.scope === "single_doc" || f.scope === "global")
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit);
 }
 
 /* -------------------- client access requests ------------------------ */
