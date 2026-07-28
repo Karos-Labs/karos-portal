@@ -16,6 +16,14 @@ interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /**
+   * What the transcript shows in place of `content`. An action chip's hidden
+   * instruction used to be rendered in the user bubble, so the client was
+   * shown words they never wrote — including an order aimed at the model
+   * ("Start by asking me…") and internal product vocabulary (QA F15).
+   * `content` is still what goes to the API.
+   */
+  display?: string;
 }
 
 /* ── Transcript persistence ──────────────────────────────────────────── */
@@ -35,7 +43,8 @@ function isPersistedMessage(v: unknown): v is Message {
   return (
     typeof m.id === "string" &&
     (m.role === "user" || m.role === "assistant") &&
-    typeof m.content === "string"
+    typeof m.content === "string" &&
+    (m.display === undefined || typeof m.display === "string")
   );
 }
 
@@ -163,11 +172,21 @@ function useCopilot(
   }, [storageKey]);
 
   const send = useCallback(
-    async (text: string) => {
+    /**
+     * @param display Shown in the user bubble instead of `text` — used by the
+     * action chips, whose trigger is an instruction to the model, not a
+     * sentence the client typed (QA F15). `text` is what the API receives.
+     */
+    async (text: string, display?: string) => {
       const trimmed = text.trim();
       if (!trimmed || streaming) return;
 
-      const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: trimmed };
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: trimmed,
+        ...(display ? { display } : {}),
+      };
       const assistantId = crypto.randomUUID();
 
       setMessages((prev) => [...prev, userMsg, { id: assistantId, role: "assistant", content: "" }]);
@@ -752,7 +771,9 @@ export function ChatbotWidget({
                         // documents view uses.
                         <div dangerouslySetInnerHTML={{ __html: renderSectionBody(msg.content) }} />
                       ) : (
-                        <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
+                        // `display` is the action's own label when the chip's
+                        // hidden trigger is what was actually sent (QA F15).
+                        <span style={{ whiteSpace: "pre-wrap" }}>{msg.display ?? msg.content}</span>
                       )
                     ) : (
                       <TypingDots />
