@@ -13,7 +13,9 @@ import {
   TASK_EXECUTION_COSTS,
   availableCredits,
   bindingCreditLimit,
+  CREDIT_BUCKET_LABEL,
 } from "@/lib/credits";
+import type { AgentSpendRow } from "@/lib/credit-reporting";
 import { cn, relativeTime } from "@/lib/utils";
 import type { ClientCredits, CreditLedgerEntry, Role } from "@/lib/types";
 
@@ -100,12 +102,20 @@ export function CreditsPanel({
   clientId,
   credits,
   ledger,
+  spendByAgent,
   role,
   viewer,
 }: {
   clientId: string;
   credits: ClientCredits;
   ledger: CreditLedgerEntry[];
+  /**
+   * The per-agent breakdown (§6.2a), aggregated SERVER-side over the whole
+   * ledger. Deliberately not derived here from `ledger`: that prop is the
+   * capped "Recent activity" feed, so a breakdown computed from it would be a
+   * breakdown of the last few rows presented as a breakdown of spend.
+   */
+  spendByAgent?: AgentSpendRow[];
   role: Role;
   /**
    * Signed-in viewer, for the support control offered when spending is blocked.
@@ -344,6 +354,38 @@ export function CreditsPanel({
 
       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
       {notice && <p className="mt-3 text-xs text-neon">{notice}</p>}
+
+      {/* §6.2(a). "Recent activity" answers "what happened last"; it has never
+          answered "what am I paying for", which is the question a client
+          actually brings to this page. Spend per agent, split into the setup
+          they paid once for, the schedule they chose, and the runs they started
+          themselves — the three things they can act on. Aggregated server-side
+          over the whole ledger, not over the capped feed below. */}
+      {spendByAgent && spendByAgent.length > 0 && (
+        <div className="mt-5 border-t border-border pt-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-2">
+            Where your credits went
+          </p>
+          <ul className="divide-y divide-border">
+            {spendByAgent.map((row) => (
+              <li key={row.agentId ?? "__none__"} className="py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="min-w-0 truncate text-sm text-foreground">{row.agentName}</p>
+                  <span className="shrink-0 font-mono text-xs text-muted">{row.credits}</span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                  {row.buckets.map((bucket) => (
+                    <span key={bucket.bucket} className="text-[11px] text-muted-2">
+                      {CREDIT_BUCKET_LABEL[bucket.bucket]}
+                      <span className="ml-1 font-mono">{bucket.credits}</span>
+                    </span>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="mt-5 border-t border-border pt-4">
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-2">Recent activity</p>

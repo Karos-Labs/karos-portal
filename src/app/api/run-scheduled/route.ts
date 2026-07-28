@@ -69,6 +69,16 @@ export async function GET(req: NextRequest) {
             ? `Create exactly ${run.outputsPerRun} distinct outputs for this scheduled run.\n\n${run.prompt}`
             : run.prompt,
         chargeMultiplier: run.billClientCredits ? (run.outputsPerRun ?? 1) : 1,
+        // A scheduled fire is a run TYPE, and until now it was the only one
+        // that never said so — launches and manual template runs both stamp
+        // themselves, so every recurring fire landed in the untyped bucket.
+        // Everything §6 reports splits on this field: the client's ledger
+        // breakdown separates scheduled from manual by it, and §6.3's
+        // launch-price calibration uses scheduled+manual runs as the very
+        // denominator it measures a launch against. Without the stamp both
+        // are computed over a hole.
+        runType: "scheduled",
+        ...(run.clientAgentId ? { clientAgentId: run.clientAgentId } : {}),
       });
 
       const advance: Partial<PlannedScheduledRun> = {

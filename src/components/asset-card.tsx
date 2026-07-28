@@ -545,8 +545,10 @@ export function AssetCard({
     return (
       <Card className="overflow-hidden">
         <div className="flex items-start gap-3">
+          {/* Creation language, matching the modal (§4.1 item 1) — a padlock
+              says "this exists and you may not see it". */}
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-muted-2">
-            <Icon name="Lock" className="h-4 w-4" />
+            <Icon name="CalendarClock" className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
@@ -555,7 +557,7 @@ export function AssetCard({
             </div>
             <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-2">
               <Icon name="CalendarClock" className="h-3.5 w-3.5 shrink-0" />
-              {unlockStr ? `Unlocks ${unlockStr}` : "Unlocks on its scheduled date"}
+              {unlockStr ? `Created on ${unlockStr}` : "Created on its scheduled day"}
             </p>
           </div>
         </div>

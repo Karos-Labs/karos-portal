@@ -8,6 +8,8 @@ import { ContactUsButton } from "@/components/contact-us-modal";
 import { AgentScheduleModal } from "@/components/custom-agents";
 import { ClientAgentFeedbackModal } from "./feedback-modal";
 import { OptionsRow, TemplateRows, WeekStrip } from "./live-card";
+import { SlotNoteModal } from "./slot-note-modal";
+import { OptionPicked, OptionPicker } from "./option-picker";
 import { visibleTemplates } from "@/lib/client-agent-runs";
 import { runClientAgentTemplateAction } from "@/lib/actions/client-agent-run-actions";
 import type { ClientAgentCardRow } from "./types";
@@ -46,6 +48,7 @@ export function AgentDetailPanel({
     { scope: "agent" } | { scope: "template"; key: string; name: string } | null
   >(null);
   const [scheduling, setScheduling] = useState(false);
+  const [noteDay, setNoteDay] = useState<ClientAgentCardRow["week"][number] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [, startTransition] = useTransition();
@@ -147,7 +150,24 @@ export function AgentDetailPanel({
           }
         />
         {agent.optionsMode ? (
-          <OptionsRow />
+          /* WP-9 retires D6's placeholder. That row existed to describe the
+             product without promising the picker, because the picker did not
+             exist; it does now, so today's three options ARE the row. The
+             placeholder survives only for a day whose options have not been
+             assigned yet — where it is still the honest thing to say. */
+          agent.today ? (
+            agent.today.pickedDirection ? (
+              <OptionPicked direction={agent.today.pickedDirection} />
+            ) : (
+              <OptionPicker
+                clientId={agent.clientId}
+                slotId={agent.today.slotId}
+                options={agent.today.options}
+              />
+            )
+          ) : (
+            <OptionsRow />
+          )
         ) : (
           <TemplateRows
             agent={agent}
@@ -164,7 +184,11 @@ export function AgentDetailPanel({
       {/* ── Coming up ── */}
       {agent.week.length > 0 && (
         <section>
-          <WeekStrip week={agent.week} />
+          {/* The strip is where a client can say something about ONE day
+              (§4.3). It stays intent-only: a note marker says the client wrote
+              something, which they already know, and still reveals nothing
+              about whether that day's post exists yet. */}
+          <WeekStrip week={agent.week} clientId={agent.clientId} onNote={setNoteDay} />
         </section>
       )}
 
@@ -201,6 +225,13 @@ export function AgentDetailPanel({
           rows={agent.feedback}
           viewerIsClient={viewerIsClient}
           onClose={() => setFeedback(null)}
+        />
+      )}
+      {noteDay && (
+        <SlotNoteModal
+          clientId={agent.clientId}
+          day={noteDay}
+          onClose={() => setNoteDay(null)}
         />
       )}
       {scheduling && agent.runnable && (

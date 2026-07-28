@@ -149,15 +149,21 @@ export function AssetDetailModal({
     return (
       <Modal open={open} onClose={onClose} title={template?.name ?? "Upcoming post"} className="max-w-md">
         <div className="flex flex-col items-center gap-3 py-6 text-center">
+          {/* CREATION language, not lock language (§4.1 item 1). "This
+              deliverable unlocks on Thursday" tells the client the post already
+              exists and is being withheld from them — which is the single fact
+              the whole slot model is built to keep indistinguishable, and it
+              made every pre-generated batch legible as one. A padlock says the
+              same thing in an icon, so it goes too. */}
           <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-surface-2 text-muted-2">
-            <Icon name="Lock" className="h-5 w-5" />
+            <Icon name="CalendarClock" className="h-5 w-5" />
           </div>
           {template && <Badge tone="neutral">{template.name}</Badge>}
           <p className="text-sm font-medium text-foreground">Upcoming post</p>
           <p className="max-w-xs text-xs text-muted-2">
             {unlockStr
-              ? `This deliverable unlocks on ${unlockStr}. You'll be able to view and download it then.`
-              : "This deliverable unlocks on its scheduled date."}
+              ? `This post is created on ${unlockStr}. It'll appear here that morning.`
+              : "This post is created on its scheduled day. It'll appear here that morning."}
           </p>
         </div>
       </Modal>

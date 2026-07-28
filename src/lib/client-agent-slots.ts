@@ -1,14 +1,28 @@
 import "server-only";
 
-import { listPlannedScheduledRuns, updatePlannedScheduledRun } from "@/lib/data";
-import { createAgentSlots, listAgentSlots, updateClientAgent } from "@/lib/data-client-agents";
+import { listAssets, listPlannedScheduledRuns, updatePlannedScheduledRun } from "@/lib/data";
 import {
+  createAgentSlots,
+  listAgentSlots,
+  listClientAgents,
+  updateAgentSlot,
+  updateClientAgent,
+} from "@/lib/data-client-agents";
+import {
+  dateKeyInZone,
   effectiveRotation,
   isOptionsMode,
   OPTIONS_TEMPLATE_KEY,
   shiftDateKey,
 } from "@/lib/client-agents";
-import { generateSlotHorizon, slotScheduleFor, type SlotSchedule } from "@/lib/slot-plan";
+import {
+  assignOptionRefs,
+  generateSlotHorizon,
+  slotScheduleFor,
+  type SlotSchedule,
+} from "@/lib/slot-plan";
+import { optionCandidatesFromBatch } from "@/lib/x-options";
+import { parseXDrafts, type XParsedBatch } from "@/lib/x-drafts";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { AgentSlot, ClientAgent, PlannedScheduledRun } from "@/lib/types";
 
@@ -64,6 +78,8 @@ export async function resolveUmbrellaSchedule(
 export interface HorizonResult {
   /** Slot docs created by this call. */
   created: number;
+  /** Options-mode only: days given their candidate drafts by this call. */
+  assigned?: number;
   /** Why nothing was created, when nothing was. */
   skipped?: "not_live" | "no_schedule" | "schedule_paused" | "no_templates";
 }
@@ -104,8 +120,147 @@ export async function ensureSlotHorizon(
     ...(options ? { optionsTemplateKey: OPTIONS_TEMPLATE_KEY } : {}),
   });
   const created = await createAgentSlots(drafts, actorUid);
-  return { created };
+  // Go-live catch-up only: a batch that already existed before this umbrella
+  // went live. Steady state is syncOptionsFromBatchAsset, invoked as each new
+  // batch lands through the webhook — this path fires once and never again.
+  let assigned = 0;
+  if (options) {
+    const batch = await latestXBatchAsset(umbrella.clientId);
+    if (batch) assigned = await assignOptionsForUmbrella({ umbrella, batch, now });
+  }
+  return { created, ...(assigned > 0 ? { assigned } : {}) };
 }
+
+/**
+ * Give each unassigned options day its three candidate drafts (§4.5b, B1).
+ *
+ * THE INTERIM MODE, and the one that actually ships. The X engine produces a
+ * weekly BATCH; the client is shown three options a DAY. Until Tomer's seam T7
+ * teaches the engine to produce three-a-day directly, the gap is closed here by
+ * slicing the batch across the plan — and §8.3 is explicit that the batch-sliced
+ * version is the shipping degraded mode, not a placeholder. Without this the
+ * picker, the pick action and the whole telemetry loop are unreachable code:
+ * nothing else in the system ever writes `optionRefs`.
+ *
+ * Runs opportunistically beside horizon generation, for the same reason and
+ * with the same guarantees: never reassigns a day that already has options (a
+ * client may have picked from it), never uses one draft twice, and leaves a day
+ * empty rather than offering it as a "pick of 3" with one card in it.
+ *
+ * CHURN-SAFE. Assignment is not presentation: a future day's refs live on the
+ * slot doc, and only the CURRENT day's option texts ever cross the RSC boundary
+ * (client-agent-rows). Writing tomorrow's refs today reveals nothing, because
+ * nothing reads them until tomorrow.
+ */
+async function assignOptionsForUmbrella(input: {
+  umbrella: ClientAgent;
+  batch: { assetId: string; parsed: XParsedBatch };
+  now: number;
+}): Promise<number> {
+  const { umbrella, batch } = input;
+  const candidates = optionCandidatesFromBatch(batch.parsed);
+  if (candidates.length === 0) return 0;
+
+  // The day boundary comes from the SCHEDULE's zone, not the container's — the
+  // F108 contract every other slot path follows. On a UTC container, a Tel Aviv
+  // client's "today" starts hours earlier, and reading it in the wrong zone
+  // silently skips the day they are actually living in.
+  const scheduleRun = await resolveUmbrellaSchedule(umbrella);
+  const zone = scheduleRun?.timeZone ?? runtimeTimeZone();
+  const todayKey = dateKeyInZone(input.now, zone);
+
+  const slots = (await listAgentSlots({ clientAgentId: umbrella.id }))
+    // Today and forward only. A past day cannot be picked (the action refuses
+    // it), so assigning to one would burn drafts on a day nobody can act on.
+    .filter((slot) => slot.dateKey >= todayKey && slot.status !== "skipped");
+
+  const assignments = assignOptionRefs(candidates, slots);
+  if (assignments.length === 0) return 0;
+
+  await Promise.all(
+    assignments.map((assignment) =>
+      updateAgentSlot(assignment.slotId, {
+        optionRefs: assignment.optionRefs,
+        // The slot points at the BATCH until a pick materializes a per-day
+        // asset over it. That is what lets the picker resolve refs to text.
+        assetId: batch.assetId,
+      }),
+    ),
+  );
+  return assignments.length;
+}
+
+/**
+ * Slice a batch across the plan AT THE MOMENT THE BATCH LANDS (B1, second pass).
+ *
+ * The first attempt hung assignment off `ensureSlotHorizon`, which was the wrong
+ * seam and made the feature reachable in theory only. Its options-mode-reachable
+ * caller is the ONE-SHOT go-live: the other two callers are template-gated, and
+ * an options umbrella has no templates by design. So week 1 got refs only if a
+ * batch happened to pre-exist at go-live, and week 2's batch — the recurring one
+ * this product actually runs on — was never sliced at all.
+ *
+ * The batch arrives through the custom-agent webhook, so that is where this is
+ * invoked. Identified by the same parse predicate as everywhere else: DRAFTS.md
+ * carries no marker, and `parseXDrafts` returning non-null IS the test.
+ *
+ * IDEMPOTENT, which matters because the webhook's claim is single-use but this
+ * runs after it: `assignOptionRefs` never touches a day that already has
+ * options, so a redelivery, a retry, or a second batch in the same week adds
+ * refs only to days that had none.
+ *
+ * Fenced by clientId at the call site — the umbrellas are looked up BY the job's
+ * client, so a crafted payload cannot reach another tenant's plan.
+ */
+export async function syncOptionsFromBatchAsset(input: {
+  clientId: string;
+  assetId: string;
+  content: string;
+  now?: number;
+}): Promise<{ assigned: number }> {
+  // Cheap prefilter before the line-by-line parse — most assets are posts.
+  if (!input.content.includes("# Account ")) return { assigned: 0 };
+  const parsed = parseXDrafts(input.content);
+  if (!parsed) return { assigned: 0 };
+
+  const umbrellas = (await listClientAgents({ clientId: input.clientId })).filter(
+    (umbrella) => umbrella.launchState === "live" && isOptionsMode(umbrella),
+  );
+  if (umbrellas.length === 0) return { assigned: 0 };
+
+  const now = input.now ?? Date.now();
+  let assigned = 0;
+  for (const umbrella of umbrellas) {
+    assigned += await assignOptionsForUmbrella({
+      umbrella,
+      batch: { assetId: input.assetId, parsed },
+      now,
+    });
+  }
+  return { assigned };
+}
+
+/**
+ * The newest asset for this client whose content is an X drafts batch.
+ *
+ * Used only by the go-live path, which has to catch up on a batch that already
+ * existed before the umbrella went live. Steady state runs through
+ * syncOptionsFromBatchAsset as each new batch lands.
+ */
+async function latestXBatchAsset(
+  clientId: string,
+): Promise<{ assetId: string; parsed: XParsedBatch } | null> {
+  const assets = await listAssets({ clientId });
+  const byNewest = [...assets].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  for (const asset of byNewest) {
+    const content = asset.content ?? "";
+    if (!content.includes("# Account ")) continue;
+    const parsed = parseXDrafts(content);
+    if (parsed) return { assetId: asset.id, parsed };
+  }
+  return null;
+}
+
 
 /**
  * The next `days` days of an umbrella's plan, in date order — what the week
@@ -127,4 +282,34 @@ export async function upcomingSlots(
   return slots
     .filter((slot) => horizon.has(slot.dateKey) && slot.status !== "skipped")
     .sort((a, b) => (a.dateKey < b.dateKey ? -1 : 1));
+}
+
+/**
+ * Flip the slot that a now-published asset fulfils to `posted` (§3, §1.2).
+ *
+ * The slot's status is DERIVED — the asset is the source of truth for content
+ * state, the slot is the source of truth for intent (template + day + note) —
+ * so nothing reads slot.status to decide what a client may see. It exists so
+ * the plan can say "this day happened" without re-deriving it from assets on
+ * every read, and so a re-planned day never silently overwrites a day the
+ * client already posted (slot-plan's reorder validator refuses a posted day;
+ * until now nothing could ever reach that state, which made the guard dead
+ * code).
+ *
+ * BEST-EFFORT and OUT-OF-BAND, deliberately. reconcileAssetPublished is a
+ * transaction, and Firestore forbids a query inside one — the slot has to be
+ * found by asset id, which is a query. A failure here must never fail the
+ * publish: the asset is live either way, and the next horizon pass or reader
+ * re-derives it. Same contract the webhook's chain reflow already runs under.
+ */
+export async function syncSlotPostedForAsset(input: {
+  clientId: string;
+  assetId: string;
+  now?: number;
+}): Promise<{ changed: boolean }> {
+  const slots = await listAgentSlots({ clientId: input.clientId });
+  const slot = slots.find((s) => s.assetId === input.assetId);
+  if (!slot || slot.status === "posted") return { changed: false };
+  await updateAgentSlot(slot.id, { status: "posted" });
+  return { changed: true };
 }

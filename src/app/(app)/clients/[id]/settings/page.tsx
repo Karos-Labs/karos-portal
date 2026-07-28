@@ -7,6 +7,7 @@ import {
   listClientIntegrations,
   listCreditLedger,
   listCustomAgents,
+  listJobs,
   listScheduledRuns,
   listTranscripts,
   getClientSettings,
@@ -14,6 +15,12 @@ import {
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
+import { summarizeClientSpend } from "@/lib/credit-reporting";
+
+/** Rows the "Recent activity" feed shows. */
+const LEDGER_FEED_LIMIT = 15;
+/** Rows the per-agent breakdown aggregates over (§6.2a). */
+const LEDGER_SUMMARY_LIMIT = 500;
 import { Card, CardTitle, PageHeader } from "@/components/ui";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import AutoScheduleToggle from "@/components/auto-schedule-toggle";
@@ -26,7 +33,7 @@ import { ScheduledRunsCard } from "@/components/scheduled-runs";
 import { ClientEditor } from "@/components/client-editor";
 import { SettingsTabs, type SettingsTab } from "@/components/settings-tabs";
 import { relativeTime } from "@/lib/utils";
-import type { ClientIntegration, Transcript, ClientCredits, CreditLedgerEntry, CustomAgent, ClientSettings, EmployeeSeat, ScheduledRun } from "@/lib/types";
+import type { ClientIntegration, Transcript, ClientCredits, CreditLedgerEntry, CustomAgent, ClientSettings, EmployeeSeat, JobRunType, ScheduledRun } from "@/lib/types";
 
 export default async function ClientSettingsPage({
   params,
@@ -57,11 +64,32 @@ export default async function ClientSettingsPage({
     listClientIntegrations(id),
     listTranscripts({ clientId: id }),
     getClientCredits(id),
-    listCreditLedger(id, 15),
+    // The FEED is capped at 15; the breakdown below is aggregated over a much
+    // deeper slice, because "where your credits went" computed from the last
+    // fifteen rows would be a breakdown of this week presented as a breakdown
+    // of spend.
+    listCreditLedger(id, LEDGER_SUMMARY_LIMIT),
     isAdmin ? listCustomAgents() : Promise.resolve([]),
     getClientSettings(id),
     isAdmin ? listScheduledRuns({ clientId: id }) : Promise.resolve([]),
   ])) as [ClientIntegration[], Transcript[], ClientCredits, CreditLedgerEntry[], CustomAgent[], ClientSettings | null, ScheduledRun[]];
+
+  // §6.2(a). The split between a scheduled fire and a run the client started
+  // lives on the JOB, not the ledger row, so the jobs are joined here on the
+  // server — the browser never needs them and a client payload carrying every
+  // job would be both wasteful and a staff-detail leak.
+  const spendJobs = await listJobs({ clientId: id });
+  const runTypeByJobId: Record<string, JobRunType | undefined> = {};
+  for (const job of spendJobs) runTypeByJobId[job.id] = job.runType;
+  const agentNameById: Record<string, string> = {};
+  for (const job of spendJobs) {
+    if (job.customAgentId) agentNameById[job.customAgentId] = job.agentName;
+  }
+  const spendByAgent = summarizeClientSpend({
+    ledger: creditLedger,
+    runTypeByJobId,
+    agentNameById,
+  });
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
   // Sanitized LinkedIn seats for the multi-seat workspace — strip tokens; the UI
@@ -84,7 +112,8 @@ export default async function ClientSettingsPage({
     <CreditsPanel
       clientId={client.id}
       credits={credits}
-      ledger={creditLedger}
+      ledger={creditLedger.slice(0, LEDGER_FEED_LIMIT)}
+      spendByAgent={spendByAgent}
       role={user.role}
       viewer={{ name: user.name, email: user.email }}
     />

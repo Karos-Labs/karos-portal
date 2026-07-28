@@ -12,7 +12,13 @@
  * The transactional balance mutations live in src/lib/data.ts.
  */
 
-import type { AppUser, ClientCredits, ManagedTaskType } from "@/lib/types";
+import type {
+  AppUser,
+  ClientCredits,
+  CreditOperation,
+  JobRunType,
+  ManagedTaskType,
+} from "@/lib/types";
 
 /**
  * True when this actor's AI actions should charge the client's balance:
@@ -409,3 +415,57 @@ export function availableCredits(credits: ClientCredits, now?: number): number {
   const monthLeft = rolled.monthlyLimit != null ? rolled.monthlyLimit - rolled.monthSpent : Infinity;
   return Math.max(0, Math.min(rolled.balance, weekLeft, monthLeft));
 }
+
+/* ── Ledger presentation (§6.2) ───────────────────────────────────── */
+
+/**
+ * Human label per ledger operation.
+ *
+ * Ledger rows have always rendered their free-text `reason`, which is composed
+ * at each charge site ("Agent setup · Instagram Agent", "Task execution · …").
+ * That reads fine one row at a time and is useless for grouping: two charges of
+ * the same kind can carry different prose, so nothing can bucket spend without
+ * re-parsing English. These labels are the stable name of the KIND, which is
+ * what a breakdown groups by; the reason line stays as the detail beneath it.
+ */
+export const CREDIT_OPERATION_LABEL: Record<CreditOperation, string> = {
+  agent_run: "Agent runs",
+  chat_message: "Copilot",
+  task_execution: "Task runs",
+  doc_correction: "Document corrections",
+  custom_agent_run: "Agent runs",
+  agent_launch: "Setup",
+  seat_purchase: "Seats",
+  manual: "Adjustments",
+};
+
+/**
+ * The bucket a charge belongs to in the per-agent breakdown (§6.2a).
+ *
+ * `custom_agent_run` covers both a schedule firing and a client pressing Run,
+ * and the two are worth telling apart — one is the pace they chose, the other
+ * is spend they initiated. The job's `runType` is what separates them, so a row
+ * whose job has been deleted (or predates run-type stamping) honestly falls
+ * back to the undifferentiated "Agent runs" rather than guessing.
+ */
+export type CreditBucket = "setup" | "scheduled" | "manual" | "other";
+
+export function creditBucketFor(
+  operation: CreditOperation,
+  runType?: JobRunType | null,
+): CreditBucket {
+  if (operation === "agent_launch") return "setup";
+  if (operation === "custom_agent_run" || operation === "agent_run") {
+    if (runType === "scheduled") return "scheduled";
+    if (runType === "manual_template" || runType === "manual") return "manual";
+    return "other";
+  }
+  return "other";
+}
+
+export const CREDIT_BUCKET_LABEL: Record<CreditBucket, string> = {
+  setup: "Setup",
+  scheduled: "Scheduled runs",
+  manual: "Runs you started",
+  other: "Other usage",
+};

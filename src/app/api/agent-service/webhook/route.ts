@@ -24,6 +24,8 @@ import { orderKeyForCreatedAt } from "@/lib/post-chain";
 import { reflowClientChain } from "@/lib/chain";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { applyLaunchOutcome, isLaunchTemplatesArtifact } from "@/lib/jobs/launch-outcome";
+import { getClientAgent } from "@/lib/data-client-agents";
+import { syncOptionsFromBatchAsset } from "@/lib/client-agent-slots";
 import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
 import { logger } from "@/services/logger";
 
@@ -208,6 +210,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // The template stream this run was fired against, resolved BEFORE the claim
+  // for the same reason the refund above is: the claim is single-use, so a
+  // lookup that throws after it has no retry — redelivery would short-circuit
+  // on "Already processed" and the asset would be written with no template
+  // forever. Failing the delivery (503) keeps it in the service queue instead.
+  //
+  // WHITELISTED against the umbrella's own registry, and FENCED by client: the
+  // key is trusted from our job doc first and the metadata echo second, but a
+  // stale or hand-crafted key must never write a stream name onto a client's
+  // deliverable that their agent does not have, and an umbrella id from another
+  // tenant must never be read through at all.
+  const claimClientAgentId = job.clientAgentId ?? payload.metadata?.karos_client_agent_id ?? null;
+  const claimIsLaunch =
+    (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(claimClientAgentId);
+  const runTemplateKey = job.templateKey ?? payload.metadata?.karos_template_key ?? null;
+  let runTemplate: { key: string; name?: string } | null = null;
+  if (runTemplateKey && claimClientAgentId && !claimIsLaunch) {
+    let umbrella;
+    try {
+      umbrella = await getClientAgent(claimClientAgentId);
+    } catch {
+      return NextResponse.json(
+        { error: "Template lookup failed — retry delivery" },
+        { status: 503 },
+      );
+    }
+    if (umbrella && umbrella.clientId === job.clientId) {
+      const match = umbrella.templates?.find((t) => t.key === runTemplateKey);
+      if (match) runTemplate = { key: match.key, name: match.name };
+    }
+  }
+
   // Atomic claim — makes redelivery (sender retries on timeout) idempotent:
   // exactly one delivery flips the job out of queued/running and runs the
   // side effects (asset creation, usage logging).
@@ -229,6 +263,13 @@ export async function POST(req: NextRequest) {
   const isLaunchRun =
     (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(clientAgentId);
   let launchTemplatesJson: string | null = null;
+
+  // The template stream this run was fired against, WHITELISTED against the
+  // umbrella's own registry (§8.2). The key is trusted from our own job doc
+  // first and the metadata echo second, but either way it is only accepted if
+  // the umbrella actually has that template — a stale or hand-crafted key must
+  // never write a stream name onto a client's deliverable that their agent
+  // does not have, since the archive groups by exactly this field.
 
   const artifacts: ExternalJobArtifact[] = [];
   const assetIds: string[] = [...job.assetIds];
@@ -369,9 +410,22 @@ export async function POST(req: NextRequest) {
         imageUrl: orderedImageUrls[0] ?? null,
         ...(platform ? { channels: [platform] } : {}),
         status: "draft",
+        // Template attribution, in precedence order. A managed product IS its
+        // own template. A custom run fired against one of the umbrella's
+        // template streams carries the key on the job (submit-custom stores it
+        // and echoes karos_template_key) — and until now the webhook dropped it
+        // on the floor, so every post a per-template run produced arrived with
+        // no template at all. That is the join the archive groups by, the chip
+        // the calendar paints and the key per-template feedback is scoped to:
+        // without it a client's own streams are invisible on their deliverables.
         ...(managedProduct
           ? { templateKey: payload.task_type, templateName: managedProduct.name }
-          : {}),
+          : runTemplate
+            ? {
+                templateKey: runTemplate.key,
+                ...(runTemplate.name ? { templateName: runTemplate.name } : {}),
+              }
+            : {}),
         orderKey: orderKeyForCreatedAt(now, job.id),
         ...recommendedScheduleFields(assetType, 0, platform),
         createdBy: "agent-service",
@@ -392,6 +446,30 @@ export async function POST(req: NextRequest) {
             at: Date.now(),
             level: "error",
             message: "Calendar reflow failed - run the staff reflow action",
+          }),
+        );
+
+        // §4.5b — an X drafts BATCH landing is the moment its days can be
+        // sliced into daily options. This is where the batch actually arrives:
+        // the recurring X run delivers here every week, and the horizon path
+        // (which is template-gated, and an options umbrella has no templates)
+        // never sees it. Identified by the same parse predicate as every other
+        // X surface, and looked up BY this job's client so a crafted payload
+        // cannot reach another tenant's plan.
+        //
+        // Safe after the single-use claim: assignment never touches a day that
+        // already has options, so a redelivery adds nothing. Best-effort for
+        // the same reason the reflow above is — the deliverable is already
+        // written, and the next batch re-attempts any day still unassigned.
+        await syncOptionsFromBatchAsset({
+          clientId: job.clientId,
+          assetId,
+          content: primaryText ? primaryText.content : "",
+        }).catch(() =>
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message: "Daily options assignment failed - retries on the next batch",
           }),
         );
       }
@@ -451,6 +529,7 @@ export async function POST(req: NextRequest) {
     try {
       await applyLaunchOutcome({
         clientAgentId,
+        clientId: job.clientId,
         status: payload.status,
         error: payload.status === "done" ? null : (payload.error ?? payload.status),
         templatesJson: launchTemplatesJson,

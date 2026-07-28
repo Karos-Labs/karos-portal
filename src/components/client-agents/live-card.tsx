@@ -9,6 +9,8 @@ import { ContactUsButton } from "@/components/contact-us-modal";
 import { AgentScheduleModal } from "@/components/custom-agents";
 import { ClientAgentFeedbackModal } from "./feedback-modal";
 import { moveTemplateKey, visibleTemplates } from "@/lib/client-agent-runs";
+import { markSlotNoteAppliedAction } from "@/lib/actions/slot-note-actions";
+import { relativeTime } from "@/lib/utils";
 import {
   reorderClientAgentTemplatesAction,
   runClientAgentTemplateAction,
@@ -142,6 +144,8 @@ export function ClientAgentLiveCard({
       )}
 
       <WeekStrip week={agent.week} />
+      {/* B2: the notes reach the people who apply them. */}
+      {!viewerIsClient && <StaffSlotNotes clientId={agent.clientId} week={agent.week} />}
 
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
         <p className="text-xs text-muted-2">
@@ -393,8 +397,18 @@ const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  * post and a day-of run project into an identical chip, and that
  * indistinguishability is the churn guard, not a copy choice (§4.1).
  */
-export function WeekStrip({ week }: { week: Array<{ dateKey: string; label: string }> }) {
+export function WeekStrip({
+  week,
+  clientId,
+  onNote,
+}: {
+  week: ClientAgentCardRow["week"];
+  clientId?: string;
+  /** Present ⇒ days are pressable and open the note editor (detail page only). */
+  onNote?: (day: ClientAgentCardRow["week"][number]) => void;
+}) {
   if (week.length === 0) return null;
+  const interactive = Boolean(onNote && clientId);
   return (
     <div className="mt-4">
       <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
@@ -404,19 +418,127 @@ export function WeekStrip({ week }: { week: Array<{ dateKey: string; label: stri
         {week.map((day) => {
           const [y, mo, d] = day.dateKey.split("-").map(Number);
           const at = new Date(Date.UTC(y, mo - 1, d));
-          return (
-            <li
-              key={day.dateKey}
-              className="rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px]"
-            >
+          const body = (
+            <>
               <span className="text-muted-2">
                 {WEEKDAY[at.getUTCDay()]} {at.getUTCDate()}
               </span>
               <span className="ml-1.5 text-foreground">{day.label}</span>
+              {/* A note marker, never a fulfilment marker. It says the CLIENT
+                  wrote something about this day — which they already know —
+                  and reveals nothing about whether the post exists yet. */}
+              {day.note && (
+                <Icon
+                  name="MessageSquare"
+                  className="ml-1.5 inline h-3 w-3 text-neon"
+                  aria-label="Has a note"
+                />
+              )}
+            </>
+          );
+          return (
+            <li key={day.dateKey}>
+              {interactive && day.canNote ? (
+                <button
+                  type="button"
+                  onClick={() => onNote?.(day)}
+                  className="rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px] transition-colors hover:border-neon/50"
+                >
+                  {body}
+                </button>
+              ) : (
+                <span className="inline-block rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px]">
+                  {body}
+                </span>
+              )}
             </li>
           );
         })}
       </ul>
+      {interactive && (
+        <p className="mt-1.5 text-[11px] text-muted-2">
+          Something specific in mind for a day? Tap it and leave a note.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────── staff: notes the client left ───────────────────── */
+
+/**
+ * The notes a client left on specific days, for the people who apply them (B2).
+ *
+ * Path 3 of §4.3 is the one that ships: a human reads the note and folds it
+ * into that day's post. That only works if the note actually reaches a human,
+ * and until now it reached none — the write logged an activity row whose TITLE
+ * named the day but whose text lived only in metadata nothing renders, and
+ * `markSlotNoteAppliedAction` had no caller at all, so "applied" was a state the
+ * product could describe and never enter.
+ *
+ * Staff-only, and mounted beside the plan rather than on the asset card: the
+ * slot→asset link only exists once something has been matched or picked, so an
+ * asset-card mount would show nothing for exactly the days that need a human.
+ */
+export function StaffSlotNotes({
+  clientId,
+  week,
+}: {
+  clientId: string;
+  week: ClientAgentCardRow["week"];
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
+
+  const withNotes = week.filter((day) => day.note);
+  if (withNotes.length === 0) return null;
+
+  function markApplied(slotId: string) {
+    setError(null);
+    setBusy(slotId);
+    startTransition(async () => {
+      const result = await markSlotNoteAppliedAction({ clientId, slotId });
+      setBusy(null);
+      if (result.error) setError(result.error);
+      else router.refresh();
+    });
+  }
+
+  return (
+    <div className="mt-4 rounded-md border border-neon/25 bg-neon-soft/20 p-3">
+      <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+        <Icon name="MessageSquare" className="h-3.5 w-3.5" />
+        Client notes on specific days
+      </p>
+      <ul className="space-y-2">
+        {withNotes.map((day) => (
+          <li key={day.dateKey} className="rounded-md border border-border bg-surface-2/70 p-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-mono text-[11px] text-foreground">{day.dateKey}</span>
+              {day.note?.applied ? (
+                <Badge tone="success">Applied</Badge>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy === day.slotId}
+                  loading={busy === day.slotId}
+                  onClick={() => markApplied(day.slotId)}
+                >
+                  Mark applied
+                </Button>
+              )}
+            </div>
+            <p className="mt-1 whitespace-pre-wrap text-xs text-foreground">{day.note?.text}</p>
+            <p className="mt-1 text-[11px] text-muted-2">
+              {day.note?.authorName} · {relativeTime(day.note?.createdAt ?? 0)}
+            </p>
+          </li>
+        ))}
+      </ul>
+      {error && <p className="mt-2 text-[11px] text-warning">{error}</p>}
     </div>
   );
 }

@@ -208,6 +208,44 @@ export async function updateAgentSlot(id: string, data: Partial<AgentSlot>): Pro
   await col.agentSlots().doc(id).update({ ...data, updatedAt: Date.now() });
 }
 
+/**
+ * Claim a day's option pick — the single-winner guard for §4.5c.
+ *
+ * A read-then-write "have you already picked?" check is not idempotency: two
+ * tabs, a double press, or a retry after a slow response all read `null` before
+ * either writes, and both then mint a post for the same day. The winner is
+ * decided INSIDE a transaction, on the slot doc that is the natural lock — the
+ * same shape as claimExternalJobCompletion, which exists for the identical
+ * single-delivery problem on jobs.
+ *
+ * Returns false when someone else got there first; the caller must treat that
+ * as "already chosen" and not create an asset.
+ *
+ * The asset is deliberately created AFTER a successful claim, and the two
+ * failure modes are not equivalent. A crash between the claim and the asset
+ * strands that ONE DAY: it reads as chosen, has nothing behind it, the client
+ * cannot pick again, and clearing it needs a direct edit to the slot doc. That
+ * is a real cost, not a self-healing one — but it is one day, in a
+ * millisecond-wide window, visible to nobody else. The reverse order would risk
+ * a published post the client never confirmed, re-minted on every retry. The
+ * ordering trades a recoverable-by-hand gap for the impossibility of a
+ * duplicate, which is the right way round for something that becomes content.
+ */
+export async function claimAgentSlotOptionPick(
+  id: string,
+  pick: NonNullable<AgentSlot["optionPick"]>,
+): Promise<boolean> {
+  const ref = col.agentSlots().doc(id);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const slot = snap.data() as AgentSlot;
+    if (slot.optionPick) return false;
+    tx.update(ref, { optionPick: pick, updatedAt: Date.now() });
+    return true;
+  });
+}
+
 /** Link matched assets onto their slots in one batch (slot-plan output). */
 export async function applySlotMatches(
   matches: Array<{ slotId: string; assetId: string }>,

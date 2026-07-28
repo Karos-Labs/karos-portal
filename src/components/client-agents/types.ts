@@ -1,6 +1,7 @@
 import type { ClientAgentLaunchState, ClientAgentTemplate } from "@/lib/types";
 import type { LaunchBlockCode } from "@/lib/client-agents";
 import type { TemplateRunBlockCode } from "@/lib/client-agent-runs";
+import type { XOption } from "@/lib/x-options";
 import type { ClientAgentScheduleRow, RunnableAgentSummary } from "@/components/custom-agents";
 
 /**
@@ -15,6 +16,8 @@ import type { ClientAgentScheduleRow, RunnableAgentSummary } from "@/components/
 export interface ClientAgentCardRow {
   id: string;
   clientId: string;
+  /** The bound lab agent. Stable across re-imports of the umbrella. */
+  customAgentId: string;
   /** Identity string for the platform mark ("<key> <name>"). */
   identity: string;
   /** Stored lucide icon of the bound lab agent (mark fallback). */
@@ -65,7 +68,35 @@ export interface ClientAgentCardRow {
    * a future day's post already exists (§4.1, the A3 churn rule). Two producers
    * project into the same chip and the client cannot tell them apart.
    */
-  week: Array<{ dateKey: string; label: string }>;
+  week: Array<{
+    dateKey: string;
+    label: string;
+    /**
+     * The slot's own id, so a day can carry a note (§4.3). NOT a fulfilment
+     * tell: every planned day has one, whether or not anything exists for it,
+     * so it stays indistinguishable exactly as the label does.
+     */
+    slotId: string;
+    /** The note on this day, if any — echoed back to whoever can read it. */
+    note: { text: string; authorName: string; createdAt: number; applied: boolean } | null;
+    /** False once the day has passed: a note then could never be applied. */
+    canNote: boolean;
+  }>;
+  /**
+   * TODAY's three options, for an options-mode umbrella (§4.5, WP-9).
+   *
+   * Present ONLY for the current day, and only once its options are assigned.
+   * A future day's texts never enter this payload — their existence is the one
+   * fact the churn rule keeps indistinguishable, and redaction that happens at
+   * render time has already lost. Null once the client has chosen, with the
+   * direction they picked, so the day can show a receipt instead of re-offering
+   * options they already declined.
+   */
+  today: {
+    slotId: string;
+    options: XOption[];
+    pickedDirection: string | null;
+  } | null;
   /** Two-level feedback already on this umbrella (WP-3). */
   feedback: ClientAgentFeedbackRow[];
   /**

@@ -110,6 +110,7 @@ describe("applyLaunchOutcome", () => {
     getClientAgent.mockResolvedValue(umbrella());
     const result = await applyLaunchOutcome({
       clientAgentId: "client-1__ig",
+      clientId: "client-1",
       status: "done",
       templatesJson: JSON.stringify([{ key: "playbook", name: "Playbook" }]),
       now: NOW,
@@ -131,6 +132,7 @@ describe("applyLaunchOutcome", () => {
     );
     await applyLaunchOutcome({
       clientAgentId: "client-1__ig",
+      clientId: "client-1",
       status: "done",
       templatesJson: JSON.stringify([{ key: "fresh", name: "Fresh" }]),
       now: NOW,
@@ -144,6 +146,7 @@ describe("applyLaunchOutcome", () => {
     getClientAgent.mockResolvedValue(umbrella());
     await applyLaunchOutcome({
       clientAgentId: "client-1__ig",
+      clientId: "client-1",
       status: "failed",
       error: "AGENT_SERVICE_URL unreachable",
       refunded: true,
@@ -158,7 +161,12 @@ describe("applyLaunchOutcome", () => {
 
   it("treats a cancelled run as terminal, with neutral stored copy (F30)", async () => {
     getClientAgent.mockResolvedValue(umbrella());
-    await applyLaunchOutcome({ clientAgentId: "client-1__ig", status: "cancelled", now: NOW });
+    await applyLaunchOutcome({
+      clientAgentId: "client-1__ig",
+      clientId: "client-1",
+      status: "cancelled",
+      now: NOW,
+    });
     expect(updateClientAgent.mock.calls[0][1]).toMatchObject({
       launchState: "launch_failed",
       launchError: "Setup run cancelled",
@@ -171,6 +179,7 @@ describe("applyLaunchOutcome", () => {
       getClientAgent.mockResolvedValue(umbrella({ launchState: state }));
       const result = await applyLaunchOutcome({
         clientAgentId: "client-1__ig",
+      clientId: "client-1",
         status: "done",
         now: NOW,
       });
@@ -179,9 +188,30 @@ describe("applyLaunchOutcome", () => {
     }
   });
 
+  it("refuses an umbrella belonging to another client (tenancy fence)", async () => {
+    // clientAgentId can arrive from webhook METADATA, which is attacker-shaped.
+    getClientAgent.mockResolvedValue(umbrella({ clientId: "someone-else" }));
+    const result = await applyLaunchOutcome({
+      clientAgentId: "client-1__ig",
+      clientId: "client-1",
+      status: "done",
+      templatesJson: JSON.stringify([{ key: "playbook", name: "Playbook" }]),
+      now: NOW,
+    });
+    expect(result).toEqual({ applied: false, seededTemplates: 0 });
+    expect(updateClientAgent).not.toHaveBeenCalled();
+  });
+
   it("is a no-op for an umbrella that no longer exists", async () => {
     getClientAgent.mockResolvedValue(null);
-    expect(await applyLaunchOutcome({ clientAgentId: "gone", status: "done", now: NOW })).toEqual({
+    expect(
+      await applyLaunchOutcome({
+        clientAgentId: "gone",
+        clientId: "client-1",
+        status: "done",
+        now: NOW,
+      }),
+    ).toEqual({
       applied: false,
       seededTemplates: 0,
     });

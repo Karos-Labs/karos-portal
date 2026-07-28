@@ -23,7 +23,7 @@ import {
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { clientSafeRunError } from "@/lib/custom-agent-launch";
-import { isBillableClientActor } from "@/lib/credits";
+import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { requireAdmin, requireClientAccess } from "./_shared";
 
 /* ── limits (mirror agent-service/src/schemas/task-types/custom.json) ── */
@@ -62,6 +62,14 @@ export interface CustomAgentInput {
   includeClientSkills?: boolean;
   instructions: string;
   creditCost?: number | null;
+  /**
+   * One-time price of this agent's SETUP run (§6.3). Null ⇒ the client's
+   * self-serve Launch button stays disabled with a visible "pricing is being
+   * finalized" reason — deliberately gated rather than provisional, because
+   * billing an invented number that later changes is the F130 placeholder-
+   * pricing failure re-created at the most expensive SKU.
+   */
+  launchCreditCost?: number | null;
   enabled?: boolean;
 }
 
@@ -88,6 +96,19 @@ function validateAgentInput(input: CustomAgentInput): string | null {
   }
   if (input.creditCost != null && (!Number.isInteger(input.creditCost) || input.creditCost < 0)) {
     return "Credit cost must be a whole number ≥ 0 (empty = default).";
+  }
+  if (input.launchCreditCost != null) {
+    if (!Number.isInteger(input.launchCreditCost) || input.launchCreditCost <= 0) {
+      return "Launch price must be a whole number greater than 0 (empty = not priced yet).";
+    }
+    // Priced ABOVE a run, per the Q1 ruling: a setup run researches the brand
+    // and designs the whole template set, so a launch that costs the same as
+    // (or less than) one post is a mis-set price, not a discount. Compared
+    // against the effective run price so leaving creditCost empty still guards.
+    const runCost = input.creditCost ?? CREDIT_COSTS.customAgentRun;
+    if (input.launchCreditCost <= runCost) {
+      return `Launch price must be higher than the ${runCost}-credit run price — setup does much more than one post.`;
+    }
   }
   const blurb = (input.clientBlurb ?? "").trim();
   if (blurb.length > MAX_CLIENT_BLURB_CHARS) {
@@ -129,6 +150,7 @@ export async function createCustomAgentAction(
     includeClientSkills: input.includeClientSkills !== false,
     instructions: input.instructions.trim(),
     creditCost: input.creditCost ?? null,
+    launchCreditCost: input.launchCreditCost ?? null,
     enabled: input.enabled !== false,
     source: null,
     createdBy: user.uid,
@@ -164,6 +186,7 @@ export async function updateCustomAgentAction(
     includeClientSkills: input.includeClientSkills !== false,
     instructions: input.instructions.trim(),
     creditCost: input.creditCost ?? null,
+    launchCreditCost: input.launchCreditCost ?? null,
     enabled: input.enabled !== false,
     updatedAt: Date.now(),
   });
@@ -341,7 +364,13 @@ export async function runCustomAgentAction(input: {
     customAgentId: input.agentId,
   });
   if (blocked) return { error: blocked };
-  const result = await submitCustomAgentJob(user, input);
+  // B4 / §6.2a. This is the OTHER client-reachable, billable run — the generic
+  // run dialog — and it stamped no run type, so every charge it made landed in
+  // the undifferentiated "Other usage" bucket that the per-agent breakdown
+  // exists to eliminate. It is a run the client started by hand, which is
+  // exactly what "manual" means; both the Job type and creditBucketFor already
+  // understand it.
+  const result = await submitCustomAgentJob(user, { ...input, runType: "manual" });
   if (result.jobId && !result.error) {
     revalidatePath("/jobs");
     revalidatePath(`/clients/${input.clientId}`);

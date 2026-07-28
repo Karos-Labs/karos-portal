@@ -1,6 +1,6 @@
 import "server-only";
 
-import { listPlannedScheduledRuns } from "@/lib/data";
+import { getAsset, listPlannedScheduledRuns } from "@/lib/data";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
@@ -9,6 +9,10 @@ import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgentFeedback } from "@/lib/data-client-agents";
 import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-agents";
 import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
+import { canNoteSlot } from "@/lib/slot-notes";
+import { parseXDrafts } from "@/lib/x-drafts";
+import { resolveOptions } from "@/lib/x-options";
+import { laneLabel } from "@/lib/draft-lane-label";
 import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { AgentSetupState, ClientAgentScheduleRow, CustomAgentRunRow, RunnableAgentSummary } from "@/components/custom-agents";
@@ -259,13 +263,48 @@ export async function toClientAgentRows(args: {
     // day-of one, which is precisely the distinction the slot model exists to
     // erase (§4.1).
     const zone = args.scheduleZones.get(umbrella.customAgentId) ?? runtimeTimeZone();
+    // The day boundary in the SCHEDULE's zone (F108), not the container's —
+    // otherwise a client one timezone east is told today has passed.
+    const todayKey = dateKeyInZone(args.now, zone);
     const [slots, feedbackRows] = live
       ? await Promise.all([
-          upcomingSlots(umbrella.id, dateKeyInZone(args.now, zone), WEEK_STRIP_DAYS),
+          upcomingSlots(umbrella.id, todayKey, WEEK_STRIP_DAYS),
           listClientAgentFeedback({ clientAgentId: umbrella.id }),
         ])
       : [[], []];
     const templateNames = new Map(umbrella.templates.map((t) => [t.key, t.name]));
+
+    // §4.5 / WP-9. TODAY only — a future day's option texts must never enter
+    // the payload, because their existence is precisely what the slot model
+    // keeps indistinguishable. The batch asset is read here, on the server, and
+    // only the three texts for the current day cross the boundary.
+    let today: ClientAgentCardRow["today"] = null;
+    if (live && optionsMode) {
+      const todaySlot = slots.find((slot) => slot.dateKey === todayKey);
+      if (todaySlot && (todaySlot.optionRefs?.length ?? 0) > 0) {
+        if (todaySlot.optionPick) {
+          // F70: the ref's tail is the LAB's lane vocabulary ("News-reaction
+          // (live)", "Avenue 2"), which no client surface may render raw. The
+          // direction stored at pick time is already humanised; the fallback
+          // runs the tail through the same laneLabel every other path uses, so
+          // a pick made before the field existed still reads properly.
+          const pick = todaySlot.optionPick;
+          today = {
+            slotId: todaySlot.id,
+            options: [],
+            pickedDirection:
+              pick.direction ?? laneLabel(pick.optionRef.split(" · ").slice(1).join(" · ")),
+          };
+        } else if (todaySlot.assetId) {
+          const batchAsset = await getAsset(todaySlot.assetId);
+          const batch = batchAsset ? parseXDrafts(batchAsset.content ?? "") : null;
+          const options = batch ? resolveOptions(batch, todaySlot.optionRefs ?? []) : [];
+          if (options.length > 0) {
+            today = { slotId: todaySlot.id, options, pickedDirection: null };
+          }
+        }
+      }
+    }
 
     // The one run the card acknowledges: a "Run now" the viewer just pressed.
     // Scheduled fires are deliberately invisible here (see ClientAgentCardRow).
@@ -281,6 +320,7 @@ export async function toClientAgentRows(args: {
     rows.push({
       id: umbrella.id,
       clientId: umbrella.clientId,
+      customAgentId: agent.id,
       identity: `${agent.key} ${agent.name}`,
       icon: agent.icon,
       displayName: umbrella.displayName,
@@ -338,7 +378,32 @@ export async function toClientAgentRows(args: {
         label: optionsMode
           ? "Daily post"
           : (templateNames.get(slot.templateKey) ?? slot.templateKey),
+        slotId: slot.id,
+        // The note crosses because its author wrote it and its reader needs it
+        // back. authorName, never the uid — the same rule the feedback list
+        // follows, so a client never receives the internal id of the staff
+        // member who answered them.
+        // B5: the label is VIEWER-relative, not role-derived. "You" computed
+        // from authorRole === "client" is right for the client and a lie to the
+        // staff member reading the same note on the same surface — this row is
+        // built for both. Whoever wrote it sees "You"; everyone else sees the
+        // stored name, falling back to the side they were on for notes written
+        // before authorName existed.
+        note: slot.note
+          ? {
+              text: slot.note.text,
+              authorName:
+                slot.note.authorUid === args.viewerUid
+                  ? "You"
+                  : (slot.note.authorName ??
+                    (slot.note.authorRole === "client" ? "Your team" : "Karos")),
+              createdAt: slot.note.createdAt,
+              applied: slot.note.consumedAt != null,
+            }
+          : null,
+        canNote: canNoteSlot(slot, todayKey).ok,
       })),
+      today,
       feedback: feedbackRows.map((row) => ({
         id: row.id,
         scope: row.scope,

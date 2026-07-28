@@ -7,7 +7,7 @@ import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { assetImages, assetVideos } from "@/lib/asset-images";
-import { agentLabelForAsset } from "@/lib/post-chain";
+import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { cn, relativeTime } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
 
@@ -32,6 +32,34 @@ interface AgentGroup {
   name: string;
   assets: Asset[];
   latestAt: number;
+  /** Distinct template streams in this group, most-used first (F148). */
+  templates: Array<{ key: string; name: string; count: number }>;
+}
+
+/** Template chips shown on a group header before the "+N" overflow. */
+const GROUP_TEMPLATE_CHIPS = 3;
+
+/**
+ * The template streams present in one agent's deliverables, most-used first.
+ *
+ * F148's complaint was that a client's template set is "rendered nowhere as a
+ * group" — the agent designs three or four named formats for them, the detail
+ * modal shows one on a single post, and nowhere does the client see that their
+ * agent produces several distinct streams. The archive is where the whole body
+ * of work is, so it is where the streams become visible.
+ */
+function templatesOf(assets: Asset[]): AgentGroup["templates"] {
+  const counts = new Map<string, { key: string; name: string; count: number }>();
+  for (const asset of assets) {
+    const template = templateForAsset(asset);
+    if (!template) continue;
+    const existing = counts.get(template.key);
+    if (existing) existing.count += 1;
+    else counts.set(template.key, { key: template.key, name: template.name, count: 1 });
+  }
+  return [...counts.values()].sort(
+    (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+  );
 }
 
 /** Tiles shown per agent group before "Show all N" (QA F66). */
@@ -114,6 +142,7 @@ export function ArchiveView({
         name,
         assets: [...list].sort((a, b) => b.createdAt - a.createdAt),
         latestAt: Math.max(...list.map((a) => a.createdAt)),
+        templates: templatesOf(list),
       }))
       .sort((a, b) => b.latestAt - a.latestAt);
   }, [agent, agentNameFor, assets, search, status]);
@@ -209,8 +238,32 @@ export function ArchiveView({
                 className="mb-3 flex w-full items-center gap-3 text-left"
               >
                 <AgentIdentity identity={group.name} size="sm" />
-                <h3 className="min-w-0 truncate text-base font-medium text-foreground">{group.name}</h3>
+                <h3 className="min-w-0 shrink-0 truncate text-base font-medium text-foreground">
+                  {group.name}
+                </h3>
                 <Badge tone="neutral">{group.assets.length}</Badge>
+                {/* The agent's template streams, as a group (F148). Without
+                    this a client's formats exist only one-post-at-a-time in the
+                    detail modal, and the fact that their agent writes several
+                    distinct streams is visible nowhere. Most-used first, capped
+                    so a long set cannot push the count off the row. */}
+                {group.templates.length > 0 && (
+                  <span className="hidden min-w-0 flex-wrap items-center gap-1 @lg:flex">
+                    {group.templates.slice(0, GROUP_TEMPLATE_CHIPS).map((template) => (
+                      <span
+                        key={template.key}
+                        className="truncate rounded-[4px] border border-border bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted-2"
+                      >
+                        {template.name}
+                      </span>
+                    ))}
+                    {group.templates.length > GROUP_TEMPLATE_CHIPS && (
+                      <span className="text-[10px] text-muted-2">
+                        +{group.templates.length - GROUP_TEMPLATE_CHIPS}
+                      </span>
+                    )}
+                  </span>
+                )}
                 <Icon
                   name="ChevronDown"
                   className={cn(
