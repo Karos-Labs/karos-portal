@@ -188,7 +188,10 @@ export async function submitCustomAgentJob(
   if (isXAgent(agent.key)) {
     if (!(await hasXAgentIntake(input.clientId))) {
       return {
-        error: `${X_SETUP_REQUIRED_PREFIX} first. Open the "X agent data" page (under Agent-specific documents) and fill in the company page - the agent drafts from that. Nothing has run.`,
+        // CD-E1: this used to send clients to an "Agent-specific documents"
+        // section of the rail that no longer exists — intake moved onto the
+        // agent's own page. Named the way the F25-pattern gate reasons name it.
+        error: `${X_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
     try {
@@ -206,7 +209,7 @@ export async function submitCustomAgentJob(
   if (isLinkedInAgent(agent.key)) {
     if (!(await hasLinkedInAgentIntake(input.clientId, agent.key))) {
       return {
-        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open the "LinkedIn agent data" page (under Agent-specific documents) and save the company page form - the agent drafts from that. Nothing has run.`,
+        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
     try {
