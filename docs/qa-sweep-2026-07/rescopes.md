@@ -334,3 +334,9 @@ starting. Updated by the orchestrator after each verification gate.
 - chat/route.ts:237 lets client copilot write free-form guidelines text into the
   INTERNAL branding doc (pre-existing, now deterministic) — COPILOT cluster
   should look at it with F81's copilot half.
+- F86 bounce accepted (9af2dd3): tier validated + clamped to "client" for
+  CLIENT_USER, tier pushed into the query, no cross-tier fallback.
+  generateClientBriefAction clamped for ALL callers (fixer's call, accepted —
+  the brief renders to the client whoever triggers it). BEHAVIOR CHANGE to
+  watch on mock-client walks: a client without client-tier docs now gets
+  "No documents to summarize yet." instead of an internal-derived brief.
