@@ -3,6 +3,7 @@
 import { useState, useEffect, useTransition, useRef } from "react";
 import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
+import { renderAssetBody } from "@/lib/doc-render";
 import {
   getTaskCommentsAction,
   addTaskCommentAction,
@@ -328,11 +329,17 @@ function AiPlanSection({
 }) {
   const [plan, setPlan] = useState<string | null>(initialPlan);
   const [isPending, startTransition] = useTransition();
+  // A guide the user just asked for opens; one that was already stored starts
+  // folded so it cannot push the comment box below the fold.
+  const [expanded, setExpanded] = useState(!initialPlan);
 
   function generate() {
     startTransition(async () => {
       const result = await generateTaskPlanAction(taskId, clientId);
-      if (result.plan) setPlan(result.plan);
+      if (result.plan) {
+        setPlan(result.plan);
+        setExpanded(true);
+      }
     });
   }
 
@@ -354,6 +361,19 @@ function AiPlanSection({
             Generate Plan
           </button>
         )}
+        {plan && !isPending && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            {expanded ? "Hide" : "Show"}
+            <Icon
+              name="ChevronDown"
+              className={cn("h-3 w-3 transition-transform", expanded && "rotate-180")}
+            />
+          </button>
+        )}
       </div>
 
       {isPending ? (
@@ -362,9 +382,20 @@ function AiPlanSection({
           Generating step-by-step execution plan…
         </div>
       ) : plan ? (
-        <div className="max-h-56 overflow-y-auto text-xs text-foreground leading-relaxed">
-          <pre className="whitespace-pre-wrap font-sans">{plan}</pre>
-        </div>
+        expanded ? (
+          <div
+            className="max-h-72 overflow-y-auto break-words text-xs leading-relaxed [&_code]:break-all [&_table]:min-w-0"
+            // The generating prompt orders "## Overview / ## Prerequisites / …",
+            // so this guide is markdown on every generation. renderAssetBody is
+            // the entry point for agent output: unlike renderFullDoc it strips no
+            // preamble, so a leading heading or `---` rule is rendered, not eaten.
+            dangerouslySetInnerHTML={{ __html: renderAssetBody(plan) }}
+          />
+        ) : (
+          <p className="text-xs text-muted">
+            Execution guide ready — {countPlanSteps(plan)}. Press Show to read it.
+          </p>
+        )
       ) : (
         <p className="text-xs text-muted">
           Click &ldquo;Generate Plan&rdquo; to get an AI-recommended step-by-step execution guide for this task.
@@ -372,6 +403,14 @@ function AiPlanSection({
       )}
     </div>
   );
+}
+
+/** Folded-state summary line: how much guide is behind the toggle. */
+function countPlanSteps(plan: string): string {
+  const sections = (plan.match(/^##\s+/gm) ?? []).length;
+  if (sections > 0) return `${sections} section${sections === 1 ? "" : "s"}`;
+  const words = plan.trim().split(/\s+/).length;
+  return `${words} word${words === 1 ? "" : "s"}`;
 }
 
 /* ── Comments section ────────────────────────────────────────────── */
