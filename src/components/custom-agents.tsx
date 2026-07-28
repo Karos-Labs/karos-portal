@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Label, Select, Textarea } from "@/components/ui";
@@ -94,6 +94,48 @@ export interface ClientAgentScheduleRow {
 
 function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
   return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+}
+
+/**
+ * An agent's blurb wherever a client reads it. Clamped to three lines so the
+ * cut always lands on a line boundary — never mid-word — with a "More" control
+ * that expands it in place. Whether the text overflows is MEASURED rather than
+ * guessed from a character count: a length threshold is the same class of bug,
+ * and the same prose wraps to a different number of lines per card width.
+ */
+function AgentBlurb({ text, className }: { text: string; className?: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    // While expanded there is nothing to measure (the clamp is off) — keep the
+    // last answer so the control that opened it does not vanish under the cursor.
+    if (!el || expanded) return;
+    const measure = () => setOverflows(el.scrollHeight - el.clientHeight > 1);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [text, expanded]);
+
+  return (
+    <div className={className}>
+      <p ref={ref} className={cn("text-xs leading-relaxed text-muted", !expanded && "line-clamp-3")}>
+        {text}
+      </p>
+      {overflows && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+          className="mt-0.5 text-[11px] text-muted-2 underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+        >
+          {expanded ? "Less" : "More"}
+        </button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -400,7 +442,7 @@ export function ClientCustomAgents({
                         </Badge>
                       ) : null}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agentBlurb(agent)}</p>
+                    <AgentBlurb text={agentBlurb(agent)} className="mt-0.5" />
                   </div>
                   {readyAssetCount > 0 && (
                     <Link
@@ -900,8 +942,12 @@ function RunCustomAgentModal({
   }
 
   return (
-    <Modal open onClose={onClose} title={agent.name} description={agentBlurb(agent)} className="max-w-2xl">
+    // The blurb goes in the body, not Modal's `description`: that slot is an
+    // unclamped <p>, so a long fallback manifest pushed the whole brief below
+    // the fold. Same clamp + "More" as the card.
+    <Modal open onClose={onClose} title={agent.name} className="max-w-2xl">
       <div className="space-y-5">
+        <AgentBlurb text={agentBlurb(agent)} />
         <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="max-w-lg">
