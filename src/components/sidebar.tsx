@@ -205,7 +205,7 @@ function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
       <button
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left transition-colors",
+          "flex w-full items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-colors",
           open ? "bg-surface-2" : "hover:bg-surface-2",
         )}
       >
@@ -215,11 +215,11 @@ function UserMenu({ user, realAdmin }: { user: AppUser; realAdmin?: AppUser }) {
             <img
               src={user.photoURL}
               alt=""
-              className="h-9 w-9 shrink-0 rounded-full object-cover"
+              className="h-8 w-8 shrink-0 rounded-full object-cover"
             />
           </>
         ) : (
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-neon">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-neon">
             {initials(user.name)}
           </div>
         )}
@@ -317,9 +317,9 @@ export function Sidebar({
   // at the foot of the rail: its ✕ clears the context AND routes to /clients, and
   // it renders for every staff member, not just admins. A second labelled exit in
   // the nav was redundant — three controls for one action, and one more row
-  // competing for the rail's fixed height.
+  // competing for the rail's fixed height (CD-E3).
   const nav = (
-    <nav className="flex flex-col gap-1">
+    <nav className="flex flex-col gap-0.5">
       {items.map((item) => {
         const itemPath = item.href.split("?")[0];
         const active = item.exact
@@ -332,7 +332,7 @@ export function Sidebar({
             href={item.href}
             onClick={() => setOpen(false)}
             className={cn(
-              "group flex items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-all duration-150 active:scale-[0.97]",
+              "group flex items-center gap-3 rounded-[10px] px-3 py-1 text-sm transition-all duration-150 active:scale-[0.97]",
               active
                 ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]"
                 : "text-muted hover:bg-surface-2 hover:text-foreground",
@@ -359,10 +359,10 @@ export function Sidebar({
 
   // Client-context sections appended below core nav when a client is active
   const clientSections = activeClient ? (
-    <div className="mt-2 space-y-4">
+    <div className="mt-1.5 space-y-1.5">
       {/* Client header */}
-      <div className="border-t border-border pt-4">
-        <div className="mb-1 flex items-center gap-2 px-1">
+      <div className="border-t border-border pt-2.5">
+        <div className="flex items-center gap-2 px-1">
           <BrandFavicon
             src={activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl}
             website={activeClient.client.website}
@@ -386,7 +386,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="border-t border-border pt-4">
+      <div className="border-t border-border pt-3">
         <ClientDocuments
           contextDocs={activeClient.contextDocs}
           isAdmin={activeClient.isAdmin}
@@ -422,7 +422,7 @@ export function Sidebar({
   const content = (
     <div className="flex h-full flex-col">
       {/* Logo — fixed top */}
-      <div className="shrink-0 px-4 pb-2 pt-4">
+      <div className="shrink-0 px-4 pb-1 pt-2.5">
         <Link href="/dashboard" className="flex items-center gap-2.5 px-2 py-1">
           <Image
             src="/brand/kairos-head-disc-dark.svg"
@@ -438,16 +438,24 @@ export function Sidebar({
         </Link>
       </div>
 
-      {/* Scrollable body: core nav + optional client sections */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
+      {/* Body. NOT a scroll container by contract (CD-E3): nav + client chip +
+          Documents + Competitor Track + Brand Colors + footer must fit the
+          viewport at common laptop heights. The content set is bounded — 4
+          client tabs, ≤6 documents, ≤5 tracked competitors, ≤4 swatches — so
+          the compacted stack fits; overflow-y-auto stays as the safety valve
+          for genuinely short windows rather than clipping a section away. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-1">
         {nav}
         {clientSections}
       </div>
 
       {/* Bottom — fixed */}
-      <div className="shrink-0 space-y-2 border-t border-border px-4 py-3">
-        {/* QA F113: employees get the same labelled exit as admins. `clients` is
-            already fenced to their assigned clients by the app layout. */}
+      <div className="shrink-0 space-y-1.5 border-t border-border px-4 py-2">
+        {/* QA F113: employees get the same context switcher as admins — the
+            picker also carries the X that clears the context. `clients` is
+            already fenced to their assigned clients by the app layout. The
+            LABELLED exit is F60's ClientContextBar, which renders for any
+            staff member the moment a client context is active. */}
         {isStaff && <ClientContextPicker clients={clients} />}
         <UserMenu user={user} realAdmin={realAdmin} />
       </div>

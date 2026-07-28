@@ -138,8 +138,8 @@ export function CompetitorTrack({
   }
 
   return (
-    <div className="border-t border-border pt-4">
-      <div className="mb-2 flex items-center justify-between px-1">
+    <div className="border-t border-border pt-3">
+      <div className="mb-1 flex items-center justify-between px-1">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
           Competitor Track
         </p>
@@ -203,7 +203,7 @@ export function CompetitorTrack({
       )}
 
       {displayed.length > 0 && (
-        <ul className="space-y-0.5">
+        <ul>
           {displayed.map((c) => {
             const href = c.url
               ? c.url.startsWith("http")
@@ -228,19 +228,19 @@ export function CompetitorTrack({
             return (
               <li
                 key={c.id}
-                className="group flex items-center gap-1 rounded-md px-2 py-1.5 transition-colors hover:bg-surface-2"
+                className="group flex items-center gap-1 rounded-md px-2 py-0.5 transition-colors hover:bg-surface-2"
               >
                 {href ? (
                   <a
                     href={href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex min-w-0 flex-1 items-center gap-2.5"
+                    className="flex min-w-0 flex-1 items-center gap-2"
                   >
                     {linkContent}
                   </a>
                 ) : (
-                  <div className="flex min-w-0 flex-1 items-center gap-2.5">{linkContent}</div>
+                  <div className="flex min-w-0 flex-1 items-center gap-2">{linkContent}</div>
                 )}
                 {(isStaff || c.source === "manual") && (
                 <button
@@ -305,8 +305,8 @@ export function BrandColorsSection({
   const showUsage = isStaff && effective.some((c) => c.usagePct != null);
 
   return (
-    <div className="border-t border-border pt-4">
-      <div className="mb-2.5 flex items-center justify-between px-1">
+    <div className="border-t border-border pt-3">
+      <div className="mb-1 flex items-center justify-between px-1">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
           Brand Colors
         </p>
@@ -325,7 +325,7 @@ export function BrandColorsSection({
           {effective.map((color, i) => (
             <div key={i} className="group relative">
               <div
-                className="h-7 w-7 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110"
+                className="h-6 w-6 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110"
                 style={{ backgroundColor: color.hex }}
                 title={color.role ? `${color.role} · ${color.hex}` : color.hex}
               />
