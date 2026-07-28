@@ -706,3 +706,22 @@ completion refresh lands. Scope (two consecutive clean passes required):
 5. TOMER-HANDOVER.md reconciled against final HEAD — every deferred seam
    named there must still be real, every new seam (Phase 3 detail routes,
    CD-G7 data shapes) added.
+
+### CD-G8 — Copilot dock: fixed to the bottom, full width to the right, no gaps (Albert, third batch addendum)
+- Screenshots (staff shell, narrow viewport): the AI COPILOT strip floats
+  mid-page with content visible BELOW it, and neither the strip nor the
+  expanded panel reaches the right edge. Ruling: the collapsed strip is
+  FIXED to the viewport bottom and spans the full content column to the
+  right edge (desktop: from the rail's right edge to the viewport edge;
+  phone: full width, sitting above the mobile tab bar). The expanded panel
+  anchors to the same bottom edge — never floating mid-flow.
+- The expanded panel shows a large dead region between its content and the
+  input row (h-[70dvh] with sparse content) — size to content or fill
+  deliberately; no dead air.
+- Applies to BOTH shells (client CopilotDock + StaffCopilotDock) and must
+  be verified at phone width, md, and lg+.
+- The agents page's own vertical gap (empty Client agents section + mt-10
+  stacking) belongs to the CD-G1 rework, not the dock fixer.
+- Albert: "implement with an agent that reviews at the end if it matches
+  what I asked" — a dedicated Albert-match review lens runs over the whole
+  CD-G wave after merge, checking his verbatim feedback against localhost.
