@@ -491,6 +491,35 @@ async function applyTargetedDocCorrection(
 
   await updateContextDocContent(documentId, corrected);
 
+  // A correction edits exactly one stored row — the one the viewer opened, which
+  // the picker resolves to the client-facing copy. Its internal twin is what the
+  // copilot and the agents read, so without this the AI keeps quoting the fact
+  // the client just told us was wrong. Runs after the response so the modal is
+  // not held open for a second model call, and never fails the correction that
+  // already landed.
+  const siblingTier: ContextDocTier | null =
+    doc.tier === "client" ? "internal" : doc.tier === "internal" ? "client" : null;
+  if (siblingTier) {
+    const { clientId: docClientId, docType } = doc;
+    after(async () => {
+      try {
+        const sibling = await getClientContextDocByTier(docClientId, docType, siblingTier);
+        if (!sibling) return;
+        const correctedSibling = await applyDocCorrections(
+          client,
+          docType,
+          sibling.content,
+          corrections,
+        );
+        if (correctedSibling.trim() !== sibling.content.trim()) {
+          await updateContextDocContent(sibling.id, correctedSibling);
+        }
+      } catch (e) {
+        console.error(`[intel] Could not propagate correction to ${siblingTier} ${docType}:`, e);
+      }
+    });
+  }
+
   const actorRole = user.role === "CLIENT_USER" ? "client" : "staff";
   const now = Date.now();
   await Promise.all([

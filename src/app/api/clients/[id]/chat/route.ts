@@ -233,7 +233,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (args.guidelines !== undefined) updated.guidelines = args.guidelines;
       await updateClient(clientId, { brandingGuidelines: updated });
       try {
-        const existingDoc = await getClientContextDoc(clientId, "branding-guidelines");
+        // Deterministic tier — matches the write in src/lib/branding.ts.
+        const existingDoc = await getClientContextDoc(clientId, "branding-guidelines", "internal");
         await upsertClientContextDoc({
           clientId,
           docType: "branding-guidelines",

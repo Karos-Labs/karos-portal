@@ -1240,17 +1240,19 @@ export async function listClientContextDocs(
   return snap.docs.map((d) => withId<ClientContextDoc>(d));
 }
 
+/**
+ * Get a single context doc. The tier is REQUIRED: a client-facing document and
+ * its internal twin share a docType, and this used to be a bare .limit(1) on an
+ * unordered query — so callers silently drew whichever row Firestore happened to
+ * return first, which is how a corrected document and an uncorrected one could
+ * both be "the" document depending on the caller.
+ */
 export async function getClientContextDoc(
   clientId: string,
   docType: string,
+  tier: ContextDocTier,
 ): Promise<ClientContextDoc | null> {
-  const snap = await col
-    .clientContextDocs()
-    .where("clientId", "==", clientId)
-    .where("docType", "==", docType)
-    .limit(1)
-    .get();
-  return snap.empty ? null : withId<ClientContextDoc>(snap.docs[0]);
+  return getClientContextDocByTier(clientId, docType, tier);
 }
 
 /** Get a single context doc by clientId + docType + tier. */
