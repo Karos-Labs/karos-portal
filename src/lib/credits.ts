@@ -57,7 +57,9 @@ export const CREDIT_COSTS = {
   customAgentRun: 25,
   /**
    * One additional LinkedIn employee-advocacy seat beyond the plan's included
-   * limit (~$29/mo equivalent). Charged once per seat added over the limit.
+   * limit. Charged ONCE per seat added over the limit — there is no recurring
+   * seat billing anywhere in the product, so nothing here may be described as
+   * a monthly rate (QA F53).
    */
   employeeSeat: 100,
 } as const;
@@ -119,7 +121,7 @@ export function evaluateSeatAddition(args: {
     allowed: false,
     requiresCharge: true,
     cost,
-    reason: `You've reached your plan's ${args.seatLimit}-seat limit. Adding another employee seat costs ${cost} credits (≈ $29/mo) - top up credits or upgrade your plan to continue.`,
+    reason: `You've reached your plan's ${args.seatLimit}-seat limit. Adding another employee seat is a one-time ${cost}-credit charge — top up credits or upgrade your plan to continue.`,
   };
 }
 
