@@ -246,7 +246,22 @@ describe("templateDetails", () => {
       "rationale",
       "source",
     ]);
-    expect(Object.keys(details.numbers.posts).length).toBe(0);
+  });
+
+  it("pins a post row to exactly three fields", () => {
+    // The sibling of the assertion above, and the one that was missing: the
+    // key-set pin was being run against an EMPTY ARRAY, so `Object.keys(...)`
+    // was 0 for reasons that had nothing to do with the projection. A post row
+    // is where a `status` or a "ready" marker would most plausibly be added,
+    // and it is the field that would hand a client the batch shape under the
+    // one heading that groups work by the stream that produced it (A3/A4).
+    const details = templateDetails({
+      templates,
+      assets: [makeAsset({ id: "a1", templateKey: "numbers" })],
+      viewerIsClient: true,
+    });
+    expect(details.numbers.posts).toHaveLength(1);
+    expect(Object.keys(details.numbers.posts[0]).sort()).toEqual(["at", "id", "title"]);
   });
 
   it("keeps a retired template's history reachable", () => {
@@ -443,14 +458,13 @@ describe("buildDailyFinderView", () => {
 describe("finderDays", () => {
   const zone = "UTC";
 
-  it("always contains today, and marks the days that have passed", () => {
-    const days = finderDays({ run: null, now: NOW, zone });
-    const today = days.find((d) => d.isToday);
-    expect(today?.dateKey).toBe("2026-07-28");
-    expect(days.filter((d) => d.isPast).every((d) => d.dateKey < "2026-07-28")).toBe(true);
-    // Nothing after today without a schedule to project — the strip does not
-    // invent a rhythm the agent does not have.
-    expect(days.every((d) => d.dateKey <= "2026-07-28")).toBe(true);
+  it("paints no days at all for an agent nobody has scheduled", () => {
+    // It used to return the lookback window plus today whatever the schedule
+    // was, so an agent that had never run rendered four dated chips under
+    // "WHEN IT LOOKS" while the panel above said "Not looking yet" — days on
+    // which it demonstrably did not look. The empty list is what DailyStrip
+    // turns into "No schedule yet".
+    expect(finderDays({ run: null, now: NOW, zone })).toEqual([]);
   });
 
   it("projects forward from the agent's own schedule", () => {
@@ -469,6 +483,12 @@ describe("finderDays", () => {
 
     const days = finderDays({ run, now: NOW, zone, horizonDays: 7 });
     expect(days.some((d) => d.dateKey > "2026-07-28")).toBe(true);
+    // Today and the lookback survive the no-schedule early return: `nextRunAt`
+    // only ever points forward, so a projection alone would render a strip that
+    // begins in the future and never contains today.
+    expect(days.find((d) => d.isToday)?.dateKey).toBe("2026-07-28");
+    expect(days.some((d) => d.isPast)).toBe(true);
+    expect(days.filter((d) => d.isPast).every((d) => d.dateKey < "2026-07-28")).toBe(true);
     // Weekday-only: the Reddit agent fires at most five days a week, so a
     // seven-day strip would promise two days it never works.
     const weekend = days.filter((d) => {
@@ -517,6 +537,18 @@ describe("wiring", () => {
     expect(fn.slice(0, 400)).toContain("REDDIT_SETUP_REQUIRED_PREFIX");
     expect(fn.slice(0, 400)).toContain("X_SETUP_REQUIRED_PREFIX");
     expect(fn.slice(0, 400)).toContain("LINKEDIN_SETUP_REQUIRED_PREFIX");
+  });
+
+  it("tells staff the runs are paused too", () => {
+    // The outage notice was mounted on the CLIENT branch only, so an operator
+    // opened a roster of enabled Run controls with nothing on the page saying
+    // the service was down — they found out by pressing one.
+    const src = source("src/app/(app)/clients/[id]/agents/page.tsx");
+    expect(src).toContain("enabledAgents.length > 0 && !agentServiceConfigured");
+    // Both rosters read delivered work the same way, so one cannot call an
+    // agent "Not set up yet" while the other calls it "Runs on request".
+    expect(src).toContain("hasDelivered: completedAgentIds.has(agent.id)");
+    expect(src).toContain("hasDelivered: staffDeliveredAgentIds.has(agent.id)");
   });
 
   it("no longer ships the retired all-in-one card grid", () => {
