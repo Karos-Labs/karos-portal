@@ -183,7 +183,11 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
         href={view.href}
         className="mt-2 inline-flex items-center gap-1 text-xs text-neon hover:underline"
       >
-        Manage {view.label} <Icon name="ArrowRight" className="h-3 w-3" />
+        {/* The label is already a full noun phrase in the reader's words
+            ("Your X details"), so it stands alone rather than being prefixed
+            with a verb that would read as a second imperative next to the
+            band's own badge. */}
+        {view.label} <Icon name="ArrowRight" className="h-3 w-3" />
       </Link>
       {missing > 0 && (
         <p className="mt-1.5 text-[11px] text-muted-2">

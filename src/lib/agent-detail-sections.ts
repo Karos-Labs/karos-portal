@@ -74,7 +74,11 @@ export interface AgentInputsView {
   agent: AgentIntake["agent"];
   /** The existing full-page intake surface — the ONE place these are edited. */
   href: string;
-  /** Its label, e.g. "X agent data" (AgentSetupState.label). */
+  /**
+   * What to call these documents to the READER, e.g. "Your X details"
+   * (AgentSetupState.clientLabel). This band is client-facing, so it does not
+   * carry the operator vocabulary the route and the staff run dialog use.
+   */
   label: string;
   /** True when the submit core would accept a run on what is stored. */
   ready: boolean;
@@ -224,10 +228,16 @@ export async function readAgentInputDocs(
  */
 export function agentInputsView(
   docs: AgentInputDocs | null,
-  setup: { ready: boolean; href: string; label: string } | null,
+  setup: { ready: boolean; href: string; clientLabel: string } | null,
 ): AgentInputsView | null {
   if (!docs || !setup) return null;
-  return { agent: docs.agent, href: setup.href, label: setup.label, ready: setup.ready, rows: docs.rows };
+  return {
+    agent: docs.agent,
+    href: setup.href,
+    label: setup.clientLabel,
+    ready: setup.ready,
+    rows: docs.rows,
+  };
 }
 
 /* ─────────────────── settings: the umbrella's launch data ──────────────── */

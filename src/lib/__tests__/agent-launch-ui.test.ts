@@ -283,7 +283,7 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
     for (const route of ["x-agent", "linkedin-agent", "reddit-agent"]) {
       expect(rows).toContain(`/clients/\${clientId}/${route}`);
     }
-    expect(rows).toContain("{ ready, href, label }");
+    expect(rows).toContain("{ ready, href, label, clientLabel }");
   });
 
   it("attaches a prefetched form to the agent it belongs to", () => {

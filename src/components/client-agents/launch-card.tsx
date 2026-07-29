@@ -166,7 +166,7 @@ export function ClientAgentLaunchCard({
                   href={agent.setupHref}
                   className="inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
                 >
-                  Open {agent.setupLabel ?? "the setup page"}
+                  {agent.setupLabel ?? "The setup page"}
                   <Icon name="ArrowRight" className="h-3 w-3" />
                 </Link>
               )}

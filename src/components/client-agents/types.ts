@@ -41,6 +41,10 @@ export interface ClientAgentCardRow {
   gate: { allowed: boolean; code?: LaunchBlockCode; reason?: string };
   /** Set when the intake rung is what blocks — links the page that fixes it. */
   setupHref?: string | null;
+  /**
+   * The CLIENT's name for that page ("Your X details"), never the operator one
+   * ("X agent data") — every surface that paints this row is client-facing.
+   */
   setupLabel?: string | null;
   templates: ClientAgentTemplate[];
 

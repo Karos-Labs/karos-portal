@@ -206,22 +206,24 @@ export async function buildAgentSetup(
         const ready = await hasXAgentIntake(clientId);
         const href = `/clients/${clientId}/x-agent`;
         const label = "X agent data";
+        const clientLabel = "Your X details";
         return [
           agent.id,
           panes?.x
-            ? { ready, href, label, kind: "x", data: panes.x }
-            : { ready, href, label },
+            ? { ready, href, label, clientLabel, kind: "x", data: panes.x }
+            : { ready, href, label, clientLabel },
         ];
       }
       if (isLinkedInAgentIdentity(agent.key)) {
         const ready = await hasLinkedInAgentIntake(clientId, agent.key);
         const href = `/clients/${clientId}/linkedin-agent`;
         const label = "LinkedIn agent data";
+        const clientLabel = "Your LinkedIn details";
         return [
           agent.id,
           panes?.linkedin
-            ? { ready, href, label, kind: "linkedin", data: panes.linkedin }
-            : { ready, href, label },
+            ? { ready, href, label, clientLabel, kind: "linkedin", data: panes.linkedin }
+            : { ready, href, label, clientLabel },
         ];
       }
       if (isRedditAgentIdentity(agent.key)) {
@@ -231,11 +233,12 @@ export async function buildAgentSetup(
         const ready = await hasRedditAgentIntake(clientId);
         const href = `/clients/${clientId}/reddit-agent`;
         const label = "Reddit agent data";
+        const clientLabel = "Your Reddit details";
         return [
           agent.id,
           panes?.reddit
-            ? { ready, href, label, kind: "reddit", data: panes.reddit }
-            : { ready, href, label },
+            ? { ready, href, label, clientLabel, kind: "reddit", data: panes.reddit }
+            : { ready, href, label, clientLabel },
         ];
       }
       return null;
@@ -427,7 +430,9 @@ export async function toClientAgentRows(args: {
         allowed: gate.allowed,
         ...(gate.allowed ? {} : { code: gate.code, reason: gate.reason }),
       },
-      ...(setup ? { setupHref: setup.href, setupLabel: setup.label } : {}),
+      // The CLIENT label: `setupLabel` is painted by the launch card and by the
+      // detail panel's intake block, both of which a client reads.
+      ...(setup ? { setupHref: setup.href, setupLabel: setup.clientLabel } : {}),
       // Templates cross to a client viewer ONLY once the umbrella is live.
       // While it is `curating` the registry holds what the setup run PROPOSED,
       // which staff have not confirmed yet (the Q3 gate) — sending it and
