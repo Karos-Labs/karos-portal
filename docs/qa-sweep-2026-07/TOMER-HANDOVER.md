@@ -1257,6 +1257,30 @@ the moment someone reads a stored field as if a current pipeline had written it.
    Any new optional field on this record inherits the same rule: distinguish
    *not recorded* from *measured as none* before writing copy about it.
 
+**Reading a snapshot's age off its denominator.** `citationSummary.totalMeasuredAnswers`
+tells you which code wrote a snapshot, which is the fastest triage there is:
+
+- **60** (= 20 questions × 3 engines) → pre-CD-B3. The summary counted EVERY probe,
+  branded questions included.
+- **48** (= 16 category questions × 3 engines) → current. `computeCitationSummary`
+  takes `categoryProbes` only.
+
+This was checked because two different clients rendered an identical "11 of 60" and
+that looked like cross-client contamination. **It is not** — audited and cleared: the
+`clientSeoGeo` doc id is derived from the payload's own `clientId`, the importer
+refuses a bundle whose `clientId` differs from its target, `refresh-apply-core.ts`
+touches SEO/GEO not at all, no script writes the collection, and there is no render
+cache or fallback snapshot object outside tests. `brandCited` is keyed strictly to
+the client's own `gazetteer.clientDomain`, so the numerator cannot be
+client-independent by construction.
+
+The shared value is a property of the legacy maths: on a pre-CD-B3 snapshot the
+count is dominated by the client citing its OWN domain on branded prompts ("what is
+X", "X reviews"), which is engine behaviour rather than category performance, so it
+converges near (branded questions × engines) for any client with a live website. Two
+clients matching is expected. Re-capture is the decisive test — if a post-CD-B3
+snapshot still reads "of 60" when it should read "of 48", that IS new evidence.
+
 ---
 
 ## 5. Known accepted residuals & pending product decisions
