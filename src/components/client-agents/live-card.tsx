@@ -280,6 +280,20 @@ export function TemplateRows({
                     ))}
                   </ul>
                 )}
+                {/* The cap is deliberate — this is a peek at a stream, not the
+                    archive — but "newest 6 of 23" with no way to reach the
+                    other 17 is a dead end. The Workspace is where all of them
+                    already live, and it is the same href the page's archive
+                    section links, so the two cannot drift apart. */}
+                {detail.postCount > detail.posts.length && (
+                  <a
+                    href={`/clients/${agent.clientId}/assets`}
+                    className="inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+                  >
+                    See all in your Workspace
+                    <Icon name="ArrowRight" className="h-3 w-3" />
+                  </a>
+                )}
                 <p className="text-[11px] text-muted-2">
                   Added {formatDate(detail.addedAt)}
                   {detail.source === "manual" ? " by your Karos team" : ""}
