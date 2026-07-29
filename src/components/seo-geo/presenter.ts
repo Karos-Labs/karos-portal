@@ -26,6 +26,7 @@ import {
   dedupeGapsByRecId,
   engineVisibilityScore,
   normalizeBrandKey,
+  presenceCounts,
   type EngineId,
   type Lever,
   type SeoGeoInsights,
@@ -414,6 +415,11 @@ function fraction(count: number, total: number, noun: string): string {
   return `${count} of ${total} ${noun}`;
 }
 
+/** A 0..1 rate as a whole-percent headline (CD-J1 directive 2). */
+function pct(rate: number): string {
+  return `${Math.round(rate * 100)}%`;
+}
+
 /**
  * Copy for the one unmeasured state. CD-B2 removed the "not-wired" tier along with
  * Perplexity and Copilot: every tracked engine has a wired provider now, so a
@@ -591,17 +597,19 @@ export function buildEngineViews(
           explainer:
             "Of every time this engine named you or a tracked competitor in a category question, this is your slice. 50% would mean you get named as often as everyone else combined.",
         },
+        // CD-J1 directive 2: these two are SCORES, so the headline is a percentage
+        // and the count that produced it moves into the explainer. (The brand rows
+        // above stay as counts — they are the raw series the bars encode, read
+        // against a denominator this card states once, not one score each.)
         {
           label: "cited as a source",
-          value: fraction(citedCount, n, "answers"),
-          explainer:
-            "How often the engine linked to your website as a source for its answer. Being cited means the AI is reading your site, not just remembering your name.",
+          value: pct(cat.citationRate),
+          explainer: `How often the engine linked to your website as a source for its answer — ${fraction(citedCount, n, "category answers")}. Being cited means the AI is reading your site, not just remembering your name.`,
         },
         {
           label: "answered first",
-          value: fraction(firstCount, n, "answers"),
-          explainer:
-            "When the answer listed brands, how often yours came first. First mention carries the most weight with buyers skimming an answer.",
+          value: pct(cat.firstPositionRate),
+          explainer: `When the answer listed brands, how often yours came first — ${fraction(firstCount, n, "category answers")}. First mention carries the most weight with buyers skimming an answer.`,
         },
       ],
       // F10: `cat.`, not `row.` — the chip sat in the same card as "cited as a
@@ -623,10 +631,22 @@ export function buildEngineViews(
 export interface PresenceTile {
   heading: string;
   caption: string;
+  /** Honest count line — the denominators, kept for the popup, not the headline. */
   fractionLine: string | null;
   pct: number | null;
+  /** The headline: "62%", or null when nothing in this bucket came back. */
+  pctLabel: string | null;
   explainer: string;
   emptyLine: string | null;
+  /**
+   * CD-J1 directive 2 — what the popup says when the client clicks the score.
+   * Plain sentences, no ratio arithmetic to do in their head: how many we asked,
+   * how many named them, and (only when it happened) how many we couldn't measure.
+   */
+  detail: {
+    title: string;
+    lines: string[];
+  };
 }
 
 export interface PresenceView {
@@ -641,13 +661,49 @@ export interface PresenceView {
   } | null;
 }
 
+/**
+ * CD-J1 directive 2: the headline is a PERCENTAGE, the denominators live one click
+ * away. "Named in 8 of 8 / 0 of 12" asked a client to compare two fractions with
+ * different denominators and work out that one is a control and the other is the
+ * score. The percentage is the score; the popup is the honesty.
+ *
+ * The rate is named-over-MEASURED, and the questions we couldn't measure are
+ * disclosed in the popup rather than folded into the denominator. Scoring a client
+ * down for our engine failures would be as dishonest as the old behaviour of
+ * dropping those questions — the difference is that this says so out loud.
+ */
+function presenceTile(
+  bucket: Parameters<typeof presenceCounts>[0],
+  copy: { heading: string; caption: string; explainer: string; asked: string; emptyLine: string },
+): PresenceTile {
+  const { named, measured, planned, notMeasured } = presenceCounts(bucket);
+  const pct = measured > 0 ? Math.round((named / measured) * 100) : null;
+  const lines = [`We asked ${measured} question${measured === 1 ? "" : "s"} ${copy.asked}.`,
+    `You were named in ${named} of them.`];
+  if (notMeasured > 0) {
+    lines.push(
+      `${notMeasured} more ${notMeasured === 1 ? "question was" : "questions were"} part of this snapshot but no engine answered ${notMeasured === 1 ? "it" : "them"}, so ${notMeasured === 1 ? "it is" : "they are"} shown as not measured rather than counted against you.`,
+    );
+  }
+  return {
+    heading: copy.heading,
+    caption: copy.caption,
+    fractionLine: measured > 0 ? `Named in ${fraction(named, measured, "questions")}` : null,
+    pct,
+    pctLabel: pct === null ? null : `${pct}%`,
+    explainer: copy.explainer,
+    emptyLine: measured > 0 ? null : copy.emptyLine,
+    detail: { title: copy.heading, lines },
+  };
+}
+
 export function buildPresence(insights: SeoGeoInsights): PresenceView {
-  const b = insights.brandPresence;
-  const c = insights.categoryPresence;
+  const b = presenceCounts(insights.brandPresence);
+  const c = presenceCounts(insights.categoryPresence);
   const competitors = Math.max(0, insights.roster.length - 1);
 
-  const brandRate = b.total > 0 ? b.named / b.total : null;
-  const catRate = c.total > 0 ? c.named / c.total : null;
+  const brandRate = b.measured > 0 ? b.named / b.measured : null;
+  const catRate = c.measured > 0 ? c.named / c.measured : null;
 
   let takeaway: string | null = null;
   if (brandRate !== null && catRate !== null) {
@@ -665,33 +721,34 @@ export function buildPresence(insights: SeoGeoInsights): PresenceView {
   }
 
   return {
-    brand: {
+    brand: presenceTile(insights.brandPresence, {
       heading: "When buyers ask about you by name",
       caption: "questions that mention your brand",
-      fractionLine: b.total > 0 ? `Named in ${fraction(b.named, b.total, "questions")}` : null,
-      pct: b.total > 0 ? Math.round((b.named / b.total) * 100) : null,
+      asked: "that buyers ask about you by name",
       explainer:
         "Questions that mention you by name, like asking whether your brand is any good. Being named here shows the engines know who you are.",
-      emptyLine: b.total > 0 ? null : "We didn't ask any questions that name you this run.",
-    },
-    category: {
+      emptyLine: "We couldn't measure any questions that name you this run.",
+    }),
+    category: presenceTile(insights.categoryPresence, {
       heading: "When buyers ask about your category",
       caption: "questions that don't mention your name",
-      fractionLine: c.total > 0 ? `Named in ${fraction(c.named, c.total, "questions")}` : null,
-      pct: c.total > 0 ? Math.round((c.named / c.total) * 100) : null,
+      asked: "that buyers ask about your category, without naming you",
       explainer:
         "Questions buyers ask before they know you exist, like asking for the best option in your category. Being named here is how new customers find you. It's the hardest and most valuable place to show up.",
-      emptyLine: c.total > 0 ? null : "No category questions were measured this run.",
-    },
+      emptyLine: "No category questions were measured this run.",
+    }),
     takeaway,
     rosterShare:
       competitors > 0
         ? {
             value: `${Math.round(insights.rosterSharePct)}%`,
             pct: Math.round(insights.rosterSharePct),
-            caption: `of every brand mention across you and the ${competitors} competitor${competitors === 1 ? "" : "s"} we track`,
+            caption: `of every brand mention across you and the ${competitors} competitor${competitors === 1 ? "" : "s"} we track — measured on category questions only`,
+            // CD-J1 directive 3: state the basis. This is computed on category
+            // questions alone; the branded ones name the client by construction,
+            // and counting them would be scoring yourself on your own name.
             explainer:
-              "Your share of every brand mention across all measured answers, counting you and the competitors we track. It's the single number for how much of the AI conversation you own.",
+              "Your share of every brand mention across the category answers we measured, counting you and the competitors we track. Questions that name you are left out — being named in a question about you isn't visibility. It's the single number for how much of the AI conversation you own.",
           }
         : null,
   };
@@ -724,6 +781,85 @@ export function buildRosterDrift(insights: SeoGeoInsights, tracked?: TrackedComp
     .map((t) => t.name);
   const removed = insights.roster.slice(1).filter((n) => !trackedKeys.has(normalizeBrandKey(n)));
   return { added, removed, isStale: added.length > 0 || removed.length > 0 };
+}
+
+/* ── Roster sanity (CD-J1 directive 4) ────────────────────────────── */
+
+export interface RosterSanity {
+  /** The tracked set and the brands the engines actually name share nobody. */
+  noOverlap: boolean;
+  trackedCount: number;
+  /** Named-but-untracked brands, strongest first — a suggestion, never an action. */
+  suggestions: string[];
+  headline: string;
+  detail: string;
+}
+
+/**
+ * STAFF-ONLY sanity check: does the tracked competitor set intersect the brands
+ * the engines actually named this run?
+ *
+ * A client can be tracking five rivals that no AI answer has ever mentioned. Every
+ * comparison then renders honestly and means nothing — five bars at zero, a share
+ * of voice computed against opponents who are not in the race, and a report that
+ * looks measured while measuring the wrong market. Nothing on the page distinguishes
+ * that from "you're losing to these five", which is the reading a client takes.
+ *
+ * Returns null when there is no verdict to give: nobody tracked, or no measured
+ * answers to check against (a degraded run is not evidence of a bad roster).
+ *
+ * This SUGGESTS and never mutates. The tracked roster is a deliberate account
+ * decision — whose competitor set it is matters more than whether it maximises
+ * measured overlap — so this puts named-but-untracked brands in front of the team
+ * and stops. Client-facing comparisons keep using the tracked roster exactly as
+ * chosen; the client never sees this block.
+ */
+export function buildRosterSanity(
+  insights: SeoGeoInsights,
+  tracked?: TrackedCompetitorRef[],
+): RosterSanity | null {
+  const measuredAnswers = insights.citationSummary?.totalMeasuredAnswers ?? 0;
+  if (measuredAnswers === 0) return null;
+
+  // The tracked set: the CURRENT list when the page has it, else the frozen roster
+  // the capture actually ran against.
+  const trackedRefs: TrackedCompetitorRef[] =
+    tracked && tracked.length > 0
+      ? tracked
+      : insights.roster.slice(1).map((name) => ({ name }));
+  if (trackedRefs.length === 0) return null;
+
+  // Brands the engines NAMED: tracked competitors with a real count, plus every
+  // brand the open discovery pass verified. Both are category-scoped (CD-B3).
+  const namedKeys = new Set<string>();
+  for (const c of insights.competitorsNamed ?? []) {
+    if (c.mentions > 0) for (const k of brandKeys(c.name)) namedKeys.add(k);
+  }
+  for (const d of insights.discoveredBrands ?? []) {
+    for (const k of brandKeys(d.name, d.url)) namedKeys.add(k);
+  }
+  if (namedKeys.size === 0) return null; // engines named nobody — not a roster verdict
+
+  const overlap = trackedRefs.filter((t) => refKeys(t).some((k) => namedKeys.has(k)));
+  if (overlap.length > 0) return null;
+
+  const trackedKeys = new Set(trackedRefs.flatMap(refKeys));
+  const suggestions = (insights.discoveredBrands ?? [])
+    .filter((d) => !brandKeys(d.name, d.url).some((k) => trackedKeys.has(k)))
+    .sort((a, b) => b.mentions - a.mentions)
+    .slice(0, 3)
+    .map((d) => d.name);
+
+  const n = trackedRefs.length;
+  return {
+    noOverlap: true,
+    trackedCount: n,
+    suggestions,
+    headline: `None of the ${n} tracked competitor${n === 1 ? "" : "s"} appear in the AI answers we measured`,
+    detail: suggestions.length
+      ? `Every comparison on this page is scored against brands the engines never named, so the client sees a race they aren't in. Consider tracking: ${suggestions.join(", ")}.`
+      : "Every comparison on this page is scored against brands the engines never named, so the client sees a race they aren't in. The discovery pass found no untracked brands either — worth checking the client's category and question set.",
+  };
 }
 
 export interface DiscoveredView {

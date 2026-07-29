@@ -16,6 +16,7 @@ import {
   buildDiscoveredViews,
   buildRosterChips,
   buildRosterDrift,
+  buildRosterSanity,
   buildEngineViews,
   buildGapViews,
   buildPresence,
@@ -596,12 +597,18 @@ describe("engine views (SCRUM-52 fixes 2 + 4)", () => {
     expect(chatgpt?.causeLine).toContain("no usable answers this run");
   });
 
-  it("labels ratios as fractions and derives counts from rates (fix 3)", () => {
+  it("leads the engine scores with percentages and keeps the counts in the explainer (fix 3 / CD-J1)", () => {
     const [chatgpt] = buildEngineViews(insights());
     // Highest mention count sorts first (QA Fix 2 amendment) — Rival (6) before Acme (3).
     expect(chatgpt.brands.map((b) => b.name)).toEqual(["Rival", "Acme"]);
+    // Brand rows stay counts: they are the raw series the bars encode, read against
+    // one denominator the card states once — not a score each (CD-J1 directive 2).
     expect(chatgpt.brands[0].line).toBe("named in 6 of 10 answers");
-    expect(chatgpt.stats.map((s) => s.value)).toEqual(["20%", "1 of 10 answers", "1 of 10 answers"]);
+    // The two SCORES are percentages…
+    expect(chatgpt.stats.map((s) => s.value)).toEqual(["20%", "10%", "10%"]);
+    // …and the honest denominator moved into the explainer rather than vanishing.
+    expect(chatgpt.stats[1].explainer).toContain("1 of 10 category answers");
+    expect(chatgpt.stats[2].explainer).toContain("1 of 10 category answers");
   });
 
   it("only surfaces ghost citations when the rate is above zero", () => {
@@ -706,6 +713,46 @@ describe("presence + prompts", () => {
   it("drops the roster share strip when no competitors are tracked", () => {
     expect(buildPresence(insights({ roster: ["Acme"] })).rosterShare).toBeNull();
     expect(buildPresence(insights()).rosterShare?.value).toBe("18%");
+  });
+
+  /* ── CD-J1 directive 2: percentage headline, denominators in the popup ── */
+
+  it("leads with a percentage and keeps the fraction for the popup", () => {
+    const view = buildPresence(insights());
+    expect(view.brand.pctLabel).toBe("100%"); // 2 of 2
+    expect(view.category.pctLabel).toBe("13%"); // 1 of 8
+    expect(view.category.detail.lines[0]).toBe(
+      "We asked 8 questions that buyers ask about your category, without naming you.",
+    );
+    expect(view.category.detail.lines[1]).toBe("You were named in 1 of them.");
+  });
+
+  it("discloses the questions no engine answered instead of shrinking the denominator", () => {
+    const view = buildPresence(
+      insights({ categoryPresence: { named: 1, measured: 8, total: 12 } }),
+    );
+    // Rate is over what came back — a client is not marked down for our engine
+    // failures — but the four missing questions are stated, not deleted.
+    expect(view.category.pctLabel).toBe("13%");
+    expect(view.category.detail.lines[2]).toContain("4 more questions were part of this snapshot");
+    expect(view.category.detail.lines[2]).toContain("not measured rather than counted against you");
+  });
+
+  it("says nothing about unmeasured questions on a complete run", () => {
+    const view = buildPresence(insights({ categoryPresence: { named: 1, measured: 8, total: 8 } }));
+    expect(view.category.detail.lines).toHaveLength(2);
+  });
+
+  it("reads a legacy bucket with no `measured` by its own rules", () => {
+    const view = buildPresence(insights({ categoryPresence: { named: 3, total: 12 } }));
+    expect(view.category.pctLabel).toBe("25%");
+    expect(view.category.detail.lines).toHaveLength(2); // no invented shortfall
+  });
+
+  it("labels the roster share as category-only (CD-J1 directive 3)", () => {
+    const share = buildPresence(insights()).rosterShare;
+    expect(share?.caption).toContain("measured on category questions only");
+    expect(share?.explainer).toContain("Questions that name you are left out");
   });
 
   /** QA F17: the chip is driven by the persisted per-prompt intent — the same
@@ -1140,6 +1187,73 @@ describe("tracked-list alignment (competitor side-by-side)", () => {
     expect(chips[0]).toMatchObject({ name: "Acme", isClient: true, url: "acme.com", pending: false });
     expect(chips[1]).toMatchObject({ name: "Rival", pending: false });
     expect(chips[2]).toMatchObject({ name: "Ghost Co", pending: true });
+  });
+});
+
+/* ── CD-J1 directive 4: roster sanity (staff-only, never mutating) ── */
+
+describe("roster sanity", () => {
+  /** Engines named NewRival; the tracked list is somebody else entirely. */
+  const measured = (patch: Partial<SeoGeoInsights> = {}) =>
+    insights({
+      citationSummary: { totalMeasuredAnswers: 12, answersCited: 0, answersNamed: 0, ghostCitations: 0 },
+      competitorsNamed: [],
+      discoveredBrands: [{ name: "NewRival", url: "newrival.com", mentions: 7, perEngine: [] }],
+      ...patch,
+    });
+
+  it("flags a tracked set that shares nobody with the brands the engines named", () => {
+    const verdict = buildRosterSanity(measured(), [{ name: "Ghost Co" }, { name: "Absent Ltd" }]);
+    expect(verdict?.noOverlap).toBe(true);
+    expect(verdict?.trackedCount).toBe(2);
+    expect(verdict?.headline).toContain("None of the 2 tracked competitors appear");
+    expect(verdict?.suggestions).toEqual(["NewRival"]);
+    expect(verdict?.detail).toContain("Consider tracking: NewRival");
+  });
+
+  it("stays silent when a tracked competitor IS named", () => {
+    // One real overlap is enough: the comparison is measuring the right market.
+    expect(
+      buildRosterSanity(
+        measured({ competitorsNamed: [{ name: "Ghost Co", mentions: 2 }] }),
+        [{ name: "Ghost Co" }],
+      ),
+    ).toBeNull();
+  });
+
+  it("counts an overlap the discovery pass found, not just the frozen roster", () => {
+    expect(buildRosterSanity(measured(), [{ name: "NewRival", url: "newrival.com" }])).toBeNull();
+  });
+
+  it("gives no verdict on a run with nothing measured", () => {
+    // A degraded capture is not evidence of a bad roster.
+    expect(buildRosterSanity(insights(), [{ name: "Ghost Co" }])).toBeNull();
+  });
+
+  it("gives no verdict when the engines named nobody at all", () => {
+    expect(
+      buildRosterSanity(measured({ discoveredBrands: [] }), [{ name: "Ghost Co" }]),
+    ).toBeNull();
+  });
+
+  it("falls back to the snapshot roster when the page has no tracked list", () => {
+    // insights().roster is ["Acme", "Rival"] — Rival was never named.
+    const verdict = buildRosterSanity(measured());
+    expect(verdict?.trackedCount).toBe(1);
+    expect(verdict?.headline).toContain("None of the 1 tracked competitor appear");
+  });
+
+  it("never proposes a brand that is already tracked", () => {
+    const verdict = buildRosterSanity(
+      measured({
+        discoveredBrands: [
+          { name: "NewRival", url: "newrival.com", mentions: 7, perEngine: [] },
+          { name: "Other Co", mentions: 3, perEngine: [] },
+        ],
+      }),
+      [{ name: "Ghost Co" }],
+    );
+    expect(verdict?.suggestions).toEqual(["NewRival", "Other Co"]);
   });
 });
 

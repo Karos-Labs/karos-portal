@@ -8,9 +8,13 @@ import {
   ENGINE_LABELS,
   ENGINE_PROVIDERS,
   GEO_READINESS_CHECKS,
+  PLANNED_QUESTIONS_TOTAL,
   SEO_CHECKS,
+  SEO_GEO_METHODOLOGY_VERSION,
   SEO_GEO_PIPELINE_VERSION,
   analyzeAnswer,
+  buildQuestionSet,
+  countByIntent,
   buildGazetteer,
   categoryMetrics,
   computeCheckGaps,
@@ -25,12 +29,12 @@ import {
   normalizeBrandKey,
   normalizeEvidence,
   rootDomain,
-  selectByIntentQuota,
   computeCitationLeaderboard,
   computeCitationSummary,
   computeCompetitorsNamed,
   computePerEngineVisibility,
   computePresence,
+  presenceCounts,
   computeRosterSharePct,
   computeVisibilityGaps,
   computeVisibilityIndex,
@@ -41,6 +45,7 @@ import {
   type Gazetteer,
   type GeoProbe,
   type IntentPrompt,
+  type PromptIntent,
   type SeoGeoCheck,
   type SeoGeoInsights,
   type VisibilityGap,
@@ -67,11 +72,12 @@ import { logger } from "@/services/logger";
 const ENGINE_ROSTER: EngineId[] = ["chatgpt", "gemini", "claude"];
 
 /**
- * Prompts per capture run. The a3 spec + the client report use 20 buyer-intent
- * questions across the intent taxonomy; keep this at the spec size. Cost/latency is
- * bounded by CAPTURE_CONCURRENCY (probes fan out in bounded batches, not all at once).
+ * Questions per capture run — the fixed plan, not a ceiling (CD-J1 directive 1).
+ * Derived from INTENT_QUOTA rather than restated, so the number here and the shape
+ * `buildQuestionSet` enforces can never disagree. Cost/latency is bounded by
+ * CAPTURE_CONCURRENCY (probes fan out in bounded batches, not all at once).
  */
-const PROMPT_SET_SIZE = 20;
+const PROMPT_SET_SIZE = PLANNED_QUESTIONS_TOTAL;
 
 /** Max concurrent engine probes — bounds the N prompts × M engines fan-out so a
  *  20-question run doesn't fire 60 simultaneous API calls into rate limits. */
@@ -311,54 +317,93 @@ function sanitizePromptSet(prompts: string[]): string[] {
 }
 
 /**
- * Deterministic fallback prompt set when generation fails — never blocks the capture.
- * Spans the full a3 intent taxonomy (discovery / comparison / problem / brand / nav)
- * so the answer grid still has representative rows even on a degraded run.
+ * The deterministic template bank, filed by intent. Two jobs:
+ *
+ *  1. PADDING (CD-J1 directive 1). The plan requires exactly INTENT_QUOTA[intent]
+ *     questions per intent; when the drafter returns a thin or lopsided pool,
+ *     `buildQuestionSet` tops the short blocks up from here. Each block is
+ *     deliberately longer than its quota so padding cannot run dry after the
+ *     dedupe pass drops a template that duplicates a drafted question.
+ *  2. FALLBACK. When generation fails outright, the same bank IS the question set.
+ *
+ * Every entry is written so `classifyIntent` files it where this bank does —
+ * category templates never contain the client's name, brand templates always do,
+ * and the navigational ones carry the bare domain or "official site".
  */
-function fallbackPromptSet(client: Client): string[] {
+function questionTemplates(client: Client): Record<PromptIntent, string[]> {
   const category = client.industry?.trim() || "this category";
   const name = client.name;
   const domain = client.website?.replace(/^https?:\/\//, "").replace(/\/.*$/, "") || name;
-  const set = [
-    // discovery
-    `What are the best ${category} companies right now?`,
-    `Who are the most trusted names in ${category}?`,
-    `Best ${category} options to consider this year`,
-    `Top-rated ${category} providers`,
-    // comparison
-    `Compare the top ${category} options for a new customer`,
-    `Best app or tool for ${category}`,
-    `${name} alternatives`,
-    `Which ${category} provider should I choose and why?`,
-    // problem
-    `How do I choose a ${category} provider near me?`,
-    `What should I look for when picking a ${category} provider?`,
-    `I need help with ${category} right now — where do I start?`,
-    `How do I get started with ${category}?`,
-    // brand
-    `What is ${name}?`,
-    `Is ${name} good?`,
-    `Is ${name} worth it?`,
-    `${name} reviews`,
-    // navigational
-    `${domain}`,
-    `${name} official site`,
-  ];
-  return set.slice(0, PROMPT_SET_SIZE);
+  return {
+    discovery: [
+      `What are the best ${category} companies right now?`,
+      `Who are the most trusted names in ${category}?`,
+      `Top-rated ${category} providers`,
+      `Which ${category} provider should I choose and why?`,
+      `What should I look for when picking a ${category} provider?`,
+      `Who are the leading ${category} providers people recommend?`,
+      `What are the most popular ${category} options?`,
+      `Who is worth considering for ${category}?`,
+    ],
+    comparison: [
+      `Compare the top ${category} options for a new customer`,
+      `Best app or tool for ${category}`,
+      `${name} alternatives`,
+      `What are the alternatives worth comparing in ${category}?`,
+      `Which app to use for ${category}?`,
+      `Compare pricing and features across ${category} providers`,
+      `Best apps for ${category} compared`,
+    ],
+    problem: [
+      `How do I choose a ${category} provider near me?`,
+      `I need help with ${category} right now — where do I start?`,
+      `How do I get started with ${category}?`,
+      `How can I fix a bad experience with ${category}?`,
+      `Where can I find a reliable ${category} provider?`,
+      `How do I know if a ${category} provider is any good?`,
+      `How to switch ${category} providers?`,
+    ],
+    brand: [
+      `What is ${name}?`,
+      `Is ${name} good?`,
+      `Is ${name} worth it?`,
+      `${name} reviews`,
+      `What do customers say about ${name}?`,
+    ],
+    navigational: [`${name} official site`, `${domain}`],
+  };
+}
+
+/**
+ * Deterministic fallback prompt set when generation fails — never blocks the capture.
+ * Built from the same bank and the same plan as a successful run, so a degraded run
+ * is measured on the SAME SHAPE as a healthy one: the client's denominators do not
+ * depend on whether the drafter happened to answer.
+ */
+function fallbackPromptSet(client: Client, gazetteer: Gazetteer): string[] {
+  return buildQuestionSet([], gazetteer, questionTemplates(client));
 }
 
 /** Candidate pool the drafter is asked for (larger than the final set — the quota pass trims it). */
 const PROMPT_POOL_SIZE = 32;
 
 /**
- * Generate the frozen buyer-intent prompt set via the a3 Phase-1 pipeline:
+ * Generate the frozen buyer-intent question set via the a3 Phase-1 pipeline:
  *   Sonnet drafts a candidate POOL from the client's real vocabulary
  *     → shingle-dedupe near-duplicates
  *     → sanitize (strip search operators / hardcoded years, sentence-case)
- *     → per-intent QUOTA selection to the final set
+ *     → fill the FIXED question plan, padding short blocks from the template bank
  *     → freeze.
+ *
+ * CD-J1 directive 1: the set this returns is the plan or nothing — every client is
+ * measured on the same 16 category + 4 branded questions, whatever the drafter
+ * returned. The model supplies the client's real vocabulary; it does not get to
+ * decide how much of the client we measure. A pool too thin to fill the plan is
+ * topped up rather than shipped short, and a run that under-fills anyway is logged
+ * with the shape it actually emitted (never silently accepted as the standard).
+ *
  * (The interactive client keep/edit/delete approval SCREEN is a separate stateful
- * workflow; the automated onboarding run drafts, tags, dedupes and quota-selects here.)
+ * workflow; the automated onboarding run drafts, tags, dedupes and fills here.)
  */
 async function generatePromptSet(client: Client, competitors: string[], gazetteer: Gazetteer): Promise<string[]> {
   try {
@@ -402,17 +447,24 @@ Return ONLY a fenced \`\`\`json block containing an array of ${PROMPT_POOL_SIZE}
       const arr = tolerantJsonParse(json) as unknown;
       if (Array.isArray(arr)) {
         const raw = arr.filter((p): p is string => typeof p === "string" && p.trim().length > 8);
-        // dedupe near-duplicates → sanitize (operators/years/case) → quota-balance the final set.
+        // dedupe near-duplicates → sanitize (operators/years/case) → fill the plan.
         const cleaned = sanitizePromptSet(dedupeNearDuplicates(raw));
-        const selected = selectByIntentQuota(cleaned, gazetteer, PROMPT_SET_SIZE);
+        const selected = buildQuestionSet(cleaned, gazetteer, questionTemplates(client));
+        if (selected.length === PROMPT_SET_SIZE) return selected;
+        // Under-filled: the bank ran dry for some intent. Say so with the shape, so
+        // a short set is diagnosable from the logs rather than showing up months
+        // later as one client whose denominators don't match anyone else's.
+        console.warn(
+          `[seo-geo] Question plan under-filled for ${client.id}: ${selected.length}/${PROMPT_SET_SIZE}`,
+          countByIntent(selected, gazetteer),
+        );
         if (selected.length >= 3) return selected;
       }
     }
     throw new Error("prompt set could not be parsed or was too small");
   } catch (err) {
     console.warn("[seo-geo] Prompt-set generation failed — using deterministic fallback:", err);
-    const fallback = sanitizePromptSet(dedupeNearDuplicates(fallbackPromptSet(client)));
-    return selectByIntentQuota(fallback, gazetteer, PROMPT_SET_SIZE);
+    return fallbackPromptSet(client, gazetteer);
   }
 }
 
@@ -610,7 +662,17 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
     `- **GEO visibility index: ${insights.geoVisibilityIndex}/100** (${insights.geoVisibilityModel})`,
     `- Engines measured: ${insights.geoVisibilityEnginesMeasured} of ${insights.geoVisibilityEnginesTotal} first-party (${insights.geoVisibilityEnginesScored} scored this run)`,
     `- Roster share of voice (client vs tracked competitors): ${insights.rosterSharePct}%`,
-    `- Brand-query presence: named in ${insights.brandPresence.named}/${insights.brandPresence.total} brand prompts · Category presence: ${insights.categoryPresence.named}/${insights.categoryPresence.total} non-brand prompts`,
+    // Counts are "named of MEASURED, out of PLANNED" — a question the engines
+    // failed on is reported as unmeasured, never quietly removed from the
+    // denominator (CD-J1 directive 1).
+    ...(() => {
+      const b = presenceCounts(insights.brandPresence);
+      const c = presenceCounts(insights.categoryPresence);
+      const tail = (p: { notMeasured: number }) => (p.notMeasured > 0 ? ` (${p.notMeasured} not measured)` : "");
+      return [
+        `- Brand-query presence: named in ${b.named}/${b.measured} of ${b.planned} branded questions${tail(b)} · Category presence: named in ${c.named}/${c.measured} of ${c.planned} category questions${tail(c)}`,
+      ];
+    })(),
     "",
     // CD-B3: every rate in this table is CATEGORY-scoped. Branded prompts name
     // the client by construction, so the full-set figures ran high and disagreed
@@ -771,7 +833,16 @@ export async function runSeoGeoResearch(
   // metrics, so the panel's "N category / M brand questions" subtitle can never
   // disagree with its own engine cards (previously presence used a raw alias
   // match while the cards used classifyIntent — off-by-one subtitles).
-  const presence = computePresence(capture.probes, gazetteer, (prompt) => !isCategoryPrompt(prompt));
+  //
+  // CD-J1: the frozen question set is the denominator. A question every engine
+  // failed on stays in its bucket as planned-but-not-measured instead of dropping
+  // out and shrinking the ratio the client is shown.
+  const presence = computePresence(
+    capture.probes,
+    gazetteer,
+    (prompt) => !isCategoryPrompt(prompt),
+    capture.promptSet,
+  );
   const rosterSharePct = computeRosterSharePct(capture.probes, gazetteer, isCategoryPrompt);
 
   // Open brand discovery: which brands did the engines name that we do NOT track?
@@ -814,6 +885,11 @@ export async function runSeoGeoResearch(
     // CD-B4: stamp what measured this, so the panel can tell current results from
     // ones computed under superseded rules rather than presenting both as fact.
     pipelineVersion: SEO_GEO_PIPELINE_VERSION,
+    // CD-J1: and stamp the question methodology, so a snapshot's denominators are
+    // always read by the rules that produced them. Old captures keep rendering as
+    // what they were — a description of one run — instead of being reinterpreted
+    // as a short measurement against today's fixed plan.
+    methodologyVersion: SEO_GEO_METHODOLOGY_VERSION,
     seoScore: seoScore.score,
     seoDataCoveragePct: seoScore.dataCoveragePct,
     geoReadiness: geoReadiness.score,

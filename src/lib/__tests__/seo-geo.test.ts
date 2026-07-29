@@ -19,6 +19,14 @@ import {
   normalizeBrandKey,
   dedupeNearDuplicates,
   selectByIntentQuota,
+  buildQuestionSet,
+  countByIntent,
+  computePresence,
+  presenceCounts,
+  INTENT_QUOTA,
+  PLANNED_BRANDED_QUESTIONS,
+  PLANNED_CATEGORY_QUESTIONS,
+  PLANNED_QUESTIONS_TOTAL,
   computeCheckGaps,
   computeCheckScore,
   computeCitationLeaderboard,
@@ -377,6 +385,157 @@ describe("QA Fix 4: two-stage prompt pipeline (dedupe + quota)", () => {
   });
 });
 
+/* ── CD-J1 directive 1: the question plan is a contract ─────────────── */
+
+const TEMPLATES = {
+  discovery: [
+    "What are the best fintech companies right now?",
+    "Who are the most trusted names in fintech?",
+    "Top-rated fintech providers",
+    "Which fintech provider should I choose and why?",
+    "What should I look for when picking a fintech provider?",
+    "Who are the leading fintech providers people recommend?",
+    "What are the most popular fintech options?",
+  ],
+  comparison: [
+    "Compare the top fintech options for a new customer",
+    "Best app or tool for fintech",
+    "What are the alternatives worth comparing in fintech?",
+    "Which app to use for fintech?",
+    "Compare pricing and features across fintech providers",
+    "Best apps for fintech compared",
+  ],
+  problem: [
+    "How do I choose a fintech provider near me?",
+    "I need help with fintech right now — where do I start?",
+    "How do I get started with fintech?",
+    "How can I fix a bad experience with fintech?",
+    "Where can I find a reliable fintech provider?",
+    "How do I know if a fintech provider is any good?",
+  ],
+  brand: [
+    "What is Acme Fintech?",
+    "Is Acme Fintech good?",
+    "Is Acme Fintech worth it?",
+    "What do customers say about Acme Fintech?",
+  ],
+  navigational: ["Acme Fintech official site", "acmefintech.com"],
+};
+
+describe("CD-J1: the question plan is fixed, deterministic and category-heavy", () => {
+  it("derives its totals from the quota rather than restating them", () => {
+    expect(PLANNED_CATEGORY_QUESTIONS).toBe(
+      INTENT_QUOTA.discovery + INTENT_QUOTA.comparison + INTENT_QUOTA.problem,
+    );
+    expect(PLANNED_BRANDED_QUESTIONS).toBe(INTENT_QUOTA.brand + INTENT_QUOTA.navigational);
+    expect(PLANNED_QUESTIONS_TOTAL).toBe(PLANNED_CATEGORY_QUESTIONS + PLANNED_BRANDED_QUESTIONS);
+    // The measurement base must dominate: every client-facing comparison is
+    // computed on category questions alone (CD-B3).
+    expect(PLANNED_CATEGORY_QUESTIONS).toBeGreaterThan(PLANNED_BRANDED_QUESTIONS);
+  });
+
+  it("pads a thin pool up to the full plan instead of shipping a short set", () => {
+    // The old failure: three usable questions in, three questions measured, and a
+    // client scored against a denominator no other client shared.
+    const set = buildQuestionSet(["Best fintech apps", "What is Acme Fintech?"], gaz, TEMPLATES);
+    expect(set).toHaveLength(PLANNED_QUESTIONS_TOTAL);
+    expect(countByIntent(set, gaz)).toEqual(INTENT_QUOTA);
+    // The drafted questions survive — padding tops up, it does not replace.
+    expect(set).toContain("Best fintech apps");
+    expect(set).toContain("What is Acme Fintech?");
+  });
+
+  it("trims an intent the pool over-supplies, so shape never varies by pool", () => {
+    const brandHeavy = [
+      "What is Acme Fintech?",
+      "Is Acme Fintech good?",
+      "Is Acme Fintech worth it?",
+      "Acme Fintech reviews",
+      "What do customers say about Acme Fintech?", // 5 brand questions, quota is 3
+    ];
+    const set = buildQuestionSet(brandHeavy, gaz, TEMPLATES);
+    const counts = countByIntent(set, gaz);
+    expect(counts.brand).toBe(INTENT_QUOTA.brand);
+    expect(counts).toEqual(INTENT_QUOTA);
+  });
+
+  it("is deterministic: the same pool and bank always produce the same set", () => {
+    const pool = ["Best fintech apps", "How do I get started with fintech?", "Is Acme Fintech good?"];
+    expect(buildQuestionSet(pool, gaz, TEMPLATES)).toEqual(buildQuestionSet(pool, gaz, TEMPLATES));
+  });
+
+  it("never double-counts a question the pool and the bank both contain", () => {
+    const set = buildQuestionSet(["Top-rated fintech providers"], gaz, TEMPLATES);
+    expect(new Set(set).size).toBe(set.length);
+  });
+
+  it("files every padded question where the classifier agrees it belongs", () => {
+    // The plan, the report's intent tags and the branded/category denominators are
+    // all produced by classifyIntent — a template filed under the wrong intent
+    // would put the emitted shape back out of step with the displayed one.
+    const set = buildQuestionSet([], gaz, TEMPLATES);
+    expect(countByIntent(set, gaz)).toEqual(INTENT_QUOTA);
+  });
+});
+
+describe("CD-J1: a question no engine answered is not a question we didn't ask", () => {
+  const promptSet = ["Best fintech apps", "Top fintech providers", "What is Acme Fintech?"];
+  const probeFor = (prompt: string, tier: "MEASURED" | "UNAVAILABLE", named: boolean) =>
+    analyzeAnswer(
+      answer({
+        prompt,
+        captureTier: tier,
+        answerText: named ? "We recommend Acme Fintech." : "Try Rival One.",
+      }),
+      gaz,
+    );
+
+  it("keeps an all-unavailable question in the denominator as not-measured", () => {
+    const presence = computePresence(
+      [
+        probeFor("Best fintech apps", "MEASURED", true),
+        probeFor("Top fintech providers", "UNAVAILABLE", false), // every engine failed
+        probeFor("What is Acme Fintech?", "MEASURED", true),
+      ],
+      gaz,
+      (p) => classifyIntent(p, gaz) === "brand" || classifyIntent(p, gaz) === "navigational",
+      promptSet,
+    );
+    const cat = presenceCounts(presence.category);
+    // Two category questions were ASKED; one came back. The old maths reported
+    // "1 of 1" — a perfect score built by deleting the question that failed.
+    expect(cat.planned).toBe(2);
+    expect(cat.measured).toBe(1);
+    expect(cat.named).toBe(1);
+    expect(cat.notMeasured).toBe(1);
+  });
+
+  it("counts a planned question no engine even attempted", () => {
+    const presence = computePresence(
+      [probeFor("Best fintech apps", "MEASURED", false)],
+      gaz,
+      () => false,
+      promptSet,
+    );
+    const cat = presenceCounts(presence.category);
+    expect(cat.planned).toBe(3); // the whole frozen set, branded predicate off
+    expect(cat.measured).toBe(1);
+    expect(cat.notMeasured).toBe(2);
+  });
+
+  it("reads a legacy bucket by its own rules: no `measured` means measured == total", () => {
+    // Pre-v2 snapshots counted nothing unless it was measured, so there is no
+    // not-measured remainder to disclose and none may be invented.
+    expect(presenceCounts({ named: 3, total: 8 })).toEqual({
+      named: 3,
+      measured: 8,
+      planned: 8,
+      notMeasured: 0,
+    });
+    expect(presenceCounts(undefined)).toEqual({ named: 0, measured: 0, planned: 0, notMeasured: 0 });
+  });
+});
+
 describe("QA Fix 1/2: tracked roster dedup + category-only comparison", () => {
   it("dedupes near-duplicate competitors into one entity (Kairos AI Agency == KAIROS.ai)", () => {
     const g = buildGazetteer("Acme", "https://acme.com", [
@@ -586,7 +745,7 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
     // SEO-06 maps to plain-English copy (QA Fix 7) and a machine-appliable control.
     const meta = recs.find((r) => r.recId.startsWith("SEO-06"));
     expect(meta?.actionKind).toBe("one_click"); // meta_description is machine-appliable
-    expect(meta?.title).toBe("Fix your meta descriptions"); // plain-English, no thresholds
+    expect(meta?.title).toBe("Write the summary that appears under your search result"); // plain-English, no thresholds
     expect(meta?.description.length).toBeGreaterThan(10);
     expect(meta?.owner).toContain("we draft, you approve");
     expect(meta?.targetPlatform).toBe("site");
@@ -628,6 +787,34 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
       .map((d) => d.id)
       .filter((id) => !REC_COPY[id]);
     expect(uncovered).toEqual([]);
+  });
+
+  /**
+   * CD-J1 directive 5: coverage was already pinned; the BAR was not. Every entry
+   * here is read by a client deciding whether to click Approve, and the technical
+   * phrasing has a home — the staff-only block on the gap behind the row carries the
+   * measured value and benchmark verbatim. These two checks stop a jargon-grade line
+   * ("Answer capsules: 40–60 word summary under key H2s") returning through a later
+   * addition, which is how the last batch of them arrived.
+   */
+  it("keeps markup and protocol vocabulary out of client-facing copy", () => {
+    const jargon =
+      /\b(h1s?|h2s?|canonical|noindex|nosnippet|robots\.txt|alt text|crawlers?|meta description|schema|sitemap dates?|indexation|p75|lcp|cls|inp|answer capsules?)\b/i;
+    const offenders = Object.entries(REC_COPY)
+      .filter(([, c]) => jargon.test(c.title) || jargon.test(c.description))
+      .map(([id]) => id);
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps numeric thresholds out of client-facing copy", () => {
+    // A client cannot act on "under 60 characters" — they are approving that we go
+    // and fix it. Counts of things they own ("one headline") are fine; measurement
+    // specs are not. Word/character/second budgets and ranges are the tell.
+    const spec = /\b\d+\s*(–|-|to)\s*\d+\s*(word|character|char|second|sec|s)\b|\b(under|over|at least|below|above)\s+\d+\s*(word|character|char|%|second)/i;
+    const offenders = Object.entries(REC_COPY)
+      .filter(([, c]) => spec.test(c.title) || spec.test(c.description))
+      .map(([id]) => id);
+    expect(offenders).toEqual([]);
   });
 
   it("never lets a registry label reach a client-facing title or description", () => {

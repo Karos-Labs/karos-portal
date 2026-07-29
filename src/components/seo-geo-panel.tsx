@@ -13,6 +13,7 @@ import {
   buildPromptViews,
   buildRosterChips,
   buildRosterDrift,
+  buildRosterSanity,
   buildScoreViews,
   buildSnapshotTrust,
   capturedNothing,
@@ -28,6 +29,7 @@ import { TONE_COLORS } from "@/components/seo-geo/tones";
 import { Disclosure } from "@/components/seo-geo/disclosure";
 import { FlagButton } from "@/components/seo-geo/flag-button";
 import { GapList } from "@/components/seo-geo/gap-list";
+import { ScorePopover } from "@/components/seo-geo/score-popover";
 import { SeoGeoActionPlan } from "@/components/seo-geo-action-plan";
 
 /**
@@ -504,6 +506,9 @@ export function SeoGeoPanel({
   const drift = buildRosterDrift(insights, trackedCompetitors);
   const discovered = buildDiscoveredViews(insights, trackedCompetitors);
   const rosterChips = buildRosterChips(insights, trackedCompetitors, clientWebsite);
+  // Staff-only roster verdict (CD-J1 directive 4); null when there is nothing to
+  // say — nobody tracked, or no measured answers to check a roster against.
+  const rosterSanity = buildRosterSanity(insights, trackedCompetitors);
 
   // Citation leaderboard split (QA Fix 5): "who's quoted instead of you" vs your own baseline.
   const quotedInstead = citationLeaderboard.filter((r) => !r.isClient);
@@ -583,7 +588,9 @@ export function SeoGeoPanel({
         <CardTitle className="mb-1">Do buyers find you?</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
           Whether AI engines name you when buyers ask by name versus when they ask open category
-          questions.
+          questions. Click a score to see how it was measured. Only the category side feeds your
+          comparison against competitors — being named in a question about you isn&apos;t
+          visibility.
         </p>
         <div className="grid gap-4 @xl:grid-cols-2">
           {[presence.brand, presence.category].map((tile) => (
@@ -593,11 +600,18 @@ export function SeoGeoPanel({
                 <InfoTip text={tile.explainer} />
               </div>
               <p className="text-[11px] text-muted-2">{tile.caption}</p>
-              {tile.fractionLine ? (
+              {/* CD-J1 directive 2: the headline is the percentage; the counts it
+                  was computed from are one click away, in sentences. */}
+              {tile.pctLabel ? (
                 <>
-                  <p className="mt-2 font-mono text-lg font-medium text-foreground">
-                    {tile.fractionLine}
-                  </p>
+                  <div className="mt-2">
+                    <ScorePopover
+                      value={tile.pctLabel}
+                      title={tile.detail.title}
+                      lines={tile.detail.lines}
+                      srLabel={`${tile.heading}: ${tile.pctLabel}. See how this was measured.`}
+                    />
+                  </div>
                   <Meter pct={tile.pct ?? 0} color="var(--neon)" className="mt-1.5" />
                 </>
               ) : (
@@ -613,6 +627,8 @@ export function SeoGeoPanel({
               <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
                 Your share of the conversation
               </p>
+              {/* Basis stated in the caption below and in this explainer: category
+                  questions only (CD-J1 directive 3). */}
               <InfoTip text={presence.rosterShare.explainer} />
             </div>
             <div className="mt-1.5 flex items-center gap-3">
@@ -633,11 +649,16 @@ export function SeoGeoPanel({
       {!captureFailed && (
       <Card>
         <CardTitle className="mb-1">You vs competitors on each AI engine</CardTitle>
+        {/* CD-J1 directive 3: name the basis in the subline. Every number in this
+            section is measured on category questions only — a question that
+            contains your name names you by construction, so counting those would
+            hand you a lead over every competitor before an engine said anything. */}
         <p className="mb-4 text-xs text-muted-2">
-          How often each brand gets named when we ask the engines {insights.categoryPresence.total} real
-          buyer question{insights.categoryPresence.total === 1 ? "" : "s"} — excluding the{" "}
-          {insights.brandPresence.total} question{insights.brandPresence.total === 1 ? "" : "s"} that name
-          you directly, so the comparison is like-for-like.
+          Measured on category questions only. How often each brand gets named when we ask the
+          engines {insights.categoryPresence.total} real buyer question
+          {insights.categoryPresence.total === 1 ? "" : "s"} — the{" "}
+          {insights.brandPresence.total} question{insights.brandPresence.total === 1 ? "" : "s"} that
+          name you directly are left out, so the comparison is like-for-like.
           {competitorCount === 0 && " No competitors tracked yet · ask us to add some."}
         </p>
         {drift.isStale && (
@@ -750,6 +771,21 @@ export function SeoGeoPanel({
         <p className="mb-3 text-xs text-muted-2">
           The brands your visibility is measured against on every snapshot.
         </p>
+        {/* CD-J1 directive 4 — STAFF ONLY. A roster of never-named brands makes
+            every comparison above honest and meaningless at once: bars at zero
+            against opponents who aren't in the race. The client cannot tell that
+            apart from "you're losing", so the team gets told instead. A suggestion,
+            never an action — the roster is an account decision and nothing here
+            mutates it. */}
+        {!isClientViewer && rosterSanity && (
+          <div className="mb-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
+            <p className="flex items-start gap-1.5 text-xs font-medium text-warning">
+              <Icon name="TriangleAlert" className="mt-px h-3.5 w-3.5 shrink-0" />
+              {rosterSanity.headline}
+            </p>
+            <p className="mt-1 text-[11px] text-muted">{rosterSanity.detail}</p>
+          </div>
+        )}
         <div className="flex flex-wrap gap-1.5">
           {rosterChips.map((chip, i) => (
             <span

@@ -1168,6 +1168,68 @@ Small but easy to misread, because it moved during the build.
   (:164-170) — the F108 contract (§6.4). On a UTC container a Tel Aviv client's
   "today" starts hours earlier.
 
+### 4.16 SEO/GEO methodology v2 — the question-count contract (CD-J1)
+
+Yours because **re-captures run in the service environment**, not from a laptop:
+the capture makes live Anthropic + OpenAI + Gemini calls, so the contract below is
+enforced in code but only ever *exercised* where those keys live. A run that
+violates it is a capture bug, not a display bug.
+
+**The plan.** Every capture emits exactly **20 questions**: 16 category + 4
+branded, split by intent — 6 discovery, 5 comparison, 5 problem, 3 brand,
+1 navigational. `INTENT_QUOTA` (`src/lib/seo-geo.ts`) is the single source; the
+totals (`PLANNED_CATEGORY_QUESTIONS` / `PLANNED_BRANDED_QUESTIONS` /
+`PLANNED_QUESTIONS_TOTAL`) are derived from it, never restated. It is
+category-heavy on purpose: every client-vs-competitor number in the product is
+computed on category questions alone (CD-B3), so that block is the measurement and
+the branded four are a control answering "do the engines know this brand at all?".
+
+**Why it exists.** Before v2 the quota was a ceiling only — it took *up to* its
+share of whatever the drafter returned, so a thin pool shipped a short set. Clients
+were measured on 8+12, 4+11, 5+6. Every client-facing ratio hangs off those
+denominators, so no two clients' scores were comparable and "named in 0 of 12" had
+no fixed meaning.
+
+**What a capture MUST emit** (`SeoGeoInsights`):
+
+| Field | Contract |
+|---|---|
+| `promptSet` | exactly 20 questions, the frozen set. This is the denominator for everything below. |
+| `methodologyVersion` | `SEO_GEO_METHODOLOGY_VERSION` (`"q2-2026-07-29"`). Absent = pre-v2 capture; the UI reads it by its own rules and never reinterprets it. |
+| `pipelineVersion` | `SEO_GEO_PIPELINE_VERSION` (`"2026-07-29"`). Anything else renders under the CD-B4 legacy banner. |
+| `categoryPresence` / `brandPresence` | `{ named, measured, total }`. **`total` = planned (16 / 4), `measured` = how many at least one engine answered, `named` ⊆ measured.** `measured` is optional *only* for pre-v2 records. |
+
+**The denominator rule — the one that is easy to regress.** A question no engine
+answered is **not** a question we didn't ask. `computePresence` takes `promptSet`
+and counts a dead question as planned-but-not-measured; it must never derive its
+universe from the probes alone, which is what silently shrank denominators before
+(a capture failure *raised* the visible score). Read every bucket through
+`presenceCounts()`, which applies the legacy reading in one place.
+
+**Enforcement.** `buildQuestionSet(pool, gazetteer, templates)` fills the plan from
+the model pool first and pads short blocks from a deterministic template bank
+(`questionTemplates` in `src/lib/intel/seo-geo.ts`), accepting a template only into
+the slot `classifyIntent` agrees it belongs to — so the emitted shape and the intent
+tags shown in the report cannot drift apart. The fallback set is built from the same
+bank and plan, so a degraded run has the same shape as a healthy one. An
+under-filled run logs `[seo-geo] Question plan under-filled for <clientId>` with the
+shape it actually emitted: **that line in the service logs is the signal that a
+client's denominators are off-standard.** Pinned by `src/lib/__tests__/seo-geo.test.ts`
+("the question plan is fixed, deterministic and category-heavy").
+
+**Changing the plan later.** Edit `INTENT_QUOTA`, bump
+`SEO_GEO_METHODOLOGY_VERSION` **and** `SEO_GEO_PIPELINE_VERSION`, and leave old
+snapshots alone — they keep rendering under their own stamp. Do not retro-fit new
+maths onto old captures (CD-B4); a re-capture is how a client moves to the new plan.
+
+**Also in CD-J1, for context when you read that code:** presence scores render as a
+percentage with the counts in a click-through popover (`score-popover.tsx`);
+`computeRosterSharePct`'s category predicate is now a required argument; a
+staff-only banner flags a tracked roster that shares nobody with the brands the
+engines named (`buildRosterSanity` — suggests, never mutates); and `REC_COPY`
+client strings are held to a no-jargon/no-thresholds bar by two tests, with the
+technical phrasing living on the staff-only gap block.
+
 ---
 
 ## 5. Known accepted residuals & pending product decisions
