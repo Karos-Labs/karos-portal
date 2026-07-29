@@ -162,6 +162,32 @@ export async function generateClientBriefAction(
  * it. Callable by the client for their own account or by staff — works with no navigation,
  * so a client viewer never hits an empty-agents dead end.
  */
+/**
+ * WHAT APPROVE ACTUALLY DOES, end to end (CD-J1 directive 6).
+ *
+ * A client clicks Approve on a row of the SEO/GEO action plan. Then:
+ *
+ *  1. AUTHORIZE — a client user may only approve against their own clientId;
+ *     staff and admins may approve on any client's behalf.
+ *  2. PERSIST — `approveSeoGeoRecommendation` adds the recId to `approvedRecIds`
+ *     on the client's `clientSeoGeo` doc, inside a transaction, through a Set, so
+ *     a double-click or two people clicking at once cannot duplicate it. It throws
+ *     if there is no capture to approve against. The recIds are the REC_COPY keys,
+ *     which is why those keys are stable: renaming one orphans an approval.
+ *  3. LOG — an activity-timeline entry the team monitors ("SEO/GEO fix approved",
+ *     carrying the plain-English title and who approved it). This is the hand-off.
+ *     There is no separate work queue: the timeline IS how the team learns a fix
+ *     was authorized.
+ *  4. REVALIDATE — the client page re-renders and the row shows its approved state
+ *     to everyone, client and staff alike, from the persisted set rather than from
+ *     the clicking browser's memory.
+ *
+ * Then a HUMAN on the Karos team makes the change on the client's site. Nothing
+ * here dispatches an agent — approval is authorization, not execution. The result
+ * shows up as movement in the next capture, and `upsertClientSeoGeo` deliberately
+ * carries `approvedRecIds` across re-captures so a refresh cannot silently
+ * un-approve work that was already authorized.
+ */
 export async function approveSeoGeoRecommendationAction(
   clientId: string,
   recId: string,
