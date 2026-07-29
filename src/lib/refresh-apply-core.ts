@@ -903,7 +903,7 @@ export interface PlanItem {
 }
 
 export const docItemKey = (docType: string, tier: string) => `doc:${docType}@${tier}`;
-const competitorItemKey = (c: CompetitorPlan) => (c.id ? `comp:${c.id}` : `comp:new:${String(c.data.url)}`);
+export const competitorItemKey = (c: CompetitorPlan) => (c.id ? `comp:${c.id}` : `comp:new:${String(c.data.url)}`);
 export const PROFILE_ITEM_KEY = "client:profile";
 export const PALETTE_ITEM_KEY = "client:palette";
 

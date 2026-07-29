@@ -14,13 +14,20 @@ import {
   listClients,
   upsertClientSeoGeo,
 } from "@/lib/data";
+import { findPriorImport, type PriorImport } from "@/lib/ops-import-history";
 import {
   buildWriteOps,
+  competitorItemKey,
+  docItemKey,
+  planItems,
   validateProposal,
+  validateSelection,
   type CurrentState,
+  type PlanItem,
   type RefreshPlan,
   type Row,
 } from "@/lib/refresh-apply-core";
+import { bundleFingerprint } from "@/lib/bundle-fingerprint";
 import { isOpsInboxConfigured, readInboxProposal, readInboxSeoGeo } from "@/lib/ops-inbox";
 import {
   isLabOutputsConfigured,
@@ -79,23 +86,40 @@ export interface PlanSummary {
   clientId: string;
   clientName: string;
   docs: Array<{
+    /** Selection key — absent on unchanged rows, which are not tickable. */
+    key: string | null;
     label: string;
     action: "create" | "update" | "unchanged";
     detail: string;
     verifyTokens: number;
   }>;
-  competitors: Array<{ company: string; action: "create" | "update" | "unchanged"; fields: string[] }>;
+  competitors: Array<{
+    key: string | null;
+    company: string;
+    action: "create" | "update" | "unchanged";
+    fields: string[];
+    /** Set when a `create` was folded onto an existing row. Said, never silent. */
+    reconciled: { matchedBy: "name" | "url"; matchedCompany: string } | null;
+  }>;
   profileFills: Array<{ field: string; to: string }>;
   skippedProfile: Array<{ field: string; reason: string }>;
   brandingFills: string[];
   colors: { from: string[]; to: string[] } | null;
+  /** Every tickable item, with its dependencies — drives the checkboxes. */
+  items: PlanItem[];
   warnings: string[];
   counts: RefreshPlan["counts"];
   /** The SEO/GEO half, when <inbox>/seo-geo/<clientId>.json exists. */
   seoGeo: SeoGeoPlanSummary | null;
   /** Set when the client is mid-pipeline: the apply buttons stay disabled. */
   lockedReason: string | null;
+  /** Identity of the bundle as read, for the already-imported comparison. */
+  fingerprint: string;
+  /** A previous import of this same ref, when the activity log records one. */
+  priorImport: PriorImport | null;
 }
+
+export type { PriorImport };
 
 export interface SeoGeoPlanSummary {
   ok: boolean;
@@ -130,6 +154,8 @@ export interface ScannedProposal {
   /** clientId the file declares — a mismatch shows up before any plan runs. */
   declaredClientId: string | null;
   error: string | null;
+  /** A recorded earlier import of this same file, so it is not re-offered blind. */
+  priorImport: PriorImport | null;
 }
 
 export interface ScannedClient {
@@ -230,6 +256,7 @@ export async function scanLabForUpdatesAction(): Promise<UpdateScan> {
             name: f.name,
             declaredClientId: typeof declared === "string" ? declared : null,
             error: null,
+            priorImport: await findPriorImport(c.id, "lab", f.path, bundleFingerprint(parsed)),
           };
         } catch (e) {
           return {
@@ -237,6 +264,7 @@ export async function scanLabForUpdatesAction(): Promise<UpdateScan> {
             name: f.name,
             declaredClientId: null,
             error: e instanceof Error ? e.message : "Could not read this proposal.",
+            priorImport: null,
           };
         }
       });
@@ -311,14 +339,26 @@ async function loadCurrentState(clientId: string): Promise<
   };
 }
 
-function summarize(b: BundleRef, plan: RefreshPlan, lockedReason: string | null): PlanSummary {
+function summarize(
+  b: BundleRef,
+  plan: RefreshPlan,
+  lockedReason: string | null,
+  fingerprint: string,
+  priorImport: PriorImport | null,
+): PlanSummary {
+  const items = planItems(plan);
+
   return {
     origin: b.origin,
     ref: b.ref,
     label: labelFor(b),
     clientId: plan.clientId,
     clientName: plan.clientName,
+    items,
+    fingerprint,
+    priorImport,
     docs: plan.docs.map((d) => ({
+      key: d.action === "unchanged" ? null : docItemKey(d.docType, d.tier),
       label: `${d.docType} · ${d.tier}`,
       action: d.action,
       detail:
@@ -331,9 +371,11 @@ function summarize(b: BundleRef, plan: RefreshPlan, lockedReason: string | null)
       verifyTokens: d.verifyTokens,
     })),
     competitors: plan.competitors.map((c) => ({
+      key: c.action === "unchanged" ? null : competitorItemKey(c),
       company: c.company,
       action: c.action,
       fields: c.changes.map((ch) => ch.field),
+      reconciled: c.reconciled ?? null,
     })),
     profileFills: plan.client.profile.map((p) => ({ field: p.field, to: truncate(p.to) })),
     skippedProfile: plan.client.skippedProfile,
@@ -427,7 +469,14 @@ export async function planOpsBundleAction(bundle: BundleRef): Promise<PlanResult
   const result = validateProposal(proposal, state.current);
   if (!result.ok) return { ok: false, origin, ref, errors: result.errors };
 
-  const summary = summarize(bundle, result.plan, state.lockedReason);
+  const fingerprint = bundleFingerprint(proposal);
+  const summary = summarize(
+    bundle,
+    result.plan,
+    state.lockedReason,
+    fingerprint,
+    await findPriorImport(clientId, bundle.origin, bundle.ref, fingerprint),
+  );
   summary.seoGeo = await planSeoGeo(clientId, now);
   return { ok: true, plan: summary };
 }
@@ -444,6 +493,8 @@ export async function applyOpsBundleAction(input: {
   origin: BundleOrigin;
   ref: string;
   includeSeoGeo: boolean;
+  /** Ticked item keys. Omitted means everything the plan can write. */
+  selectedKeys?: string[];
 }): Promise<
   { ok: true; outcome: ApplyOutcome } | { ok: false; errors: string[]; origin: BundleOrigin; ref: string }
 > {
@@ -473,28 +524,41 @@ export async function applyOpsBundleAction(input: {
 
   const plan = result.plan;
   const label = labelFor(bundle);
+
+  // The tick state arrives over the wire, so the dependency rules are enforced
+  // here as well as in the UI — a disabled checkbox is an explanation, not a
+  // guarantee. Unticking the branding document while keeping the palette is
+  // refused before anything is written, not discovered afterwards.
+  const selected = input.selectedKeys ? new Set(input.selectedKeys) : undefined;
+  if (selected) {
+    const problems = validateSelection(plan, selected);
+    if (problems.length) return { ok: false, origin, ref, errors: problems };
+  }
+
+  const ops = buildWriteOps(plan, now, selected);
+  // Counts describe what THIS import writes, not what the bundle could write.
+  const written = {
+    docs: ops.filter((o) => o.collection === "clientContextDocs").length,
+    competitors: ops.filter((o) => o.collection === "clientCompetitors").length,
+    client: ops.filter((o) => o.collection === "clients").length,
+  };
+
   const outcome: ApplyOutcome = {
     origin,
     ref,
     clientName: plan.clientName,
-    refresh: {
-      applied: false,
-      docs: plan.counts.docWrites,
-      competitors: plan.counts.compWrites,
-      client: plan.counts.clientTouched ? 1 : 0,
-      error: null,
-    },
+    refresh: { applied: false, ...written, error: null },
     seoGeo: { applied: false, skippedReason: null, error: null },
   };
 
   /* ── Refresh half — one atomic batch, same ops as the CLI ── */
-  if (plan.counts.totalWrites === 0) {
+  if (ops.length === 0) {
     outcome.refresh.applied = true; // nothing to do IS success, and says so in the counts
   } else {
     try {
       const db = adminDb();
       const batch = db.batch();
-      for (const op of buildWriteOps(plan, now)) {
+      for (const op of ops) {
         if (op.kind === "create") {
           batch.set(db.collection(op.collection).doc(), op.data);
         } else {
@@ -542,25 +606,33 @@ export async function applyOpsBundleAction(input: {
   }
 
   const sourceLabel = origin === "lab" ? `lab repo ${ref}` : label;
-  if (outcome.refresh.applied && plan.counts.totalWrites > 0) {
+  // The fingerprint rides on the log row: it is what lets the page say
+  // "imported on the 28th" versus "imported, and the file has changed since".
+  const fingerprint = bundleFingerprint(proposal);
+  const partial = selected !== undefined && selected.size < planItems(plan).length;
+
+  if (outcome.refresh.applied && ops.length > 0) {
     void logActivity({
       clientId,
       timestamp: Date.now(),
       type: "CONTEXT_DOC_UPDATED",
       title: opsImportTitle(
         sourceLabel,
-        `${plan.counts.docWrites} document(s), ${plan.counts.compWrites} competitor row(s)` +
-          (plan.counts.clientTouched ? ", client profile" : "") +
-          (outcome.seoGeo.applied ? ", SEO/GEO snapshot" : ""),
+        `${written.docs} document(s), ${written.competitors} competitor row(s)` +
+          (written.client ? ", client profile" : "") +
+          (outcome.seoGeo.applied ? ", SEO/GEO snapshot" : "") +
+          (partial ? " (selected items only)" : ""),
       ),
       actor: user.name,
       actorRole: "staff",
       metadata: {
         origin,
         ref,
-        docs: plan.counts.docWrites,
-        competitors: plan.counts.compWrites,
-        clientTouched: plan.counts.clientTouched,
+        bundleFingerprint: fingerprint,
+        docs: written.docs,
+        competitors: written.competitors,
+        clientTouched: written.client > 0,
+        partial,
         seoGeoImported: outcome.seoGeo.applied,
       },
     });
@@ -572,7 +644,7 @@ export async function applyOpsBundleAction(input: {
       title: opsImportTitle(sourceLabel, "SEO/GEO snapshot (imported, not machine-measured)"),
       actor: user.name,
       actorRole: "staff",
-      metadata: { origin, ref, seoGeoImported: true },
+      metadata: { origin, ref, bundleFingerprint: fingerprint, seoGeoImported: true },
     });
   }
 
