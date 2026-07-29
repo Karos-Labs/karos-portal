@@ -242,8 +242,23 @@ function AgentBlurb({ text, className }: { text: string; className?: string }) {
 export type AgentSetupState = {
   ready: boolean;
   href: string;
-  /** e.g. "X agent data" — names the intake page in copy and link labels. */
+  /**
+   * The OPERATOR's name for the intake page, e.g. "X agent data" — it matches
+   * the route, the manifest and how staff talk about it, and staff surfaces
+   * (the run dialog, the roster note, StaffAgentControls) keep using it.
+   */
   label: string;
+  /**
+   * The same page in a client's words, e.g. "Your X details".
+   *
+   * "Agent data" is our vocabulary, not theirs: a client reading "Manage X
+   * agent data" beside "Reddit agent data — NEEDED" is being asked to maintain
+   * a system's records rather than to tell us about themselves. Every
+   * client-facing surface — the inputs band, the sidebar card, the run gates'
+   * refusal lines — reads this one, so the three agents also stop each
+   * inventing their own phrasing.
+   */
+  clientLabel: string;
 } & (
   | { kind?: undefined; data?: undefined }
   | { kind: "x"; data: ComponentProps<typeof XAgentIntake> }

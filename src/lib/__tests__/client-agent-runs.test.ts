@@ -128,7 +128,7 @@ describe("evaluateTemplateRunGate", () => {
    * its sidebar while "Create new post" sat enabled next to it — and the submit
    * core then refused, pre-charge, on exactly that intake.
    */
-  const intake = { ready: false, label: "X agent data", href: "/clients/c1/x-agent" };
+  const intake = { ready: false, clientLabel: "Your X details", href: "/clients/c1/x-agent" };
 
   it("blocks a live umbrella whose intake was never filled in", () => {
     const gate = evaluateTemplateRunGate({
@@ -138,7 +138,7 @@ describe("evaluateTemplateRunGate", () => {
       availableCredits: 500,
     });
     expect(gate.allowed === false && gate.code).toBe("setup_missing");
-    expect(gate.allowed === false && gate.reason).toContain("X agent data");
+    expect(gate.allowed === false && gate.reason).toContain("Your X details");
   });
 
   it("lets a ready intake through", () => {
@@ -345,7 +345,7 @@ describe("umbrellaOwnsClientCard", () => {
  */
 describe("evaluateLegacyRunGate", () => {
   const base = { serviceConfigured: true, cost: 25, availableCredits: 100 };
-  const intake = { ready: false, label: "X agent data", href: "/clients/c1/x-agent" };
+  const intake = { ready: false, clientLabel: "Your X details", href: "/clients/c1/x-agent" };
 
   it("allows a run when the service is up, intake is ready and credits cover it", () => {
     expect(evaluateLegacyRunGate(base)).toEqual({ allowed: true });
@@ -354,7 +354,7 @@ describe("evaluateLegacyRunGate", () => {
   it("treats a missing intake as blocking, and says where to fix it", () => {
     const gate = evaluateLegacyRunGate({ ...base, setup: intake });
     expect(gate).toMatchObject({ allowed: false, code: "setup_missing", href: intake.href });
-    expect(gate.reason).toContain("X agent data");
+    expect(gate.reason).toContain("Your X details");
   });
 
   it("blocks on credits with the limit that actually bit", () => {

@@ -81,7 +81,7 @@ export interface TemplateRunGateInput {
    * resolved value evaluateLegacyRunGate takes — see the rung below for why a
    * live umbrella still needs it.
    */
-  setup?: { ready: boolean; label: string; href: string } | null;
+  setup?: { ready: boolean; clientLabel: string; href: string } | null;
   /**
    * What one run of this agent costs. Per-agent flat price (Q6): templates
    * inherit the agent's `creditCost`, there is no per-template pricing.
@@ -145,7 +145,7 @@ export function evaluateTemplateRunGate(input: TemplateRunGateInput): TemplateRu
       // Word for word the legacy ladder's line: the two gates guard the same
       // refusal on the same agent, and a client who meets one on the roster and
       // the other on the detail page must not read two different explanations.
-      reason: `This agent writes from your ${input.setup.label} — it needs that before it can make a post.`,
+      reason: `${input.setup.clientLabel} are missing — this agent needs them before it can make a post.`,
     };
   }
 
@@ -320,7 +320,7 @@ export interface LegacyRunGateResult {
 export function evaluateLegacyRunGate(input: {
   serviceConfigured: boolean;
   /** This agent's intake, when it has one. */
-  setup?: { ready: boolean; label: string; href: string } | null;
+  setup?: { ready: boolean; clientLabel: string; href: string } | null;
   cost: number;
   /** Undefined ⇒ the actor is not billable (staff): credits cannot block them. */
   availableCredits?: number;
@@ -339,9 +339,9 @@ export function evaluateLegacyRunGate(input: {
     return {
       allowed: false,
       code: "setup_missing",
-      reason: `This agent writes from your ${input.setup.label} — it needs that before it can make a post.`,
+      reason: `${input.setup.clientLabel} are missing — this agent needs them before it can make a post.`,
       href: input.setup.href,
-      hrefLabel: `Set up your ${input.setup.label}`,
+      hrefLabel: input.setup.clientLabel,
     };
   }
   if (input.availableCredits !== undefined && input.availableCredits < input.cost) {

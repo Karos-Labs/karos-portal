@@ -204,7 +204,7 @@ export function AgentDetailPanel({
                 href={agent.setupHref}
                 className="mt-1 inline-block text-xs text-neon hover:underline"
               >
-                Set up your {agent.setupLabel ?? "agent data"} →
+                {agent.setupLabel ?? "Your agent details"} →
               </a>
             )}
             {firstBlock?.code === "credits_short" && viewer && (

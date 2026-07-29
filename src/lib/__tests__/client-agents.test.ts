@@ -17,6 +17,7 @@ import {
   shiftDateKey,
   weekdayOfDateKey,
   activeTemplates,
+  deliveredAgentIds,
   rosterStatus,
 } from "@/lib/client-agents";
 import type { ClientAgentTemplate } from "@/lib/types";
@@ -370,5 +371,87 @@ describe("rosterStatus", () => {
       // "Ready to start" that opens onto "Not set up yet" lied about its page.
       label: "Not set up yet",
     });
+  });
+
+  it("stops calling a delivered, unscheduled agent 'Not set up yet'", () => {
+    // The self-contradiction this rung exists to kill: the status strip printed
+    // "NOT SET UP YET · Last delivered 7d ago · Deliverables 2" in one line.
+    // An agent that has produced is set up; what it lacks is a schedule, so it
+    // runs when somebody asks. Idle tone either way — the word is what changes.
+    expect(
+      rosterStatus({ launchState: null, scheduleActive: false, hasDelivered: true }),
+    ).toEqual({ tone: "idle", label: "Runs on request" });
+  });
+
+  it("keeps a live schedule and a refusal outranking delivered work", () => {
+    // hasDelivered is the LOWEST rung of the no-umbrella branch: it may not
+    // demote an agent that is actually firing, and it may not paint over the
+    // F24/F129 refusal precedence.
+    expect(
+      rosterStatus({ launchState: null, scheduleActive: true, hasDelivered: true }),
+    ).toMatchObject({ label: "Live" });
+    expect(
+      rosterStatus({
+        launchState: null,
+        scheduleActive: true,
+        hasDelivered: true,
+        scheduleRefusal: "Turned away on its last scheduled run.",
+      }),
+    ).toMatchObject({ tone: "attention", label: "Needs attention" });
+  });
+
+  it("leaves the umbrella states alone — a bound umbrella owns its own word", () => {
+    // "Not set up yet" for a `not_launched` UMBRELLA is a statement about the
+    // launch run, which delivered work says nothing about: staff bound it and
+    // have not launched it, and the launch card is that story.
+    expect(rosterStatus({ launchState: "not_launched", hasDelivered: true })).toMatchObject({
+      label: "Not set up yet",
+    });
+  });
+});
+
+/**
+ * The one join every surface asks "has this agent ever produced for us" with.
+ * Three spellings of it is how a roster card ends up disagreeing with the page
+ * it opens — which is exactly what "Not set up yet · Last delivered 7d ago" was.
+ */
+describe("deliveredAgentIds", () => {
+  const byName = new Map([["Instagram Agent", "ca-ig"]]);
+  const job = (over: Record<string, unknown>) =>
+    ({
+      id: "j1",
+      clientId: "c1",
+      agentId: "agent-service",
+      agentName: "Instagram Agent",
+      status: "delivered",
+      external: { taskType: "custom" },
+      ...over,
+    }) as never;
+
+  it("counts review, approved and delivered — the work exists in all three", () => {
+    for (const status of ["review", "approved", "delivered"]) {
+      expect([...deliveredAgentIds([job({ status, customAgentId: "ca-ig" })], byName)]).toEqual([
+        "ca-ig",
+      ]);
+    }
+  });
+
+  it("ignores runs that never landed, and non-custom jobs", () => {
+    expect(
+      deliveredAgentIds(
+        [
+          job({ status: "failed", customAgentId: "ca-ig" }),
+          job({ status: "queued", customAgentId: "ca-ig" }),
+          job({ status: "delivered", customAgentId: "ca-ig", external: { taskType: "social_post" } }),
+        ],
+        byName,
+      ).size,
+    ).toBe(0);
+  });
+
+  it("falls back to the agent NAME for runs fired before customAgentId existed", () => {
+    expect([...deliveredAgentIds([job({})], byName)]).toEqual(["ca-ig"]);
+    // And drops what it cannot attribute rather than guessing.
+    expect(deliveredAgentIds([job({ agentName: "Someone Else" })], byName).size).toBe(0);
   });
 });

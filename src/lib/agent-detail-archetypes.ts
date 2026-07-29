@@ -196,6 +196,14 @@ export function finderDays(args: {
   lookbackDays?: number;
   horizonDays?: number;
 }): FinderDay[] {
+  // NO SCHEDULE, NO STRIP. The lookback days were painted unconditionally, so
+  // an agent nobody has scheduled rendered four dated chips under "WHEN IT
+  // LOOKS" while the panel above it said "Not looking yet" — days on which it
+  // demonstrably did not look. The strip answers "when does it go looking", and
+  // for an unscheduled agent the honest answer is the one DailyStrip already
+  // renders for an empty list: there is no schedule yet.
+  if (!args.run || args.run.status === "completed") return [];
+
   const todayKey = dateKeyInZone(args.now, args.zone);
   const lookback = args.lookbackDays ?? 3;
   const horizon = args.horizonDays ?? 7;
@@ -209,14 +217,14 @@ export function finderDays(args: {
   }
   keys.add(todayKey);
 
-  if (args.run && args.run.status !== "completed") {
-    for (const at of projectRunOccurrences(args.run, {
-      from: args.now,
-      horizonDays: horizon,
-      ...(args.run.timeZone ? { timeZone: args.run.timeZone } : {}),
-    })) {
-      keys.add(dateKeyInZone(at, args.zone));
-    }
+  // The projection's own guard (`run && status !== "completed"`) is gone: the
+  // early return above already settled both halves of it.
+  for (const at of projectRunOccurrences(args.run, {
+    from: args.now,
+    horizonDays: horizon,
+    ...(args.run.timeZone ? { timeZone: args.run.timeZone } : {}),
+  })) {
+    keys.add(dateKeyInZone(at, args.zone));
   }
 
   return [...keys]

@@ -19,7 +19,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
+import { deliveredAgentIds, isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
@@ -246,10 +246,17 @@ export default async function ClientAgentDetailPage({
   const row = rows[0] ?? null;
 
   const schedule = scheduleRows.find((s) => s.agentId === agent.id) ?? null;
+  // Whether this agent has ever landed work here, read from the SAME job join
+  // the roster reads (deliveredAgentIds) rather than from `produced` below: a
+  // client's `produced` is the 30-day archive set, so an agent whose only
+  // delivery was two months ago would be "Not set up yet" on this page and
+  // "Runs on request" on the card that opened it.
+  const hasDelivered = deliveredAgentIds(jobs, new Map([[agent.name, agent.id]])).has(agent.id);
   const status = rosterStatus({
     launchState: umbrella?.launchState ?? null,
     scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
     scheduleActive: schedule?.status === "active",
+    hasDelivered,
   });
   const blurb = clientAgentBlurb({
     key: agent.key,
@@ -533,7 +540,15 @@ export default async function ClientAgentDetailPage({
         </p>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      {/* CD-H7a's idiom, for the same failure one level up: the two-column
+          arrangement engages off the CONTENT COLUMN, not the viewport. `lg:`
+          only knows the window is 1024+, so with the Copilot dock out at 1280
+          this grid computed 236px of content beside a 320px rail — the run
+          card's label wrapped one word per line and the button sat on top of
+          it. The (app) shells wrap every page in @container, so @4xl (896px of
+          actual column) is the first width that honestly holds 1fr + 320px +
+          the gap; below it the page is a single column. */}
+      <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
           {/* ── STATUS (CD-K1) ──
               The header badge says the same word in the same breath, and that
@@ -603,7 +618,7 @@ export default async function ClientAgentDetailPage({
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
             />
-          ) : status.tone === "live" ? (
+          ) : status.tone === "live" || hasDelivered ? (
             /* The legacy shape (CD-H8): no umbrella was ever bound, but a weekly
                schedule is firing — so this agent genuinely IS producing, and the
                roster and header badge it Live. It is also the flagship case, not
@@ -613,12 +628,23 @@ export default async function ClientAgentDetailPage({
                a post, no way to change its pace, and no sign of anything it had
                ever made. It now gets the two gestures that need no umbrella;
                templates, the week strip and notes stay umbrella-gated because
-               faking them would invent streams this agent does not have. */
+               faking them would invent streams this agent does not have.
+
+               `|| hasDelivered` is what makes the "Runs on request" status
+               honest. An unbound agent with delivered work but no schedule is
+               set up and idle, and a page that says so while offering no way to
+               ask it for anything is a label with nothing behind it. The gate
+               below is the same server-evaluated ladder — service, intake,
+               credits — so the button can still only offer a press the server
+               would accept. */
             <LegacyAgentPanel
               clientId={id}
               agent={summary}
               cost={spendable !== undefined ? cost : null}
               gate={legacyGate}
+              // The banner above already made the outage statement; the gate's
+              // own paragraph would repeat it 150px lower in different words.
+              outageAnnounced={!agentServiceConfigured}
               schedule={schedule}
               {...(setup ? { setup } : {})}
               contextItems={contextItems}
@@ -638,6 +664,19 @@ export default async function ClientAgentDetailPage({
                   : null
               }
             />
+          ) : inputs ? (
+            /* ONE SETUP ASK PER SCREEN (P1-2/P1-4). This EmptyState used to
+               render above the inputs band regardless, so an intake-driven
+               agent said "Not set up yet — your Karos team sets this up" in a
+               hero and then, 40px below, carried a green READY TO RUN badge on
+               the band that actually knows. On the Reddit page the same screen
+               asked for setup five times in five voices.
+
+               The band is the one that can answer: it holds the readiness the
+               submit core gates on, the per-document dates, and the link to the
+               form. So when it is mounted it owns the state, and the hero says
+               nothing rather than a second, staler version of it. */
+            null
           ) : (
             <EmptyState
               icon={<Icon name="Bot" className="h-7 w-7" />}
@@ -758,15 +797,22 @@ export default async function ClientAgentDetailPage({
               files={sourceFiles}
               hint={launchProfileFor({ key: agent.key, name: agent.name }).attachments.hint}
             />
-          ) : archetype === "daily_finder" && setup ? (
+          ) : archetype === "daily_finder" && setup && !(inputs && !inputs.ready) ? (
             /* Kept even though the inputs band lists the same document: this
                card shows the ANSWERS (which communities it is welcome in, which
                it is banned from), and "did they actually record that we were
-               banned from r/SEO" is not a question a dated row can answer. */
+               banned from r/SEO" is not a question a dated row can answer.
+
+               It drops out while the intake is still EMPTY, though. With
+               nothing saved it has no answers to show and collapses into a
+               fourth "Set it up" — and the inputs band beside it is already
+               making that ask with the dates and the link. One ask per screen
+               (P1-4); once the intake exists this card is the only thing on the
+               page that can show what is in it, and comes back. */
             <FinderIntakeCard
               intake={finderIntake}
               href={setup.href}
-              label={setup.label}
+              label={setup.clientLabel}
               ready={setup.ready}
             />
           ) : inputs ? (
@@ -781,7 +827,7 @@ export default async function ClientAgentDetailPage({
             {setup ? (
               <div className="rounded-[var(--radius)] border border-border bg-surface-2/50 p-3">
                 <div className="flex items-center gap-2">
-                  <p className="flex-1 text-xs text-foreground">{setup.label}</p>
+                  <p className="flex-1 text-xs text-foreground">{setup.clientLabel}</p>
                   <Badge tone={setup.ready ? "success" : "warning"}>
                     {setup.ready ? "Saved" : "Needed"}
                   </Badge>

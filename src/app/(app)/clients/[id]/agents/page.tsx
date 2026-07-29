@@ -19,7 +19,7 @@ import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
+import { deliveredAgentIds, isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
 import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { BindAgentControl } from "@/components/client-agents/client-agents-section";
 import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
@@ -73,14 +73,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       listPlannedScheduledRuns({ clientId: id }),
       listClientAgents({ clientId: id }),
     ]);
-    const successful = new Set(["review", "approved", "delivered"]);
     const agentIdByName = new Map(allAgents.map((agent) => [agent.name, agent.id]));
-    const completedAgentIds = new Set(
-      jobs
-        .filter((job) => job.external?.taskType === "custom" && successful.has(job.status))
-        .map((job) => job.customAgentId ?? agentIdByName.get(job.agentName))
-        .filter((agentId): agentId is string => Boolean(agentId)),
-    );
+    // The same set answers two questions on this page: which agents a client
+    // inherits by having been delivered to, and — through rosterStatus — which
+    // of them are plainly set up already. It used to be spelled out inline here
+    // and nowhere else, which is why the status word could not read it.
+    const completedAgentIds = deliveredAgentIds(jobs, agentIdByName);
     const agents = allAgents
       .filter(
         (agent) =>
@@ -195,6 +193,9 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           // not live, whatever its umbrella says.
           scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
           scheduleActive: schedule?.status === "active",
+          // "Not set up yet" beside a shelf of delivered work is the card
+          // contradicting itself; an agent that has produced says so instead.
+          hasDelivered: completedAgentIds.has(agent.id),
         }),
       };
     });
@@ -286,6 +287,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // page it opens is where it gets set up.
   const staffUmbrellaByAgentId = new Map(umbrellas.map((u) => [u.customAgentId, u]));
   const staffScheduleByAgentId = new Map(staffScheduleRows.map((row) => [row.agentId, row]));
+  // Same delivered-work read the client branch makes, so the two rosters cannot
+  // call one agent "Not set up yet" and the other "Runs on request".
+  const staffDeliveredAgentIds = deliveredAgentIds(
+    jobs,
+    new Map(customAgents.map((a) => [a.name, a.id])),
+  );
   // Drafts waiting on staff, per agent — the queue the retired card surfaced
   // as its "N ready" chip. Counted from the jobs already loaded.
   const reviewCountByAgentName = new Map<string, number>();
@@ -327,6 +334,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         launchState: umbrella?.launchState ?? null,
         scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
         scheduleActive: schedule?.status === "active",
+        hasDelivered: staffDeliveredAgentIds.has(agent.id),
       }),
       note,
     };
@@ -350,6 +358,18 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           </div>
         }
       />
+      {/* The outage notice, on the STAFF branch too. It was mounted only for
+          clients, so an operator opened a roster of enabled Run controls with
+          nothing anywhere on the page saying the service was down — they found
+          out by pressing one. Same banner, staff wording: they are the people
+          who clear it, so it names the cause rather than promising a call. */}
+      {enabledAgents.length > 0 && !agentServiceConfigured && (
+        <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+          <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
+          Agent runs are paused — the agent-service environment is not configured, so submitting a
+          run will fail until it is set. Schedules, history and deliverables below are unaffected.
+        </p>
+      )}
       {/* An unconfigured service must NOT hide the roster. F34's banner says
           "everything below is unaffected", and replacing the whole grid with an
           empty state made that a lie — the client's agents, their schedules and

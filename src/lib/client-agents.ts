@@ -13,7 +13,7 @@
  * never through a second clock implementation.
  */
 
-import type { ClientAgent, ClientAgentLaunchState, ClientAgentTemplate } from "@/lib/types";
+import type { ClientAgent, ClientAgentLaunchState, ClientAgentTemplate, Job } from "@/lib/types";
 import { localYMD } from "@/lib/run-cadence";
 import { agentKeyMatchesClientSlug, perClientAgentSlug } from "@/lib/custom-agent-launch";
 
@@ -408,6 +408,35 @@ export const OPTIONS_TEMPLATE_KEY = "daily-post";
 
 /* ─────────────────────── the roster card's status word ────────────────────── */
 
+/**
+ * Job statuses that mean a run actually LANDED something for this client.
+ * `review` counts: the work exists and staff hold it, which is the fact
+ * "has this agent ever produced for us" is asking about.
+ */
+const DELIVERED_JOB_STATUSES = new Set(["review", "approved", "delivered"]);
+
+/**
+ * Which agents have already delivered work for this client, by customAgentId.
+ *
+ * ONE answer for every surface. The roster card, the detail page's status strip
+ * and `rosterStatus` itself all need "has this agent ever produced", and three
+ * spellings of it is how a card ends up disagreeing with the page it opens.
+ *
+ * `agentIdByName` keeps runs fired before `customAgentId` existed attributable —
+ * the same fallback join `agentProducedAssets` uses.
+ */
+export function deliveredAgentIds(
+  jobs: Pick<Job, "status" | "external" | "customAgentId" | "agentName">[],
+  agentIdByName: Map<string, string>,
+): Set<string> {
+  return new Set(
+    jobs
+      .filter((job) => job.external?.taskType === "custom" && DELIVERED_JOB_STATUSES.has(job.status))
+      .map((job) => job.customAgentId ?? agentIdByName.get(job.agentName))
+      .filter((agentId): agentId is string => Boolean(agentId)),
+  );
+}
+
 export type RosterStatusTone = "live" | "attention" | "progress" | "idle";
 
 export interface RosterStatus {
@@ -432,6 +461,14 @@ export interface RosterStatus {
  * that has gone live, or — for an agent with no umbrella at all — a weekly
  * schedule that is actively producing. A granted agent that is neither is idle,
  * not broken, and says so.
+ *
+ * "NOT SET UP YET" IS A CLAIM ABOUT HISTORY, so it has to read history. An
+ * unbound agent with no schedule but a shelf of delivered work was being called
+ * "Not set up yet" while the strip beside it printed "Last delivered 7d ago ·
+ * Deliverables 2" — one card contradicting itself in a single line. That agent
+ * is not un-set-up; it is set up and idle, and it runs when somebody asks it to.
+ * The distinction lives HERE rather than in the strip so the roster card and the
+ * detail page cannot end up holding two different opinions of the same agent.
  */
 export function rosterStatus(input: {
   /** Null for a granted agent with no umbrella bound. */
@@ -440,6 +477,13 @@ export function rosterStatus(input: {
   scheduleRefusal?: string | null;
   /** True when a weekly schedule exists and is not paused. */
   scheduleActive?: boolean;
+  /**
+   * True when this agent has already landed work for this client — i.e. it has
+   * plainly been set up, whatever it has bound. Resolved by the callers from
+   * the job history through `deliveredAgentIds`, so every surface answers it
+   * the same way.
+   */
+  hasDelivered?: boolean;
 }): RosterStatus {
   if (input.scheduleRefusal?.trim()) return { tone: "attention", label: "Needs attention" };
 
@@ -448,8 +492,9 @@ export function rosterStatus(input: {
     // client yet, and its detail page says exactly that. The two must agree —
     // a roster promising "Ready to start" that opens onto "Not set up yet" is
     // a card that lied about the page behind it.
-    return input.scheduleActive
-      ? { tone: "live", label: "Live" }
+    if (input.scheduleActive) return { tone: "live", label: "Live" };
+    return input.hasDelivered
+      ? { tone: "idle", label: "Runs on request" }
       : { tone: "idle", label: "Not set up yet" };
   }
 

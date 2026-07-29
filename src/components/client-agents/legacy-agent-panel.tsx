@@ -66,6 +66,7 @@ export function LegacyAgentPanel({
   viewer,
   availableCredits,
   activeRun,
+  outageAnnounced,
 }: {
   clientId: string;
   agent: RunnableAgentSummary;
@@ -80,6 +81,17 @@ export function LegacyAgentPanel({
    * says a run is happening, never what it will contain.
    */
   activeRun?: { id: string; status: "queued" | "running"; refunds: boolean } | null;
+  /**
+   * The page has ALREADY said runs are paused, in its own banner.
+   *
+   * Both lines are warning-styled and land about 150px apart, saying the same
+   * thing in two wordings ("...will not work until this clears" / "...will work
+   * again once your Karos team clears it"), which reads as two separate
+   * problems. The banner is the page-level statement and keeps its wording; the
+   * button below it is disabled and its sub-line already says a run is not
+   * available, so the gate's own paragraph is what gives way.
+   */
+  outageAnnounced?: boolean;
   setup?: AgentSetupState;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
@@ -113,7 +125,13 @@ export function LegacyAgentPanel({
 
       <section>
         <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 p-4">
-          <div className="min-w-0 flex-1">
+          {/* `basis-56 grow`, not `flex-1`: flex-1 is basis-0, so in a narrow
+              column the label had no preferred width at all and shrank to
+              about 30px — "Create a new post" wrapped one word per line and the
+              button rode over it. A basis wide enough for the sentence means
+              the row wraps the BUTTON to its own line instead, which is what
+              flex-wrap is on this container for. */}
+          <div className="min-w-0 basis-56 grow">
             <p className="text-sm text-foreground">Create a new post</p>
             <p className="mt-0.5 text-xs text-muted-2">
               {gate.allowed
@@ -130,7 +148,7 @@ export function LegacyAgentPanel({
             {cost != null ? `Create new post · ${cost} credits` : "Create new post"}
           </Button>
         </div>
-        {!gate.allowed && gate.reason && (
+        {!gate.allowed && gate.reason && !(outageAnnounced && gate.code === "service_down") && (
           <div className="mt-2 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-2.5">
             <p className="text-xs text-warning">{gate.reason}</p>
             {gate.href && gate.hrefLabel && (

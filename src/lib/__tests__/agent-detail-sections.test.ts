@@ -110,6 +110,31 @@ describe("toAgentInputRows", () => {
     expect(serialized).not.toContain("secret");
   });
 
+  it("pins an input row to exactly its six fields", () => {
+    // The not-contains assertions above catch a leak of the values this
+    // fixture happens to carry; they would sail past a narrowly added field —
+    // a `seatId`, a `createdBy`, a `cvPath` on a document that has one. The
+    // whitelist is the rule, so the key set is what the test asserts.
+    const rows = toAgentInputRows({
+      agent: "x",
+      company: makeIntake(),
+      seats: [makeSeat()],
+      intake: [],
+      news: [],
+      takes: [],
+    });
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual([
+        "detail",
+        "filled",
+        "icon",
+        "id",
+        "label",
+        "updatedAt",
+      ]);
+    }
+  });
+
   it("lists a seat whose form was never filled in, dated from the seat itself", () => {
     // The question this band exists to answer: who has a seat and no answers.
     // A null date there would read as "just added" for a seat three weeks old.
@@ -362,6 +387,57 @@ describe("wiring", () => {
     for (const form of ["XAgentIntake", "LinkedInAgentIntake", "RedditAgentIntake"]) {
       expect(strip, form).not.toContain(form);
     }
+  });
+
+  it("makes ONE setup ask per screen — the band, not a hero that repeats it", () => {
+    // The bounce: the generic "Not set up yet — your Karos team sets this up"
+    // EmptyState rendered above the inputs band regardless, so an intake-driven
+    // agent contradicted itself twice on one screen (a hero denying setup over
+    // a green READY TO RUN badge), and the Reddit page asked for setup five
+    // times in five voices. The band holds the readiness the submit core gates
+    // on, so it is the one that speaks.
+    const src = route();
+    expect(src).toContain(") : inputs ? (");
+    expect(src).toMatch(/inputs \? \(\s*\/\*[\s\S]*?\*\/\s*null/);
+    // And the finder's sidebar card stands down while its intake is empty:
+    // with nothing saved it has no answers to show and is a fourth "Set it up".
+    expect(src).toContain('archetype === "daily_finder" && setup && !(inputs && !inputs.ready)');
+  });
+
+  it("stacks off the CONTAINER, so the Copilot dock cannot crush the content column", () => {
+    // `lg:` only knows the window is 1024+; at 1280 with the dock out the main
+    // column is 644px and the grid computed 236px of content beside a 320px
+    // rail. The (app) shells wrap every page in @container (CD-H7a's idiom).
+    const src = route();
+    expect(src).toContain("@4xl:grid-cols-[minmax(0,1fr)_320px]");
+    expect(src).not.toContain("lg:grid-cols-[minmax(0,1fr)_320px]");
+    // And the run card's label keeps a basis wide enough for its sentence:
+    // flex-1 is basis-0, which let it shrink to about 30px in that column.
+    const panel = source("src/components/client-agents/legacy-agent-panel.tsx");
+    expect(panel).toContain("basis-56 grow");
+  });
+
+  it("says the outage once — the page banner, not the banner and the gate", () => {
+    // Two warning-styled paragraphs 150px apart, in two wordings, read as two
+    // separate problems. The banner is the page-level statement; the gate's own
+    // service_down paragraph gives way when it has already been made.
+    const src = route();
+    expect(src).toContain("outageAnnounced={!agentServiceConfigured}");
+    const panel = source("src/components/client-agents/legacy-agent-panel.tsx");
+    expect(panel).toContain('!(outageAnnounced && gate.code === "service_down")');
+  });
+
+  it("speaks the client's vocabulary on client surfaces, not 'agent data'", () => {
+    // "Manage X agent data" / "Reddit agent data — NEEDED" asks a client to
+    // maintain a system's records. AgentSetupState carries both names; the
+    // client-facing surfaces read clientLabel and the staff ones keep `label`.
+    const rows = source("src/lib/client-agent-rows.ts");
+    expect(rows).toContain('const clientLabel = "Your X details"');
+    expect(rows).toContain("setupLabel: setup.clientLabel");
+    const strip = source("src/components/client-agents/agent-sections.tsx");
+    expect(strip).not.toContain("Manage {view.label}");
+    const gates = source("src/lib/client-agent-runs.ts");
+    expect(gates).not.toMatch(/setup\.label/);
   });
 
   it("keeps every animation CSS-grade and behind prefers-reduced-motion", () => {
