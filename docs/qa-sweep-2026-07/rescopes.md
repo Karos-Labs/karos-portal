@@ -1221,3 +1221,26 @@ Then: handover to Tomer includes the methodology as his SEO/geo section.
   log it invented, then the stored document's section is re-attached, matched on
   docType + tier. `refresh-apply-core.ts`'s "the pipeline drops it" warning is
   therefore stale — retiring it is the ops-builder's round.
+
+### CD-K1 — Agent detail hub groundwork (Albert, 2026-07-29)
+Verbatim directives (post-campaign, pre-handover):
+1. AGENT-SPECIFIC DOCUMENTS: Daniel's system (agent intake docs + per-seat
+   docs for X / LinkedIn / Reddit — the surfaces the redesign removed from the
+   sidebar) must be manageable from the agent's own page on the AI Agents tab.
+2. LAUNCH DATA: the Instagram-style umbrella launch's setup output — templates
+   and all that data — likewise manageable from the agent's page.
+3. "Agents are paused right now": understand why. RULING (orchestrator,
+   verified): `agentServiceConfigured()` is false because AGENT_SERVICE_URL /
+   AGENT_SERVICE_TOKEN are absent from the local `.env.local` — an honest
+   environment notice, not a product state; production with env set never
+   shows it. Keep the copy honest; no code defect.
+4. LAYOUT: under each agent, everything Daniel created is there, WITH DATES,
+   categorized in sections — all inputs, all outputs, all settings — the most
+   UI/UX-friendly way. Basic (CSS-grade) animations; if something's running it
+   must say LIVE.
+5. TEMPLATES: clickable — see examples and every post created under that
+   template (join key: Asset.templateKey). Calendar sync stays automatic
+   (slot plan), and the chain is verified + documented.
+6. SCOPE: lay the basic groundwork now; record the target end-state in
+   TOMER-HANDOVER.md — Tomer takes it over post-merge and makes it fully
+   dynamic. "We need to make sure the agent interface is good and dynamic."
