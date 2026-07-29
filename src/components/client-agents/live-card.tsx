@@ -51,6 +51,7 @@ export function TemplateRows({
   templates,
   details,
   viewer,
+  viewerIsClient,
   onFeedback,
   onError,
 }: {
@@ -64,6 +65,13 @@ export function TemplateRows({
    */
   details?: Record<string, TemplateDetail>;
   viewer?: { name: string; email: string };
+  /**
+   * A client's `postCount` is the archive set, which drops published work past
+   * its window — the same reason the page labels its own count "In your
+   * Workspace" rather than a lifetime total. The copy below must make the same
+   * disclosure, so the two numbers never claim to be different things.
+   */
+  viewerIsClient?: boolean;
   onFeedback: (template: ClientAgentTemplate) => void;
   onError: (message: string | null) => void;
 }) {
@@ -177,7 +185,9 @@ export function TemplateRows({
                   {paused && <Badge tone="neutral">Paused</Badge>}
                   {detail && detail.postCount > 0 && (
                     <span className="text-[11px] text-muted-2">
-                      {detail.postCount} post{detail.postCount === 1 ? "" : "s"}
+                      {viewerIsClient
+                        ? `${detail.postCount} in your Workspace`
+                        : `${detail.postCount} post${detail.postCount === 1 ? "" : "s"}`}
                     </span>
                   )}
                 </div>
@@ -243,7 +253,7 @@ export function TemplateRows({
                 <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
                   {detail.postCount === 0
                     ? "Nothing under this format yet"
-                    : `What it has made in this format${
+                    : `${viewerIsClient ? "In your Workspace under this format" : "What it has made in this format"}${
                         detail.postCount > detail.posts.length
                           ? ` · newest ${detail.posts.length} of ${detail.postCount}`
                           : ""

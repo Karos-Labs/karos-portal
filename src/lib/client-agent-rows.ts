@@ -383,12 +383,16 @@ export async function toClientAgentRows(args: {
 
     // The one run the card acknowledges: a "Run now" the viewer just pressed.
     // Scheduled fires are deliberately invisible here (see ClientAgentCardRow).
+    // For a client that scoping must include WHO pressed it: a staff "Run now"
+    // announced on the client's page is work the client did not ask for — the
+    // same viewer rule the legacy path already applies to its own run.
     const pending = live
       ? args.jobs.find(
           (job) =>
             job.clientAgentId === umbrella.id &&
             job.runType === "manual_template" &&
-            (job.status === "queued" || job.status === "running"),
+            (job.status === "queued" || job.status === "running") &&
+            (!args.viewerIsClient || job.createdBy === args.viewerUid),
         )
       : undefined;
 

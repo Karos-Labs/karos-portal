@@ -254,6 +254,7 @@ export function AgentDetailPanel({
           <TemplateRows
             agent={agent}
             templates={templates}
+            viewerIsClient={viewerIsClient}
             {...(templateDetails ? { details: templateDetails } : {})}
             {...(viewer ? { viewer } : {})}
             onFeedback={(template) =>

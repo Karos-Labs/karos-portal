@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { formatDate, relativeTime } from "@/lib/utils";
 import type { AgentInputsView, AgentSetupFact } from "@/lib/agent-detail-sections";
+import type { RosterStatus } from "@/lib/client-agents";
 
 /**
  * The dated, categorized bands of an agent's page (CD-K1).
@@ -48,8 +49,9 @@ export function AgentStatusStrip({
   running,
   facts,
 }: {
-  /** From `rosterStatus` — never re-derived. */
-  status: { label: string; tone: string };
+  /** From `rosterStatus` — never re-derived. The real union, so a tone typo
+      is a type error rather than a silent fall-through to idle grey. */
+  status: RosterStatus;
   /**
    * A run THIS viewer started is in flight. Deliberately narrow, and resolved
    * by the page from the same sources the run banners use: a scheduled fire is
@@ -93,7 +95,10 @@ export function AgentStatusStrip({
           aria-hidden="true"
         />
         <span className={`font-mono text-[11px] uppercase tracking-[0.12em] ${text}`}>
-          {live && running ? `${status.label} · working now` : status.label}
+          {/* "working now" rides `running` alone: a legacy agent can have a run
+              in flight while its status reads "Not set up yet", and a spinner
+              beside a label that denies any work is a contradiction. */}
+          {running ? `${status.label} · working now` : status.label}
         </span>
         {running && (
           <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-2">
