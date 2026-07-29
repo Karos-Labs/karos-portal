@@ -1326,12 +1326,19 @@ Settings → staff controls → Outputs**.
    a count and two timestamps. The **answers** stay on the intake page behind
    `toXIntakeView` / `toLiIntakeView` / `toRedditIntakeView`. The test asserts
    the whole serialized payload, not the painted parts.
-2. **A client never receives `postsPerWeek` × `outputsPerRun`.** Those two
-   numbers multiply out to "your week is generated in one lump", which is the
-   fact the slot model exists to keep indistinguishable (A3/A4) — the same rule
-   behind `AgentScheduleModal`'s `paceOnly` face. A client's Settings band says
+2. **The Settings band never PRINTS `postsPerWeek` × `outputsPerRun` to a
+   client.** Be precise about what the rule is and is not: a client's payload
+   *does* carry both numbers, on `ClientAgentScheduleRow` — the pace dialog is
+   theirs to open and it cannot offer a pace without them. What must not happen
+   is the two being **shown together as a sentence**, because multiplied out
+   they say "your week is generated in one lump", which is the fact the slot
+   model exists to keep indistinguishable (A3/A4). That is the same line
+   `AgentScheduleModal`'s `paceOnly` face draws: the client sets a pace, never
+   reads the batching. So a client's Settings band says
    `Schedule: Running | Paused`; staff get the arithmetic, the next fire and the
-   chain family.
+   chain family. A rule phrased as "the client never receives these fields"
+   would be falsified by the first person who opened the RSC payload, and a
+   falsified rule is one nobody keeps.
 3. **The settings band reads `row.templates`, never `umbrella.templates`.**
    While an umbrella is `curating`, the stored registry holds what the setup run
    *proposed* and staff have not confirmed; `toClientAgentRows` empties it for a
