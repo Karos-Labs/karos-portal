@@ -7,14 +7,14 @@ import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { moveTemplateKey } from "@/lib/client-agent-runs";
 import { markSlotNoteAppliedAction } from "@/lib/actions/slot-note-actions";
-import { relativeTime } from "@/lib/utils";
+import { formatDate, relativeTime } from "@/lib/utils";
 import {
   reorderClientAgentTemplatesAction,
   runClientAgentTemplateAction,
   setClientAgentTemplateStatusAction,
 } from "@/lib/actions/client-agent-run-actions";
 import type { ClientAgentTemplate } from "@/lib/types";
-import type { ClientAgentCardRow } from "./types";
+import type { ClientAgentCardRow, TemplateDetail } from "./types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -49,18 +49,27 @@ import { cn } from "@/lib/utils";
 export function TemplateRows({
   agent,
   templates,
+  details,
   viewer,
   onFeedback,
   onError,
 }: {
   agent: ClientAgentCardRow;
   templates: ClientAgentTemplate[];
+  /**
+   * What clicking a format opens onto (CD-K1), keyed by template key.
+   *
+   * Optional so the rows still render for a caller that has not joined the
+   * archive — the expansion is the extra, never the row's reason to exist.
+   */
+  details?: Record<string, TemplateDetail>;
   viewer?: { name: string; email: string };
   onFeedback: (template: ClientAgentTemplate) => void;
   onError: (message: string | null) => void;
 }) {
   const router = useRouter();
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   if (templates.length === 0) {
@@ -126,21 +135,53 @@ export function TemplateRows({
         const allowed = gate?.allowed ?? false;
         const paused = template.status === "paused";
         const busy = busyKey === template.key;
+        const detail = details?.[template.key];
+        const open = openKey === template.key;
         return (
           <li
             key={template.key}
             className={cn(
-              "rounded-md border border-border bg-surface-2/70 px-3 py-2",
+              "rounded-md border border-border bg-surface-2/70 px-3 py-2 transition-colors",
               paused && "opacity-70",
+              open && "border-neon/40",
             )}
           >
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="truncate text-sm text-foreground">{template.name}</p>
+                  {/* Pressable only when there is something behind it. A
+                      disclosure that opens onto nothing is a control that lied
+                      about having content. */}
+                  {detail ? (
+                    <button
+                      type="button"
+                      aria-expanded={open}
+                      onClick={() => setOpenKey(open ? null : template.key)}
+                      className="flex min-w-0 items-center gap-1 text-left"
+                    >
+                      <Icon
+                        name="ChevronRight"
+                        className={cn(
+                          "h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform",
+                          open && "rotate-90",
+                        )}
+                        aria-hidden="true"
+                      />
+                      <span className="truncate text-sm text-foreground hover:text-neon">
+                        {template.name}
+                      </span>
+                    </button>
+                  ) : (
+                    <p className="truncate text-sm text-foreground">{template.name}</p>
+                  )}
                   {paused && <Badge tone="neutral">Paused</Badge>}
+                  {detail && detail.postCount > 0 && (
+                    <span className="text-[11px] text-muted-2">
+                      {detail.postCount} post{detail.postCount === 1 ? "" : "s"}
+                    </span>
+                  )}
                 </div>
-                {template.rationale && (
+                {template.rationale && !open && (
                   <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-muted-2">
                     {template.rationale}
                   </p>
@@ -186,6 +227,55 @@ export function TemplateRows({
                 {paused ? "Resume" : "Pause"}
               </Button>
             </div>
+            {/* ── The format, opened (CD-K1) ──
+                Why this stream exists, and everything it has actually made.
+                The post list is the SAME set the page's archive rides — a
+                client's is delivered-work-only, joined server-side on
+                Asset.templateKey — so opening a format can never become a
+                second route to work that has not been delivered. There is no
+                status, no draft count and no "ready" marker anywhere in it,
+                for the reason the week strip has none (§4.1). */}
+            {open && detail && (
+              <div className="mt-2 animate-fade-up space-y-2 border-t border-border/60 pt-2">
+                {detail.rationale && (
+                  <p className="text-[11px] leading-relaxed text-muted">{detail.rationale}</p>
+                )}
+                <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                  {detail.postCount === 0
+                    ? "Nothing under this format yet"
+                    : `What it has made in this format${
+                        detail.postCount > detail.posts.length
+                          ? ` · newest ${detail.posts.length} of ${detail.postCount}`
+                          : ""
+                      }`}
+                </p>
+                {detail.posts.length === 0 ? (
+                  <p className="text-[11px] text-muted-2">
+                    Finished work appears here once your Karos team has approved it.
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {detail.posts.map((post) => (
+                      <li
+                        key={post.id}
+                        className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-2 py-1.5"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-[11px] text-foreground">
+                          {post.title}
+                        </span>
+                        <span className="shrink-0 text-[11px] text-muted-2">
+                          {relativeTime(post.at)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="text-[11px] text-muted-2">
+                  Added {formatDate(detail.addedAt)}
+                  {detail.source === "manual" ? " by your Karos team" : ""}
+                </p>
+              </div>
+            )}
             {/* The reason the run is off, PAINTED — not a tooltip on a control
                 that cannot receive a pointer. A paused format explains itself
                 through its own toggle, so only the other blockers get a line. */}
