@@ -1244,3 +1244,15 @@ Verbatim directives (post-campaign, pre-handover):
 6. SCOPE: lay the basic groundwork now; record the target end-state in
    TOMER-HANDOVER.md — Tomer takes it over post-merge and makes it fully
    dynamic. "We need to make sure the agent interface is good and dynamic."
+
+CD-K1 RESOLVED (2026-07-29): groundwork merged (bbfb8e6), pre-merge code
+review SHIP-WITH-NITS (four P2s fixed in 227a802), live-walk lens P1s fixed
+in the bounce round (merge 293db82 — honest "Runs on request" status, one
+setup ask per screen, container-query detail grid, plain client vocabulary
+"Your X details"). §4.17 in TOMER-HANDOVER.md carries the end state. Known
+env facts: the umbrella setup band + template click-through are test/code
+verified only on localhost (no umbrella-launched agent in the local dataset,
+launching needs AGENT_SERVICE_URL); the paused banner is the honest unset-env
+notice. Deferred to Tomer by ruling: slots→calendar wiring + horizon clock,
+in-place client editing, curated template examples, staff inputs-band query
+dedup.

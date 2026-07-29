@@ -207,7 +207,7 @@ are tracked in the CD table at the bottom.
 | CD-I1 | AGENTS | 5 | RESOLVED | Per-archetype agent detail pages (template-calendar / clip-maker / daily-finder) + staff parity. Landed after the Tomer merge: archetypes 2 and 3 in 380d317, projection+parity pins in bdc4719, roster/detail parity merged in 41453dc |
 | CD-J1 | SEO | 6 | RESOLVED | SEO/GEO v2: standardized question logic, % scores + popup, category-only comparisons, roster sanity, plain recommendations, approve flow surfaced |
 | CD-G7 | — | end-loop | OPEN | Fleet COMPLETION refresh: one team per client, keep existing data, internal Claude agents, --apply-gated Firestore writes; runs after CD-G1..G6 |
-| CD-K1 | AGENTS | 6 | OPEN | Agent detail hub groundwork: intake/seat docs + launch templates managed from the agent page, dated sections (inputs/outputs/settings), LIVE state, template click-through to its posts, Tomer end-state doc |
+| CD-K1 | AGENTS | 6 | RESOLVED | Agent detail hub groundwork: dated inputs/setup bands on the agent page, LIVE strip, template click-through (Asset.templateKey, archive-filtered), §4.17 Tomer end-state. Landed 583d15e..9a7b5d4 (merge bbfb8e6), review nits 227a802, lens bounce c68785a..c3e605c (merge 293db82) |
 
 ## Guard zones (all phases)
 - No deep rework of AI Insights (fix listed defects only) — call directive B5.
