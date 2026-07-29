@@ -1230,6 +1230,33 @@ engines named (`buildRosterSanity` — suggests, never mutates); and `REC_COPY`
 client strings are held to a no-jargon/no-thresholds bar by two tests, with the
 technical phrasing living on the staff-only gap block.
 
+**Three rules that exist because old snapshots outlive the code that wrote them.**
+Everything below was a live defect on a real client page, and each will come back
+the moment someone reads a stored field as if a current pipeline had written it.
+
+1. **Plan copy is frozen at capture, so re-resolve it at render.**
+   `recommendations[]` is persisted, so improving `REC_COPY` only ever helped
+   clients captured afterwards — a July-22 snapshot still served the engineering
+   labels the table exists to replace. `resolveRecCopy(recId, stored?)` is the one
+   resolver, used by `buildRecommendations` at capture and by `healRecommendations`
+   at render. Ids are stable, which is what makes retroactive healing possible —
+   **do not rename a REC_COPY key**, it orphans both the copy and the approval.
+   Healing runs at the SERVER boundary (`SeoGeoPlan`), not in the client leaf, so
+   the raw strings never enter the RSC payload.
+2. **Label a legacy snapshot; never relabel it.** `categoryMetrics` falls back to a
+   record's full-set figures when it has no `category` field. That fallback is
+   correct and stays. What must not happen is calling those numbers "category" —
+   that is how one page showed four contradictory denominators (the full prompt
+   count and the all-probe count both wearing a category label). Take the noun from
+   `buildMeasurementBasis(insights)`, which decides structurally, not from a version
+   string. The legacy banner keys on three independent signals: pipeline stamp,
+   methodology stamp, and that structural check.
+3. **Absent is not zero.** `citationSummary` is optional because captures predating
+   it carry none. Reading a missing field as `?? 0` is what made the panel report
+   "we couldn't measure any answers this run" next to "3 of 5 AI engines measured".
+   Any new optional field on this record inherits the same rule: distinguish
+   *not recorded* from *measured as none* before writing copy about it.
+
 ---
 
 ## 5. Known accepted residuals & pending product decisions
