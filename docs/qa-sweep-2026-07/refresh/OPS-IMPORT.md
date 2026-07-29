@@ -122,6 +122,46 @@ that was never built. Nobody should debug that blind again.
 
 ---
 
+## Reviewing and picking
+
+### Picking what lands
+
+Every write in the plan has a checkbox, all ticked by default. Untick anything
+you do not want and Import writes only the rest; the confirm dialog lists the
+ticked subset, not the whole bundle.
+
+One dependency exists. **The palette cannot be imported without its branding
+document** — the app rebuilds that document from the palette on save, so taking
+one without the other leaves every agent reading stale hex codes. The palette's
+tick disables itself, with that reason, when the document is unticked, and
+unticking the document drops the palette with it. The server re-checks the
+selection on apply: a disabled checkbox is an explanation, not a guarantee.
+
+(No dependency is declared when the stored branding document already states the
+palette — it is "unchanged", so there is no document write to keep in step with.)
+
+### When a refusal happens
+
+Refusals are grouped into plain sentences — what happened, and what to do —
+with the validator's exact wording one disclosure down, under
+**Technical detail**. Nothing is discarded; a message with no written copy yet
+still appears under a generic heading.
+
+### Already-imported bundles
+
+A bundle that has been imported renders as a quiet **applied** card carrying the
+date and who did it, rather than looking like one nobody has touched. This is
+read back from the activity log — every apply writes a row with the bundle's
+`origin`, `ref` and a fingerprint — so there is no second source of truth to
+drift from the timeline.
+
+If the file has changed since that import it is badged **changed** and offers
+**Review again**. A bundle imported before fingerprinting shipped has no
+recorded fingerprint and is treated as changed: a needless re-import is
+recoverable, a silently skipped one is not.
+
+---
+
 ## What the buttons do
 
 **Review changes** — dry run. Reads Firestore, writes nothing, and renders the
@@ -143,14 +183,41 @@ Three things worth knowing:
 - **The plan authorizes nothing.** Apply re-reads the file from disk and
   re-validates it from scratch. A bundle edited between preview and click is
   re-judged, not trusted.
-- **Any error refuses the whole bundle.** There is no partial apply.
+- **Any error refuses the whole bundle.** Ticking a subset is a choice you make;
+  a validation failure is not, and it stops everything.
 - **A pipeline run blocks the import.** While `isAiProcessingLockActive` holds
   for that client, the buttons are disabled — a refresh interleaved with a
   pipeline run is how half of each survives.
 
 Each applied bundle writes a `CONTEXT_DOC_UPDATED` activity entry naming the
-file and the counts. The result panel reports applied / skipped / errors per
-half, so a green refresh next to a refused snapshot reads as exactly that.
+file and the counts (and marked `(selected items only)` when a subset was
+taken). The result panel reports applied / skipped / errors per half, so a
+green refresh next to a refused snapshot reads as exactly that.
+
+---
+
+## Competitors that already exist
+
+A proposal is written against an export taken days earlier, and the roster moves
+underneath it. So a `create` for a competitor that has since landed is a **stale
+export, not an error**.
+
+When a `create` matches exactly one roster row — by company name or by domain —
+the plan folds it onto that row as an update. The fields merge; `company` is
+dropped as the join key (it is what matched on a name hit, and renaming a row on
+the strength of a URL hit is not this pass's call). The row says
+*"Already in the roster (matched by name) — will update the existing row"*, so
+the fold is visible in the diff, never silent.
+
+Two cases still refuse, because intent is genuinely unclear:
+
+- the create matches **two or more** rows — guessing would silently merge the
+  wrong one;
+- the create resolves onto a row the **same proposal already updates** — two
+  plans for one row is a double write.
+
+This replaced a hard refusal of the entire bundle, which turned a routine
+refresh into a hand-editing job.
 
 ---
 
@@ -209,6 +276,11 @@ reports "kept the newer one" rather than claiming a write that never happened.
 - `scripts/refresh-export.ts` — produces the dump a proposal is written against.
 - `scripts/refresh-apply.ts` — the CLI path; same core, same fences.
 - `src/lib/refresh-apply-core.ts` — where the rules actually live.
-- Tests: `src/lib/__tests__/refresh-apply-core.test.ts` (refusal rules),
-  `src/lib/__tests__/seo-geo-import.test.ts` (provenance),
-  `src/lib/__tests__/lab-refresh-proposals.test.ts` (the repo path fence).
+- `src/lib/refusal-copy.ts` — the plain-language refusal grouping.
+- `src/lib/ops-import-history.ts` — "have I already imported this?", from the
+  activity log.
+- Tests: `src/lib/__tests__/refresh-apply-core.test.ts` (refusal rules,
+  reconciliation, selection), `src/lib/__tests__/seo-geo-import.test.ts`
+  (provenance), `src/lib/__tests__/lab-refresh-proposals.test.ts` (the repo path
+  fence), `src/lib/__tests__/refusal-copy.test.ts` (the copy, checked against
+  the real validator), `src/lib/__tests__/bundle-fingerprint.test.ts`.
