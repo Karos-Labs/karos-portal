@@ -1190,6 +1190,28 @@ function impactFor(severity: GapSeverity): RecImpact {
  * Plain-English client copy per a3 rec id (QA Fix 7 — the Sitti one-pager voice: a verb-first
  * action title + what it entails). Keyed by the id prefix (before any ":").
  *
+ * THE COPY BAR (CD-J1 directive 5). Every line here is read by a client who is being
+ * asked to click Approve, and the Karos Labs list is the standard: "Add short
+ * plain-English summaries under your main headings so AI engines can quote you" —
+ * not "Answer capsules: 40–60 word summary under key H2s". Concretely:
+ *
+ *   - OUTCOME FIRST, MECHANISM ONLY FOR STAFF. Say what changes for them and why it
+ *     matters. The thresholds, attribute names and protocol vocabulary belong to the
+ *     staff-only technical block on the gap behind this row, which carries the
+ *     measured value and the benchmark verbatim — so nothing is lost by leaving them
+ *     out here, and the client is not asked to approve a spec they can't read.
+ *   - NO NUMERIC SPECS in client copy ("under 60 characters", "120–180 words",
+ *     "40–60 word"). A client cannot act on a threshold; they are approving that we
+ *     go and fix it.
+ *   - NO MARKUP OR PROTOCOL NAMES (H1, canonical tag, noindex, alt text, crawler,
+ *     index, robots.txt). Describe the thing in words a non-specialist owns.
+ *   - NO PRODUCT HISTORY, no client-specific nouns. These strings are shared by every
+ *     client; one of them used to name "the guides page" from the account it was
+ *     written for.
+ *
+ * Ids are STABLE — approvals persist against them (`approvedRecIds`). Rewording an
+ * entry is safe; renaming a key silently orphans an approval.
+ *
  * COVERAGE IS THE CONTRACT (QA F9): every id in SEO_CHECKS and GEO_READINESS_CHECKS must
  * have an entry here, because an uncovered id used to fall through to the internal
  * registry label — client-facing card titles like "LCP p75 ≤ 2.5s". Pinned by a unit test
@@ -1198,29 +1220,29 @@ function impactFor(severity: GapSeverity): RecImpact {
  * model's own label.
  */
 export const REC_COPY: Record<string, { title: string; description: string }> = {
-  "BOTH-07": { title: "Point your guides hub at itself", description: "The guides page currently tells search engines its canonical version is the homepage, so Google credits the homepage instead. Point the canonical tag at the guides hub." },
-  "SEO-02": { title: "Tighten your page titles", description: "Keep titles under 60 characters, unique per page, with the main keyword near the front so they aren't cut off in results." },
-  "SEO-06": { title: "Fix your meta descriptions", description: "Rewrite each description to 120–158 characters — long enough to use the space, short enough not to be truncated — and make each one unique." },
-  "GEO-17": { title: "Give every page one clear headline", description: "Each page needs exactly one main heading (H1); search and AI engines use it to understand what the page is about." },
-  "GEO-20": { title: "Fix your freshness signals", description: "Make each page's sitemap date match its real on-page updated date, so engines trust when the content actually changed." },
-  "GEO-02": { title: "Add a short answer at the top of each guide", description: "Open each guide with a self-contained 40–60 word answer to the question it targets — AI assistants lift these directly." },
-  "GEO-03": { title: "Add evidence to your content", description: "Add statistics, cited sources, and quotes to each section — evidence is what makes an engine quote your page over another." },
-  "GEO-09": { title: "Add authorship and original data", description: "Add a named author, inline citations, and at least one original statistic per page so engines trust and attribute your content." },
-  "BOTH-16": { title: "Make your sections scannable", description: "Keep sections to roughly 120–180 words with a clear one-line definition, so engines can extract clean answers." },
-  "GEO-22": { title: "Use question-style headings", description: "Phrase key headings as the questions buyers actually ask, each followed by a short direct answer — that's how AI matches pages to prompts." },
-  "GEO-25": { title: "Establish a clear entity record", description: "Create a Wikidata item (and a Wikipedia article once notable) so every engine knows which brand you are and stops confusing you with similarly-named ones." },
-  "GEO-04": { title: "Earn authoritative mentions", description: "Get named on independent, reputable sites — engines repeat what trusted third parties say about you." },
-  "GEO-14": { title: "Build a third-party review presence", description: "Get reviews across several independent platforms so 'is X any good' resolves to more than your own listing." },
-  "BOTH-01": { title: "Make every page indexable", description: "Ensure pages return 200 and carry no noindex/nosnippet directive so search and AI engines can use them." },
-  "GEO-27": { title: "Close the share-of-voice gap on category questions", description: "A tracked competitor is named far more often than you on the questions buyers actually ask. Earn mentions in the sources those answers draw from." },
-  "GEO-35": { title: "Get named on category questions", description: "You're rarely named when buyers ask category questions (not your brand by name). Owned comparison content plus third-party mentions fix this." },
-  "GEO-11": { title: "Earn citations from the engines", description: "The engines don't yet cite your site as a source on category answers. Quotable, evidence-backed pages turn into citations." },
+  "BOTH-07": { title: "Stop your pages handing their credit to another page", description: "One of your pages tells search engines that a different page is the real version of it, so everything it earns is credited elsewhere. Pointing it back at itself keeps the credit where the work is." },
+  "SEO-02": { title: "Tighten your page titles", description: "Your page titles are being cut off in search results. Make each one shorter, different from the others, and lead with the words buyers actually type." },
+  "SEO-06": { title: "Write the summary that appears under your search result", description: "The blurb under your link in search results is missing, cut off, or repeated across pages. A clear, distinct summary per page is what makes someone click yours instead of the next one." },
+  "GEO-17": { title: "Give every page one clear headline", description: "Each page should open with a single headline that says what the page is about. Search and AI engines read it first to decide what the page answers." },
+  "GEO-20": { title: "Show when your pages were really updated", description: "The dates you publish for engines don't match when the pages actually changed. Engines stop trusting those dates, and genuinely fresh work stops reading as fresh." },
+  "GEO-02": { title: "Open each page with a short, quotable answer", description: "Start each page with a few plain sentences answering the question it's about, complete on their own. That opening is what AI assistants lift and quote." },
+  "GEO-03": { title: "Back up what your pages claim", description: "Add real numbers, named sources, and quotes to each section. Evidence is what makes an engine quote your page instead of somebody else's." },
+  "GEO-09": { title: "Put a real author and real numbers on your pages", description: "Pages that say who wrote them, show where their facts came from, and include at least one figure of your own get trusted and credited. Anonymous pages get passed over." },
+  "BOTH-16": { title: "Break your pages into short, scannable sections", description: "Long unbroken text gives engines nothing clean to pull out. Shorter sections, each opening with a one-line explanation, are what they lift answers from." },
+  "GEO-22": { title: "Use your buyers' questions as your headings", description: "Phrase key headings as the questions people actually ask, each followed by a short direct answer. That's how an AI matches your page to what someone asked it." },
+  "GEO-25": { title: "Establish a clear public record of who you are", description: "Create a Wikidata entry (and a Wikipedia article once you qualify) so every engine knows which company you are and stops confusing you with similarly-named ones." },
+  "GEO-04": { title: "Get talked about on sites engines trust", description: "Get named on independent, reputable sites. Engines repeat what trusted third parties say about you far more readily than what you say about yourself." },
+  "GEO-14": { title: "Build a review presence you don't own", description: "Get reviews across several independent platforms, so \"are they any good?\" is answered by more than your own website." },
+  "BOTH-01": { title: "Make sure your pages can be listed at all", description: "Some pages are either failing to load for engines or carrying an instruction telling them not to list the page. Until that's cleared, no other work can make those pages appear." },
+  "GEO-27": { title: "Close the gap with the competitor engines name most", description: "A competitor you track is named far more often than you on the questions buyers actually ask. Earning mentions in the sources those answers draw from is what closes it." },
+  "GEO-35": { title: "Get named when buyers ask about your category", description: "Buyers asking about your category — without naming you — rarely hear about you. Comparison pages of your own, plus getting mentioned on other people's sites, is what changes that." },
+  "GEO-11": { title: "Get the engines quoting your site", description: "The engines don't yet use your site as a source when they answer questions about your category. Pages with clear facts and clear sourcing are the ones they quote." },
   // ── QA F9: the 22 registry ids that used to fall through to their engineering label ──
   "BOTH-01b": { title: "Clear the hidden 'do not list' flags", description: "Some pages carry an instruction telling engines not to list or quote them. Remove it from the pages you want buyers to find." },
   "BOTH-02": { title: "Serve your main content as plain HTML", description: "Content that only appears after a login, behind a paywall, or once scripts run is invisible to engines. They read the raw page, so anything they can't see doesn't count." },
   "BOTH-03": { title: "Make your content original", description: "Pages that closely echo what already ranks give engines no reason to pick yours. Add your own data, examples, and point of view." },
   "BOTH-05": { title: "Link your important pages to each other", description: "Each priority page should link out to a few others on your site. Internal links show engines which pages matter and how they relate." },
-  "BOTH-09": { title: "Publish a clean sitemap", description: "Your sitemap is the index that tells engines which pages exist. Make sure it's valid, listed in robots.txt, and free of pages you've asked engines to ignore." },
+  "BOTH-09": { title: "Publish a clean map of your site", description: "Engines rely on a list of every page you want found. Yours needs to be readable, easy for them to locate, and free of pages you've already asked them to skip." },
   "BOTH-11": { title: "Show first-hand experience", description: "Say what you actually did, tested, or measured, and show your own numbers. Engines increasingly favour content with real experience behind it." },
   "BOTH-13": { title: "Publish on a steady cadence", description: "Gaps longer than a month make a site look dormant. A predictable publishing rhythm keeps engines coming back to check for new answers." },
   "BOTH-19": { title: "Make the phone version match the desktop one", description: "Phone visitors should get the same content with no sideways scrolling. Search and AI engines judge your site on its mobile version." },
@@ -1228,15 +1250,15 @@ export const REC_COPY: Record<string, { title: string; description: string }> = 
   "SEO-04a": { title: "Speed up how fast your pages appear", description: "Your main content should be visible within about two and a half seconds. Slow pages lose readers before they read anything." },
   "SEO-04b": { title: "Make your pages respond faster to taps", description: "When someone taps or clicks, the page should react almost immediately. Lag here frustrates visitors and counts against you in search." },
   "SEO-04c": { title: "Stop your pages jumping while they load", description: "Content that shifts as images and banners arrive makes people mis-tap. Reserve the space they'll occupy so the page settles as it loads." },
-  "GEO-01": { title: "Let search and AI crawlers read your site", description: "Your robots.txt decides which crawlers may read you. Allow the search engines and the AI assistants, or you aren't eligible to appear at all." },
-  "GEO-07": { title: "Point your public entity record at your website", description: "Your Wikidata entry should list your real domain as the official site. When it doesn't, engines credit your work to whichever site is listed instead." },
-  "GEO-08": { title: "Get listed where ChatGPT looks", description: "ChatGPT's search leans on Bing's index and its own crawler. Missing from either means it can't surface you even when you're the right answer." },
-  "GEO-10": { title: "Open your about pages to AI crawlers", description: "Your about and company pages are where engines learn who you are. Blocking them leaves the assistants guessing at your identity." },
+  "GEO-01": { title: "Let search engines and AI assistants read your site", description: "One settings file on your site decides who is allowed to read it. If the search engines and AI assistants are turned away there, nothing else you do can make you appear." },
+  "GEO-07": { title: "Point your public record at your own website", description: "Your Wikidata entry should list your real website as the official one. While it doesn't, engines credit your work to whichever site is listed instead." },
+  "GEO-08": { title: "Get listed where ChatGPT looks", description: "ChatGPT finds pages through Bing and through its own reader. Missing from either means it can't surface you even when you're the right answer." },
+  "GEO-10": { title: "Let AI assistants read your about pages", description: "Your about and company pages are where engines learn who you are. Blocking them leaves the assistants guessing at your identity." },
   "GEO-18": { title: "Name the things you're actually talking about", description: "Use the real names of your products, places, people, and partners instead of vague wording, so engines can connect your pages to what buyers ask about. Naturally — not stuffed in." },
-  "GEO-19": { title: "Add original images with descriptions", description: "Use your own visuals rather than stock, and describe each one in alt text so engines can read what the image shows." },
-  "GEO-23": { title: "Get your pages into Brave's index", description: "Brave runs its own independent index that some assistants draw on. Being missing there is a blind spot no other fix covers." },
-  "GEO-24": { title: "Get your pages into Bing's index", description: "Bing feeds several AI assistants. Submitting your site and turning on instant indexing gets new pages picked up in days rather than weeks." },
-  "GEO-37": { title: "Keep your cornerstone pages current", description: "Your about page and main topic pages should be revisited at least quarterly. Engines treat long-untouched cornerstone pages as less reliable." },
+  "GEO-19": { title: "Use your own images, and describe them", description: "Swap stock photography for your own visuals, and add a written description to each one so engines can tell what the image shows." },
+  "GEO-23": { title: "Get your pages into Brave's search results", description: "Brave searches its own independent set of pages, which some assistants draw on. Being absent there is a blind spot no other fix covers." },
+  "GEO-24": { title: "Get your pages into Bing's search results", description: "Bing feeds several AI assistants. Submitting your site and switching on its fast-update option gets new pages picked up in days rather than weeks." },
+  "GEO-37": { title: "Keep your most important pages current", description: "Your about page and main topic pages should be revisited every few months. Engines treat pages left untouched for a long time as less reliable." },
   "GEO-41": { title: "Confirm Google can list and quote you", description: "Check your pages are in Google's index and that you haven't opted out of its AI answers — that opt-out is easy to leave switched on by accident." },
 };
 

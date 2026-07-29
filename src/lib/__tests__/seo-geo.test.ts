@@ -745,7 +745,7 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
     // SEO-06 maps to plain-English copy (QA Fix 7) and a machine-appliable control.
     const meta = recs.find((r) => r.recId.startsWith("SEO-06"));
     expect(meta?.actionKind).toBe("one_click"); // meta_description is machine-appliable
-    expect(meta?.title).toBe("Fix your meta descriptions"); // plain-English, no thresholds
+    expect(meta?.title).toBe("Write the summary that appears under your search result"); // plain-English, no thresholds
     expect(meta?.description.length).toBeGreaterThan(10);
     expect(meta?.owner).toContain("we draft, you approve");
     expect(meta?.targetPlatform).toBe("site");
@@ -787,6 +787,34 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
       .map((d) => d.id)
       .filter((id) => !REC_COPY[id]);
     expect(uncovered).toEqual([]);
+  });
+
+  /**
+   * CD-J1 directive 5: coverage was already pinned; the BAR was not. Every entry
+   * here is read by a client deciding whether to click Approve, and the technical
+   * phrasing has a home — the staff-only block on the gap behind the row carries the
+   * measured value and benchmark verbatim. These two checks stop a jargon-grade line
+   * ("Answer capsules: 40–60 word summary under key H2s") returning through a later
+   * addition, which is how the last batch of them arrived.
+   */
+  it("keeps markup and protocol vocabulary out of client-facing copy", () => {
+    const jargon =
+      /\b(h1s?|h2s?|canonical|noindex|nosnippet|robots\.txt|alt text|crawlers?|meta description|schema|sitemap dates?|indexation|p75|lcp|cls|inp|answer capsules?)\b/i;
+    const offenders = Object.entries(REC_COPY)
+      .filter(([, c]) => jargon.test(c.title) || jargon.test(c.description))
+      .map(([id]) => id);
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps numeric thresholds out of client-facing copy", () => {
+    // A client cannot act on "under 60 characters" — they are approving that we go
+    // and fix it. Counts of things they own ("one headline") are fine; measurement
+    // specs are not. Word/character/second budgets and ranges are the tell.
+    const spec = /\b\d+\s*(–|-|to)\s*\d+\s*(word|character|char|second|sec|s)\b|\b(under|over|at least|below|above)\s+\d+\s*(word|character|char|%|second)/i;
+    const offenders = Object.entries(REC_COPY)
+      .filter(([, c]) => spec.test(c.title) || spec.test(c.description))
+      .map(([id]) => id);
+    expect(offenders).toEqual([]);
   });
 
   it("never lets a registry label reach a client-facing title or description", () => {
