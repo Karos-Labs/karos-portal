@@ -13,6 +13,7 @@ import {
   buildPromptViews,
   buildRosterChips,
   buildRosterDrift,
+  buildRosterSanity,
   buildScoreViews,
   buildSnapshotTrust,
   capturedNothing,
@@ -505,6 +506,9 @@ export function SeoGeoPanel({
   const drift = buildRosterDrift(insights, trackedCompetitors);
   const discovered = buildDiscoveredViews(insights, trackedCompetitors);
   const rosterChips = buildRosterChips(insights, trackedCompetitors, clientWebsite);
+  // Staff-only roster verdict (CD-J1 directive 4); null when there is nothing to
+  // say — nobody tracked, or no measured answers to check a roster against.
+  const rosterSanity = buildRosterSanity(insights, trackedCompetitors);
 
   // Citation leaderboard split (QA Fix 5): "who's quoted instead of you" vs your own baseline.
   const quotedInstead = citationLeaderboard.filter((r) => !r.isClient);
@@ -767,6 +771,21 @@ export function SeoGeoPanel({
         <p className="mb-3 text-xs text-muted-2">
           The brands your visibility is measured against on every snapshot.
         </p>
+        {/* CD-J1 directive 4 — STAFF ONLY. A roster of never-named brands makes
+            every comparison above honest and meaningless at once: bars at zero
+            against opponents who aren't in the race. The client cannot tell that
+            apart from "you're losing", so the team gets told instead. A suggestion,
+            never an action — the roster is an account decision and nothing here
+            mutates it. */}
+        {!isClientViewer && rosterSanity && (
+          <div className="mb-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
+            <p className="flex items-start gap-1.5 text-xs font-medium text-warning">
+              <Icon name="TriangleAlert" className="mt-px h-3.5 w-3.5 shrink-0" />
+              {rosterSanity.headline}
+            </p>
+            <p className="mt-1 text-[11px] text-muted">{rosterSanity.detail}</p>
+          </div>
+        )}
         <div className="flex flex-wrap gap-1.5">
           {rosterChips.map((chip, i) => (
             <span

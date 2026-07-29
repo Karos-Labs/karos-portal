@@ -16,6 +16,7 @@ import {
   buildDiscoveredViews,
   buildRosterChips,
   buildRosterDrift,
+  buildRosterSanity,
   buildEngineViews,
   buildGapViews,
   buildPresence,
@@ -1186,6 +1187,73 @@ describe("tracked-list alignment (competitor side-by-side)", () => {
     expect(chips[0]).toMatchObject({ name: "Acme", isClient: true, url: "acme.com", pending: false });
     expect(chips[1]).toMatchObject({ name: "Rival", pending: false });
     expect(chips[2]).toMatchObject({ name: "Ghost Co", pending: true });
+  });
+});
+
+/* ── CD-J1 directive 4: roster sanity (staff-only, never mutating) ── */
+
+describe("roster sanity", () => {
+  /** Engines named NewRival; the tracked list is somebody else entirely. */
+  const measured = (patch: Partial<SeoGeoInsights> = {}) =>
+    insights({
+      citationSummary: { totalMeasuredAnswers: 12, answersCited: 0, answersNamed: 0, ghostCitations: 0 },
+      competitorsNamed: [],
+      discoveredBrands: [{ name: "NewRival", url: "newrival.com", mentions: 7, perEngine: [] }],
+      ...patch,
+    });
+
+  it("flags a tracked set that shares nobody with the brands the engines named", () => {
+    const verdict = buildRosterSanity(measured(), [{ name: "Ghost Co" }, { name: "Absent Ltd" }]);
+    expect(verdict?.noOverlap).toBe(true);
+    expect(verdict?.trackedCount).toBe(2);
+    expect(verdict?.headline).toContain("None of the 2 tracked competitors appear");
+    expect(verdict?.suggestions).toEqual(["NewRival"]);
+    expect(verdict?.detail).toContain("Consider tracking: NewRival");
+  });
+
+  it("stays silent when a tracked competitor IS named", () => {
+    // One real overlap is enough: the comparison is measuring the right market.
+    expect(
+      buildRosterSanity(
+        measured({ competitorsNamed: [{ name: "Ghost Co", mentions: 2 }] }),
+        [{ name: "Ghost Co" }],
+      ),
+    ).toBeNull();
+  });
+
+  it("counts an overlap the discovery pass found, not just the frozen roster", () => {
+    expect(buildRosterSanity(measured(), [{ name: "NewRival", url: "newrival.com" }])).toBeNull();
+  });
+
+  it("gives no verdict on a run with nothing measured", () => {
+    // A degraded capture is not evidence of a bad roster.
+    expect(buildRosterSanity(insights(), [{ name: "Ghost Co" }])).toBeNull();
+  });
+
+  it("gives no verdict when the engines named nobody at all", () => {
+    expect(
+      buildRosterSanity(measured({ discoveredBrands: [] }), [{ name: "Ghost Co" }]),
+    ).toBeNull();
+  });
+
+  it("falls back to the snapshot roster when the page has no tracked list", () => {
+    // insights().roster is ["Acme", "Rival"] — Rival was never named.
+    const verdict = buildRosterSanity(measured());
+    expect(verdict?.trackedCount).toBe(1);
+    expect(verdict?.headline).toContain("None of the 1 tracked competitor appear");
+  });
+
+  it("never proposes a brand that is already tracked", () => {
+    const verdict = buildRosterSanity(
+      measured({
+        discoveredBrands: [
+          { name: "NewRival", url: "newrival.com", mentions: 7, perEngine: [] },
+          { name: "Other Co", mentions: 3, perEngine: [] },
+        ],
+      }),
+      [{ name: "Ghost Co" }],
+    );
+    expect(verdict?.suggestions).toEqual(["NewRival", "Other Co"]);
   });
 });
 

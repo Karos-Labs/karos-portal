@@ -783,6 +783,85 @@ export function buildRosterDrift(insights: SeoGeoInsights, tracked?: TrackedComp
   return { added, removed, isStale: added.length > 0 || removed.length > 0 };
 }
 
+/* ── Roster sanity (CD-J1 directive 4) ────────────────────────────── */
+
+export interface RosterSanity {
+  /** The tracked set and the brands the engines actually name share nobody. */
+  noOverlap: boolean;
+  trackedCount: number;
+  /** Named-but-untracked brands, strongest first — a suggestion, never an action. */
+  suggestions: string[];
+  headline: string;
+  detail: string;
+}
+
+/**
+ * STAFF-ONLY sanity check: does the tracked competitor set intersect the brands
+ * the engines actually named this run?
+ *
+ * A client can be tracking five rivals that no AI answer has ever mentioned. Every
+ * comparison then renders honestly and means nothing — five bars at zero, a share
+ * of voice computed against opponents who are not in the race, and a report that
+ * looks measured while measuring the wrong market. Nothing on the page distinguishes
+ * that from "you're losing to these five", which is the reading a client takes.
+ *
+ * Returns null when there is no verdict to give: nobody tracked, or no measured
+ * answers to check against (a degraded run is not evidence of a bad roster).
+ *
+ * This SUGGESTS and never mutates. The tracked roster is a deliberate account
+ * decision — whose competitor set it is matters more than whether it maximises
+ * measured overlap — so this puts named-but-untracked brands in front of the team
+ * and stops. Client-facing comparisons keep using the tracked roster exactly as
+ * chosen; the client never sees this block.
+ */
+export function buildRosterSanity(
+  insights: SeoGeoInsights,
+  tracked?: TrackedCompetitorRef[],
+): RosterSanity | null {
+  const measuredAnswers = insights.citationSummary?.totalMeasuredAnswers ?? 0;
+  if (measuredAnswers === 0) return null;
+
+  // The tracked set: the CURRENT list when the page has it, else the frozen roster
+  // the capture actually ran against.
+  const trackedRefs: TrackedCompetitorRef[] =
+    tracked && tracked.length > 0
+      ? tracked
+      : insights.roster.slice(1).map((name) => ({ name }));
+  if (trackedRefs.length === 0) return null;
+
+  // Brands the engines NAMED: tracked competitors with a real count, plus every
+  // brand the open discovery pass verified. Both are category-scoped (CD-B3).
+  const namedKeys = new Set<string>();
+  for (const c of insights.competitorsNamed ?? []) {
+    if (c.mentions > 0) for (const k of brandKeys(c.name)) namedKeys.add(k);
+  }
+  for (const d of insights.discoveredBrands ?? []) {
+    for (const k of brandKeys(d.name, d.url)) namedKeys.add(k);
+  }
+  if (namedKeys.size === 0) return null; // engines named nobody — not a roster verdict
+
+  const overlap = trackedRefs.filter((t) => refKeys(t).some((k) => namedKeys.has(k)));
+  if (overlap.length > 0) return null;
+
+  const trackedKeys = new Set(trackedRefs.flatMap(refKeys));
+  const suggestions = (insights.discoveredBrands ?? [])
+    .filter((d) => !brandKeys(d.name, d.url).some((k) => trackedKeys.has(k)))
+    .sort((a, b) => b.mentions - a.mentions)
+    .slice(0, 3)
+    .map((d) => d.name);
+
+  const n = trackedRefs.length;
+  return {
+    noOverlap: true,
+    trackedCount: n,
+    suggestions,
+    headline: `None of the ${n} tracked competitor${n === 1 ? "" : "s"} appear in the AI answers we measured`,
+    detail: suggestions.length
+      ? `Every comparison on this page is scored against brands the engines never named, so the client sees a race they aren't in. Consider tracking: ${suggestions.join(", ")}.`
+      : "Every comparison on this page is scored against brands the engines never named, so the client sees a race they aren't in. The discovery pass found no untracked brands either — worth checking the client's category and question set.",
+  };
+}
+
 export interface DiscoveredView {
   name: string;
   url: string | null;
