@@ -1891,8 +1891,17 @@ export interface SeoGeoInsights {
   answerGrid: QuestionRow[];
   /** Domain citation leaderboard across all measured answers ("who the engines quote"). */
   citationLeaderboard: CitationLeader[];
-  /** Client citation summary (cited/named/ghost across measured answers). */
-  citationSummary: CitationSummary;
+  /**
+   * Client citation summary (cited/named/ghost across measured answers).
+   *
+   * OPTIONAL because stored reality says so (CD-J1 bounce 3): captures from before
+   * this field existed carry no summary, every reader already optional-chained it,
+   * and the required type was the reason a missing field could be read as a
+   * measured zero — the panel telling a client "we couldn't measure any answers
+   * this run" on the same page as "3 of 5 AI engines measured". Absent is not zero;
+   * the type now lets a reader tell the two apart.
+   */
+  citationSummary?: CitationSummary;
   /** Competitors named across measured answers, with counts. */
   competitorsNamed: Array<{ name: string; mentions: number }>;
   /** Non-roster brands the engines named this run (open extraction, verified counts).

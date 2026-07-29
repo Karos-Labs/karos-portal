@@ -9,6 +9,7 @@ import {
   buildAnswerGridViews,
   buildCaptureStrip,
   buildContextLine,
+  buildCitationView,
   buildIntentPromptViews,
   buildMeasurementBasis,
   buildQuestionPlanLine,
@@ -1309,6 +1310,51 @@ describe("measurement basis", () => {
       }),
     );
     expect(groups.map((g) => g.basisLabel)).toEqual(["category", "names you"]);
+  });
+});
+
+describe("citation copy: absent is not zero (CD-J1 bounce 3)", () => {
+  const noSummary = () => {
+    const data = insights();
+    delete (data as Partial<SeoGeoInsights>).citationSummary;
+    return data;
+  };
+
+  it("does not report a measurement failure for a snapshot that never carried the data", () => {
+    // The live contradiction: this line claimed "we couldn't measure any answers
+    // this run" on the same page as "3 of 5 AI engines measured". The engines line
+    // was a fact; this one was a missing field impersonating one.
+    const view = buildCitationView(noSummary());
+    expect(view.clientLine).toContain("before we started recording");
+    expect(view.clientLine).not.toContain("couldn't measure");
+    expect(view.emptyLine).toContain("predates our record");
+  });
+
+  it("still reports a real measured zero as a real measured zero", () => {
+    const view = buildCitationView(
+      insights({
+        citationSummary: { totalMeasuredAnswers: 0, answersCited: 0, answersNamed: 0, ghostCitations: 0 },
+      }),
+    );
+    expect(view.clientLine).toContain("couldn't measure any");
+  });
+
+  it("scopes its noun to what the snapshot actually measured", () => {
+    const summary = { totalMeasuredAnswers: 60, answersCited: 11, answersNamed: 4, ghostCitations: 7 };
+    const scoped = buildCitationView(
+      insights({
+        citationSummary: summary,
+        pipelineVersion: SEO_GEO_PIPELINE_VERSION,
+        methodologyVersion: SEO_GEO_METHODOLOGY_VERSION,
+      }),
+    );
+    expect(scoped.clientLine).toContain("11 of 60 category answers");
+
+    const unscopedRow = engineRow();
+    delete (unscopedRow as Partial<PerEngineVisibility>).category;
+    const legacy = buildCitationView(insights({ citationSummary: summary, perEngine: [unscopedRow] }));
+    expect(legacy.clientLine).toContain("11 of 60 answers");
+    expect(legacy.clientLine).not.toContain("category");
   });
 });
 

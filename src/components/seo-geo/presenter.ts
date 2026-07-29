@@ -322,6 +322,47 @@ export function buildQuestionPlanLine(insights: SeoGeoInsights): string {
   return `We ask ${asked} questions on every snapshot — ${cat} about your category, and ${brand} that name you directly. Only the ${cat} category questions count toward how you compare with competitors.`;
 }
 
+export interface CitationView {
+  /** The client's own citation sentence (QA F19 — never gated on there being any). */
+  clientLine: string;
+  /** What the leaderboard says when it has no rows. */
+  emptyLine: string;
+}
+
+/**
+ * The citation copy, in the presenter so it can be pinned by a test rather than
+ * assembled inline in JSX.
+ *
+ * CD-J1 bounce 3 — ABSENT IS NOT ZERO. Captures from before `citationSummary`
+ * existed carry no summary at all. Defaulting that to 0 made the panel report a
+ * measurement failure that never happened: "We couldn't measure any answers this
+ * run", sitting on the same page as "3 of 5 AI engines measured". One was a fact
+ * about the run and the other was a missing field impersonating one. A snapshot
+ * that never carried the data now says exactly that.
+ */
+export function buildCitationView(insights: SeoGeoInsights): CitationView {
+  const basis = buildMeasurementBasis(insights);
+  const summary = insights.citationSummary;
+  if (!summary) {
+    return {
+      clientLine:
+        "This snapshot was taken before we started recording which sources the engines quote, so there is nothing to show here. Your next refresh records it.",
+      emptyLine: "This snapshot predates our record of which sources the engines quote.",
+    };
+  }
+  const cited = summary.answersCited;
+  const of = summary.totalMeasuredAnswers;
+  return {
+    clientLine:
+      of === 0
+        ? `We couldn't measure any ${basis.answers} this run, so there is nothing to count citations against yet.`
+        : cited > 0
+          ? `Your site was cited as a source in ${cited} of ${of} ${basis.answers} across every engine we measured.`
+          : `Your site was never cited as a source in the ${of} ${basis.answers} we measured — earning citations from these domains' territory is what moves the visibility score.`,
+    emptyLine: "No engine cited any source domain on the answers we measured this run.",
+  };
+}
+
 /* ── Snapshot trust (CD-B4) ───────────────────────────────────────── */
 
 export interface SnapshotTrustView {

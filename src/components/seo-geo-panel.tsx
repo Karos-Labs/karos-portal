@@ -8,6 +8,7 @@ import {
   buildDiscoveredViews,
   buildEngineViews,
   buildGapViews,
+  buildCitationView,
   buildIntentPromptViews,
   buildMeasurementBasis,
   buildQuestionPlanLine,
@@ -540,17 +541,9 @@ export function SeoGeoPanel({
   // two numbers for the same measurement, both stated as fact, reading as the
   // report contradicting itself. Both surfaces now use the engine cards' unit
   // and scope: answers cited, out of measured category answers.
-  const cited = insights.citationSummary?.answersCited ?? 0;
-  const citedOf = insights.citationSummary?.totalMeasuredAnswers ?? 0;
-  // CD-J1 bounce 2b: on a pre-CD-B3 snapshot this total is every probe across every
-  // engine, not a category subset. Say "answers", not "category answers" — the
-  // mislabel is how one page ended up claiming "11 of 60 category answers".
-  const clientCitationLine =
-    citedOf === 0
-      ? `We couldn't measure any ${basis.answers} this run, so there is nothing to count citations against yet.`
-      : cited > 0
-        ? `Your site was cited as a source in ${cited} of ${citedOf} ${basis.answers} across every engine we measured.`
-        : `Your site was never cited as a source in the ${citedOf} ${basis.answers} we measured — earning citations from these domains' territory is what moves the visibility score.`;
+  // Scope-correct and absent-aware (CD-J1 bounce 2b/3), built in the presenter so
+  // it is pinned by a test rather than assembled inline here.
+  const citation = buildCitationView(insights);
 
   return (
     <div className="space-y-6">
@@ -876,10 +869,12 @@ export function SeoGeoPanel({
           </>
         ) : (
           <p className="mb-1 text-xs text-muted-2">
-            No engine cited any source domain on the answers we measured this run.
+            {/* CD-J1 bounce 3: don't report a measured absence when the snapshot
+                simply predates the data. */}
+            {citation.emptyLine}
           </p>
         )}
-        <p className="mt-2 text-[11px] text-muted-2">{clientCitationLine}</p>
+        <p className="mt-2 text-[11px] text-muted-2">{citation.clientLine}</p>
       </Card>
       )}
 
