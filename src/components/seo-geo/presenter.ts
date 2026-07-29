@@ -18,6 +18,7 @@ import {
   GEO_READINESS_CHECKS,
   REC_COPY,
   SEO_CHECKS,
+  SEO_GEO_METHODOLOGY_VERSION,
   SEO_GEO_PIPELINE_VERSION,
   SNAPSHOT_TRUST_CUTOFF,
   brandKeys,
@@ -25,6 +26,7 @@ import {
   computeCheckScore,
   dedupeGapsByRecId,
   engineVisibilityScore,
+  intentBasis,
   normalizeBrandKey,
   presenceCounts,
   resolveRecCopy,
@@ -133,6 +135,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   const seoMeasured = insights.seoDataCoveragePct > 0;
   const readinessMeasured = insights.geoReadinessCoveragePct > 0;
   const visibilityMeasured = insights.geoVisibilityEnginesScored > 0;
+  const basis = buildMeasurementBasis(insights);
   // State the denominator (QA F10): the index is scored on the CATEGORY questions,
   // the same set every card and gap below uses — not the full prompt set, which
   // includes the questions that name the client and hit by construction.
@@ -168,7 +171,10 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
     {
       key: "visibility",
       label: "AI visibility today",
-      explainer: `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand — the questions new customers ask. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we can measure. This is the number the fixes below are designed to move.`,
+      // CD-J1 bounce 2b: only claim the category scope when the record carries it.
+      explainer: basis.categoryScoped
+        ? `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand — the questions new customers ask. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we can measure. This is the number the fixes below are designed to move.`
+        : `How often AI assistants actually named or recommended you on this snapshot, measured across all the buyer questions we asked — including the ones naming your brand, which is why it isn't comparable with a current snapshot. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we could measure.`,
       value: visibilityMeasured ? insights.geoVisibilityIndex : null,
       tone: visibilityMeasured ? visBand.tone : "neutral",
       bandLabel: visibilityMeasured ? visBand.label : "no engines measured this run",
@@ -255,6 +261,67 @@ export function buildContextLine(insights: SeoGeoInsights, now = Date.now()): st
   ].join(" · ");
 }
 
+/* ── Measurement basis (CD-J1 bounce 2) ───────────────────────────── */
+
+export interface MeasurementBasis {
+  /** True when this snapshot's per-engine numbers really are category-only. */
+  categoryScoped: boolean;
+  /** False when no engine returned anything — there is no scope claim either way. */
+  hasMeasuredEngines: boolean;
+  /** Noun for an answer denominator: "category answers" or plain "answers". */
+  answers: string;
+  /** Phrase for a question denominator on an engine card. */
+  questions: string;
+}
+
+/**
+ * Is this snapshot's comparison data genuinely scoped to category questions?
+ *
+ * CD-J1 bounce 2 — LABEL A LEGACY SNAPSHOT, NEVER RELABEL IT. `categoryMetrics`
+ * falls back to a record's FULL-set figures when it has no `category` field, which is
+ * right (a pre-CD-B3 snapshot still has real numbers) — but every string around it
+ * called those numbers "category", so one page showed four denominators that
+ * contradicted each other: "20 real buyer questions", "the 12 category questions",
+ * "named in 4 of 16 … the same 16 unbranded category buyer questions" (16 being the
+ * full prompt count wearing a category label), and "cited in 11 of 60 category
+ * answers" (60 being every probe across every engine, same trick).
+ *
+ * The fallback stays. What changes is that a surface reading it stops CLAIMING a
+ * scope the number does not have: unscoped figures are described as what they are,
+ * measured over all questions, and the legacy banner says the counts differ.
+ *
+ * Structural, not just a version string: a record whose measured engines carry no
+ * `category` field is unscoped whatever it is stamped with.
+ */
+export function buildMeasurementBasis(insights: SeoGeoInsights): MeasurementBasis {
+  const measured = (insights.perEngine ?? []).filter(
+    (e) => e.captureTier !== "UNAVAILABLE" && e.promptsMeasured > 0,
+  );
+  const categoryScoped = measured.length > 0 && measured.every((e) => e.category !== undefined);
+  return {
+    categoryScoped,
+    hasMeasuredEngines: measured.length > 0,
+    answers: categoryScoped ? "category answers" : "answers",
+    questions: categoryScoped ? "unbranded category buyer questions" : "buyer questions",
+  };
+}
+
+/**
+ * The methodology in one sentence, for the surfaces that describe how we measure
+ * (CD-J1 bounce 2c). v2 snapshots state the split explicitly — the branded count
+ * appeared nowhere on screen before this — while a legacy snapshot describes only
+ * what it can honestly claim: the set it actually asked.
+ */
+export function buildQuestionPlanLine(insights: SeoGeoInsights): string {
+  const asked = insights.promptSet?.length ?? 0;
+  if (insights.methodologyVersion !== SEO_GEO_METHODOLOGY_VERSION) {
+    return `We asked ${asked} buyer question${asked === 1 ? "" : "s"} on this snapshot. Question counts varied between snapshots under the older measurement setup.`;
+  }
+  const cat = presenceCounts(insights.categoryPresence).planned;
+  const brand = presenceCounts(insights.brandPresence).planned;
+  return `We ask ${asked} questions on every snapshot — ${cat} about your category, and ${brand} that name you directly. Only the ${cat} category questions count toward how you compare with competitors.`;
+}
+
 /* ── Snapshot trust (CD-B4) ───────────────────────────────────────── */
 
 export interface SnapshotTrustView {
@@ -288,16 +355,43 @@ export interface SnapshotTrustView {
 export function buildSnapshotTrust(insights: SeoGeoInsights): SnapshotTrustView {
   const planPending =
     (insights.recommendations?.length ?? 0) === 0 && (insights.gaps?.length ?? 0) > 0;
-  const isLegacy = insights.pipelineVersion !== SEO_GEO_PIPELINE_VERSION;
+  // CD-J1 bounce 2a: three independent reasons a snapshot is not current, because
+  // one stamp cannot speak for all of them. The pipeline stamp covers the scoring
+  // changes; the methodology stamp covers the question plan (a snapshot measured on
+  // a variable-sized set is not comparable with one measured on the fixed 20, even
+  // if the maths matched); and the structural check catches a record whose engines
+  // carry no category scope whatever it is stamped with.
+  const basis = buildMeasurementBasis(insights);
+  const oldPipeline = insights.pipelineVersion !== SEO_GEO_PIPELINE_VERSION;
+  const oldMethodology = insights.methodologyVersion !== SEO_GEO_METHODOLOGY_VERSION;
+  // Only a snapshot that HAS engine figures can have unscoped ones. A run where
+  // every engine failed is a degraded capture, which the capture strip already
+  // explains — calling it "an earlier measurement setup" would be a second, wrong
+  // story about the same event.
+  const unscoped = basis.hasMeasuredEngines && !basis.categoryScoped;
+  const isLegacy = oldPipeline || oldMethodology || unscoped;
   if (!isLegacy) return { isLegacy: false, title: null, description: null, planPending };
 
   const preRedeploy = Number.isFinite(insights.capturedAt) && insights.capturedAt < SNAPSHOT_TRUST_CUTOFF;
+  // Say WHICH way the numbers differ, rather than a generic "things changed". The
+  // counts are the part a client can see with their own eyes — a legacy snapshot's
+  // question totals do not match the fixed plan a current one is measured on, and
+  // its comparison figures may cover every question rather than category ones.
+  const countsLine = oldMethodology
+    ? " Question counts also differed between snapshots back then, so the totals here won't match a current snapshot's."
+    : "";
+  const scopeLine = unscoped
+    ? " Its engine-by-engine figures cover every question we asked, including the ones that name you — current snapshots measure those on category questions only."
+    : "";
   return {
     isLegacy: true,
     title: "These results are from an earlier measurement setup",
-    description: preRedeploy
-      ? `This snapshot was captured on ${formatCaptured(insights.capturedAt)}, before we rebuilt how visibility is measured. Read the numbers as history rather than your position today — a refresh re-measures everything on the current setup.`
-      : "How we measure visibility has changed since this snapshot, so these numbers aren't directly comparable with a current one. A refresh re-measures everything on the current setup.",
+    description:
+      (preRedeploy
+        ? `This snapshot was captured on ${formatCaptured(insights.capturedAt)}, before we rebuilt how visibility is measured. Read the numbers as history rather than your position today — a refresh re-measures everything on the current setup.`
+        : "How we measure visibility has changed since this snapshot, so these numbers aren't directly comparable with a current one. A refresh re-measures everything on the current setup.") +
+      countsLine +
+      scopeLine,
     planPending,
   };
 }
@@ -542,6 +636,9 @@ export function buildEngineViews(
   clientWebsite?: string | null,
 ): EngineView[] {
   const byEngine = new Map(insights.perEngine.map((e) => [e.engine, e]));
+  // What these numbers are actually measured over — "category answers" only when
+  // the record carries the scope (CD-J1 bounce 2b).
+  const basis = buildMeasurementBasis(insights);
   return ENGINE_ORDER.map((engine) => {
     const row = byEngine.get(engine) ?? null;
     const name = ENGINE_LABELS[engine] ?? "Engine";
@@ -587,7 +684,9 @@ export function buildEngineViews(
       status,
       statusLabel: "measured",
       statusTone: "success" as Tone,
-      explainer: `Measured ${providerPhrase(row.source)} by asking the same ${n} unbranded category buyer questions we ask every engine.`,
+      // CD-J1 bounce 2b: `n` comes from categoryMetrics, which falls back to the
+      // FULL prompt count on a pre-CD-B3 record. Describe what the number is.
+      explainer: `Measured ${providerPhrase(row.source)} by asking the same ${n} ${basis.questions} we ask every engine.`,
       causeLine: null,
       flagPrefill: null,
       allZero,
@@ -606,12 +705,12 @@ export function buildEngineViews(
         {
           label: "cited as a source",
           value: pct(cat.citationRate),
-          explainer: `How often the engine linked to your website as a source for its answer — ${fraction(citedCount, n, "category answers")}. Being cited means the AI is reading your site, not just remembering your name.`,
+          explainer: `How often the engine linked to your website as a source for its answer — ${fraction(citedCount, n, basis.answers)}. Being cited means the AI is reading your site, not just remembering your name.`,
         },
         {
           label: "answered first",
           value: pct(cat.firstPositionRate),
-          explainer: `When the answer listed brands, how often yours came first — ${fraction(firstCount, n, "category answers")}. First mention carries the most weight with buyers skimming an answer.`,
+          explainer: `When the answer listed brands, how often yours came first — ${fraction(firstCount, n, basis.answers)}. First mention carries the most weight with buyers skimming an answer.`,
         },
       ],
       // F10: `cat.`, not `row.` — the chip sat in the same card as "cited as a
@@ -901,8 +1000,10 @@ export function buildDiscoveredViews(
   tracked?: TrackedCompetitorRef[],
 ): DiscoveredView[] {
   const trackedKeys = new Set((tracked ?? []).flatMap(refKeys));
-  // Both sides of this fraction are CATEGORY answers (CD-B3) — the same scope the
-  // comparison rows use, so a discovered brand's count is read like-for-like.
+  // Both sides of this fraction share the comparison rows' scope (CD-B3), so a
+  // discovered brand's count is read like-for-like. On a pre-CD-B3 snapshot that
+  // scope is the full answer set, and the noun says so (CD-J1 bounce 2b).
+  const basis = buildMeasurementBasis(insights);
   const total = insights.citationSummary?.totalMeasuredAnswers ?? 0;
   return (insights.discoveredBrands ?? [])
     .filter((d) => !brandKeys(d.name, d.url).some((k) => trackedKeys.has(k)))
@@ -912,7 +1013,7 @@ export function buildDiscoveredViews(
       mentions: d.mentions,
       line:
         total > 0
-          ? `named in ${fraction(d.mentions, total, "category answers")}`
+          ? `named in ${fraction(d.mentions, total, basis.answers)}`
           : `named ${d.mentions} times`,
     }));
 }
@@ -1220,6 +1321,8 @@ export interface AnswerGridRow {
 /** Rows under one plain-English intent heading (F18). */
 export interface AnswerGridGroup {
   intentLabel: string;
+  /** Which side of the question plan this group sits on (CD-J1 bounce 2c). */
+  basisLabel: string;
   rows: AnswerGridRow[];
 }
 
@@ -1256,6 +1359,16 @@ const INTENT_VIEW_DEFAULT = "Other questions";
 
 export function intentLabel(intent: string): string {
   return INTENT_VIEW[intent] ?? INTENT_VIEW_DEFAULT;
+}
+
+/**
+ * Which side of the question plan a group sits on, in the client's words (CD-J1
+ * bounce 2c). The intent headings alone don't carry it — "Comparison questions" and
+ * "Problem questions" are both category questions, and nothing on screen said which
+ * groups feed the competitor comparison and which are the control.
+ */
+export function basisLabel(intent: string): string {
+  return intentBasis(intent) === "branded" ? "names you" : "category";
 }
 
 /** Prompts that open with one of these read as questions and earn a "?" (F18). */
@@ -1325,7 +1438,8 @@ export function buildAnswerGridViews(insights: SeoGeoInsights): AnswerGridView |
   const groups: AnswerGridGroup[] = [];
   for (const intent of order) {
     const rows = grid.filter((r) => r.intent === intent).map(toRow);
-    if (rows.length > 0) groups.push({ intentLabel: intentLabel(intent), rows });
+    if (rows.length > 0)
+      groups.push({ intentLabel: intentLabel(intent), basisLabel: basisLabel(intent), rows });
   }
 
   return {
@@ -1339,6 +1453,8 @@ export function buildAnswerGridViews(insights: SeoGeoInsights): AnswerGridView |
 
 export interface IntentPromptGroup {
   intentLabel: string;
+  /** Which side of the question plan this group sits on (CD-J1 bounce 2c). */
+  basisLabel: string;
   prompts: PromptView[];
 }
 
@@ -1352,7 +1468,7 @@ export function buildIntentPromptViews(insights: SeoGeoInsights): IntentPromptGr
   const views = new Map(buildPromptViews(insights).map((v) => [v.text, v] as const));
   const intents = insights.intentPrompts ?? [];
   if (intents.length === 0) {
-    return [{ intentLabel: "", prompts: [...views.values()] }];
+    return [{ intentLabel: "", basisLabel: "", prompts: [...views.values()] }];
   }
   const known = new Set(INTENT_VIEW_ORDER);
   const order = [...INTENT_VIEW_ORDER, ...new Set(intents.map((p) => p.intent).filter((i) => !known.has(i)))];
@@ -1362,7 +1478,8 @@ export function buildIntentPromptViews(insights: SeoGeoInsights): IntentPromptGr
       .filter((p) => p.intent === intent)
       .map((p) => views.get(p.prompt))
       .filter((v): v is PromptView => !!v);
-    if (prompts.length > 0) groups.push({ intentLabel: intentLabel(intent), prompts });
+    if (prompts.length > 0)
+      groups.push({ intentLabel: intentLabel(intent), basisLabel: basisLabel(intent), prompts });
   }
   return groups;
 }

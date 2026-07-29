@@ -10,6 +10,8 @@ import {
   buildCaptureStrip,
   buildContextLine,
   buildIntentPromptViews,
+  buildMeasurementBasis,
+  buildQuestionPlanLine,
   capturedNothing,
   formatPrompt,
   snapshotAge,
@@ -30,6 +32,7 @@ import {
 import {
   GEO_READINESS_CHECKS,
   SEO_CHECKS,
+  SEO_GEO_METHODOLOGY_VERSION,
   SEO_GEO_PIPELINE_VERSION,
   computeCheckGaps,
   computeVisibilityGaps,
@@ -1022,8 +1025,16 @@ describe("snapshot age + the promised next snapshot (QA F20)", () => {
 });
 
 describe("snapshot trust (CD-B4)", () => {
+  // "Current" now means all three: the scoring pipeline, the question methodology,
+  // and per-engine data that actually carries the category scope (CD-J1 bounce 2a).
+  // One stamp cannot speak for the others — a snapshot can share today's maths and
+  // still have been measured on a variable-sized question set.
   const current = (patch: Partial<SeoGeoInsights> = {}) =>
-    insights({ pipelineVersion: SEO_GEO_PIPELINE_VERSION, ...patch });
+    insights({
+      pipelineVersion: SEO_GEO_PIPELINE_VERSION,
+      methodologyVersion: SEO_GEO_METHODOLOGY_VERSION,
+      ...patch,
+    });
 
   it("treats a snapshot from the current pipeline as current", () => {
     const view = buildSnapshotTrust(current());
@@ -1191,6 +1202,115 @@ describe("tracked-list alignment (competitor side-by-side)", () => {
 });
 
 /* ── CD-J1 directive 4: roster sanity (staff-only, never mutating) ── */
+
+/* ── CD-J1 bounce 2: label a legacy snapshot, never relabel it ────── */
+
+describe("measurement basis", () => {
+  /** A pre-CD-B3 record: real numbers, but no category scope on them. */
+  const unscopedRow = () => {
+    const row = engineRow();
+    delete (row as Partial<PerEngineVisibility>).category;
+    return row;
+  };
+  const legacy = (patch: Partial<SeoGeoInsights> = {}) =>
+    insights({ perEngine: [unscopedRow()], ...patch });
+  const modern = (patch: Partial<SeoGeoInsights> = {}) =>
+    insights({
+      pipelineVersion: SEO_GEO_PIPELINE_VERSION,
+      methodologyVersion: SEO_GEO_METHODOLOGY_VERSION,
+      ...patch,
+    });
+
+  it("calls unscoped figures what they are, never 'category'", () => {
+    const basis = buildMeasurementBasis(legacy());
+    expect(basis.categoryScoped).toBe(false);
+    expect(basis.answers).toBe("answers");
+    expect(basis.questions).not.toContain("category");
+  });
+
+  it("claims the category scope only when the record carries it", () => {
+    const basis = buildMeasurementBasis(modern());
+    expect(basis.categoryScoped).toBe(true);
+    expect(basis.answers).toBe("category answers");
+  });
+
+  it("stops the engine card claiming a category denominator it doesn't have", () => {
+    // The live defect: "named in 4 of 16 answers … the same 16 unbranded category
+    // buyer questions", where 16 was the FULL prompt count wearing a category label.
+    const [view] = buildEngineViews(legacy());
+    expect(view.explainer).not.toContain("category");
+    expect(view.stats[1].explainer).toContain("of 10 answers");
+    expect(view.stats[1].explainer).not.toContain("category answers");
+
+    const [scoped] = buildEngineViews(modern());
+    expect(scoped.explainer).toContain("unbranded category buyer questions");
+    expect(scoped.stats[1].explainer).toContain("category answers");
+  });
+
+  it("stops the discovered-brand line mislabelling the all-answers denominator", () => {
+    // The live defect: "cited in 11 of 60 category answers", where 60 was every
+    // probe across every engine.
+    const [view] = buildDiscoveredViews(
+      legacy({
+        citationSummary: { totalMeasuredAnswers: 60, answersCited: 11, answersNamed: 0, ghostCitations: 0 },
+        discoveredBrands: [{ name: "NewRival", mentions: 11, perEngine: [] }],
+      }),
+    );
+    expect(view.line).toBe("named in 11 of 60 answers");
+  });
+
+  it("marks a snapshot legacy for an old methodology even when the pipeline matches", () => {
+    // Same maths, variable-sized question set — the totals still aren't comparable.
+    const view = buildSnapshotTrust(insights({ pipelineVersion: SEO_GEO_PIPELINE_VERSION }));
+    expect(view.isLegacy).toBe(true);
+    expect(view.description).toContain("Question counts also differed");
+  });
+
+  it("marks a structurally-unscoped snapshot legacy whatever it is stamped with", () => {
+    const view = buildSnapshotTrust(modern({ perEngine: [unscopedRow()] }));
+    expect(view.isLegacy).toBe(true);
+    expect(view.description).toContain("cover every question we asked");
+  });
+
+  it("does not call a failed capture an earlier measurement setup", () => {
+    // No engines returned anything, so there is no scope claim either way — the
+    // capture strip explains that, and a second wrong story would contradict it.
+    const view = buildSnapshotTrust(modern({ perEngine: [] }));
+    expect(view.isLegacy).toBe(false);
+  });
+
+  it("states the v2 split in words, including the branded count", () => {
+    const line = buildQuestionPlanLine(
+      modern({
+        promptSet: Array.from({ length: 20 }, (_, i) => `q${i}`),
+        categoryPresence: { named: 1, measured: 16, total: 16 },
+        brandPresence: { named: 4, measured: 4, total: 4 },
+      }),
+    );
+    expect(line).toContain("20 questions");
+    expect(line).toContain("16 about your category");
+    expect(line).toContain("4 that name you directly");
+  });
+
+  it("does not claim a fixed plan for a snapshot measured without one", () => {
+    const line = buildQuestionPlanLine(legacy({ promptSet: ["a", "b", "c"] }));
+    expect(line).toContain("3 buyer questions");
+    expect(line).toContain("varied between snapshots");
+    expect(line).not.toContain("We ask 3 questions on every snapshot");
+  });
+
+  it("labels each question group as category or branded", () => {
+    const groups = buildIntentPromptViews(
+      insights({
+        intentPrompts: [
+          { prompt: "best fintech tool for startups", intent: "discovery" },
+          { prompt: "Is Acme legit?", intent: "brand" },
+        ],
+      }),
+    );
+    expect(groups.map((g) => g.basisLabel)).toEqual(["category", "names you"]);
+  });
+});
 
 describe("roster sanity", () => {
   /** Engines named NewRival; the tracked list is somebody else entirely. */

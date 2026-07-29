@@ -9,6 +9,8 @@ import {
   buildEngineViews,
   buildGapViews,
   buildIntentPromptViews,
+  buildMeasurementBasis,
+  buildQuestionPlanLine,
   healRecommendations,
   buildPresence,
   buildPromptViews,
@@ -125,6 +127,12 @@ function AnswerGrid({ view }: { view: AnswerGridView }) {
                   className="border-t border-border pb-1 pt-3 text-left font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
                 >
                   {group.intentLabel}
+                  {/* CD-J1 bounce 2c: which side of the plan this block sits on.
+                      "Comparison" and "Problem" are both category questions, and
+                      nothing said which groups feed the competitor comparison. */}
+                  {group.basisLabel && (
+                    <span className="ml-1.5 normal-case text-muted-3">· {group.basisLabel}</span>
+                  )}
                 </th>
               </tr>
               {group.rows.map((row, i) => (
@@ -515,6 +523,11 @@ export function SeoGeoPanel({
   // Staff-only roster verdict (CD-J1 directive 4); null when there is nothing to
   // say — nobody tracked, or no measured answers to check a roster against.
   const rosterSanity = buildRosterSanity(insights, trackedCompetitors);
+  // What this snapshot's comparison numbers are actually measured over. A legacy
+  // record's figures cover every question; the copy must say so rather than
+  // relabel them "category" (CD-J1 bounce 2b).
+  const basis = buildMeasurementBasis(insights);
+  const questionPlanLine = buildQuestionPlanLine(insights);
 
   // Citation leaderboard split (QA Fix 5): "who's quoted instead of you" vs your own baseline.
   const quotedInstead = citationLeaderboard.filter((r) => !r.isClient);
@@ -529,12 +542,15 @@ export function SeoGeoPanel({
   // and scope: answers cited, out of measured category answers.
   const cited = insights.citationSummary?.answersCited ?? 0;
   const citedOf = insights.citationSummary?.totalMeasuredAnswers ?? 0;
+  // CD-J1 bounce 2b: on a pre-CD-B3 snapshot this total is every probe across every
+  // engine, not a category subset. Say "answers", not "category answers" — the
+  // mislabel is how one page ended up claiming "11 of 60 category answers".
   const clientCitationLine =
     citedOf === 0
-      ? "We couldn't measure any category answers this run, so there is nothing to count citations against yet."
+      ? `We couldn't measure any ${basis.answers} this run, so there is nothing to count citations against yet.`
       : cited > 0
-        ? `Your site was cited as a source in ${cited} of ${citedOf} category answers across every engine we measured.`
-        : `Your site was never cited as a source in the ${citedOf} category answers we measured — earning citations from these domains' territory is what moves the visibility score.`;
+        ? `Your site was cited as a source in ${cited} of ${citedOf} ${basis.answers} across every engine we measured.`
+        : `Your site was never cited as a source in the ${citedOf} ${basis.answers} we measured — earning citations from these domains' territory is what moves the visibility score.`;
 
   return (
     <div className="space-y-6">
@@ -660,11 +676,14 @@ export function SeoGeoPanel({
             contains your name names you by construction, so counting those would
             hand you a lead over every competitor before an engine said anything. */}
         <p className="mb-4 text-xs text-muted-2">
-          Measured on category questions only. How often each brand gets named when we ask the
-          engines {insights.categoryPresence.total} real buyer question
+          {basis.categoryScoped ? "Measured on category questions only. " : ""}
+          How often each brand gets named when we ask the engines{" "}
+          {insights.categoryPresence.total} real buyer question
           {insights.categoryPresence.total === 1 ? "" : "s"} — the{" "}
           {insights.brandPresence.total} question{insights.brandPresence.total === 1 ? "" : "s"} that
-          name you directly are left out, so the comparison is like-for-like.
+          name{insights.brandPresence.total === 1 ? "s" : ""} you directly{" "}
+          {insights.brandPresence.total === 1 ? "is" : "are"} left out, so the comparison is
+          like-for-like.
           {competitorCount === 0 && " No competitors tracked yet · ask us to add some."}
         </p>
         {drift.isStale && (
@@ -745,6 +764,9 @@ export function SeoGeoPanel({
                   {group.intentLabel && (
                     <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
                       {group.intentLabel}
+                      {group.basisLabel && (
+                        <span className="ml-1.5 normal-case text-muted-3">· {group.basisLabel}</span>
+                      )}
                     </p>
                   )}
                   <ul className="space-y-1.5">
@@ -764,9 +786,12 @@ export function SeoGeoPanel({
               ))}
             </div>
           )}
+          {/* CD-J1 bounce 2c: state the split in words. The branded count appeared
+              nowhere on screen before this — the page showed a category total and a
+              grand total and left the client to subtract. */}
           <p className="mt-3 text-[11px] text-muted-2">
-            We ask every engine the same questions on every snapshot so results stay comparable run
-            to run.
+            {questionPlanLine} We ask every engine the same questions on every snapshot so results
+            stay comparable run to run.
           </p>
         </Disclosure>
       </Card>
@@ -828,8 +853,8 @@ export function SeoGeoPanel({
             {/* The bars count citations, the sentence below counts answers — say
                 which is which, so two honest numbers don't read as a contradiction. */}
             <p className="mb-3 text-xs text-muted-2">
-              How many times each of these {quotedInstead.length} domains was cited across the
-              category answers we measured.
+              How many times each of these {quotedInstead.length} domains was cited across the{" "}
+              {basis.answers} we measured.
             </p>
             {/* Every row the data layer returns — the old hard `.slice(0, 8)` against
                 a limit of 12 dropped up to four competitor source domains with no

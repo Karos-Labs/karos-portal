@@ -1467,6 +1467,12 @@ export const CATEGORY_INTENTS: readonly PromptIntent[] = ["discovery", "comparis
 /** Intents whose questions name the client by construction — the control block. */
 export const BRANDED_INTENTS: readonly PromptIntent[] = ["brand", "navigational"];
 
+/** Which side of the plan an intent sits on. One definition, so a display grouping
+ *  can never disagree with the denominators (CD-J1 bounce 2c). */
+export function intentBasis(intent: string): "category" | "branded" {
+  return (BRANDED_INTENTS as readonly string[]).includes(intent) ? "branded" : "category";
+}
+
 const sumQuota = (intents: readonly PromptIntent[]) =>
   intents.reduce((a, i) => a + INTENT_QUOTA[i], 0);
 

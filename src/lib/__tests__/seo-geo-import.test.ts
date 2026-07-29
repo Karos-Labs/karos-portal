@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { SEO_GEO_PIPELINE_VERSION, type SeoGeoInsights } from "@/lib/seo-geo";
+import {
+  SEO_GEO_METHODOLOGY_VERSION,
+  SEO_GEO_PIPELINE_VERSION,
+  type SeoGeoInsights,
+} from "@/lib/seo-geo";
 import { describeProvenance, validateSeoGeoSnapshot } from "@/lib/seo-geo-import";
 import { buildSnapshotTrust } from "@/components/seo-geo/presenter";
 
@@ -23,6 +27,9 @@ function snapshot(over: Record<string, unknown> = {}): Record<string, unknown> {
     clientId: "client-1",
     capturedAt: CAPTURED,
     pipelineVersion: SEO_GEO_PIPELINE_VERSION,
+    // A current bundle carries BOTH stamps — the trust verdict keys on the question
+    // methodology as well as the scoring pipeline (CD-J1 bounce 2a).
+    methodologyVersion: SEO_GEO_METHODOLOGY_VERSION,
     seoScore: 62,
     seoDataCoveragePct: 90,
     geoReadiness: 55,
