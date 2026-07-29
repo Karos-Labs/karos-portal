@@ -155,6 +155,16 @@ export interface CompetitorPlan {
   company: string;
   changes: Array<{ field: string; from: unknown; to: unknown }>;
   data: Row;
+  /**
+   * Set when the proposal asked to CREATE this row but the roster already had
+   * it, so the plan folded the create onto the existing row instead of
+   * refusing. A proposal is written against an export taken days earlier; the
+   * roster moves underneath it. Refusing the whole bundle for a row that merely
+   * arrived early made a stale export a hand-editing job (Albert hit exactly
+   * this on Geektime). Reconciling at plan time is the fix — and it is visible
+   * in the diff, never silent.
+   */
+  reconciled?: { matchedBy: "name" | "url"; matchedCompany: string };
 }
 
 export interface ClientPlan {
@@ -557,23 +567,66 @@ function buildCompetitorPlans(ctx: Ctx, raw: unknown, stored: Row[]): Competitor
         if (typeof data.company !== "string" || typeof data.url !== "string") return;
 
         const nameKey = data.company.trim().toLowerCase();
-        const clash = stored.find(
-          (c) =>
-            String(c.company ?? "").trim().toLowerCase() === nameKey ||
-            (typeof c.url === "string" && c.url.toLowerCase().replace(/^www\./, "") === data.url),
-        );
-        if (clash) {
+        const sameName = (c: Row) => String(c.company ?? "").trim().toLowerCase() === nameKey;
+        const sameUrl = (c: Row) =>
+          typeof c.url === "string" && c.url.toLowerCase().replace(/^www\./, "") === data.url;
+        const matches = stored.filter((c) => sameName(c) || sameUrl(c));
+        // Name is the stronger signal: it is what a human recognises the row by.
+        const matchedByName = matches.length === 1 && sameName(matches[0]!);
+        const dupeInBatch = plans.find((p) => String(p.data.url) === data.url);
+        if (dupeInBatch) return fail(ctx, where, `duplicates ${String(dupeInBatch.data.url)} earlier in this proposal`);
+
+        // The roster moves under a proposal written days earlier, so a "create"
+        // for a row that has since arrived is a stale export, not an error.
+        // Fold it onto the existing row rather than refusing the whole bundle.
+        if (matches.length > 1) {
           return fail(
             ctx,
             where,
-            `duplicates the existing row "${String(clash.company)}" (${String(clash.url ?? "no url")}) — ` +
-              "put it in `update` with that row's id instead",
+            `matches ${matches.length} existing rows (${matches.map((m) => `"${String(m.company)}"`).join(", ")}) — ` +
+              "which one it means is ambiguous, so put it in `update` with the right row's id",
           );
         }
-        const dupeInBatch = plans.find(
-          (p) => p.action === "create" && String(p.data.url) === data.url,
-        );
-        if (dupeInBatch) return fail(ctx, where, `duplicates ${String(dupeInBatch.data.url)} earlier in this proposal`);
+        if (matches.length === 1) {
+          const match = matches[0]!;
+          const id = String(match.id);
+          if (plans.some((p) => p.id === id)) {
+            return fail(
+              ctx,
+              where,
+              `resolves to the existing row "${String(match.company)}", which this proposal already updates — ` +
+                "merge the two entries",
+            );
+          }
+
+          // readFields ran with no `existing`, so the never-blank-a-list rule
+          // was not applied. Now that we know which row this is, apply it.
+          const merged: Row = { ...data };
+          for (const f of ["keyStrengths", "keyWeaknesses"] as const) {
+            const next = merged[f];
+            const prev = match[f];
+            if (Array.isArray(next) && next.length === 0 && Array.isArray(prev) && prev.length > 0) {
+              fail(ctx, `${where}.${f}`, `would empty a list that currently holds ${prev.length} entries — a refresh never blanks data`);
+            }
+          }
+          // `company` was the join key when it matched by name, and renaming a
+          // roster row on the strength of a URL match is not this pass's call.
+          delete merged.company;
+
+          const changes = Object.entries(merged)
+            .filter(([k, v]) => JSON.stringify(match[k]) !== JSON.stringify(v))
+            .map(([field, to]) => ({ field, from: match[field], to }));
+
+          plans.push({
+            action: changes.length ? "update" : "unchanged",
+            id,
+            company: String(match.company ?? id),
+            changes,
+            data: merged,
+            reconciled: { matchedBy: matchedByName ? "name" : "url", matchedCompany: String(match.company ?? id) },
+          });
+          return;
+        }
 
         plans.push({
           action: "create",
@@ -826,6 +879,111 @@ export function validateProposal(proposal: unknown, current: CurrentState): Vali
   };
 }
 
+/* ── Selection ───────────────────────────────────────────────────────── */
+
+export type PlanItemKind = "doc" | "competitor" | "profile" | "palette";
+
+/**
+ * One tickable line in the plan. Staff import a subset — "I should be able to
+ * tick if I don't want to import one of the things" — so every write in the
+ * plan needs a stable identity the browser can hand back.
+ */
+export interface PlanItem {
+  key: string;
+  kind: PlanItemKind;
+  label: string;
+  /**
+   * Items that must be ticked whenever this one is. Surfaced as a
+   * disabled-with-reason tick, so a dependency is visible in the UI rather than
+   * discovered as a refusal after clicking Import.
+   */
+  requires: string[];
+  /** Why `requires` exists, in the words the tick's tooltip uses. */
+  requiresReason: string | null;
+}
+
+export const docItemKey = (docType: string, tier: string) => `doc:${docType}@${tier}`;
+export const competitorItemKey = (c: CompetitorPlan) => (c.id ? `comp:${c.id}` : `comp:new:${String(c.data.url)}`);
+export const PROFILE_ITEM_KEY = "client:profile";
+export const PALETTE_ITEM_KEY = "client:palette";
+
+/** The palette's document twin — the one dependency in the plan. */
+const BRANDING_DOC_KEY = docItemKey("branding-guidelines", "internal");
+
+/**
+ * Every write in the plan, as a tickable item. Unchanged rows are not listed:
+ * there is nothing to opt out of.
+ */
+export function planItems(plan: RefreshPlan): PlanItem[] {
+  const items: PlanItem[] = [];
+
+  for (const d of plan.docs) {
+    if (d.action === "unchanged") continue;
+    items.push({
+      key: docItemKey(d.docType, d.tier),
+      kind: "doc",
+      label: `${d.docType} · ${d.tier}`,
+      requires: [],
+      requiresReason: null,
+    });
+  }
+
+  for (const c of plan.competitors) {
+    if (c.action === "unchanged") continue;
+    items.push({ key: competitorItemKey(c), kind: "competitor", label: c.company, requires: [], requiresReason: null });
+  }
+
+  if (plan.client.profile.length > 0 || plan.client.brandingFill.length > 0) {
+    items.push({ key: PROFILE_ITEM_KEY, kind: "profile", label: "Client profile fills", requires: [], requiresReason: null });
+  }
+
+  if (plan.client.colors) {
+    // The app regenerates the branding document from the palette on save, so
+    // taking the palette WITHOUT its document leaves every agent reading stale
+    // hexes — the same drift the validator refuses at proposal level. Only a
+    // real write counts: if the stored document already matches, it is
+    // "unchanged", absent from this list, and the palette needs nothing.
+    const docIsAWrite = plan.docs.some(
+      (d) => d.action !== "unchanged" && docItemKey(d.docType, d.tier) === BRANDING_DOC_KEY,
+    );
+    items.push({
+      key: PALETTE_ITEM_KEY,
+      kind: "palette",
+      label: "Brand palette",
+      requires: docIsAWrite ? [BRANDING_DOC_KEY] : [],
+      requiresReason: docIsAWrite
+        ? "The app rebuilds the branding document from the palette, so the two must land together — otherwise agents read stale hex codes."
+        : null,
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Re-check a selection server-side. The UI disables the ticks that would break
+ * a dependency, but the selection arrives over the wire, so the rule is
+ * enforced here too — the disabled tick is the explanation, not the guarantee.
+ */
+export function validateSelection(plan: RefreshPlan, selected: ReadonlySet<string>): string[] {
+  const errors: string[] = [];
+  const items = planItems(plan);
+  const byKey = new Map(items.map((i) => [i.key, i]));
+
+  for (const key of selected) {
+    if (!byKey.has(key)) errors.push(`"${key}" is not something this plan can write.`);
+  }
+  for (const item of items) {
+    if (!selected.has(item.key)) continue;
+    for (const dep of item.requires) {
+      if (!selected.has(dep)) {
+        errors.push(`${item.label} needs ${byKey.get(dep)?.label ?? dep} in the same import. ${item.requiresReason ?? ""}`.trim());
+      }
+    }
+  }
+  return errors;
+}
+
 /* ── Write ops ───────────────────────────────────────────────────────── */
 
 /**
@@ -841,12 +999,18 @@ export type WriteOp =
  * Turn an approved plan into the exact writes the CLI has always performed.
  * Pure: same plan + same `now` ⇒ same ops, so the page's dry run and its apply
  * cannot disagree.
+ *
+ * `selected` narrows the plan to the ticked subset (see `planItems`). Omit it —
+ * as the CLI does — to write everything, which is the behaviour this function
+ * has always had.
  */
-export function buildWriteOps(plan: RefreshPlan, now: number): WriteOp[] {
+export function buildWriteOps(plan: RefreshPlan, now: number, selected?: ReadonlySet<string>): WriteOp[] {
   const ops: WriteOp[] = [];
+  const wants = (key: string) => selected === undefined || selected.has(key);
 
   for (const d of plan.docs) {
     if (d.action === "unchanged") continue;
+    if (!wants(docItemKey(d.docType, d.tier))) continue;
     const content = plan.docContent[`${d.docType}@${d.tier}`];
     if (content === undefined) {
       throw new Error(`Internal: missing validated content for ${d.docType}@${d.tier}`);
@@ -872,6 +1036,7 @@ export function buildWriteOps(plan: RefreshPlan, now: number): WriteOp[] {
 
   for (const c of plan.competitors) {
     if (c.action === "unchanged") continue;
+    if (!wants(competitorItemKey(c))) continue;
     if (c.action === "create") {
       ops.push({
         kind: "create",
@@ -905,13 +1070,19 @@ export function buildWriteOps(plan: RefreshPlan, now: number): WriteOp[] {
     }
   }
 
-  if (plan.counts.clientTouched) {
+  // The profile fills and the palette are two independent ticks that share one
+  // `clients` document, so each half is resolved before the patch is built —
+  // taking the palette alone must not drag an unticked profile fill along.
+  const takeProfile = (plan.client.profile.length > 0 || plan.client.brandingFill.length > 0) && wants(PROFILE_ITEM_KEY);
+  const takePalette = plan.client.colors != null && wants(PALETTE_ITEM_KEY);
+
+  if (takeProfile || takePalette) {
     const patch: Row = { updatedAt: now };
-    for (const p of plan.client.profile) patch[p.field] = p.to;
-    if (plan.client.colors || plan.client.brandingFill.length) {
+    if (takeProfile) for (const p of plan.client.profile) patch[p.field] = p.to;
+    if (takePalette || (takeProfile && plan.client.brandingFill.length)) {
       const bg: Row = { ...plan.client.storedBranding };
-      for (const b of plan.client.brandingFill) bg[b.field] = b.to;
-      if (plan.client.colors) {
+      if (takeProfile) for (const b of plan.client.brandingFill) bg[b.field] = b.to;
+      if (takePalette && plan.client.colors) {
         const to = plan.client.colors.to;
         bg.dominantColors = to;
         // Legacy scalars mirror dominantColors[0..3].hex — src/lib/branding.ts:762-765.

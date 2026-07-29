@@ -3,6 +3,8 @@ import "server-only";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
+import { bundleFingerprint } from "@/lib/bundle-fingerprint";
+
 /**
  * The "ops inbox" — a directory of locally-produced update bundles the admin
  * Ops Import page ingests into the live portal.
@@ -71,6 +73,8 @@ export interface InboxBundle {
   counts: { docs: number; competitorUpdates: number; competitorCreates: number } | null;
   /** Whether <inbox>/seo-geo/<clientId>.json exists alongside it. */
   hasSeoGeo: boolean;
+  /** Identity of the file as read, for the already-imported comparison. */
+  fingerprint: string | null;
 }
 
 function countShape(parsed: unknown): InboxBundle["counts"] {
@@ -128,7 +132,15 @@ export async function listInboxBundles(): Promise<InboxBundle[]> {
     names.map(async (file): Promise<InboxBundle> => {
       const full = resolveInInbox(root, file);
       if (!full) {
-        return { file, clientId: null, clientName: null, error: "Refused: path escapes the inbox.", counts: null, hasSeoGeo: false };
+        return {
+          file,
+          clientId: null,
+          clientName: null,
+          error: "Refused: path escapes the inbox.",
+          counts: null,
+          hasSeoGeo: false,
+          fingerprint: null,
+        };
       }
       try {
         const parsed = await readJsonFile(full);
@@ -141,6 +153,7 @@ export async function listInboxBundles(): Promise<InboxBundle[]> {
           error: null,
           counts: countShape(parsed),
           hasSeoGeo: clientId !== null && seoGeoIds.has(clientId),
+          fingerprint: bundleFingerprint(parsed),
         };
       } catch (e) {
         return {
@@ -150,6 +163,7 @@ export async function listInboxBundles(): Promise<InboxBundle[]> {
           error: e instanceof Error ? e.message : "Could not read this file.",
           counts: null,
           hasSeoGeo: false,
+          fingerprint: null,
         };
       }
     }),

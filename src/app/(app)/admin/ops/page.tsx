@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { listClients } from "@/lib/data";
 import { isLabOutputsConfigured, labRepoName } from "@/lib/lab-outputs";
 import { isOpsInboxConfigured, listInboxBundles, opsInboxDir } from "@/lib/ops-inbox";
+import { findPriorImports } from "@/lib/ops-import-history";
 import { Badge, Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { LabImportButton } from "@/components/lab-import";
@@ -32,10 +33,20 @@ export default async function OpsImportPage() {
   if (user.role !== "KAROS_ADMIN") redirect("/dashboard");
 
   const inboxReady = isOpsInboxConfigured();
-  const [bundles, clients] = await Promise.all([
+  const [rawBundles, clients] = await Promise.all([
     inboxReady ? listInboxBundles() : Promise.resolve([]),
     listClients(),
   ]);
+
+  // Which of these have been imported before, read back from the activity log.
+  // Without this an imported bundle is indistinguishable from a never-imported
+  // one, which is what made Albert ask why Karos Labs was not listed.
+  const history = await findPriorImports(
+    rawBundles
+      .filter((b) => b.clientId && b.fingerprint)
+      .map((b) => ({ clientId: b.clientId!, origin: "inbox", ref: b.file, fingerprint: b.fingerprint! })),
+  );
+  const bundles = rawBundles.map((b) => ({ ...b, priorImport: history.get(`inbox:${b.file}`) ?? null }));
 
   const labReady = isLabOutputsConfigured();
   const labClients = clients

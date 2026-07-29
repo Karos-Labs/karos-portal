@@ -12,8 +12,10 @@ import {
   type ApplyOutcome,
   type BundleOrigin,
   type PlanSummary,
+  type PriorImport,
   type UpdateScan,
 } from "@/lib/actions";
+import { groupRefusals, summarizeRefusals } from "@/lib/refusal-copy";
 import { cn } from "@/lib/utils";
 
 /**
@@ -40,6 +42,7 @@ interface SourceRow {
   subtitle: string | null;
   error: string | null;
   hasSeoGeo: boolean;
+  priorImport: PriorImport | null;
 }
 
 /** What the server hands us for the inbox half at page load. */
@@ -50,6 +53,11 @@ export interface InboxBundleRow {
   error: string | null;
   counts: { docs: number; competitorUpdates: number; competitorCreates: number } | null;
   hasSeoGeo: boolean;
+  priorImport: PriorImport | null;
+}
+
+function importedOn(at: number): string {
+  return new Date(at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
 type PlanState =
@@ -66,6 +74,13 @@ type ApplyState =
 
 const keyOf = (r: { origin: BundleOrigin; ref: string }) => `${r.origin}:${r.ref}`;
 
+/** A plan plus the subset the operator ticked — what actually gets imported. */
+interface Pick_ {
+  plan: PlanSummary;
+  selectedKeys: string[];
+  includeSeoGeo: boolean;
+}
+
 function inboxRow(b: InboxBundleRow): SourceRow {
   return {
     origin: "inbox",
@@ -79,13 +94,14 @@ function inboxRow(b: InboxBundleRow): SourceRow {
       : null,
     error: b.error,
     hasSeoGeo: b.hasSeoGeo,
+    priorImport: b.priorImport,
   };
 }
 
 export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
   const [plans, setPlans] = useState<Record<string, PlanState>>({});
   const [applied, setApplied] = useState<Record<string, ApplyState>>({});
-  const [confirming, setConfirming] = useState<PlanSummary | null>(null);
+  const [confirming, setConfirming] = useState<Pick_ | null>(null);
   const [bulk, setBulk] = useState<"idle" | "confirm" | "running">("idle");
   const [scan, setScan] = useState<UpdateScan | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -106,6 +122,7 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
           subtitle: p.ref,
           error: p.error,
           hasSeoGeo: false,
+          priorImport: p.priorImport,
         }),
       ),
     ),
@@ -124,13 +141,14 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
     });
   }
 
-  async function runApply(plan: PlanSummary) {
+  async function runApply({ plan, selectedKeys, includeSeoGeo }: Pick_) {
     const k = keyOf(plan);
     setApplied((a) => ({ ...a, [k]: { status: "running" } }));
     const res = await applyOpsBundleAction({
       origin: plan.origin,
       ref: plan.ref,
-      includeSeoGeo: plan.seoGeo?.ok === true,
+      includeSeoGeo,
+      selectedKeys,
     });
     setApplied((a) => ({
       ...a,
@@ -148,12 +166,21 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
     });
   }
 
-  /** Every bundle that has a rendered, unapplied, unlocked plan. */
-  const readyPlans = rows
+  /**
+   * Every bundle with a rendered, unapplied, unlocked plan. "Import all" takes
+   * each in full — a per-bundle subset is a per-bundle decision, so anything
+   * ticked down individually is imported from its own card.
+   */
+  const readyPlans: Pick_[] = rows
     .map((r) => planFor(keyOf(r)))
     .filter((s): s is { status: "ready"; plan: PlanSummary } => s.status === "ready")
     .map((s) => s.plan)
-    .filter((p) => !p.lockedReason && p.counts.totalWrites > 0 && applyFor(keyOf(p)).status === "idle");
+    .filter((p) => !p.lockedReason && p.counts.totalWrites > 0 && applyFor(keyOf(p)).status === "idle")
+    .map((plan) => ({
+      plan,
+      selectedKeys: plan.items.map((i) => i.key),
+      includeSeoGeo: plan.seoGeo?.ok === true,
+    }));
 
   return (
     <div className="space-y-4">
@@ -202,7 +229,7 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
             plan={planFor(keyOf(row))}
             apply={applyFor(keyOf(row))}
             onPlan={() => loadPlan(row)}
-            onImport={(p) => setConfirming(p)}
+            onImport={(pick) => setConfirming(pick)}
           />
         ))
       )}
@@ -212,12 +239,12 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
         open={confirming !== null}
         onClose={() => setConfirming(null)}
         title="Import into the live portal?"
-        description={confirming ? `${confirming.clientName} · ${confirming.label}` : undefined}
+        description={confirming ? `${confirming.plan.clientName} · ${confirming.plan.label}` : undefined}
         className="max-w-lg"
       >
         {confirming && (
           <div className="mt-4 space-y-4">
-            <WriteManifest plan={confirming} />
+            <WriteManifest pick={confirming} />
             <div className="flex justify-end gap-2">
               <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                 Cancel
@@ -225,13 +252,14 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
               <Button
                 size="sm"
                 onClick={() => {
-                  const plan = confirming;
+                  const pick = confirming;
                   setConfirming(null);
-                  startTransition(() => void runApply(plan));
+                  startTransition(() => void runApply(pick));
                 }}
               >
-                <Icon name="Download" className="h-3.5 w-3.5" /> Write {confirming.counts.totalWrites} change
-                {confirming.counts.totalWrites === 1 ? "" : "s"}
+                <Icon name="Download" className="h-3.5 w-3.5" /> Write{" "}
+                {confirming.selectedKeys.length + (confirming.includeSeoGeo ? 1 : 0)} change
+                {confirming.selectedKeys.length + (confirming.includeSeoGeo ? 1 : 0) === 1 ? "" : "s"}
               </Button>
             </div>
           </div>
@@ -248,10 +276,10 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
       >
         <div className="mt-4 space-y-4">
           <div className="max-h-[320px] space-y-3 overflow-y-auto">
-            {readyPlans.map((p) => (
-              <div key={keyOf(p)} className="rounded-md border border-border px-3 py-2.5">
-                <p className="text-sm font-medium">{p.clientName}</p>
-                <WriteManifest plan={p} compact />
+            {readyPlans.map((pick) => (
+              <div key={keyOf(pick.plan)} className="rounded-md border border-border px-3 py-2.5">
+                <p className="text-sm font-medium">{pick.plan.clientName}</p>
+                <WriteManifest pick={pick} compact />
               </div>
             ))}
           </div>
@@ -348,17 +376,40 @@ function ScanSummary({ scan }: { scan: UpdateScan }) {
   );
 }
 
-/** The confirm dialog's manifest: what lands, in nouns, before anything is written. */
-function WriteManifest({ plan, compact }: { plan: PlanSummary; compact?: boolean }) {
+/**
+ * The confirm dialog's manifest: what lands, in nouns, before anything is
+ * written — and only what is TICKED. A confirm that listed the whole bundle
+ * after the operator narrowed it would be worse than no confirm at all.
+ */
+function WriteManifest({ pick, compact }: { pick: Pick_; compact?: boolean }) {
+  const { plan, selectedKeys, includeSeoGeo } = pick;
+  const on = new Set(selectedKeys);
   const lines: string[] = [];
-  const docs = plan.docs.filter((d) => d.action !== "unchanged");
-  for (const d of docs) lines.push(`${d.action === "create" ? "Create" : "Update"} document ${d.label}`);
-  const comps = plan.competitors.filter((c) => c.action !== "unchanged");
-  for (const c of comps) lines.push(`${c.action === "create" ? "Add" : "Update"} competitor ${c.company}`);
-  for (const f of plan.profileFills) lines.push(`Fill client.${f.field}`);
-  for (const f of plan.brandingFills) lines.push(`Fill brandingGuidelines.${f}`);
-  if (plan.colors) lines.push(`Replace brand palette (${plan.colors.to.join(", ")})`);
-  if (plan.seoGeo?.ok) lines.push(`Import SEO/GEO snapshot captured ${plan.seoGeo.capturedOn}`);
+
+  for (const d of plan.docs) {
+    if (d.action === "unchanged" || !d.key || !on.has(d.key)) continue;
+    lines.push(`${d.action === "create" ? "Create" : "Update"} document ${d.label}`);
+  }
+  for (const c of plan.competitors) {
+    if (c.action === "unchanged" || !c.key || !on.has(c.key)) continue;
+    lines.push(
+      c.reconciled
+        ? `Update existing competitor ${c.company} (matched by ${c.reconciled.matchedBy})`
+        : `${c.action === "create" ? "Add" : "Update"} competitor ${c.company}`,
+    );
+  }
+  const profileKey = plan.items.find((i) => i.kind === "profile")?.key;
+  if (profileKey && on.has(profileKey)) {
+    for (const f of plan.profileFills) lines.push(`Fill client.${f.field}`);
+    for (const f of plan.brandingFills) lines.push(`Fill brandingGuidelines.${f}`);
+  }
+  const paletteKey = plan.items.find((i) => i.kind === "palette")?.key;
+  if (paletteKey && on.has(paletteKey) && plan.colors) {
+    lines.push(`Replace brand palette (${plan.colors.to.join(", ")})`);
+  }
+  if (includeSeoGeo && plan.seoGeo?.ok) {
+    lines.push(`Import SEO/GEO snapshot captured ${plan.seoGeo.capturedOn}`);
+  }
 
   return (
     <div className={cn("space-y-1.5", compact && "mt-1.5")}>
@@ -398,28 +449,52 @@ function BundleCard({
   plan: PlanState;
   apply: ApplyState;
   onPlan: () => void;
-  onImport: (plan: PlanSummary) => void;
+  onImport: (pick: Pick_) => void;
 }) {
+  // An already-imported bundle stays on the page as a quiet card rather than
+  // looking like one nobody has touched — that ambiguity is what made Albert
+  // ask why Karos Labs was missing. Still re-openable: a file that changed
+  // since says so, and "Review again" is always available.
+  const prior = row.priorImport;
+  const settled = prior !== null && !prior.changedSince && plan.status === "idle" && apply.status === "idle";
+
   return (
-    <Card className="p-5">
+    <Card className={cn("p-5", settled && "opacity-70")}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <CardTitle>{row.clientName ?? row.label}</CardTitle>
           <p className="mt-1 font-mono text-xs text-muted-2">{row.label}</p>
           {row.subtitle && <p className="mt-1.5 truncate text-xs text-muted">{row.subtitle}</p>}
+          {prior && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+              <Icon name="Check" className="h-3.5 w-3.5 shrink-0 text-success" />
+              Imported {importedOn(prior.importedAt)} by {prior.actor}
+              {prior.partial && " (selected items only)"}
+              {prior.changedSince && (
+                <span className="text-warning">· the file has changed since — import it again</span>
+              )}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <OriginBadge origin={row.origin} />
           {row.hasSeoGeo && <Badge tone="info">seo/geo</Badge>}
           {apply.status === "done" && <Badge tone="success">imported</Badge>}
+          {settled && <Badge tone="success">applied</Badge>}
+          {prior?.changedSince && plan.status === "idle" && <Badge tone="warning">changed</Badge>}
           {plan.status !== "ready" && apply.status !== "done" && (
-            <Button size="sm" variant="subtle" disabled={plan.status === "loading" || !!row.error} onClick={onPlan}>
+            <Button
+              size="sm"
+              variant={settled ? "ghost" : "subtle"}
+              disabled={plan.status === "loading" || !!row.error}
+              onClick={onPlan}
+            >
               {plan.status === "loading" ? (
                 <Spinner className="h-3.5 w-3.5" />
               ) : (
                 <Icon name="Eye" className="h-3.5 w-3.5" />
               )}
-              Review changes
+              {prior ? "Review again" : "Review changes"}
             </Button>
           )}
         </div>
@@ -432,7 +507,12 @@ function BundleCard({
       )}
 
       {plan.status === "rejected" && <RejectionList errors={plan.errors} />}
-      {plan.status === "ready" && <PlanCard plan={plan.plan} onImport={() => onImport(plan.plan)} />}
+      {plan.status === "ready" && (
+        <PlanCard
+          plan={plan.plan}
+          onImport={(selectedKeys, includeSeoGeo) => onImport({ plan: plan.plan, selectedKeys, includeSeoGeo })}
+        />
+      )}
       {apply.status === "running" && (
         <p className="mt-3 flex items-center gap-2 text-xs text-muted">
           <Spinner className="h-3.5 w-3.5" /> Writing…
@@ -444,33 +524,160 @@ function BundleCard({
   );
 }
 
+/**
+ * A refusal, in sentences.
+ *
+ * The validator's own strings are precise and unreadable — Albert hit
+ * `competitors.create[0]: duplicates the existing row …` and could not tell
+ * whether he or the tool was at fault. Grouped copy answers what happened and
+ * what to do; the exact lines stay one disclosure away, never discarded.
+ */
 function RejectionList({ errors }: { errors: string[] }) {
+  const groups = groupRefusals(errors);
   return (
     <div className="mt-3 rounded-md border border-danger/30 bg-danger/10 px-3.5 py-3">
       <p className="flex items-center gap-1.5 text-sm font-medium text-danger">
         <Icon name="TriangleAlert" className="h-4 w-4 shrink-0" />
-        Refused — {errors.length} problem{errors.length === 1 ? "" : "s"}. Nothing was written.
+        {summarizeRefusals(groups)}
       </p>
-      <ul className="mt-2 space-y-1">
-        {errors.map((e, i) => (
-          <li key={i} className="font-mono text-[11px] leading-relaxed text-danger/90">
-            {e}
-          </li>
+      <div className="mt-2.5 space-y-2.5">
+        {groups.map((g, i) => (
+          <div key={i}>
+            <p className="text-xs font-medium text-foreground">{g.title}</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{g.advice}</p>
+            <details className="mt-1">
+              <summary className="cursor-pointer text-[11px] text-muted-2 hover:text-muted">
+                Technical detail ({g.details.length})
+              </summary>
+              <ul className="mt-1 space-y-1 border-l border-danger/30 pl-2.5">
+                {g.details.map((d, j) => (
+                  <li key={j} className="font-mono text-[10px] leading-relaxed text-danger/90">
+                    {d}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </div>
         ))}
-      </ul>
+      </div>
     </div>
   );
 }
 
-/** The dry-run diff. Rendered before any write, every time. */
-function PlanCard({ plan, onImport }: { plan: PlanSummary; onImport: () => void }) {
+/** One tickable line. Disabled ticks explain themselves rather than just refusing. */
+function Tick({
+  checked,
+  disabled,
+  reason,
+  onChange,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  reason?: string | null;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <input
+      type="checkbox"
+      className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-neon disabled:opacity-40"
+      checked={checked}
+      disabled={disabled}
+      title={disabled ? reason ?? undefined : undefined}
+      onChange={(e) => onChange(e.target.checked)}
+    />
+  );
+}
+
+/**
+ * The dry-run diff, with a tick per write.
+ *
+ * Everything starts ticked — the common case is importing the whole bundle —
+ * and untickng a line simply removes it from the write. The one exception is a
+ * dependency: the palette cannot go in without its branding document, so that
+ * tick disables itself with a reason instead of letting the click through and
+ * failing afterwards.
+ */
+function PlanCard({
+  plan,
+  onImport,
+}: {
+  plan: PlanSummary;
+  onImport: (selectedKeys: string[], includeSeoGeo: boolean) => void;
+}) {
+  const allKeys = plan.items.map((i) => i.key);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(allKeys));
+  const [withSeoGeo, setWithSeoGeo] = useState(plan.seoGeo?.ok === true);
+
+  // Read the keys off the plan rather than importing the core's constants — the
+  // core is the validator, and a client bundle has no business carrying it.
+  const PROFILE_KEY = plan.items.find((i) => i.kind === "profile")?.key ?? "client:profile";
+  const PALETTE_KEY = plan.items.find((i) => i.kind === "palette")?.key ?? "client:palette";
+
+  /** Keys whose dependency is currently unticked — disabled, with the reason. */
+  const blocked = new Map<string, string>();
+  for (const item of plan.items) {
+    const missing = item.requires.filter((r) => !selected.has(r));
+    if (missing.length) blocked.set(item.key, item.requiresReason ?? "Depends on another item in this plan.");
+  }
+
+  function toggle(key: string, next: boolean) {
+    setSelected((prev) => {
+      const s = new Set(prev);
+      if (next) {
+        s.add(key);
+        // Ticking a dependent pulls its requirements in with it.
+        for (const dep of plan.items.find((i) => i.key === key)?.requires ?? []) s.add(dep);
+      } else {
+        s.delete(key);
+        // Unticking a requirement drops whatever depended on it, so the
+        // selection never sits in a state the server would refuse.
+        for (const item of plan.items) if (item.requires.includes(key)) s.delete(item.key);
+      }
+      return s;
+    });
+  }
+
+  const isOn = (key: string | null) => key !== null && selected.has(key);
   const changedDocs = plan.docs.filter((d) => d.action !== "unchanged");
   const changedComps = plan.competitors.filter((c) => c.action !== "unchanged");
   const unchanged =
     plan.docs.length - changedDocs.length + (plan.competitors.length - changedComps.length);
 
+  const pickedCount = selected.size + (withSeoGeo ? 1 : 0);
+  const totalCount = allKeys.length + (plan.seoGeo?.ok ? 1 : 0);
+
   return (
     <div className="mt-4 space-y-4 border-t border-border pt-4">
+      {totalCount > 1 && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[11px] text-muted-2">
+            {pickedCount} of {totalCount} selected — untick anything you do not want.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="text-[11px] text-muted underline-offset-2 hover:underline"
+              onClick={() => {
+                setSelected(new Set(allKeys));
+                setWithSeoGeo(plan.seoGeo?.ok === true);
+              }}
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              className="text-[11px] text-muted underline-offset-2 hover:underline"
+              onClick={() => {
+                setSelected(new Set());
+                setWithSeoGeo(false);
+              }}
+            >
+              Select none
+            </button>
+          </div>
+        </div>
+      )}
+
       <Section title="Documents" empty={changedDocs.length === 0 ? "No document changes." : null}>
         {changedDocs.map((d) => (
           <Row
@@ -480,6 +687,8 @@ function PlanCard({ plan, onImport }: { plan: PlanSummary; onImport: () => void 
             label={d.label}
             detail={d.detail}
             flag={d.verifyTokens > 0 ? `${d.verifyTokens} [VERIFY]` : null}
+            checked={isOn(d.key)}
+            onToggle={d.key ? (v) => toggle(d.key!, v) : undefined}
           />
         ))}
       </Section>
@@ -489,9 +698,17 @@ function PlanCard({ plan, onImport }: { plan: PlanSummary; onImport: () => void 
           <Row
             key={c.company}
             tone={c.action === "create" ? "success" : "info"}
-            tag={c.action}
+            tag={c.reconciled ? "reconciled" : c.action}
             label={c.company}
             detail={c.fields.join(", ")}
+            // Say it, rather than quietly folding a create into an update.
+            note={
+              c.reconciled
+                ? `Already in the roster (matched by ${c.reconciled.matchedBy}) — will update the existing row.`
+                : null
+            }
+            checked={isOn(c.key)}
+            onToggle={c.key ? (v) => toggle(c.key!, v) : undefined}
           />
         ))}
       </Section>
@@ -504,18 +721,26 @@ function PlanCard({ plan, onImport }: { plan: PlanSummary; onImport: () => void 
             : null
         }
       >
-        {plan.profileFills.map((f) => (
-          <Row key={f.field} tone="success" tag="fill" label={f.field} detail={f.to} />
-        ))}
-        {plan.brandingFills.map((f) => (
-          <Row key={f} tone="success" tag="fill" label={`brandingGuidelines.${f}`} detail="" />
-        ))}
+        {(plan.profileFills.length > 0 || plan.brandingFills.length > 0) && (
+          <Row
+            tone="success"
+            tag="fill"
+            label="Profile fills"
+            detail={[...plan.profileFills.map((f) => f.field), ...plan.brandingFills.map((f) => `brandingGuidelines.${f}`)].join(", ")}
+            checked={isOn(PROFILE_KEY)}
+            onToggle={(v) => toggle(PROFILE_KEY, v)}
+          />
+        )}
         {plan.colors && (
           <Row
             tone="warning"
             tag="palette"
             label={plan.colors.from.join(" · ") || "(none)"}
             detail={`→ ${plan.colors.to.join(" · ")}`}
+            checked={isOn(PALETTE_KEY)}
+            onToggle={(v) => toggle(PALETTE_KEY, v)}
+            disabled={blocked.has(PALETTE_KEY)}
+            disabledReason={blocked.get(PALETTE_KEY) ?? null}
           />
         )}
       </Section>
@@ -535,7 +760,13 @@ function PlanCard({ plan, onImport }: { plan: PlanSummary; onImport: () => void 
         </div>
       )}
 
-      {plan.seoGeo && <SeoGeoCard seoGeo={plan.seoGeo} />}
+      {plan.seoGeo && (
+        <SeoGeoCard
+          seoGeo={plan.seoGeo}
+          checked={withSeoGeo}
+          onToggle={plan.seoGeo.ok ? setWithSeoGeo : undefined}
+        />
+      )}
 
       {plan.warnings.length > 0 && (
         <div className="rounded-md border border-warning/30 bg-warning/10 px-3.5 py-2.5">
@@ -562,16 +793,16 @@ function PlanCard({ plan, onImport }: { plan: PlanSummary; onImport: () => void 
         <p className="rounded-md border border-warning/30 bg-warning/10 px-3.5 py-2.5 text-xs text-warning">
           {plan.lockedReason}
         </p>
-      ) : plan.counts.totalWrites === 0 ? (
+      ) : plan.counts.totalWrites === 0 && !plan.seoGeo?.ok ? (
         <p className="text-xs text-muted">Nothing to write — the bundle matches what is already stored.</p>
       ) : (
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-muted">
-            {plan.counts.docWrites} document write{plan.counts.docWrites === 1 ? "" : "s"} ·{" "}
-            {plan.counts.compWrites} competitor write{plan.counts.compWrites === 1 ? "" : "s"} ·{" "}
-            {plan.counts.clientTouched ? 1 : 0} client update
+            {pickedCount === 0
+              ? "Nothing selected."
+              : `Will write ${pickedCount} of ${totalCount} item${totalCount === 1 ? "" : "s"}.`}
           </p>
-          <Button size="sm" onClick={onImport}>
+          <Button size="sm" disabled={pickedCount === 0} onClick={() => onImport([...selected], withSeoGeo)}>
             <Icon name="Download" className="h-3.5 w-3.5" /> Import
           </Button>
         </div>
@@ -585,7 +816,15 @@ function PlanCard({ plan, onImport }: { plan: PlanSummary; onImport: () => void 
  * normally machine-measured — importing one by hand is the exception, and the
  * page says so rather than letting it blend in with a pipeline capture.
  */
-function SeoGeoCard({ seoGeo }: { seoGeo: NonNullable<PlanSummary["seoGeo"]> }) {
+function SeoGeoCard({
+  seoGeo,
+  checked,
+  onToggle,
+}: {
+  seoGeo: NonNullable<PlanSummary["seoGeo"]>;
+  checked?: boolean;
+  onToggle?: (next: boolean) => void;
+}) {
   if (!seoGeo.ok) {
     return (
       <div className="rounded-md border border-danger/30 bg-danger/10 px-3.5 py-3">
@@ -601,8 +840,9 @@ function SeoGeoCard({ seoGeo }: { seoGeo: NonNullable<PlanSummary["seoGeo"]> }) 
     );
   }
   return (
-    <div className="rounded-md border border-border bg-surface-2 px-3.5 py-3">
+    <div className={cn("rounded-md border border-border bg-surface-2 px-3.5 py-3", onToggle && !checked && "opacity-50")}>
       <p className="flex items-center gap-1.5 text-xs font-medium">
+        {onToggle && <Tick checked={!!checked} onChange={onToggle} />}
         <Icon name="Search" className="h-3.5 w-3.5 shrink-0 text-muted" />
         SEO/GEO snapshot · measured {seoGeo.capturedOn}
       </p>
@@ -678,19 +918,45 @@ function Row({
   label,
   detail,
   flag,
+  note,
+  checked,
+  onToggle,
+  disabled,
+  disabledReason,
 }: {
   tone: "success" | "info" | "warning";
   tag: string;
   label: string;
   detail: string;
   flag?: string | null;
+  note?: string | null;
+  checked?: boolean;
+  onToggle?: (next: boolean) => void;
+  disabled?: boolean;
+  disabledReason?: string | null;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2">
-      <Badge tone={tone}>{tag}</Badge>
-      <span className="text-xs font-medium">{label}</span>
-      {detail && <span className="text-[11px] text-muted-2">{detail}</span>}
-      {flag && <Badge tone="warning">{flag}</Badge>}
+    <div
+      className={cn(
+        "flex gap-2 rounded-md border border-border px-3 py-2",
+        onToggle && !checked && "opacity-50",
+      )}
+    >
+      {onToggle && (
+        <Tick checked={!!checked} disabled={disabled} reason={disabledReason} onChange={onToggle} />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={tone}>{tag}</Badge>
+          <span className="text-xs font-medium">{label}</span>
+          {detail && <span className="text-[11px] text-muted-2">{detail}</span>}
+          {flag && <Badge tone="warning">{flag}</Badge>}
+        </div>
+        {note && <p className="mt-1 text-[11px] text-muted">{note}</p>}
+        {disabled && disabledReason && (
+          <p className="mt-1 text-[11px] text-warning">{disabledReason}</p>
+        )}
+      </div>
     </div>
   );
 }

@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildWriteOps,
+  docItemKey,
+  planItems,
   validateProposal,
+  validateSelection,
+  PALETTE_ITEM_KEY,
+  PROFILE_ITEM_KEY,
   type CurrentState,
   type Row,
 } from "@/lib/refresh-apply-core";
@@ -254,15 +259,100 @@ describe("competitor fences", () => {
     )).toContain("never blanks a field");
   });
 
-  it("refuses a create that duplicates an existing row by name or by domain", () => {
-    expect(refuse(
-      proposal({ competitors: { create: [{ company: "Rival Inc", url: "elsewhere.com" }] } }),
-      current({ competitors: roster }),
-    )).toContain("duplicates the existing row");
-    expect(refuse(
-      proposal({ competitors: { create: [{ company: "Different Name", url: "https://www.rival.com/about" }] } }),
-      current({ competitors: roster }),
-    )).toContain("duplicates the existing row");
+  /* A proposal is written against an export taken days earlier, so a "create"
+     for a row that has since landed is a stale export — not an error. Refusing
+     the whole bundle over it turned a routine refresh into a hand-editing job
+     (Albert hit this on Geektime). These pin the reconciliation. */
+  describe("reconciling a create onto a row that already exists", () => {
+    it("folds a name match onto the existing row instead of refusing", () => {
+      const plan = accept(
+        proposal({ competitors: { create: [{ company: "Rival Inc", url: "elsewhere.com", positioning: "budget tier" }] } }),
+        current({ competitors: roster }),
+      );
+      expect(plan.competitors[0]).toMatchObject({
+        action: "update",
+        id: "c1",
+        reconciled: { matchedBy: "name", matchedCompany: "Rival Inc" },
+      });
+      // No new row: the roster count is unchanged.
+      expect(plan.competitors.filter((c) => c.action === "create")).toHaveLength(0);
+    });
+
+    it("folds a domain match on too, even when the name differs", () => {
+      const plan = accept(
+        proposal({
+          competitors: {
+            create: [{ company: "Rival (rebranded)", url: "https://www.rival.com/about", scale: "200 staff" }],
+          },
+        }),
+        current({ competitors: roster }),
+      );
+      expect(plan.competitors[0]).toMatchObject({ action: "update", id: "c1", reconciled: { matchedBy: "url" } });
+      expect(plan.competitors[0].changes).toEqual([{ field: "scale", from: undefined, to: "200 staff" }]);
+    });
+
+    // Renaming a roster row on the strength of a URL match is not this pass's
+    // call, and on a name match the company is what matched — either way it is
+    // the join key, not a field to write.
+    it("never writes company through a reconciled create", () => {
+      const plan = accept(
+        proposal({ competitors: { create: [{ company: "Rival (rebranded)", url: "rival.com" }] } }),
+        current({ competitors: roster }),
+      );
+      expect(plan.competitors[0].data).not.toHaveProperty("company");
+      expect(plan.competitors[0].changes.map((c) => c.field)).not.toContain("company");
+    });
+
+    it("still applies the never-blank-a-list rule once the row is known", () => {
+      expect(refuse(
+        proposal({ competitors: { create: [{ company: "Rival Inc", url: "rival.com", keyStrengths: [] }] } }),
+        current({ competitors: roster }),
+      )).toContain("never blanks data");
+    });
+
+    it("reports no change when the reconciled row already says the same thing", () => {
+      const plan = accept(
+        proposal({ competitors: { create: [{ company: "Rival Inc", url: "rival.com" }] } }),
+        current({ competitors: roster }),
+      );
+      expect(plan.competitors[0].action).toBe("unchanged");
+      expect(plan.counts.compWrites).toBe(0);
+    });
+
+    // Reconciliation is for the unambiguous case. Two candidates is a genuine
+    // question about intent, and guessing would silently merge the wrong row.
+    it("refuses when the create matches two different rows", () => {
+      const twoWay: Row[] = [
+        { id: "c1", company: "Rival Inc", url: "rival.com" },
+        { id: "c2", company: "Other Co", url: "elsewhere.com" },
+      ];
+      expect(refuse(
+        proposal({ competitors: { create: [{ company: "Rival Inc", url: "elsewhere.com" }] } }),
+        current({ competitors: twoWay }),
+      )).toContain("ambiguous");
+    });
+
+    it("refuses when the create resolves onto a row the same proposal updates", () => {
+      expect(refuse(
+        proposal({
+          competitors: {
+            update: [{ id: "c1", positioning: "one thing" }],
+            create: [{ company: "Rival Inc", url: "rival.com", positioning: "another thing" }],
+          },
+        }),
+        current({ competitors: roster }),
+      )).toContain("already updates");
+    });
+
+    it("writes a reconciled create as a merge on the stored id, never as a new row", () => {
+      const plan = accept(
+        proposal({ competitors: { create: [{ company: "Rival Inc", url: "rival.com", scale: "200 staff" }] } }),
+        current({ competitors: roster }),
+      );
+      const ops = buildWriteOps(plan, 42);
+      expect(ops).toHaveLength(1);
+      expect(ops[0]).toMatchObject({ kind: "merge", collection: "clientCompetitors", id: "c1" });
+    });
   });
 
   it("refuses a new row without a working domain", () => {
@@ -469,5 +559,142 @@ describe("buildWriteOps", () => {
   it("produces nothing at all when the proposal matches what is stored", () => {
     const plan = accept(proposal({}));
     expect(buildWriteOps(plan, 42)).toEqual([]);
+  });
+});
+
+/* ── Selective import ────────────────────────────────────────────────── */
+
+describe("selective import", () => {
+  /** A palette change always ships with its branding document (the validator insists). */
+  const paletteProposal = () =>
+    proposal({
+      docs: [
+        { docType: "branding-guidelines", tier: "internal", content: docBody({ extra: "\n\n#111111 #222222 #333333" }) },
+        { docType: "brand-voice", tier: "internal", content: docBody() },
+      ],
+      competitors: { create: [{ company: "New Co", url: "new-co.io" }] },
+      client: {
+        profile: { website: "https://acme.test" },
+        brandingGuidelines: {
+          dominantColors: [
+            { hex: "#111111", dominanceRank: 1, usagePct: 50 },
+            { hex: "#222222", dominanceRank: 2, usagePct: 30 },
+            { hex: "#333333", dominanceRank: 3, usagePct: 20 },
+          ],
+        },
+      },
+    });
+
+  const BRANDING_DOC = docItemKey("branding-guidelines", "internal");
+  const VOICE_DOC = docItemKey("brand-voice", "internal");
+
+  it("lists one tickable item per write and nothing for unchanged rows", () => {
+    const body = docBody();
+    const plan = accept(
+      proposal({
+        docs: [
+          { docType: "brand-voice", tier: "internal", content: body },
+          { docType: "market-strategy", tier: "internal", content: docBody({ pad: 70 }) },
+        ],
+      }),
+      current({ docs: new Map([["brand-voice@internal", { id: "d1", content: body, version: 2 }]]) }),
+    );
+    expect(planItems(plan).map((i) => i.key)).toEqual([docItemKey("market-strategy", "internal")]);
+  });
+
+  it("writes only the ticked subset", () => {
+    const plan = accept(paletteProposal());
+    const ops = buildWriteOps(plan, 42, new Set([VOICE_DOC]));
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ collection: "clientContextDocs", data: { docType: "brand-voice" } });
+  });
+
+  it("omitting the selection writes everything, as the CLI always has", () => {
+    const plan = accept(paletteProposal());
+    expect(buildWriteOps(plan, 42, undefined)).toEqual(buildWriteOps(plan, 42));
+  });
+
+  it("drops an unticked competitor without touching the others", () => {
+    const roster: Row[] = [{ id: "c1", company: "Rival Inc", url: "rival.com" }];
+    const plan = accept(
+      proposal({
+        competitors: {
+          update: [{ id: "c1", positioning: "budget tier" }],
+          create: [{ company: "New Co", url: "new-co.io" }],
+        },
+      }),
+      current({ competitors: roster }),
+    );
+    const ops = buildWriteOps(plan, 42, new Set(["comp:c1"]));
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ kind: "merge", id: "c1" });
+  });
+
+  // Profile fills and the palette share one `clients` document but are two
+  // independent ticks, so taking one must not drag the other along.
+  it("keeps profile fills and the palette independent inside the shared client doc", () => {
+    const plan = accept(paletteProposal());
+
+    const paletteOnly = buildWriteOps(plan, 42, new Set([PALETTE_ITEM_KEY, BRANDING_DOC]))
+      .find((o) => o.collection === "clients");
+    expect(paletteOnly!.data).not.toHaveProperty("website");
+    expect(brandingPatch([paletteOnly!])).toMatchObject({ primaryAccent: "#111111" });
+
+    const profileOnly = buildWriteOps(plan, 42, new Set([PROFILE_ITEM_KEY]))
+      .find((o) => o.collection === "clients");
+    expect(profileOnly!.data).toMatchObject({ website: "https://acme.test" });
+    expect(profileOnly!.data).not.toHaveProperty("brandingGuidelines");
+  });
+
+  it("writes no client document when neither client item is ticked", () => {
+    const plan = accept(paletteProposal());
+    expect(buildWriteOps(plan, 42, new Set([VOICE_DOC])).some((o) => o.collection === "clients")).toBe(false);
+  });
+
+  describe("the palette's dependency on its document", () => {
+    it("declares it when the branding document is itself a write", () => {
+      const item = planItems(accept(paletteProposal())).find((i) => i.key === PALETTE_ITEM_KEY);
+      expect(item?.requires).toEqual([BRANDING_DOC]);
+      expect(item?.requiresReason).toContain("stale hex");
+    });
+
+    it("refuses a selection that takes the palette without its document", () => {
+      const plan = accept(paletteProposal());
+      const errors = validateSelection(plan, new Set([PALETTE_ITEM_KEY]));
+      expect(errors.join(" ")).toContain("Brand palette needs");
+    });
+
+    it("accepts the pair together", () => {
+      const plan = accept(paletteProposal());
+      expect(validateSelection(plan, new Set([PALETTE_ITEM_KEY, BRANDING_DOC]))).toEqual([]);
+    });
+
+    // No dependency when the stored document already states the palette: it is
+    // "unchanged", so there is no document write to keep in step with.
+    it("declares no dependency when the branding document needs no rewrite", () => {
+      const brandingBody = docBody({ extra: "\n\n#111111 #222222 #333333" });
+      const plan = accept(
+        proposal({
+          docs: [{ docType: "branding-guidelines", tier: "internal", content: brandingBody }],
+          client: {
+            brandingGuidelines: {
+              dominantColors: [
+                { hex: "#111111", dominanceRank: 1, usagePct: 50 },
+                { hex: "#222222", dominanceRank: 2, usagePct: 30 },
+                { hex: "#333333", dominanceRank: 3, usagePct: 20 },
+              ],
+            },
+          },
+        }),
+        current({ docs: new Map([["branding-guidelines@internal", { id: "d1", content: brandingBody, version: 4 }]]) }),
+      );
+      expect(planItems(plan).find((i) => i.key === PALETTE_ITEM_KEY)?.requires).toEqual([]);
+      expect(validateSelection(plan, new Set([PALETTE_ITEM_KEY]))).toEqual([]);
+    });
+  });
+
+  it("refuses a key that is not in the plan at all", () => {
+    const plan = accept(paletteProposal());
+    expect(validateSelection(plan, new Set(["doc:client-guidelines@client"])).join(" ")).toContain("not something this plan can write");
   });
 });
