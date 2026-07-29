@@ -205,7 +205,7 @@ are tracked in the CD table at the bottom.
 | CD-H7 | WORKSPACE/SHELL | audit | RESOLVED | a) container-query toolbar (deviation flagged) b) one badgeLabel c) one-clock calendar d) Landing Builder blurb |
 | CD-H8 | AGENTS | audit | RESOLVED | Legacy live-schedule detail page: run gesture, pace, deliverables |
 | CD-I1 | AGENTS | 5 | RESOLVED | Per-archetype agent detail pages (template-calendar / clip-maker / daily-finder) + staff parity. Landed after the Tomer merge: archetypes 2 and 3 in 380d317, projection+parity pins in bdc4719, roster/detail parity merged in 41453dc |
-| CD-J1 | SEO | 6 | OPEN | SEO/GEO v2: standardized question logic, % scores + popup, category-only comparisons, roster sanity, plain recommendations, approve flow surfaced |
+| CD-J1 | SEO | 6 | RESOLVED | SEO/GEO v2: standardized question logic, % scores + popup, category-only comparisons, roster sanity, plain recommendations, approve flow surfaced |
 | CD-G7 | — | end-loop | OPEN | Fleet COMPLETION refresh: one team per client, keep existing data, internal Claude agents, --apply-gated Firestore writes; runs after CD-G1..G6 |
 
 ## Guard zones (all phases)
