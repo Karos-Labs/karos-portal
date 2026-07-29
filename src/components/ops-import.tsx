@@ -12,9 +12,9 @@ import {
   type ApplyOutcome,
   type BundleOrigin,
   type PlanSummary,
-  type PriorImport,
   type UpdateScan,
 } from "@/lib/actions";
+import type { PriorImport } from "@/lib/ops-import-history";
 import { groupRefusals, summarizeRefusals } from "@/lib/refusal-copy";
 import { cn } from "@/lib/utils";
 
