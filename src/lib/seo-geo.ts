@@ -1273,6 +1273,48 @@ const REC_FALLBACK = {
     "Our audit flagged something on your site that doesn't map to a standard check yet. Your Karos team reviews it and turns it into a plain-English action on your next refresh.",
 } as const;
 
+/** Every internal registry label, for detecting one that was frozen into a snapshot. */
+const REGISTRY_LABELS: ReadonlySet<string> = new Set(
+  [...SEO_CHECKS, ...GEO_READINESS_CHECKS].map((d) => d.label),
+);
+
+/**
+ * Resolve the client-facing copy for a rec id — the ONE definition, used both when a
+ * capture builds its plan and when a stored plan is rendered.
+ *
+ * WHY RENDER-TIME RESOLUTION EXISTS (CD-J1 bounce 1). `recommendations[]` is written
+ * into the snapshot at capture, so the copy a client reads is frozen at the moment of
+ * measurement. Every improvement to REC_COPY therefore healed only clients captured
+ * after it — a July-22 snapshot still served the raw engineering labels the copy table
+ * was written to eliminate ("Answer capsules: 40–60 word summary under key H2s",
+ * "Title tags ≤ 60 chars"), and snapshots from the window before the table was
+ * complete served a mix. Rec ids are STABLE, so re-resolving them at render heals
+ * every existing snapshot without a re-capture.
+ *
+ * Precedence:
+ *  1. REC_COPY by id prefix — covers every registry id (pinned by test), so a stored
+ *     raw label loses to today's plain-English copy.
+ *  2. Otherwise the stored strings, EXCEPT when they are themselves an internal
+ *     label — an exact registry label, or a title echoed verbatim as its own
+ *     description, both signatures of the pre-F9 fall-through. Those get the
+ *     deliberately-unspecific fallback rather than being handed back to the client.
+ *  3. Otherwise the stored strings, which is the honest answer for an id the model
+ *     invented under a pipeline whose copy we cannot reconstruct.
+ */
+export function resolveRecCopy(
+  recId: string,
+  stored?: { title?: string; description?: string },
+): { title: string; description: string } {
+  const known = REC_COPY[recId.split(":")[0]];
+  if (known) return known;
+
+  const title = stored?.title?.trim() ?? "";
+  const description = stored?.description?.trim() ?? "";
+  if (!title) return REC_FALLBACK;
+  if (REGISTRY_LABELS.has(title) || title === description) return REC_FALLBACK;
+  return { title, description };
+}
+
 function ownerFor(actionKind: ActionKind): string {
   switch (actionKind) {
     case "connect":
@@ -1304,9 +1346,11 @@ export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recomme
       b.scoreLift - a.scoreLift,
   );
   for (const gap of ordered) {
-    // REC_COPY covers every registry id (pinned by test); REC_FALLBACK catches
+    // REC_COPY covers every registry id (pinned by test); the fallback catches
     // model-invented ids so a raw engineering label can never become a card title (F9).
-    const copy = REC_COPY[gap.id.split(":")[0]] ?? REC_FALLBACK;
+    // Same resolver the render path uses, so a stored plan and a fresh one can
+    // never disagree about what a given id is called.
+    const copy = resolveRecCopy(gap.id);
     const title = copy.title;
     const key = title.toLowerCase().trim();
     if (seen.has(key)) continue;

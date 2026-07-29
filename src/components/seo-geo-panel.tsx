@@ -9,6 +9,7 @@ import {
   buildEngineViews,
   buildGapViews,
   buildIntentPromptViews,
+  healRecommendations,
   buildPresence,
   buildPromptViews,
   buildRosterChips,
@@ -367,8 +368,13 @@ export function SeoGeoPlan({
 }) {
   const trust = buildSnapshotTrust(insights);
   const gaps = buildGapViews(insights.gaps, insights.clientId);
-  // `?? []` covers snapshots captured before the plan existed.
-  const recommendations = insights.recommendations ?? [];
+  // `?? []` covers snapshots captured before the plan existed. The copy is
+  // re-resolved through today's REC_COPY here, at the server boundary (CD-J1
+  // bounce 1): the plan was frozen at capture, so older snapshots still carry the
+  // raw engineering labels the copy table exists to replace. Ids are stable, so
+  // this heals them without a re-capture — and doing it here, rather than in the
+  // client leaf, keeps those labels out of the RSC payload entirely.
+  const recommendations = healRecommendations(insights.recommendations ?? []);
   return (
     <Card>
       <CardTitle className="mb-1">What we&apos;re fixing</CardTitle>

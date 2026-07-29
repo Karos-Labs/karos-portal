@@ -27,8 +27,10 @@ import {
   engineVisibilityScore,
   normalizeBrandKey,
   presenceCounts,
+  resolveRecCopy,
   type EngineId,
   type Lever,
+  type Recommendation,
   type SeoGeoInsights,
   type SubMetrics,
   type VisibilityGap,
@@ -784,6 +786,25 @@ export function buildRosterDrift(insights: SeoGeoInsights, tracked?: TrackedComp
 }
 
 /* ── Roster sanity (CD-J1 directive 4) ────────────────────────────── */
+
+/**
+ * Re-resolve every stored plan row's copy through today's REC_COPY (CD-J1 bounce 1).
+ *
+ * The plan is frozen into the snapshot at capture, so improvements to the copy table
+ * only ever reached clients measured afterwards: a July-22 snapshot still served raw
+ * engineering labels, and snapshots from the window before the table was complete
+ * served a mix of healed and raw rows. Rec ids are stable, so this heals every
+ * existing snapshot at render — no re-capture required.
+ *
+ * Runs at the SERVER boundary rather than inside the client leaf, which is the
+ * established rule (wave 1): a client viewer must not RECEIVE an internal string,
+ * even one a component would have chosen not to display. Healing here keeps the raw
+ * labels out of the RSC payload entirely. Only title and description are touched —
+ * impact, vertical, recId and the approval state are the snapshot's own facts.
+ */
+export function healRecommendations(recommendations: Recommendation[]): Recommendation[] {
+  return recommendations.map((r) => ({ ...r, ...resolveRecCopy(r.recId, r) }));
+}
 
 export interface RosterSanity {
   /** The tracked set and the brands the engines actually name share nobody. */

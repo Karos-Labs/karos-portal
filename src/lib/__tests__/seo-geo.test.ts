@@ -4,6 +4,7 @@ import {
   ENGINE_PROVIDERS,
   GEO_READINESS_CHECKS,
   REC_COPY,
+  resolveRecCopy,
   SEO_CHECKS,
   TARGET_MENTION,
   analyzeAnswer,
@@ -804,6 +805,55 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
       .filter(([, c]) => jargon.test(c.title) || jargon.test(c.description))
       .map(([id]) => id);
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * CD-J1 bounce 1: the plan is FROZEN into the snapshot at capture, so every
+   * improvement to REC_COPY previously healed only clients measured afterwards. A
+   * July-22 snapshot was still serving the exact engineering labels the copy table
+   * was written to eliminate. Ids are stable, so re-resolution at render heals every
+   * stored snapshot without a re-capture.
+   */
+  it("re-resolves a frozen registry label to today's plain-English copy", () => {
+    // The literal strings the Albert-match walk found rendering on a live client.
+    const healed = resolveRecCopy("GEO-02", {
+      title: "Answer capsules: 40–60 word summary under key H2s",
+      description: "Answer capsules: 40–60 word summary under key H2s",
+    });
+    expect(healed).toEqual(REC_COPY["GEO-02"]);
+    expect(healed.title).not.toContain("40–60");
+
+    expect(resolveRecCopy("SEO-02", { title: "Title tags ≤ 60 chars, unique, keyword-placed" })).toEqual(
+      REC_COPY["SEO-02"],
+    );
+  });
+
+  it("heals a per-engine id through its prefix", () => {
+    expect(resolveRecCopy("GEO-27:chatgpt", { title: "whatever was frozen" })).toEqual(
+      REC_COPY["GEO-27"],
+    );
+  });
+
+  it("refuses to hand back an internal label for an id it cannot resolve", () => {
+    // Signatures of the pre-F9 fall-through: an exact registry label, or a title
+    // echoed verbatim as its own description. Neither may reach a client.
+    const asLabel = resolveRecCopy("MODEL-INVENTED-1", {
+      title: "Indexable: pages return 200, no noindex/nosnippet",
+      description: "something else",
+    });
+    expect(asLabel.title).toBe("A technical finding your team is reviewing");
+
+    const echoed = resolveRecCopy("MODEL-INVENTED-2", { title: "LCP p75 ≤ 2.5s", description: "LCP p75 ≤ 2.5s" });
+    expect(echoed.title).toBe("A technical finding your team is reviewing");
+
+    expect(resolveRecCopy("MODEL-INVENTED-3", {}).title).toBe("A technical finding your team is reviewing");
+  });
+
+  it("keeps genuinely plain stored copy for an unknown id", () => {
+    // An id we cannot reconstruct, whose stored copy is already client-safe, is
+    // left alone — the honest answer rather than a blanket downgrade.
+    const stored = { title: "Fix the thing on your pricing page", description: "A plain description." };
+    expect(resolveRecCopy("MODEL-INVENTED-4", stored)).toEqual(stored);
   });
 
   it("keeps numeric thresholds out of client-facing copy", () => {
