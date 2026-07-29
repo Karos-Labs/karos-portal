@@ -28,6 +28,7 @@ import { TONE_COLORS } from "@/components/seo-geo/tones";
 import { Disclosure } from "@/components/seo-geo/disclosure";
 import { FlagButton } from "@/components/seo-geo/flag-button";
 import { GapList } from "@/components/seo-geo/gap-list";
+import { ScorePopover } from "@/components/seo-geo/score-popover";
 import { SeoGeoActionPlan } from "@/components/seo-geo-action-plan";
 
 /**
@@ -593,11 +594,18 @@ export function SeoGeoPanel({
                 <InfoTip text={tile.explainer} />
               </div>
               <p className="text-[11px] text-muted-2">{tile.caption}</p>
-              {tile.fractionLine ? (
+              {/* CD-J1 directive 2: the headline is the percentage; the counts it
+                  was computed from are one click away, in sentences. */}
+              {tile.pctLabel ? (
                 <>
-                  <p className="mt-2 font-mono text-lg font-medium text-foreground">
-                    {tile.fractionLine}
-                  </p>
+                  <div className="mt-2">
+                    <ScorePopover
+                      value={tile.pctLabel}
+                      title={tile.detail.title}
+                      lines={tile.detail.lines}
+                      srLabel={`${tile.heading}: ${tile.pctLabel}. See how this was measured.`}
+                    />
+                  </div>
                   <Meter pct={tile.pct ?? 0} color="var(--neon)" className="mt-1.5" />
                 </>
               ) : (
