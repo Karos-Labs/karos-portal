@@ -1281,6 +1281,208 @@ converges near (branded questions × engines) for any client with a live website
 clients matching is expected. Re-capture is the decisive test — if a post-CD-B3
 snapshot still reads "of 60" when it should read "of 48", that IS new evidence.
 
+### 4.17 The agent detail hub (CD-K1) — what landed, and where you take it
+
+Albert's directive, verbatim in `rescopes.md` §CD-K1: when a user clicks an
+agent, **everything** about that agent is laid out on that agent's page — all
+inputs, all outputs, all settings, in dated categorized sections, with an
+unmistakable LIVE state. CD-K1 was scoped as **groundwork**: surface the real
+data, reuse the existing editors, and hand you the dynamic version. This is the
+handover of that half.
+
+#### 4.17.1 What CD-K1 laid down
+
+All of it on `src/app/(app)/clients/[id]/agents/[agentId]/page.tsx` (the CD-I1
+chassis, §4.14). The content column now reads **Status → hero → Inputs →
+Settings → staff controls → Outputs**.
+
+| Band | Component | Builder |
+|---|---|---|
+| Status (the LIVE mark) | `AgentStatusStrip` — `src/components/client-agents/agent-sections.tsx` | inline in the route (`running`, `statusFacts`) |
+| Inputs — "What it runs on" | `AgentInputsSection`, same file | `readAgentInputDocs` + `agentInputsView` — `src/lib/agent-detail-sections.ts` |
+| Settings — "How it's set up" | `AgentSetupSection`, same file | `buildAgentSetupFacts`, same module |
+| Template click-through | `TemplateRows` (extended) — `src/components/client-agents/live-card.tsx` | `templateDetails` — `src/lib/agent-detail-archetypes.ts` |
+
+- **`src/lib/agent-detail-sections.ts`** is new and `server-only`. `toAgentInputRows`
+  and `buildAgentSetupFacts` are pure and given already-read documents, so the
+  boundary rules are driven by tests rather than a Firestore double.
+- **`src/components/client-agents/agent-sections.tsx`** is new: three **server**
+  components, no `"use client"`, nothing to hydrate.
+- `TemplateDetail` / `TemplatePostRow` live in
+  `src/components/client-agents/types.ts` — the client-safe types module — for
+  the same reason `ClientAgentCardRow` does: `TemplateRows` is a client
+  component and must not import a type out of a `server-only` module.
+- One new keyframe, `pulse-ring`, in `src/app/globals.css`, registered in the
+  `prefers-reduced-motion` block with the other six. No animation library was
+  added and none should be.
+- Tests: `src/lib/__tests__/agent-detail-sections.test.ts` (19) and six more in
+  `agent-detail-archetypes.test.ts`. Suite at **1406** passing.
+
+#### 4.17.2 The rules the bands encode — do not undo these
+
+1. **Inputs are built by WHITELIST.** `AgentIntake` carries `createdBy` (a uid),
+   `cvPath`/`cvUrl` (a private CV), and every other family's fields — X,
+   LinkedIn and Reddit share one collection. What crosses is a label, a handle,
+   a count and two timestamps. The **answers** stay on the intake page behind
+   `toXIntakeView` / `toLiIntakeView` / `toRedditIntakeView`. The test asserts
+   the whole serialized payload, not the painted parts.
+2. **A client never receives `postsPerWeek` × `outputsPerRun`.** Those two
+   numbers multiply out to "your week is generated in one lump", which is the
+   fact the slot model exists to keep indistinguishable (A3/A4) — the same rule
+   behind `AgentScheduleModal`'s `paceOnly` face. A client's Settings band says
+   `Schedule: Running | Paused`; staff get the arithmetic, the next fire and the
+   chain family.
+3. **The settings band reads `row.templates`, never `umbrella.templates`.**
+   While an umbrella is `curating`, the stored registry holds what the setup run
+   *proposed* and staff have not confirmed; `toClientAgentRows` empties it for a
+   client viewer, and a second reader going to the document directly would undo
+   that.
+4. **A template's post list rides `agentProducedAssets`.** For a client that set
+   has already been through `getClientArchiveAssets`, so opening a format
+   inherits the delivered-work-only filter. A version that read `listAssets` and
+   filtered on `templateKey` alone would hand a client every draft in the batch
+   the moment they opened a format — A3/A4 in its most direct form, on the one
+   surface that groups work by the stream that produced it. The projection
+   carries **no** status, draft count or "ready" marker; the key-set assertion in
+   the test is what keeps it that way.
+5. **LIVE is not re-derived.** The strip takes the already-resolved
+   `rosterStatus`, which is where the rule lives that a **schedule refusal
+   outranks Live** (F24/F129). `running` is `row?.activeRun || legacyRun` —
+   a viewer's own run only. A scheduled fire is deliberately never announced.
+
+#### 4.17.3 The chain, verified (directive 5) — it syncs, but only half of it exists
+
+Re-verified at this commit; this **supersedes nothing in §4.10/§4.11, it
+sharpens them**. Templates → slots is wired and automatic. Slots → calendar
+still does not exist.
+
+```
+ClientAgent.templates/.rotation
+  └─ effectiveRotation          client-agents.ts:354
+       └─ ensureSlotHorizon     client-agent-slots.ts:94
+            ├─ slotScheduleFor        slot-plan.ts:64   (weekly cadence only)
+            ├─ generateSlotHorizon    slot-plan.ts:125  (SLOT_HORIZON_DAYS = 28)
+            └─ createAgentSlots       data-client-agents.ts:187  → agentSlots/{id}
+agentSlots → upcomingSlots      client-agent-slots.ts:274
+           → week strip label   client-agent-rows.ts:453  ← slots end here
+```
+
+`ensureSlotHorizon` has **exactly three callers, all server actions, no cron**:
+
+| Trigger | Site |
+|---|---|
+| Staff "Go live" | `client-agent-actions.ts:465` (best-effort, `.catch`) |
+| Template **resume** only | `client-agent-run-actions.ts:215` |
+| Rotation reorder | `client-agent-run-actions.ts:264` |
+
+Four things follow, and each is a seam rather than a bug report:
+
+1. **A reorder does not re-template days that are already planned.**
+   `generateSlotHorizon` skips any `dateKey` in `existingSlots`
+   (`slot-plan.ts:145` + `:161`) and `createAgentSlots` is create-not-set
+   (`data-client-agents.ts:201`, `if (snap.exists) return`). So reordering the rotation changes only the
+   tail beyond the current horizon — visible effect is close to zero until the
+   horizon advances. That skip is *deliberate* (it is what stops a re-plan from
+   yanking a day out from under a note or a matched asset); making reorder feel
+   immediate means deciding which future days may be rewritten, not deleting the
+   guard.
+2. **Nothing extends the horizon on a clock.** No route under `src/app/api/`
+   calls `ensureSlotHorizon`; `run-scheduled/route.ts` fires schedules and never
+   plans. An umbrella that goes live and is then left alone runs out of slots 28
+   days later and the week strip silently empties.
+3. **Schedule changes do not re-plan.** `configureClientAgentScheduleAction`
+   (`planned-run-actions.ts:180`) and `setPlannedRunStatusAction` (`:357`) write
+   the weekdays, zone and paused-state that `slotScheduleFor` reads, and neither
+   calls `ensureSlotHorizon`. A client who changes their pace keeps the old
+   plan's days.
+4. **The calendar renders no slots at all.** `calendar-body.tsx` mentions "slot"
+   only in two comments. Its chips come from `Asset` rows and projected
+   `PlannedScheduledRun` occurrences; a template name reaches a calendar chip
+   through `redactLockedAsset` (`asset-visibility.ts:121-129`,
+   `templateName ?? templateForAsset(a)?.name`), **not** through
+   `AgentSlot.templateKey`. So "calendar sync is automatic" is true of the
+   template→slot half and false of the slot→calendar half. §4.10 is the
+   prerequisite and its warning stands: land `matchAssetsToSlots`, its write
+   twin `applySlotMatches`, and a `chainFamily` exclusion in `reflowClientChain`
+   **in one change**, or the two planners fight over the client's dates.
+
+#### 4.17.4 The end state Albert wants
+
+> "We need to make sure the agent interface is good and dynamic."
+
+Ordered by what unlocks the most:
+
+1. **Manage intake in place.** Today the inputs band is a dated index that links
+   `/clients/<id>/<platform>-agent`. Staff already get a manage-in-place path —
+   `StaffAgentControls` mounts the real form from `AgentSetupState.data`
+   (`custom-agents.tsx:242`, built by `agentIntakePane` at `[agentId]/page.tsx:96`).
+   The target is that a **client** can expand a row and edit that document
+   without leaving the agent, which means mounting `XAgentIntake` /
+   `LinkedInAgentIntake` / `RedditAgentIntake` per row rather than per page.
+   **Reuse those components — do not fork the forms.** Their server actions
+   already own the writes and the clear-on-blank rules
+   (`reddit-intake-guards.test.ts` pins one set of them).
+2. **Template galleries with curated examples.** `ClientAgentTemplate` has
+   `rationale` and **no `examples` field** — that is why the click-through shows
+   the posts made under the template as its de-facto examples. The launch run
+   already writes a rationale per template (`client-agent-actions.ts:224-225`
+   asks for `templates.json` as `[{key, name, rationale}]`); adding `examples`
+   to that artifact and to the type is the seam, and the curation pane
+   (`client-agents-section.tsx`, `ClientAgentTemplateInput` at
+   `client-agents.ts:381`) is where staff would confirm them.
+3. **Automatic calendar sync** — §4.17.3 items 1–4, gated on §4.10.
+4. **Richer live states.** The strip currently distinguishes live / working now
+   / attention / setting up / idle. It does **not** surface a paused schedule to
+   a client, deliberately: `rosterStatus` returns "Live" for a live umbrella
+   whose schedule is paused, and a strip that said "Paused" beside a "Live"
+   badge would be two answers on one screen. Fixing that properly means deciding
+   in `rosterStatus` whether a paused schedule outranks a live launch state —
+   a product call, and the same shape as the F24/F129 refusal rule.
+5. **Per-template feedback and history in the same expansion.**
+   `ClientAgentFeedback` is already scoped `template` with a `templateKey`
+   (`client-agent-feedback.ts:55-64`), and the feedback modal already opens
+   per-template from the row. Folding the existing rows into the open format —
+   rather than a modal — is a pure UI move on data that is already there.
+
+#### 4.17.5 Seams, exactly
+
+- **Join keys.** `ClientAgentTemplate.key` **equals** `Asset.templateKey`
+  (`types.ts:1668`) and equals `AgentSlot.templateKey`. Written by four paths:
+  `webhook/route.ts:421-428`, `lab-output-actions.ts:257`,
+  `slot-option-actions.ts:143` (hardcodes `OPTIONS_TEMPLATE_KEY`), and
+  `submit-custom.ts:304/:386` (the upstream `Job.templateKey` +
+  `karos_template_key` echo). The canonical resolver is `templateForAsset`
+  (`post-chain.ts:424`).
+- **Attribution.** "Which agent made this" is `agentProducedAssets`
+  (`agent-detail-archetypes.ts:54`) over `resolveContentIdentity`. Three page
+  shapes asking it three ways is three chances to credit a post to the wrong
+  agent (F147) — add to that module, do not re-implement beside a component.
+- **Redaction you must not widen.** `toClientAgentRows`
+  (`client-agent-rows.ts:258`) for anything umbrella-shaped;
+  `toXIntakeView`/`toLiIntakeView`/`toRedditIntakeView`
+  (`agent-intake-views.ts`) for anything intake-shaped;
+  `getClientArchiveAssets` + `deliverableStamp` for anything a client reads as
+  "what it made". All of them run **before** serialization, never at render.
+- **A known duplicate read, left in deliberately.** On a **staff** load of an
+  intake agent, `readAgentInputDocs` re-reads the same five collections
+  `buildXAgentIntakeView` (etc.) just read for the run dialog's panes. They are
+  fired concurrently (`[agentId]/page.tsx`, the `Promise.all` around
+  `agentIntakePane`), so no serial latency was added, but it is five duplicated
+  queries. The clean fix is for the `agent-intake-views.ts` builders to emit the
+  dated index alongside the props — which changes a
+  `ComponentProps<typeof XAgentIntake>` return contract four surfaces depend on,
+  and was out of scope for groundwork.
+- **The paused banner is honest, with one unbacked clause.** Re-verified per
+  directive 3: both banners key off `isAgentServiceConfigured()`
+  (`agent-service/client.ts:94`) and both are consistent with the run gates
+  below them (`evaluateLegacyRunGate` / `evaluateTemplateRunGate` refuse with
+  `service_down`). No code defect, copy left alone. **But** "Your Karos team has
+  been notified" is backed by nothing — no route, action or logger fires on an
+  unconfigured service. The wording was prescribed by the sweep's own finding
+  (`inventory/findings-p047-084.md:151`) and the banner is unreachable in a
+  configured production, so it was not churned; if you ever make this state
+  reachable in prod, make the sentence true or drop it.
+
 ---
 
 ## 5. Known accepted residuals & pending product decisions
