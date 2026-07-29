@@ -1230,6 +1230,57 @@ engines named (`buildRosterSanity` — suggests, never mutates); and `REC_COPY`
 client strings are held to a no-jargon/no-thresholds bar by two tests, with the
 technical phrasing living on the staff-only gap block.
 
+**Three rules that exist because old snapshots outlive the code that wrote them.**
+Everything below was a live defect on a real client page, and each will come back
+the moment someone reads a stored field as if a current pipeline had written it.
+
+1. **Plan copy is frozen at capture, so re-resolve it at render.**
+   `recommendations[]` is persisted, so improving `REC_COPY` only ever helped
+   clients captured afterwards — a July-22 snapshot still served the engineering
+   labels the table exists to replace. `resolveRecCopy(recId, stored?)` is the one
+   resolver, used by `buildRecommendations` at capture and by `healRecommendations`
+   at render. Ids are stable, which is what makes retroactive healing possible —
+   **do not rename a REC_COPY key**, it orphans both the copy and the approval.
+   Healing runs at the SERVER boundary (`SeoGeoPlan`), not in the client leaf, so
+   the raw strings never enter the RSC payload.
+2. **Label a legacy snapshot; never relabel it.** `categoryMetrics` falls back to a
+   record's full-set figures when it has no `category` field. That fallback is
+   correct and stays. What must not happen is calling those numbers "category" —
+   that is how one page showed four contradictory denominators (the full prompt
+   count and the all-probe count both wearing a category label). Take the noun from
+   `buildMeasurementBasis(insights)`, which decides structurally, not from a version
+   string. The legacy banner keys on three independent signals: pipeline stamp,
+   methodology stamp, and that structural check.
+3. **Absent is not zero.** `citationSummary` is optional because captures predating
+   it carry none. Reading a missing field as `?? 0` is what made the panel report
+   "we couldn't measure any answers this run" next to "3 of 5 AI engines measured".
+   Any new optional field on this record inherits the same rule: distinguish
+   *not recorded* from *measured as none* before writing copy about it.
+
+**Reading a snapshot's age off its denominator.** `citationSummary.totalMeasuredAnswers`
+tells you which code wrote a snapshot, which is the fastest triage there is:
+
+- **60** (= 20 questions × 3 engines) → pre-CD-B3. The summary counted EVERY probe,
+  branded questions included.
+- **48** (= 16 category questions × 3 engines) → current. `computeCitationSummary`
+  takes `categoryProbes` only.
+
+This was checked because two different clients rendered an identical "11 of 60" and
+that looked like cross-client contamination. **It is not** — audited and cleared: the
+`clientSeoGeo` doc id is derived from the payload's own `clientId`, the importer
+refuses a bundle whose `clientId` differs from its target, `refresh-apply-core.ts`
+touches SEO/GEO not at all, no script writes the collection, and there is no render
+cache or fallback snapshot object outside tests. `brandCited` is keyed strictly to
+the client's own `gazetteer.clientDomain`, so the numerator cannot be
+client-independent by construction.
+
+The shared value is a property of the legacy maths: on a pre-CD-B3 snapshot the
+count is dominated by the client citing its OWN domain on branded prompts ("what is
+X", "X reviews"), which is engine behaviour rather than category performance, so it
+converges near (branded questions × engines) for any client with a live website. Two
+clients matching is expected. Re-capture is the decisive test — if a post-CD-B3
+snapshot still reads "of 60" when it should read "of 48", that IS new evidence.
+
 ---
 
 ## 5. Known accepted residuals & pending product decisions

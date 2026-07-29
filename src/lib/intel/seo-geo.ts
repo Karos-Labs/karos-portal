@@ -694,12 +694,17 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
     );
   }
 
-  // Client citation summary + ghost citations (cited but not named).
+  // Client citation summary + ghost citations (cited but not named). Always present
+  // on a fresh capture — this builder runs on insights the run just computed — but
+  // the field is optional on the record because older stored snapshots lack it, so
+  // the brief omits the line rather than asserting zeros it did not measure.
   const cs = insights.citationSummary;
-  lines.push(
-    "",
-    `**Your citations:** cited as a source in ${cs.answersCited} of ${cs.totalMeasuredAnswers} measured CATEGORY answers, named in ${cs.answersNamed}. That leaves ${cs.ghostCitations} ghost citations (your content used without crediting you) to convert into named recommendations.`,
-  );
+  if (cs) {
+    lines.push(
+      "",
+      `**Your citations:** cited as a source in ${cs.answersCited} of ${cs.totalMeasuredAnswers} measured CATEGORY answers, named in ${cs.answersNamed}. That leaves ${cs.ghostCitations} ghost citations (your content used without crediting you) to convert into named recommendations.`,
+    );
+  }
 
   // "Who the engines quote instead" — citation-domain leaderboard.
   if (insights.citationLeaderboard.length) {
