@@ -74,6 +74,11 @@ const COUNT_PAIRS = ["categoryPresence", "brandPresence"] as const;
 const KNOWN_KEYS: readonly string[] = [
   "clientId",
   "pipelineVersion",
+  // CD-J1: the question methodology a capture ran under. Optional and carried
+  // through verbatim for the same reason pipelineVersion is — an absent stamp
+  // means an unstamped capture, and inventing one would claim a standard the run
+  // never followed. Listed here so a v2 bundle is not refused as foreign.
+  "methodologyVersion",
   "geoVisibilityModel",
   "citationSummary",
   "updatedAt",
@@ -210,6 +215,9 @@ export function validateSeoGeoSnapshot(
     clientId: ctx.clientId,
     capturedAt: captured,
     ...(typeof raw.pipelineVersion === "string" ? { pipelineVersion: raw.pipelineVersion } : {}),
+    ...(typeof raw.methodologyVersion === "string"
+      ? { methodologyVersion: raw.methodologyVersion }
+      : {}),
     seoScore: raw.seoScore as number,
     seoDataCoveragePct: raw.seoDataCoveragePct as number,
     geoReadiness: raw.geoReadiness as number,

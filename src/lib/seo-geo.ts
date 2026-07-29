@@ -579,36 +579,105 @@ export function computeRosterSharePct(
   return total ? Math.round(((counts.get(clientName) ?? 0) / total) * 1000) / 10 : 0;
 }
 
-/** Brand-prompt vs category-prompt presence (run-record `brand_presence` / `category_presence`). */
+/**
+ * One presence bucket (run-record `brand_presence` / `category_presence`).
+ *
+ * Three numbers, because two cannot tell the truth about a partial run:
+ *   total    — questions the plan ASKED for in this bucket (the honest denominator)
+ *   measured — of those, how many at least one engine actually answered
+ *   named    — of the measured ones, how many named the client
+ *
+ * `measured` is optional only for snapshots written before methodology v2, where
+ * `total` already meant "questions with an answer". Read every bucket through
+ * `presenceCounts` rather than reaching for the fields, so that legacy reading
+ * happens in exactly one place.
+ */
+export interface PresenceCount {
+  named: number;
+  total: number;
+  measured?: number;
+}
+
+/** Brand-prompt vs category-prompt presence. */
 export interface PresenceBreakdown {
-  brand: { named: number; total: number };
-  category: { named: number; total: number };
+  brand: PresenceCount;
+  category: PresenceCount;
 }
 
 /**
- * Split the prompt set into brand/nav prompts (those that name the client) and
- * category prompts (those that don't), then count in how many the brand actually
- * appeared across measured engines. Mirrors the a3 "4 of 4 brand / 0 of 16 category".
+ * Normalize a presence bucket to the four numbers every surface needs, applying
+ * the legacy rule in one place: a bucket with no `measured` was written before
+ * methodology v2, when nothing was counted unless it was measured — so for those,
+ * measured IS the total and there is no not-measured remainder to disclose.
+ */
+export function presenceCounts(p: PresenceCount | undefined): {
+  named: number;
+  measured: number;
+  planned: number;
+  notMeasured: number;
+} {
+  const planned = p?.total ?? 0;
+  const measured = p?.measured ?? planned;
+  return {
+    named: p?.named ?? 0,
+    measured,
+    planned,
+    notMeasured: Math.max(0, planned - measured),
+  };
+}
+
+/**
+ * Split the frozen question set into branded questions (those that name the client)
+ * and category questions (those that don't), then count how many of each the brand
+ * actually appeared in.
+ *
+ * CD-J1 directive 1 — A QUESTION NO ENGINE ANSWERED IS NOT A QUESTION WE DIDN'T ASK.
+ * This used to derive the whole universe from the probes and skip UNAVAILABLE ones,
+ * so a question every engine failed on vanished from the record entirely: the
+ * denominator quietly shrank, and "named in 3 of 9" was reported for a 12-question
+ * run with three dead cells. A capture bug flattered the score, and the size of the
+ * report changed for reasons nothing on the page explained. Passing `promptSet` (the
+ * frozen set) fixes the denominator to what was ASKED, and the shortfall surfaces as
+ * `total - measured` for the UI to disclose.
+ *
+ * @param promptSet the frozen question set. Omit only for legacy callers that have
+ *   probes but no set — then the universe is every prompt with a probe, including
+ *   the all-UNAVAILABLE ones, which is still strictly more honest than before.
  */
 export function computePresence(
   probes: GeoProbe[],
   gazetteer: Gazetteer,
   isBrandPrompt: (prompt: string) => boolean = (prompt) =>
     gazetteer.client.some((a) => findMention(prompt, a) >= 0),
+  promptSet?: string[],
 ): PresenceBreakdown {
-  const byPrompt = new Map<string, { brand: boolean; named: boolean }>();
+  const byPrompt = new Map<string, { brand: boolean; measured: boolean; named: boolean }>();
+  const ensure = (prompt: string) => {
+    let cur = byPrompt.get(prompt);
+    if (!cur) {
+      cur = { brand: isBrandPrompt(prompt), measured: false, named: false };
+      byPrompt.set(prompt, cur);
+    }
+    return cur;
+  };
+  // Seed with the plan, so an unanswered question still occupies its slot.
+  for (const prompt of promptSet ?? []) ensure(prompt);
   for (const p of probes) {
+    const cur = ensure(p.prompt);
     if (p.captureTier === "UNAVAILABLE") continue;
-    const cur = byPrompt.get(p.prompt) ?? { brand: isBrandPrompt(p.prompt), named: false };
+    cur.measured = true;
     if (p.brandMentioned) cur.named = true;
-    byPrompt.set(p.prompt, cur);
   }
-  const brand = { named: 0, total: 0 };
-  const category = { named: 0, total: 0 };
+
+  const brand: PresenceCount = { named: 0, total: 0, measured: 0 };
+  const category: PresenceCount = { named: 0, total: 0, measured: 0 };
   for (const v of byPrompt.values()) {
     const bucket = v.brand ? brand : category;
     bucket.total += 1;
-    if (v.named) bucket.named += 1;
+    if (v.measured) {
+      bucket.measured = (bucket.measured ?? 0) + 1;
+      if (v.named) bucket.named += 1;
+    }
   }
   return { brand, category };
 }
@@ -993,8 +1062,11 @@ export function computeVisibilityGaps(perEngine: PerEngineVisibility[]): Visibil
   const gaps: VisibilityGap[] = [];
   for (const e of perEngine) {
     if (e.captureTier === "UNAVAILABLE") continue;
-    // Gaps reflect CATEGORY visibility (real market reality), not brand-prompt inflation.
-    const c = e.category;
+    // Gaps reflect CATEGORY visibility (real market reality), not brand-prompt
+    // inflation. Read through the shared accessor, not `e.category` directly, so a
+    // record predating that field degrades to its full-set figures like every other
+    // category-scoped surface instead of throwing (CD-B3/CD-J1 directive 3).
+    const c = categoryMetrics(e);
     if (c.promptsMeasured === 0) continue;
     const label = ENGINE_LABELS[e.engine];
     const src = e.source ?? undefined;
@@ -1273,8 +1345,44 @@ export function tagPromptIntents(prompts: string[], gazetteer: Gazetteer): Inten
   return prompts.map((prompt) => ({ prompt, intent: classifyIntent(prompt, gazetteer) }));
 }
 
-/** Per-intent target counts for a 20-prompt set (a3 Phase-1 quota — keeps the set
- *  balanced and caps brand/nav so the comparison stays category-heavy). */
+/* ── The question plan (methodology v2 — CD-J1 directive 1) ───────────
+ *
+ * WHY A FIXED PLAN AT ALL. Before this, the final question set was whatever
+ * survived the drafter: the model returned a pool, the pool was deduped, and the
+ * per-intent quota took "up to" its share of whatever was there. A thin pool in one
+ * intent produced a short set, and a set of a different SHAPE — so one client was
+ * measured on 8 branded + 12 category questions and the next on 4 + 11. Every
+ * client-facing ratio hangs off those denominators, which made "named in 0 of 12"
+ * and "named in 0 of 16" incomparable numbers wearing the same clothes. Neither the
+ * client nor we could say what a score meant, and no two clients could be compared.
+ *
+ * THE COUNTS, AND WHY THESE ONES. The plan below is the a3 Phase-1 quota that the
+ * generator was already aiming at — 6 discovery + 5 comparison + 5 problem branded
+ * off 3 brand + 1 navigational — now a floor as well as a ceiling. It is deliberately
+ * category-heavy: 16 of the 20 questions never say the client's name.
+ *
+ *   - CATEGORY questions (16) are the measurement. Every client-vs-competitor number
+ *     in the product is computed on these alone (CD-B3), because a question that
+ *     contains your name names you by construction. 16 is the largest category block
+ *     that fits a 20-question run, and a bigger denominator is a steadier score:
+ *     one lucky answer moves a 16-question rate by 6 points, a 12-question rate by 8.
+ *   - BRANDED questions (4) are a control, not a score. They answer "do the engines
+ *     know who this brand is at all?", which is the difference between a visibility
+ *     problem and a recognition problem. 4 is enough to read that signal; spending
+ *     more of the run on questions the client is guaranteed to win buys nothing.
+ *
+ * (The directive floated "e.g. 8 branded + 12 category" as an illustration of the
+ * FORM. Implemented as the generator's own natural sizes, per the same sentence,
+ * because moving four questions from the category block to the branded one shrinks
+ * the only denominator anyone is scored on in order to grow the one nobody is.)
+ *
+ * THE CONTRACT. A capture MUST emit exactly these counts — `buildQuestionSet` pads
+ * from a deterministic template bank and trims to the quota, so a thin or lopsided
+ * model pool can no longer change the shape of the measurement. Engine failures are
+ * a DISPLAY concern and never shrink a denominator: see `computePresence`, where a
+ * question no engine answered is counted as planned-but-not-measured rather than
+ * dropped out of the set.
+ */
 export const INTENT_QUOTA: Record<PromptIntent, number> = {
   discovery: 6,
   comparison: 5,
@@ -1282,6 +1390,33 @@ export const INTENT_QUOTA: Record<PromptIntent, number> = {
   brand: 3,
   navigational: 1,
 };
+
+/** Intents whose questions never name the client — the measurement base (CD-B3). */
+export const CATEGORY_INTENTS: readonly PromptIntent[] = ["discovery", "comparison", "problem"];
+/** Intents whose questions name the client by construction — the control block. */
+export const BRANDED_INTENTS: readonly PromptIntent[] = ["brand", "navigational"];
+
+const sumQuota = (intents: readonly PromptIntent[]) =>
+  intents.reduce((a, i) => a + INTENT_QUOTA[i], 0);
+
+/** Category (non-branded) questions every capture must ask: 16. */
+export const PLANNED_CATEGORY_QUESTIONS = sumQuota(CATEGORY_INTENTS);
+/** Branded questions every capture must ask: 4. */
+export const PLANNED_BRANDED_QUESTIONS = sumQuota(BRANDED_INTENTS);
+/** Total questions every capture must ask: 20. */
+export const PLANNED_QUESTIONS_TOTAL = PLANNED_CATEGORY_QUESTIONS + PLANNED_BRANDED_QUESTIONS;
+
+/**
+ * Version of the question methodology a snapshot was measured under, stamped onto
+ * the record so an old capture is read by its own rules rather than reinterpreted
+ * by today's (the CD-B4 legacy discipline). Bump this whenever the plan above, or
+ * what counts toward a denominator, changes.
+ *
+ * v2 (2026-07-29) is the first version with a fixed plan; anything without a stamp
+ * was measured under "whatever the drafter returned" and its denominators are
+ * descriptive of that one run, not of a standard.
+ */
+export const SEO_GEO_METHODOLOGY_VERSION = "q2-2026-07-29";
 
 /** Word-set of a prompt (ignoring stop-word noise would over-merge; keep it simple). */
 function tokenSet(s: string): Set<string> {
@@ -1339,6 +1474,79 @@ export function selectByIntentQuota(prompts: string[], gazetteer: Gazetteer, tot
     }
   }
   return out.slice(0, total);
+}
+
+/** Fixed iteration order over the plan — never `Object.keys`, so the emitted set
+ *  is byte-identical for identical inputs regardless of object-key ordering. */
+const PLAN_ORDER: readonly PromptIntent[] = [...CATEGORY_INTENTS, ...BRANDED_INTENTS];
+
+/** Case/punctuation-insensitive identity for a question (dedupe across pool + bank). */
+function questionKey(prompt: string): string {
+  return prompt.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** How many questions of each intent a set actually contains. */
+export function countByIntent(prompts: string[], gazetteer: Gazetteer): Record<PromptIntent, number> {
+  const counts: Record<PromptIntent, number> = {
+    discovery: 0, comparison: 0, problem: 0, brand: 0, navigational: 0,
+  };
+  for (const p of prompts) counts[classifyIntent(p, gazetteer)] += 1;
+  return counts;
+}
+
+/**
+ * Build the frozen question set to the fixed plan (methodology v2): exactly
+ * INTENT_QUOTA[intent] questions per intent, drawn from `pool` first and padded
+ * from `templates` when the pool is thin. Trimming and padding are both
+ * deterministic — same pool, same bank, same set, every run.
+ *
+ * A template is only accepted into the slot it was filed under if the classifier
+ * agrees it belongs there. That check is the point: the plan, the intent tags shown
+ * in the report, and the branded/category denominators are all produced by
+ * `classifyIntent`, so a question that the bank calls "brand" and the classifier
+ * calls "comparison" would put the emitted shape back out of step with the
+ * displayed one — the exact drift this plan exists to remove.
+ *
+ * An intent can still finish short if its template bank is exhausted (only
+ * reachable when a caller passes a bank smaller than the quota). The set is
+ * returned as built rather than backfilled from another intent: a short block is
+ * visible as a short block, where padding it with the wrong kind of question would
+ * silently restore the variable-shape problem. Callers verify with `countByIntent`.
+ */
+export function buildQuestionSet(
+  pool: string[],
+  gazetteer: Gazetteer,
+  templates: Partial<Record<PromptIntent, string[]>> = {},
+): string[] {
+  const byIntent = new Map<PromptIntent, string[]>();
+  for (const p of pool) {
+    const intent = classifyIntent(p, gazetteer);
+    const bucket = byIntent.get(intent);
+    if (bucket) bucket.push(p);
+    else byIntent.set(intent, [p]);
+  }
+
+  const used = new Set<string>();
+  const out: string[] = [];
+  for (const intent of PLAN_ORDER) {
+    const quota = INTENT_QUOTA[intent];
+    const picked: string[] = [];
+    const take = (candidates: string[], requireIntent: boolean) => {
+      for (const p of candidates) {
+        if (picked.length >= quota) return;
+        const key = questionKey(p);
+        if (!key || used.has(key)) continue;
+        if (requireIntent && classifyIntent(p, gazetteer) !== intent) continue;
+        used.add(key);
+        picked.push(p);
+      }
+    };
+    // Pool entries are already bucketed by the same classifier — no re-check needed.
+    take(byIntent.get(intent) ?? [], false);
+    take(templates[intent] ?? [], true);
+    out.push(...picked);
+  }
+  return out;
 }
 
 /** One (question × engine) cell state, matching the PDF grid's dot legend. */
@@ -1520,8 +1728,14 @@ export function countBrandInAnswers(
  * from the registry rather than the id prefix (F16), and one severity scale across
  * all gap types (F22). A snapshot without this stamp was measured under the old
  * rules; its numbers are historical, not wrong-but-current.
+ *
+ * 2026-07-29 adds question methodology v2 (CD-J1): a fixed question plan every
+ * capture must emit, and denominators that count what was ASKED rather than what
+ * happened to come back. That changes what a presence ratio MEANS, so snapshots
+ * measured before it are not comparable with ones measured after — which is exactly
+ * what this stamp exists to say. See SEO_GEO_METHODOLOGY_VERSION.
  */
-export const SEO_GEO_PIPELINE_VERSION = "2026-07-28";
+export const SEO_GEO_PIPELINE_VERSION = "2026-07-29";
 
 /**
  * The team treats captures before the 2026-07-23/24 SEO/GEO redeploy as
@@ -1565,10 +1779,14 @@ export interface SeoGeoInsights {
   geoVisibilityEnginesTotal: number;
   /** Client share among the locked roster across all measured answers, % (run-record `roster_share_pct`). */
   rosterSharePct: number;
+  /** Question methodology this capture was measured under (CD-J1). Absent on
+   *  anything captured before the fixed question plan — those denominators
+   *  describe one run rather than a standard, and render under their own rules. */
+  methodologyVersion?: string;
   /** Brand named in non-brand/category prompts (run-record `category_presence`). */
-  categoryPresence: { named: number; total: number };
+  categoryPresence: PresenceCount;
   /** Brand named in brand/nav prompts (run-record `brand_presence`). */
-  brandPresence: { named: number; total: number };
+  brandPresence: PresenceCount;
   /** Per-engine sub-metrics with provider provenance — the chart series. */
   perEngine: PerEngineVisibility[];
   /** Prioritized SEO + GEO gaps/issues (site checks + competitor visibility deltas), run-record `issues[]` shape.
