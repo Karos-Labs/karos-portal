@@ -7,7 +7,7 @@ import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
-import { assetImages } from "@/lib/asset-images";
+import { assetImages, assetLiMedia } from "@/lib/asset-images";
 import {
   updateAssetAction,
   approveAssetAction,
@@ -266,7 +266,7 @@ function ApprovePanel({
 
       {!canAuto && compatiblePlatforms.length > 0 && (
         <p className="text-[11px] text-muted-2">
-          <Icon name="AlertCircle" className="mr-1 inline h-3 w-3 text-warning" />
+          <Icon name="CircleAlert" className="mr-1 inline h-3 w-3 text-warning" />
           Connect{" "}
           {channelPlatforms.map((p) => PLATFORM_LABELS[p] ?? p).join(" or ")}{" "}
           in the Integrations tab to enable auto-publishing.
@@ -462,30 +462,11 @@ export function AssetCard({
     ? redditBatch.accounts.reduce((n, a) => n + a.drafts.length, 0)
     : 0;
   // The run's attachable media (slides, PDFs, video) for the LinkedIn reader —
-  // the webhook stores the client-facing artifact list in meta.artifacts. The
-  // service may omit content_type, so fall back to extension sniffing; and a
-  // failed re-host leaves an auth-gated service URL a browser can't open, so
-  // only durable re-hosted links are offered.
-  const liMedia = useMemo<LiMediaFile[]>(() => {
-    if (!liBatch) return [];
-    const MEDIA_EXTENSIONS = /\.(png|jpe?g|gif|webp|pdf|mp4|mov|webm)$/i;
-    const artifacts =
-      (asset.meta?.artifacts as Array<{ name?: string; url?: string; contentType?: string }> | undefined) ?? [];
-    return artifacts
-      .filter((a): a is { name: string; url: string; contentType?: string } => {
-        if (!a.name || !a.url) return false;
-        if (!a.url.includes("firebasestorage.googleapis.com")) return false;
-        if (a.contentType) {
-          return (
-            a.contentType.startsWith("image/") ||
-            a.contentType === "application/pdf" ||
-            a.contentType.startsWith("video/")
-          );
-        }
-        return MEDIA_EXTENSIONS.test(a.name);
-      })
-      .map((a) => ({ name: a.name, url: a.url }));
-  }, [asset.meta, liBatch]);
+  // shared definition, see assetLiMedia.
+  const liMedia = useMemo<LiMediaFile[]>(
+    () => (liBatch ? assetLiMedia(asset.meta) : []),
+    [asset.meta, liBatch],
+  );
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
@@ -582,8 +563,10 @@ export function AssetCard({
     return (
       <Card className="overflow-hidden">
         <div className="flex items-start gap-3">
+          {/* Creation language, matching the modal (§4.1 item 1) — a padlock
+              says "this exists and you may not see it". */}
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-muted-2">
-            <Icon name="Lock" className="h-4 w-4" />
+            <Icon name="CalendarClock" className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
@@ -592,7 +575,7 @@ export function AssetCard({
             </div>
             <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-2">
               <Icon name="CalendarClock" className="h-3.5 w-3.5 shrink-0" />
-              {unlockStr ? `Unlocks ${unlockStr}` : "Unlocks on its scheduled date"}
+              {unlockStr ? `Created on ${unlockStr}` : "Created on its scheduled day"}
             </p>
           </div>
         </div>
@@ -759,7 +742,7 @@ export function AssetCard({
             ) : (
               <p className="mt-1 text-sm text-muted">
                 {xDraftCount} drafts across {xBatch.accounts.length} accounts — about a week of posting.
-                Expand to read and pick favourites.
+                Expand to read and pick favorites.
               </p>
             )
           ) : (
@@ -939,7 +922,7 @@ export function AssetCard({
           {/* Last publish failure (manual push or auto cron) */}
           {publishError && asset.status !== "published" && (
             <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5">
-              <Icon name="AlertCircle" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
+              <Icon name="CircleAlert" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
               <p className="text-xs text-danger">Publish failed: {publishError}</p>
             </div>
           )}
@@ -947,7 +930,7 @@ export function AssetCard({
           {/* Approve / save / unschedule failure */}
           {actionError && (
             <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5">
-              <Icon name="AlertCircle" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
+              <Icon name="CircleAlert" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
               <p className="text-xs text-danger">{actionError}</p>
             </div>
           )}

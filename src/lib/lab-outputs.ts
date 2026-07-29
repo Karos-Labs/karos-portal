@@ -5,6 +5,8 @@ import {
   groupRunFiles,
   guessAssetType,
   humanizeItemName,
+  isLabProposalPath,
+  labRefreshDir,
   normalizeLabSlug,
   pickPrimaryFiles,
   type LabFile,
@@ -36,6 +38,11 @@ function config(): { repo: string; token: string } | null {
 
 export function isLabOutputsConfigured(): boolean {
   return config() !== null;
+}
+
+/** "karoslabs/karos-agents" — for telling staff WHICH repo was scanned. */
+export function labRepoName(): string | null {
+  return config()?.repo ?? null;
 }
 
 async function ghJson<T>(path: string): Promise<T> {
@@ -126,6 +133,42 @@ export async function listRunClientFiles(
   }
   await walk(base, 0);
   return files;
+}
+
+/* ── Refresh proposals committed in the lab repo ───────────────────────
+   Same repo, same token, same fetch layer as the run outputs above — a
+   second GitHub client would be a second thing to get auth, timeouts and
+   404-handling wrong. Convention mirrors outputs/:
+
+     clients/<slug>/outputs/<agent>/<run>/client/   deliverables (posts)
+     clients/<slug>/refresh/<anything>.json         refresh proposals
+
+   Documented in docs/qa-sweep-2026-07/refresh/OPS-IMPORT.md. */
+
+/** A refresh proposal is JSON; anything near this size is not one. */
+export const MAX_PROPOSAL_BYTES = 4 * 1024 * 1024;
+
+export interface LabProposalFile {
+  name: string;
+  /** repo-relative path, e.g. clients/geektime/refresh/geektime.proposal.json */
+  path: string;
+  size: number;
+}
+
+/** Lists a client's committed refresh proposals. Empty when the folder is absent. */
+export async function listLabRefreshProposals(slug: string): Promise<LabProposalFile[]> {
+  return (await listDir(labRefreshDir(slug)))
+    .filter((e) => e.type === "file" && isLabProposalPath(e.path))
+    .map((e) => ({ name: e.name, path: e.path, size: e.size }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Reads and parses one committed proposal. Refuses paths outside the convention. */
+export async function readLabRefreshProposal(path: string): Promise<unknown> {
+  if (!isLabProposalPath(path)) throw new Error("Invalid proposal path.");
+  const bytes = await downloadLabFile(path);
+  if (bytes.length > MAX_PROPOSAL_BYTES) throw new Error("That file is too large to be a proposal.");
+  return JSON.parse(bytes.toString("utf8"));
 }
 
 /** Downloads one file's raw bytes (works for private repos at any blob size GitHub serves raw). */

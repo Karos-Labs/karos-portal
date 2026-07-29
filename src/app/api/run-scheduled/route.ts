@@ -4,6 +4,7 @@ import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { computeNextRun } from "@/lib/scheduled-runs";
 import type { AppUser, PlannedScheduledRun } from "@/lib/types";
 
+import { CLIENT_SCHEDULE_ACTOR_NAME, SCHEDULER_ACTOR_NAME } from "@/lib/activity-actors";
 export const maxDuration = 120;
 
 /** A stored refusal is one readable sentence on the schedule row, not a log. */
@@ -18,11 +19,13 @@ const MAX_ERROR_CHARS = 400;
  * while a schedule a client switched on (billClientCredits) charges that
  * client's credits on every fire, outputsPerRun included.
  *
- * The submit core can refuse before it writes a job row (setup gates, credit
- * ceilings, service misconfiguration), which leaves no job, no failed status and
- * no charge behind. Every such refusal is written to the run's lastError so a
- * schedule that can never fire is visible instead of silently green; a clean
- * fire clears it.
+ * Every fire that produces nothing — a credit refusal, a spend cap, missing
+ * intake, the agent service being unreachable — is refused by the submit core
+ * before a job row exists, leaving no job, no failed status and no charge
+ * behind. Every such refusal is recorded on the schedule row as
+ * lastError/lastErrorAt, and a fire that succeeds clears them. The agent card
+ * reads those fields, so a schedule that can never fire is visible instead of
+ * silently green.
  */
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -48,7 +51,7 @@ export async function GET(req: NextRequest) {
     const stored = await getUser(run.createdBy);
     const user = stored ?? ({
       uid: run.createdBy || "scheduler",
-      name: run.billClientCredits ? "Client schedule" : "Scheduler",
+      name: run.billClientCredits ? CLIENT_SCHEDULE_ACTOR_NAME : SCHEDULER_ACTOR_NAME,
       ...(run.billClientCredits
         ? { role: "CLIENT_USER", clientId: run.clientId }
         : { role: "KAROS_ADMIN" }),
@@ -74,12 +77,24 @@ export async function GET(req: NextRequest) {
             ? `Create exactly ${run.outputsPerRun} distinct outputs for this scheduled run.\n\n${run.prompt}`
             : run.prompt,
         chargeMultiplier: run.billClientCredits ? (run.outputsPerRun ?? 1) : 1,
+        // A scheduled fire is a run TYPE, and until now it was the only one
+        // that never said so — launches and manual template runs both stamp
+        // themselves, so every recurring fire landed in the untyped bucket.
+        // Everything §6 reports splits on this field: the client's ledger
+        // breakdown separates scheduled from manual by it, and §6.3's
+        // launch-price calibration uses scheduled+manual runs as the very
+        // denominator it measures a launch against. Without the stamp both
+        // are computed over a hole.
+        runType: "scheduled",
+        ...(run.clientAgentId ? { clientAgentId: run.clientAgentId } : {}),
       });
 
       const advance: Partial<PlannedScheduledRun> = {
         lastRunAt: now,
         ...(jobId ? { lastJobId: jobId } : {}),
-        // Written as null rather than omitted: Firestore is configured to ignore
+        // Refusals are surfaced on the client's agent card; a clean fire clears
+        // the previous one so the card stops nagging once it recovers. Written
+        // as null rather than omitted: Firestore is configured to ignore
         // undefined values, so an omitted key would leave the previous refusal
         // in place forever.
         lastError: error ? error.slice(0, MAX_ERROR_CHARS) : null,
@@ -97,6 +112,9 @@ export async function GET(req: NextRequest) {
           weekdays: run.weekdays,
           dayOfMonth: run.dayOfMonth,
           from: now,
+          // Advance in the zone the schedule's wall clock was set in. Without
+          // it every recurrence drifts to this container's zone (UTC in prod).
+          ...(run.timeZone ? { timeZone: run.timeZone } : {}),
         });
       }
       await updatePlannedScheduledRun(run.id, advance);
@@ -104,8 +122,8 @@ export async function GET(req: NextRequest) {
       results.push(error ? { runId: run.id, status: "failed", error, jobId } : { runId: run.id, status: "submitted", jobId });
     } catch (e) {
       // Leave the run active so the next tick retries, and leave the cursor
-      // alone; only the reason is recorded, so a run that throws every tick is
-      // diagnosable rather than merely quiet.
+      // alone, but record the refusal so the card can show it — a throw is
+      // exactly the case that would otherwise stay silently green forever.
       const message = e instanceof Error ? e.message : "Unknown error";
       try {
         await updatePlannedScheduledRun(run.id, {
@@ -114,7 +132,8 @@ export async function GET(req: NextRequest) {
           updatedAt: Date.now(),
         });
       } catch {
-        // The row itself is unreachable — the response below still reports it.
+        // The row may be gone — nothing left to annotate; the response below
+        // still reports it.
       }
       results.push({ runId: run.id, status: "failed", error: message });
     }

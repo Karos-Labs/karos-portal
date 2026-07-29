@@ -2,15 +2,17 @@ import { after } from "next/server";
 import { streamText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, isStaff } from "@/lib/auth";
 import {
   getClient,
   listAssets,
+  listClientIntegrations,
   listClientMarketingAnalytics,
   getClientInsightsCache,
   upsertClientInsightsCache,
 } from "@/lib/data";
-import { rankByEngagement } from "@/lib/analytics";
+import { engagementIsMockOrStale, rankByEngagement } from "@/lib/analytics";
+import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { logger } from "@/services/logger";
 import { MODELS } from "@/lib/constants";
 import type { Asset, ClientMarketingAnalytics } from "@/lib/types";
@@ -47,22 +49,67 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   const force = new URL(req.url).searchParams.get("force") === "1";
 
-  const [client, records, assets, cached] = await Promise.all([
+  const [client, records, assets, integrations, cached] = await Promise.all([
     getClient(clientId),
     listClientMarketingAnalytics(clientId),
     listAssets({ clientId }),
+    listClientIntegrations(clientId),
     force ? Promise.resolve(null) : getClientInsightsCache(clientId),
   ]);
   if (!client) return Response.json({ error: "Client not found" }, { status: 404 });
 
-  const digest = buildDigest(records, assets);
+  // QA F125 (second half): metrics rows are written per published asset, so they can name a
+  // platform the client never connected (an Instagram row on a Google/LinkedIn/YouTube
+  // account). Scope the digest — and therefore the prompt — to channels the client actually
+  // has, so the briefing can't recommend shifting budget on a channel they don't use.
+  // QA F145: "a channel the client actually has" means CONNECTED, not "connected and
+  // healthy". A dead token doesn't delete the channel — it stops refreshing it. Scoping to
+  // usable integrations made a channel whose login expired vanish from the briefing without
+  // a word, the same silent disappearance F145 fixes on the dashboard's channels card. Its
+  // rows stay in the digest, flagged stale, so the briefing can say "LinkedIn data is stale —
+  // reconnect" instead of quietly pretending the channel isn't there.
+  const connectedPlatforms = new Set(integrations.map((i) => i.platform));
+  const stalePlatforms = [
+    ...new Set(integrations.filter((i) => integrationNeedsReconnect(i)).map((i) => i.platform)),
+  ];
+  const scopedRecords = records.filter((r) => connectedPlatforms.has(r.platform));
 
   // Data-honesty signal (QA Fix 8): engagement analytics fall back to deterministic
   // MOCK metrics for platforms with no live token. If EVERY record feeding the digest
   // is mock-sourced, the engagement briefing is narrating demo numbers — tell the client
   // via a response header so <AiInsights/> can badge (or suppress) it.
-  const engagementIsMock = records.length > 0 && records.every((r) => r.source === "mock");
+  // Computed on `scopedRecords`, NOT `records`: the briefing is built from the scoped set,
+  // so judging provenance on the unscoped set would let live rows on a dropped platform
+  // vouch for a briefing made entirely of mock rows (analytics/sync leaves real historical
+  // rows behind when an integration expires).
+  // QA F145 verifier bounce: readmitting expired platforms above means their
+  // leftover LIVE rows re-enter scopedRecords, and analytics/sync stops writing
+  // on a 401/403 — so those rows persist indefinitely and one of them would flip
+  // this gate false, releasing a full unbadged briefing over otherwise-mock
+  // figures (F125's blocker symptom, narrowed but reachable). A stale channel's
+  // history is real but frozen, so it cannot vouch for freshness either:
+  // `every(r => r.source === "mock" || staleSet.has(r.platform))`.
+  const engagementIsMock = engagementIsMockOrStale(scopedRecords, stalePlatforms);
   const dataSourceHeaders = engagementIsMock ? { "X-Insights-Data-Source": "mock" } : undefined;
+
+  // QA F125: a "Demo data" badge does not offset paragraphs of specific, numbered budget
+  // advice derived from invented figures. When every engagement row is mock, a client (or
+  // staff viewing as one) gets the empty state + connect link instead of a briefing — no
+  // model call at all. Staff keep the demo prose behind the badge so the panel stays
+  // testable internally.
+  if (engagementIsMock && !isStaff(user)) {
+    return new Response(
+      "Connect a social account and we'll brief you weekly on what's working.",
+      {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-Insights-State": "needs-connection",
+        },
+      },
+    );
+  }
+
+  const digest = buildDigest(scopedRecords, assets, stalePlatforms);
 
   // No measured engagement yet — the sync cron hasn't captured any published-content
   // metrics for this client (no connected socials yet, nothing published yet, or the
@@ -79,7 +126,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     }
 
     const digestKey = JSON.stringify(activity);
-    if (cached && cached.digestKey === digestKey) {
+    if (cached && cached.digestKey === digestKey && cached.text.trim() !== "") {
       return cachedResponse(cached.text);
     }
 
@@ -101,10 +148,13 @@ Write the update now.`;
       model: MODEL,
       system: pipelineSystem,
       prompt: pipelinePrompt,
+      onError: ({ error }) => console.error("[ai-insights] Pipeline stream failed:", error),
       onFinish: ({ text, usage }) => {
         after(async () => {
           try {
-            await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
+            if (isCacheable(text)) {
+              await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
+            }
             await logger.logUsage({
               clientId,
               agentId: null,
@@ -125,13 +175,18 @@ Write the update now.`;
   }
 
   const digestKey = JSON.stringify(digest);
-  if (cached && cached.digestKey === digestKey) {
+  if (cached && cached.digestKey === digestKey && cached.text.trim() !== "") {
     return cachedResponse(cached.text, dataSourceHeaders);
   }
 
   const system =
     "You are Karos AI, an Elite CMO analyst. Write a concise, scannable performance briefing for a busy client. " +
     "Use plain language (no jargon, no fabricated numbers — only the figures provided). " +
+    "Only reference channels that appear in the data below; never name, compare against, or recommend " +
+    "spending on a platform that is not listed — the client is not on it. " +
+    "Any channel named in staleChannels has a disconnected login: its numbers stopped updating and are " +
+    "not current. Say plainly that its data is stale and the channel needs reconnecting, and do not base " +
+    "any recommendation on its figures. " +
     "Format as 2–3 short sections with bold mini-headers and tight bullets. Cover: (1) week-over-week movement, " +
     "(2) what's winning and why, (3) the optimization choices the engine is making next (double down on winners, phase out losers). " +
     "Keep the whole thing under 160 words.";
@@ -147,10 +202,13 @@ Write the briefing now.`;
     model: MODEL,
     system,
     prompt,
+    onError: ({ error }) => console.error("[ai-insights] Briefing stream failed:", error),
     onFinish: ({ text, usage }) => {
       after(async () => {
         try {
-          await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
+          if (isCacheable(text)) {
+            await upsertClientInsightsCache(clientId, { digestKey, text, generatedAt: Date.now() });
+          }
           await logger.logUsage({
             clientId,
             agentId: null,
@@ -168,6 +226,19 @@ Write the briefing now.`;
   });
 
   return result.toTextStreamResponse({ headers: dataSourceHeaders });
+}
+
+/**
+ * A generation that fails mid-stream finishes with empty text (the SDK masks the
+ * error into the stream, so the response is still a 200 with an empty body).
+ * Caching that would pin a blank card in place for every later load with the
+ * same digest — a poisoned cache no page load can clear. Never store one; the
+ * next load simply regenerates.
+ */
+function isCacheable(text: string): boolean {
+  if (text.trim() !== "") return true;
+  console.error("[ai-insights] Generation produced no text — not caching");
+  return false;
 }
 
 /** A cache hit is already fully generated — return it in one shot (still plain
@@ -226,6 +297,10 @@ function buildActivityDigest(assets: Asset[]): ActivityDigest {
 
 type Digest = {
   sampleSize: number;
+  /** Connected channels whose login has expired — their rows are real but no
+   *  longer refreshing (QA F145). Named in the prompt so the briefing reports
+   *  the staleness instead of the channel silently going missing. */
+  staleChannels: string[];
   weekOverWeek: {
     thisWeekAvgScore: number;
     lastWeekAvgScore: number;
@@ -252,6 +327,7 @@ function avg(nums: number[]): number {
 function buildDigest(
   records: ClientMarketingAnalytics[],
   assets: Array<{ id: string; publishedAt?: number }>,
+  staleChannels: string[] = [],
 ): Digest {
   const publishedAtById = new Map(assets.map((a) => [a.id, a.publishedAt]));
   const now = Date.now();
@@ -290,6 +366,7 @@ function buildDigest(
 
   return {
     sampleSize: records.length,
+    staleChannels,
     weekOverWeek: {
       thisWeekAvgScore: thisWeekAvg,
       lastWeekAvgScore: lastWeekAvg,

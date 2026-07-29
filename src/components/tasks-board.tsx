@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   DndContext,
   PointerSensor,
@@ -21,7 +21,12 @@ import { CSS } from "@dnd-kit/utilities";
 import { Icon } from "@/components/icon";
 import { Badge, EmptyState } from "@/components/ui";
 import { cn, relativeTime } from "@/lib/utils";
-import { deleteTaskAction, updateAutopilotAction, updateTaskStatusAction } from "@/lib/actions";
+import {
+  deleteTaskAction,
+  previewPendingTasksBatchAction,
+  runPendingTasksBatchAction,
+  updateTaskStatusAction,
+} from "@/lib/actions";
 import { TaskTicketModal } from "@/components/task-ticket-modal";
 import type { ClientTask, Role, TaskOwner, TaskSource, TaskStatus } from "@/lib/types";
 
@@ -32,9 +37,9 @@ type BoardTask = ClientTask & { _clientName?: string };
 
 const BOARD_COLUMNS: { status: BoardStatus; label: string; icon: string }[] = [
   { status: "pending", label: "Pending", icon: "Circle" },
-  { status: "in_progress", label: "In Progress", icon: "PlayCircle" },
+  { status: "in_progress", label: "In Progress", icon: "CirclePlay" },
   { status: "review_pending", label: "Review Pending", icon: "Eye" },
-  { status: "completed", label: "Done", icon: "CheckCircle" },
+  { status: "completed", label: "Done", icon: "CircleCheck" },
 ];
 
 const SOURCE_META: Record<TaskSource, { label: string; icon: string }> = {
@@ -95,55 +100,105 @@ function findStatusFromOver(overId: string | null, tasks: BoardTask[]): BoardSta
   return overTask?.status === "archived" ? null : (overTask?.status as BoardStatus | undefined) ?? null;
 }
 
-function AutopilotToggle({ clientId, enabled }: { clientId: string; enabled: boolean }) {
-  const [isOn, setIsOn] = useState(enabled);
+/**
+ * One-shot batch runner. This used to be an "Autopilot" switch that stayed on
+ * forever while nothing in the product ever ran a second batch (QA F48), so it
+ * is now labelled as what it does: run the next few pending automated tasks.
+ */
+function RunPendingTasksButton({ clientId }: { clientId: string }) {
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
+  const [started, setStarted] = useState<number | null>(null);
+  const [preview, setPreview] = useState<{ count: number; credits: number; billable: boolean } | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Store-previous-prop pattern (avoids the cascading-render setState-in-effect anti-pattern).
-  const [prevEnabled, setPrevEnabled] = useState(enabled);
-  if (prevEnabled !== enabled) {
-    setPrevEnabled(enabled);
-    setIsOn(enabled);
+  // Confirm step: nothing is claimed or charged until the client has seen the
+  // task count and the credit total (QA F58).
+  function askToRun() {
+    setError(null);
+    setStarted(null);
+    startTransition(async () => {
+      const res = await previewPendingTasksBatchAction(clientId);
+      if (!res.ok) {
+        setError(res.error ?? "Could not check what would run");
+        return;
+      }
+      setPreview({ count: res.count ?? 0, credits: res.credits ?? 0, billable: res.billable ?? false });
+    });
   }
 
-  function toggle() {
-    const next = !isOn;
-    setIsOn(next);
+  function confirmRun() {
     setError(null);
     startTransition(async () => {
-      const res = await updateAutopilotAction(clientId, next);
+      const res = await runPendingTasksBatchAction(clientId);
+      setPreview(null);
       if (!res.ok) {
-        setIsOn(!next);
-        setError(res.error ?? "Could not update Autopilot");
+        setError(res.error ?? "Could not start the run");
+        return;
       }
+      setStarted(res.started ?? 0);
+      router.refresh();
     });
   }
 
   return (
     <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
       <button
-        onClick={toggle}
-        disabled={isPending}
-        aria-checked={isOn}
-        role="switch"
-        className="flex items-center gap-2 text-xs text-muted disabled:opacity-50"
+        onClick={askToRun}
+        disabled={isPending || preview !== null}
+        className="flex items-center gap-2 text-xs font-medium text-foreground disabled:opacity-50"
       >
-        <span
-          className={cn(
-            "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
-            isOn ? "bg-success" : "bg-surface-3",
-          )}
-        >
-          <span
-            className={cn(
-              "inline-block h-4 w-4 rounded-full bg-primary shadow-sm transition-transform",
-              isOn ? "translate-x-4" : "translate-x-0.5",
-            )}
-          />
-        </span>
-        <span className="font-medium text-foreground">{isOn ? "Autopilot on" : "Autopilot off"}</span>
+        <Icon name={isPending ? "Loader" : "Play"} className={cn("h-3.5 w-3.5 text-neon", isPending && "animate-spin")} />
+        Run up to 5 pending tasks now
       </button>
+      {/* Honest about the skip the §2 guard rail introduced: a task whose agent
+          is still being set up is passed over rather than run, and the price
+          below is quoted on what will actually run. */}
+      <p className="mt-1 max-w-[420px] text-[11px] leading-relaxed text-muted-2">
+        Runs your next few pending automated tasks and charges credits for each. Anything waiting on
+        an agent that is still being set up is skipped.
+      </p>
+
+      {preview && (
+        <div className="mt-2 rounded-md border border-border bg-surface px-2.5 py-2">
+          {preview.count === 0 ? (
+            <p className="text-[11px] text-muted">No pending automated tasks to run right now.</p>
+          ) : (
+            <p className="text-[11px] leading-relaxed text-foreground">
+              {`Runs ${preview.count} pending task${preview.count === 1 ? "" : "s"} `}
+              {preview.billable ? (
+                <span className="font-medium text-neon">{`for ${preview.credits} credits`}</span>
+              ) : (
+                <span className="font-medium text-muted">at no credit cost (staff run)</span>
+              )}
+              .
+            </p>
+          )}
+          <div className="mt-2 flex items-center gap-2">
+            {preview.count > 0 && (
+              <button
+                onClick={confirmRun}
+                disabled={isPending}
+                className="inline-flex items-center gap-1 rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1 text-[11px] font-medium text-neon hover:border-neon/50 disabled:opacity-50"
+              >
+                {preview.billable ? `Run & charge ${preview.credits} credits` : "Run now"}
+              </button>
+            )}
+            <button
+              onClick={() => setPreview(null)}
+              className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+            >
+              {preview.count > 0 ? "Cancel" : "Close"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {started !== null && !error && (
+        <p className="mt-1 text-[11px] text-muted">
+          {started === 0 ? "No pending automated tasks to run." : `Started ${started} task${started === 1 ? "" : "s"}.`}
+        </p>
+      )}
       {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
     </div>
   );
@@ -251,10 +306,17 @@ function TaskCard({
         </div>
       )}
 
-      <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{task.title}</h3>
-      {task.description && <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{task.description}</p>}
+      {/* Compact by design: title, chips, age. The description lives in the
+          ticket modal (and the hover tooltip) — its two extra lines per card
+          were what pushed the count off screen (QA F136). */}
+      <h3
+        className="line-clamp-2 text-sm font-semibold leading-snug text-foreground"
+        title={task.description || task.title}
+      >
+        {task.title}
+      </h3>
 
-      <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-2">
+      <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-2">
         {!(task.source === "copilot" || owner === "karos_managed") && (
           <div className="inline-flex min-w-0 items-center gap-1 truncate">
             <Icon name={source.icon} className="h-3 w-3 shrink-0" />
@@ -264,10 +326,11 @@ function TaskCard({
         <span className="ml-auto shrink-0 whitespace-nowrap">{relativeTime(task.updatedAt || task.createdAt)}</span>
       </div>
 
-      {/* flex-wrap: on narrow columns the buttons stack instead of spilling
-          past the card border when the hover bar appears */}
+      {/* Actions only take space while hovered/focused, so the resting card
+          height stays compact. flex-wrap: on narrow columns the buttons stack
+          instead of spilling past the card border. */}
       <div
-        className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 opacity-0 transition-opacity group-hover:opacity-100"
+        className="mt-2 hidden flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 group-hover:flex group-focus-within:flex"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -385,12 +448,12 @@ function BoardColumn({
       <div
         ref={setNodeRef}
         className={cn(
-          "min-h-[280px] rounded-lg border border-border/70 bg-surface-2/65 p-2 transition-colors",
+          "min-h-[160px] rounded-lg border border-border/70 bg-surface-2/65 p-2 transition-colors",
           isTarget && "border-neon/45 bg-neon/10",
         )}
       >
         <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-          <div id={droppableId} className="flex min-h-[250px] flex-col gap-2">
+          <div id={droppableId} className="flex min-h-[130px] flex-col gap-2">
             {tasks.map((task) => (
               <SortableTaskCard
                 key={task.id}
@@ -405,7 +468,7 @@ function BoardColumn({
             {tasks.length === 0 && (
               <div
                 className={cn(
-                  "flex min-h-[150px] items-center justify-center rounded-md border border-dashed text-center",
+                  "flex min-h-[110px] items-center justify-center rounded-md border border-dashed text-center",
                   isTarget ? "border-neon/50 bg-neon/10" : "border-border/90",
                 )}
               >
@@ -424,24 +487,33 @@ interface Props {
   currentUserRole: Role;
   showClientName?: boolean;
   clientId?: string;
-  autopilotEnabled?: boolean;
 }
 
-export function TasksBoard({
-  tasks,
-  currentUserRole,
-  showClientName = false,
-  clientId,
-  autopilotEnabled = false,
-}: Props) {
+export function TasksBoard({ tasks, currentUserRole, showClientName = false, clientId }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Deep link from the notification bell: ?owner= picks the tab, ?task= opens
+  // the ticket (QA F64). Distinct keys — ?tab= is the Workspace's
+  // board/activity/archive toggle and must not be re-keyed. Unknown values are
+  // ignored, so a stale link degrades to the default board.
+  const ownerParam = searchParams.get("owner");
+  const taskParam = searchParams.get("task");
+  const linkedTask = taskParam ? tasks.find((t) => t.id === taskParam) : undefined;
+  const initialTab: OwnerTab = linkedTask
+    ? inferOwner(linkedTask) === "client_managed"
+      ? "client"
+      : "karos"
+    : ownerParam === "client"
+      ? "client"
+      : "karos";
+
   const [localTasks, setLocalTasks] = useState<BoardTask[]>(tasks);
-  const [activeTab, setActiveTab] = useState<OwnerTab>("karos");
+  const [activeTab, setActiveTab] = useState<OwnerTab>(initialTab);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [clientFilter, setClientFilter] = useState<string>("all");
   const [execError, setExecError] = useState<string | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(linkedTask?.id ?? null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const dragSnapshotRef = useRef<BoardTask[] | null>(null);
   const [, startTransition] = useTransition();
@@ -459,6 +531,17 @@ export function TasksBoard({
     setLocalTasks(tasks);
   }
 
+  // Same-route navigation (bell row clicked while already on /tasks) doesn't
+  // remount, so the deep-link params have to be re-read when they change —
+  // otherwise the board keeps whatever tab it was on (QA F64 / F97 watch-item).
+  const linkSignature = `${ownerParam ?? ""}|${taskParam ?? ""}`;
+  const [prevLinkSignature, setPrevLinkSignature] = useState(linkSignature);
+  if (prevLinkSignature !== linkSignature) {
+    setPrevLinkSignature(linkSignature);
+    setActiveTab(initialTab);
+    if (taskParam) setSelectedTaskId(linkedTask?.id ?? null);
+  }
+
   const hasExecuting = localTasks.some((t) => t.metadata?.executing === true);
   const refreshBoard = useCallback(() => router.refresh(), [router]);
   useEffect(() => {
@@ -467,10 +550,15 @@ export function TasksBoard({
     return () => clearInterval(id);
   }, [hasExecuting, refreshBoard]);
 
+  // Open work only: a chip counting Done cards disagreed with every other
+  // count in the portal (dashboard attention row, notification bell).
   const tabCounts = useMemo(
     () => ({
-      karos: localTasks.filter((t) => inferOwner(t) === "karos_managed").length,
-      client: localTasks.filter((t) => inferOwner(t) === "client_managed").length,
+      karos: localTasks.filter((t) => inferOwner(t) === "karos_managed" && t.status !== "completed")
+        .length,
+      client: localTasks.filter(
+        (t) => inferOwner(t) === "client_managed" && t.status !== "completed",
+      ).length,
     }),
     [localTasks],
   );
@@ -609,6 +697,14 @@ export function TasksBoard({
 
     for (const task of visibleTasks) {
       if (task.status === "archived") continue;
+      // The "Depending on you" tab renders no Review Pending column, so any
+      // client-owned task already stuck in that state (moved there before the
+      // status machine refused it — QA F54) surfaces in Pending instead of
+      // silently disappearing while still counting in the tab total.
+      if (activeTab === "client" && task.status === "review_pending") {
+        map.pending.push(task);
+        continue;
+      }
       map[task.status].push(task);
     }
 
@@ -616,12 +712,12 @@ export function TasksBoard({
       map[key].sort(compareByWeight);
     }
     return map;
-  }, [visibleTasks]);
+  }, [activeTab, visibleTasks]);
 
   if (localTasks.length === 0) {
     return (
       <EmptyState
-        icon={<Icon name="CheckSquare" className="h-10 w-10" />}
+        icon={<Icon name="SquareCheck" className="h-10 w-10" />}
         title="No tasks yet"
         description="Tasks appear here when AI Copilot or your team creates actionable work items."
       />
@@ -631,12 +727,33 @@ export function TasksBoard({
   return (
     <>
       <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border bg-surface-2/70 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex items-center gap-1 rounded-md border border-border bg-surface p-1">
+        {/* ONE straight row (CD-G10): tabs · search · status on a shared
+            baseline. It used to be `flex-wrap` with the run-pending CTA sitting
+            inside the right-hand group — and that CTA is a tall two-line card,
+            not a control. Its height plus the search field's min-width blew the
+            row apart: the tabs dropped to a second line bottom-left while
+            search and the status filter stayed top-right, with the card
+            floating between them. No wrap here any more; the phone layout is an
+            explicit column instead of whatever wrapping happened to produce. */}
+        {/* CD-H7a: the one-line arrangement engages off the CONTENT COLUMN, not
+            the viewport. `sm:` only knows the window is 640+, so with the
+            copilot rail out at 1280 the row still tried to fit tabs (336px) +
+            search + filters into 548-580px: the search field was squeezed to
+            41px in the client shell and to ZERO — with the row overflowing by
+            29px — in the staff shell, which carries a second select. The (app)
+            shells wrap every page in @container, so @3xl (768px of actual
+            column) is a width the row can honestly hold; below it the toolbar
+            uses the column layout CD-G10 already defines, rather than a
+            straight row with an unusable control in it. */}
+        <div className="flex flex-col gap-2 @3xl:flex-row @3xl:items-center @3xl:gap-3">
+          {/* Full width in the column layout so the two tabs split it evenly
+              instead of "Depending on you" wrapping to a second line inside its
+              own pill. */}
+          <div className="inline-flex w-full shrink-0 items-center gap-1 self-start rounded-md border border-border bg-surface p-1 @3xl:w-auto @3xl:self-auto">
             <button
               onClick={() => setActiveTab("karos")}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors @3xl:flex-none @3xl:justify-start",
                 activeTab === "karos" ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground",
               )}
             >
@@ -649,7 +766,7 @@ export function TasksBoard({
             <button
               onClick={() => setActiveTab("client")}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors @3xl:flex-none @3xl:justify-start",
                 activeTab === "client" ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground",
               )}
             >
@@ -661,8 +778,17 @@ export function TasksBoard({
             </button>
           </div>
 
-          <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
-            <div className="relative w-full min-w-[220px] max-w-[320px]">
+          {/* min-w-0 on the group and the field is what actually keeps the row
+              straight: without it the search input's own minimum width wins
+              over flex shrinking and pushes its siblings out of the line. */}
+          {/* Narrow column: search takes its own line and the selects share the
+              one below, rather than three controls fighting over 343px and
+              leaving the search box showing four characters. */}
+          <div className="flex min-w-0 flex-1 flex-col gap-2 @3xl:flex-row @3xl:items-center @3xl:justify-end">
+            {/* The floor that makes the row honest: once it IS a row, the field
+                never shrinks past 8rem — below that the placeholder is cut and
+                the control stops reading as a search box. */}
+            <div className="relative min-w-0 w-full @3xl:min-w-[8rem] @3xl:max-w-[320px] @3xl:flex-1">
               <Icon name="Search" className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-2" />
               <input
                 value={search}
@@ -671,36 +797,45 @@ export function TasksBoard({
                 className="h-9 w-full rounded-md border border-border bg-surface px-8 text-sm text-foreground placeholder:text-muted-2"
               />
             </div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-              className="h-9 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground"
-            >
-              <option value="all">All statuses</option>
-              <option value="pending">Pending</option>
-              <option value="in_progress">In Progress</option>
-              <option value="review_pending">Review Pending</option>
-              <option value="completed">Done</option>
-            </select>
-            {showClientName && (
+            <div className="flex min-w-0 items-center gap-2">
               <select
-                value={clientFilter}
-                onChange={(e) => setClientFilter(e.target.value)}
-                className="h-9 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground @3xl:flex-none @3xl:shrink-0"
               >
-                <option value="all">All clients</option>
-                {clientOptions.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
+                <option value="all">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="in_progress">In Progress</option>
+                <option value="review_pending">Review Pending</option>
+                <option value="completed">Done</option>
               </select>
-            )}
-            {activeTab === "karos" && clientId && (
-              <AutopilotToggle clientId={clientId} enabled={autopilotEnabled} />
-            )}
+              {showClientName && (
+                <select
+                  value={clientFilter}
+                  onChange={(e) => setClientFilter(e.target.value)}
+                  className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground @3xl:flex-none @3xl:shrink-0"
+                >
+                  <option value="all">All clients</option>
+                  {clientOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </div>
         </div>
+
+        {/* The CTA gets its own clean row (CD-G10). It is a card that grows a
+            price-confirmation panel when pressed, so there is no width at which
+            it belongs on the filter line — inside the row it distorted the
+            toolbar, and on the row it distorted nothing. */}
+        {activeTab === "karos" && clientId && (
+          <div className="border-t border-border/60 pt-3">
+            <RunPendingTasksButton clientId={clientId} />
+          </div>
+        )}
 
         {execError && (
           <div className="flex items-start justify-between gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
@@ -727,7 +862,12 @@ export function TasksBoard({
         onDragCancel={handleDragCancel}
         onDragEnd={handleDragEnd}
       >
-        <div className={cn("grid grid-cols-1 gap-3", visibleColumns.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-4")}>
+        <div
+          className={cn(
+            "grid grid-cols-1 gap-3 @3xl:grid-cols-2",
+            visibleColumns.length === 3 ? "@5xl:grid-cols-3" : "@5xl:grid-cols-4",
+          )}
+        >
           {visibleColumns.map((column) => (
             <BoardColumn
               key={column.status}

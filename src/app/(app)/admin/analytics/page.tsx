@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { listClients, listLoginLogs, listFeedbacks } from "@/lib/data";
+import { listClients, listLoginLogs, listFeedbacks, getClientCredits } from "@/lib/data";
+import { availableCredits } from "@/lib/credits";
+import { LOW_CREDIT_THRESHOLD } from "@/lib/constants";
 import {
   getGlobalSnapshot,
   getClientSnapshot,
@@ -22,6 +24,34 @@ import { Card, CardTitle, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AnalyticsFilters, FeedbackTable } from "@/components/analytics-dashboard";
 import { relativeTime, cn } from "@/lib/utils";
+
+interface LowCreditClient {
+  id: string;
+  name: string;
+  spendable: number;
+}
+
+/**
+ * Clients at or below LOW_CREDIT_THRESHOLD, lowest first. The client-facing
+ * wall says "ask your Karos team for a top-up" and the copilot repeats it under
+ * 20 — but the Karos team had no queue, notification or dashboard telling them
+ * who was asking (QA F117). SPENDABLE credits, so a client blocked by a weekly
+ * cap shows up too, not just an empty balance.
+ */
+async function lowCreditClients(
+  clients: Awaited<ReturnType<typeof listClients>>,
+): Promise<LowCreditClient[]> {
+  const rows = await Promise.all(
+    clients.map(async (c) => ({
+      id: c.id,
+      name: c.name,
+      spendable: availableCredits(await getClientCredits(c.id)),
+    })),
+  );
+  return rows
+    .filter((r) => r.spendable <= LOW_CREDIT_THRESHOLD)
+    .sort((a, b) => a.spendable - b.spendable);
+}
 
 export default async function AnalyticsPage({
   searchParams,
@@ -88,6 +118,7 @@ export default async function AnalyticsPage({
       errors: errs,
       loginCount: loginLogs.length,
       feedbacks,
+      lowCredits: await lowCreditClients(clients),
     });
   }
 
@@ -131,6 +162,7 @@ export default async function AnalyticsPage({
     errors,
     loginCount: loginLogs.length,
     feedbacks,
+    lowCredits: await lowCreditClients(clients),
   });
 }
 
@@ -153,11 +185,12 @@ function renderPage(p: {
   errors: Awaited<ReturnType<typeof listRecentErrors>>;
   loginCount: number;
   feedbacks: Awaited<ReturnType<typeof listFeedbacks>>;
+  lowCredits: LowCreditClient[];
 }) {
   const {
     rangeLabel, range, clientId, clients, agentKey, agentDisplayName,
     totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
-    modelStats, agentStats, errors, loginCount, feedbacks,
+    modelStats, agentStats, errors, loginCount, feedbacks, lowCredits,
   } = p;
 
   /** Build an /admin/analytics href preserving clientId/range, overriding agentKey. */
@@ -262,16 +295,43 @@ function renderPage(p: {
         ))}
       </div>
 
+      {/* Clients low on credits — the agency's queue for the top-up the
+          client-facing wall tells them to ask for (QA F117). */}
+      {lowCredits.length > 0 && (
+        <Card>
+          <CardTitle className="mb-1">Clients low on credits</CardTitle>
+          <p className="mb-4 text-xs text-muted">
+            At or below {LOW_CREDIT_THRESHOLD} spendable credits — the point where the portal
+            starts telling them to ask you for a top-up.
+          </p>
+          <ul className="divide-y divide-border">
+            {lowCredits.map((c) => (
+              <li key={c.id} className="flex items-center justify-between gap-3 py-2">
+                <Link
+                  href={`/clients/${c.id}/settings`}
+                  className="min-w-0 flex-1 truncate text-sm text-foreground transition-colors hover:text-neon"
+                >
+                  {c.name}
+                </Link>
+                <Badge tone={c.spendable === 0 ? "danger" : "warning"}>
+                  {c.spendable === 0 ? "Out of credits" : `${c.spendable} left`}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       {/* Two-column: model breakdown + agent leaderboard */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Model breakdown */}
         <Card>
           <CardTitle className="mb-4">
-            {agentKey ? `Model breakdown - ${agentDisplayName ?? "selected agent"}` : "Model breakdown"}
+            {agentKey ? `Model breakdown — ${agentDisplayName ?? "selected agent"}` : "Model breakdown"}
           </CardTitle>
           {modelStats.length === 0 ? (
             <EmptyState
-              icon={<Icon name="BarChart2" className="h-5 w-5" />}
+              icon={<Icon name="ChartNoAxesColumn" className="h-5 w-5" />}
               title="No model usage"
               description={
                 agentKey

@@ -111,7 +111,7 @@ export async function saveRedditCompanyIntakeAction(input: {
   if (offLimitsRaw && offLimitsSubreddits.length === 0) {
     return {
       error:
-        "We could not read a subreddit in the list to stay out of. Write them as names, like r/SaaS, r/marketing - you can add why after them.",
+        "We could not read a subreddit in the list to stay out of. Write them as names, like r/SaaS, r/marketing — you can add why after them.",
     };
   }
 
@@ -197,14 +197,14 @@ export async function addRedditDraftFeedbackAction(input: {
   }
   if (input.action === "not_posted") {
     if (!input.reasonCode || !isReasonCode(input.reasonCode)) {
-      return { error: "Pick a reason - that is what teaches the agent." };
+      return { error: "Pick a reason — that is what teaches the agent." };
     }
     if (!input.reason?.trim()) {
-      return { error: "Add a line about why - that is what teaches the agent." };
+      return { error: "Add a line about why — that is what teaches the agent." };
     }
   }
   if (input.action === "note" && !input.reason?.trim()) {
-    return { error: "Write the feedback - as much detail as you like." };
+    return { error: "Write the feedback — as much detail as you like." };
   }
   if (input.action === "edit_request" && !input.reason?.trim()) {
     return { error: "Tell us what to change about this draft." };

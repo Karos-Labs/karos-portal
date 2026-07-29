@@ -3,6 +3,7 @@
 import { useState, useEffect, useTransition, useRef } from "react";
 import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
+import { renderAssetBody } from "@/lib/doc-render";
 import {
   getTaskCommentsAction,
   addTaskCommentAction,
@@ -21,11 +22,18 @@ const PRIORITY_COLOR: Record<string, string> = {
   low:    "text-muted   bg-surface-2  border-border",
 };
 
+/**
+ * The badge a task wears in its ticket. Clients open this modal, so the labels
+ * name the WORK, never the pipeline that produced it — `content_dispatch`
+ * reads "Content", matching the board chip in tasks-board.tsx so the same task
+ * does not carry two names between its card and its ticket (A3). This map is
+ * not role-branched: there is no staff-only variant of these labels.
+ */
 const SOURCE_LABEL: Record<string, { label: string; color: string }> = {
   gmail:               { label: "Operational Intel",   color: "#6b9fd4" },
   competitor_research: { label: "Competitor Research", color: "#FF6B2C" },
   brand_audit:         { label: "Brand Audit",         color: "#d9a13d" },
-  content_dispatch:    { label: "Content Dispatch",    color: "#e5484d" },
+  content_dispatch:    { label: "Content",             color: "#e5484d" },
   copilot:             { label: "AI Copilot",          color: "#FF6B2C" },
   manual:              { label: "Manual",              color: "#9c9ca3" },
 };
@@ -37,6 +45,18 @@ const STATUS_NEXT: Record<TaskStatus, TaskStatus> = {
   completed:      "pending",
   archived:       "pending",
 };
+
+/**
+ * Review Pending is the state an AI draft sits in while Karos reviews it, so
+ * client-owned work never belongs there — the "Depending on you" board doesn't
+ * even render that column, and a task pushed into it from this footer vanished
+ * with no way back (QA F54). Client-managed work goes straight to Done.
+ */
+function nextStatusFor(task: ClientTask): TaskStatus {
+  const next = STATUS_NEXT[task.status];
+  if (next === "review_pending" && inferOwner(task) === "client_managed") return "completed";
+  return next;
+}
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   pending:        "Pending",
@@ -50,7 +70,7 @@ const STATUS_ICON: Record<TaskStatus, string> = {
   pending:        "Circle",
   in_progress:    "Clock",
   review_pending: "Eye",
-  completed:      "CheckCircle",
+  completed:      "CircleCheck",
   archived:       "Archive",
 };
 
@@ -196,7 +216,7 @@ function ReviewPanel({
       {/* Failed upload alert */}
       {failedUpload && (
         <div className="flex items-start gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
-          <Icon name="AlertTriangle" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
+          <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
           <div className="min-w-0">
             <p className="text-xs font-semibold text-danger">Send failed</p>
             {failedUploadError && (
@@ -212,7 +232,7 @@ function ReviewPanel({
       {/* Approve / publish failure */}
       {actionError && (
         <div className="flex items-start gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
-          <Icon name="AlertTriangle" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
+          <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
           <p className="text-xs text-danger break-words">{actionError}</p>
         </div>
       )}
@@ -231,8 +251,8 @@ function ReviewPanel({
               Auto-publish at the scheduled time
             </span>
             <span className="block text-[11px] text-muted">
-              Requires the target channel to be connected with auto-publish enabled - otherwise it
-              lands on the calendar for a manual Publish Now.
+              Requires the target channel to be connected with auto-publish enabled — otherwise it
+              lands on the calendar, where you open the post and press Publish Now.
             </span>
           </span>
         </label>
@@ -328,11 +348,17 @@ function AiPlanSection({
 }) {
   const [plan, setPlan] = useState<string | null>(initialPlan);
   const [isPending, startTransition] = useTransition();
+  // A guide the user just asked for opens; one that was already stored starts
+  // folded so it cannot push the comment box below the fold.
+  const [expanded, setExpanded] = useState(!initialPlan);
 
   function generate() {
     startTransition(async () => {
       const result = await generateTaskPlanAction(taskId, clientId);
-      if (result.plan) setPlan(result.plan);
+      if (result.plan) {
+        setPlan(result.plan);
+        setExpanded(true);
+      }
     });
   }
 
@@ -350,8 +376,21 @@ function AiPlanSection({
             onClick={generate}
             className="flex items-center gap-1.5 rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1 text-[11px] font-medium text-neon transition-colors hover:bg-neon/20"
           >
-            <Icon name="Wand2" className="h-3 w-3" />
+            <Icon name="WandSparkles" className="h-3 w-3" />
             Generate Plan
+          </button>
+        )}
+        {plan && !isPending && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            {expanded ? "Hide" : "Show"}
+            <Icon
+              name="ChevronDown"
+              className={cn("h-3 w-3 transition-transform", expanded && "rotate-180")}
+            />
           </button>
         )}
       </div>
@@ -362,9 +401,20 @@ function AiPlanSection({
           Generating step-by-step execution plan…
         </div>
       ) : plan ? (
-        <div className="max-h-56 overflow-y-auto text-xs text-foreground leading-relaxed">
-          <pre className="whitespace-pre-wrap font-sans">{plan}</pre>
-        </div>
+        expanded ? (
+          <div
+            className="max-h-72 overflow-y-auto break-words text-xs leading-relaxed [&_code]:break-all [&_table]:min-w-0"
+            // The generating prompt orders "## Overview / ## Prerequisites / …",
+            // so this guide is markdown on every generation. renderAssetBody is
+            // the entry point for agent output: unlike renderFullDoc it strips no
+            // preamble, so a leading heading or `---` rule is rendered, not eaten.
+            dangerouslySetInnerHTML={{ __html: renderAssetBody(plan) }}
+          />
+        ) : (
+          <p className="text-xs text-muted">
+            Execution guide ready — {countPlanSteps(plan)}. Press Show to read it.
+          </p>
+        )
       ) : (
         <p className="text-xs text-muted">
           Click &ldquo;Generate Plan&rdquo; to get an AI-recommended step-by-step execution guide for this task.
@@ -372,6 +422,14 @@ function AiPlanSection({
       )}
     </div>
   );
+}
+
+/** Folded-state summary line: how much guide is behind the toggle. */
+function countPlanSteps(plan: string): string {
+  const sections = (plan.match(/^##\s+/gm) ?? []).length;
+  if (sections > 0) return `${sections} section${sections === 1 ? "" : "s"}`;
+  const words = plan.trim().split(/\s+/).length;
+  return `${words} word${words === 1 ? "" : "s"}`;
 }
 
 /* ── Comments section ────────────────────────────────────────────── */
@@ -520,7 +578,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   const isExecuting = task.metadata?.executing === true;
   const failedUpload = task.metadata?.failedUpload as boolean | undefined;
   const failedUploadError = task.metadata?.failedUploadError as string | undefined;
-  const nextStatus = STATUS_NEXT[task.status];
+  const nextStatus = nextStatusFor(task);
   // The AI plan is a guide for the client to execute the task themselves —
   // not useful for karos_managed tasks our own agents already run.
   const isClientManaged = inferOwner(task) === "client_managed";
@@ -604,7 +662,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
               </span>
               {failedUpload && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold text-danger">
-                  <Icon name="AlertTriangle" className="h-2.5 w-2.5" />
+                  <Icon name="TriangleAlert" className="h-2.5 w-2.5" />
                   Send Failed
                 </span>
               )}

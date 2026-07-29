@@ -7,9 +7,20 @@ import { icons, type LucideProps } from "lucide-react";
  * Default stroke is 1.5 — thin, minimal line work across the whole app.
  */
 export function Icon({ name, strokeWidth = 1.5, ...props }: { name: string } & LucideProps) {
-  const Cmp = (icons as Record<string, React.ComponentType<LucideProps>>)[name] ?? icons.Sparkles;
-  return <Cmp strokeWidth={strokeWidth} {...props} />;
+  const Cmp = (icons as Record<string, React.ComponentType<LucideProps>>)[name];
+  if (!Cmp && process.env.NODE_ENV !== "production" && !warned.has(name)) {
+    // Loud in dev: the silent sparkle fallback hid 37 renamed icons across 24
+    // files after a lucide major (QA F63) — including a cheerful sparkle beside
+    // a red error message.
+    warned.add(name);
+    console.warn(`[Icon] unknown lucide icon "${name}" — falling back to Sparkles`);
+  }
+  const Resolved = Cmp ?? icons.Sparkles;
+  return <Resolved strokeWidth={strokeWidth} {...props} />;
 }
+
+/** One warning per unknown name per session, not per render. */
+const warned = new Set<string>();
 
 /**
  * The X (Twitter) wordmark. lucide dropped brand glyphs, so the platform logo

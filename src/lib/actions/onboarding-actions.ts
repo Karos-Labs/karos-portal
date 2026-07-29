@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import { logGenerationFailure } from "./_shared";
 import {
   upsertUser,
   completeOnboarding,
@@ -117,6 +118,7 @@ export async function completeOnboardingAction(input: {
       // show the reason instead of the run just silently vanishing, and so
       // Regenerate/Refresh Task Map are usable again the moment this exits.
       await releaseAiProcessingLock(clientId, failure);
+      await logGenerationFailure(clientId, failure);
     }
   });
 

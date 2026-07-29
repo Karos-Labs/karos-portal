@@ -5,12 +5,13 @@
 import { useState } from "react";
 import { Icon } from "@/components/icon";
 import { cn, initials } from "@/lib/utils";
-import { faviconUrl } from "@/lib/favicon";
+import { faviconUrl, domainFromName } from "@/lib/favicon";
 
 /**
  * Brand avatar with a graceful fallback chain:
- *   explicit logo (`src`) → website favicon (`website`) → initials chip
- *   (when `name` given) → generic building glyph.
+ *   explicit logo (`src`) → website favicon (`website`) → favicon derived from
+ *   a `name` that is itself a domain ("ploy.ai") → initials chip → generic
+ *   building glyph.
  *
  * One component for every brand surface — client switcher, clients grid,
  * competitor track, SEO/GEO comparison rows — so "always show the brand's
@@ -42,9 +43,16 @@ export function BrandFavicon({
   className?: string;
   imgClassName?: string;
 }) {
-  const candidates = [src?.trim() || null, faviconUrl(website, faviconSize)].filter(
-    (s): s is string => !!s,
-  );
+  // Third candidate: brands whose NAME is their domain and that carry no
+  // stored website — routine for report-sourced competitor rows, which is why
+  // Okara.ai and ploy.ai rendered the generic glyph next to real favicons
+  // (CD-F2). Dropped when it would duplicate the website candidate.
+  const derived = website?.trim() ? null : faviconUrl(domainFromName(name), faviconSize);
+  const candidates = [
+    src?.trim() || null,
+    faviconUrl(website, faviconSize),
+    derived,
+  ].filter((s): s is string => !!s);
   const [failedCount, setFailedCount] = useState(0);
   const current = failedCount < candidates.length ? candidates[failedCount] : null;
 

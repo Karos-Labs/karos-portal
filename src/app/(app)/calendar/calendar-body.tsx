@@ -1,8 +1,31 @@
-import { listAssets, listClients, listCustomAgents, listJobs, listPlannedScheduledRuns } from "@/lib/data";
+import Link from "next/link";
+import {
+  listAssets,
+  listClients,
+  listCustomAgents,
+  listJobs,
+  listPlannedScheduledRuns,
+} from "@/lib/data";
+import { listClientAgents } from "@/lib/data-client-agents";
 import { assetImages } from "@/lib/asset-images";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
-import { describeCadence, projectRunOccurrences } from "@/lib/scheduled-runs";
+import {
+  identitiesByClient,
+  runRowLabel,
+  scheduleRowLabel,
+  type ClientAgentIdentity,
+} from "@/lib/agent-identity-map";
+import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
+import { pushablePlatformsByClient } from "@/lib/publish-targets";
+import {
+  clientCadenceLabel,
+  describeCadence,
+  projectRunOccurrences,
+  shortZoneLabel,
+} from "@/lib/scheduled-runs";
 import { computeRunway } from "@/lib/runway";
+import { isValidTimeZone } from "@/lib/run-cadence";
+import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { PageHeader, EmptyState, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
@@ -14,10 +37,57 @@ import {
   type ScheduleAgentOption,
 } from "@/components/run-calendar";
 import type { ReactNode } from "react";
-import type { Asset, AppUser } from "@/lib/types";
+import type { Asset, AppUser, AssetType } from "@/lib/types";
 
-// Jobs that have actually run (produced or attempted output).
-const PAST_JOB_STATUSES = new Set(["review", "approved", "delivered", "failed"]);
+// Jobs that have actually run (produced or attempted output). "cancelled" is a
+// terminal outcome of its own since F30 — without it here a stopped run would
+// simply vanish from the calendar instead of showing what happened that day.
+const PAST_JOB_STATUSES = new Set(["review", "approved", "delivered", "failed", "cancelled"]);
+
+/** Plain-English noun for what a run actually produced. */
+const OUTPUT_NOUN: Record<AssetType, [string, string]> = {
+  instagram_post: ["post", "posts"],
+  social_post: ["post", "posts"],
+  article: ["article", "articles"],
+  email: ["email", "emails"],
+  note: ["note", "notes"],
+};
+
+/**
+ * "drafted 8 posts" — composed from the run's own deliverables instead of
+ * echoing the record's internal summary text.
+ */
+function describeRunOutput(views: RunAssetView[]): string | undefined {
+  if (views.length === 0) return undefined;
+  const types = new Set(views.map((v) => v.type));
+  const [one, many] =
+    types.size === 1 ? OUTPUT_NOUN[[...types][0]] ?? ["item", "items"] : ["item", "items"];
+  return `${views.length} ${views.length === 1 ? one : many}`;
+}
+
+/**
+ * The zone a scheduled run's wall clock actually means (CD-H7c).
+ *
+ * The run card printed "…09:00 · next 11:00 AM": describeCadence renders the
+ * STORED hour, while the next-run time was formatted in whatever zone the
+ * renderer happened to be in — two clocks, neither labelled, disagreeing by the
+ * offset between them. A row written before `timeZone` existed had its
+ * nextRunAt computed against the runtime's own zone (see the timezone contract
+ * in lib/scheduled-runs), so that is the zone its hour was always expressed in.
+ * Resolving it here means both halves of the line, the day bucket and the
+ * printed zone suffix all come off the same clock, and a row WITH a stored zone
+ * is unaffected.
+ */
+const RUNTIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+function runZone(stored: string | undefined): string {
+  return isValidTimeZone(stored) ? stored : RUNTIME_ZONE;
+}
+
+/** Titles come straight from the agent — a leading `#` or `**` is not a title. */
+function cleanTitle(title: string): string {
+  return stripInlineMarkdown(title.replace(/^#{1,6}\s+/, "")) || title;
+}
 
 function postKind(a: Asset): CalendarPost["kind"] | null {
   if (a.status === "published" && (a.scheduledAt != null || a.publishedAt != null)) return "published";
@@ -77,7 +147,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       singleFilter = { clientId: viewClient.id };
       single = true;
       defaultClientId = viewClient.id;
-      title = `${viewClient.name} - Calendar`;
+      title = `${viewClient.name} — Calendar`;
       // "View as client" is scoped to this one client — the schedule-run
       // picker must not offer every other client staff can see.
       clientOptions = [{ id: viewClient.id, name: viewClient.name }];
@@ -92,11 +162,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
 
   // ── Fetch (single-client scope uses a Firestore filter; broader scopes
   //    fetch-then-filter, matching the assets page) ─────────────────────
-  const [runsRaw, jobsRaw, assetsRaw, customAgents] = await Promise.all([
+  const [runsRaw, jobsRaw, assetsRaw, customAgents, umbrellasRaw] = await Promise.all([
     listPlannedScheduledRuns(singleFilter),
     listJobs(singleFilter),
     listAssets(singleFilter),
     listCustomAgents(),
+    // §7.3. One scoped read for the whole page — the cross-client overview
+    // labels rows of many clients, and a per-row umbrella query would be one
+    // Firestore read per printed card.
+    listClientAgents(singleFilter),
   ]);
   const inScope = <T extends { clientId: string }>(arr: T[]): T[] =>
     idSet ? arr.filter((x) => idSet!.has(x.clientId)) : arr;
@@ -113,12 +187,38 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     : scopedAssets;
 
   // Agent lookups: by id for scheduled runs, by name for past jobs (jobs store
-  // the agent's name, not its id).
+  // the agent's name, not its id). These stay JOIN keys — what a card PRINTS
+  // comes off the identity helper below, never off the stored name.
   const agentById = new Map(customAgents.map((a) => [a.id, a]));
   const agentByName = new Map(customAgents.map((a) => [a.name, a]));
+
+  // §7.3 identity (F147). The calendar is where Albert saw one stream named two
+  // ways on the same day — a run row reading "Instagram Agent" stacked over a
+  // post card reading "Social posts (IG/TikTok)". Both mappings below now name
+  // their row through the one resolver, which maps a run onto the umbrella that
+  // owns its content family. Stored `agentName` is untouched: it is the record
+  // of what fired, and this is the display of who it belongs to.
+  const NO_UMBRELLAS: ClientAgentIdentity[] = [];
+  const umbrellasByClient = identitiesByClient(inScope(umbrellasRaw));
+  const umbrellasFor = (clientId: string): ClientAgentIdentity[] =>
+    umbrellasByClient.get(clientId) ?? NO_UMBRELLAS;
+  // `description` here is the internal lab manifest and this array is serialized
+  // into the payload the browser receives, rendered or not — so client viewers
+  // get the written blurb, or the keyed fallback, never the manifest.
   const agentOptions: ScheduleAgentOption[] = customAgents
     .filter((a) => a.enabled)
-    .map((a) => ({ id: a.id, name: a.name, description: a.description, icon: a.icon, color: a.color }));
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      // Clients get the curated line, or the keyed fallback when none is
+      // written yet (CD-G2) — never the lab manifest, and no longer an empty
+      // string either, which is what they got before the fallback existed.
+      description: isClient
+        ? clientAgentBlurb({ key: a.key, name: a.name, clientBlurb: a.clientBlurb ?? null })
+        : a.description,
+      icon: a.icon,
+      color: a.color,
+    }));
 
   const assetsByJob = new Map<string, Asset[]>();
   for (const a of assets) {
@@ -133,22 +233,62 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     .filter((r) => r.status === "active")
     .flatMap((r) => {
       const agent = agentById.get(r.customAgentId);
+      // Client-visible calendar: the lab manifest never ships here either.
+      // It did. `clientBlurb || description` falls straight through to the
+      // manifest for every agent whose blurb has not been written yet — which
+      // is all of them until the backfill runs — so "Master content-social
+      // skill…" was reaching clients on this surface today (CD-G2).
+      const blurb = isClient
+        ? clientAgentBlurb({
+            key: agent?.key ?? "",
+            name: agent?.name ?? r.agentName,
+            clientBlurb: agent?.clientBlurb ?? null,
+          })
+        : agent?.clientBlurb?.trim() || agent?.description;
       // A recurring cadence (e.g. "weekly · Mon-Fri") fires many times — project
       // every upcoming occurrence within the horizon instead of only the single
-      // next fire, so a 5x/week schedule shows 5 chips a week, not 1.
-      return projectRunOccurrences(r, { from: scheduleNow }).map((at) => ({
+      // next fire, so a 5x/week schedule shows 5 chips a week, not 1. Projected
+      // in the SCHEDULE's zone, not the container's: only the first occurrence
+      // comes from the stored cursor, so on a UTC server every later chip of a
+      // Sao Paulo 09:00 run would slide to 06:00, and a Tokyo 22:00 run would
+      // land on the previous day — putting a weekday-only run on a weekend
+      // (F108).
+      return projectRunOccurrences(r, {
+        from: scheduleNow,
+        timeZone: runZone(r.timeZone),
+      }).map((at) => ({
         id: r.id,
         kind: "scheduled" as const,
         clientId: r.clientId,
         clientName: single ? undefined : nameOf(r.clientId),
         at,
-        productName: r.agentName,
+        // F147: the chip is named by the umbrella the client actually knows
+        // ("Instagram Agent"), not the lab agent's own row name. One identity
+        // for the same thing across calendar, agents page and dashboard.
+        productName: scheduleRowLabel(r, umbrellasFor(r.clientId)),
         productColor: r.agentColor,
         productIcon: r.agentIcon,
         cadence: r.cadence,
-        cadenceLabel: describeCadence(r),
-        prompt: r.prompt,
-        ...(agent?.description ? { agentDescription: agent.description } : {}),
+        // Pace for a client, mechanics for staff. describeCadence prints "3×
+        // weekly", which names RUNS — and on a schedule storing several outputs
+        // per fire that number is not the client's post count at all. Same
+        // vocabulary AgentScheduleModal's paceOnly branch settled on.
+        cadenceLabel: isClient
+          ? clientCadenceLabel({ ...r, timeZone: runZone(r.timeZone) })
+          : describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
+        // The zone the schedule's wall clock was set in. Sent to the browser so
+        // the chip's day bucket and printed time are computed there exactly as
+        // they were on the server — and so the card's cadence label and its
+        // "next" time are read off ONE clock (CD-H7c).
+        timeZone: runZone(r.timeZone),
+        // Per OCCURRENCE, not per row: a projection that crosses a DST boundary
+        // prints the offset in force on that day.
+        zoneLabel: shortZoneLabel(runZone(r.timeZone), at),
+        // The schedule's standing instruction is staff-authored direction —
+        // run-calendar paints it under "Will run", so a client would read the
+        // internal brief verbatim. Same shape as staffRef below (delta-lens).
+        ...(isClient ? {} : { prompt: r.prompt }),
+        ...(blurb ? { agentDescription: blurb } : {}),
       }));
     });
 
@@ -158,11 +298,25 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     .filter((j) => !(isClient && j.status === "failed")) // hide internal failures from clients
     .map((j) => {
       const agent = agentByName.get(j.agentName);
-      const views: RunAssetView[] = (assetsByJob.get(j.id) ?? []).map((a) => ({
+      // Sanitized here, at the server boundary, not at render: slicing raw
+      // content shipped the run record's own bookkeeping — markdown syntax, the
+      // internal status word, the lab product code and the job hash — into the
+      // payload of the panel a client opens to see what ran.
+      // A3/A4. `assets` carries a client's future-dated posts as redacted
+      // placeholders, and they were being counted into this card's summary: a
+      // run that produced a week of slots printed "7 posts · Ran 3:14 PM",
+      // which states outright that the whole week came out of one fire at one
+      // minute — the batch tell in its purest form. A past run card may only
+      // speak of what the client has actually been given; the rest of that run
+      // is upcoming work, and upcoming work lives on the calendar as slots.
+      // Staff keep the full run (invariant A10.6).
+      const runAssets = assetsByJob.get(j.id) ?? [];
+      const deliveredAssets = isClient ? runAssets.filter((a) => !a.locked) : runAssets;
+      const views: RunAssetView[] = deliveredAssets.map((a) => ({
         id: a.id,
         type: a.type,
-        title: a.title,
-        textPreview: (a.content ?? "").slice(0, 240),
+        title: cleanTitle(a.title),
+        textPreview: toPlainSummary(a.content, 240),
         images: assetImages(a),
       }));
       return {
@@ -171,10 +325,18 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         clientId: j.clientId,
         clientName: single ? undefined : nameOf(j.clientId),
         at: j.createdAt,
-        productName: j.agentName,
+        // The job alone, deliberately — not its assets. This card IS the run,
+        // so its fallback rung must stay the run's own recorded name; feeding
+        // the deliverables in would let an asset-derived label outrank it.
+        // The family rule still fires from the job's own `external.taskType`,
+        // which is what a managed "Social posts (IG/TikTok)" run carries.
+        productName: runRowLabel(j, umbrellasFor(j.clientId)),
         productColor: agent?.color ?? "#FF6B2C",
         productIcon: agent?.icon ?? "Bot",
         jobStatus: j.status,
+        ...(describeRunOutput(views) ? { outputSummary: describeRunOutput(views) } : {}),
+        // Job id is staff bookkeeping: a tooltip for them, absent for clients.
+        ...(isClient ? {} : { staffRef: `Job ${j.id}${agent ? ` · agent ${agent.id}` : ""}` }),
         assets: views,
         images: views.flatMap((v) => v.images),
       };
@@ -183,6 +345,10 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   const runs = [...scheduledEntries, ...pastEntries];
 
   // ── Post publish events (auto-placed + manually scheduled + published) ──
+  // No identity call here on purpose: a CalendarPost carries a title, a day and
+  // a kind, and names no agent at all. F147's second name entered this surface
+  // through the RUN cards above, which is where the resolver belongs. Give a
+  // post an agent line later and it takes the same call.
   const posts: CalendarPost[] = assets
     .map((a): CalendarPost | null => {
       const kind = postKind(a);
@@ -192,14 +358,40 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         assetId: a.id,
         clientId: a.clientId,
         clientName: single ? undefined : nameOf(a.clientId),
-        title: a.title,
+        title: cleanTitle(a.title),
         at,
         kind,
         images: assetImages(a),
-        textPreview: (a.content ?? "").slice(0, 160),
+        // Same leak class as the run cards above — same treatment.
+        textPreview: toPlainSummary(a.content, 160),
       };
     })
     .filter((p): p is CalendarPost => p != null);
+
+  // ── Manual push ("Publish Now") — staff only ────────────────────────
+  // The approve panel's "Manual push" tier tells the user they push the post
+  // live from the calendar, so the calendar's detail panel needs the control.
+  // publishAssetNowAction is requireStaff(), so this is built ONLY for staff —
+  // a client viewer's payload gains nothing. Integrations are read for the
+  // clients that actually own a pushable post, not for every client in scope.
+  //
+  // The predicate itself lives in lib/publish-targets.ts, which exists so "is
+  // this post pushable" cannot drift between the surfaces that ask it. This
+  // file had kept a byte-identical copy of that function's body inline — three
+  // status/mode/platform conditions and the integration read — which is the
+  // second answer the shared module was extracted to prevent.
+  const connectedPlatformsByClient = isClient
+    ? undefined
+    : await pushablePlatformsByClient(assets);
+
+  // ── Empty state ─────────────────────────────────────────────────────
+  // A month of blank squares under a header promising "what your agents will
+  // run" is a dead end: clicking a day does nothing, and nothing says where
+  // schedules come from. Clients CAN set one up — one item up the same rail —
+  // via configureClientAgentScheduleAction, so this hands off rather than
+  // apologising.
+  const scopedClientId = singleFilter?.clientId;
+  const isEmpty = runs.length + posts.length === 0;
 
   // Runway indicator (staff single-client scope only — the client's own view
   // hides internal drafts, which would understate the backlog). Reuses the same
@@ -224,13 +416,37 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   return (
     <>
       <PageHeader title={title} description={description} action={runwayBadge} />
+      {isEmpty && scopedClientId && (
+        <div className="mb-4">
+          <EmptyState
+            icon={<Icon name="CalendarClock" className="h-7 w-7" />}
+            title="No runs on the calendar yet"
+            description="Schedules are set on the AI Agents page. Once an agent has one, its runs and everything they produce show up here."
+            action={
+              <Link
+                href={`/clients/${scopedClientId}/agents`}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-neon px-4 text-sm font-semibold text-accent-ink transition-all duration-200 hover:-translate-y-0.5"
+              >
+                <Icon name="Bot" className="h-4 w-4" />
+                Set up an agent schedule
+              </Link>
+            }
+          />
+        </div>
+      )}
       <RunCalendar
         runs={runs}
         posts={posts}
         assets={assets}
         canSchedule={canSchedule}
+        // Pausing is not a staff privilege — a client owns their own schedules
+        // and the server action already authorizes them. Deleting stays behind
+        // canSchedule.
+        canManageRuns
+
         clients={clientOptions}
         agents={agentOptions}
+        {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
         defaultClientId={defaultClientId}
       />
     </>

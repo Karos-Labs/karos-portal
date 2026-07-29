@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import {
@@ -319,5 +321,149 @@ describe("subredditKey", () => {
     expect(subredditKey("r/SaaS")).toBe(subredditKey("SaaS"));
     expect(subredditKey("  /r/SaaS  ")).toBe("saas");
     expect(subredditKey("")).toBe("");
+  });
+});
+
+
+/**
+ * The rules the X and LinkedIn readers already follow, applied to the Reddit
+ * surfaces. Source-level, because these components import server actions (the
+ * Admin SDK comes with them) and cannot be mounted in a unit test — the same
+ * technique the intake-gate suite uses on the submit cores.
+ */
+describe("the Reddit reader follows the shared render rules", () => {
+  const reader = readFileSync(
+    join(process.cwd(), "src/components/reddit-drafts-review.tsx"),
+    "utf8",
+  );
+
+  it("de-marks every line of lab commentary it prints", () => {
+    // The lab writes markdown into these fields; raw ** in front of a client is
+    // F70. One assertion per site, so a regression names the field it lost.
+    for (const site of [
+      "draft.verdictNote ? stripInlineMarkdown(draft.verdictNote)",
+      "stripInlineMarkdown(draft.threadTitle)",
+      "stripInlineMarkdown(draft.whyThread)",
+      "stripInlineMarkdown(draft.laneNote)",
+      "stripInlineMarkdown(draft.whySafe)",
+      "stripInlineMarkdown(seg.text)",
+      "stripInlineMarkdown(acc.note)",
+    ]) {
+      expect(reader, `missing strip at ${site}`).toContain(site);
+    }
+  });
+
+  it("leaves the reply body and the disclosure exactly as written", () => {
+    // These two are what the client POSTS, and Reddit renders markdown
+    // natively — stripping them would change the comment that goes up.
+    expect(reader).toContain("{draft.text}");
+    expect(reader).toContain("{draft.disclosure}");
+    expect(reader).not.toContain("stripInlineMarkdown(draft.text)");
+    expect(reader).not.toContain("stripInlineMarkdown(draft.disclosure)");
+  });
+
+  it("humanizes the lab's lane vocabulary when it stands in as the title", () => {
+    // "Draft 1 · Thorough value answer" is production shorthand. It stays raw
+    // in the draftRef the feedback log joins on, and is humanized only here.
+    expect(reader).toContain("laneLabel(draft.formula)");
+    expect(reader).toContain("const draftRef = `${accountTitle} · ${draft.formula}`");
+  });
+});
+
+describe("the Reddit intake follows them too", () => {
+  const intake = readFileSync(
+    join(process.cwd(), "src/components/reddit-agent-intake.tsx"),
+    "utf8",
+  );
+
+  it("renders a run's state and date through the app's own helpers", () => {
+    expect(intake).toContain("<JobStatusBadge status={r.status} />");
+    // Staff keep the generation date; a client gets the relative, outcome-worded
+    // stamp instead (A3/A4 — four rows carrying one date is the batch tell).
+    // intake-run-rows.test.ts owns that split; this pin only holds the
+    // formatters, which is what it was written for.
+    expect(intake).toContain("`Run ${formatDate(r.createdAt)}`");
+    expect(intake).toContain("relativeTime(r.createdAt)");
+    // The raw database word and the ISO machine date, both gone.
+    expect(intake).not.toContain("· {r.status}");
+    expect(intake).not.toContain('new Date(r.createdAt).toISOString()');
+  });
+
+  it("sends clients to the archive only for work that reaches it (F28)", () => {
+    // F149 filters the client archive to approved, non-future items, so freshly
+    // generated work is not there and a client sent looking for it finds an
+    // empty page. The copy names the approval step and links the destination —
+    // it no longer names the unit the work ships in.
+    expect(intake).toContain("Once your Karos team has approved the replies");
+    expect(intake).toContain('href="/tasks?tab=archive"');
+  });
+});
+
+describe("Reddit owns no chain family", () => {
+  it("is excluded from chainFamilyForAgent alongside the X agent", () => {
+    // A Reddit reply answers a thread that is live NOW: re-dating one to fill a
+    // calendar gap posts it into a discussion that has moved on. Reddit also
+    // reaches the identity map as a social platform, so without the exclusion
+    // it would claim the social family — and a client running Reddit beside
+    // Instagram would have one silently owning the other's chain days.
+    const src = readFileSync(
+      join(process.cwd(), "src/lib/actions/client-agent-actions.ts"),
+      "utf8",
+    );
+    const fn = src.match(/function chainFamilyForAgent[\s\S]*?\n}/)?.[0];
+    expect(fn).toBeDefined();
+    expect(fn).toContain("isRedditAgentIdentity(agent.key)");
+    expect(fn?.indexOf("isRedditAgentIdentity")).toBeLessThan(
+      fn?.indexOf("socialPlatformsFor") ?? Infinity,
+    );
+  });
+});
+
+describe("Reddit is registered as an intake-driven agent", () => {
+  it("gets a setup entry, so its card cannot compute ready-by-omission", () => {
+    const rows = readFileSync(join(process.cwd(), "src/lib/client-agent-rows.ts"), "utf8");
+    const fn = rows.slice(rows.indexOf("export async function buildAgentSetup"));
+    expect(fn).toContain("isRedditAgentIdentity(agent.key)");
+    expect(fn).toContain("hasRedditAgentIntake(clientId)");
+    expect(fn).toContain("reddit-agent");
+    expect(fn).toContain('"Reddit agent data"');
+    // And the pane, so the staff dialog can collect the account form in place.
+    expect(fn).toContain('kind: "reddit", data: panes.reddit');
+  });
+
+  it("keeps the blurb table and its backfill twin byte-identical", () => {
+    // They are twins by construction: the table serves live surfaces, the
+    // script writes the same line onto existing docs. A blurb in one and not
+    // the other means an agent reads differently depending on when it landed.
+    const REDDIT_BLURB =
+      "Find the Reddit threads worth joining and get a reply drafted in your voice, one at a time.";
+    const table = readFileSync(join(process.cwd(), "src/lib/agent-blurbs.ts"), "utf8");
+    const script = readFileSync(join(process.cwd(), "scripts/backfill-agent-blurbs.ts"), "utf8");
+    expect(table).toContain(REDDIT_BLURB);
+    expect(script).toContain(REDDIT_BLURB);
+  });
+});
+
+describe("the deliverable's two viewers agree about what it is", () => {
+  it("sniffs li -> reddit -> x in the modal, the same order as the card", () => {
+    // Reddit and LinkedIn both write "## Account N · …" headings, which contain
+    // the X sniff's "# Account " substring, so both must be tested before X or
+    // the X reader claims their batches. The modal is the only deliverable
+    // viewer a client can reach, so a missing slot there means the client sees
+    // raw markdown of a batch staff see as a reader.
+    const modal = readFileSync(
+      join(process.cwd(), "src/components/asset-detail-modal.tsx"),
+      "utf8",
+    );
+    const li = modal.indexOf('includes("# LinkedIn drafts")');
+    const reddit = modal.indexOf('includes("# Reddit answer drafts")');
+    const x = modal.indexOf('includes("# Account ")');
+    expect(li).toBeGreaterThan(-1);
+    expect(reddit).toBeGreaterThan(-1);
+    expect(li).toBeLessThan(reddit);
+    expect(reddit).toBeLessThan(x);
+    // The X sniff is reached only when neither of the other two claimed it.
+    expect(modal).toContain("!liBatch && !redditBatch");
+    expect(modal).toContain("<RedditDraftsBatch");
   });
 });

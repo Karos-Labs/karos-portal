@@ -1,5 +1,16 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { computeNextRun, describeCadence, projectRunOccurrences, weeklyCadenceDays } from "@/lib/scheduled-runs";
+import {
+  clientCadenceLabel,
+  computeNextRun,
+  describeCadence,
+  MAX_OUTPUTS_PER_RUN,
+  MAX_RUNS_PER_WEEK,
+  projectRunOccurrences,
+  scheduleLimitsFor,
+  weeklyCadenceDays,
+} from "@/lib/scheduled-runs";
 
 /** Local-time constructor keeps assertions timezone-independent. */
 function local(y: number, m: number, d: number, h = 0, min = 0): number {
@@ -60,6 +71,63 @@ describe("computeNextRun", () => {
   });
 });
 
+describe("computeNextRun — timezone-pinned", () => {
+  // Sao Paulo is UTC-3 with no DST today; Kolkata is UTC+5:30. Asserting in UTC
+  // keeps these independent of the machine the suite runs on — which is the
+  // whole point of the field.
+  const SP = "America/Sao_Paulo";
+  const utc = (y: number, mo: number, d: number, h = 0, min = 0) => Date.UTC(y, mo, d, h, min);
+
+  it("fires at the picked wall clock in the schedule's zone, not the runtime's", () => {
+    // Monday 2026-07-06, 09:00 in Sao Paulo === 12:00 UTC.
+    const from = utc(2026, 6, 6, 0);
+    expect(computeNextRun({ cadence: "weekly", weekday: 1, hour: 9, minute: 0, from, timeZone: SP }))
+      .toBe(utc(2026, 6, 6, 12));
+  });
+
+  it("half-hour offsets land on the right instant", () => {
+    // Daily 09:00 Asia/Kolkata (UTC+5:30) === 03:30 UTC.
+    const from = utc(2026, 6, 6, 0);
+    expect(computeNextRun({ cadence: "daily", hour: 9, minute: 0, from, timeZone: "Asia/Kolkata" }))
+      .toBe(utc(2026, 6, 6, 3, 30));
+  });
+
+  it("keeps a fixed wall clock across a DST transition", () => {
+    // US DST ends 2026-11-01. A daily 09:00 New York slot is 13:00 UTC before
+    // and 14:00 UTC after — a hardcoded offset would drift by an hour.
+    const before = computeNextRun({
+      cadence: "daily", hour: 9, minute: 0, timeZone: "America/New_York",
+      from: utc(2026, 9, 20, 0),
+    });
+    const after = computeNextRun({
+      cadence: "daily", hour: 9, minute: 0, timeZone: "America/New_York",
+      from: utc(2026, 10, 5, 0),
+    });
+    expect(new Date(before).getUTCHours()).toBe(13);
+    expect(new Date(after).getUTCHours()).toBe(14);
+  });
+
+  it("monthly still clamps to the last day of a short month", () => {
+    const next = computeNextRun({
+      cadence: "monthly", dayOfMonth: 31, hour: 9, minute: 0, timeZone: SP,
+      from: utc(2026, 8, 5, 12), // 2026-09-05
+    });
+    // 2026-09-30 09:00 Sao Paulo === 12:00 UTC.
+    expect(next).toBe(utc(2026, 8, 30, 12));
+  });
+
+  it("ignores an unresolvable zone rather than throwing", () => {
+    expect(computeNextRun({ cadence: "daily", hour: 9, minute: 0, from: MON_8AM, timeZone: "Mars/Olympus" }))
+      .toBe(local(2026, 6, 6, 9));
+  });
+
+  it("always returns a time strictly in the future", () => {
+    const from = utc(2026, 6, 6, 12); // exactly the 09:00 SP slot
+    expect(computeNextRun({ cadence: "daily", hour: 9, minute: 0, from, timeZone: SP }))
+      .toBeGreaterThan(from);
+  });
+});
+
 describe("describeCadence", () => {
   it("summarizes a weekly cadence", () => {
     expect(describeCadence({ cadence: "weekly", weekday: 1, hour: 9, minute: 0, nextRunAt: MON_8AM }))
@@ -79,6 +147,88 @@ describe("describeCadence", () => {
       minute: 0,
       nextRunAt: MON_8AM,
     })).toBe("3× weekly · Mon, Wed, Fri 09:00");
+  });
+
+  it("names the zone when the schedule carries one", () => {
+    expect(describeCadence({
+      cadence: "weekly",
+      weekday: 1,
+      hour: 9,
+      minute: 0,
+      nextRunAt: Date.UTC(2026, 6, 6, 12),
+      timeZone: "America/Sao_Paulo",
+    })).toBe("Weekly · Mon 09:00 GMT-3");
+  });
+});
+
+describe("clientCadenceLabel", () => {
+  it("states pace, not runs, for a multi-day weekly cadence", () => {
+    expect(
+      clientCadenceLabel({
+        cadence: "weekly",
+        weekdays: [1, 3, 5],
+        hour: 9,
+        minute: 0,
+        nextRunAt: MON_8AM,
+      }),
+    ).toBe("3 posts a week · Mon, Wed, Fri 09:00");
+  });
+
+  it("switches to DAYS when the schedule batches several outputs per fire", () => {
+    // 3 fires × 5 outputs is 15 posts a week. Calling that "3 posts a week"
+    // would be false, and naming the runs would state the batch shape — so the
+    // honest client-side name for the same dial is the posting days.
+    expect(
+      clientCadenceLabel({
+        cadence: "weekly",
+        weekdays: [1, 3, 5],
+        hour: 9,
+        minute: 0,
+        nextRunAt: MON_8AM,
+        outputsPerRun: 5,
+      }),
+    ).toBe("3 posting days a week · Mon, Wed, Fri 09:00");
+  });
+
+  it("never prints the run mechanics the staff label carries", () => {
+    const staff = describeCadence({
+      cadence: "weekly",
+      weekdays: [1, 3, 5],
+      hour: 9,
+      minute: 0,
+      nextRunAt: MON_8AM,
+    });
+    const client = clientCadenceLabel({
+      cadence: "weekly",
+      weekdays: [1, 3, 5],
+      hour: 9,
+      minute: 0,
+      nextRunAt: MON_8AM,
+    });
+    expect(staff).toContain("×");
+    expect(client).not.toContain("×");
+    expect(client.toLowerCase()).not.toContain("run");
+  });
+
+  it("keeps the wall clock and its zone — time of day is pace, not mechanics", () => {
+    expect(
+      clientCadenceLabel({
+        cadence: "daily",
+        hour: 9,
+        minute: 0,
+        nextRunAt: Date.UTC(2026, 6, 6, 12),
+        timeZone: "America/Sao_Paulo",
+      }),
+    ).toBe("Every day · 09:00 GMT-3");
+  });
+
+  it("covers the single-weekday and monthly cadences", () => {
+    expect(
+      clientCadenceLabel({ cadence: "weekly", weekday: 1, hour: 9, minute: 0, nextRunAt: MON_8AM }),
+    ).toBe("1 post a week · Mon 09:00");
+    expect(
+      clientCadenceLabel({ cadence: "monthly", dayOfMonth: 3, hour: 9, minute: 0, nextRunAt: MON_8AM }),
+    ).toBe("Every month · 3rd 09:00");
   });
 });
 
@@ -123,6 +273,81 @@ describe("projectRunOccurrences", () => {
       local(2026, 6, 9, 9),
     ]);
   });
+
+  /**
+   * F108. Only the FIRST occurrence comes from the stored nextRunAt, which the
+   * scheduler computed in the schedule's own zone. Every later one is
+   * recomputed by this function, so an unthreaded zone makes the calendar
+   * disagree with itself: chip 1 right, chips 2..n on the runtime's clock (UTC
+   * in production). Asserted in the schedule's zone rather than the test
+   * runner's, so these hold wherever the suite runs.
+   */
+  describe("zone-pinned projection", () => {
+    /** The wall clock the given zone reads at an instant. */
+    function wall(zone: string, at: number): { hour: number; weekday: string } {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+        hour: "2-digit",
+        hour12: false,
+        weekday: "short",
+      }).formatToParts(new Date(at));
+      return {
+        hour: Number(parts.find((p) => p.type === "hour")!.value),
+        weekday: parts.find((p) => p.type === "weekday")!.value,
+      };
+    }
+
+    it("keeps every Sao Paulo occurrence at 09:00 local, not the runtime's 06:00", () => {
+      const zone = "America/Sao_Paulo";
+      const base = {
+        cadence: "daily" as const,
+        hour: 9,
+        minute: 0,
+      };
+      const nextRunAt = computeNextRun({ ...base, from: MON_8AM, timeZone: zone });
+      const occurrences = projectRunOccurrences(
+        { ...base, nextRunAt },
+        { from: MON_8AM, horizonDays: 14, timeZone: zone },
+      );
+      expect(occurrences.length).toBeGreaterThan(10);
+      // The whole projection, not just the stored first fire.
+      for (const at of occurrences) expect(wall(zone, at).hour).toBe(9);
+    });
+
+    it("keeps a Tokyo 22:00 weekday run on weekdays — no weekend chip", () => {
+      const zone = "Asia/Tokyo";
+      const base = {
+        cadence: "weekly" as const,
+        weekdays: [1, 2, 3, 4, 5],
+        hour: 22,
+        minute: 0,
+      };
+      const nextRunAt = computeNextRun({ ...base, from: MON_8AM, timeZone: zone });
+      const occurrences = projectRunOccurrences(
+        { ...base, nextRunAt },
+        { from: MON_8AM, horizonDays: 21, timeZone: zone },
+      );
+      expect(occurrences.length).toBeGreaterThan(5);
+      for (const at of occurrences) {
+        const { hour, weekday } = wall(zone, at);
+        expect(hour).toBe(22);
+        // 22:00 in Tokyo is 13:00 UTC the same day, but 09:00 the NEXT day in
+        // Auckland and the previous evening in New York — a projection on any
+        // clock but Tokyo's drifts across the date line into Sat/Sun.
+        expect(["Sat", "Sun"]).not.toContain(weekday);
+      }
+    });
+
+    it("without a zone the walk falls back to the runtime clock (legacy rows)", () => {
+      // Not an endorsement — the documented legacy behaviour, pinned so that
+      // dropping the argument at a call site shows up as a diff here.
+      const run = { cadence: "daily" as const, hour: 9, minute: 0, nextRunAt: local(2026, 6, 6, 9) };
+      expect(projectRunOccurrences(run, { from: MON_8AM, horizonDays: 2 })).toEqual([
+        local(2026, 6, 6, 9),
+        local(2026, 6, 7, 9),
+      ]);
+    });
+  });
 });
 
 describe("weeklyCadenceDays", () => {
@@ -130,5 +355,74 @@ describe("weeklyCadenceDays", () => {
     expect(weeklyCadenceDays(1)).toEqual([2]);
     expect(weeklyCadenceDays(3)).toEqual([1, 3, 5]);
     expect(weeklyCadenceDays(7)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+});
+
+
+/**
+ * F27. A Reddit reply is a post into someone else's community, and the product
+ * is one a day at most. The generic dial offers 7 runs x 5 outputs and the
+ * scheduler BILLS chargeMultiplier = outputsPerRun on every fire, so the
+ * un-capped dialog both invoiced 35 replies a week and drove the client's
+ * account into the behaviour subreddits remove and ban for.
+ */
+describe("scheduleLimitsFor", () => {
+  it("caps the Reddit agent at five runs a week, one reply each", () => {
+    expect(scheduleLimitsFor("karos-reddit-agent")).toEqual({
+      maxRunsPerWeek: 5,
+      maxOutputsPerRun: 1,
+    });
+  });
+
+  it("leaves every other agent on the generic ceiling", () => {
+    for (const key of [
+      "karos-x-agent",
+      "karos-linkedin-agent",
+      "karos-linkedin-company-karoslabs",
+      "karos-instagram-agent",
+      // A lookalike import is not the portal's Reddit agent and is not capped
+      // by its product rule.
+      "acme-reddit-ghostwriter",
+    ]) {
+      expect(scheduleLimitsFor(key)).toEqual({
+        maxRunsPerWeek: MAX_RUNS_PER_WEEK,
+        maxOutputsPerRun: MAX_OUTPUTS_PER_RUN,
+      });
+    }
+  });
+
+  it("holds the weekly reply ceiling at 5, not 35", () => {
+    const reddit = scheduleLimitsFor("karos-reddit-agent");
+    expect(reddit.maxRunsPerWeek * reddit.maxOutputsPerRun).toBe(5);
+    const generic = scheduleLimitsFor("karos-instagram-agent");
+    expect(generic.maxRunsPerWeek * generic.maxOutputsPerRun).toBe(35);
+  });
+});
+
+describe("the server clamps to those limits, not only the dialog", () => {
+  it("applies the per-agent ceiling to both stored fields", () => {
+    // A server action is a public HTTP surface: hiding an option is not the
+    // same as refusing a value, and a stale page or a direct call is exactly
+    // how the 35-a-week schedule got written.
+    const src = readFileSync(
+      join(process.cwd(), "src/lib/actions/planned-run-actions.ts"),
+      "utf8",
+    );
+    const start = src.indexOf("export async function configureClientAgentScheduleAction");
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf("\nexport async function ", start + 1));
+    expect(body).toContain("scheduleLimitsFor(agent.key)");
+    expect(body).toContain("clampInt(input.postsPerWeek, 1, limits.maxRunsPerWeek)");
+    expect(body).toContain("limits.maxOutputsPerRun");
+    // The clamp wraps the preserve-the-stored-value branch too, so re-saving a
+    // row written before the cap cannot re-commit to billing it.
+    expect(body).not.toMatch(/const outputsPerRun =\s*\n?\s*actorIsClient/);
+  });
+
+  it("keeps the dialog's dropdowns on the same source of truth", () => {
+    const ui = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
+    expect(ui).toContain("scheduleLimitsFor(agent.key)");
+    expect(ui).toContain("countOptions(limits.maxRunsPerWeek)");
+    expect(ui).toContain("countOptions(limits.maxOutputsPerRun)");
   });
 });

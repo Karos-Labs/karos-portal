@@ -24,6 +24,15 @@ describe("evaluateSeatAddition — monetization gate", () => {
     expect(a.reason).toMatch(/upgrade|credits/i);
   });
 
+  it("prices the blocked seat as a one-time credit charge, never a monthly fee", () => {
+    const a = evaluateSeatAddition({ ...base, currentSeatCount: 2, availableCredits: 0 });
+    // The charge fires once per seat added over the limit. Quoting a dollar
+    // "≈ $29/mo" equivalence sold that one-off as a subscription price.
+    expect(a.reason).toMatch(/one-time/i);
+    expect(a.reason).not.toMatch(/\$|\/mo\b|per month|monthly/i);
+    expect(a.reason).toContain(String(CREDIT_COSTS.employeeSeat));
+  });
+
   it("lets staff (non-billable) exceed the limit for free", () => {
     const a = evaluateSeatAddition({ ...base, currentSeatCount: 5, availableCredits: 0, billable: false });
     expect(a).toMatchObject({ allowed: true, requiresCharge: false, cost: 0 });

@@ -9,33 +9,7 @@ import {
   getAppOrigin,
 } from "@/lib/integrations/oauth";
 import { GOOGLE_UNIFIED_SUB_PLATFORM_IDS } from "@/lib/integrations/platforms";
-
-/* ── HTML page helpers ───────────────────────────────────────────────── */
-
-const BASE_STYLE = `*{box-sizing:border-box;margin:0;padding:0}body{background:#07090b;color:#e5e7eb;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}.card{text-align:center;padding:2rem;max-width:320px}.icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1.25rem}h2{font-size:1.125rem;font-weight:600;margin-bottom:.5rem;color:#fff}p{color:#6b7280;font-size:.875rem;line-height:1.5}`;
-
-function htmlPage(body: string, script: string): Response {
-  return new Response(
-    `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Karos CMO</title><style>${BASE_STYLE}</style></head><body><div class="card">${body}</div><script>${script}<\/script></body></html>`,
-    { headers: { "content-type": "text/html; charset=utf-8" } },
-  );
-}
-
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function successPage(platform: string, accountName: string, origin: string): Response {
-  const body = `<div class="icon" style="background:#FF6B2C22"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#FF6B2C" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h2>Connected!</h2><p>Closing window…</p>`;
-  const script = `(function(){var o=window.opener;if(o&&!o.closed){o.postMessage({type:"karos_oauth_success",platform:${JSON.stringify(platform)},accountName:${JSON.stringify(accountName)}},${JSON.stringify(origin)});setTimeout(function(){window.close()},800)}else{document.querySelector("p").textContent="You can close this window."}})()`;
-  return htmlPage(body, script);
-}
-
-function errorPage(platform: string, message: string, origin: string): Response {
-  const body = `<div class="icon" style="background:#ef444422"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round"/></svg></div><h2>Connection failed</h2><p>${esc(message)}</p>`;
-  const script = `(function(){var o=window.opener;if(o&&!o.closed){o.postMessage({type:"karos_oauth_error",platform:${JSON.stringify(platform)},error:${JSON.stringify(message)}},${JSON.stringify(origin)});setTimeout(function(){window.close()},1500)}else{document.querySelector("p").textContent+=" You can close this window."}})()`;
-  return htmlPage(body, script);
-}
+import { errorPage, successPage } from "@/lib/integrations/oauth-popup";
 
 /* ── Token exchange ──────────────────────────────────────────────────── */
 

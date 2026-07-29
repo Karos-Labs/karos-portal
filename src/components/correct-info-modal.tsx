@@ -9,12 +9,21 @@ import { Button, Textarea } from "@/components/ui";
 export function CorrectInfoModal({
   documentId,
   docLabel,
+  correctionPricing,
   open,
   onClose,
   onSuccess,
 }: {
   documentId: string;
   docLabel: string;
+  /**
+   * What this correction will cost the viewer, resolved on the server. Present
+   * only when the viewer is actually billable — staff and admins in "View as
+   * Client" pass nothing and see no price, because they are not charged.
+   * `blockReason` is the server's own refusal line (creditBlockReason) when the
+   * cost does not fit, so this modal names the same limit the charge would.
+   */
+  correctionPricing?: { cost: number; blockReason?: string };
   open: boolean;
   onClose: () => void;
   onSuccess: () => void;
@@ -44,9 +53,13 @@ export function CorrectInfoModal({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, pending, onClose]);
 
+  // Credits won't cover it — the server would refuse the charge before the model
+  // runs, so don't let the client spend a keystroke on the attempt.
+  const shortfall = correctionPricing?.blockReason != null;
+
   function handleSubmit() {
     const trimmed = corrections.trim();
-    if (!trimmed || pending) return;
+    if (!trimmed || pending || shortfall) return;
     setError(null);
     startTransition(async () => {
       try {
@@ -104,20 +117,35 @@ export function CorrectInfoModal({
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit();
             }}
             placeholder={
-              'e.g. "Our pricing is $49/mo, not $99/mo" or\n"The founder\'s name is Tomer, not John"'
+              'e.g. "Our pricing is $49/mo, not $99/mo" or\n"Our head office is in Tel Aviv, not London"'
             }
             rows={5}
             disabled={pending}
             className="resize-none"
           />
+          {/* The charge happens before the model call, so a client used to learn
+              the price only by watching the rail drop by 2 — or, if they were
+              short, by a red error after committing. Every other billable action
+              states its cost up front ("Costs N credits." on the run dialog);
+              this surface was the one that stayed silent. */}
           <p className="text-[11px] text-muted-2">
             Be specific. Only the facts you name will change. Everything else stays identical.
             Tip: {"⌘"}Enter to submit.
+            {correctionPricing && (
+              <span className="ml-1 text-muted">Costs {correctionPricing.cost} credits.</span>
+            )}
           </p>
+
+          {shortfall && (
+            <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5">
+              <Icon name="Lock" className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <p className="text-sm text-muted">{correctionPricing?.blockReason}</p>
+            </div>
+          )}
 
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2.5">
-              <Icon name="AlertCircle" className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+              <Icon name="CircleAlert" className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
               <p className="text-sm text-danger">{error}</p>
             </div>
           )}
@@ -140,7 +168,7 @@ export function CorrectInfoModal({
           <Button
             size="sm"
             onClick={handleSubmit}
-            disabled={!corrections.trim() || pending}
+            disabled={!corrections.trim() || pending || shortfall}
             loading={pending}
           >
             {pending ? "Applying…" : "Apply Correction"}

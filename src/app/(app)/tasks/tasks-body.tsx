@@ -2,16 +2,21 @@ import {
   listClientTasks,
   listClients,
   getClient,
-  getClientSettings,
   listClientActivityLogs,
   listJobs,
   listAssets,
   getClientReport,
 } from "@/lib/data";
+import { listClientAgents } from "@/lib/data-client-agents";
 import { TasksBoard } from "@/components/tasks-board";
 import { ProgressView } from "@/components/progress-view";
+import type { TimelineActivity, TimelineJob } from "@/components/activity-timeline";
 import { PageHeader } from "@/components/ui";
-import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import { contentLabelsByAsset, runRowLabel } from "@/lib/agent-identity-map";
+import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
+import { clientSafeActor } from "@/lib/activity-actors";
+import { isRunMachineryTitle } from "@/lib/activity-titles";
+import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import type { AppUser, ClientTask } from "@/lib/types";
 
 /**
@@ -50,20 +55,98 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
   // Archiving is handled at query level (listClientTasks hides tasks Done ≥7d)
   // plus a physical sweep in the /api/credits/reconcile cron — no page-load work.
   if (scopedClientId) {
-    const [tasks, settings, activityLogs, jobs, report, rawAssets] = await Promise.all([
+    const [tasks, activityLogs, jobs, report, rawAssets, umbrellas] = await Promise.all([
       listClientTasks({ clientId: scopedClientId }),
-      getClientSettings(scopedClientId),
       listClientActivityLogs(scopedClientId),
       listJobs({ clientId: scopedClientId }),
       getClientReport(scopedClientId),
       listAssets({ clientId: scopedClientId }),
+      listClientAgents({ clientId: scopedClientId }),
     ]);
-    // Archive tab data. Client viewers get the redacted library set (locked
-    // future posts are whitelist-stripped before crossing the RSC boundary —
-    // same rule as the old Library page); staff keep full visibility.
-    const assets = getClientLibraryAssets(rawAssets, {
-      forClient: user.role === "CLIENT_USER",
-    });
+    // Archive tab data. A client's archive is POSTED work from the last ~30
+    // days only (F149/A4) — filtered HERE, at the server boundary, so nothing
+    // unposted crosses into the RSC payload at all; redaction still runs behind
+    // it as the standing guard for anything future-dated. Staff keep the full
+    // library.
+    const isClientViewer = user.role === "CLIENT_USER";
+    const assets = isClientViewer
+      ? getClientLibraryAssets(getClientArchiveAssets(rawAssets), { forClient: true })
+      : getClientLibraryAssets(rawAssets);
+    // The activity timeline narrates these runs, and on failure prints the
+    // stored error verbatim. Two things must not go
+    // through that door for a client: a LAUNCH run (its story is the launch
+    // card's three phases — a second telling is the double identity again, and
+    // it announces a deliverable that is staff-only by design), and the raw
+    // service error, which is the same internal string every other client
+    // surface routes through clientSafeRefusal. Both are handled HERE, at the
+    // server boundary, because everything below is serialized into the RSC
+    // payload whether or not it is painted.
+    //
+    // §7.3 identity (F147). The Workspace shows the same stream twice — the
+    // Activity tab narrates the runs, the Archive tab groups their output — and
+    // before this the two read the JOB's stored agentName and the ASSET's
+    // derived label independently, which is exactly how one agent came to have
+    // two names one tab apart. Both are resolved HERE, through the one helper,
+    // and only the finished label crosses into the payload: the archive is a
+    // client component and has no business holding umbrella ids or launch
+    // states to re-derive a heading from.
+    //
+    // PROJECTED, not spread. This list is serialized into the RSC payload the
+    // browser downloads, and a whole Job carries `input` (the operator's prompt
+    // and brief), `events` (the internal execution trace), `clientAgentId` and
+    // `meta.agentsRepoSha` — the git SHA of the private lab repo. The timeline
+    // paints five fields; five fields is what crosses. Built by CONSTRUCTION so
+    // a field added to Job later is excluded by default (the redactLockedAsset
+    // rule), which is exactly what a `{ ...job }` here defeated.
+    // The timeline's OTHER half, projected by the same rule and for the same
+    // reason. An ActivityLog carries `clientId` and a free-form `metadata` bag
+    // nothing paints, and its `actor` is whatever the writer stored — the
+    // automated writers store internal service names ("Runway autopilot", see
+    // activity-actors.ts). All of it shipped, and the redaction ran in the
+    // BROWSER on a payload the browser already had.
+    //
+    // MANUAL_NOTE rows go the same way. They are written by the staff-only
+    // composer in the timeline ("Add an internal note…"), and they were dropped
+    // at render for a client while crossing the boundary in full — title, body
+    // and the staff author's name. Dropped HERE instead, exactly like the
+    // launch runs below.
+    //
+    // Machinery rows go with them. "Managed job started: Social posts
+    // (IG/TikTok)" is the operator's dispatch record, and it reached the client
+    // verbatim: the machine's vocabulary on the one screen that narrates their
+    // work, one row per dispatch, so a runway top-up wrote up to fourteen of
+    // them inside a single minute (the batch tell the run aggregation below was
+    // added to close). The client is told nothing less — every writer of these
+    // rows mints a job too, and a client's jobs are already narrated here,
+    // collapsed to one row per agent per day in outcome language. See
+    // activity-titles.ts for why the launch/setup row is on that list as well.
+    const timelineActivity: TimelineActivity[] = activityLogs
+      .filter(
+        (log) =>
+          !isClientViewer || (log.type !== "MANUAL_NOTE" && !isRunMachineryTitle(log.title)),
+      )
+      .map((log) => ({
+        id: log.id,
+        timestamp: log.timestamp,
+        type: log.type,
+        title: log.title,
+        ...(log.description ? { description: log.description } : {}),
+        // Staff are handed the row untouched, so their timeline is unchanged.
+        ...clientSafeActor(log.actor, log.actorRole, isClientViewer),
+      }));
+    const agentLabelByAssetId = contentLabelsByAsset(assets, jobs, umbrellas);
+    const timelineJobs: TimelineJob[] = jobs
+      .filter((job) => !isClientViewer || job.runType !== "launch")
+      .map((job) => ({
+        id: job.id,
+        agentName: runRowLabel(job, umbrellas),
+        status: job.status,
+        title: job.title,
+        createdAt: job.createdAt,
+        ...(job.error
+          ? { error: isClientViewer ? clientSafeRefusal(job.error) : job.error }
+          : {}),
+      }));
     return (
       <div>
         <PageHeader
@@ -74,11 +157,11 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
           tasks={tasks}
           currentUserRole={user.role}
           clientId={scopedClientId}
-          autopilotEnabled={settings?.autopilot ?? false}
-          activityLogs={activityLogs}
-          jobs={jobs}
+          activityLogs={timelineActivity}
+          jobs={timelineJobs}
           report={report}
           assets={assets}
+          agentLabelByAssetId={agentLabelByAssetId}
         />
       </div>
     );
@@ -105,7 +188,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
 
   return (
     <div>
-      <PageHeader title="Task Board" />
+      <PageHeader title="Workspace" description="Every client's board in one place." />
       <TasksBoard tasks={annotatedTasks} currentUserRole={user.role} showClientName />
     </div>
   );

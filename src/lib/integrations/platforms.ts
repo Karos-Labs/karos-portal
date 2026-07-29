@@ -83,6 +83,18 @@ export const GOOGLE_UNIFIED_SUB_PLATFORM_IDS = ["youtube", "google_search_consol
 export const GOOGLE_READ_ONLY_SUB_PLATFORM_IDS = ["google_search_console", "google_analytics", "google_business_profile"] as const;
 
 /**
+ * Platforms whose OAuth flow is fully built here but cannot yet be completed
+ * because the PLATFORM has not approved the Karos Labs developer account.
+ *
+ * TikTok is blocked on TikTok verifying that account (call directive D2,
+ * 27 Jul 2026). Offering a "Connect with TikTok" button in that state sends the
+ * client into a popup that can only fail, so the card says pending verification
+ * instead of pretending. DELETE THE ENTRY the day verification lands — nothing
+ * else needs changing, the OAuth config is already complete.
+ */
+export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>(["tiktok"]);
+
+/**
  * Which platforms each asset type can be pushed to (auto cron or Publish Now).
  * Single source of truth — the publish cron, the asset card, and the schedule
  * form all read this map. Order matters: first connected match wins when a
@@ -96,16 +108,37 @@ export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
   note: [],
 };
 
-/** Human-readable platform names for badges / pickers. */
+/**
+ * Human-readable platform names for badges / pickers. THE map for displaying a
+ * provider id — never title-case an id at render, which is how the connected-
+ * channels card printed "Linkedin" and "Youtube", misspelling both brands
+ * (QA F122). Use `platformLabel()` so an unknown id still degrades sanely.
+ */
 export const PLATFORM_LABELS: Record<string, string> = {
   instagram: "Instagram",
   facebook: "Facebook",
   linkedin: "LinkedIn",
   linkedin_community: "LinkedIn Company Page",
   twitter: "X (Twitter)",
+  x: "X",
   youtube: "YouTube",
   tiktok: "TikTok",
+  reddit: "Reddit",
+  /** Legacy aggregate id for the Google OAuth connection (still in live data). */
+  google: "Google",
+  google_search_console: "Google Search Console",
+  google_analytics: "Google Analytics",
+  google_business_profile: "Google Business Profile",
 };
+
+/**
+ * Display name for a provider id. Falls back to the id with underscores opened
+ * up rather than a raw snake_case token, so an id added to the data before it
+ * is added here never reaches a client as "google_business_profile".
+ */
+export function platformLabel(id: string): string {
+  return PLATFORM_LABELS[id] ?? id.replace(/_/g, " ");
+}
 
 export const PLATFORM_REGISTRY: PlatformConfig[] = [
   {
@@ -340,7 +373,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
   {
     id: "google_analytics",
     name: "Google Analytics",
-    icon: "BarChart3",
+    icon: "ChartColumn",
     color: "#E37400",
     description: "Read sessions, conversions, and AI-referral traffic from the client's GA4 property.",
     fields: [

@@ -1,4 +1,5 @@
 import "server-only";
+import { jobTitleForClient } from "@/lib/job-title";
 
 import { createJob, getClient, getContextItem, updateJob } from "@/lib/data";
 import {
@@ -9,6 +10,7 @@ import {
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import type { AppUser, ManagedTaskType } from "@/lib/types";
 import { logActivity } from "@/lib/actions/_shared";
+import { managedRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
 
 /**
@@ -22,6 +24,18 @@ import { mintJobToken } from "@/lib/mcp/job-token";
 // The catalog products this serves; "custom" runs go through runCustomAgentAction.
 type CatalogTaskType = Exclude<ManagedTaskType, "custom">;
 
+/**
+ * The name a managed run is RECORDED under. Stored history is data: a job that
+ * fired as "Social posts (IG/TikTok)" fired as that, and rewriting it after the
+ * fact would falsify the record and break the joins keyed on it.
+ *
+ * What changed in WP-7 is every DISPLAY of it (F147/§7.3). The job also carries
+ * `external.taskType`, and resolveContentIdentity reads the family off it — so
+ * for a client whose live social umbrella owns that family, the calendar card,
+ * the /jobs row, the run history and the archive group all print the umbrella's
+ * own name instead. The label below survives only where no umbrella claims the
+ * stream, which is exactly the case it was written for.
+ */
 const MANAGED_TASK_LABELS: Record<CatalogTaskType, string> = {
   social_post: "Social posts (IG/TikTok)",
   newsletter_issue: "Newsletter issue",
@@ -105,7 +119,7 @@ export async function submitManagedJob(
     clientId: input.clientId,
     agentId: "agent-service",
     agentName: label,
-    title: `${label} - ${client.name}`,
+    title: jobTitleForClient(label, client.name),
     status: "queued",
     input: inputSummary,
     assetIds: [],
@@ -167,7 +181,12 @@ export async function submitManagedJob(
     clientId: input.clientId,
     timestamp: Date.now(),
     type: "CAMPAIGN_CREATED",
-    title: `Managed job started: ${label}`,
+    // Machinery language, deliberately: this row is the operator's record that a
+    // submission left the building. It is minted through the shared builder so
+    // the client projection that hides it (activity-titles.ts) cannot drift
+    // away from the string it has to match — the runway sweep dispatches here,
+    // and a top-up writes one of these per job inside the same minute.
+    title: managedRunStartedTitle(label),
     actor: user.name,
     actorRole: "staff",
     metadata: { jobId, taskType: input.taskType },

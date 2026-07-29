@@ -26,7 +26,14 @@
   --border-strong: #45454e;
   --foreground: #f2f1ec;   /* warm paper white */
   --muted: #9c9ca3;
-  --muted-2: #77777e;
+  /* 4.8:1 on --surface. Was #77777e — ~3.5:1, under the 4.5:1 floor, and it
+     carried the smallest type in the app (10-11px captions, stat sub-labels,
+     per-million pricing, relative timestamps), so the large-text exemption
+     never applied (QA F119). */
+  --muted-2: #8f8f97;
+  /* The old value, kept for DECORATIVE use only — icon strokes, dividers,
+     disabled states, meter fills. Text must never use it. */
+  --muted-3: #77777e;
 
   /* THE orange — emphasis only (markers, eyebrows, hovers, live signals) */
   --neon: #ff6b2c;
@@ -61,6 +68,7 @@
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-muted-2: var(--muted-2);
+  --color-muted-3: var(--muted-3);
   --color-neon: var(--neon);
   --color-neon-bright: var(--neon-bright);
   --color-neon-dim: var(--neon-dim);
@@ -78,12 +86,12 @@
 
 html {
   color-scheme: dark;
-  /* The vertical scrollbar must exist on EVERY page or pages that scroll are
-     ~10-15px narrower than pages that don't, and the whole layout shifts when
-     switching tabs (classic-scrollbar setups; overlay scrollbars unaffected).
-     scrollbar-gutter alone is not reliably honored on the root element in
-     Chrome, so force the scrollbar area with overflow-y: scroll. */
-  overflow-y: scroll;
+  /* Pages that scroll must not be ~10-15px narrower than pages that don't, or
+     the whole layout shifts when switching tabs. `scrollbar-gutter: stable`
+     reserves that space on classic-scrollbar setups (Windows, macOS "always
+     show") and is a no-op under overlay scrollbars, which never take width.
+     This used to also force `overflow-y: scroll` — see the scrollbar skin
+     below for why that had to go (CD-G8). */
   scrollbar-gutter: stable;
 }
 html.light {
@@ -125,21 +133,30 @@ body {
   color: var(--accent-ink);
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
+/* Scrollbar skin — INNER scroll containers only, never the root.
+   Styling ::-webkit-scrollbar on html/body is itself what opts Chrome out of
+   macOS overlay scrollbars, and a classic root scrollbar permanently reserves
+   its width: every `position: fixed; right: 0` surface then stops short of the
+   window edge. Measured at a 375px window before this change — innerWidth 375
+   vs documentElement.clientWidth 365 — which is why the copilot strip's top
+   border, and the client tab bar under it, both stopped 10px short (CD-G8).
+   The `:not(html):not(body)` fence is load-bearing; do not simplify it back to
+   a bare `::-webkit-scrollbar`. */
+:not(html):not(body)::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
-::-webkit-scrollbar-track {
+:not(html):not(body)::-webkit-scrollbar-track {
   background: transparent;
 }
-::-webkit-scrollbar-thumb {
+:not(html):not(body)::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: 999px;
   border: 2px solid var(--background);
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-2);
+:not(html):not(body)::-webkit-scrollbar-thumb:hover {
+  /* Decorative fill, not text — pinned to the old value (QA F119). */
+  background: var(--muted-3);
 }
 
 /* ── The marker — signature highlight (§6) ───────────────────────────── */
@@ -209,7 +226,9 @@ body {
   --border-strong: #c8c3b6;
   --foreground: #1a1a1a;
   --muted: #6b6a63;
-  --muted-2: #8a887f;
+  /* 4.7:1 on white. Was #8a887f — ~3.6:1 (QA F119). */
+  --muted-2: #767469;
+  --muted-3: #8a887f;
 
   /* The orange never changes between modes */
   --neon: #ff6b2c;
@@ -243,12 +262,16 @@ body {
   -webkit-backdrop-filter: blur(18px) saturate(120%);
 }
 
-.light ::-webkit-scrollbar-thumb {
+/* `.light` sits on <html>, so the descendant combinator already excludes the
+   root — but not <body>, whose scrollbar propagates to the viewport. Same fence
+   as the base skin above, for the same reason (CD-G8). */
+.light :not(body)::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-color: var(--background);
 }
-.light ::-webkit-scrollbar-thumb:hover {
-  background: var(--muted-2);
+.light :not(body)::-webkit-scrollbar-thumb:hover {
+  /* Decorative fill, not text — pinned to the old value (QA F119). */
+  background: var(--muted-3);
 }
 
 /* ── Keyframes ────────────────────────────────────────────────────────── */
@@ -282,6 +305,17 @@ body {
 }
 .animate-slide-in-right { animation: slide-in-right 0.28s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 
+/* The LIVE mark on an agent (CD-K1). A halo that breathes outward, so "this is
+   running right now" reads from across the page rather than only on the dot's
+   own two pixels. Pair it with a background colour on the element itself —
+   the shadow is the whole animation, and a bare ring on nothing is invisible. */
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 7px color-mix(in srgb, var(--success) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 0%, transparent); }
+}
+.animate-pulse-ring { animation: pulse-ring 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
 /* Skeleton shimmer — use alongside a size class (e.g. h-4 w-32) */
 @keyframes shimmer {
   0%   { background-position: -200% 0; }
@@ -301,6 +335,7 @@ body {
 /* Respect reduced motion (§13) */
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse-neon,
+  .animate-pulse-ring,
   .animate-spin-slow,
   .animate-fade-up,
   .animate-fade-in,

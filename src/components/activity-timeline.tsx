@@ -1,13 +1,57 @@
 "use client";
 
 import { useState, useRef, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { AgentMark } from "@/components/agent-identity";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { CLIENT_SAFE_ACTOR, SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
 import { addActivityNoteAction } from "@/lib/actions";
-import type { ActivityEventType, ActivityLog, ClientReport, Job, Role } from "@/lib/types";
+import type { ActivityEventType, ClientReport, Job, Role } from "@/lib/types";
+
+/**
+ * The ONLY job fields this timeline may hold.
+ *
+ * It used to take `Job[]`, which the server built by spreading whole job
+ * documents — so every row of the payload carried the run's `input` (the
+ * operator's prompt and brief), its `events` (the internal execution trace),
+ * `clientAgentId`, and `meta.agentsRepoSha`, the git SHA of the private lab
+ * repo. None of it is painted; all of it is readable in the RSC payload, which
+ * is precisely the case this codebase's redaction rule exists for. Five fields
+ * are what the timeline renders, so five fields are what it receives.
+ */
+export type TimelineJob = Pick<
+  Job,
+  "id" | "agentName" | "status" | "title" | "createdAt" | "error"
+>;
+
+/**
+ * The ONLY activity-log fields this timeline may hold — the jobs rule above,
+ * applied to the other half of the stream.
+ *
+ * It used to take `ActivityLog[]` straight off the data layer. That carried
+ * `clientId` and a free-form `metadata` bag nothing here paints, and — worse —
+ * it carried the row's stored `actor` verbatim, so the internal writer names
+ * ("Runway autopilot" and friends, see activity-actors.ts) were sanitized in
+ * the BROWSER, on a list the browser had already downloaded. Staff MANUAL_NOTE
+ * rows travelled the same way: written by a staff-only composer, filtered out
+ * at render, present in full in the RSC payload.
+ *
+ * Both are now decided server-side (tasks-body.tsx), so what arrives is already
+ * this viewer's timeline: client-safe actor names, and no rows they may not
+ * read. Staff receive the same fields with nothing redacted.
+ */
+export interface TimelineActivity {
+  id: string;
+  timestamp: number;
+  type: ActivityEventType;
+  title: string;
+  description?: string;
+  actor: string;
+  actorRole: "system" | "staff" | "client";
+}
 
 /* ── Unified display event ───────────────────────────────────────────── */
 
@@ -25,7 +69,11 @@ interface TimelineEvent {
 
 /* ── Event derivation ────────────────────────────────────────────────── */
 
-function eventsFromLogs(logs: ActivityLog[]): TimelineEvent[] {
+function eventsFromLogs(logs: TimelineActivity[]): TimelineEvent[] {
+  // A straight rename into TimelineEvent's shape. The actor arrives already
+  // redacted for this viewer and the staff-only rows are already gone — both
+  // decided at the RSC boundary, because an internal string that reaches the
+  // browser is readable whether or not this function ever paints it.
   return logs.map((l) => ({
     id: l.id,
     timestamp: l.timestamp,
@@ -37,12 +85,12 @@ function eventsFromLogs(logs: ActivityLog[]): TimelineEvent[] {
   }));
 }
 
-function eventsFromJobs(jobs: Job[]): TimelineEvent[] {
+function eventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
   return jobs.map((j) => ({
     id: `job:${j.id}`,
     timestamp: j.createdAt,
     type: "CAMPAIGN_CREATED" as ActivityEventType,
-    title: `${j.agentName} campaign drafted`,
+    title: `${j.agentName} delivered a draft`,
     description:
       j.status === "failed"
         ? `Failed: ${j.error ?? "Unknown error"}`
@@ -53,37 +101,117 @@ function eventsFromJobs(jobs: Job[]): TimelineEvent[] {
   }));
 }
 
-function eventsFromReport(report: ClientReport | null): TimelineEvent[] {
+/** Server-local calendar day — the grain a client's timeline is aggregated to. */
+function dayKeyOf(t: number): string {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+/**
+ * The client face of the same jobs: ONE row per agent per day (A3/A4).
+ *
+ * Per-run rows are the batch tell in its purest form. A week of "daily" posts
+ * is produced by one or two fires, so the client's timeline printed several
+ * "<agent> delivered a draft" lines carrying the SAME minute — the generation
+ * lump, itemised, on the screen whose whole job is to narrate steady work. It
+ * also said "delivered a draft", and a draft is precisely the thing that is not
+ * delivered to a client: it is staff-reviewed first (approveAssetAction calls
+ * requireStaff) and the archive excludes it by design.
+ *
+ * So runs collapse to one row per agent per day, stamped at that day's last
+ * fire, and the run's internal title (the catalog product code plus the client
+ * name) is dropped. Failures stay one row each — a failed run is a distinct
+ * event with its own message — but under a title that matches what happened.
+ */
+function clientEventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
+  const events: TimelineEvent[] = [];
+  const days = new Map<string, { agentName: string; at: number }>();
+
+  for (const j of jobs) {
+    if (j.status === "failed") {
+      events.push({
+        id: `job:${j.id}`,
+        timestamp: j.createdAt,
+        type: "CAMPAIGN_CREATED",
+        title: `${j.agentName} couldn't finish a run`,
+        // Already routed through clientSafeRefusal at the server boundary.
+        description: j.error ?? undefined,
+        actor: CLIENT_SAFE_ACTOR,
+        actorRole: "system",
+        agentIdentity: j.agentName,
+      });
+      continue;
+    }
+    const key = `${dayKeyOf(j.createdAt)}::${j.agentName}`;
+    const seen = days.get(key);
+    if (seen) seen.at = Math.max(seen.at, j.createdAt);
+    else days.set(key, { agentName: j.agentName, at: j.createdAt });
+  }
+
+  for (const [key, day] of days) {
+    events.push({
+      id: `job-day:${key}`,
+      timestamp: day.at,
+      type: "CAMPAIGN_CREATED",
+      title: `${day.agentName} worked on your content`,
+      actor: CLIENT_SAFE_ACTOR,
+      actorRole: "system",
+      agentIdentity: day.agentName,
+    });
+  }
+
+  return events;
+}
+
+/**
+ * The one row on this timeline with no stored actor.
+ *
+ * Everything else arrives already redacted from the server projection, which is
+ * where a STORED actor has to be decided — a name redacted after the payload
+ * shipped has already shipped. This row is derived here, from the report prop,
+ * and it signed itself "System AI": an INTERNAL_ACTORS name, reaching a
+ * client's timeline through the one door that projection does not cover. Same
+ * registry, same answer; the split is by viewer, so staff still see which
+ * system wrote it.
+ */
+function eventsFromReport(report: ClientReport | null, viewerIsClient: boolean): TimelineEvent[] {
   if (!report) return [];
   return [
     {
       id: `report:${report.id}`,
       timestamp: report.createdAt,
       type: "INTEL_GENERATION" as ActivityEventType,
-      title: "Intel Report generated",
+      title: "Research report ready",
       description: `Full competitive analysis · Score: ${report.overallScore}/100 (${report.overallGrade}) · ${report.reportDate}`,
-      actor: "System AI",
+      actor: viewerIsClient ? CLIENT_SAFE_ACTOR : SYSTEM_AI_ACTOR_NAME,
       actorRole: "system" as const,
     },
   ];
 }
 
 function buildEvents(
-  logs: ActivityLog[],
-  jobs: Job[],
+  logs: TimelineActivity[],
+  jobs: TimelineJob[],
   report: ClientReport | null,
   currentUserRole: Role,
 ): TimelineEvent[] {
-  const logEvents = eventsFromLogs(logs).filter(
-    (e) => currentUserRole !== "CLIENT_USER" || e.type !== "MANUAL_NOTE",
-  );
+  const viewerIsClient = currentUserRole === "CLIENT_USER";
+  // No MANUAL_NOTE filter here any more: staff notes are dropped at the server
+  // boundary, the same place the launch runs are dropped from `jobs`. Filtering
+  // a second time here would be a second answer to "may this viewer read this
+  // row", and the one that runs after the payload has shipped is the one that
+  // does not count.
+  const logEvents = eventsFromLogs(logs);
 
   // Deduplicate: if an INTEL_GENERATION log already exists for a date close to the
   // report's createdAt (within 5 min), don't also show the derived report event.
   const hasIntelLog = logEvents.some((e) => e.type === "INTEL_GENERATION");
-  const reportEvents = hasIntelLog ? [] : eventsFromReport(report);
+  const reportEvents = hasIntelLog ? [] : eventsFromReport(report, viewerIsClient);
 
-  const all = [...logEvents, ...eventsFromJobs(jobs), ...reportEvents];
+  const jobEvents =
+    viewerIsClient ? clientEventsFromJobs(jobs) : eventsFromJobs(jobs);
+
+  const all = [...logEvents, ...jobEvents, ...reportEvents];
   // Sort newest first, stable-ish via id as tiebreaker
   return all.sort((a, b) => b.timestamp - a.timestamp || a.id.localeCompare(b.id));
 }
@@ -101,7 +229,7 @@ const EVENT_CONFIG: Record<
     label: "Website Scraped",
   },
   INTEL_GENERATION: {
-    icon: "BarChart2",
+    icon: "ChartNoAxesColumn",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
     label: "Intel Report",
@@ -323,8 +451,8 @@ function AddNoteForm({ clientId }: { clientId: string }) {
 const PAGE_SIZE = 15;
 
 interface Props {
-  activityLogs: ActivityLog[];
-  jobs: Job[];
+  activityLogs: TimelineActivity[];
+  jobs: TimelineJob[];
   report: ClientReport | null;
   clientId: string;
   currentUserRole: Role;
@@ -370,9 +498,21 @@ export function ActivityTimeline({
           </div>
           <div>
             <p className="text-sm font-medium text-foreground">No activity yet</p>
+            {/* Manual notes are stripped from a client's timeline, and "Intel
+                Report" is an internal product name — so neither belongs in a
+                list of what to expect (QA F73). */}
             <p className="mt-1 text-xs text-muted-2">
-              Events appear here as work is done: Intel Reports, campaigns, branding updates, and notes.
+              Every agent run, brand update, and competitor change shows up here as your team works.
             </p>
+            {!isStaff && (
+              <Link
+                href={`/clients/${clientId}/agents`}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-neon hover:underline"
+              >
+                Run an agent
+                <Icon name="ArrowRight" className="h-3 w-3" />
+              </Link>
+            )}
           </div>
         </div>
       )}

@@ -10,7 +10,7 @@ import { isAiProcessingLockActive } from "@/lib/constants";
  * takes up no space when no client is selected in the sidebar picker.
  * Re-mounts with a fresh key when the selected client changes.
  */
-export function StaffCopilotDock({ userName }: { userName?: string }) {
+export function StaffCopilotDock({ userName, viewerUid }: { userName?: string; viewerUid: string }) {
   const { activeClient } = useActiveClient();
   if (!activeClient) return null;
 
@@ -19,7 +19,11 @@ export function StaffCopilotDock({ userName }: { userName?: string }) {
   return (
     <CopilotDock
       key={client.id}
+      /* The staff sidebar is w-64, the client rail w-72 — the pinned strip has
+         to start at the right edge of whichever one is on screen (CD-G8). */
+      shell="staff"
       clientId={client.id}
+      viewerUid={viewerUid}
       clientName={client.name}
       userName={userName}
       client={{

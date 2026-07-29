@@ -13,8 +13,14 @@ import type { RunCadence } from "@/lib/types";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/** Calendar Y/M/D of `atUtcMs` as observed in `timezone`. */
-function localYMD(timezone: string, atUtcMs: number): { y: number; mo: number; d: number } {
+/**
+ * Calendar Y/M/D of `atUtcMs` as observed in `timezone`.
+ *
+ * Exported so the planned-run scheduler (lib/scheduled-runs.ts) and the calendar
+ * share ONE implementation of the zone maths rather than growing a second,
+ * subtly different one.
+ */
+export function localYMD(timezone: string, atUtcMs: number): { y: number; mo: number; d: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
@@ -45,7 +51,7 @@ function offsetMsAt(timezone: string, atUtcMs: number): number {
 }
 
 /** UTC epoch millis for a wall-clock (Y/M/D h:m) interpreted in `timezone`. */
-function zonedWallToUtc(
+export function zonedWallToUtc(
   y: number,
   mo: number,
   d: number,
@@ -65,8 +71,28 @@ function zonedWallToUtc(
 }
 
 /** Weekday (0=Sun..6=Sat) of a plain calendar date — timezone-independent as a label. */
-function weekdayOf(y: number, mo: number, d: number): number {
+export function weekdayOf(y: number, mo: number, d: number): number {
   return new Date(Date.UTC(y, mo - 1, d)).getUTCDay();
+}
+
+/** Is this a timezone id the runtime's Intl can actually resolve? */
+export function isValidTimeZone(timezone: string | undefined | null): timezone is string {
+  if (!timezone) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The zone this runtime is running in. On a hosted container that is almost
+ * always UTC while the team is not — which is exactly why a schedule must carry
+ * its own zone rather than inherit this one implicitly.
+ */
+export function runtimeTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
 export function isValidCadence(cadence: RunCadence): boolean {

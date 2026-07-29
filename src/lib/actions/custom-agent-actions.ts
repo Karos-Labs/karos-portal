@@ -13,6 +13,7 @@ import {
   updateCustomAgent,
 } from "@/lib/data";
 import {
+  containsLabJargon,
   defaultInstructionsFor,
   fetchSkillFrontmatter,
   isCustomAgentImportConfigured,
@@ -20,6 +21,9 @@ import {
   type CustomAgentImportCandidate,
 } from "@/lib/agent-service/custom-agent-import";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
+import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
+import { clientSafeRunError } from "@/lib/custom-agent-launch";
+import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { requireAdmin, requireClientAccess } from "./_shared";
 
 /* ── limits (mirror agent-service/src/schemas/task-types/custom.json) ── */
@@ -27,6 +31,7 @@ const MAX_INSTRUCTIONS_CHARS = 12_000;
 const MAX_KEY_CHARS = 120; // brief agent_key
 const MAX_NAME_CHARS = 200; // brief label
 const MAX_SKILL_DIR_CHARS = 300;
+const MAX_CLIENT_BLURB_CHARS = 300; // 1–2 sentences — it is a card line, not a spec
 const MAX_SKILL_ROOTS = 8;
 const SKILL_DIR_RE = /^(?!.*\.\.)(?!.*\/\/)(products|skills|clients)\/[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 
@@ -46,7 +51,10 @@ function normalizeSkillDir(dir: string): string {
 export interface CustomAgentInput {
   key: string;
   name: string;
+  /** Internal lab blurb — staff surfaces only. */
   description: string;
+  /** Client-facing 1–2 sentences. Empty/null clears it. */
+  clientBlurb?: string | null;
   icon: string;
   color: string;
   entrySkillDir: string;
@@ -54,6 +62,14 @@ export interface CustomAgentInput {
   includeClientSkills?: boolean;
   instructions: string;
   creditCost?: number | null;
+  /**
+   * One-time price of this agent's SETUP run (§6.3). Null ⇒ the client's
+   * self-serve Launch button stays disabled with a visible "pricing is being
+   * finalized" reason — deliberately gated rather than provisional, because
+   * billing an invented number that later changes is the F130 placeholder-
+   * pricing failure re-created at the most expensive SKU.
+   */
+  launchCreditCost?: number | null;
   enabled?: boolean;
 }
 
@@ -81,7 +97,33 @@ function validateAgentInput(input: CustomAgentInput): string | null {
   if (input.creditCost != null && (!Number.isInteger(input.creditCost) || input.creditCost < 0)) {
     return "Credit cost must be a whole number ≥ 0 (empty = default).";
   }
+  if (input.launchCreditCost != null) {
+    if (!Number.isInteger(input.launchCreditCost) || input.launchCreditCost <= 0) {
+      return "Launch price must be a whole number greater than 0 (empty = not priced yet).";
+    }
+    // Priced ABOVE a run, per the Q1 ruling: a setup run researches the brand
+    // and designs the whole template set, so a launch that costs the same as
+    // (or less than) one post is a mis-set price, not a discount. Compared
+    // against the effective run price so leaving creditCost empty still guards.
+    const runCost = input.creditCost ?? CREDIT_COSTS.customAgentRun;
+    if (input.launchCreditCost <= runCost) {
+      return `Launch price must be higher than the ${runCost}-credit run price — setup does much more than one post.`;
+    }
+  }
+  const blurb = (input.clientBlurb ?? "").trim();
+  if (blurb.length > MAX_CLIENT_BLURB_CHARS) {
+    return `Client blurb is too long (max ${MAX_CLIENT_BLURB_CHARS} characters — 1 to 2 sentences).`;
+  }
+  if (blurb && containsLabJargon(blurb)) {
+    return "Client blurb reads as lab notes (product code, sub-skill, tonemap, FORGE, or Path X). Rewrite it in the client's language.";
+  }
   return null;
+}
+
+/** Normalizes the editable blurb to what the document should store. */
+function normalizeClientBlurb(raw: string | null | undefined): string | null {
+  const blurb = (raw ?? "").trim();
+  return blurb ? blurb.slice(0, MAX_CLIENT_BLURB_CHARS) : null;
 }
 
 /* ─────────────────────────── admin CRUD ─────────────────────────── */
@@ -100,6 +142,7 @@ export async function createCustomAgentAction(
     key: input.key.trim(),
     name: input.name.trim(),
     description: input.description.trim(),
+    clientBlurb: normalizeClientBlurb(input.clientBlurb),
     icon: input.icon || "Sparkles",
     color: input.color || "#A3E635",
     entrySkillDir: normalizeSkillDir(input.entrySkillDir),
@@ -107,6 +150,7 @@ export async function createCustomAgentAction(
     includeClientSkills: input.includeClientSkills !== false,
     instructions: input.instructions.trim(),
     creditCost: input.creditCost ?? null,
+    launchCreditCost: input.launchCreditCost ?? null,
     enabled: input.enabled !== false,
     source: null,
     createdBy: user.uid,
@@ -134,6 +178,7 @@ export async function updateCustomAgentAction(
     key: input.key.trim(),
     name: input.name.trim(),
     description: input.description.trim(),
+    clientBlurb: normalizeClientBlurb(input.clientBlurb),
     icon: input.icon || agent.icon,
     color: input.color || agent.color,
     entrySkillDir: normalizeSkillDir(input.entrySkillDir),
@@ -141,6 +186,7 @@ export async function updateCustomAgentAction(
     includeClientSkills: input.includeClientSkills !== false,
     instructions: input.instructions.trim(),
     creditCost: input.creditCost ?? null,
+    launchCreditCost: input.launchCreditCost ?? null,
     enabled: input.enabled !== false,
     updatedAt: Date.now(),
   });
@@ -189,7 +235,7 @@ export async function listCustomAgentImportCandidatesAction(): Promise<{
 
 export async function importCustomAgentsAction(
   keys: string[],
-): Promise<{ imported?: number; skipped?: number; error?: string }> {
+): Promise<{ imported?: number; skipped?: number; flagged?: number; error?: string }> {
   const user = await requireAdmin();
   if (!isCustomAgentImportConfigured()) {
     return { error: "Set AGENTS_REPO_GITHUB_TOKEN to import agents from the karos-agents repo." };
@@ -209,6 +255,7 @@ export async function importCustomAgentsAction(
 
   let imported = 0;
   let skipped = 0;
+  let flagged = 0;
   for (const key of keys) {
     const candidate = byKey.get(key);
     if (!candidate) {
@@ -233,10 +280,21 @@ export async function importCustomAgentsAction(
     const frontmatter = await fetchSkillFrontmatter(candidate.entrySkillDir);
     const appearance = GROUP_APPEARANCE[candidate.group] ?? GROUP_APPEARANCE.Other;
     const now = Date.now();
+    const description = (frontmatter.description || candidate.description).slice(0, 600);
+    // A manifest blurb is NEVER promoted to the client-facing one, however clean
+    // it looks. LAB_JARGON_RE is allow-by-default — five patterns cannot decide
+    // whether prose was written for a client, and the strings this finding was
+    // raised over ("parameterized clone of the proven reference engine",
+    // "pixel-verifiable and gated") sail through it. Promoting on a clean scan
+    // would also clear the "No client blurb" badge, so nobody would ever be
+    // prompted to rewrite them. Every import lands flagged; an admin writes the
+    // blurb in the editor, where the jargon guard does apply to what they type.
+    flagged++;
     await createCustomAgent({
       key: candidate.key,
       name: candidate.name.slice(0, MAX_NAME_CHARS),
-      description: (frontmatter.description || candidate.description).slice(0, 600),
+      description,
+      clientBlurb: null,
       icon: appearance.icon,
       color: appearance.color,
       entrySkillDir: candidate.entrySkillDir,
@@ -259,7 +317,7 @@ export async function importCustomAgentsAction(
     imported++;
   }
   revalidatePath("/agents");
-  return { imported, skipped };
+  return { imported, skipped, flagged };
 }
 
 /* ───────────────────── per-client agent access ──────────────────── */
@@ -295,11 +353,35 @@ export async function runCustomAgentAction(input: {
   contextItemIds?: string[];
 }): Promise<{ jobId?: string; error?: string }> {
   const user = await requireClientAccess(input.clientId);
-  const result = await submitCustomAgentJob(user, input);
+  // §2 guard rail: an agent owned by a client-agent umbrella is not the
+  // client's to run until that umbrella is live. Their surface for it is the
+  // launch card, and a run fired here would charge for an agent that has no
+  // confirmed template set to produce from. Staff are unaffected — they are
+  // the ones who get it live.
+  const blocked = await clientAgentRunRefusal({
+    user,
+    clientId: input.clientId,
+    customAgentId: input.agentId,
+  });
+  if (blocked) return { error: blocked };
+  // B4 / §6.2a. This is the OTHER client-reachable, billable run — the generic
+  // run dialog — and it stamped no run type, so every charge it made landed in
+  // the undifferentiated "Other usage" bucket that the per-agent breakdown
+  // exists to eliminate. It is a run the client started by hand, which is
+  // exactly what "manual" means; both the Job type and creditBucketFor already
+  // understand it.
+  const result = await submitCustomAgentJob(user, { ...input, runType: "manual" });
   if (result.jobId && !result.error) {
     revalidatePath("/jobs");
     revalidatePath(`/clients/${input.clientId}`);
     revalidatePath(`/clients/${input.clientId}/agents`);
+    return result;
+  }
+  // A real client's run dialog must not receive the submit core's internal
+  // strings (service URLs, env var names). Sanitize only for billable client
+  // actors — staff, and admins in "View as Client", keep the raw message.
+  if (result.error && isBillableClientActor(user)) {
+    return { error: clientSafeRunError(result.error) };
   }
   return result;
 }

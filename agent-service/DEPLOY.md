@@ -122,8 +122,17 @@ gcloud scheduler jobs create http runway \
   and reports deficits (no jobs fired). Deploy it off first, hit
   `GET /api/runway?dryRun=1` to review the plan, then flip it on.
 - `RUNWAY_MAX_JOBS_PER_CLIENT` — hard cap on top-up jobs dispatched per client
-  per run (default 2). Bounds agency-side agent-service spend; runway top-ups go
-  through the staff/agency path and never charge client credits.
+  per sweep (default **14**, i.e. `RUNWAY_HORIZON_DAYS`). One managed run yields
+  one asset, so a family that is 14 days short needs 14 dispatches: the first
+  sweep fills the whole 14-day buffer, and the weekly sweeps after it top back
+  up to the same horizon — about 7 once a week has passed, so a client always
+  has at least a week of runway in hand. The old cap of 2 turned "keep every
+  client's calendar filled" into "add two posts a week", which never catches up
+  on a client who starts empty. Bounds agency-side agent-service spend; runway
+  top-ups go through the staff/agency path and never charge client credits.
+  `cloudbuild.yaml` passes `_RUNWAY_MAX_JOBS_PER_CLIENT` as an env var on every
+  deploy, so that substitution — not the code default — is what a deployed
+  service uses; leave it empty to hand the decision back to the code.
 
 Only `active` clients still `pending`/`running` their initial onboarding are
 skipped — a past `onboardingStatus: "failed"` (the intel/context-doc research

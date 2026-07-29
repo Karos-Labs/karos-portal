@@ -5,6 +5,7 @@ import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetsView } from "@/components/assets-view";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import type { Asset } from "@/lib/types";
 
 export default async function AssetsPage({
@@ -47,6 +48,7 @@ export default async function AssetsPage({
   // Admins and employees alike only see assets of EXISTING (visible) clients —
   // orphaned assets of deleted clients used to leak into this cross-client view.
   const assets = allAssets.filter((a) => clientIds.has(a.clientId));
+  const connectedPlatformsByClient = await pushablePlatformsByClient(assets);
   return (
     <>
       <PageHeader title="Assets" description="All content generated across your clients." />
@@ -58,6 +60,7 @@ export default async function AssetsPage({
           canApprove
           initialStatus={initialStatus}
           clientNames={Object.fromEntries(clients.map((client) => [client.id, client.name]))}
+          {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
         />
       )}
     </>

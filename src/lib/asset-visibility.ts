@@ -22,7 +22,91 @@ export function getClientLibraryAssets(
   );
   if (!opts?.forClient) return sorted;
   const now = opts.now ?? Date.now();
-  return sorted.map((a) => (isAssetUnlockedForClient(a, now) ? a : redactLockedAsset(a)));
+  return sorted
+    .filter((a) => !isLaunchDeliverable(a))
+    .map((a) => (isAssetUnlockedForClient(a, now) ? a : redactLockedAsset(a)));
+}
+
+/**
+ * A client agent's SETUP-run output: the research write-up and the proposed
+ * template set. Working material staff curate, not a deliverable — it is
+ * excluded here so all three client surfaces (library, calendar, archive)
+ * inherit one exclusion instead of each growing its own filter.
+ *
+ * Not covered by the draft/date rules: a launch deliverable is undated (so the
+ * lock never applies) and would age into the archive the moment staff approved
+ * anything. The flag is written by the webhook at creation.
+ */
+export function isLaunchDeliverable(a: Pick<Asset, "meta">): boolean {
+  return a.meta?.launchDeliverable === true;
+}
+
+/** How far back the client archive reaches. Older posts are hidden, never deleted. */
+export const CLIENT_ARCHIVE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * The client-facing Archive set (QA F149, call directive A4).
+ *
+ * The archive used to be every deliverable the moment it existed, badged
+ * "draft" — breaking the approval promise the run dialog makes and handing the
+ * client the whole batch at generation time. Three rules now:
+ *
+ * 1. **No drafts.** An unapproved draft is never client-visible, so nothing
+ *    appears "the moment it is generated".
+ * 2. **No future-dated posts.** Upcoming work lives on the calendar as slots;
+ *    the archive never hints that a later day's post already exists (A3/A4).
+ * 3. **Posted work ages out at ~30 days**, while work the client still has to
+ *    post (approved / scheduled / delivered) stays until they mark it posted —
+ *    that is what keeps "Mark as posted" reachable from the archive modal, and
+ *    keeps the per-draft pick/edit/skip reader (F46) reachable at all.
+ *
+ * Ageing out is a VIEW filter — nothing is deleted, and staff surfaces keep the
+ * full history.
+ */
+export function getClientArchiveAssets(assets: Asset[], opts?: { now?: number }): Asset[] {
+  const now = opts?.now ?? Date.now();
+  return assets
+    .filter((a) => isInClientArchive(a, now))
+    .sort((a, b) => clientDeliveryStamp(b) - clientDeliveryStamp(a));
+}
+
+/**
+ * The moment the archive sorts and ages a row by: when the client got it.
+ *
+ * Also THE timestamp client-facing deliverable rows print. `createdAt` is the
+ * generation instant, and a week of "daily" posts shares one of those — so
+ * stamping a client's rows with it publishes the batch shape on every surface
+ * that lists deliverables (A3/A4). Published work carries its posting time;
+ * everything else carries the last time it moved, which for an approved
+ * deliverable is the approval. Staff surfaces keep `createdAt`: for them the
+ * generation instant is the fact worth knowing.
+ */
+export function clientDeliveryStamp(
+  a: Pick<Asset, "publishedAt" | "updatedAt" | "createdAt">,
+): number {
+  return a.publishedAt ?? a.updatedAt ?? a.createdAt;
+}
+
+/**
+ * Archive membership as ONE predicate — the four rules above, in one place.
+ *
+ * Every surface that wants to say "this is (or will be) in your archive" has to
+ * ask THIS, not re-derive a subset. Two surfaces had grown one-rule replicas of
+ * the set (`status !== "draft"`), which answers "yes, linkable" for a
+ * future-dated post, a launch deliverable, and a published post that has already
+ * aged past the 30-day window — three ways to land a client on a screen that
+ * provably excludes the row they just clicked. A link is only honest if the
+ * asset behind it passes the same filter the archive itself applies.
+ */
+export function isInClientArchive(
+  a: Pick<Asset, "meta" | "status" | "scheduledAt" | "publishedAt" | "updatedAt" | "createdAt">,
+  now: number,
+): boolean {
+  if (isLaunchDeliverable(a)) return false;
+  if (a.status === "draft") return false;
+  if (!isAssetUnlockedForClient(a, now)) return false;
+  if (a.status === "published") return clientDeliveryStamp(a) >= now - CLIENT_ARCHIVE_WINDOW_MS;
+  return true;
 }
 
 /**

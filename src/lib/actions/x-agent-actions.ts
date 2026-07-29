@@ -83,7 +83,7 @@ function parseHandle(raw: string): string | null | { error: string } {
   if (!/^[A-Za-z0-9_]{1,15}$/.test(trimmed)) {
     return {
       error:
-        "That is not a valid X handle - letters, numbers and underscores only, up to 15 characters. Leave it empty if you do not have one yet.",
+        "That is not a valid X handle — letters, numbers and underscores only, up to 15 characters. Leave it empty if you do not have one yet.",
     };
   }
   return `@${trimmed}`;
@@ -195,7 +195,7 @@ export async function addXSeatAction(input: {
   const existing = (await listClientSeats(input.clientId)).find((s) => s.slug === slug);
   let seatId = existing?.id;
   if (seatId && (await getAgentIntake(input.clientId, "x", seatId))) {
-    return { error: `An X seat for "${name}" already exists - edit it instead.` };
+    return { error: `An X seat for "${name}" already exists — edit it instead.` };
   }
   const now = Date.now();
   if (!seatId) {
@@ -245,9 +245,12 @@ export async function proposeXRosterAction(input: {
   const client = await getClient(input.clientId);
   if (!client) return { error: "Client not found." };
 
+  // Client tier: this suggestion runs for client users too, so it must read the
+  // published copy — the one a correction updates and the one that carries no
+  // internal analyst notes.
   const [audience, strategy] = await Promise.all([
-    getClientContextDoc(input.clientId, "target-audience"),
-    getClientContextDoc(input.clientId, "market-strategy"),
+    getClientContextDoc(input.clientId, "target-audience", "client"),
+    getClientContextDoc(input.clientId, "market-strategy", "client"),
   ]);
   const context = [
     `Company: ${client.name}${client.industry ? ` (${client.industry})` : ""}${client.website ? ` — ${client.website}` : ""}`,
@@ -258,7 +261,7 @@ export async function proposeXRosterAction(input: {
     .filter(Boolean)
     .join("\n\n");
   if (!audience?.content && !strategy?.content && !client.brief) {
-    return { error: "Not enough client context yet - finish onboarding first, or type accounts manually." };
+    return { error: "Not enough client context yet — finish onboarding first, or type accounts manually." };
   }
 
   const forWhom = input.seatName
@@ -274,7 +277,7 @@ export async function proposeXRosterAction(input: {
       prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
     });
     const match = text.match(/\[[\s\S]*\]/);
-    if (!match) return { error: "Could not build a proposal - try again or type accounts manually." };
+    if (!match) return { error: "Could not build a proposal — try again or type accounts manually." };
     const parsed = JSON.parse(match[0]) as Array<{ handle?: string; why?: string }>;
     const handles = parsed
       .map((p) => ({
@@ -283,10 +286,10 @@ export async function proposeXRosterAction(input: {
       }))
       .filter((p) => /^@[A-Za-z0-9_]{1,15}$/.test(p.handle))
       .slice(0, 15);
-    if (handles.length < 5) return { error: "Proposal came back too thin - try again or type accounts manually." };
+    if (handles.length < 5) return { error: "Proposal came back too thin — try again or type accounts manually." };
     return { handles };
   } catch {
-    return { error: "Could not build a proposal right now - try again or type accounts manually." };
+    return { error: "Could not build a proposal right now — try again or type accounts manually." };
   }
 }
 
@@ -373,7 +376,7 @@ export async function addXTakeAction(input: {
   const user = await requireClientAccess(input.clientId);
   const seat = await getClientSeat(input.seatId);
   if (!seat || seat.clientId !== input.clientId) return { error: "Seat not found." };
-  if (!input.take.trim()) return { error: "Write the take - one honest sentence is enough." };
+  if (!input.take.trim()) return { error: "Write the take — one honest sentence is enough." };
   if (!DATE_RE.test(input.date)) return { error: "Pick a date for this take." };
   if (input.take.length > MAX_TEXT) return { error: "Please keep the take under 2,000 characters." };
   await addXTake({
@@ -429,10 +432,10 @@ export async function addXDraftFeedbackAction(input: {
     return { error: "Paste the final text you actually posted." };
   }
   if (input.action === "not_posted" && !input.reason?.trim()) {
-    return { error: "Tell us why this one did not run - that is what teaches the agent." };
+    return { error: "Tell us why this one did not run — that is what teaches the agent." };
   }
   if (input.action === "note" && !input.reason?.trim()) {
-    return { error: "Write the feedback - as much detail as you like." };
+    return { error: "Write the feedback — as much detail as you like." };
   }
   if ((input.finalText?.length ?? 0) > MAX_TEXT || (input.reason?.length ?? 0) > MAX_TEXT) {
     return { error: "Please keep each answer under 2,000 characters." };

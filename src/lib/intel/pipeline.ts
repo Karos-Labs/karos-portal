@@ -3,10 +3,19 @@ import "server-only";
 import { streamText, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
-import { getClient, replaceClientContextDocs, listClientCompetitors, listTranscripts, upsertClientSeoGeo } from "@/lib/data";
+import {
+  getClient,
+  replaceClientContextDocs,
+  listClientContextDocs,
+  listClientCompetitors,
+  listClientDocCorrections,
+  listTranscripts,
+  upsertClientSeoGeo,
+} from "@/lib/data";
 import { RESEARCH_ENGINE_RULES, METRICS_RULES } from "./brain";
 import { TEMPLATES } from "./templates";
 import { condenseDocs } from "./condense";
+import { carryChangeLog } from "./changelog";
 import { runSeoGeoResearch, type SeoGeoResearch } from "./seo-geo";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
@@ -15,6 +24,13 @@ import { logger } from "@/services/logger";
 
 // "meeting-notes" is written exclusively by appendMeetingSignalToContextDoc — not generated here.
 type PipelineDocType = Exclude<ContextDocType, "meeting-notes">;
+
+/** One stored client correction, resolved for the generation prompt. */
+interface DocCorrection {
+  text: string;
+  /** Undefined = a global correction, which applies to every document. */
+  docType?: string;
+}
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
@@ -445,26 +461,50 @@ function lastTemplateSection(template: string): string | null {
   return matches[matches.length - 1].replace(/^## /, "").trim();
 }
 
+/**
+ * Corrections the client has already applied, rendered for the generation
+ * prompt. A regeneration replaces every stored document, so without this the
+ * run confidently restores facts the client has explicitly corrected. Framed
+ * exactly like applyDocCorrections' ground-truth block so the two paths agree
+ * on what a client correction outranks.
+ */
+function buildCorrectionsBlock(corrections: DocCorrection[]): string {
+  if (!corrections.length) return "";
+  const lines = corrections.map((c) => `- ${c.text.trim()}`).join("\n");
+  return `
+
+## ◈ VERIFIED CLIENT CORRECTIONS — ABSOLUTE GROUND TRUTH
+The client's team confirmed these facts directly, in the portal, about earlier
+versions of this document. They OUTRANK every research finding, every training
+memory, and the CLIENT CONTEXT block. Carry each one into this document
+wherever it applies, and never restate the fact these corrections replaced.
+
+${lines}`;
+}
+
 async function generateDoc(
   client: Client,
   docType: ContextDocType,
   research: Research,
   rules: string,
+  corrections: DocCorrection[] = [],
 ): Promise<string> {
   const template = TEMPLATES[docType] ?? "";
   const researchBlock = buildResearchBlock(docType, research);
+  const correctionsBlock = buildCorrectionsBlock(corrections);
 
-  const systemPrompt = `${rules}\n\nYou are a senior strategic analyst at Karos Labs writing the definitive ${docType} context document for ${client.name}. This document is consumed by every downstream content and strategy agent — its accuracy directly determines the quality of everything the agency produces for this client. Apply Claude Sonnet's full analytical depth to every section.
+  const systemPrompt = `${rules}${correctionsBlock}\n\nYou are a senior strategic analyst at Karos Labs writing the definitive ${docType} context document for ${client.name}. This document is consumed by every downstream content and strategy agent — its accuracy directly determines the quality of everything the agency produces for this client. Apply Claude Sonnet's full analytical depth to every section.
 
 ## ◈ DATA PROVENANCE & INGESTION PROTOCOL
 
 The RESEARCH FINDINGS block below was gathered minutes ago by parallel research agents with LIVE web access (web search + web fetch). It is the freshest available intelligence on this client. Ingest it under these rules:
 
 1. **Source-of-truth hierarchy** (higher always overrides lower on conflict):
-   a. CLIENT CONTEXT — entered directly by the client's team
-   b. "web-observed (URL, date):" findings — fetched live in this run
-   c. "training knowledge:" findings — unverified model memory
-   d. "industry pattern:" — general market inference
+   a. VERIFIED CLIENT CORRECTIONS — facts the client's team has already told us we got wrong
+   b. CLIENT CONTEXT — entered directly by the client's team
+   c. "web-observed (URL, date):" findings — fetched live in this run
+   d. "training knowledge:" findings — unverified model memory
+   e. "industry pattern:" — general market inference
 2. **Preserve provenance labels.** When you carry a fact into the document, carry its source label with it. Never launder a training-knowledge claim into a web-observed one.
 3. **No invention beyond the evidence.** Every named competitor, quoted tagline, metric, price, and regulatory identifier in your output must be traceable to the CLIENT CONTEXT or the RESEARCH FINDINGS. If neither supports it, omit it or mark it "to capture with client".
 4. **Degraded-research handling.** If a research section begins with "RESEARCH UNAVAILABLE", that vertical failed for this run. Do NOT reconstruct it from memory — use "—" for its quantitative fields and lean on CLIENT CONTEXT plus the surviving verticals for qualitative sections.
@@ -510,7 +550,7 @@ ${fillFrontmatter(template, client, docType, "internal")}
 INSTRUCTIONS:
 - Your output MUST begin with the opening \`---\` of the YAML frontmatter and proceed section by section in the exact order shown in the template above. Do not start from the middle of the document.
 - Fill every section completely. Replace all <placeholder> text and every \`> ...\` blockquote with real, specific content.
-- Keep all section headings (## N. Heading) exactly as written.
+- Keep all section headings exactly as written. Do NOT add numbers to them — the viewer numbers sections from their position, so a literal number in the text can only disagree with it.
 - For quantitative metrics without a source: use "—" (em dash) in table cells. For qualitative sections: derive and infer — never use any placeholder phrase.
 - For Goals & KPIs tables: fill the KPI name and cadence from business context; use "to capture with client" for unknown baselines and "to define with client" for unknown targets. Never use "data unavailable" in any table cell.
 - COMPLETE ALL SECTIONS — this document has ${template.match(/^## /gm)?.length ?? "multiple"} sections; every one must appear in the output.
@@ -724,12 +764,28 @@ function buildResearchBlock(docType: ContextDocType, research: Research): string
  * 4. All docs atomically replace existing clientContextDocs for this client
  */
 export async function runOnboardPipeline(clientId: string, runSpecificContext = ""): Promise<void> {
-  const [client, existingCompetitors, existingTranscripts] = await Promise.all([
+  const [client, existingCompetitors, existingTranscripts, storedCorrections] = await Promise.all([
     getClient(clientId),
     listClientCompetitors(clientId),
     listTranscripts({ clientId }),
+    // This run replaces every stored document, so corrections the client applied
+    // since the last run only survive if the generation prompt is told about
+    // them. Non-fatal: a correction store that cannot be read must not block a
+    // regeneration.
+    listClientDocCorrections(clientId).catch((err) => {
+      console.error("[onboard] Could not load client corrections (non-fatal):", err);
+      return [];
+    }),
   ]);
   if (!client) throw new Error(`Client not found: ${clientId}`);
+
+  const allCorrections: DocCorrection[] = storedCorrections.map((f) => ({
+    text: f.feedbackText,
+    docType: f.scope === "global" ? undefined : f.docType,
+  }));
+  /** Global corrections apply everywhere; single-doc ones only to their own document. */
+  const correctionsFor = (docType: PipelineDocType): DocCorrection[] =>
+    allCorrections.filter((c) => !c.docType || c.docType === docType);
 
   const rules = coreRules("", runSpecificContext);
 
@@ -848,8 +904,8 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
     clientGuidelines,
     actionPlan,
   ] = await Promise.all([
-    ...internalDocTypes.map((dt) => generateDoc(client, dt, research, rules)),
-    ...internalOnlyDocTypes.map((dt) => generateDoc(client, dt, research, rules)),
+    ...internalDocTypes.map((dt) => generateDoc(client, dt, research, rules, correctionsFor(dt))),
+    ...internalOnlyDocTypes.map((dt) => generateDoc(client, dt, research, rules, correctionsFor(dt))),
   ]);
 
   const internalContents: Record<PipelineDocType, string> = {
@@ -864,9 +920,41 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
   };
 
   // Phase 3: Condensation (5 public docs → client-tier)
-  const condensed = await condenseDocs(client, internalDocTypes, internalContents, rules);
+  // A blank condensation is not a document — condenseOne returns `content: ""`
+  // for an empty source, and storing that puts a row in the client's nav that
+  // opens onto an empty panel. Drop it here so the row is never written.
+  const condensed = (await condenseDocs(client, internalDocTypes, internalContents, rules)).filter(
+    (doc) => {
+      if (doc.content.trim()) return true;
+      console.warn(`[onboard] Skipping empty condensed doc: ${doc.docType}`);
+      return false;
+    },
+  );
 
-  // Phase 4: Build full doc set and atomically replace
+  // Phase 4: Build full doc set and atomically replace.
+  //
+  // Change Log carry-forward. The generator is forbidden to write a change log
+  // (it would be fabricated provenance) but the lab-imported documents carry a
+  // real one, and this run deletes every stored row. Read the outgoing documents
+  // and re-attach each one's section to its own replacement, matched on
+  // docType + tier so a client-tier log never lands on an internal document and
+  // vice versa. carryChangeLog strips before it attaches, so a model-invented
+  // log still dies and the section can never be duplicated.
+  //
+  // Non-fatal: a read failure must not throw away a full research + generation
+  // run. It degrades to the previous behaviour (no carry) and says so.
+  const priorContent = new Map<string, string>();
+  try {
+    for (const doc of await listClientContextDocs(clientId)) {
+      priorContent.set(`${doc.docType}::${doc.tier}`, doc.content);
+    }
+  } catch (err) {
+    console.error("[onboard] Could not read prior documents for Change Log carry-forward (non-fatal):", err);
+  }
+  const runDate = todayISO();
+  const withCarriedChangeLog = (content: string, docType: string, tier: string): string =>
+    carryChangeLog(content, priorContent.get(`${docType}::${tier}`), runDate);
+
   const now = Date.now();
   const allDocs = [
     // Internal tier (5 public docs)
@@ -874,7 +962,7 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
       clientId,
       docType: dt,
       tier: "internal" as const,
-      content: internalContents[dt],
+      content: withCarriedChangeLog(internalContents[dt], dt, "internal"),
       version: 1,
       createdAt: now,
       updatedAt: now,
@@ -884,7 +972,7 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
       clientId,
       docType: dt,
       tier: "internal-only" as const,
-      content: internalContents[dt],
+      content: withCarriedChangeLog(internalContents[dt], dt, "internal-only"),
       version: 1,
       createdAt: now,
       updatedAt: now,
@@ -894,7 +982,7 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
       clientId,
       docType: doc.docType,
       tier: "client" as const,
-      content: doc.content,
+      content: withCarriedChangeLog(doc.content, doc.docType, "client"),
       version: 1,
       createdAt: now,
       updatedAt: now,

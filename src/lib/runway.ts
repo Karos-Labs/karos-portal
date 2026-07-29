@@ -31,6 +31,47 @@ import { chainAllowsDay } from "@/lib/scheduling";
 /** Guaranteed rolling horizon: every active client stays filled this many days out. */
 export const RUNWAY_HORIZON_DAYS = 14;
 
+/**
+ * Jobs one client may be dispatched in a single sweep.
+ *
+ * Sized to the FILL policy, not to a per-family count. One managed run yields
+ * one asset, so a family that is 14 days short needs 14 dispatches to be full —
+ * a cap of 2 turned "keep every client's calendar filled" into "add two posts a
+ * week", which never catches up on a client who starts empty. The first sweep
+ * therefore fills the whole 14-day buffer; weekly sweeps after it top back up
+ * to the same horizon, which is ~7 once a week has passed, so a client always
+ * has at least a week of runway in hand.
+ *
+ * The ceiling is per client per sweep and bounds the agency's own agent-service
+ * spend, which is the only thing it was ever for — client credits are not
+ * touched by a system actor.
+ */
+const RUNWAY_MAX_JOBS_DEFAULT = RUNWAY_HORIZON_DAYS;
+
+/** Pure so the cap's edge cases are testable without a request. */
+export function resolveMaxJobs(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return RUNWAY_MAX_JOBS_DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) return RUNWAY_MAX_JOBS_DEFAULT;
+  return parsed;
+}
+
+/**
+ * How many jobs to fire for one short family: one per missing day, since one
+ * managed run produces one asset.
+ *
+ * Deliberately NOT a single job carrying "make 14 posts" in its brief. The
+ * managed products take no count field (both schemas are
+ * additionalProperties:false, which is what 422'd the first attempt at this),
+ * so asking for a batch means asking in prose and hoping — and a prose request
+ * for fourteen posts is exactly the batch-shaped instruction that produces
+ * fourteen variations of one idea.
+ */
+export function dispatchesFor(deficit: number, remaining: number): number {
+  return Math.max(0, Math.min(deficit, remaining));
+}
+
+
 /** Platforms whose presence makes the social family "active" for a client. */
 const SOCIAL_PLATFORMS = new Set([
   "instagram",

@@ -143,8 +143,20 @@ export interface Client {
    * Cleared the moment a new run acquires the lock. Lets the UI show what went
    * wrong and that Regenerate/Refresh Task Map are open again, instead of the
    * run just silently vanishing.
+   *
+   * STAFF-ONLY: this is a raw provider error, and only the admin branch of the
+   * banner ever paints it. `toClientPortalView` projects the boolean below in
+   * its place — see F69.
    */
   aiProcessingError?: string;
+  /**
+   * THAT the last run failed, without saying how. The client portal projection
+   * sets this instead of `aiProcessingError`: both client-side readers only ever
+   * tested the error for truthiness, so the raw provider string was crossing the
+   * RSC boundary — readable from view-source — to decide a single branch (F69).
+   * Never stored; it exists only on the projected view.
+   */
+  aiProcessingFailed?: boolean;
   /**
    * Epoch millis the Intel Report + SEO/GEO pipeline last completed successfully,
    * from ANY of its three triggers (new client, admin Regenerate, or the
@@ -200,7 +212,14 @@ export type JobStatus =
   | "review" // output ready, awaiting employee/client review
   | "approved"
   | "delivered"
-  | "failed";
+  | "failed"
+  /**
+   * Stopped on purpose. Distinct from "failed": folding the two presented a
+   * deliberate stop as a breakage, polluted failure counts, and left the person
+   * who pressed Cancel unsure whether it had worked. Credits are refunded for
+   * this outcome exactly as for a failure.
+   */
+  | "cancelled";
 
 export interface JobRunEvent {
   at: number;
@@ -223,7 +242,19 @@ export interface CustomAgent {
   /** Stable slug (the repo skill_name for imports), unique across agents. */
   key: string;
   name: string;
+  /**
+   * INTERNAL. The lab-repo skill manifest blurb — product codes, pipeline
+   * architecture, engineering shorthand. Staff surfaces only. Client surfaces
+   * render `clientBlurb`.
+   */
   description: string;
+  /**
+   * What this agent does, in the client's language: 1–2 sentences, sentence
+   * case, no lab product codes. Rendered on the client's agent card and in the
+   * run dialog. Absent on agents imported before the field existed — surfaces
+   * fall back to `description` until an admin writes one.
+   */
+  clientBlurb?: string | null;
   /** lucide icon name (see components/icon.tsx). */
   icon: string;
   /** Badge/chip hex color. */
@@ -238,6 +269,19 @@ export interface CustomAgent {
   instructions: string;
   /** Per-run price for billable client actors; null ⇒ CREDIT_COSTS.customAgentRun. */
   creditCost?: number | null;
+  /**
+   * Credits a client-fired LAUNCH (the one-time setup run of a client agent)
+   * costs. Client-billed and priced ABOVE this agent's per-run `creditCost`,
+   * from the MEASURED setup-vs-run USD ratio rather than a guessed multiplier
+   * (Phase-3 §6.3). Admin-set per agent after measurement, like creditCost.
+   *
+   * null ⇒ the price has not been calibrated yet: the CLIENT's self-serve
+   * Launch is gated with a visible reason, while staff launches (free, and the
+   * runs that produce the measurement) proceed. Deliberately gated rather than
+   * charging a provisional number — billing a price nobody consciously set is
+   * the F130 placeholder-pricing failure at the most expensive SKU.
+   */
+  launchCreditCost?: number | null;
   /** Hidden from run surfaces when false (still editable by admins). */
   enabled: boolean;
   /** Import provenance (absent on hand-written agents). */
@@ -332,12 +376,28 @@ export interface ExternalJobInfo {
   transcriptUrl?: string;
 }
 
+/**
+ * How a run was initiated within the launch-vs-runs model (Phase 3).
+ *   launch          — the one-time heavy setup run of a client agent
+ *   scheduled       — a recurring fire of the umbrella's schedule
+ *   manual_template — client pressed "Run this template now"
+ *   manual          — any other hand-fired run (incl. note revision passes)
+ * Absent on legacy jobs; analytics buckets those as "before run-type tracking".
+ */
+export type JobRunType = "launch" | "scheduled" | "manual_template" | "manual";
+
 export interface Job {
   id: string;
   clientId: string;
   agentId: string;
   /** Exact custom-agent identity for repo-agent runs. Older jobs may only have agentName. */
   customAgentId?: string;
+  /** See JobRunType. Absent on jobs written before run-type tracking existed. */
+  runType?: JobRunType;
+  /** The client-agent umbrella (clientAgents doc id) this run belongs to, when one exists. */
+  clientAgentId?: string | null;
+  /** manual_template + slot-fulfilling runs: which template stream was produced. */
+  templateKey?: string | null;
   agentName: string;
   title: string;
   status: JobStatus;
@@ -388,6 +448,15 @@ export interface Asset {
   meta?: Record<string, unknown>;
   /** Public URL of the generated visual (Vercel Blob), when one exists. */
   imageUrl?: string | null;
+  /**
+   * Public URL of the deliverable's video clip (podcast cuts, branded shorts,
+   * TikTok). Video deliverables live in GCS block storage — the agent service
+   * fetches from there and writes the resulting URL here; the portal only
+   * renders it (QA F150 / call directive D1, GCP wiring is infra-side). Clips
+   * discovered in meta.videos / meta.artifacts are picked up too — see
+   * assetVideos() in lib/asset-images.
+   */
+  videoUrl?: string | null;
   /**
    * MIME type of the primary downloadable payload, when the asset is a binary file
    * (e.g. "image/jpeg", "video/mp4"). Drives the native download action's format +
@@ -491,6 +560,12 @@ export interface PlannedScheduledRun {
   clientId: string;
   /** The repo-imported custom agent this run fires. */
   customAgentId: string;
+  /**
+   * Client-agent umbrella this schedule belongs to (clientAgents doc id). When
+   * set, the cron fires slot-aware (Phase-3 §4.3). Absent on schedules created
+   * before the umbrella model, and on non-umbrella agents.
+   */
+  clientAgentId?: string | null;
   /** Snapshot of the agent's display fields — survives the agent being renamed/deleted. */
   agentName: string;
   agentIcon: string;
@@ -508,6 +583,13 @@ export interface PlannedScheduledRun {
   weekdays?: number[];
   /** monthly cadence: 1–31 (clamped to the month's length). */
   dayOfMonth?: number;
+  /**
+   * IANA zone the hour/minute above are expressed in — the schedule's intent,
+   * captured from whoever set it. `nextRunAt` is derived from (wall clock +
+   * this zone), so every recompute must pass it. Absent on rows written before
+   * the field existed: those fall back to the runtime's local timezone.
+   */
+  timeZone?: string;
   /** Distinct deliverables requested from each scheduled run. Defaults to 1. */
   outputsPerRun?: number;
   /** Whether each scheduled fire spends the client's credits. */
@@ -520,11 +602,13 @@ export interface PlannedScheduledRun {
   /** Job id created by the most recent fire. */
   lastJobId?: string;
   /**
-   * Why the most recent fire produced nothing. A submit that is refused before
-   * a job row exists (setup gates, credit ceilings, service misconfiguration)
-   * leaves no job, no failed status and no charge, so this is the only trace it
-   * left. `null` ⇒ the last fire was clean (undefined values do not clear a
-   * Firestore field, so cleared means written null).
+   * Human-readable refusal from the most recent fire that produced nothing
+   * (out of credits, cap reached, missing intake, service down). A submit
+   * refused before a job row exists leaves no job, no failed status and no
+   * charge, so this is the only trace it left. Rendered on the agent card so a
+   * schedule that can never fire is visible instead of silently green.
+   * `null` ⇒ the last fire was clean — undefined does not clear a Firestore
+   * field, so cleared must be written as an explicit null.
    */
   lastError?: string | null;
   /** Epoch millis of `lastError`. */
@@ -642,6 +726,15 @@ export interface BrandColor {
   dominanceRank: number;
   /** Optional semantic role if unambiguous, e.g. "Logo fill", "Primary CTA". */
   role?: string;
+  /**
+   * INTERNAL ONLY — share of the brand's visual surface this color should
+   * occupy, 0-100. It is the agency's own mix guidance for the design work, not
+   * something a client is asked to reason about, so it is stripped at the
+   * client boundary (toClientPortalView) and clients see swatches only.
+   * Never render it behind a client-visible conditional — it must not be in
+   * their RSC payload at all.
+   */
+  usagePct?: number;
 }
 
 export interface BrandingGuidelines {
@@ -1131,6 +1224,9 @@ export interface AgentReviewNotification {
   title: string;
   agentName: string;
   updatedAt: number;
+  clientId: string;
+  /** Set on staff (cross-client) feeds so a row can say whose review it is. */
+  clientName?: string;
 }
 
 /**
@@ -1251,10 +1347,16 @@ export interface TaskComment {
   createdAt: number;
 }
 
-/** Per-client operational settings (e.g. Autopilot mode). Stored in `clientSettings` collection. */
+/** Per-client operational settings. Stored in `clientSettings` collection. */
 export interface ClientSettings {
   clientId: string;
-  autopilot: boolean;
+  /**
+   * @deprecated Legacy "Autopilot mode" flag. Nothing reads or writes it any
+   * more — no scheduled job ever honoured it, so the persistent "on" state was
+   * a promise the product never kept (QA F48). Batch runs are one-shot now.
+   * Retained on the type only because existing documents still carry the field.
+   */
+  autopilot?: boolean;
   /** Whether the client has opted into auto-scheduling (approve → auto when integrations exist). */
   autoScheduleEnabled?: boolean;
   updatedAt: number;
@@ -1293,6 +1395,12 @@ export type CreditOperation =
   | "doc_correction"
   /** Client-fired custom agent run on the agent service (jobId = platform job doc id). */
   | "custom_agent_run"
+  /**
+   * Client-billed SETUP run of a client agent (the one-time launch). Split from
+   * custom_agent_run so the ledger can report setup vs recurring separately at
+   * its own per-agent price (CustomAgent.launchCreditCost).
+   */
+  | "agent_launch"
   /** Purchase of an additional LinkedIn employee-advocacy seat beyond the plan limit. */
   | "seat_purchase"
   | "manual";
@@ -1520,6 +1628,274 @@ export interface LiDraftFeedback {
   reason?: string;
   createdBy: string;
   createdAt: number;
+}
+
+/* ────────────── Client agents — the launch-vs-runs model (Phase 3) ──────────────
+ *
+ * Every content platform a client buys becomes ONE client agent ("Instagram
+ * Agent for Geektime"): a per-client umbrella binding a lab agent
+ * (customAgents) to the client. It owns a LAUNCH state machine (setup run →
+ * template set → live), a registry of child TEMPLATE streams, a SLOT plan the
+ * calendar renders (template + day + optional note, never content), two-level
+ * FEEDBACK, and a launch-vs-run cost split.
+ *
+ * Nothing existing is replaced: PlannedScheduledRun stays the firing engine,
+ * Asset.templateKey is already the template join key, markAssetPostedAction is
+ * still the only client posted-transition. Collections are flat and keyed by
+ * clientId per repo convention, Admin-SDK-only (firestore.rules stays
+ * deny-all), timestamps epoch millis.
+ */
+
+/** Launch lifecycle of a client agent (Phase-3 §2 state machine). */
+export type ClientAgentLaunchState =
+  /** Bound to the client, nothing run yet. */
+  | "not_launched"
+  /** Setup job in flight (launchJobId set). */
+  | "launching"
+  /** Setup deliverables arrived; staff confirming the template registry. */
+  | "curating"
+  /** Launch complete — the recurring model is active. */
+  | "live"
+  /** Setup job failed / cancelled; the error is retained for staff. */
+  | "launch_failed";
+
+/**
+ * One child template stream ("By The Numbers"). A small set (1–8) per
+ * umbrella, so they live as an array on the parent doc rather than their own
+ * collection.
+ */
+export interface ClientAgentTemplate {
+  /** Slug — THE join key; equals Asset.templateKey for posts in this stream. */
+  key: string;
+  /** Display name ("By The Numbers"). */
+  name: string;
+  /** The launch run's rationale — "this is one of your templates because…". */
+  rationale?: string;
+  status: "active" | "paused" | "retired";
+  /** Rotation order (0-based). Drives slot generation; client-editable. */
+  position: number;
+  /** Where this template came from. */
+  source: "launch" | "backfill" | "manual";
+  addedAt: number;
+}
+
+/**
+ * The per-client umbrella agent. Doc id is deterministic —
+ * `${clientId}__${agentKeySlug}` (see clientAgentDocId) — so upserts are
+ * idempotent and a backfill is race-safe.
+ *
+ * Deliberately NOT stored here: cadence/hour/zone (owned by the linked
+ * PlannedScheduledRun — no second clock), credit balances (clientCredits), and
+ * feedback (its own collection; it grows unboundedly).
+ */
+export interface ClientAgent {
+  id: string;
+  clientId: string;
+  /** customAgents.key of the bound lab agent (stable across re-imports). */
+  agentKey: string;
+  /** customAgents doc id at bind time (display-metadata lookup). */
+  customAgentId: string;
+  /** Client-facing name, e.g. "Instagram Agent". Defaults from the custom agent. */
+  displayName: string;
+  /**
+   * Platform identity for icons/labels ("instagram" | "tiktok" | "x" | …),
+   * derived at bind time from the agent identity and STORED, so renaming the
+   * lab agent cannot silently re-platform the umbrella. Empty string when the
+   * agent maps to no social platform.
+   */
+  platform: string;
+  /**
+   * Which chain family this umbrella's slots own. While it is live, the slot
+   * planner owns this family for this client and plain reflow must not re-date
+   * its assets. Absent for an options-mode umbrella (X): it owns no chain
+   * family — its slots present picks from batch assets and never re-date.
+   */
+  chainFamily?: "social" | "email" | "article";
+  /**
+   * How this umbrella fills its calendar days. Set EXPLICITLY at bind time —
+   * never derived from the absence of `chainFamily`.
+   *
+   * "single"  — one template stream per day (the default product).
+   * "options" — the X daily pick-of-3: the client chooses between candidate
+   *             drafts on the day, and the umbrella owns no chain family.
+   *
+   * Deriving this from `chainFamily == null` conflated the X agent with every
+   * agent the family classifier simply could not place (a research agent, an
+   * SEO agent, an unrecognised import), which would have handed those an
+   * options picker they have no candidates for. Absent ⇒ "single", which
+   * generates no slots at all while the rotation is empty.
+   */
+  slotMode?: "single" | "options";
+
+  launchState: ClientAgentLaunchState;
+  /** Platform job doc id of the setup run (jobs collection). */
+  launchJobId?: string | null;
+  launchStartedAt?: number | null;
+  launchCompletedAt?: number | null;
+  /**
+   * Refusal/error retained for launch_failed. Stored RAW (staff truth);
+   * clientSafeRefusal() is applied at the page boundary before it can reach a
+   * client's RSC payload, exactly as toScheduleRows does for lastError.
+   */
+  launchError?: string | null;
+  /** True when the failed launch's client charge was handed back. */
+  launchRefunded?: boolean | null;
+
+  templates: ClientAgentTemplate[];
+  /**
+   * Default rotation: template keys in firing order. The slot generator cycles
+   * this; individual slots may override the template for their day.
+   */
+  rotation: string[];
+
+  /** The weekly schedule row that fires this umbrella (plannedScheduledRuns id). */
+  scheduleRunId?: string | null;
+
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** A client/staff note attached to one calendar day's slot. */
+export interface AgentSlotNote {
+  /** ≤ 500 chars, plain text (server-clamped). */
+  text: string;
+  authorUid: string;
+  /**
+   * Display name of the author, denormalized at write time — the same reason
+   * ClientAgentFeedback keeps createdByName and ActivityLog keeps its actor.
+   *
+   * A surface serving BOTH viewers cannot derive the label from role alone:
+   * "You", computed from authorRole === "client", is right for the client and a
+   * lie to the staff member reading the same row. The label is computed from
+   * viewer-vs-author; this is the half that has to be stored.
+   */
+  authorName?: string;
+  authorRole: "client" | "staff";
+  createdAt: number;
+  /** Stamped when a generation/revision run actually received this note. */
+  consumedAt?: number | null;
+  consumedByJobId?: string | null;
+}
+
+/**
+ * Recorded when the client picks one of an options slot's choices. The
+ * learning-log source of truth stays XDraftFeedback; this is the slot-level
+ * render state.
+ */
+export interface AgentSlotOptionPick {
+  /** Which option was chosen — its ref within the linked batch asset, or its option key. */
+  optionRef: string;
+  /**
+   * Humanised angle of the chosen option ("Playbook", "Founder POV"), stored at
+   * pick time. The ref's tail is the lab's own lane vocabulary and must never
+   * reach a client surface raw (F70); keeping the label here also saves
+   * re-reading and re-parsing the batch asset on every render.
+   */
+  direction?: string;
+  pickedAt: number;
+  pickedBy: string;
+  /** True when the client edited the text before confirming. */
+  edited: boolean;
+}
+
+/**
+ * A calendar-day intent: template + day (+ optional note). What clients see on
+ * the calendar — never content. Doc id `${clientAgentId}__${dateKey}`: one slot
+ * per day per umbrella, matching the chain's one-post-per-day-per-family
+ * invariant.
+ */
+export interface AgentSlot {
+  id: string;
+  clientId: string;
+  clientAgentId: string;
+  /**
+   * Calendar-day identity, "YYYY-MM-DD" in the schedule's zone. This is the
+   * INTENT side (wall calendar day + the parent schedule's IANA zone); derived
+   * instants are computed through the run-cadence helpers. Not a timestamp —
+   * the epoch-millis rule applies to instants, and a slot is a day.
+   */
+  dateKey: string;
+  /**
+   * "single" = one template, one post (default). "options" = the daily
+   * 3-option pick model (X). Absent ⇒ "single".
+   */
+  kind?: "single" | "options";
+  /**
+   * single: the stream this day produces. options: a fixed key ("daily-post")
+   * so calendar chips still render a stable label.
+   */
+  templateKey: string;
+  status:
+    /** Future intent — nothing client-visible exists. */
+    | "planned"
+    /** Content exists and the day has arrived (the client can act). */
+    | "generated"
+    /** Its asset reached status published. */
+    | "posted"
+    /** Client/staff removed the day (kept for history). */
+    | "skipped";
+  /**
+   * The fulfilling asset once one is matched/created. For an options slot:
+   * before the pick, the staff-side batch asset the options are drawn from;
+   * after the pick, the materialized per-day asset.
+   */
+  assetId?: string | null;
+  /** The generation job for day-of runs. */
+  jobId?: string | null;
+  /** options slots only: the candidate refs assigned to this day. */
+  optionRefs?: string[];
+  /** options slots only: set once the client picks. */
+  optionPick?: AgentSlotOptionPick | null;
+  note?: AgentSlotNote | null;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Two-level client-agent feedback: the whole agent, or one template stream.
+ *
+ * NOT the existing `Feedback` collection: that one is the doc-correction log
+ * (docType / single_doc / global) consumed by the context-doc pipeline, and
+ * overloading it would leak template feedback into doc-correction consumers.
+ * The per-draft learning logs (XDraftFeedback / LiDraftFeedback) stay the
+ * third, item-level tier.
+ */
+export interface ClientAgentFeedback {
+  id: string;
+  clientId: string;
+  clientAgentId: string;
+  /** "agent" = global, shapes every template; "template" = one stream. */
+  scope: "agent" | "template";
+  /** Required when scope === "template"; must match a registry key. */
+  templateKey?: string | null;
+  /** ≤ 500 chars, plain text (server-clamped). */
+  text: string;
+  /**
+   * active    = injected into every future run.
+   * resolved  = STAFF addressed it. Kept, not injected.
+   * withdrawn = the AUTHOR took it back. Kept, not injected.
+   *
+   * The last two are deliberately not one state (D7). "Resolved" is a claim
+   * about Karos having acted; a client who withdraws their own note has made no
+   * such claim, and collapsing the two told them their note had been handled
+   * when nobody had touched it. Only `active` is ever injected, so the run-side
+   * behaviour of the two is identical — the difference is entirely about who
+   * did it and what the list is therefore allowed to say.
+   */
+  status: "active" | "resolved" | "withdrawn";
+  createdBy: string;
+  /**
+   * Display name of the author, denormalized at write time. Stored so the
+   * feedback list can name whoever wrote a row without handing a client viewer
+   * the internal uids of the staff who answered them — the same reason
+   * ActivityLog keeps `actor` rather than a uid.
+   */
+  createdByName?: string;
+  creatorRole: "client" | "staff";
+  createdAt: number;
+  updatedAt: number;
 }
 
 /**

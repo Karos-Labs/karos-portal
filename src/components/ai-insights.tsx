@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Card, CardTitle, Badge, Skeleton } from "@/components/ui";
+import { Card, CardTitle, Badge, EmptyState, Skeleton } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { stripPipelineMarkers } from "@/lib/doc-render";
 
 /**
  * AI Insights — the client-facing readout of the Self-Improving Marketing Loop.
@@ -19,6 +21,10 @@ export function AiInsights({ clientId }: { clientId: string }) {
   // engagement figures are deterministic mock metrics (no live social token). Badge it so a
   // client never mistakes demo numbers for real performance.
   const [isDemoData, setIsDemoData] = useState(false);
+  // QA F125: the API refuses to narrate mock engagement figures to a client and answers
+  // X-Insights-State: needs-connection instead. Render the connect-a-channel empty state
+  // rather than any prose — a warning badge doesn't make invented budget advice safe.
+  const [needsConnection, setNeedsConnection] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   // The fetch + stream itself. Every setState here happens after the first
@@ -37,6 +43,11 @@ export function AiInsights({ clientId }: { clientId: string }) {
           throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
         }
         setIsDemoData(res.headers.get("X-Insights-Data-Source") === "mock");
+        if (res.headers.get("X-Insights-State") === "needs-connection") {
+          res.body?.cancel().catch(() => {});
+          setNeedsConnection(true);
+          return;
+        }
         const reader = res.body!.getReader();
         const decoder = new TextDecoder();
         let accumulated = "";
@@ -65,6 +76,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
     setLoading(true);
     setError(null);
     setText("");
+    setNeedsConnection(false);
     void run(controller, true);
   }, [run]);
 
@@ -109,6 +121,20 @@ export function AiInsights({ clientId }: { clientId: string }) {
             Try again
           </button>
         </div>
+      ) : needsConnection ? (
+        <EmptyState
+          icon={<Icon name="Plug" className="h-6 w-6" />}
+          title="No performance data yet"
+          description="Connect a social account and we'll brief you weekly on what's working."
+          action={
+            <Link
+              href={`/clients/${clientId}/settings`}
+              className="text-xs text-neon underline-offset-2 hover:underline"
+            >
+              Connect a channel
+            </Link>
+          }
+        />
       ) : loading && text === "" ? (
         <div className="space-y-2.5" aria-hidden="true">
           <Skeleton className="h-3 w-1/3" />
@@ -118,6 +144,21 @@ export function AiInsights({ clientId }: { clientId: string }) {
           <Skeleton className="h-3 w-1/4" />
           <Skeleton className="h-3 w-10/12" />
         </div>
+      ) : text.trim() === "" ? (
+        // A briefing that fails mid-stream still answers 200 with an empty body
+        // (the SDK masks the error into the stream), and an empty body used to
+        // render as nothing at all — a badged card with a blank 92px body, seen
+        // on the staff lens during the wave-1 walk. Say what happened instead.
+        <EmptyState
+          icon={<Icon name="Sparkles" className="h-6 w-6" />}
+          title="No briefing right now"
+          description="We couldn't put this week's briefing together. Try again in a moment."
+          action={
+            <button type="button" onClick={() => void load()} className="text-xs text-neon hover:underline">
+              Try again
+            </button>
+          }
+        />
       ) : (
         <div className="space-y-1.5 text-[13px] leading-relaxed text-muted">
           {renderBriefing(text)}
@@ -134,22 +175,90 @@ export function AiInsights({ clientId }: { clientId: string }) {
    too. Render all of that safely as React nodes (no dangerouslySetInnerHTML,
    no markdown dependency) rather than leaving raw syntax on the page. */
 
-function renderInline(line: string, keyPrefix: string): React.ReactNode[] {
-  // Split on **bold** spans, keeping the delimited groups.
-  return line.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, i) => {
-    if (part.startsWith("**") && part.endsWith("**")) {
+/**
+ * The inline spans a briefing can carry, in match order: ***both***, **bold**
+ * (which may wrap *emphasis* inside it), *emphasis*, __bold__, _emphasis_.
+ *
+ * QA F126: this used to match only the double-asterisk form, so whenever the
+ * model reached for italics the delimiters landed on the page verbatim ("Top
+ * performers: *Playbook* (4.2 score) and *Special Edition*"). Latent rather
+ * than always visible — it depends on what the model emits that week — which is
+ * how it survived review.
+ *
+ * The shapes below are the follow-up pass. Each one left a literal delimiter on
+ * the page under the first fix — the very symptom F126 is about:
+ * - `**bold with *nested* inside**`: `[^*]+` can't cross the inner star, so the
+ *   outer span never matched and the inner one matched across the wrong
+ *   boundary. `(?:[^*]|\*(?!\*))+?` accepts single stars but stops at the
+ *   closing pair; the content is then re-rendered, so nesting works.
+ * - `***triple***` and `__bold__`: matched one delimiter in from the edge and
+ *   spat the outermost one onto the page. Both now have their own alternative.
+ * - `client_id_value`: the underscore branch ate the middle of ordinary tokens
+ *   (reachable — asset labels are quoted verbatim into briefings). Word-boundary
+ *   guards mean an underscore only opens emphasis at a non-word boundary.
+ */
+export const INLINE_EMPHASIS_RE =
+  /(\*\*\*[^*\n]+\*\*\*|\*\*(?:[^*]|\*(?!\*))+?\*\*|\*[^*\n]+\*|(?<!\w)__[^_\n]+__(?!\w)|(?<!\w)_[^_\n]+_(?!\w))/g;
+
+/**
+ * The inside of a delimited span, or null when `part` isn't one. Split() hands
+ * back the text between matches as well as the matches themselves, so this
+ * re-checks the shape rather than trusting a startsWith: a lone "****" or "___"
+ * in prose is text, not an empty emphasis to swallow.
+ */
+function unwrap(part: string, delim: string): string | null {
+  if (part.length <= delim.length * 2) return null;
+  if (!part.startsWith(delim) || !part.endsWith(delim)) return null;
+  const inner = part.slice(delim.length, -delim.length);
+  // A leftover delimiter char at either edge means we're one level off (e.g.
+  // reading "***x***" as bold) — let the correct alternative claim it.
+  return inner.startsWith(delim[0]) || inner.endsWith(delim[0]) ? null : inner;
+}
+
+export function renderInline(line: string, keyPrefix: string, depth = 0): React.ReactNode[] {
+  // Bold may carry emphasis inside it; nothing deeper is worth another pass.
+  if (depth > 2) return [<span key={`${keyPrefix}-flat`}>{line}</span>];
+
+  return line.split(INLINE_EMPHASIS_RE).filter(Boolean).map((part, i) => {
+    const key = `${keyPrefix}-${i}`;
+
+    const both = unwrap(part, "***");
+    if (both !== null) {
       return (
-        <strong key={`${keyPrefix}-${i}`} className="font-semibold text-foreground">
-          {part.slice(2, -2)}
+        <strong key={key} className="font-semibold text-foreground">
+          <em className="italic">{renderInline(both, key, depth + 1)}</em>
         </strong>
       );
     }
-    return <span key={`${keyPrefix}-${i}`}>{part}</span>;
+
+    const bold = unwrap(part, "**") ?? unwrap(part, "__");
+    if (bold !== null) {
+      return (
+        <strong key={key} className="font-semibold text-foreground">
+          {renderInline(bold, key, depth + 1)}
+        </strong>
+      );
+    }
+
+    const emphasis = unwrap(part, "*") ?? unwrap(part, "_");
+    if (emphasis !== null) {
+      return (
+        <em key={key} className="italic text-foreground/90">
+          {emphasis}
+        </em>
+      );
+    }
+
+    return <span key={key}>{part}</span>;
   });
 }
 
-function renderBriefing(text: string): React.ReactNode {
-  const lines = text.split("\n");
+export function renderBriefing(text: string): React.ReactNode {
+  // The briefing is written over the client's context documents, so anything
+  // the pipeline wrote into those can be quoted back into it. This renderer
+  // emits React nodes, which means a comment would be shown as text rather
+  // than parsed away — same reason doc-render.ts drops them.
+  const lines = stripPipelineMarkers(text).split("\n");
 
   // Drop a leading H1 — it's the model restating a title ("# CLIENT - WEEKLY
   // BRIEFING") that only duplicates the card's own "AI Insights" header.

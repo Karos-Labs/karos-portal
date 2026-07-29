@@ -54,6 +54,8 @@ import {
   defaultClientCredits,
   rollCreditWindows,
 } from "@/lib/credits";
+import { resolveContentIdentity } from "@/lib/agent-identity-map";
+import { listClientAgents } from "@/lib/data-client-agents";
 import { engagementScore, rankByEngagement } from "@/lib/analytics";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
@@ -780,7 +782,10 @@ export async function listTranscripts(opts?: {
   return snap.docs
     .map((d) => withId<Transcript>(d))
     .filter((t) => !opts?.excludeHiddenFromClient || !t.hiddenFromClient)
-    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    // Sort by when the meeting HAPPENED, not when Fireflies synced it — a
+    // backfill otherwise drops old meetings at the top of the list (QA F146).
+    // Matches the row's own displayed date (meetingDate ?? createdAt).
+    .sort((a, b) => (b.meetingDate ?? b.createdAt ?? 0) - (a.meetingDate ?? a.createdAt ?? 0));
 }
 
 export async function getTranscript(id: string): Promise<Transcript | null> {
@@ -1247,17 +1252,19 @@ export async function listClientContextDocs(
   return snap.docs.map((d) => withId<ClientContextDoc>(d));
 }
 
+/**
+ * Get a single context doc. The tier is REQUIRED: a client-facing document and
+ * its internal twin share a docType, and this used to be a bare .limit(1) on an
+ * unordered query — so callers silently drew whichever row Firestore happened to
+ * return first, which is how a corrected document and an uncorrected one could
+ * both be "the" document depending on the caller.
+ */
 export async function getClientContextDoc(
   clientId: string,
   docType: string,
+  tier: ContextDocTier,
 ): Promise<ClientContextDoc | null> {
-  const snap = await col
-    .clientContextDocs()
-    .where("clientId", "==", clientId)
-    .where("docType", "==", docType)
-    .limit(1)
-    .get();
-  return snap.empty ? null : withId<ClientContextDoc>(snap.docs[0]);
+  return getClientContextDocByTier(clientId, docType, tier);
 }
 
 /** Get a single context doc by clientId + docType + tier. */
@@ -1558,6 +1565,26 @@ export async function listFeedbacks(agentId?: string, limit = 200): Promise<Feed
   return snap.docs.map((d) => withId<Feedback>(d));
 }
 
+/**
+ * Corrections a client (or staff on their behalf) has applied to this client's
+ * context documents, newest first. Read back by the intel pipeline so a
+ * regeneration — which replaces every document wholesale — does not restore
+ * facts the client has already told us are wrong.
+ *
+ * Sorted in memory rather than with orderBy so no composite index is required.
+ */
+export async function listClientDocCorrections(
+  clientId: string,
+  limit = 100,
+): Promise<Feedback[]> {
+  const snap = await col.feedbacks().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<Feedback>(d))
+    .filter((f) => f.scope === "single_doc" || f.scope === "global")
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit);
+}
+
 /* -------------------- client access requests ------------------------ */
 
 export async function createClientRequest(data: Omit<ClientRequest, "id">): Promise<string> {
@@ -1637,16 +1664,73 @@ export async function listAssignedActionItems(
 /**
  * Returns jobs for a client that are in the `review` state — i.e. the AI has
  * finished generating content and the client needs to approve or reject it.
+ *
+ * `agentName` here is the §7.3 identity, not the stored name: a managed run is
+ * RECORDED as "Social posts (IG/TikTok)", and the client's bell was the last
+ * surface still printing that second identity next to the umbrella's own name
+ * (F147 residual). One scoped umbrella read per client shell render buys the
+ * resolution; it stays in this function so only the finished label crosses
+ * into AgentReviewNotification, which is serialized to a client component.
+ * The staff cross-client feed below keeps the stored name — its readers hold
+ * the forensic /jobs link, and resolving there would cost a whole-collection
+ * umbrella read on every staff page load.
  */
-export async function listReviewJobs(clientId: string): Promise<AgentReviewNotification[]> {
-  const snap = await col.jobs()
-    .where("clientId", "==", clientId)
-    .where("status", "==", "review")
-    .get();
-  return snap.docs.map((d) => {
-    const j = withId<Job>(d);
-    return { jobId: j.id, title: j.title, agentName: j.agentName, updatedAt: j.updatedAt };
-  });
+export async function listReviewJobs(
+  clientId: string,
+  opts?: { limit?: number },
+): Promise<AgentReviewNotification[]> {
+  const [snap, umbrellas] = await Promise.all([
+    col.jobs()
+      .where("clientId", "==", clientId)
+      .where("status", "==", "review")
+      .get(),
+    listClientAgents({ clientId }),
+  ]);
+  return snap.docs
+    .map((d) => withId<Job>(d))
+    // Newest first and bounded, exactly like the staff feed below — this half
+    // was neither. Firestore hands back document order, so the bell's rows sat
+    // in whatever sequence the collection happened to be in, and every review
+    // in the queue crossed into the payload. A runway sweep tops a client up
+    // with up to fourteen jobs in one minute (A3/A4), so an uncapped feed turns
+    // one fire into fourteen bell rows carrying the same stamp — the batch tell
+    // on the shell of every page. The cap is the same 15 the staff feed uses.
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, opts?.limit ?? 15)
+    .map((j) => ({
+      jobId: j.id,
+      title: j.title,
+      agentName: resolveContentIdentity({ job: j }, umbrellas).label,
+      updatedAt: j.updatedAt,
+      clientId: j.clientId,
+    }));
+}
+
+/**
+ * Review-queue jobs across several clients — the staff notification bell, which
+ * could never show a review because the layout only ever built this feed for
+ * CLIENT_USER (QA F68). One query, filtered to the caller's scoped client ids
+ * (an employee only sees their assigned clients), newest first.
+ */
+export async function listReviewJobsForClients(
+  clientIds: string[],
+  opts?: { limit?: number },
+): Promise<AgentReviewNotification[]> {
+  if (clientIds.length === 0) return [];
+  const allowed = new Set(clientIds);
+  const snap = await col.jobs().where("status", "==", "review").get();
+  return snap.docs
+    .map((d) => withId<Job>(d))
+    .filter((j) => allowed.has(j.clientId))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, opts?.limit ?? 15)
+    .map((j) => ({
+      jobId: j.id,
+      title: j.title,
+      agentName: j.agentName,
+      updatedAt: j.updatedAt,
+      clientId: j.clientId,
+    }));
 }
 
 /* ─────────────────────── Login audit logs ───────────────────────────── */

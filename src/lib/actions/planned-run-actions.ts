@@ -12,8 +12,14 @@ import {
   updatePlannedScheduledRun,
 } from "@/lib/data";
 import { CREDIT_COSTS, isBillableClientActor, scheduledAgentWeeklyCost } from "@/lib/credits";
+import {
+  computeNextRun,
+  scheduleLimitsFor,
+  weeklyCadenceDays,
+} from "@/lib/scheduled-runs";
+import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
+import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { unfireableScheduleReason } from "@/lib/jobs/schedule-gate";
-import { computeNextRun, weeklyCadenceDays } from "@/lib/scheduled-runs";
 import type { PlannedRunCadence } from "@/lib/types";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
 
@@ -35,6 +41,13 @@ export interface PlannedRunInput {
   dayOfMonth?: number;
   /** "once" cadence: explicit target time (epoch millis). */
   runAt?: number;
+  /**
+   * IANA zone the hour/minute are meant in — send the browser's
+   * (`Intl.DateTimeFormat().resolvedOptions().timeZone`) so the form's preview
+   * and the stored fire time are the same clock. Falls back to the server's own
+   * zone, which is what happened implicitly before.
+   */
+  timeZone?: string;
 }
 
 export interface ClientAgentScheduleInput {
@@ -45,6 +58,13 @@ export interface ClientAgentScheduleInput {
   prompt: string;
   hour?: number;
   minute?: number;
+  /** IANA zone the hour/minute are meant in — see PlannedRunInput.timeZone. */
+  timeZone?: string;
+}
+
+/** The zone a schedule's wall clock is stored in: the caller's, else this runtime's. */
+function resolveTimeZone(requested: string | undefined): string {
+  return isValidTimeZone(requested) ? requested : runtimeTimeZone();
 }
 
 /** Staff can act on a client only if admin, or an employee assigned to it. */
@@ -77,6 +97,7 @@ export async function createPlannedRunAction(
   }
 
   const now = Date.now();
+  const timeZone = resolveTimeZone(input.timeZone);
   let nextRunAt: number;
   let hour: number;
   let minute: number;
@@ -88,15 +109,32 @@ export async function createPlannedRunAction(
       return { error: "Pick a future date and time for a one-off run." };
     }
     nextRunAt = input.runAt;
-    const d = new Date(input.runAt);
-    hour = d.getHours();
-    minute = d.getMinutes();
+    // A one-off already carries the right instant (the browser resolved the
+    // datetime-local field). Only the PRINTED hour was wrong before, because it
+    // was re-derived here in the server's zone; read it back in the caller's.
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(input.runAt));
+    const at = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+    hour = at("hour") % 24;
+    minute = at("minute");
   } else {
     hour = clampInt(input.hour ?? 9, 0, 23);
     minute = clampInt(input.minute ?? 0, 0, 59);
     if (input.cadence === "weekly") weekday = clampInt(input.weekday ?? 1, 0, 6);
     if (input.cadence === "monthly") dayOfMonth = clampInt(input.dayOfMonth ?? 1, 1, 31);
-    nextRunAt = computeNextRun({ cadence: input.cadence, hour, minute, weekday, dayOfMonth, from: now });
+    nextRunAt = computeNextRun({
+      cadence: input.cadence,
+      hour,
+      minute,
+      weekday,
+      dayOfMonth,
+      from: now,
+      timeZone,
+    });
   }
 
   const id = await createPlannedScheduledRun({
@@ -109,6 +147,7 @@ export async function createPlannedRunAction(
     cadence: input.cadence,
     hour,
     minute,
+    timeZone,
     ...(weekday != null ? { weekday } : {}),
     ...(dayOfMonth != null ? { dayOfMonth } : {}),
     nextRunAt,
@@ -161,12 +200,71 @@ export async function configureClientAgentScheduleAction(
     if (!activated) return { error: "Agent not found." };
   }
 
-  const blocked = await unfireableScheduleReason(client, agent);
+  // §2 guard rail: setting a pace for an umbrella-bound agent is the client's
+  // to do once the agent is live, not before. A schedule written against a
+  // not-yet-launched umbrella would start firing paid runs of an agent whose
+  // template set nobody has confirmed — and it would do it from a card that is
+  // simultaneously telling the client the agent is still being set up.
+  const blocked = await clientAgentRunRefusal({
+    user,
+    clientId: input.clientId,
+    customAgentId: input.customAgentId,
+  });
   if (blocked) return { error: blocked };
 
-  const postsPerWeek = clampInt(input.postsPerWeek, 1, 7);
-  const outputsPerRun = clampInt(input.outputsPerRun, 1, 10);
-  const prompt = input.prompt.trim();
+  // The other half of the pair (his layer): a schedule whose agent cannot fire
+  // at all — missing intake, an instance bound to another client's slug — must
+  // not be written as live either. Complementary, not redundant: the umbrella
+  // gate above is about launch state, this one about whether a fire could ever
+  // produce anything.
+  const unfireable = await unfireableScheduleReason(client, agent);
+  if (unfireable) return { error: unfireable };
+
+  const schedules = await listPlannedScheduledRuns({ clientId: input.clientId });
+  const existing = schedules.find(
+    (run) => run.customAgentId === agent.id && run.cadence === "weekly" && run.status !== "completed",
+  );
+
+  // Clamped to exactly what the dialog offers. outputsPerRun was capped at 10
+  // here while the dialog offered 5, so a stale page or a direct call could
+  // schedule twice the outputs the product sells — and the scheduler bills
+  // chargeMultiplier = outputsPerRun on every fire.
+  //
+  // F27: the Reddit agent's ceiling is lower than the generic one and is
+  // enforced HERE, not only in the dialog. A reply is a post into someone
+  // else's community; the product is one a day, five a week, and the generic
+  // 7x5 would both bill for 35 and get the client's account treated as spam by
+  // the subreddits the agent is building standing in.
+  const limits = scheduleLimitsFor(agent.key);
+  const postsPerWeek = clampInt(input.postsPerWeek, 1, limits.maxRunsPerWeek);
+
+  // WHAT A CLIENT MAY CHANGE HERE: the posting days and the time of day. That
+  // is the whole of "pace". Two fields are deliberately NOT theirs, and the
+  // server preserves the stored values rather than trusting what was submitted:
+  //
+  //  · outputsPerRun — a staff setting. The client's dialog does not show it,
+  //    and a client save that carried a value would rewrite it. It did: the
+  //    pace dialog pinned it to 1, so one press cut a 3×5 schedule to 3×1 and
+  //    the client silently lost four fifths of what they were paying for.
+  //  · prompt — the operator's standing instruction to the agent, written for
+  //    the model. A client rewriting it changes what every future run receives.
+  //
+  // Enforced here rather than only in the dialog because a server action is a
+  // public HTTP surface: hiding a control is not the same as refusing a value.
+  //
+  // The Reddit ceiling overrides even the preserve-the-stored-value rule: a row
+  // written before the cap existed (or by a staff member with an older page)
+  // holds a number the product does not sell, and re-saving it would re-commit
+  // to billing it. Pinned, not clamped — five answers written in one sitting is
+  // a different product from one a day, and it is the one automod removes.
+  const actorIsClient = user.role === "CLIENT_USER";
+  const outputsPerRun = clampInt(
+    actorIsClient && existing ? (existing.outputsPerRun ?? 1) : input.outputsPerRun,
+    1,
+    limits.maxOutputsPerRun,
+  );
+  const prompt =
+    actorIsClient && existing?.prompt?.trim() ? existing.prompt.trim() : input.prompt.trim();
   if (!prompt) return { error: "Describe what the agent should create each time." };
   if (prompt.length > MAX_PROMPT_CHARS) {
     return { error: `Prompt is too long (max ${MAX_PROMPT_CHARS.toLocaleString()} characters).` };
@@ -176,12 +274,14 @@ export async function configureClientAgentScheduleAction(
   const minute = clampInt(input.minute ?? 0, 0, 59);
   const weekdays = weeklyCadenceDays(postsPerWeek);
   const now = Date.now();
+  const timeZone = resolveTimeZone(input.timeZone);
   const nextRunAt = computeNextRun({
     cadence: "weekly",
     hour,
     minute,
     weekdays,
     from: now,
+    timeZone,
   });
   const billClientCredits = isBillableClientActor(user);
   const weeklyCredits = scheduledAgentWeeklyCost(
@@ -190,10 +290,6 @@ export async function configureClientAgentScheduleAction(
     outputsPerRun,
   );
 
-  const schedules = await listPlannedScheduledRuns({ clientId: input.clientId });
-  const existing = schedules.find(
-    (run) => run.customAgentId === agent.id && run.cadence === "weekly" && run.status !== "completed",
-  );
   const patch = {
     agentName: agent.name,
     agentIcon: agent.icon,
@@ -202,6 +298,7 @@ export async function configureClientAgentScheduleAction(
     cadence: "weekly" as const,
     hour,
     minute,
+    timeZone,
     weekday: weekdays[0],
     weekdays,
     outputsPerRun,
@@ -233,7 +330,11 @@ export async function configureClientAgentScheduleAction(
     clientId: input.clientId,
     timestamp: now,
     type: "CAMPAIGN_CREATED",
-    title: `Set ${agent.name} to ${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} per week`,
+    // Pace vocabulary, one stored string for both audiences (A3/A4): the old
+    // wording decomposed the batch ("3 runs per week (12 drafts)") — that shape
+    // is now on the retroactive machinery patterns, and new rows say only the
+    // pace. Staff read run/output detail on the schedule row itself.
+    title: `Set ${agent.name}'s pace: ${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week`,
     actor: user.name,
     actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
     metadata: { scheduledRunId: id, customAgentId: agent.id, postsPerWeek, outputsPerRun },
@@ -245,14 +346,39 @@ export async function configureClientAgentScheduleAction(
   return { id, weeklyCredits };
 }
 
-/** Pause, resume, or cancel a scheduled run. Clients may control their own. */
+/**
+ * Pause, resume, or retire a scheduled run.
+ *
+ * Clients may pause and resume their own — that is reversible, and the calendar
+ * and the AI Agents page both offer it. "completed" is NOT client-callable:
+ * it retires the schedule and drops it off the calendar for good, which is the
+ * same irreversible outcome as a delete wearing a different word.
+ */
 export async function setPlannedRunStatusAction(
   id: string,
   status: "active" | "paused" | "completed",
 ): Promise<{ error?: string }> {
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
-  await requireClientAccess(run.clientId);
+  const user = await requireClientAccess(run.clientId);
+  if (user.role === "CLIENT_USER" && status !== "paused" && status !== "active") {
+    return { error: "Ask your Karos contact to retire this schedule." };
+  }
+
+  // §2 guard rail (D2). Pausing is always allowed — a client may always stop
+  // their agent, and refusing that would trap a schedule they want stopped. But
+  // RE-ARMING is the same act as setting a pace in the first place: it points
+  // paid, recurring fires at an agent whose template set nobody has confirmed.
+  // configureClientAgentScheduleAction already refuses that; without the same
+  // refusal here a client could simply pause and resume their way past it.
+  if (status === "active") {
+    const blocked = await clientAgentRunRefusal({
+      user,
+      clientId: run.clientId,
+      customAgentId: run.customAgentId,
+    });
+    if (blocked) return { error: blocked };
+  }
 
   // Resuming is an enable, so it clears the same gates a create does — a
   // schedule paused while its agent data was emptied, or while its agent moved
@@ -286,6 +412,8 @@ export async function setPlannedRunStatusAction(
       weekdays: run.weekdays,
       dayOfMonth: run.dayOfMonth,
       from: Date.now(),
+      // Re-anchor in the zone the schedule was set in, not this container's.
+      ...(run.timeZone ? { timeZone: run.timeZone } : {}),
     });
   }
   await updatePlannedScheduledRun(id, patch);
@@ -293,11 +421,15 @@ export async function setPlannedRunStatusAction(
   return {};
 }
 
-/** Deletes a scheduled run outright. Clients may delete their own. */
+/**
+ * Deletes a scheduled run outright. STAFF ONLY — a client's undo for a deleted
+ * schedule is a staff member, so the UI's client-facing controls stop at Pause
+ * and the server enforces the same rule rather than trusting the button.
+ */
 export async function deletePlannedRunAction(id: string): Promise<{ error?: string }> {
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
-  await requireClientAccess(run.clientId);
+  await requireStaff();
   await deletePlannedScheduledRun(id);
   revalidatePath("/calendar");
   return {};

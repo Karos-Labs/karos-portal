@@ -37,6 +37,134 @@ const DEFAULT_CADENCE: RunCadence = {
   timezone: "America/Sao_Paulo",
 };
 
+/**
+ * One schedule row. State is per row rather than per card so a failure names
+ * the schedule it belongs to.
+ *
+ * F110: both handlers used to be fire-and-forget inside a transition — the
+ * result was discarded, so a refused toggle or delete left the row exactly as
+ * it was with no message, and the delete fired on a single click of an
+ * unlabelled trash icon. Same treatment the calendar's card already had:
+ * capture `{ error }`, surface it on the row, and confirm before deleting.
+ */
+function ScheduledRunRow({ run }: { run: ScheduledRun }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<null | "toggle" | "delete">(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  async function onToggle() {
+    if (busy) return;
+    setBusy("toggle");
+    setError(null);
+    try {
+      const res = await toggleScheduledRunAction(run.id, !run.enabled);
+      if (res?.error) {
+        setError(res.error);
+        return;
+      }
+      router.refresh();
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : `Couldn't ${run.enabled ? "pause" : "resume"} this schedule.`,
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onDelete() {
+    if (busy) return;
+    setBusy("delete");
+    setError(null);
+    try {
+      const res = await deleteScheduledRunAction(run.id);
+      if (res?.error) {
+        setError(res.error);
+        setConfirmingDelete(false);
+        return;
+      }
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't delete this schedule.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <li className="py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-medium">{run.label}</p>
+            {!run.enabled && <Badge tone="neutral">Paused</Badge>}
+          </div>
+          <p className="truncate text-xs text-muted-2">{describeCadence(run.cadence)}</p>
+          <p className="text-xs text-muted-2">
+            {run.enabled ? "Next" : "Would run"} {relativeTime(run.nextRunAt)}
+            {run.lastRunAt ? ` · last ${relativeTime(run.lastRunAt)}` : ""}
+          </p>
+        </div>
+        {!confirmingDelete && (
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onToggle}
+              loading={busy === "toggle"}
+              disabled={busy != null}
+            >
+              {run.enabled ? "Pause" : "Resume"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setConfirmingDelete(true)}
+              disabled={busy != null}
+              aria-label="Delete schedule"
+            >
+              <Icon name="Trash2" className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {confirmingDelete && (
+        <div className="mt-2 space-y-2">
+          <p className="text-xs text-danger">
+            Delete this schedule permanently? The agent stops running on this cadence and it
+            can&apos;t be undone. To stop it temporarily, pause it instead.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={onDelete}
+              loading={busy === "delete"}
+              disabled={busy != null}
+            >
+              Yes, delete it
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setConfirmingDelete(false)}
+              disabled={busy != null}
+            >
+              Keep it
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+    </li>
+  );
+}
+
 export function ScheduledRunsCard({
   clientId,
   runs,
@@ -90,20 +218,6 @@ export function ScheduledRunsCard({
     });
   }
 
-  function onToggle(run: ScheduledRun) {
-    startTransition(async () => {
-      await toggleScheduledRunAction(run.id, !run.enabled);
-      router.refresh();
-    });
-  }
-
-  function onDelete(run: ScheduledRun) {
-    startTransition(async () => {
-      await deleteScheduledRunAction(run.id);
-      router.refresh();
-    });
-  }
-
   return (
     <div className="space-y-4">
       {runs.length === 0 ? (
@@ -111,27 +225,7 @@ export function ScheduledRunsCard({
       ) : (
         <ul className="divide-y divide-border">
           {runs.map((run) => (
-            <li key={run.id} className="flex items-center justify-between gap-3 py-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="truncate text-sm font-medium">{run.label}</p>
-                  {!run.enabled && <Badge tone="neutral">Paused</Badge>}
-                </div>
-                <p className="truncate text-xs text-muted-2">{describeCadence(run.cadence)}</p>
-                <p className="text-xs text-muted-2">
-                  {run.enabled ? "Next" : "Would run"} {relativeTime(run.nextRunAt)}
-                  {run.lastRunAt ? ` · last ${relativeTime(run.lastRunAt)}` : ""}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <Button size="sm" variant="ghost" onClick={() => onToggle(run)} disabled={pending}>
-                  {run.enabled ? "Pause" : "Resume"}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => onDelete(run)} disabled={pending}>
-                  <Icon name="Trash2" className="h-4 w-4" />
-                </Button>
-              </div>
-            </li>
+            <ScheduledRunRow key={run.id} run={run} />
           ))}
         </ul>
       )}

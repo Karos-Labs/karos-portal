@@ -17,9 +17,12 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
   const router = useRouter();
   const [value, setValue] = useState("");
   const [isPending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(
-    null,
-  );
+  // "info" is the duplicate case: nothing failed, the work is already on the
+  // board — it used to render in the red danger style (QA F61).
+  const [feedback, setFeedback] = useState<{
+    type: "success" | "info" | "error";
+    message: string;
+  } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   function handleSubmit(e: React.FormEvent) {
@@ -31,8 +34,14 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
     startTransition(async () => {
       const result = await ingestCustomUserTaskAction(clientId, trimmed);
       if (result.ok) {
-        const label =
-          result.owner === "karos_managed" ? "AI-managed task added" : "Action item added";
+        // Name the card that was actually created — the router rewrites the
+        // text the user typed (QA F65). The board is already on screen here,
+        // so no link is needed.
+        const label = result.title
+          ? `Added “${result.title}”`
+          : result.owner === "karos_managed"
+            ? "AI-managed task added"
+            : "Action item added";
         setFeedback({ type: "success", message: label });
         setValue("");
         router.refresh();
@@ -40,7 +49,10 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
         // Clear success feedback after 3 s
         setTimeout(() => setFeedback(null), 3000);
       } else {
-        setFeedback({ type: "error", message: result.error ?? "Failed to add task" });
+        setFeedback({
+          type: result.duplicate ? "info" : "error",
+          message: result.error ?? "Failed to add task",
+        });
       }
     });
   }
@@ -99,11 +111,19 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
             "flex items-center gap-2 rounded-md px-3 py-1.5 text-xs",
             feedback.type === "success"
               ? "border border-success/25 bg-success/10 text-success"
-              : "border border-danger/20 bg-danger/5 text-danger",
+              : feedback.type === "info"
+                ? "border border-border bg-surface-2 text-muted"
+                : "border border-danger/20 bg-danger/5 text-danger",
           )}
         >
           <Icon
-            name={feedback.type === "success" ? "CheckCircle" : "TriangleAlert"}
+            name={
+              feedback.type === "success"
+                ? "CircleCheck"
+                : feedback.type === "info"
+                  ? "Info"
+                  : "TriangleAlert"
+            }
             className="h-3.5 w-3.5 shrink-0"
           />
           {feedback.message}

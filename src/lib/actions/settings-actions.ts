@@ -5,7 +5,6 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import {
   upsertClientSettings,
-  getClientSettings,
   listClientTasks,
   chargeClientCredits,
   claimTaskForExecution,
@@ -18,33 +17,40 @@ import {
   plannedTaskExecutionCost,
 } from "@/lib/execution-engine";
 import { CreditError, isBillableClientActor } from "@/lib/credits";
+import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
+import type { ClientTask } from "@/lib/types";
+
+/** The batch a "run pending tasks" click would execute: the same selection the
+ *  runner uses (pending → karos_managed → first 5), shared so the price shown
+ *  and the work started can never describe different task sets. */
+async function pendingTasksBatch(clientId: string): Promise<ClientTask[]> {
+  const pending = await listClientTasks({ clientId, status: "pending", limit: 10 });
+  return pending.filter((t) => inferOwnerEngine(t) === "karos_managed").slice(0, 5);
+}
 
 /**
- * Toggle the Autopilot Mode flag for a client.
- * When enabled, immediately schedules a batch execution of all pending
- * karos_managed tasks via after() so the response returns instantly.
+ * Run one batch of pending karos_managed tasks (max 5) for a client.
+ *
+ * This is a ONE-SHOT action, not a mode: nothing in the product runs a second
+ * batch on its own, so no "autopilot is on" state is persisted (QA F48 — the
+ * old switch stayed green forever while only ever draining a single batch).
+ * Execution is scheduled via after() so the response returns instantly.
  */
-export async function updateAutopilotAction(
+export async function runPendingTasksBatchAction(
   clientId: string,
-  enabled: boolean,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; started?: number; error?: string }> {
   const user = await requireUser();
 
   if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
     return { ok: false, error: "Forbidden" };
   }
 
-  // Idempotent: re-sending the current state must not re-run (or re-charge) a batch.
-  const settings = await getClientSettings(clientId);
-  if ((settings?.autopilot ?? false) === enabled) return { ok: true };
-
-  // Enabling autopilot as a client user immediately executes pending tasks.
-  // Claim the batch atomically first, then charge exactly what was claimed —
-  // so the credits taken always match the tasks that actually run, and a
-  // denied charge releases the claims and refuses the toggle.
-  if (enabled && isBillableClientActor(user)) {
-    const pending = await listClientTasks({ clientId, status: "pending", limit: 10 });
-    const batch = pending.filter((t) => inferOwnerEngine(t) === "karos_managed").slice(0, 5);
+  // Running as a client user charges credits for the batch. Claim the batch
+  // atomically first, then charge exactly what was claimed — so the credits
+  // taken always match the tasks that actually run, and a denied charge
+  // releases the claim and refuses the run.
+  if (isBillableClientActor(user)) {
+    const batch = await pendingTasksBatch(clientId);
     const claimedIds: string[] = [];
     // Claim + charge PER TASK with jobId = task.id — every refund mechanism
     // (webhook failure sync, stuck-execution sweep) pairs on that key, so an
@@ -52,6 +58,12 @@ export async function updateAutopilotAction(
     // Product-aware pricing: each task charges what will actually run it.
     let firstDenial: string | null = null;
     for (const t of batch) {
+      // §2 guard rail, keyed on the BILLED actor (D1). "Run all pending" is the
+      // widest door of all — it would have fired every not-yet-live agent on
+      // the board in one press. A blocked task is SKIPPED rather than failing
+      // the batch: the rest of the queue is legitimately runnable, and the
+      // agent's own card is where that refusal is explained.
+      if (await clientTaskRunRefusal({ user, clientId, task: t })) continue;
       const claimed = await claimTaskForExecution(t.id, clientId, ["pending"]);
       if (!claimed) continue;
       try {
@@ -59,7 +71,7 @@ export async function updateAutopilotAction(
           clientId,
           amount: await plannedTaskExecutionCost(claimed),
           operation: "task_execution",
-          reason: `Autopilot · ${claimed.title.slice(0, 80)}`,
+          reason: `Task run · ${claimed.title.slice(0, 80)}`,
           jobId: t.id,
           actorUid: user.uid,
           actorName: user.name,
@@ -75,29 +87,59 @@ export async function updateAutopilotAction(
           firstDenial = e.message;
           break;
         }
-        console.error("[autopilot] charge failed unexpectedly:", e);
+        console.error("[task-batch] charge failed unexpectedly:", e);
         break;
       }
     }
     if (claimedIds.length === 0 && firstDenial) {
       return { ok: false, error: firstDenial };
     }
-    await upsertClientSettings(clientId, { autopilot: enabled, updatedAt: Date.now() });
     if (claimedIds.length > 0) {
       after(() => runClaimedTasks(clientId, claimedIds).catch(console.error));
     }
     revalidatePath("/tasks");
-    return { ok: true };
+    return { ok: true, started: claimedIds.length };
   }
 
-  await upsertClientSettings(clientId, { autopilot: enabled, updatedAt: Date.now() });
-
-  if (enabled) {
-    after(() => runAutopilotBatch(clientId).catch(console.error));
-  }
+  // Staff (and "View as client") runs are free — no claim/charge pass.
+  const staffBatch = await pendingTasksBatch(clientId);
+  after(() => runAutopilotBatch(clientId).catch(console.error));
 
   revalidatePath("/tasks");
-  return { ok: true };
+  return { ok: true, started: staffBatch.length };
+}
+
+/**
+ * Read-only price + size preview of the batch runPendingTasksBatchAction would
+ * execute right now, so the spend is announced BEFORE it happens the way the
+ * run dialog and schedule modal already do (QA F58 — this was the largest
+ * single-click spend in the portal and the only one with no price attached).
+ * Selection mirrors the runner exactly; nothing is claimed, charged or run.
+ */
+export async function previewPendingTasksBatchAction(
+  clientId: string,
+): Promise<{ ok: boolean; count?: number; credits?: number; billable?: boolean; error?: string }> {
+  const user = await requireUser();
+  if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
+    return { ok: false, error: "Forbidden" };
+  }
+
+  const all = await pendingTasksBatch(clientId);
+  const billable = isBillableClientActor(user);
+  // The runner now skips tasks the §2 guard rail refuses (D1), so the preview
+  // has to skip them too — this dialog's whole job is to announce the spend
+  // before it happens, and counting runs that will not happen overstates it.
+  const refusals = await Promise.all(
+    all.map((t) => clientTaskRunRefusal({ user, clientId, task: t })),
+  );
+  const batch = all.filter((_, i) => !refusals[i]);
+  const costs = billable ? await Promise.all(batch.map((t) => plannedTaskExecutionCost(t))) : [];
+  return {
+    ok: true,
+    count: batch.length,
+    credits: costs.reduce((sum, c) => sum + c, 0),
+    billable,
+  };
 }
 
 /**

@@ -19,6 +19,8 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Textarea } from "@/components/ui";
 import { Icon, XLogo } from "@/components/icon";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
+import { laneLabel } from "@/lib/draft-lane-label";
+import { stripInlineMarkdown } from "@/lib/doc-render";
 import { splitMetaLinks } from "@/lib/draft-meta";
 import { xIntentUrl, type XParsedAccount, type XParsedDraft } from "@/lib/x-drafts";
 
@@ -120,7 +122,7 @@ function DraftCard({
       if (result.error) {
         setError(
           handedOff && action !== "not_posted"
-            ? `${result.error} Your post is already open on X - click again to retry recording the pick (X will not reopen).`
+            ? `${result.error} Your post is already open on X — click again to retry recording the pick (X will not reopen).`
             : result.error,
         );
         return;
@@ -134,7 +136,7 @@ function DraftCard({
   return (
     <div className="rounded-lg border border-border bg-surface-2 p-4">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium">{draft.avenue}</p>
+        <p className="text-sm font-medium">{laneLabel(draft.avenue)}</p>
         <div className="flex items-center gap-2">
           {isThread ? (
             <span title="A connected thread, written to post in order.">
@@ -152,7 +154,9 @@ function DraftCard({
           ) : null}
         </div>
       </div>
-      {draft.laneNote ? <p className="mt-1 text-xs text-muted">{draft.laneNote}</p> : null}
+      {draft.laneNote ? (
+        <p className="mt-1 text-xs text-muted">{stripInlineMarkdown(draft.laneNote)}</p>
+      ) : null}
 
       <div className="mt-3 space-y-2">
         {draft.posts.map((post, i) => (
@@ -177,6 +181,7 @@ function DraftCard({
         <ul className="mt-2 space-y-0.5">
           {draft.meta.map((m, i) => (
             <li key={i} className="break-words text-xs text-muted">
+              {/* Link runs verbatim, prose runs de-marked (F70). */}
               {splitMetaLinks(m).map((seg, j) =>
                 seg.href ? (
                   <a
@@ -189,7 +194,7 @@ function DraftCard({
                     {seg.text}
                   </a>
                 ) : (
-                  <span key={j}>{seg.text}</span>
+                  <span key={j}>{stripInlineMarkdown(seg.text)}</span>
                 ),
               )}
             </li>
@@ -319,12 +324,18 @@ export function XDraftsBatch({
   assetId: string;
   accounts: XParsedAccount[];
 }) {
+  const totalDrafts = accounts.reduce((n, a) => n + a.drafts.length, 0);
   return (
     <div className="space-y-5">
+      {/* A3/A4: this used to open "About a week of posting to choose from" and
+          close on "the next batch" — two statements of the batch shape on the
+          one client-reachable surface where the drafts are visibly a set. The
+          LinkedIn twin was scrubbed already; this is the same treatment, so the
+          two reviews say the same thing about how the work arrives (nothing). */}
       <p className="text-sm text-muted">
-        About a week of posting to choose from. Pick your favourites (each pick opens X with the
-        post ready), edit freely, and skip with a reason. Every choice sharpens that
-        account&apos;s voice for the next batch.
+        {totalDrafts === 1 ? "The next post, ready to review." : "Drafts to choose from."} Picking
+        opens X with the post ready; edit freely, or skip with a reason. Every choice sharpens
+        that account&apos;s voice for the next run.
       </p>
       {accounts.map((acc) => {
         const isCompany = acc.title.toLowerCase().includes("company page");
@@ -337,7 +348,7 @@ export function XDraftsBatch({
               <p className="min-w-0 flex-1 truncate text-[15px] font-semibold text-foreground">{acc.title}</p>
               <Badge tone={isCompany ? "info" : "neon"}>{isCompany ? "Company page" : "Personal seat"}</Badge>
             </header>
-            {acc.note ? <p className="px-4 pt-3 text-xs text-muted">{acc.note}</p> : null}
+            {acc.note ? <p className="px-4 pt-3 text-xs text-muted">{stripInlineMarkdown(acc.note)}</p> : null}
             <div className="space-y-3 p-4">
               {acc.drafts.map((draft) => (
                 <DraftCard

@@ -112,6 +112,44 @@ export function normalizeLabSlug(input: string | null | undefined): string {
   return lastSegment.toLowerCase().replace(/[^a-z0-9._-]/g, "");
 }
 
+/* ── Refresh proposals committed in the lab repo ──────────────────────
+   Convention mirrors outputs/, one folder up from the run tree:
+
+     clients/<slug>/outputs/<agent>/<run>/client/   deliverables (posts)
+     clients/<slug>/refresh/<anything>.json         refresh proposals
+
+   Documented in docs/qa-sweep-2026-07/refresh/OPS-IMPORT.md. */
+
+/** Where a client's committed refresh proposals live. */
+export function labRefreshDir(slug: string): string {
+  return `clients/${slug}/refresh`;
+}
+
+/**
+ * Exactly the paths the proposal reader will fetch.
+ *
+ * BOTH variable segments must START with an alphanumeric. That is not cosmetic:
+ * a slug class of `[\w.-]+` alone happily matches `..`, so
+ * `clients/../refresh/x.json` would pass and resolve to `refresh/x.json` at the
+ * repo root — outside the folder this convention is supposed to fence. Leading
+ * dots are excluded to kill `.` and `..` as segments; `/` is outside both
+ * classes, so a segment can never span a separator.
+ */
+const LAB_PROPOSAL_PATH = /^clients\/[A-Za-z0-9][\w.-]*\/refresh\/[A-Za-z0-9][\w.-]*\.json$/;
+
+/**
+ * Whether a repo path is a readable refresh proposal.
+ *
+ * Load-bearing: the path ROUND-TRIPS THE BROWSER — the scan lists paths and the
+ * browser sends one back to be planned or applied — so it is untrusted input.
+ * Without this, an admin-shaped request could pull any file in the private lab
+ * repo through the portal's token. Anchored, single-segment, `.json` only, and
+ * no leading dot; `..` cannot match because the segment classes exclude `/`.
+ */
+export function isLabProposalPath(path: string): boolean {
+  return LAB_PROPOSAL_PATH.test(path);
+}
+
 /** "01-template-launch-hero" → "Template launch hero"; "2026-07-06-template-launch" → "Template launch" */
 export function humanizeItemName(key: string): string {
   const cleaned = key

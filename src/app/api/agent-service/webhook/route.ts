@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { z } from "zod";
+import { assetTitleFromJobTitle } from "@/lib/job-title";
 import {
   claimExternalJobCompletion,
   createAsset,
@@ -22,6 +23,9 @@ import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { orderKeyForCreatedAt } from "@/lib/post-chain";
 import { reflowClientChain } from "@/lib/chain";
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { applyLaunchOutcome, isLaunchTemplatesArtifact } from "@/lib/jobs/launch-outcome";
+import { getClientAgent } from "@/lib/data-client-agents";
+import { syncOptionsFromBatchAsset } from "@/lib/client-agent-slots";
 import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
 import { logger } from "@/services/logger";
 
@@ -35,7 +39,9 @@ const STATUS_MAP: Record<AgentServiceWebhookPayload["status"], JobStatus> = {
   done: "review",
   failed: "failed",
   dead_letter: "failed",
-  cancelled: "failed",
+  // A deliberate stop is not a breakage: it maps to itself so the badge, the
+  // progress strip and every failure count can tell the two apart.
+  cancelled: "cancelled",
 };
 
 const ASSET_TYPE_MAP = {
@@ -204,6 +210,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // The template stream this run was fired against, resolved BEFORE the claim
+  // for the same reason the refund above is: the claim is single-use, so a
+  // lookup that throws after it has no retry — redelivery would short-circuit
+  // on "Already processed" and the asset would be written with no template
+  // forever. Failing the delivery (503) keeps it in the service queue instead.
+  //
+  // WHITELISTED against the umbrella's own registry, and FENCED by client: the
+  // key is trusted from our job doc first and the metadata echo second, but a
+  // stale or hand-crafted key must never write a stream name onto a client's
+  // deliverable that their agent does not have, and an umbrella id from another
+  // tenant must never be read through at all.
+  const claimClientAgentId = job.clientAgentId ?? payload.metadata?.karos_client_agent_id ?? null;
+  const claimIsLaunch =
+    (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(claimClientAgentId);
+  const runTemplateKey = job.templateKey ?? payload.metadata?.karos_template_key ?? null;
+  let runTemplate: { key: string; name?: string } | null = null;
+  if (runTemplateKey && claimClientAgentId && !claimIsLaunch) {
+    let umbrella;
+    try {
+      umbrella = await getClientAgent(claimClientAgentId);
+    } catch {
+      return NextResponse.json(
+        { error: "Template lookup failed — retry delivery" },
+        { status: 503 },
+      );
+    }
+    if (umbrella && umbrella.clientId === job.clientId) {
+      const match = umbrella.templates?.find((t) => t.key === runTemplateKey);
+      if (match) runTemplate = { key: match.key, name: match.name };
+    }
+  }
+
   // Atomic claim — makes redelivery (sender retries on timeout) idempotent:
   // exactly one delivery flips the job out of queued/running and runs the
   // side effects (asset creation, usage logging).
@@ -213,6 +251,25 @@ export async function POST(req: NextRequest) {
   }
   const now = Date.now();
   const events = [...job.events];
+
+  // ── Launch runs (Phase 3 §8.2) ──
+  // A setup run designs the client's templates; its deliverables are working
+  // material for staff, NOT content. They land as staff-only assets, skip the
+  // chain entirely (nothing about them belongs on a calendar), and the
+  // umbrella advances to curation. Our own job doc is the source of truth for
+  // the run type; the metadata echo is the fallback for a job written before
+  // the field was stamped.
+  const clientAgentId = job.clientAgentId ?? payload.metadata?.karos_client_agent_id ?? null;
+  const isLaunchRun =
+    (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(clientAgentId);
+  let launchTemplatesJson: string | null = null;
+
+  // The template stream this run was fired against, WHITELISTED against the
+  // umbrella's own registry (§8.2). The key is trusted from our own job doc
+  // first and the metadata echo second, but either way it is only accepted if
+  // the umbrella actually has that template — a stale or hand-crafted key must
+  // never write a stream name onto a client's deliverable that their agent
+  // does not have, since the archive groups by exactly this field.
 
   const artifacts: ExternalJobArtifact[] = [];
   const assetIds: string[] = [...job.assetIds];
@@ -265,6 +322,13 @@ export async function POST(req: NextRequest) {
               contentType: artifact.content_type ?? "application/octet-stream",
             });
             entry.url = hosted.url;
+            // The setup run's structured output (seam T1). Captured here off
+            // the bytes we already fetched — no second round-trip — and only
+            // for launch runs, so a client agent that happens to ship a
+            // templates.json in a normal run can't reseed the registry.
+            if (isLaunchRun && isLaunchTemplatesArtifact(artifact.name)) {
+              launchTemplatesJson = bytes.toString("utf8").slice(0, 20_000);
+            }
             const ext = extension(artifact.name);
             if (TEXT_EXTENSIONS.includes(ext)) {
               const content = bytes.toString("utf8");
@@ -316,15 +380,12 @@ export async function POST(req: NextRequest) {
           ? hintedType
           : (ASSET_TYPE_MAP[payload.task_type] ?? "note");
       const platform = payload.metadata?.platform || undefined;
-      // job.title is `${job.agentName} — ${clientName}` (submit-managed.ts /
-      // custom-agent-actions.ts). Strip only that exact appended " — <client>"
-      // suffix — never a blind split on " — " (agent/client names may contain
-      // legitimate em-dashes). The job doc keeps its full title.
-      const clientSuffix = " — ";
-      const assetTitle =
-        job.agentName && job.title.startsWith(job.agentName + clientSuffix)
-          ? job.agentName
-          : job.title;
+      // Strip the appended " - <client>" the submit paths add, so a client's
+      // own workspace doesn't put their company name in half of every title.
+      // Separator and strip share one definition (lib/job-title.ts) — this
+      // looked for an em dash while every builder wrote a hyphen, so it never
+      // fired for any run from any path.
+      const assetTitle = assetTitleFromJobTitle(job.title, job.agentName);
       // Only real catalog products get a template chip; "custom" runs have no
       // managed product (getManagedProduct would fall back to the first one).
       const managedProduct = MANAGED_PRODUCTS.find((p) => p.taskType === payload.task_type);
@@ -340,13 +401,31 @@ export async function POST(req: NextRequest) {
           agentsRepoSha: payload.agents_repo_sha,
           artifacts: artifacts.filter((a) => a.clientFacing),
           ...(slides ? { slides } : {}),
+          // Staff-only working material, excluded from every client library
+          // surface by getClientLibraryAssets. Flagged on the asset itself
+          // rather than inferred later: the exclusion has to survive whatever
+          // status or date this asset ends up with.
+          ...(isLaunchRun ? { launchDeliverable: true, clientAgentId } : {}),
         },
         imageUrl: orderedImageUrls[0] ?? null,
         ...(platform ? { channels: [platform] } : {}),
         status: "draft",
+        // Template attribution, in precedence order. A managed product IS its
+        // own template. A custom run fired against one of the umbrella's
+        // template streams carries the key on the job (submit-custom stores it
+        // and echoes karos_template_key) — and until now the webhook dropped it
+        // on the floor, so every post a per-template run produced arrived with
+        // no template at all. That is the join the archive groups by, the chip
+        // the calendar paints and the key per-template feedback is scoped to:
+        // without it a client's own streams are invisible on their deliverables.
         ...(managedProduct
           ? { templateKey: payload.task_type, templateName: managedProduct.name }
-          : {}),
+          : runTemplate
+            ? {
+                templateKey: runTemplate.key,
+                ...(runTemplate.name ? { templateName: runTemplate.name } : {}),
+              }
+            : {}),
         orderKey: orderKeyForCreatedAt(now, job.id),
         ...recommendedScheduleFields(assetType, 0, platform),
         createdBy: "agent-service",
@@ -358,13 +437,42 @@ export async function POST(req: NextRequest) {
       // Auto-assign the new post its one-per-day chain date. Best-effort: the
       // job is already claimed (single delivery), so a reflow failure must not
       // fail the webhook — it self-heals on the next import/webhook/staff reflow.
-      await reflowClientChain(job.clientId).catch(() =>
-        events.push({
-          at: Date.now(),
-          level: "error",
-          message: "Calendar reflow failed - run the staff reflow action",
-        }),
-      );
+      // Launch deliverables are skipped entirely: they are not calendar
+      // entities, and reflowing them would hand a client's chain a day for a
+      // document about templates.
+      if (!isLaunchRun) {
+        await reflowClientChain(job.clientId).catch(() =>
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message: "Calendar reflow failed - run the staff reflow action",
+          }),
+        );
+
+        // §4.5b — an X drafts BATCH landing is the moment its days can be
+        // sliced into daily options. This is where the batch actually arrives:
+        // the recurring X run delivers here every week, and the horizon path
+        // (which is template-gated, and an options umbrella has no templates)
+        // never sees it. Identified by the same parse predicate as every other
+        // X surface, and looked up BY this job's client so a crafted payload
+        // cannot reach another tenant's plan.
+        //
+        // Safe after the single-use claim: assignment never touches a day that
+        // already has options, so a redelivery adds nothing. Best-effort for
+        // the same reason the reflow above is — the deliverable is already
+        // written, and the next batch re-attempts any day still unassigned.
+        await syncOptionsFromBatchAsset({
+          clientId: job.clientId,
+          assetId,
+          content: primaryText ? primaryText.content : "",
+        }).catch(() =>
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message: "Daily options assignment failed - retries on the next batch",
+          }),
+        );
+      }
     }
     taskArtifactContent = primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "";
     taskArtifactImage = orderedImageUrls[0] ?? null;
@@ -411,6 +519,27 @@ export async function POST(req: NextRequest) {
     },
     updatedAt: now,
   });
+
+  // ── Client-agent launch state ──
+  // Advances the umbrella (launching → curating, or → launch_failed) and seeds
+  // the template registry from templates.json when the setup run emitted one.
+  // Best-effort like the syncs below: the job is already claimed, so a write
+  // failure here must not fail the delivery — staff can reset a stuck umbrella.
+  if (isLaunchRun && clientAgentId) {
+    try {
+      await applyLaunchOutcome({
+        clientAgentId,
+        clientId: job.clientId,
+        status: payload.status,
+        error: payload.status === "done" ? null : (payload.error ?? payload.status),
+        templatesJson: launchTemplatesJson,
+        refunded: refund.refunded,
+        now,
+      });
+    } catch (e) {
+      console.error("[webhook] client-agent launch update failed:", e);
+    }
+  }
 
   // ── Task Map sync ──
   // 1. A run dispatched BY a board task lands its deliverable on the ticket

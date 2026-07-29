@@ -3,8 +3,10 @@
 import { revalidatePath } from "next/cache";
 import {
   getAsset,
+  getJob,
   listAssets,
   updateAsset,
+  updateJob,
   clearAssetSchedule,
   markAssetPublished,
   listClientIntegrations,
@@ -25,6 +27,9 @@ import {
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
+import { isAssetUnlockedForClient } from "@/lib/post-chain";
+import { syncSlotPostedForAsset } from "@/lib/client-agent-slots";
+import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
 import type { Asset, PublishMode } from "@/lib/types";
 
 /** Load the asset and verify the caller may act on it. Shared guard for the actions below. */
@@ -198,8 +203,40 @@ export async function approveAssetAction(
   }
 
   await updateAsset(id, patch);
+  await closeProducingJobIfReviewed(asset);
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
+  revalidatePath(`/clients/${asset.clientId}/agents`);
+}
+
+/**
+ * Move a run out of "review" once every deliverable it produced has been
+ * approved.
+ *
+ * Approving a deliverable used to write the deliverable and nothing else, so a
+ * job sat on "review" forever — and the amber "N ready" pill on the agent card,
+ * which counts runs in review, could never go down no matter how many times the
+ * drafts were reviewed. It also left "approved"/"delivered" unreachable states
+ * on the run badge. Best-effort: a failure here must not undo an approval that
+ * has already been written, so it is logged, not thrown.
+ */
+async function closeProducingJobIfReviewed(asset: Asset): Promise<void> {
+  if (!asset.jobId) return;
+  try {
+    const job = await getJob(asset.jobId);
+    if (!job || job.status !== "review" || job.assetIds.length === 0) return;
+    const siblings = await Promise.all(
+      job.assetIds.map((assetId) => (assetId === asset.id ? null : getAsset(assetId))),
+    );
+    // The asset just written is approved by construction; every other one must
+    // already be past "draft" (approved, scheduled, delivered, or published).
+    // A missing sibling — deleted since the run — cannot hold the run open.
+    const outstanding = siblings.some((sibling) => sibling != null && sibling.status === "draft");
+    if (outstanding) return;
+    await updateJob(job.id, { status: "approved" });
+  } catch (error) {
+    console.error("[approveAsset] could not close producing job", asset.jobId, error);
+  }
 }
 
 /**
@@ -242,6 +279,14 @@ export async function markAssetPostedAction(
   ) {
     return { ok: false, error: "Only an approved, scheduled, or delivered post can be marked as posted" };
   }
+  // A post whose day hasn't come yet cannot have been posted. Without this a
+  // client could attest their way through the whole pre-generated batch — one
+  // click per future day — and each flip to published ends redactLockedAsset's
+  // redaction, revealing title, content and images ahead of time (churn rule
+  // A3/A4). The UI hides the control, but a server action is a public endpoint.
+  if (!isAssetUnlockedForClient(asset, Date.now())) {
+    return { ok: false, error: "This post is scheduled for a later day — you can mark it posted on the day it goes out." };
+  }
   // Don't race an in-flight push: the auto-cron may be mid-publish under a
   // claim right now, and flipping status to published here wouldn't stop it —
   // we'd attest "already posted by hand" AND post again for real.
@@ -251,6 +296,22 @@ export async function markAssetPostedAction(
 
   const { changed } = await reconcileAssetPublished(id, Date.now(), null, { force: true });
   if (!changed) return { ok: false, error: "Already marked as posted" };
+
+  // The slot this asset fulfils records that its day happened (§3). Derived,
+  // out-of-band and best-effort: the asset is live either way, and a slot that
+  // misses the stamp is re-derived on the next pass.
+  await syncSlotPostedForAsset({ clientId: asset.clientId, assetId: id }).catch((e) =>
+    console.error("[assets] slot posted sync failed:", e),
+  );
+
+  // §4.5c — the chosen option's own learning-log row. "Picked" and "actually
+  // posted" are different facts: the pick wrote the losers' rows immediately,
+  // but the winner only earns a `posted` row when the client says they posted
+  // it. Recording the pick as posted would teach the agent that everything it
+  // drafts goes out. Best-effort for the same reason as above.
+  await recordPostedOptionFeedback(asset).catch((e) =>
+    console.error("[assets] option feedback failed:", e),
+  );
 
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
@@ -329,4 +390,34 @@ export async function publishAssetNowAction(
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
   return { ok: true, platform: target };
+}
+
+/**
+ * Record that a picked X option was actually posted (§4.5c).
+ *
+ * Only applies to assets materialized by `pickAgentSlotOptionAction` — they
+ * carry the option ref, the account and the batch they came from in `meta`, so
+ * no schema change to XDraftFeedback was needed. Anything else returns silently.
+ *
+ * `posted_with_edits` carries the final text, which is the most valuable row in
+ * the whole log: it is the client showing, not telling, exactly how the agent's
+ * draft fell short. Edit detection is the flag stamped at pick time rather than
+ * a re-comparison here — the original lives in the batch asset and could have
+ * been re-imported since.
+ */
+async function recordPostedOptionFeedback(asset: Asset): Promise<void> {
+  const meta = asset.meta ?? {};
+  const draftRef = typeof meta.optionRef === "string" ? meta.optionRef : null;
+  const accountTitle = typeof meta.xAccountTitle === "string" ? meta.xAccountTitle : null;
+  if (!draftRef || !accountTitle) return;
+
+  const edited = meta.edited === true;
+  await addXDraftFeedbackAction({
+    clientId: asset.clientId,
+    accountTitle,
+    ...(typeof meta.pickedFromAssetId === "string" ? { assetId: meta.pickedFromAssetId } : {}),
+    draftRef,
+    action: edited ? "posted_with_edits" : "posted",
+    ...(edited ? { finalText: asset.content } : {}),
+  });
 }

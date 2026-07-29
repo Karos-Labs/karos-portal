@@ -20,8 +20,20 @@
 
 /* ── Engines & provenance ─────────────────────────────────────────── */
 
-/** The five answer engines from the a3 spec. Only engines with a wired provider are probed. */
-export type EngineId = "chatgpt" | "gemini" | "claude" | "perplexity" | "copilot";
+/**
+ * The tracked answer engines. Call directive B2 (2026-07-27) removed Perplexity and
+ * Copilot from the set entirely: neither has a wired provider, so they contributed
+ * nothing but permanent "not yet measured" chips, a "0 of 5 engines measured"
+ * coverage figure that could never reach 5, and a standing flag-us-to-add-them
+ * banner for connectors nobody is building. Removing them from the TYPE is
+ * deliberate — every roster, order and label map is keyed by EngineId, so the
+ * compiler now enforces the removal rather than five separate lists agreeing.
+ *
+ * Snapshots captured before this still carry perplexity/copilot rows; they are
+ * simply not rendered (ENGINE_ORDER drives the UI) and their stored
+ * geoVisibilityEnginesTotal of 5 stands as a historical fact.
+ */
+export type EngineId = "chatgpt" | "gemini" | "claude";
 
 /** Which model provider actually produced a data point (multi-model provenance). */
 export type ProviderSource = "OpenAI" | "Gemini" | "Anthropic";
@@ -33,8 +45,6 @@ export const ENGINE_LABELS: Record<EngineId, string> = {
   chatgpt: "ChatGPT",
   gemini: "Gemini",
   claude: "Claude",
-  perplexity: "Perplexity",
-  copilot: "Copilot",
 };
 
 /** Engine → provider that answers for it in this platform (null = no connector wired yet). */
@@ -42,8 +52,6 @@ export const ENGINE_PROVIDERS: Record<EngineId, ProviderSource | null> = {
   chatgpt: "OpenAI",
   gemini: "Gemini",
   claude: "Anthropic",
-  perplexity: null,
-  copilot: null,
 };
 
 /* ── Probe & answer shapes ────────────────────────────────────────── */
@@ -442,14 +450,54 @@ function clamp01(v: number): number {
   return Math.min(Math.max(v, 0), 1);
 }
 
-/** Per-engine geo-score-v3 sub-score, 0..1 (each signal normalized to 0..1 first). */
-export function engineVisibilityScore(e: PerEngineVisibility): number {
+/**
+ * The CATEGORY sub-metrics for an engine row, with a fallback to the full-prompt
+ * figures for snapshots captured before `category` existed on this record. One
+ * definition, shared by the scoring maths and the presenter, so the headline tile
+ * and the cards under it can never disagree about their denominator (QA F10 / CD-B3).
+ */
+export function categoryMetrics(e: PerEngineVisibility): SubMetrics {
   return (
-    APPEARANCE_LED_WEIGHTS.appearance * clamp01(e.mentionRate) +
-    APPEARANCE_LED_WEIGHTS.citation * clamp01(e.citationRate) +
-    APPEARANCE_LED_WEIGHTS.firstPosition * clamp01(e.firstPositionRate) +
-    APPEARANCE_LED_WEIGHTS.shareOfRoster * clamp01(e.shareOfVoice / 100) +
-    APPEARANCE_LED_WEIGHTS.sentiment * clamp01((e.netSentiment + 1) / 2)
+    e.category ?? {
+      promptsMeasured: e.promptsMeasured,
+      mentionRate: e.mentionRate,
+      citationRate: e.citationRate,
+      firstPositionRate: e.firstPositionRate,
+      shareOfVoice: e.shareOfVoice,
+      netSentiment: e.netSentiment,
+      ghostCitationRate: e.ghostCitationRate,
+      topCompetitor: e.topCompetitor,
+      brandMentions: e.brandMentions,
+    }
+  );
+}
+
+/**
+ * Per-engine geo-score-v3 sub-score, 0..1 (each signal normalized to 0..1 first).
+ *
+ * QA F10 — two corrections to the ported model, both about honesty rather than
+ * weighting:
+ *  (1) Inputs are the CATEGORY sub-metrics, not the full prompt set. The brand and
+ *      navigational questions name the client by construction, so the headline used
+ *      to show a positive grade next to an engine card of zeros, while claiming to
+ *      be "the number the fixes below are designed to move" — those fixes derive
+ *      from the category metrics. Also the CD-B3 rule: branded queries never feed a
+ *      client-vs-competitor number.
+ *  (2) The sentiment term only counts when the brand was actually mentioned.
+ *      netSentiment is 0 for an unmentioned brand, which maps to the neutral 0.5
+ *      midpoint and awarded 5/100 for having no presence at all — contradicting
+ *      this file's own rule, stated three times, that ESTIMATED signals never enter
+ *      a grade. The weights themselves are untouched (the a3 model is the recorded
+ *      baseline); zero presence now scores zero.
+ */
+export function engineVisibilityScore(e: PerEngineVisibility): number {
+  const c = categoryMetrics(e);
+  return (
+    APPEARANCE_LED_WEIGHTS.appearance * clamp01(c.mentionRate) +
+    APPEARANCE_LED_WEIGHTS.citation * clamp01(c.citationRate) +
+    APPEARANCE_LED_WEIGHTS.firstPosition * clamp01(c.firstPositionRate) +
+    APPEARANCE_LED_WEIGHTS.shareOfRoster * clamp01(c.shareOfVoice / 100) +
+    (c.mentionRate > 0 ? APPEARANCE_LED_WEIGHTS.sentiment * clamp01((c.netSentiment + 1) / 2) : 0)
   );
 }
 
@@ -480,7 +528,11 @@ export function computeVisibilityIndex(
   perEngine: PerEngineVisibility[],
   enginesTotal = perEngine.length,
 ): VisibilityIndexResult {
-  const live = perEngine.filter((e) => e.captureTier !== "UNAVAILABLE" && e.promptsMeasured > 0);
+  // Scored on CATEGORY questions (F10), so an engine that only answered branded
+  // questions contributes nothing rather than a guaranteed-hit inflation.
+  const live = perEngine.filter(
+    (e) => e.captureTier !== "UNAVAILABLE" && categoryMetrics(e).promptsMeasured > 0,
+  );
   const index = live.length
     ? Math.round((live.reduce((a, e) => a + engineVisibilityScore(e), 0) / live.length) * 100)
     : 0;
@@ -504,59 +556,133 @@ export function computeVisibilityIndex(
  * Client share among the LOCKED roster (client + tracked competitors) across every
  * measured answer this run, as a percentage — the run-record `roster_share_pct`.
  *
- * @param isCategory optional predicate marking a prompt as a category (non-brand,
- *   non-navigational) question. When supplied, only those prompts count toward the
- *   share — brand/nav prompts name the client by construction and would otherwise
- *   inflate this to a near-meaningless number even when competitor shares are 0
- *   (QA Fix 2: same like-for-like rule as computePerEngineVisibility's `category`).
+ * @param isCategory predicate marking a prompt as a category (non-brand,
+ *   non-navigational) question — only those count toward the share. Brand/nav
+ *   prompts name the client by construction and would otherwise inflate this to a
+ *   near-meaningless number even when every competitor sits at 0 (QA Fix 2: the
+ *   same like-for-like rule as computePerEngineVisibility's `category`).
+ *
+ *   REQUIRED, unlike the sibling predicates (CD-J1 directive 3). This number is
+ *   rendered to clients as "your share of the conversation" with nothing else to
+ *   qualify it, and there is no honest reading of it over the full prompt set — so
+ *   the scope is a parameter you cannot forget rather than one you should remember.
  */
 export function computeRosterSharePct(
   probes: GeoProbe[],
   gazetteer: Gazetteer,
-  isCategory?: (prompt: string) => boolean,
+  isCategory: (prompt: string) => boolean,
 ): number {
   const clientName = gazetteer.client[0];
   const roster = [clientName, ...Object.keys(gazetteer.competitors)];
   const counts = new Map<string, number>(roster.map((b) => [b, 0]));
   for (const p of probes) {
     if (p.captureTier === "UNAVAILABLE") continue;
-    if (isCategory && !isCategory(p.prompt)) continue;
+    if (!isCategory(p.prompt)) continue;
     for (const b of p.mentionedBrands) counts.set(b, (counts.get(b) ?? 0) + 1);
   }
   const total = [...counts.values()].reduce((a, b) => a + b, 0);
   return total ? Math.round(((counts.get(clientName) ?? 0) / total) * 1000) / 10 : 0;
 }
 
-/** Brand-prompt vs category-prompt presence (run-record `brand_presence` / `category_presence`). */
+/**
+ * One presence bucket (run-record `brand_presence` / `category_presence`).
+ *
+ * Three numbers, because two cannot tell the truth about a partial run:
+ *   total    — questions the plan ASKED for in this bucket (the honest denominator)
+ *   measured — of those, how many at least one engine actually answered
+ *   named    — of the measured ones, how many named the client
+ *
+ * `measured` is optional only for snapshots written before methodology v2, where
+ * `total` already meant "questions with an answer". Read every bucket through
+ * `presenceCounts` rather than reaching for the fields, so that legacy reading
+ * happens in exactly one place.
+ */
+export interface PresenceCount {
+  named: number;
+  total: number;
+  measured?: number;
+}
+
+/** Brand-prompt vs category-prompt presence. */
 export interface PresenceBreakdown {
-  brand: { named: number; total: number };
-  category: { named: number; total: number };
+  brand: PresenceCount;
+  category: PresenceCount;
 }
 
 /**
- * Split the prompt set into brand/nav prompts (those that name the client) and
- * category prompts (those that don't), then count in how many the brand actually
- * appeared across measured engines. Mirrors the a3 "4 of 4 brand / 0 of 16 category".
+ * Normalize a presence bucket to the four numbers every surface needs, applying
+ * the legacy rule in one place: a bucket with no `measured` was written before
+ * methodology v2, when nothing was counted unless it was measured — so for those,
+ * measured IS the total and there is no not-measured remainder to disclose.
+ */
+export function presenceCounts(p: PresenceCount | undefined): {
+  named: number;
+  measured: number;
+  planned: number;
+  notMeasured: number;
+} {
+  const planned = p?.total ?? 0;
+  const measured = p?.measured ?? planned;
+  return {
+    named: p?.named ?? 0,
+    measured,
+    planned,
+    notMeasured: Math.max(0, planned - measured),
+  };
+}
+
+/**
+ * Split the frozen question set into branded questions (those that name the client)
+ * and category questions (those that don't), then count how many of each the brand
+ * actually appeared in.
+ *
+ * CD-J1 directive 1 — A QUESTION NO ENGINE ANSWERED IS NOT A QUESTION WE DIDN'T ASK.
+ * This used to derive the whole universe from the probes and skip UNAVAILABLE ones,
+ * so a question every engine failed on vanished from the record entirely: the
+ * denominator quietly shrank, and "named in 3 of 9" was reported for a 12-question
+ * run with three dead cells. A capture bug flattered the score, and the size of the
+ * report changed for reasons nothing on the page explained. Passing `promptSet` (the
+ * frozen set) fixes the denominator to what was ASKED, and the shortfall surfaces as
+ * `total - measured` for the UI to disclose.
+ *
+ * @param promptSet the frozen question set. Omit only for legacy callers that have
+ *   probes but no set — then the universe is every prompt with a probe, including
+ *   the all-UNAVAILABLE ones, which is still strictly more honest than before.
  */
 export function computePresence(
   probes: GeoProbe[],
   gazetteer: Gazetteer,
   isBrandPrompt: (prompt: string) => boolean = (prompt) =>
     gazetteer.client.some((a) => findMention(prompt, a) >= 0),
+  promptSet?: string[],
 ): PresenceBreakdown {
-  const byPrompt = new Map<string, { brand: boolean; named: boolean }>();
+  const byPrompt = new Map<string, { brand: boolean; measured: boolean; named: boolean }>();
+  const ensure = (prompt: string) => {
+    let cur = byPrompt.get(prompt);
+    if (!cur) {
+      cur = { brand: isBrandPrompt(prompt), measured: false, named: false };
+      byPrompt.set(prompt, cur);
+    }
+    return cur;
+  };
+  // Seed with the plan, so an unanswered question still occupies its slot.
+  for (const prompt of promptSet ?? []) ensure(prompt);
   for (const p of probes) {
+    const cur = ensure(p.prompt);
     if (p.captureTier === "UNAVAILABLE") continue;
-    const cur = byPrompt.get(p.prompt) ?? { brand: isBrandPrompt(p.prompt), named: false };
+    cur.measured = true;
     if (p.brandMentioned) cur.named = true;
-    byPrompt.set(p.prompt, cur);
   }
-  const brand = { named: 0, total: 0 };
-  const category = { named: 0, total: 0 };
+
+  const brand: PresenceCount = { named: 0, total: 0, measured: 0 };
+  const category: PresenceCount = { named: 0, total: 0, measured: 0 };
   for (const v of byPrompt.values()) {
     const bucket = v.brand ? brand : category;
     bucket.total += 1;
-    if (v.named) bucket.named += 1;
+    if (v.measured) {
+      bucket.measured = (bucket.measured ?? 0) + 1;
+      if (v.named) bucket.named += 1;
+    }
   }
   return { brand, category };
 }
@@ -741,6 +867,18 @@ export interface VisibilityGap {
   artifactRef?: string | null;
 }
 
+/**
+ * ONE severity scale for every gap type (QA F22). Site checks derive their lift from
+ * registry weight, which runs 0–10; the competitor-visibility gaps used to set their
+ * chip independently and produce much smaller numbers on unrelated scales, so a
+ * half-failing site check scoring 5 and tagged "important" out-ranked a genuinely
+ * urgent visibility gap whose number topped out at 4.5 — under a header promising
+ * the list was ordered by impact.
+ *
+ * Known ceiling, unchanged and deliberate: a site check whose registry weight is
+ * below 7 can never reach "urgent" however completely it fails. Changing that means
+ * re-tuning the a3 weights, which is out of scope here.
+ */
 function severityFromLift(lift: number): GapSeverity {
   if (lift >= 7) return "critical";
   if (lift >= 4) return "high";
@@ -748,10 +886,61 @@ function severityFromLift(lift: number): GapSeverity {
   return "low";
 }
 
-/** Derive the lever from an a3 rec id prefix (BOTH-* → BOTH), falling back per registry. */
+/**
+ * Normalize a visibility shortfall onto the same 0–10 band computeCheckGaps uses.
+ * `weight` is chosen so a TOTAL miss lands in the severity the product intends:
+ * never named at all is urgent (10), never cited is important (6), and a category
+ * leader holding 100% of the conversation to your 0% is urgent (10).
+ */
+function visibilityLift(shortfall: number, target: number, weight: number): number {
+  const ratio = target > 0 ? clamp01(shortfall / target) : 0;
+  return Math.round(ratio * weight * 10) / 10;
+}
+
+/**
+ * Normalize an audit-model evidence string before it is persisted (QA F3a).
+ * The model writes free-text markdown ("**robots.txt** (fetched today) has _no_
+ * `Disallow` for ClaudeBot"); this strips the markup, collapses whitespace,
+ * sentence-cases the opening and gives it terminal punctuation, so no raw model
+ * formatting survives into any rendered surface. Pure — applied at the server
+ * boundary in intel/seo-geo.ts sanitizeChecks, never at render.
+ */
+export function normalizeEvidence(raw: string): string {
+  let s = (raw ?? "").trim();
+  if (!s) return "";
+  s = s
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1") // [text](url) / ![alt](src) → text
+    .replace(/`{1,3}([^`]*)`{1,3}/g, "$1") // `code` → code
+    .replace(/\*\*([^*]+)\*\*/g, "$1") // **bold** → bold
+    .replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,;:!?]|$)/g, "$1$2") // *em* / _em_ → em
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, "") // list bullets
+    .replace(/^\s*#{1,6}\s*/gm, "") // headings
+    .replace(/^\s*>\s*/gm, "") // blockquote markers
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return "";
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  if (!/[.!?)\]"']$/.test(s)) s += ".";
+  return s;
+}
+
+/**
+ * Derive the lever for a check (QA F16).
+ *
+ * The channel is a property of the REGISTRY the check is scored in, not of its id
+ * prefix. GEO-01, GEO-02, GEO-17 and GEO-20 are entries in the SEARCH score
+ * registry (eligibility, on-page, structure buckets), but reading the prefix made
+ * them AI-only — the presenter mapped that to the AI channel and the "Search
+ * engines" tab silently dropped four of its seventeen checks, so a client reading
+ * that tab believed the category was clean when it wasn't.
+ *
+ * A "BOTH-" prefix is still authoritative: BOTH-05 lives only in SEO_CHECKS, and
+ * demoting it to search-only would be the same mis-filing in the other direction.
+ * Ids that sit in BOTH registries come out with a different lever per registry and
+ * are promoted to "BOTH" by dedupeGapsByRecId, which is where they belong.
+ */
 export function leverFromId(id: string, fallback: Lever): Lever {
-  const prefix = id.split(/[-:]/)[0].toUpperCase();
-  return prefix === "BOTH" ? "BOTH" : prefix === "SEO" ? "SEO" : prefix === "GEO" ? "GEO" : fallback;
+  return id.split(/[-:]/)[0].toUpperCase() === "BOTH" ? "BOTH" : fallback;
 }
 
 /** Deterministic check-id → actuator fix_action map (machine-appliable fixes only). */
@@ -824,6 +1013,52 @@ export function computeCheckGaps(
 }
 
 /**
+ * Collapse gaps that describe the SAME defect (QA F11).
+ *
+ * Nine check ids sit in BOTH registries with different labels and different
+ * weights (BOTH-01, BOTH-02, BOTH-03, BOTH-09, BOTH-16, GEO-01, GEO-02, GEO-17,
+ * GEO-20), and the audit prompt instructs the model to return every id from both.
+ * The pipeline then runs computeCheckGaps once per registry, so one real defect
+ * emitted two cards — and because severity is (1 − norm) × registry weight, and the
+ * weights differ between registries, the two cards carried DIFFERENT priority chips
+ * for the identical underlying problem (sitemap: important vs moderate; freshness:
+ * important vs urgent; scannable sections: urgent vs moderate).
+ *
+ * Survivor keeps the higher scoreLift (hence the higher severity, which derives from
+ * it) and is promoted to lever "BOTH" when the group disagrees — a defect that both
+ * registries measure genuinely affects both channels, and channel "both" already
+ * renders under both filter tabs.
+ *
+ * Keyed on the FULL id, not `id.split(":")[0]` as the spec's shorthand suggested:
+ * the competitor-visibility gaps are per-engine (`GEO-27:chatgpt`,
+ * `GEO-11:gemini`), and prefix-keying would silently merge five engines' findings
+ * into one card. Registry duplicates carry bare ids, so full-id keying collapses
+ * exactly the duplicates and nothing else.
+ */
+export function dedupeGapsByRecId(gaps: VisibilityGap[]): VisibilityGap[] {
+  const byId = new Map<string, VisibilityGap>();
+  const levers = new Map<string, Set<Lever>>();
+  const order: string[] = [];
+  for (const gap of gaps) {
+    const seenLevers = levers.get(gap.id) ?? new Set<Lever>();
+    seenLevers.add(gap.lever);
+    levers.set(gap.id, seenLevers);
+    const held = byId.get(gap.id);
+    if (!held) {
+      byId.set(gap.id, gap);
+      order.push(gap.id);
+    } else if (gap.scoreLift > held.scoreLift) {
+      byId.set(gap.id, gap);
+    }
+  }
+  return order.map((id) => {
+    const gap = byId.get(id)!;
+    const seen = levers.get(id)!;
+    return seen.size > 1 ? { ...gap, lever: "BOTH" as Lever } : gap;
+  });
+}
+
+/**
  * Competitor-vs-client visibility gaps computed from the multi-engine capture.
  * The a3 agent does not emit explicit gap values, so this is the utility logic that
  * derives them from the collected competitor vs client data (per requirement).
@@ -832,8 +1067,11 @@ export function computeVisibilityGaps(perEngine: PerEngineVisibility[]): Visibil
   const gaps: VisibilityGap[] = [];
   for (const e of perEngine) {
     if (e.captureTier === "UNAVAILABLE") continue;
-    // Gaps reflect CATEGORY visibility (real market reality), not brand-prompt inflation.
-    const c = e.category;
+    // Gaps reflect CATEGORY visibility (real market reality), not brand-prompt
+    // inflation. Read through the shared accessor, not `e.category` directly, so a
+    // record predating that field degrades to its full-set figures like every other
+    // category-scoped surface instead of throwing (CD-B3/CD-J1 directive 3).
+    const c = categoryMetrics(e);
     if (c.promptsMeasured === 0) continue;
     const label = ENGINE_LABELS[e.engine];
     const src = e.source ?? undefined;
@@ -844,41 +1082,51 @@ export function computeVisibilityGaps(perEngine: PerEngineVisibility[]): Visibil
 
     if (c.topCompetitor && c.topCompetitor.shareOfVoice > c.shareOfVoice) {
       const delta = c.topCompetitor.shareOfVoice - c.shareOfVoice;
+      // F22: one scale. A leader holding 100% to your 0% is the total miss = 10.
+      const sovLift = visibilityLift(delta, 100, 10);
       gaps.push({
         ...base,
         id: `GEO-27:${e.engine}`,
         lever: "GEO",
         title: `Share-of-voice gap on ${label}: ${c.topCompetitor.name} leads by ${Math.round(delta)} pts`,
-        severity: delta >= 40 ? "critical" : delta >= 20 ? "high" : delta >= 10 ? "medium" : "low",
+        severity: severityFromLift(sovLift),
         measured: `${Math.round(c.shareOfVoice)}% share of voice (vs ${c.topCompetitor.name} at ${Math.round(c.topCompetitor.shareOfVoice)}%)`,
         benchmark: `≥ ${Math.round(c.topCompetitor.shareOfVoice)}% (match category leader)`,
-        scoreLift: Math.round(delta) / 10,
+        scoreLift: sovLift,
         evidence: `Measured across ${c.promptsMeasured} category questions answered by ${label}`,
       });
     }
     if (c.mentionRate < TARGET_MENTION) {
+      // Never named at all is the total miss = 10 → urgent, as before, but now
+      // derived from the number the list is sorted by rather than set beside it.
+      const mentionLift = visibilityLift(TARGET_MENTION - c.mentionRate, TARGET_MENTION, 10);
       gaps.push({
         ...base,
         id: `GEO-35:${e.engine}`,
         lever: "GEO",
         title: `Low named-mention rate on ${label}`,
-        severity: c.mentionRate === 0 ? "critical" : c.mentionRate < 0.15 ? "high" : "medium",
-        measured: `Named in ${Math.round(c.mentionRate * 100)}% of category answers`,
+        severity: severityFromLift(mentionLift),
+        // F133: counts, with the denominator, in the same unit the engine cards and
+        // the citation footer use — never a bare percentage against an unstated set.
+        measured: `Named in ${Math.round(c.mentionRate * c.promptsMeasured)} of ${c.promptsMeasured} ${label} category answers`,
         benchmark: `≥ ${TARGET_MENTION * 100}% of category answers`,
-        scoreLift: Math.round((TARGET_MENTION - c.mentionRate) * 15 * 10) / 10,
+        scoreLift: mentionLift,
         evidence: `${c.promptsMeasured} category questions probed on ${label}`,
       });
     }
     if (c.citationRate < TARGET_CITE) {
+      // Never cited at all is important, not urgent — weight 6 puts a total miss
+      // at the top of the "high" band, matching the severity this gap always had.
+      const citeLift = visibilityLift(TARGET_CITE - c.citationRate, TARGET_CITE, 6);
       gaps.push({
         ...base,
         id: `GEO-11:${e.engine}`,
         lever: "GEO",
         title: `Site never cited as a source by ${label}`,
-        severity: c.citationRate === 0 ? "high" : "medium",
-        measured: `Cited in ${Math.round(c.citationRate * 100)}% of category answers`,
+        severity: severityFromLift(citeLift),
+        measured: `Cited in ${Math.round(c.citationRate * c.promptsMeasured)} of ${c.promptsMeasured} ${label} category answers`,
         benchmark: `≥ ${TARGET_CITE * 100}% citation share`,
-        scoreLift: Math.round((TARGET_CITE - c.citationRate) * 35 * 10) / 10,
+        scoreLift: citeLift,
         evidence: `${c.promptsMeasured} category questions probed on ${label}`,
       });
     }
@@ -940,28 +1188,132 @@ function impactFor(severity: GapSeverity): RecImpact {
 
 /**
  * Plain-English client copy per a3 rec id (QA Fix 7 — the Sitti one-pager voice: a verb-first
- * action title + what it entails). Keyed by the id prefix (before any ":"). Anything not
- * mapped falls back to the internal gap title (still readable, just less polished).
+ * action title + what it entails). Keyed by the id prefix (before any ":").
+ *
+ * THE COPY BAR (CD-J1 directive 5). Every line here is read by a client who is being
+ * asked to click Approve, and the Karos Labs list is the standard: "Add short
+ * plain-English summaries under your main headings so AI engines can quote you" —
+ * not "Answer capsules: 40–60 word summary under key H2s". Concretely:
+ *
+ *   - OUTCOME FIRST, MECHANISM ONLY FOR STAFF. Say what changes for them and why it
+ *     matters. The thresholds, attribute names and protocol vocabulary belong to the
+ *     staff-only technical block on the gap behind this row, which carries the
+ *     measured value and the benchmark verbatim — so nothing is lost by leaving them
+ *     out here, and the client is not asked to approve a spec they can't read.
+ *   - NO NUMERIC SPECS in client copy ("under 60 characters", "120–180 words",
+ *     "40–60 word"). A client cannot act on a threshold; they are approving that we
+ *     go and fix it.
+ *   - NO MARKUP OR PROTOCOL NAMES (H1, canonical tag, noindex, alt text, crawler,
+ *     index, robots.txt). Describe the thing in words a non-specialist owns.
+ *   - NO PRODUCT HISTORY, no client-specific nouns. These strings are shared by every
+ *     client; one of them used to name "the guides page" from the account it was
+ *     written for.
+ *
+ * Ids are STABLE — approvals persist against them (`approvedRecIds`). Rewording an
+ * entry is safe; renaming a key silently orphans an approval.
+ *
+ * COVERAGE IS THE CONTRACT (QA F9): every id in SEO_CHECKS and GEO_READINESS_CHECKS must
+ * have an entry here, because an uncovered id used to fall through to the internal
+ * registry label — client-facing card titles like "LCP p75 ≤ 2.5s". Pinned by a unit test
+ * in src/lib/__tests__/seo-geo.test.ts; add copy here whenever you add a check.
+ * Ids the audit model invents that are in neither registry get REC_FALLBACK, never the
+ * model's own label.
  */
-const REC_COPY: Record<string, { title: string; description: string }> = {
-  "BOTH-07": { title: "Point your guides hub at itself", description: "The guides page currently tells search engines its canonical version is the homepage, so Google credits the homepage instead. Point the canonical tag at the guides hub." },
-  "SEO-02": { title: "Tighten your page titles", description: "Keep titles under 60 characters, unique per page, with the main keyword near the front so they aren't cut off in results." },
-  "SEO-06": { title: "Fix your meta descriptions", description: "Rewrite each description to 120–158 characters - long enough to use the space, short enough not to be truncated - and make each one unique." },
-  "GEO-17": { title: "Give every page one clear headline", description: "Each page needs exactly one main heading (H1); search and AI engines use it to understand what the page is about." },
-  "GEO-20": { title: "Fix your freshness signals", description: "Make each page's sitemap date match its real on-page updated date, so engines trust when the content actually changed." },
-  "GEO-02": { title: "Add a short answer at the top of each guide", description: "Open each guide with a self-contained 40–60 word answer to the question it targets - AI assistants lift these directly." },
-  "GEO-03": { title: "Add evidence to your content", description: "Add statistics, cited sources, and quotes to each section - evidence is what makes an engine quote your page over another." },
-  "GEO-09": { title: "Add authorship and original data", description: "Add a named author, inline citations, and at least one original statistic per page so engines trust and attribute your content." },
-  "BOTH-16": { title: "Make your sections scannable", description: "Keep sections to roughly 120–180 words with a clear one-line definition, so engines can extract clean answers." },
-  "GEO-22": { title: "Use question-style headings", description: "Phrase key headings as the questions buyers actually ask, each followed by a short direct answer - that's how AI matches pages to prompts." },
-  "GEO-25": { title: "Establish a clear entity record", description: "Create a Wikidata item (and a Wikipedia article once notable) so every engine knows which brand you are and stops confusing you with similarly-named ones." },
-  "GEO-04": { title: "Earn authoritative mentions", description: "Get named on independent, reputable sites - engines repeat what trusted third parties say about you." },
-  "GEO-14": { title: "Build a third-party review presence", description: "Get reviews across several independent platforms so 'is X any good' resolves to more than your own listing." },
-  "BOTH-01": { title: "Make every page indexable", description: "Ensure pages return 200 and carry no noindex/nosnippet directive so search and AI engines can use them." },
-  "GEO-27": { title: "Close the share-of-voice gap on category questions", description: "A tracked competitor is named far more often than you on the questions buyers actually ask. Earn mentions in the sources those answers draw from." },
-  "GEO-35": { title: "Get named on category questions", description: "You're rarely named when buyers ask category questions (not your brand by name). Owned comparison content plus third-party mentions fix this." },
-  "GEO-11": { title: "Earn citations from the engines", description: "The engines don't yet cite your site as a source on category answers. Quotable, evidence-backed pages turn into citations." },
+export const REC_COPY: Record<string, { title: string; description: string }> = {
+  "BOTH-07": { title: "Stop your pages handing their credit to another page", description: "One of your pages tells search engines that a different page is the real version of it, so everything it earns is credited elsewhere. Pointing it back at itself keeps the credit where the work is." },
+  "SEO-02": { title: "Tighten your page titles", description: "Your page titles are being cut off in search results. Make each one shorter, different from the others, and lead with the words buyers actually type." },
+  "SEO-06": { title: "Write the summary that appears under your search result", description: "The blurb under your link in search results is missing, cut off, or repeated across pages. A clear, distinct summary per page is what makes someone click yours instead of the next one." },
+  "GEO-17": { title: "Give every page one clear headline", description: "Each page should open with a single headline that says what the page is about. Search and AI engines read it first to decide what the page answers." },
+  "GEO-20": { title: "Show when your pages were really updated", description: "The dates you publish for engines don't match when the pages actually changed. Engines stop trusting those dates, and genuinely fresh work stops reading as fresh." },
+  "GEO-02": { title: "Open each page with a short, quotable answer", description: "Start each page with a few plain sentences answering the question it's about, complete on their own. That opening is what AI assistants lift and quote." },
+  "GEO-03": { title: "Back up what your pages claim", description: "Add real numbers, named sources, and quotes to each section. Evidence is what makes an engine quote your page instead of somebody else's." },
+  "GEO-09": { title: "Put a real author and real numbers on your pages", description: "Pages that say who wrote them, show where their facts came from, and include at least one figure of your own get trusted and credited. Anonymous pages get passed over." },
+  "BOTH-16": { title: "Break your pages into short, scannable sections", description: "Long unbroken text gives engines nothing clean to pull out. Shorter sections, each opening with a one-line explanation, are what they lift answers from." },
+  "GEO-22": { title: "Use your buyers' questions as your headings", description: "Phrase key headings as the questions people actually ask, each followed by a short direct answer. That's how an AI matches your page to what someone asked it." },
+  "GEO-25": { title: "Establish a clear public record of who you are", description: "Create a Wikidata entry (and a Wikipedia article once you qualify) so every engine knows which company you are and stops confusing you with similarly-named ones." },
+  "GEO-04": { title: "Get talked about on sites engines trust", description: "Get named on independent, reputable sites. Engines repeat what trusted third parties say about you far more readily than what you say about yourself." },
+  "GEO-14": { title: "Build a review presence you don't own", description: "Get reviews across several independent platforms, so \"are they any good?\" is answered by more than your own website." },
+  "BOTH-01": { title: "Make sure your pages can be listed at all", description: "Some pages are either failing to load for engines or carrying an instruction telling them not to list the page. Until that's cleared, no other work can make those pages appear." },
+  "GEO-27": { title: "Close the gap with the competitor engines name most", description: "A competitor you track is named far more often than you on the questions buyers actually ask. Earning mentions in the sources those answers draw from is what closes it." },
+  "GEO-35": { title: "Get named when buyers ask about your category", description: "Buyers asking about your category — without naming you — rarely hear about you. Comparison pages of your own, plus getting mentioned on other people's sites, is what changes that." },
+  "GEO-11": { title: "Get the engines quoting your site", description: "The engines don't yet use your site as a source when they answer questions about your category. Pages with clear facts and clear sourcing are the ones they quote." },
+  // ── QA F9: the 22 registry ids that used to fall through to their engineering label ──
+  "BOTH-01b": { title: "Clear the hidden 'do not list' flags", description: "Some pages carry an instruction telling engines not to list or quote them. Remove it from the pages you want buyers to find." },
+  "BOTH-02": { title: "Serve your main content as plain HTML", description: "Content that only appears after a login, behind a paywall, or once scripts run is invisible to engines. They read the raw page, so anything they can't see doesn't count." },
+  "BOTH-03": { title: "Make your content original", description: "Pages that closely echo what already ranks give engines no reason to pick yours. Add your own data, examples, and point of view." },
+  "BOTH-05": { title: "Link your important pages to each other", description: "Each priority page should link out to a few others on your site. Internal links show engines which pages matter and how they relate." },
+  "BOTH-09": { title: "Publish a clean map of your site", description: "Engines rely on a list of every page you want found. Yours needs to be readable, easy for them to locate, and free of pages you've already asked them to skip." },
+  "BOTH-11": { title: "Show first-hand experience", description: "Say what you actually did, tested, or measured, and show your own numbers. Engines increasingly favour content with real experience behind it." },
+  "BOTH-13": { title: "Publish on a steady cadence", description: "Gaps longer than a month make a site look dormant. A predictable publishing rhythm keeps engines coming back to check for new answers." },
+  "BOTH-19": { title: "Make the phone version match the desktop one", description: "Phone visitors should get the same content with no sideways scrolling. Search and AI engines judge your site on its mobile version." },
+  "BOTH-21": { title: "Give each page one job", description: "A page chasing several topics at once wins none of them. Keep one clear purpose per page and drop repeated keyword padding." },
+  "SEO-04a": { title: "Speed up how fast your pages appear", description: "Your main content should be visible within about two and a half seconds. Slow pages lose readers before they read anything." },
+  "SEO-04b": { title: "Make your pages respond faster to taps", description: "When someone taps or clicks, the page should react almost immediately. Lag here frustrates visitors and counts against you in search." },
+  "SEO-04c": { title: "Stop your pages jumping while they load", description: "Content that shifts as images and banners arrive makes people mis-tap. Reserve the space they'll occupy so the page settles as it loads." },
+  "GEO-01": { title: "Let search engines and AI assistants read your site", description: "One settings file on your site decides who is allowed to read it. If the search engines and AI assistants are turned away there, nothing else you do can make you appear." },
+  "GEO-07": { title: "Point your public record at your own website", description: "Your Wikidata entry should list your real website as the official one. While it doesn't, engines credit your work to whichever site is listed instead." },
+  "GEO-08": { title: "Get listed where ChatGPT looks", description: "ChatGPT finds pages through Bing and through its own reader. Missing from either means it can't surface you even when you're the right answer." },
+  "GEO-10": { title: "Let AI assistants read your about pages", description: "Your about and company pages are where engines learn who you are. Blocking them leaves the assistants guessing at your identity." },
+  "GEO-18": { title: "Name the things you're actually talking about", description: "Use the real names of your products, places, people, and partners instead of vague wording, so engines can connect your pages to what buyers ask about. Naturally — not stuffed in." },
+  "GEO-19": { title: "Use your own images, and describe them", description: "Swap stock photography for your own visuals, and add a written description to each one so engines can tell what the image shows." },
+  "GEO-23": { title: "Get your pages into Brave's search results", description: "Brave searches its own independent set of pages, which some assistants draw on. Being absent there is a blind spot no other fix covers." },
+  "GEO-24": { title: "Get your pages into Bing's search results", description: "Bing feeds several AI assistants. Submitting your site and switching on its fast-update option gets new pages picked up in days rather than weeks." },
+  "GEO-37": { title: "Keep your most important pages current", description: "Your about page and main topic pages should be revisited every few months. Engines treat pages left untouched for a long time as less reliable." },
+  "GEO-41": { title: "Confirm Google can list and quote you", description: "Check your pages are in Google's index and that you haven't opted out of its AI answers — that opt-out is easy to leave switched on by accident." },
 };
+
+/**
+ * Last-resort client copy for an id in neither registry nor REC_COPY (the audit model
+ * occasionally invents one). Deliberately says nothing specific rather than echoing the
+ * model's own label into a client-facing card title (QA F3c / F9).
+ */
+const REC_FALLBACK = {
+  title: "A technical finding your team is reviewing",
+  description:
+    "Our audit flagged something on your site that doesn't map to a standard check yet. Your Karos team reviews it and turns it into a plain-English action on your next refresh.",
+} as const;
+
+/** Every internal registry label, for detecting one that was frozen into a snapshot. */
+const REGISTRY_LABELS: ReadonlySet<string> = new Set(
+  [...SEO_CHECKS, ...GEO_READINESS_CHECKS].map((d) => d.label),
+);
+
+/**
+ * Resolve the client-facing copy for a rec id — the ONE definition, used both when a
+ * capture builds its plan and when a stored plan is rendered.
+ *
+ * WHY RENDER-TIME RESOLUTION EXISTS (CD-J1 bounce 1). `recommendations[]` is written
+ * into the snapshot at capture, so the copy a client reads is frozen at the moment of
+ * measurement. Every improvement to REC_COPY therefore healed only clients captured
+ * after it — a July-22 snapshot still served the raw engineering labels the copy table
+ * was written to eliminate ("Answer capsules: 40–60 word summary under key H2s",
+ * "Title tags ≤ 60 chars"), and snapshots from the window before the table was
+ * complete served a mix. Rec ids are STABLE, so re-resolving them at render heals
+ * every existing snapshot without a re-capture.
+ *
+ * Precedence:
+ *  1. REC_COPY by id prefix — covers every registry id (pinned by test), so a stored
+ *     raw label loses to today's plain-English copy.
+ *  2. Otherwise the stored strings, EXCEPT when they are themselves an internal
+ *     label — an exact registry label, or a title echoed verbatim as its own
+ *     description, both signatures of the pre-F9 fall-through. Those get the
+ *     deliberately-unspecific fallback rather than being handed back to the client.
+ *  3. Otherwise the stored strings, which is the honest answer for an id the model
+ *     invented under a pipeline whose copy we cannot reconstruct.
+ */
+export function resolveRecCopy(
+  recId: string,
+  stored?: { title?: string; description?: string },
+): { title: string; description: string } {
+  const known = REC_COPY[recId.split(":")[0]];
+  if (known) return known;
+
+  const title = stored?.title?.trim() ?? "";
+  const description = stored?.description?.trim() ?? "";
+  if (!title) return REC_FALLBACK;
+  if (REGISTRY_LABELS.has(title) || title === description) return REC_FALLBACK;
+  return { title, description };
+}
 
 function ownerFor(actionKind: ActionKind): string {
   switch (actionKind) {
@@ -979,12 +1331,27 @@ function ownerFor(actionKind: ActionKind): string {
  * lift (highest impact first). The internal gap fields never cross into the returned
  * objects — only the §3b render contract does; titles/descriptions are plain-English.
  */
+/** Display order for the plan's impact badges (QA F22). */
+const SEVERITY_ORDER: Record<GapSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
 export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recommendation[] {
   const seen = new Set<string>();
   const out: Recommendation[] = [];
-  for (const gap of [...gaps].sort((a, b) => b.scoreLift - a.scoreLift)) {
-    const copy = REC_COPY[gap.id.split(":")[0]];
-    const title = copy?.title ?? gap.title;
+  // F22: the client's plan is headed "Ordered by expected impact on your scores",
+  // so the impact badge on a row must agree with where that row sits. Severity
+  // first, lift as the tie-breaker — same rule as the staff gap list.
+  const ordered = [...gaps].sort(
+    (a, b) =>
+      (SEVERITY_ORDER[a.severity] ?? 4) - (SEVERITY_ORDER[b.severity] ?? 4) ||
+      b.scoreLift - a.scoreLift,
+  );
+  for (const gap of ordered) {
+    // REC_COPY covers every registry id (pinned by test); the fallback catches
+    // model-invented ids so a raw engineering label can never become a card title (F9).
+    // Same resolver the render path uses, so a stored plan and a fresh one can
+    // never disagree about what a given id is called.
+    const copy = resolveRecCopy(gap.id);
+    const title = copy.title;
     const key = title.toLowerCase().trim();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -992,7 +1359,8 @@ export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recomme
     out.push({
       recId: gap.id,
       title,
-      description: copy?.description ?? gap.benchmark ?? "",
+      // Never `gap.benchmark` — that is the internal registry label (F3b/F9).
+      description: copy.description,
       owner: ownerFor(actionKind),
       vertical: gap.lever,
       impact: impactFor(gap.severity),
@@ -1048,8 +1416,44 @@ export function tagPromptIntents(prompts: string[], gazetteer: Gazetteer): Inten
   return prompts.map((prompt) => ({ prompt, intent: classifyIntent(prompt, gazetteer) }));
 }
 
-/** Per-intent target counts for a 20-prompt set (a3 Phase-1 quota — keeps the set
- *  balanced and caps brand/nav so the comparison stays category-heavy). */
+/* ── The question plan (methodology v2 — CD-J1 directive 1) ───────────
+ *
+ * WHY A FIXED PLAN AT ALL. Before this, the final question set was whatever
+ * survived the drafter: the model returned a pool, the pool was deduped, and the
+ * per-intent quota took "up to" its share of whatever was there. A thin pool in one
+ * intent produced a short set, and a set of a different SHAPE — so one client was
+ * measured on 8 branded + 12 category questions and the next on 4 + 11. Every
+ * client-facing ratio hangs off those denominators, which made "named in 0 of 12"
+ * and "named in 0 of 16" incomparable numbers wearing the same clothes. Neither the
+ * client nor we could say what a score meant, and no two clients could be compared.
+ *
+ * THE COUNTS, AND WHY THESE ONES. The plan below is the a3 Phase-1 quota that the
+ * generator was already aiming at — 6 discovery + 5 comparison + 5 problem branded
+ * off 3 brand + 1 navigational — now a floor as well as a ceiling. It is deliberately
+ * category-heavy: 16 of the 20 questions never say the client's name.
+ *
+ *   - CATEGORY questions (16) are the measurement. Every client-vs-competitor number
+ *     in the product is computed on these alone (CD-B3), because a question that
+ *     contains your name names you by construction. 16 is the largest category block
+ *     that fits a 20-question run, and a bigger denominator is a steadier score:
+ *     one lucky answer moves a 16-question rate by 6 points, a 12-question rate by 8.
+ *   - BRANDED questions (4) are a control, not a score. They answer "do the engines
+ *     know who this brand is at all?", which is the difference between a visibility
+ *     problem and a recognition problem. 4 is enough to read that signal; spending
+ *     more of the run on questions the client is guaranteed to win buys nothing.
+ *
+ * (The directive floated "e.g. 8 branded + 12 category" as an illustration of the
+ * FORM. Implemented as the generator's own natural sizes, per the same sentence,
+ * because moving four questions from the category block to the branded one shrinks
+ * the only denominator anyone is scored on in order to grow the one nobody is.)
+ *
+ * THE CONTRACT. A capture MUST emit exactly these counts — `buildQuestionSet` pads
+ * from a deterministic template bank and trims to the quota, so a thin or lopsided
+ * model pool can no longer change the shape of the measurement. Engine failures are
+ * a DISPLAY concern and never shrink a denominator: see `computePresence`, where a
+ * question no engine answered is counted as planned-but-not-measured rather than
+ * dropped out of the set.
+ */
 export const INTENT_QUOTA: Record<PromptIntent, number> = {
   discovery: 6,
   comparison: 5,
@@ -1057,6 +1461,39 @@ export const INTENT_QUOTA: Record<PromptIntent, number> = {
   brand: 3,
   navigational: 1,
 };
+
+/** Intents whose questions never name the client — the measurement base (CD-B3). */
+export const CATEGORY_INTENTS: readonly PromptIntent[] = ["discovery", "comparison", "problem"];
+/** Intents whose questions name the client by construction — the control block. */
+export const BRANDED_INTENTS: readonly PromptIntent[] = ["brand", "navigational"];
+
+/** Which side of the plan an intent sits on. One definition, so a display grouping
+ *  can never disagree with the denominators (CD-J1 bounce 2c). */
+export function intentBasis(intent: string): "category" | "branded" {
+  return (BRANDED_INTENTS as readonly string[]).includes(intent) ? "branded" : "category";
+}
+
+const sumQuota = (intents: readonly PromptIntent[]) =>
+  intents.reduce((a, i) => a + INTENT_QUOTA[i], 0);
+
+/** Category (non-branded) questions every capture must ask: 16. */
+export const PLANNED_CATEGORY_QUESTIONS = sumQuota(CATEGORY_INTENTS);
+/** Branded questions every capture must ask: 4. */
+export const PLANNED_BRANDED_QUESTIONS = sumQuota(BRANDED_INTENTS);
+/** Total questions every capture must ask: 20. */
+export const PLANNED_QUESTIONS_TOTAL = PLANNED_CATEGORY_QUESTIONS + PLANNED_BRANDED_QUESTIONS;
+
+/**
+ * Version of the question methodology a snapshot was measured under, stamped onto
+ * the record so an old capture is read by its own rules rather than reinterpreted
+ * by today's (the CD-B4 legacy discipline). Bump this whenever the plan above, or
+ * what counts toward a denominator, changes.
+ *
+ * v2 (2026-07-29) is the first version with a fixed plan; anything without a stamp
+ * was measured under "whatever the drafter returned" and its denominators are
+ * descriptive of that one run, not of a standard.
+ */
+export const SEO_GEO_METHODOLOGY_VERSION = "q2-2026-07-29";
 
 /** Word-set of a prompt (ignoring stop-word noise would over-merge; keep it simple). */
 function tokenSet(s: string): Set<string> {
@@ -1089,6 +1526,12 @@ export function dedupeNearDuplicates(prompts: string[], threshold = 0.7): string
 /**
  * Select a balanced final prompt set from a larger pool by per-intent quota (a3 Phase-1),
  * then backfill any shortfall from the leftovers. Preserves input order within each intent.
+ *
+ * SUPERSEDED by `buildQuestionSet` (CD-J1) and no longer called by the capture — kept
+ * because its behaviour is still the honest description of a best-effort selection
+ * from a pool. DO NOT wire it back into a capture path: the quota here is a ceiling
+ * only, so a thin pool yields a short, differently-shaped set, which is exactly the
+ * variable-denominator problem the question plan exists to remove.
  */
 export function selectByIntentQuota(prompts: string[], gazetteer: Gazetteer, total: number): string[] {
   const byIntent = new Map<PromptIntent, string[]>();
@@ -1114,6 +1557,79 @@ export function selectByIntentQuota(prompts: string[], gazetteer: Gazetteer, tot
     }
   }
   return out.slice(0, total);
+}
+
+/** Fixed iteration order over the plan — never `Object.keys`, so the emitted set
+ *  is byte-identical for identical inputs regardless of object-key ordering. */
+const PLAN_ORDER: readonly PromptIntent[] = [...CATEGORY_INTENTS, ...BRANDED_INTENTS];
+
+/** Case/punctuation-insensitive identity for a question (dedupe across pool + bank). */
+function questionKey(prompt: string): string {
+  return prompt.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** How many questions of each intent a set actually contains. */
+export function countByIntent(prompts: string[], gazetteer: Gazetteer): Record<PromptIntent, number> {
+  const counts: Record<PromptIntent, number> = {
+    discovery: 0, comparison: 0, problem: 0, brand: 0, navigational: 0,
+  };
+  for (const p of prompts) counts[classifyIntent(p, gazetteer)] += 1;
+  return counts;
+}
+
+/**
+ * Build the frozen question set to the fixed plan (methodology v2): exactly
+ * INTENT_QUOTA[intent] questions per intent, drawn from `pool` first and padded
+ * from `templates` when the pool is thin. Trimming and padding are both
+ * deterministic — same pool, same bank, same set, every run.
+ *
+ * A template is only accepted into the slot it was filed under if the classifier
+ * agrees it belongs there. That check is the point: the plan, the intent tags shown
+ * in the report, and the branded/category denominators are all produced by
+ * `classifyIntent`, so a question that the bank calls "brand" and the classifier
+ * calls "comparison" would put the emitted shape back out of step with the
+ * displayed one — the exact drift this plan exists to remove.
+ *
+ * An intent can still finish short if its template bank is exhausted (only
+ * reachable when a caller passes a bank smaller than the quota). The set is
+ * returned as built rather than backfilled from another intent: a short block is
+ * visible as a short block, where padding it with the wrong kind of question would
+ * silently restore the variable-shape problem. Callers verify with `countByIntent`.
+ */
+export function buildQuestionSet(
+  pool: string[],
+  gazetteer: Gazetteer,
+  templates: Partial<Record<PromptIntent, string[]>> = {},
+): string[] {
+  const byIntent = new Map<PromptIntent, string[]>();
+  for (const p of pool) {
+    const intent = classifyIntent(p, gazetteer);
+    const bucket = byIntent.get(intent);
+    if (bucket) bucket.push(p);
+    else byIntent.set(intent, [p]);
+  }
+
+  const used = new Set<string>();
+  const out: string[] = [];
+  for (const intent of PLAN_ORDER) {
+    const quota = INTENT_QUOTA[intent];
+    const picked: string[] = [];
+    const take = (candidates: string[], requireIntent: boolean) => {
+      for (const p of candidates) {
+        if (picked.length >= quota) return;
+        const key = questionKey(p);
+        if (!key || used.has(key)) continue;
+        if (requireIntent && classifyIntent(p, gazetteer) !== intent) continue;
+        used.add(key);
+        picked.push(p);
+      }
+    };
+    // Pool entries are already bucketed by the same classifier — no re-check needed.
+    take(byIntent.get(intent) ?? [], false);
+    take(templates[intent] ?? [], true);
+    out.push(...picked);
+  }
+  return out;
 }
 
 /** One (question × engine) cell state, matching the PDF grid's dot legend. */
@@ -1282,6 +1798,36 @@ export function countBrandInAnswers(
   };
 }
 
+/* ── Snapshot trust (call directive B4) ───────────────────────────── */
+
+/**
+ * Stamped onto every snapshot the pipeline writes. Bump this whenever a change
+ * makes older snapshots non-comparable with new ones, so the UI can say so
+ * instead of presenting stale maths as current.
+ *
+ * 2026-07-28 covers the QA-sweep measurement changes: category-only client-vs-
+ * competitor scoring and citations (CD-B3, F10), Perplexity/Copilot dropped from
+ * the engine roster (CD-B2), registry-duplicate gaps collapsed (F11), levers taken
+ * from the registry rather than the id prefix (F16), and one severity scale across
+ * all gap types (F22). A snapshot without this stamp was measured under the old
+ * rules; its numbers are historical, not wrong-but-current.
+ *
+ * 2026-07-29 adds question methodology v2 (CD-J1): a fixed question plan every
+ * capture must emit, and denominators that count what was ASKED rather than what
+ * happened to come back. That changes what a presence ratio MEANS, so snapshots
+ * measured before it are not comparable with ones measured after — which is exactly
+ * what this stamp exists to say. See SEO_GEO_METHODOLOGY_VERSION.
+ */
+export const SEO_GEO_PIPELINE_VERSION = "2026-07-29";
+
+/**
+ * The team treats captures before the 2026-07-23/24 SEO/GEO redeploy as
+ * unreliable (call directive B4). Used only to word the legacy notice — the
+ * version stamp above is what decides trust, because a hardcoded date stops being
+ * meaningful the moment the pipeline changes again.
+ */
+export const SNAPSHOT_TRUST_CUTOFF = Date.UTC(2026, 6, 23);
+
 /* ── Stored insights record ───────────────────────────────────────── */
 
 /**
@@ -1292,6 +1838,9 @@ export function countBrandInAnswers(
 export interface SeoGeoInsights {
   clientId: string;
   capturedAt: number;
+  /** Pipeline that produced this snapshot (CD-B4). Absent on anything captured
+   *  before version stamping — those are shown as legacy, never as current. */
+  pipelineVersion?: string;
   /** Headline KPIs (0–100 ints, measured-only per the grade rule). */
   seoScore: number;
   seoDataCoveragePct: number;
@@ -1313,10 +1862,14 @@ export interface SeoGeoInsights {
   geoVisibilityEnginesTotal: number;
   /** Client share among the locked roster across all measured answers, % (run-record `roster_share_pct`). */
   rosterSharePct: number;
+  /** Question methodology this capture was measured under (CD-J1). Absent on
+   *  anything captured before the fixed question plan — those denominators
+   *  describe one run rather than a standard, and render under their own rules. */
+  methodologyVersion?: string;
   /** Brand named in non-brand/category prompts (run-record `category_presence`). */
-  categoryPresence: { named: number; total: number };
+  categoryPresence: PresenceCount;
   /** Brand named in brand/nav prompts (run-record `brand_presence`). */
-  brandPresence: { named: number; total: number };
+  brandPresence: PresenceCount;
   /** Per-engine sub-metrics with provider provenance — the chart series. */
   perEngine: PerEngineVisibility[];
   /** Prioritized SEO + GEO gaps/issues (site checks + competitor visibility deltas), run-record `issues[]` shape.
@@ -1338,8 +1891,17 @@ export interface SeoGeoInsights {
   answerGrid: QuestionRow[];
   /** Domain citation leaderboard across all measured answers ("who the engines quote"). */
   citationLeaderboard: CitationLeader[];
-  /** Client citation summary (cited/named/ghost across measured answers). */
-  citationSummary: CitationSummary;
+  /**
+   * Client citation summary (cited/named/ghost across measured answers).
+   *
+   * OPTIONAL because stored reality says so (CD-J1 bounce 3): captures from before
+   * this field existed carry no summary, every reader already optional-chained it,
+   * and the required type was the reason a missing field could be read as a
+   * measured zero — the panel telling a client "we couldn't measure any answers
+   * this run" on the same page as "3 of 5 AI engines measured". Absent is not zero;
+   * the type now lets a reader tell the two apart.
+   */
+  citationSummary?: CitationSummary;
   /** Competitors named across measured answers, with counts. */
   competitorsNamed: Array<{ name: string; mentions: number }>;
   /** Non-roster brands the engines named this run (open extraction, verified counts).
@@ -1348,4 +1910,33 @@ export interface SeoGeoInsights {
   /** Roster used for share-of-voice (client first). */
   roster: string[];
   updatedAt: number;
+  /**
+   * Set ONLY when this snapshot was hand-imported through the admin Ops Import
+   * page instead of being measured by a portal pipeline run. Absent means the
+   * portal measured it itself — which is why this is an optional field and not
+   * a defaulted one: every snapshot written before Ops Import existed is a
+   * genuine machine capture, and must keep reading as one.
+   *
+   * Deliberately NOT named `source`: `PerEngineVisibility.source` already means
+   * `ProviderSource` ("OpenAI" | "Gemini" | "Anthropic") one level down, and a
+   * top-level field of the same name reading "local-import" would be a trap.
+   *
+   * This does NOT participate in the trust/legacy verdict. `buildSnapshotTrust`
+   * keys off `pipelineVersion` alone, and an import carries through whatever
+   * version the capture actually declared — it never restamps. So the legacy
+   * banner keeps meaning "measured under superseded rules", and provenance
+   * answers the separate question of where the run happened.
+   *
+   * The next real pipeline capture overwrites the doc and drops this field.
+   * That is correct: a machine capture must not inherit an import's provenance.
+   */
+  importedFrom?: {
+    source: "local-import";
+    /** Epoch millis the import landed — NOT `capturedAt`, which stays the measurement time. */
+    importedAt: number;
+    /** Display name of the admin who clicked Import. */
+    importedBy?: string;
+    /** Bundle filename the snapshot came from, for the audit trail. */
+    file?: string;
+  };
 }

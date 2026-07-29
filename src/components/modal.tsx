@@ -5,12 +5,23 @@ import { createPortal } from "react-dom";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 
+/**
+ * Dialog shell: a fixed header, a scrolling body, and an optional pinned
+ * footer.
+ *
+ * Title, description, body and actions used to share ONE scroll box under a
+ * hard 720px cap, so a long form (the agent run brief, the intake panes) hid
+ * its own submit button off screen and left hundreds of pixels of a tall
+ * display unused. `footer` is the slot for the primary action: whatever goes
+ * in it stays visible however far the body scrolls.
+ */
 export function Modal({
   open,
   onClose,
   title,
   description,
   children,
+  footer,
   className,
   closeOnBackdrop = true,
   scrollRef,
@@ -20,6 +31,8 @@ export function Modal({
   title?: string;
   description?: string;
   children: React.ReactNode;
+  /** Pinned action bar. Stays put while the body scrolls. */
+  footer?: React.ReactNode;
   className?: string;
   /**
    * Set false when a stray click outside would discard typed input. Escape and
@@ -28,8 +41,10 @@ export function Modal({
   closeOnBackdrop?: boolean;
   /**
    * The one element that scrolls, handed to callers that swap their content in
-   * place: the title and description live inside it, so only the caller knows
-   * when a swap has left them above the fold.
+   * place: only the caller knows when a swap has left the reader mid-document.
+   * The title and description sit in the sticky header ABOVE this element
+   * (F32's split body), so scrolling it to 0 restores the top of the content
+   * without moving the heading.
    */
   scrollRef?: React.RefObject<HTMLDivElement | null>;
 }) {
@@ -68,7 +83,17 @@ export function Modal({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div
+      // A portaled overlay is mounted on document.body, so it is NOT inside the
+      // DOM subtree of whatever opened it. Any surface running an outside-click
+      // dismissal (the copilot dock's sheet, CD-G9b) therefore reads a click in
+      // here as "outside" and closes itself behind the dialog. This attribute is
+      // how such a test recognises a click that is still inside the UI the user
+      // is working in — an attribute rather than a class name so it survives
+      // restyling and covers every overlay that portals through this component.
+      data-overlay-root=""
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+    >
       <div
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
         {...(closeOnBackdrop ? { onClick: onClose } : {})}
@@ -78,7 +103,13 @@ export function Modal({
         // Focus target only — a container draws no ring of its own.
         tabIndex={-1}
         className={cn(
-          "relative z-10 flex max-h-[min(calc(100dvh-2rem),720px)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius)] border border-border-strong bg-surface shadow-2xl animate-fade-up focus:outline-none",
+          // Capped, not uncapped: the body scrolls, so a content-heavy dialog
+          // must not stretch to a tall monitor's full height. 1100px clears
+          // F32's "Start run scrolls out of sight" on normal displays while
+          // staying bounded on very tall ones. focus:outline-none because the
+          // panel is only a focus TARGET (tabIndex -1) — a container drawing a
+          // ring of its own would ring the whole dialog on open.
+          "relative z-10 flex max-h-[min(calc(100dvh-3rem),1100px)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius)] border border-border-strong bg-surface shadow-2xl animate-fade-up focus:outline-none",
           className,
         )}
         role="dialog"
@@ -91,11 +122,22 @@ export function Modal({
         >
           <Icon name="X" className="h-5 w-5" />
         </button>
-        <div className="overflow-y-auto p-6" {...(scrollRef ? { ref: scrollRef } : {})}>
-          {title && <h2 className="pr-8 text-lg font-semibold">{title}</h2>}
-          {description && <p className="mt-1 pr-8 text-sm text-muted">{description}</p>}
-          <div className={title ? "mt-4" : ""}>{children}</div>
+        {(title || description) && (
+          <div className="shrink-0 px-6 pt-6">
+            {title && <h2 className="pr-8 text-lg font-semibold">{title}</h2>}
+            {description && <p className="mt-1 pr-8 text-sm text-muted">{description}</p>}
+          </div>
+        )}
+        {/* Spacing is kept identical to the single-box version on purpose: the
+            inner wrapper carries the same mt-4 / pt-6 the old body applied, so
+            no existing dialog shifts by a pixel from the restructure. */}
+        <div
+          className="min-h-0 flex-1 overflow-y-auto px-6 pb-6"
+          {...(scrollRef ? { ref: scrollRef } : {})}
+        >
+          <div className={title || description ? "mt-4" : "pt-6"}>{children}</div>
         </div>
+        {footer && <div className="shrink-0 border-t border-border px-6 py-4">{footer}</div>}
       </div>
     </div>,
     document.body,

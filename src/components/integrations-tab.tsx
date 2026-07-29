@@ -14,12 +14,13 @@ import {
 import {
   PLATFORM_REGISTRY,
   OAUTH_SUPPORTED_PLATFORM_IDS,
+  PENDING_VERIFICATION_PLATFORM_IDS,
   READ_ONLY_PLATFORM_IDS,
   GOOGLE_READ_ONLY_SUB_PLATFORM_IDS,
   type PlatformConfig,
 } from "@/lib/integrations/platforms";
 import { SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
-import { integrationNeedsReconnect } from "@/lib/integration-status";
+import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { LinkedInSeatsWorkspace, type SeatView } from "@/components/linkedin-seats-workspace";
 import type { Role } from "@/lib/types";
 
@@ -121,6 +122,105 @@ function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) 
 
 /* ── Platform card ───────────────────────────────────────────────────── */
 
+/**
+ * Refusals from the card's actions arrive as DATA ({ error }) and are already
+ * written for a client to read, so they render verbatim. A throw reaching these
+ * handlers is therefore not a refusal but a transport failure — or an exception
+ * Next has masked behind an opaque production digest ("An error occurred in the
+ * Server Components render… digest: 1234567890"). Never render that: the catch
+ * blocks below always substitute their own line, which is the allowlist
+ * direction F34 established (no internal string reaches a client because a
+ * filter failed to recognise it).
+ */
+
+/**
+ * One channels section, connected first. Every platform used to render as an
+ * identical full-height card whether it was live or had never been touched, so
+ * on a nine-card grid reading "Not connected" eight times, the one channel that
+ * actually mattered was lost in the noise.
+ *
+ * Live channels keep the full card. The rest collapse into a compact add-row
+ * list; clicking one expands that platform's real card in place, so nothing is
+ * removed — only deferred.
+ */
+function ChannelSection({
+  title,
+  blurb,
+  platforms,
+  statusOf,
+  renderCard,
+  leadingCards,
+}: {
+  title: string;
+  blurb: string;
+  platforms: PlatformConfig[];
+  /**
+   * Three buckets, not two. "needs-reconnect" MUST keep its full card: an
+   * expired token is the one state a client has to act on, and collapsing it
+   * into the add-list hid the Reconnect badge behind a click and replaced the
+   * warning with the platform's marketing blurb — a broken channel reading as
+   * fine and filed away. Only a platform with no integration doc at all is
+   * genuinely "not set up" and safe to collapse.
+   */
+  statusOf: (p: PlatformConfig) => "live" | "needs-reconnect" | "absent";
+  renderCard: (p: PlatformConfig) => React.ReactNode;
+  /** Always-full cards that belong to this section (the merged Google suite). */
+  leadingCards?: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState<string[]>([]);
+  const live = platforms.filter((p) => statusOf(p) === "live");
+  const needsReconnect = platforms.filter((p) => statusOf(p) === "needs-reconnect");
+  const absent = platforms.filter((p) => statusOf(p) === "absent");
+  const opened = absent.filter((p) => expanded.includes(p.id));
+  const collapsed = absent.filter((p) => !expanded.includes(p.id));
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <p className="text-xs text-muted-2">{blurb}</p>
+      </div>
+
+      {(live.length > 0 || needsReconnect.length > 0 || opened.length > 0 || leadingCards) && (
+        <div className="grid grid-cols-1 items-start gap-6 @2xl:grid-cols-2 @4xl:grid-cols-3">
+          {/* Healthy first, then the ones needing attention — both as full
+              cards, so a Reconnect badge is never a click away. */}
+          {live.map(renderCard)}
+          {needsReconnect.map(renderCard)}
+          {leadingCards}
+          {opened.map(renderCard)}
+        </div>
+      )}
+
+      {collapsed.length > 0 && (
+        <div className="overflow-hidden rounded-[var(--radius)] border border-border">
+          <p className="border-b border-border bg-foreground/[0.03] px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-2">
+            Add a channel
+          </p>
+          <ul className="divide-y divide-border">
+            {collapsed.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  onClick={() => setExpanded((prev) => [...prev, p.id])}
+                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-2/60"
+                >
+                  <PlatformMark id={p.id} className="h-4 w-4 shrink-0 text-muted-2" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-foreground">{p.name}</span>
+                    <span className="block truncate text-[11px] text-muted-2">{p.description}</span>
+                  </span>
+                  <Icon name="Plus" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function PlatformCard({
   platform,
   integration,
@@ -128,6 +228,7 @@ function PlatformCard({
   isOAuthEnabled,
   isConnecting,
   isAdmin,
+  isClientViewer,
   onOAuthConnect,
   onDisconnected,
   linkedinSeats,
@@ -140,6 +241,8 @@ function PlatformCard({
   isOAuthEnabled: boolean;
   isConnecting: boolean;
   isAdmin: boolean;
+  /** Required, not defaulted: a missing role must not fail open to staff copy. */
+  isClientViewer: boolean;
   onOAuthConnect: () => void;
   onDisconnected: () => void;
   linkedinSeats?: SeatView[];
@@ -151,6 +254,9 @@ function PlatformCard({
   // Connect button regardless of whether the server env vars are wired up.
   const hasOAuthSupport = OAUTH_SUPPORTED_PLATFORM_IDS.has(platform.id);
   const isConnected = !!integration;
+  // The OAuth flow exists but the platform has not approved our developer
+  // account yet, so a Connect click can only end in a failed popup. Say so.
+  const pendingVerification = !isConnected && PENDING_VERIFICATION_PLATFORM_IDS.has(platform.id);
   // "Healthy" (fully connected, no reconnect needed) drives the subtle glow —
   // a reconnect-needed card should read as a warning, not a success state.
   const isHealthyConnected = isConnected && !integrationNeedsReconnect(integration!);
@@ -161,6 +267,13 @@ function PlatformCard({
   const [saving, setSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  /**
+   * Failures from the card's own controls (auto-publish, Disconnect). Separate
+   * from formError, which renders inside the admin credentials form and is
+   * therefore invisible whenever that form is collapsed — which is exactly when
+   * these two controls are used.
+   */
+  const [actionError, setActionError] = useState<string | null>(null);
   const [seatsOpen, setSeatsOpen] = useState(false);
   const [accountName, setAccountName] = useState(integration?.accountName ?? "");
   const [fields, setFields] = useState<Record<string, string>>(() => {
@@ -211,12 +324,20 @@ function PlatformCard({
 
   async function handleAutoPublishToggle() {
     const next = !autoPublish;
-    setAutoPublish(next); // optimistic — revalidation corrects on failure
+    setAutoPublish(next); // optimistic — reverted below if the write is refused
     setTogglingAuto(true);
+    setActionError(null);
     try {
-      await setIntegrationAutoPublishAction(clientId, platform.id, next);
+      const res = await setIntegrationAutoPublishAction(clientId, platform.id, next);
+      if (res.error) {
+        // The revert stays; what was missing is the reason. A switch that moves
+        // twice on its own is indistinguishable from a network blip.
+        setAutoPublish(!next);
+        setActionError(res.error);
+      }
     } catch {
       setAutoPublish(!next);
+      setActionError("Couldn't change auto-publish. Please try again.");
     } finally {
       setTogglingAuto(false);
     }
@@ -224,12 +345,20 @@ function PlatformCard({
 
   async function handleDisconnect() {
     setDisconnecting(true);
+    setActionError(null);
     try {
-      await deleteIntegrationAction(clientId, platform.id);
+      const res = await deleteIntegrationAction(clientId, platform.id);
+      if (res.error) {
+        // The old comment here claimed "revalidation corrects state" — nothing
+        // revalidates on the failure path, so the card just stayed Connected and
+        // said nothing.
+        setActionError(res.error);
+        return;
+      }
       setAdvancedOpen(false);
       onDisconnected();
     } catch {
-      // revalidation corrects state
+      setActionError("Couldn't disconnect this channel. Please try again.");
     } finally {
       setDisconnecting(false);
     }
@@ -268,10 +397,15 @@ function PlatformCard({
                 </Badge>
               ) : (
                 <Badge tone="neon">
-                  <Icon name="CheckCircle2" className="h-3 w-3" />
+                  <Icon name="CircleCheck" className="h-3 w-3" />
                   Connected
                 </Badge>
               )
+            ) : pendingVerification ? (
+              <Badge tone="warning">
+                <Icon name="Clock" className="h-3 w-3" />
+                Pending verification
+              </Badge>
             ) : (
               <Badge tone="neutral">Not connected</Badge>
             )}
@@ -293,8 +427,10 @@ function PlatformCard({
           how much (or little) header content sits above it, so Connect /
           Reconnect / Disconnect line up across every card in the row. */}
       <div className="mt-auto px-4 pb-4 space-y-3">
-        {/* OAuth connect — available to all users when this platform supports OAuth */}
-        {!isConnected && hasOAuthSupport && (
+        {/* OAuth connect — available to all users when this platform supports
+            OAuth, EXCEPT while the platform still has to approve our developer
+            account: that button can only open a popup that fails. */}
+        {!isConnected && hasOAuthSupport && !pendingVerification && (
           <BrandedConnectButton
             platform={platform}
             loading={isConnecting}
@@ -302,15 +438,32 @@ function PlatformCard({
           />
         )}
 
-        {/* Admin-only hint when OAuth flow exists but env vars aren't configured yet */}
-        {isAdmin && hasOAuthSupport && !isOAuthEnabled && (
+        {pendingVerification && (
+          <p className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-[11px] leading-relaxed text-warning">
+            {platform.name} is reviewing our developer account. Connecting is not available yet —
+            your Karos team will turn it on the moment it is approved.
+          </p>
+        )}
+
+        {/* The Connect button is shown to everyone regardless of server config,
+            so the "this will fail" hint has to be shown to everyone too — it
+            used to be admin-only, leaving clients and employees with a branded
+            button whose entire behaviour was a blank popup (QA F55). */}
+        {hasOAuthSupport && !isOAuthEnabled && (
           <p className="text-[11px] text-warning/80">
-            OAuth env vars not set. The button above will fail until configured.
+            {isAdmin
+              ? "OAuth env vars not set. The button above will fail until configured."
+              : "This channel isn't connectable yet — ask your Karos team to finish setting it up."}
           </p>
         )}
 
         {/* Three-tier publishing control: on = the cron auto-posts scheduled
-            content here; off = content goes out only via manual Publish Now.
+            content here; off = it goes out by hand. WHOSE hand differs, so the
+            off-copy is role-aware: Publish Now lives in the calendar's post
+            detail panel and is staff-only (publishAssetNowAction is
+            requireStaff), while a client posts from their own account and
+            records it with "Mark as posted". Naming a control the reader cannot
+            see is the defect this whole finding is about.
             Hidden for read/analytics-only platforms — there's nothing to publish. */}
         {isConnected && !READ_ONLY_PLATFORM_IDS.has(platform.id) && (
           <button
@@ -320,7 +473,9 @@ function PlatformCard({
             title={
               autoPublish
                 ? "Scheduled content posts automatically at its slot"
-                : "Auto-posting is off. Publish through the Publish Now button only"
+                : isClientViewer
+                  ? "Auto-posting is off. Scheduled content waits on your calendar for you to post it yourself, then mark it as posted"
+                  : "Auto-posting is off. Scheduled content waits on the calendar until someone opens it and presses Publish Now"
             }
           >
             <span className="flex items-center gap-1.5 text-xs text-muted">
@@ -359,17 +514,30 @@ function PlatformCard({
                 Reconnect
               </Button>
             )}
-            <Button
-              size="sm"
-              variant="danger"
-              onClick={handleDisconnect}
-              loading={disconnecting}
-              className={hasOAuthSupport ? "" : "flex-1"}
-            >
-              <Icon name="Unplug" className="h-3.5 w-3.5" />
-              Disconnect
-            </Button>
+            {/* Staff only. deleteIntegrationAction is requireStaff, so for a
+                client this button could never do anything but fail — and it
+                failed silently, giving them a spinner and nothing else, every
+                single time. Gated on staff rather than isAdmin because
+                employees are permitted to disconnect. */}
+            {!isClientViewer && (
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={handleDisconnect}
+                loading={disconnecting}
+                className={hasOAuthSupport ? "" : "flex-1"}
+              >
+                <Icon name="Unplug" className="h-3.5 w-3.5" />
+                Disconnect
+              </Button>
+            )}
           </div>
+        )}
+
+        {actionError && (
+          <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            {actionError}
+          </p>
         )}
 
         {/* LinkedIn employee-advocacy roster lives in a modal, not inline —
@@ -529,6 +697,8 @@ function GoogleUnifiedCard({
 }) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+  /** Failure text for a per-service disconnect — this card had no error slot. */
+  const [subError, setSubError] = useState<string | null>(null);
 
   const byId = new Map(integrations.map((i) => [i.platform, i]));
   const connectedCount = GOOGLE_SUB_SERVICES.filter((s) => byId.has(s.id)).length;
@@ -542,11 +712,19 @@ function GoogleUnifiedCard({
 
   async function handleDisconnectSub(id: string) {
     setDisconnectingId(id);
+    setSubError(null);
     try {
-      await deleteIntegrationAction(clientId, id);
+      const res = await deleteIntegrationAction(clientId, id);
+      if (res.error) {
+        // Same empty catch as the platform card had, and the same claim that
+        // "revalidation corrects state" — it doesn't on the failure path. This
+        // card had no error slot at all, so the refusal had nowhere to go.
+        setSubError(res.error);
+        return;
+      }
       onDisconnected();
     } catch {
-      // revalidation corrects state
+      setSubError("Couldn't disconnect this service. Please try again.");
     } finally {
       setDisconnectingId(null);
     }
@@ -581,7 +759,7 @@ function GoogleUnifiedCard({
                 </Badge>
               ) : (
                 <Badge tone="neon">
-                  <Icon name="CheckCircle2" className="h-3 w-3" />
+                  <Icon name="CircleCheck" className="h-3 w-3" />
                   Connected
                 </Badge>
               )
@@ -649,10 +827,14 @@ function GoogleUnifiedCard({
           {isConnecting ? "Connecting…" : anyConnected ? "Reconnect Google Suite" : "Connect Google Suite"}
         </button>
 
-        {isAdmin && !isOAuthEnabled && (
+        {/* Same rule as the platform cards: everyone who can press the button
+            gets told it can't work yet (QA F55) — only admins get the env-var
+            detail. */}
+        {!isOAuthEnabled && (
           <p className="text-[11px] text-warning/80">
-            OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). The button above will
-            fail until configured.
+            {isAdmin
+              ? "OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). The button above will fail until configured."
+              : "Google Suite isn't connectable yet — ask your Karos team to finish setting it up."}
           </p>
         )}
 
@@ -708,6 +890,11 @@ function GoogleUnifiedCard({
                   </div>
                 );
               })}
+              {subError && (
+                <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                  {subError}
+                </p>
+              )}
               <p className="pt-1 text-[11px] text-muted-2">
                 Reconnecting always goes through the button above — Google issues one token pair
                 covering all three services at once, so there&apos;s no separate per-service OAuth.
@@ -733,6 +920,9 @@ export function IntegrationsTab({
 }: Props) {
   const router = useRouter();
   const isAdmin = currentUserRole === "KAROS_ADMIN";
+  // This tab renders on /clients/[id]/settings, which a client can open for
+  // their own workspace — so copy here has to know who is reading it.
+  const isClientViewer = currentUserRole === "CLIENT_USER";
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
   const [popupError, setPopupError] = useState<string | null>(null);
   const popupTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -742,12 +932,25 @@ export function IntegrationsTab({
   // what's visually on screen (e.g. "6/9" while only 7 cards are shown).
   const googleMergedIds = new Set<string>(GOOGLE_READ_ONLY_SUB_PLATFORM_IDS);
   const standalonePlatforms = PLATFORM_REGISTRY.filter((p) => !googleMergedIds.has(p.id));
-  const connectedGoogleCount = GOOGLE_READ_ONLY_SUB_PLATFORM_IDS.filter((id) =>
-    integrations.some((i) => i.platform === id),
-  ).length;
+  // Counts follow the same three-bucket rule as the grid. The badge used to
+  // count any integration DOC as connected, with no status check, so an expired
+  // channel was tallied as working — the count and the card contradicted each
+  // other. "Connected" now means usable; anything needing a reconnect is
+  // reported separately rather than being quietly folded into a green number.
+  const usableGoogleCount = GOOGLE_READ_ONLY_SUB_PLATFORM_IDS.filter((id) => {
+    const i = integrations.find((x) => x.platform === id);
+    return !!i && integrationIsUsable(i);
+  }).length;
+  const staleGoogleCount = GOOGLE_READ_ONLY_SUB_PLATFORM_IDS.filter((id) => {
+    const i = integrations.find((x) => x.platform === id);
+    return !!i && !integrationIsUsable(i);
+  }).length;
   const connectedCount =
-    standalonePlatforms.filter((p) => integrations.some((i) => i.platform === p.id)).length +
-    (connectedGoogleCount > 0 ? 1 : 0);
+    standalonePlatforms.filter((p) => platformStatus(p) === "live").length +
+    (usableGoogleCount > 0 ? 1 : 0);
+  const needsReconnectCount =
+    standalonePlatforms.filter((p) => platformStatus(p) === "needs-reconnect").length +
+    (usableGoogleCount === 0 && staleGoogleCount > 0 ? 1 : 0);
   const totalCardCount = standalonePlatforms.length + 1; // +1 for the merged Google Services Suite card
 
   // Two sections, driven by each platform's registry `category` — a new
@@ -805,6 +1008,18 @@ export function IntegrationsTab({
     }, 600);
   }
 
+  /**
+   * Which of the three buckets a platform sits in. "absent" means no
+   * integration doc at all — the only state that is genuinely not set up. A
+   * dead-token integration is "needs-reconnect": still a channel the client
+   * owns, and the one that most needs to stay on screen.
+   */
+  function platformStatus(platform: PlatformConfig): "live" | "needs-reconnect" | "absent" {
+    const integration = integrations.find((i) => i.platform === platform.id);
+    if (!integration) return "absent";
+    return integrationIsUsable(integration) ? "live" : "needs-reconnect";
+  }
+
   function renderPlatformCard(platform: PlatformConfig) {
     const integration = integrations.find((i) => i.platform === platform.id);
     return (
@@ -816,6 +1031,7 @@ export function IntegrationsTab({
         isOAuthEnabled={oauthEnabledPlatforms.includes(platform.id)}
         isConnecting={connectingPlatform === platform.id}
         isAdmin={isAdmin}
+        isClientViewer={isClientViewer}
         onOAuthConnect={() => openOAuthPopup(platform.id)}
         onDisconnected={() => router.refresh()}
         {...(platform.id === "linkedin" ? { linkedinSeats, seatLimit, seatCost } : {})}
@@ -828,22 +1044,31 @@ export function IntegrationsTab({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-semibold">Connected Channels</h2>
+          <h2 className="text-base font-semibold">Connected channels</h2>
           <p className="mt-0.5 text-sm text-muted-2">
             Link accounts so agents can publish content and pull performance data automatically.
           </p>
         </div>
-        {connectedCount > 0 && (
-          <Badge tone="neon">
-            {connectedCount} / {totalCardCount} connected
-          </Badge>
+        {(connectedCount > 0 || needsReconnectCount > 0) && (
+          <div className="shrink-0 text-right">
+            {connectedCount > 0 && (
+              <Badge tone="neon">
+                {connectedCount} / {totalCardCount} connected
+              </Badge>
+            )}
+            {needsReconnectCount > 0 && (
+              <p className="mt-1 text-[11px] text-warning">
+                {needsReconnectCount} {needsReconnectCount === 1 ? "needs" : "need"} attention
+              </p>
+            )}
+          </div>
         )}
       </div>
 
       {/* Popup error banner */}
       {popupError && (
         <div className="flex items-center gap-2.5 rounded-md border border-danger/30 bg-danger/10 px-4 py-3">
-          <Icon name="AlertCircle" className="h-4 w-4 shrink-0 text-danger" />
+          <Icon name="CircleAlert" className="h-4 w-4 shrink-0 text-danger" />
           <p className="text-sm text-danger">{popupError}</p>
           <button
             onClick={() => setPopupError(null)}
@@ -855,32 +1080,32 @@ export function IntegrationsTab({
         </div>
       )}
 
-      {/* Social Publishing & Engagement */}
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Social Publishing & Engagement</h3>
-          <p className="text-xs text-muted-2">Channels your agents post and schedule content to.</p>
-        </div>
-        <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {publishingPlatforms.map(renderPlatformCard)}
-        </div>
-      </section>
+      {/* Social publishing & engagement */}
+      <ChannelSection
+        title="Social publishing &amp; engagement"
+        blurb="Channels your agents post and schedule content to."
+        platforms={publishingPlatforms}
+        statusOf={platformStatus}
+        renderCard={renderPlatformCard}
+      />
 
       {/* Analytics & Performance Intelligence — the three read-only Google
           services (Search Console / Analytics / Business Profile) render as
           ONE merged card; YouTube's own standalone card stays in Publishing
           since it's also a post target, but its status still surfaces here
           as an info pill on the Google Suite card. */}
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Analytics & Performance Intelligence</h3>
-          <p className="text-xs text-muted-2">
-            Read-only sources agents pull performance data and content ideas from.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {analyticsStandalonePlatforms.map(renderPlatformCard)}
+      <ChannelSection
+        title="Analytics &amp; performance intelligence"
+        blurb="Read-only sources agents pull performance data and content ideas from."
+        platforms={analyticsStandalonePlatforms}
+        statusOf={platformStatus}
+        renderCard={renderPlatformCard}
+        leadingCards={
+          // The merged Google suite is one card covering three services and has
+          // its own internal connected/not state, so it always renders in full
+          // rather than partitioning with the standalone platforms.
           <GoogleUnifiedCard
+            key="google_unified"
             integrations={integrations.filter((i) => googleMergedIds.has(i.platform))}
             youtubeConnected={integrations.some((i) => i.platform === "youtube")}
             clientId={clientId}
@@ -890,8 +1115,8 @@ export function IntegrationsTab({
             onOAuthConnect={() => openOAuthPopup("google_unified")}
             onDisconnected={() => router.refresh()}
           />
-        </div>
-      </section>
+        }
+      />
 
       {/* Footer note */}
       <p className="text-xs text-muted-2">

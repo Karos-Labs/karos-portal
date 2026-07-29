@@ -41,14 +41,20 @@ export async function unfireableScheduleReason(
   // The agents that draft FROM stored agent data (X e13, LinkedIn e10, Reddit
   // e15) need their company-level form saved. Unattended fires have no one to
   // answer it.
+  //
+  // Same copy as the submit cores' refusals except for the closing clause: this
+  // one is answering "why is the schedule off", not "why did nothing run".
   if (isXAgent(agent.key) && !(await hasXAgentIntake(client.id))) {
-    return `${X_SETUP_REQUIRED_PREFIX} first: fill in the company page, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. The schedule stays off until then.`;
+    return `${X_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. The schedule stays off until then.`;
   }
-  if (isLinkedInAgent(agent.key) && !(await hasLinkedInAgentIntake(client.id))) {
-    return `${LINKEDIN_SETUP_REQUIRED_PREFIX} first: save the company page form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. The schedule stays off until then.`;
+  // Keyed, like the cores: the Path-B master has no company form of its own and
+  // gates on any LinkedIn intake, so passing the key is what keeps a
+  // seat-only workspace able to schedule the master (ruling 6).
+  if (isLinkedInAgent(agent.key) && !(await hasLinkedInAgentIntake(client.id, agent.key))) {
+    return `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. The schedule stays off until then.`;
   }
   if (isRedditAgent(agent.key) && !(await hasRedditAgentIntake(client.id))) {
-    return `${REDDIT_SETUP_REQUIRED_PREFIX} first: save the account form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. The schedule stays off until then.`;
+    return `${REDDIT_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the account form there. The schedule stays off until then.`;
   }
   return null;
 }

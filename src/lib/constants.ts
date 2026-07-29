@@ -80,6 +80,25 @@ export function isAiProcessingLockActive(client: {
 }
 
 /**
+ * Height in px of the narrow-width (<md) bottom tab bar — the Dashboard · AI
+ * Agents · Calendar · Workspace · Company strip both portal shells render
+ * below md (CD-G9a; components/mobile-shell.tsx sets the bar to this).
+ *
+ * Shared rather than inlined because the copilot's collapsed strip parks
+ * directly ABOVE the bar at that width (CD-G9b) — two independent numbers
+ * would drift and leave the strip floating or buried under the tabs.
+ */
+export const MOBILE_TAB_BAR_H = 54;
+
+/**
+ * The same offset as a Tailwind class, for anything that has to sit on top of
+ * the bar (the copilot dock consumes this). Written as a literal on purpose:
+ * Tailwind scans source text, so a computed `bottom-[${MOBILE_TAB_BAR_H}px]`
+ * would never be emitted. Keep the number in sync with MOBILE_TAB_BAR_H above.
+ */
+export const MOBILE_TAB_BAR_OFFSET_CLASS = "bottom-[54px]";
+
+/**
  * Display labels for managed action-item statuses, in lifecycle order.
  * Shared by the dashboard UI and the audit-history writers.
  */
@@ -91,3 +110,16 @@ export const ACTION_ITEM_STATUS_LABELS = {
 } as const;
 
 export const ACTION_ITEM_STATUSES = ["open", "in_progress", "in_review", "done"] as const;
+
+/**
+ * Spendable-credit level at or below which the agency should act BEFORE the
+ * client hits a wall. Matches the copilot's own "under 20" prompt rule
+ * (src/app/api/clients/[id]/chat/route.ts) so the staff-facing warning and the
+ * client-facing nudge fire on the same number.
+ *
+ * Lives here rather than in credits.ts only because that module is the
+ * client-safe pricing surface owned by the billing work; fold the two together
+ * when they next meet.
+ */
+export const LOW_CREDIT_THRESHOLD = 20;
+

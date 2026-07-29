@@ -5,8 +5,22 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { renderFullDoc, stripDocPreamble } from "@/lib/doc-render";
-import { generateIntelReportAction, updateIntelScheduleAction } from "@/lib/actions";
+import {
+  GENERATED_BLOCK_LINE_RE,
+  isSafeHref,
+  LINK_RE,
+  parseDocSections,
+  renderFullDoc,
+  renderSectionBody,
+  stripDocPreamble,
+  stripHeadingNumber,
+  stripPipelineMarkers,
+} from "@/lib/doc-render";
+import {
+  generateDocSummaryAction,
+  generateIntelReportAction,
+  updateIntelScheduleAction,
+} from "@/lib/actions";
 import { CorrectInfoModal } from "@/components/correct-info-modal";
 import {
   computeFirstIntelScheduleRun,
@@ -34,23 +48,59 @@ function countSections(content: string): number {
   return (content.match(/^## /gm) ?? []).length;
 }
 
+/** What the nav should show for one doc type: a readable doc, or a placeholder row. */
+type DocPick =
+  | { kind: "doc"; doc: ClientContextDoc }
+  | { kind: "rebuilding" }
+  | { kind: "none" };
+
 /**
- * Prefer the client-facing tier. Fall back to internal when the client tier has fewer
- * ## sections — catches condensation runs that silently dropped a leading section.
- * Never surfaces internal-only tier.
+ * Prefer the client-facing tier.
+ *
+ * `allowInternalFallback` is the tier boundary, not a preference: the internal
+ * tier is analyst-grade copy (methodology notes, sourcing workflow, competitor
+ * labels) that types.ts restricts to admin/employee. Only the staff sidebar may
+ * pass it. For a client viewer a missing or degraded client-tier copy resolves
+ * to a "being rebuilt" row — never to the internal document. Internal-only tier
+ * is never surfaced on either path.
  */
-function pickDoc(docs: ClientContextDoc[], docType: ContextDocType): ClientContextDoc | null {
-  const clientTier = docs.find((d) => d.docType === docType && d.tier === "client");
-  const internalTier = docs.find((d) => d.docType === docType && d.tier === "internal");
+/**
+ * A document whose generation came back empty is not a document. The condense
+ * step returns `{ content: "" }` for an empty source and a failed model stream
+ * resolves with whatever partial text arrived, so a blank row could be written
+ * and then rendered as a nav item that opens onto nothing.
+ */
+function hasBody(doc: ClientContextDoc | undefined): doc is ClientContextDoc {
+  return !!doc && stripDocPreamble(doc.content).length > 40;
+}
 
-  if (!clientTier) return internalTier ?? null;
-  if (!internalTier) return clientTier;
+function pickDoc(
+  docs: ClientContextDoc[],
+  docType: ContextDocType,
+  allowInternalFallback: boolean,
+): DocPick {
+  const clientTier = docs.filter((d) => d.docType === docType && d.tier === "client").find(hasBody);
+  const internalTier = docs
+    .filter((d) => d.docType === docType && d.tier === "internal")
+    .find(hasBody);
 
-  if (countSections(clientTier.content) < countSections(internalTier.content)) {
-    return internalTier;
+  if (!allowInternalFallback) {
+    if (clientTier) return { kind: "doc", doc: clientTier };
+    // An internal twin with no client-facing copy means condensation has not
+    // produced (or has lost) the client version — say so instead of leaking it.
+    return internalTier ? { kind: "rebuilding" } : { kind: "none" };
   }
 
-  return clientTier;
+  if (!clientTier) return internalTier ? { kind: "doc", doc: internalTier } : { kind: "none" };
+  if (!internalTier) return { kind: "doc", doc: clientTier };
+
+  // Staff only: a client copy with fewer ## sections means condensation dropped
+  // one, so show the complete internal document instead.
+  if (countSections(clientTier.content) < countSections(internalTier.content)) {
+    return { kind: "doc", doc: internalTier };
+  }
+
+  return { kind: "doc", doc: clientTier };
 }
 
 /* ── Print / export helpers ───────────────────────────────────────────── */
@@ -62,18 +112,44 @@ function esc(s: string): string {
 /**
  * Converts cleaned markdown to print-safe HTML with inline styles.
  * A standalone, Tailwind-free renderer used only for the PDF print window.
+ *
+ * Escapes FIRST, for the same reason doc-render.ts does: every tag below is
+ * generated after this point, so any `<...>` in the document body is text, not
+ * markup. Without it the browser parsed angle-bracketed text as a tag and
+ * dropped it — the templates carry ~110 angle-bracket placeholder slots, so any
+ * section the model left unfilled silently lost its text in the one file a
+ * client is most likely to forward — and a stray script or image tag reaching a
+ * document would have executed in the print window.
  */
 function renderForPrint(markdown: string): string {
-  let out = markdown
-    // Separator lines
-    .replace(/^---+$/gm, "")
-    // H2 headings
-    .replace(/^##\s+(.+)$/gm, "<h2>$1</h2>")
+  // Markers before the escape, same as the on-screen renderer: once `<!-- … -->`
+  // has become `&lt;!-- … --&gt;` nothing downstream recognises it, and the PDF
+  // is the copy a client is most likely to forward.
+  let out = esc(stripPipelineMarkers(markdown))
+    // Separator lines. A rule is a real separator, so it prints as one — the
+    // screen has rendered it since the asset-renderer fix and a PDF that
+    // silently drops it does not match the document the client just read.
+    // Trailing spaces are matched too; without that they left a literal "---".
+    .replace(/^---+[ \t]*$/gm, "<hr />")
+    // H4+ sub-headings — the Market Strategy template's persona headings
+    .replace(/^#{4,6}\s+(.+)$/gm, "<h4>$1</h4>")
+    // H2 headings — legacy literal numbers stripped; documents generated before
+    // the numbers came out of the templates still carry them.
+    .replace(/^##\s+(.+)$/gm, (_m, h: string) => `<h2>${stripHeadingNumber(h)}</h2>`)
     // H3 sub-headings
     .replace(/^###\s+(.+)$/gm, "<h3>$1</h3>")
-    // Bold / italic / code
+    // H1 LAST of the heading rules. buildPrintWindow prints per section, so a
+    // `#` title that ended up inside a section body (the brand sync block is
+    // injected above the document title, which pushes the title down into the
+    // first section) reached this renderer and printed its hash mark.
+    .replace(/^#\s+(.+)$/gm, "<h2>$1</h2>")
+    // Bold / italic / code. The underscore forms are guarded at word boundaries
+    // so the rule cannot open inside snake_case; without them `_Last updated: …_`
+    // printed its underscores.
+    .replace(/(?<!\w)__([^_\n]+)__(?!\w)/g, "<strong>$1</strong>")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<em>$1</em>")
     .replace(/`(.+?)`/g, "<code>$1</code>");
 
   // Tables
@@ -97,32 +173,71 @@ function renderForPrint(markdown: string): string {
     return html + "</table>\n";
   });
 
-  // Bullet lists (sentinel to avoid nested re-match)
-  out = out.replace(/^[-*+]\s+(.+)$/gm, "\x02$1\x03");
+  // Bullet lists (sentinel to avoid nested re-match). Leading whitespace is
+  // allowed so an indented sub-bullet joins the list instead of printing a bare
+  // dash as a paragraph; \x06 marks it for the indent class.
+  out = out.replace(/^([ \t]+)?[-*+]\s+(.+)$/gm, (_m, indent: string | undefined, text: string) =>
+    indent ? `\x02\x06${text}\x03` : `\x02${text}\x03`,
+  );
   out = out.replace(/(\x02[\s\S]*?\x03\n?)+/g, (block) => {
-    const items = block.replace(/\x02([\s\S]*?)\x03/g, "<li>$1</li>");
+    const items = block
+      .replace(/\x02\x06([\s\S]*?)\x03/g, '<li class="indent">$1</li>')
+      .replace(/\x02([\s\S]*?)\x03/g, "<li>$1</li>");
     return `<ul>${items}</ul>\n`;
   });
 
   // Ordered lists
-  out = out.replace(/^\d+\.\s+(.+)$/gm, "\x04$1\x05");
+  out = out.replace(/^([ \t]+)?\d+\.\s+(.+)$/gm, (_m, indent: string | undefined, text: string) =>
+    indent ? `\x04\x06${text}\x05` : `\x04${text}\x05`,
+  );
   out = out.replace(/(\x04[\s\S]*?\x05\n?)+/g, (block) => {
-    const items = block.replace(/\x04([\s\S]*?)\x05/g, "<li>$1</li>");
+    const items = block
+      .replace(/\x04\x06([\s\S]*?)\x05/g, '<li class="indent">$1</li>')
+      .replace(/\x04([\s\S]*?)\x05/g, "<li>$1</li>");
     return `<ol>${items}</ol>\n`;
   });
 
-  // Blockquotes
-  out = out.replace(/^>\s+(.+)$/gm, "<blockquote>$1</blockquote>");
+  // Blockquotes — matches the ESCAPED marker: esc() above has already turned a
+  // leading ">" into "&gt;", so a `^>` rule here could never fire and every
+  // quoted line would keep its arrow on the page. Same rule as doc-render.ts.
+  out = out.replace(/^&gt;\s+(.+)$/gm, "<blockquote>$1</blockquote>");
 
-  // Remaining plain lines → paragraphs
-  out = out.replace(/^(?!<[a-zA-Z/]|$|\s*$)(.+)$/gm, "<p>$1</p>");
+  // Remaining plain lines → paragraphs. Skips only the BLOCK tags generated
+  // above, not any tag: the inline passes run first, so a `**Label:** value`
+  // line already starts with `<strong>` and used to fall out of this pass
+  // entirely — printing at the browser default instead of the 11pt body size.
+  out = out.replace(/^(?!\s*$).+$/gm, (line) =>
+    GENERATED_BLOCK_LINE_RE.test(line) ? line : `<p>${line}</p>`,
+  );
+
+  // Links, last — same rule and same scheme guard as the on-screen renderer, so
+  // the PDF matches the screen instead of printing bracket-and-parenthesis text.
+  out = out.replace(LINK_RE, (whole, text: string, href: string) =>
+    isSafeHref(href) ? `<a href="${href}">${text}</a>` : whole,
+  );
 
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function buildPrintWindow(content: string, title: string): void {
   const clean = stripDocPreamble(content);
-  const body = renderForPrint(clean);
+  // Built from the SAME section list the drawer indexes, so the PDF's section
+  // numbers cannot disagree with the ones on screen (parseDocSections drops
+  // placeholder sections, and a renderer counting its own headings would number
+  // them differently).
+  const sections = parseDocSections(content);
+  const body =
+    sections.length >= 2
+      ? [
+          renderForPrint(leadIn(content)),
+          ...sections.map(
+            (s, i) =>
+              `<h2>${esc(`${i + 1}. ${stripHeadingNumber(s.heading)}`)}</h2>\n${renderForPrint(s.body)}`,
+          ),
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : renderForPrint(clean);
 
   const html = `<!DOCTYPE html>
 <html>
@@ -143,9 +258,12 @@ function buildPrintWindow(content: string, title: string): void {
          page-break-after: avoid; }
     h3 { font-size: 10pt; font-weight: 600; text-transform: uppercase;
          letter-spacing: 0.08em; color: #555; margin: 16px 0 4px; }
+    h4 { font-size: 11pt; font-weight: 600; color: #111; margin: 12px 0 4px; }
     p  { margin: 5px 0; font-size: 11pt; color: #222; }
+    a  { color: #0b5fa5; }
     ul, ol { margin: 6px 0; padding-left: 22px; }
     li { margin: 3px 0; font-size: 11pt; }
+    li.indent { margin-left: 18px; }
     ul li::marker { color: #888; }
     table { width: 100%; border-collapse: collapse; margin: 12px 0;
             page-break-inside: avoid; font-size: 10pt; }
@@ -159,6 +277,7 @@ function buildPrintWindow(content: string, title: string): void {
            background: #f5f5f5; padding: 1px 4px; border-radius: 2px; }
     strong { font-weight: 600; }
     em { font-style: italic; }
+    hr { border: 0; border-top: 1px solid #ddd; margin: 18px 0; }
     @media print {
       body { padding: 0; max-width: none; }
     }
@@ -181,6 +300,9 @@ function buildPrintWindow(content: string, title: string): void {
 }
 
 function downloadMarkdown(content: string, label: string): void {
+  // stripDocPreamble already drops pipeline markers, so the .md a client keeps
+  // does not carry the sync sentinels either — they are invisible in a markdown
+  // preview but plain text in any editor, which is where the file gets opened.
   const clean = stripDocPreamble(content);
   const titled = `# ${label}\n\n${clean}`;
   const slug = label.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
@@ -246,7 +368,7 @@ function ExportMenu({
             <Icon name="FileText" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
             <div>
               <p className="font-medium text-foreground">Export PDF</p>
-              <p className="text-[10px] text-muted-2">Opens print dialog</p>
+              <p className="text-[11px] text-muted-2">Opens print dialog</p>
             </div>
           </button>
           <div className="h-px bg-border" />
@@ -260,7 +382,7 @@ function ExportMenu({
             <Icon name="FileCode" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
             <div>
               <p className="font-medium text-foreground">Export Markdown</p>
-              <p className="text-[10px] text-muted-2">Downloads .md file</p>
+              <p className="text-[11px] text-muted-2">Downloads .md file</p>
             </div>
           </button>
         </div>
@@ -271,20 +393,47 @@ function ExportMenu({
 
 /* ── Full-document slide-over (50% width) ─────────────────────────────── */
 
+/** Any body text sitting before the first `##` heading — parseDocSections drops it. */
+function leadIn(content: string): string {
+  const clean = stripDocPreamble(content);
+  const idx = clean.search(/^##\s+/m);
+  return idx > 0 ? clean.slice(0, idx).trim() : "";
+}
+
+/** Stable, unique anchor id for a section heading. */
+function sectionId(heading: string, i: number): string {
+  const slug = heading.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `doc-section-${i}-${slug || "untitled"}`;
+}
+
 function DocOverlay({
   doc,
   label,
+  clientId,
+  correctionPricing,
   onClose,
   onDocUpdated,
 }: {
   doc: ClientContextDoc;
   label: string;
   clientId?: string;
+  correctionPricing?: { cost: number; blockReason?: string };
   onClose: () => void;
   onDocUpdated?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [correcting, setCorrecting] = useState(false);
+  const [summary, setSummary] = useState<string[] | null>(null);
+  // renderFullDoc("") returns "" — with no branch here the panel used to open
+  // onto a completely blank body with no message and no explanation.
+  const body = renderFullDoc(doc.content);
+  // parseDocSections gives heading/body pairs AND drops sections whose body is
+  // nothing but "Unknown" / "Not provided" / "TBD" — both were already written
+  // and had no callers. Below two sections there is nothing to index, so those
+  // documents keep the single-pass render.
+  const sections = parseDocSections(doc.content);
+  const indexed = sections.length >= 2;
+  const lead = leadIn(doc.content);
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -303,6 +452,25 @@ function DocOverlay({
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [doc.id]);
 
+  // Executive summary: already built on the server, with caching keyed on the
+  // document version and its own usage logging, and no screen had ever called
+  // it. Non-blocking and best-effort — the document reads fine without it, and
+  // a repeat open of an unchanged version is served from cache with no model
+  // call.
+  useEffect(() => {
+    if (!clientId) return;
+    let live = true;
+    generateDocSummaryAction(clientId, doc.docType, doc.tier)
+      .then((bullets) => {
+        if (live && bullets.length) setSummary(bullets);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+      setSummary(null);
+    };
+  }, [clientId, doc.docType, doc.tier, doc.version]);
+
   return createPortal(
     <>
       <div
@@ -314,8 +482,17 @@ function DocOverlay({
       >
         <div className="flex h-full w-full max-w-[92%] flex-col border-l border-border bg-surface shadow-2xl animate-slide-in-right md:max-w-[50%]">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-6 py-3.5">
-            <p className="text-sm font-semibold text-foreground">{label}</p>
-            <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-foreground">{label}</p>
+              {/* "Is this current?" is the first question a document with a
+                  recurring regeneration schedule has to answer. */}
+              {/* Carries a date and a version number, so it takes the readable
+                  tone — muted-2 is for labels (QA F119). */}
+              <p className="mt-0.5 text-[11px] text-muted">
+                Updated {formatDate(doc.updatedAt)} · v{doc.version}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
               <ExportMenu doc={doc} label={label} />
               <button
                 onClick={() => setCorrecting(true)}
@@ -336,10 +513,90 @@ function DocOverlay({
           </div>
 
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
-            <div
-              className="mx-auto w-full max-w-2xl break-words [&_code]:break-all [&_table]:min-w-0"
-              dangerouslySetInnerHTML={{ __html: renderFullDoc(doc.content) }}
-            />
+            {body && summary && (
+              <div className="mx-auto mb-6 w-full max-w-3xl rounded-[10px] border border-border bg-surface-2 px-4 py-3">
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                  In short
+                </p>
+                <ul className="space-y-1">
+                  {summary.map((line) => (
+                    <li key={line} className="flex gap-2 text-xs leading-[1.6] text-muted">
+                      <span className="mt-[3px] shrink-0 text-[10px] text-neon/50">▸</span>
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {!body ? (
+              <p className="mx-auto w-full max-w-2xl text-sm text-muted">
+                This document has not been generated yet — ask your Karos team to regenerate it.
+              </p>
+            ) : indexed ? (
+              <div className="mx-auto flex w-full max-w-3xl gap-6">
+                <nav
+                  aria-label="Sections"
+                  className="sticky top-0 hidden w-44 shrink-0 self-start md:block"
+                >
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                    Contents
+                  </p>
+                  <ul className="space-y-0.5">
+                    {sections.map((s, i) => (
+                      <li key={sectionId(s.heading, i)}>
+                        <button
+                          onClick={() =>
+                            document
+                              .getElementById(sectionId(s.heading, i))
+                              ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                          }
+                          className="w-full rounded-md px-2 py-1 text-left text-xs leading-snug text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                        >
+                          {i + 1}. {stripHeadingNumber(s.heading)}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+
+                <div className="min-w-0 flex-1 break-words [&_code]:break-all [&_table]:min-w-0">
+                  {/* Narrow panels get the index as a scrollable chip row — a
+                      44px column would leave no room for the document itself. */}
+                  <div className="mb-4 -mx-1 flex gap-1.5 overflow-x-auto pb-1 md:hidden">
+                    {sections.map((s, i) => (
+                      <button
+                        key={sectionId(s.heading, i)}
+                        onClick={() =>
+                          document
+                            .getElementById(sectionId(s.heading, i))
+                            ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                        }
+                        className="shrink-0 rounded-full border border-border px-2.5 py-1 text-[11px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                      >
+                        {i + 1}. {stripHeadingNumber(s.heading)}
+                      </button>
+                    ))}
+                  </div>
+
+                  {lead && (
+                    <div dangerouslySetInnerHTML={{ __html: renderSectionBody(lead) }} />
+                  )}
+                  {sections.map((s, i) => (
+                    <section key={sectionId(s.heading, i)} id={sectionId(s.heading, i)}>
+                      <h2 className="mt-7 mb-2.5 scroll-mt-4 text-base font-semibold text-neon/90">
+                        {i + 1}. {stripHeadingNumber(s.heading)}
+                      </h2>
+                      <div dangerouslySetInnerHTML={{ __html: renderSectionBody(s.body) }} />
+                    </section>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div
+                className="mx-auto w-full max-w-2xl break-words [&_code]:break-all [&_table]:min-w-0"
+                dangerouslySetInnerHTML={{ __html: body }}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -347,6 +604,7 @@ function DocOverlay({
       <CorrectInfoModal
         documentId={doc.id}
         docLabel={label}
+        correctionPricing={correctionPricing}
         open={correcting}
         onClose={() => setCorrecting(false)}
         onSuccess={() => {
@@ -362,7 +620,9 @@ function DocOverlay({
 
 /* ── Regenerate modal ─────────────────────────────────────────────────── */
 
-function RegenerateModal({
+/* Exported for the staff dashboard's Regenerate entry point (CD-G5) — the flow
+   lives here because this is where it was born, and it must exist exactly once. */
+export function RegenerateModal({
   clientId,
   open,
   onClose,
@@ -442,11 +702,22 @@ function RegenerateModal({
 
         {/* Body */}
         <div className="space-y-4 px-5 py-4">
+          {/* Corrections are NOT lost any more: runOnboardPipeline reads them back
+              through listClientDocCorrections and buildCorrectionsBlock re-injects
+              them into every doc prompt as ground truth. The old copy predated that. */}
+          <p className="rounded-[8px] border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
+            This rebuilds every document from scratch. Corrections you&apos;ve applied are
+            carried into the new versions.
+          </p>
           <p className="text-sm text-muted">
             Optionally add run-specific context for this regeneration. These instructions apply
             to{" "}
             <span className="font-medium text-foreground">this run only</span> and take the
             highest priority if they conflict with global settings.
+          </p>
+          <p className="text-xs text-muted-2">
+            The run takes a few minutes and continues in the background — you can close this and
+            keep working. Regenerate stays locked until it finishes.
           </p>
           <div className="space-y-1.5">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
@@ -488,7 +759,7 @@ function RegenerateModal({
               name="RefreshCw"
               className={cn("h-3.5 w-3.5", running && "animate-spin")}
             />
-            {running ? "Running pipeline…" : "Confirm & Run"}
+            {running ? "Starting…" : "Confirm & Run"}
           </button>
         </div>
       </div>
@@ -563,9 +834,25 @@ function ScheduleModal({
 
   if (!open) return null;
 
-  // Preview always reflects "the next upcoming occurrence of dayOfMonth" — saving
-  // re-anchors nextRunAt the same way (see updateIntelScheduleAction).
-  const previewNextRun = enabled ? computeFirstIntelScheduleRun(dayOfMonth) : null;
+  // The saved next run and the preview only agree at a one-month interval: the
+  // cron advances by adding the interval to the slot that just fired, while the
+  // preview is the next calendar occurrence of dayOfMonth. So show the SAVED
+  // date until something is edited, and relabel it once it is — the modal is the
+  // only place a schedule can be inspected, and "Next run" was the one number an
+  // admin opens it to check.
+  const edited =
+    enabled !== schedule.enabled ||
+    intervalMonths !== schedule.intervalMonths ||
+    dayOfMonth !== schedule.dayOfMonth;
+  // A schedule saved with no stored next run has nothing to report but the
+  // preview, so it gets the preview's label too rather than a bare date.
+  const previewing = edited || schedule.nextRunAt === null;
+  const nextRunLabel = previewing ? "Next run after saving" : "Next run";
+  const nextRunAt = enabled
+    ? previewing
+      ? computeFirstIntelScheduleRun(dayOfMonth)
+      : schedule.nextRunAt
+    : null;
 
   return createPortal(
     <div
@@ -626,17 +913,22 @@ function ScheduleModal({
           <div className={cn("grid grid-cols-2 gap-3", !enabled && "pointer-events-none opacity-40")}>
             <div className="space-y-1.5">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-                Every ___ month(s)
+                Repeat every
               </p>
-              <input
-                type="number"
-                min={MIN_INTERVAL_MONTHS}
-                max={MAX_INTERVAL_MONTHS}
-                value={intervalMonths}
-                onChange={(e) => setIntervalMonths(Number(e.target.value) || MIN_INTERVAL_MONTHS)}
-                disabled={running || !enabled}
-                className="w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground focus:border-neon focus:outline-none disabled:opacity-50"
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={MIN_INTERVAL_MONTHS}
+                  max={MAX_INTERVAL_MONTHS}
+                  value={intervalMonths}
+                  onChange={(e) => setIntervalMonths(Number(e.target.value) || MIN_INTERVAL_MONTHS)}
+                  disabled={running || !enabled}
+                  className="w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground focus:border-neon focus:outline-none disabled:opacity-50"
+                />
+                <span className="shrink-0 text-sm text-muted">
+                  {intervalMonths === 1 ? "month" : "months"}
+                </span>
+              </div>
             </div>
             <div className="space-y-1.5">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
@@ -659,10 +951,10 @@ function ScheduleModal({
               <span className="text-muted-2">Cadence: </span>
               {enabled ? describeIntelSchedule({ intervalMonths, dayOfMonth }) : "Off"}
             </p>
-            {enabled && previewNextRun && (
+            {enabled && nextRunAt && (
               <p className="text-muted">
-                <span className="text-muted-2">Next run: </span>
-                {formatDate(previewNextRun)}
+                <span className="text-muted-2">{nextRunLabel}: </span>
+                {formatDate(nextRunAt)}
               </p>
             )}
             <p className="text-muted">
@@ -704,29 +996,52 @@ function ScheduleModal({
 
 /* ── Documents list ───────────────────────────────────────────────────── */
 
+
 export function ClientDocuments({
   contextDocs,
   isAdmin,
   clientId,
   isAiProcessing,
+  aiProcessingFailed,
   intelSchedule,
+  allowInternalFallback = false,
+  correctionPricing,
 }: {
   contextDocs: ClientContextDoc[];
   isAdmin?: boolean;
   clientId?: string;
   /** True while a background AI generation cycle is running — locks the Regenerate button. */
   isAiProcessing?: boolean;
+  /**
+   * True when the last generation cycle failed — the empty state says so (QA
+   * F69). A BOOLEAN, not the reason: this rail mounts for client viewers, and
+   * all it ever did with the raw provider error was test it for truthiness.
+   */
+  aiProcessingFailed?: boolean;
   /** Admin-only recurring regeneration schedule. Only meaningful (and only ever rendered) when isAdmin. */
   intelSchedule?: IntelScheduleInfo;
+  /**
+   * Staff-only escape hatch: show the internal-tier document when the
+   * client-facing copy is missing or looks under-condensed. Defaults to false so
+   * a client-facing mount can never opt in by omission.
+   */
+  allowInternalFallback?: boolean;
+  /**
+   * Price of a targeted correction, for the Correct Info modal. Server-resolved
+   * and passed only for billable client viewers — omitted on the staff shell,
+   * whose corrections are agency overhead and cost the client nothing.
+   */
+  correctionPricing?: { cost: number; blockReason?: string };
 }) {
   const router = useRouter();
   const [openDoc, setOpenDoc] = useState<{ doc: ClientContextDoc; label: string } | null>(null);
   const [regenModalOpen, setRegenModalOpen] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
 
-  const available = DOC_TABS.map((t) => ({ ...t, doc: pickDoc(contextDocs, t.docType) })).filter(
-    (i) => i.doc,
-  );
+  const available = DOC_TABS.map((t) => ({
+    ...t,
+    pick: pickDoc(contextDocs, t.docType, allowInternalFallback),
+  })).filter((i) => i.pick.kind !== "none");
 
   return (
     <div>
@@ -749,7 +1064,7 @@ export function ClientDocuments({
               disabled={isAiProcessing}
               title={
                 isAiProcessing
-                  ? "Karos Agents are already building this workspace - please wait for it to finish"
+                  ? "Karos Agents are already building this workspace — please wait for it to finish"
                   : "Re-run the Intel Report pipeline to regenerate all documents"
               }
               className="flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-medium text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-2"
@@ -762,33 +1077,68 @@ export function ClientDocuments({
       </div>
 
       {available.length === 0 ? (
+        // One line used to cover three different situations, so a client who
+        // finished onboarding half an hour ago was told to finish onboarding —
+        // and a failed run said the same thing (QA F69).
         <p className="px-1 py-1.5 text-xs text-muted-2">
-          Your brand and strategy documents will appear here once onboarding completes.
+          {isAiProcessing
+            ? "Karos Agents are writing your documents now — this takes a few minutes."
+            : aiProcessingFailed
+              ? "Generation stopped early. Your Karos team is on it."
+              : "Your brand and strategy documents will appear here once onboarding completes."}
         </p>
       ) : (
         <ul>
-          {available.map((item) => (
-            <li key={item.docType}>
-              <button
-                onClick={() => setOpenDoc({ doc: item.doc!, label: item.label })}
-                className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
-              >
-                <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
-                <span className="flex-1 truncate text-sm text-muted group-hover:text-foreground">
-                  {item.label}
-                </span>
-                <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
-              </button>
-            </li>
-          ))}
+          {available.map((item) =>
+            item.pick.kind === "doc" ? (
+              <li key={item.docType}>
+                <button
+                  onClick={() =>
+                    setOpenDoc({
+                      doc: (item.pick as { kind: "doc"; doc: ClientContextDoc }).doc,
+                      label: item.label,
+                    })
+                  }
+                  /* Compact rows: the rail is a no-scroll fixed layout (CD-E3),
+                     and seven of these were its single tallest block. */
+                  className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
+                >
+                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
+                  <span className="flex-1 truncate text-[13px] leading-5 text-muted group-hover:text-foreground">
+                    {item.label}
+                  </span>
+                </button>
+              </li>
+            ) : (
+              <li key={item.docType}>
+                <div
+                  className="flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left"
+                  title="This document is being rebuilt — check back shortly."
+                >
+                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2/60" />
+                  <span className="flex-1 truncate text-[13px] leading-5 text-muted-2">{item.label}</span>
+                  <span className="shrink-0 text-[11px] text-muted-2">Rebuilding</span>
+                </div>
+              </li>
+            ),
+          )}
         </ul>
       )}
+
+      {/* An "Agent-specific documents" section used to sit here (X / LinkedIn
+          agent data), mounted only when clientId was set — so it appeared and
+          disappeared as you moved around the portal, and it competed with the
+          real documents list for the rail's fixed height. Agent data intake is
+          reachable where it belongs: the AI Agents cards link it per agent
+          (buildAgentSetup in clients/[id]/agents/page.tsx), which is also the
+          only place that knows whether the client HAS that agent (CD-E1). */}
 
       {openDoc && (
         <DocOverlay
           doc={openDoc.doc}
           label={openDoc.label}
           clientId={clientId}
+          correctionPricing={correctionPricing}
           onClose={() => setOpenDoc(null)}
           onDocUpdated={() => {
             setOpenDoc(null);

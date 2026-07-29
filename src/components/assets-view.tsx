@@ -32,6 +32,7 @@ export function AssetsView({
   canApprove = false,
   initialStatus,
   clientNames,
+  connectedPlatformsByClient,
 }: {
   assets: Asset[];
   /** Staff-only: show approve/schedule controls on each card. Clients never approve. */
@@ -39,6 +40,13 @@ export function AssetsView({
   initialStatus?: Asset["status"];
   /** Present on the staff-wide view so cards retain their client context. */
   clientNames?: Record<string, string>;
+  /**
+   * Staff-only, keyed by client: the platforms a post can actually be pushed to.
+   * Without it AssetCard's "Publish Now" can never render, so the approve panel's
+   * "Manual push" tier names a control that does not exist on this list (F107).
+   * Platform ids only — never integration records, which carry decrypted tokens.
+   */
+  connectedPlatformsByClient?: Record<string, string[]>;
 }) {
   const [status, setStatus] = useState<Asset["status"] | "all">(initialStatus ?? "all");
   const channels = useMemo(
@@ -110,7 +118,13 @@ export function AssetsView({
                   {clientNames?.[asset.clientId] && (
                     <div className="mb-1"><Badge tone="neutral">{clientNames[asset.clientId]}</Badge></div>
                   )}
-                  <AssetCard asset={asset} canApprove={canApprove} />
+                  <AssetCard
+                    asset={asset}
+                    canApprove={canApprove}
+                    {...(connectedPlatformsByClient?.[asset.clientId]
+                      ? { connectedPlatforms: connectedPlatformsByClient[asset.clientId] }
+                      : {})}
+                  />
                 </div>
               ))}
             </div>

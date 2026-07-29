@@ -15,6 +15,13 @@ interface Props {
   existing?: BrandingGuidelines;
   /** When true, shows the "Generate from website" button that uses AI to pre-fill the form. */
   hasWebsite?: boolean;
+  /**
+   * Staff only. Shows the per-color usage-percentage field (CD-E2). Clients
+   * never receive the stored values (stripped in toClientPortalView) and the
+   * save action re-applies the stored ones for a CLIENT_USER, so a client
+   * editing the palette cannot blank the agency's mix.
+   */
+  allowUsagePct?: boolean;
 }
 
 /* ── Color entry (local form state — lighter than full BrandColor) ─────── */
@@ -23,6 +30,8 @@ interface ColorEntry {
   id: number;
   hex: string;
   role: string;
+  /** "" = not set. Kept as a string so the input can be cleared. */
+  usagePct: string;
 }
 
 const MAX_COLORS = 4;
@@ -33,12 +42,17 @@ function nextColorId() { return ++_colorIdCounter; }
 /** Synthesise initial color entries from existing guidelines, preferring the new array. */
 function getInitialColors(existing?: BrandingGuidelines): ColorEntry[] {
   if (existing?.dominantColors?.length) {
-    return existing.dominantColors.map((c) => ({ id: nextColorId(), hex: c.hex, role: c.role ?? "" }));
+    return existing.dominantColors.map((c) => ({
+      id: nextColorId(),
+      hex: c.hex,
+      role: c.role ?? "",
+      usagePct: c.usagePct != null ? String(c.usagePct) : "",
+    }));
   }
   // Fall back to legacy scalar fields for pre-migration clients
   const entries: ColorEntry[] = [];
   const add = (hex: string | undefined, role: string) => {
-    if (hex) entries.push({ id: nextColorId(), hex, role });
+    if (hex) entries.push({ id: nextColorId(), hex, role, usagePct: "" });
   };
   add(existing?.primaryAccent ?? existing?.primaryColor, "Primary accent");
   add(existing?.secondaryAccent ?? existing?.secondaryColor, "Secondary accent");
@@ -49,7 +63,14 @@ function getInitialColors(existing?: BrandingGuidelines): ColorEntry[] {
 
 /* ── Component ───────────────────────────────────────────────────────────── */
 
-export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }: Props) {
+export function BrandingModal({
+  open,
+  onClose,
+  clientId,
+  existing,
+  hasWebsite,
+  allowUsagePct = false,
+}: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -82,8 +103,18 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
   }
 
   function addColorSlot() {
-    if (colors.length < MAX_COLORS) setColors((prev) => [...prev, { id: nextColorId(), hex: "", role: "" }]);
+    if (colors.length < MAX_COLORS) {
+      setColors((prev) => [...prev, { id: nextColorId(), hex: "", role: "", usagePct: "" }]);
+    }
   }
+
+  /** Sum of the entered usage shares — a mix that does not add to 100 is a
+   *  typo far more often than it is intentional, so the form says so. */
+  const usageTotal = colors.reduce((sum, c) => {
+    const n = Number(c.usagePct);
+    return sum + (c.usagePct.trim() && Number.isFinite(n) ? n : 0);
+  }, 0);
+  const anyUsageSet = colors.some((c) => c.usagePct.trim() !== "");
 
   async function generateFromWebsite() {
     setGenerating(true);
@@ -95,13 +126,22 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
 
       // Pre-fill palette — prefer new array, fall back to legacy scalars
       if (result.dominantColors?.length) {
-        setColors(result.dominantColors.map((c) => ({ id: nextColorId(), hex: c.hex, role: c.role ?? "" })));
+        setColors(
+          result.dominantColors.map((c) => ({
+            id: nextColorId(),
+            hex: c.hex,
+            role: c.role ?? "",
+            usagePct: c.usagePct != null ? String(c.usagePct) : "",
+          })),
+        );
       } else {
         const newColors: ColorEntry[] = [];
-        if (result.primaryAccent) newColors.push({ id: nextColorId(), hex: result.primaryAccent, role: "Primary accent" });
-        if (result.secondaryAccent) newColors.push({ id: nextColorId(), hex: result.secondaryAccent, role: "Secondary accent" });
-        if (result.brandNeutralDark) newColors.push({ id: nextColorId(), hex: result.brandNeutralDark, role: "" });
-        if (result.brandNeutralLight) newColors.push({ id: nextColorId(), hex: result.brandNeutralLight, role: "" });
+        const push = (hex: string, role: string) =>
+          newColors.push({ id: nextColorId(), hex, role, usagePct: "" });
+        if (result.primaryAccent) push(result.primaryAccent, "Primary accent");
+        if (result.secondaryAccent) push(result.secondaryAccent, "Secondary accent");
+        if (result.brandNeutralDark) push(result.brandNeutralDark, "");
+        if (result.brandNeutralLight) push(result.brandNeutralLight, "");
         setColors(newColors);
       }
 
@@ -131,11 +171,19 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
     try {
       const dominantColors: BrandColor[] = colors
         .filter((c) => c.hex.trim())
-        .map((c, i) => ({
-          hex: c.hex.trim(),
-          dominanceRank: i + 1,
-          role: c.role.trim() || undefined,
-        }));
+        .map((c, i) => {
+          const pct = Number(c.usagePct);
+          return {
+            hex: c.hex.trim(),
+            dominanceRank: i + 1,
+            role: c.role.trim() || undefined,
+            // Only staff forms carry this; for a client the server re-applies
+            // the stored value, so omitting it here can never blank it.
+            ...(allowUsagePct && c.usagePct.trim() !== "" && Number.isFinite(pct)
+              ? { usagePct: Math.min(100, Math.max(0, Math.round(pct))) }
+              : {}),
+          };
+        });
 
       await saveBrandingGuidelinesAction(clientId, {
         dominantColors,
@@ -183,7 +231,7 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
         {/* Generation feedback */}
         {genResult && (
           <div className="flex items-center gap-2 rounded-[8px] border border-neon/30 bg-neon-soft/30 px-3 py-2 text-xs text-neon">
-            <Icon name="CheckCircle" className="h-3.5 w-3.5 shrink-0" />
+            <Icon name="CircleCheck" className="h-3.5 w-3.5 shrink-0" />
             {`AI Generated from live site/search data${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. Review the values below and save.`}
           </div>
         )}
@@ -191,13 +239,14 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
         {/* Dynamic dominant color palette */}
         <div>
           <Label>Dominant color palette</Label>
-          <p className="mb-2 text-[10px] text-muted-2">
+          <p className="mb-2 text-[11px] text-muted-2">
             Up to 4 colors ordered by visual prominence. Color 1 = most dominant (logo, main CTA). No dark/light constraints.
+            {allowUsagePct && " Usage % is internal — clients see the swatches only."}
           </p>
           <div className="space-y-2">
             {colors.map((entry, idx) => (
               <div key={entry.id} className="flex items-center gap-2">
-                <span className="w-5 shrink-0 text-center font-mono text-[10px] font-semibold text-muted-2">
+                <span className="w-5 shrink-0 text-center font-mono text-[11px] font-semibold text-muted-2">
                   {idx + 1}
                 </span>
                 <input
@@ -218,6 +267,23 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
                   placeholder="Role (e.g. Logo fill, CTA)"
                   className="flex-1 text-xs"
                 />
+                {allowUsagePct && (
+                  <div className="relative shrink-0">
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={entry.usagePct}
+                      onChange={(e) => updateColor(idx, { usagePct: e.target.value })}
+                      placeholder="—"
+                      aria-label={`Usage percentage for color ${idx + 1}`}
+                      className="w-[72px] pr-5 text-center font-mono text-xs"
+                    />
+                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-muted-2">
+                      %
+                    </span>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => removeColor(idx)}
@@ -233,6 +299,16 @@ export function BrandingModal({ open, onClose, clientId, existing, hasWebsite }:
                 <Icon name="Plus" className="h-3.5 w-3.5" />
                 Add color slot
               </Button>
+            )}
+            {allowUsagePct && anyUsageSet && (
+              <p
+                className={
+                  usageTotal === 100 ? "text-[11px] text-muted" : "text-[11px] text-warning"
+                }
+              >
+                Usage total {usageTotal}%
+                {usageTotal === 100 ? "" : " — a brand mix normally adds up to 100%."}
+              </p>
             )}
           </div>
         </div>

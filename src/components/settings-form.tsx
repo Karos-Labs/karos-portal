@@ -111,7 +111,7 @@ function ProfileTab({
     <div className="space-y-5">
       {/* Avatar card */}
       <Card>
-        <CardTitle className="mb-4">Profile Picture</CardTitle>
+        <CardTitle className="mb-4">Profile picture</CardTitle>
         <AvatarUploader
           name={savedName}
           value={photoURL}
@@ -124,7 +124,7 @@ function ProfileTab({
 
       {/* Editable fields */}
       <Card>
-        <CardTitle className="mb-4">Personal Information</CardTitle>
+        <CardTitle className="mb-4">Personal information</CardTitle>
         <form onSubmit={save} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -166,7 +166,7 @@ function ProfileTab({
           {error && <p className="text-xs text-danger">{error}</p>}
           {success && (
             <p className="flex items-center gap-1.5 text-xs text-neon">
-              <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+              <Icon name="CircleCheck" className="h-3.5 w-3.5" />
               Profile updated.
             </p>
           )}
@@ -185,14 +185,14 @@ function ProfileTab({
       <Card>
         <CardTitle className="mb-1">Resume / CV</CardTitle>
         <p className="mb-3 text-xs text-muted-2">
-          Used to write LinkedIn advocacy content in your authentic voice.
+          Stored for your Karos team — they use it when writing your LinkedIn advocacy posts.
         </p>
         <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
       </Card>
 
       {/* Account metadata — read-only */}
       <Card>
-        <CardTitle className="mb-4">Account Details</CardTitle>
+        <CardTitle className="mb-4">Account details</CardTitle>
         <dl className="space-y-3">
           <div className="flex items-center justify-between">
             <dt className="text-sm text-muted">Role</dt>
@@ -274,7 +274,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
     <div className="space-y-5">
       {/* Auth method overview */}
       <Card>
-        <CardTitle className="mb-4">Authentication Method</CardTitle>
+        <CardTitle className="mb-4">Authentication method</CardTitle>
         <div className="space-y-3">
           {socialProviders.map((pid) => {
             const meta = PROVIDER_META[pid];
@@ -309,7 +309,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
       {/* Password change — only for email/password accounts */}
       {hasPassword && (
         <Card>
-          <CardTitle className="mb-4">Change Password</CardTitle>
+          <CardTitle className="mb-4">Change password</CardTitle>
           <form onSubmit={savePassword} className="space-y-4">
             <div>
               <Label htmlFor="pw-current">Current password</Label>
@@ -352,7 +352,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
             {error && <p className="text-xs text-danger">{error}</p>}
             {success && (
               <p className="flex items-center gap-1.5 text-xs text-neon">
-                <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+                <Icon name="CircleCheck" className="h-3.5 w-3.5" />
                 Password updated successfully.
               </p>
             )}

@@ -21,6 +21,10 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { SavedFormCard } from "@/components/saved-form-card";
+import { JobStatusBadge } from "@/components/job-status";
+import { laneLabel } from "@/lib/draft-lane-label";
+import { formatDate, relativeTime } from "@/lib/utils";
+import type { JobStatus } from "@/lib/types";
 import {
   addRedditDraftFeedbackAction,
   saveRedditCompanyIntakeAction,
@@ -50,7 +54,8 @@ export interface RedditFeedbackRowView {
 
 export interface RedditRunRowView {
   id: string;
-  status: string;
+  /** Typed so the row renders through JobStatusBadge, never the raw word. */
+  status: JobStatus;
   createdAt: number;
   href?: string;
 }
@@ -182,7 +187,7 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
             rows={2}
             value={subreddits}
             onChange={(e) => setSubreddits(e.target.value)}
-            placeholder="r/SaaS, r/marketing - separated by commas or new lines"
+            placeholder="r/SaaS, r/marketing — separated by commas or new lines"
           />
           <p className="mt-1 text-xs text-muted">
             A starting point for our research, not the final list. We build the full set from where
@@ -196,7 +201,7 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
             rows={2}
             value={offLimitsSubreddits}
             onChange={(e) => setOffLimitsSubreddits(e.target.value)}
-            placeholder="r/SEO, r/marketing - anywhere you were removed, banned, or would rather not appear"
+            placeholder="r/SEO, r/marketing — anywhere you were removed, banned, or would rather not appear"
           />
           <p className="mt-1 text-xs text-muted">
             We never draft for these. Worth filling in if a past post went badly somewhere. Names
@@ -260,10 +265,12 @@ function FeedbackBox({
   clientId,
   runs,
   recent,
+  isStaff,
 }: {
   clientId: string;
   runs: RedditRunRowView[];
   recent: RedditFeedbackRowView[];
+  isStaff: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -294,25 +301,51 @@ function FeedbackBox({
   return (
     <Card className="p-5">
       <CardTitle>Feedback</CardTitle>
+      {/* F28: the archive holds APPROVED work (F149 filters it to approved,
+          non-future items), so a fresh batch is not there yet and a client sent
+          looking for one finds an empty page. Name the approval step, and link
+          the archive rather than describing where it might be. */}
       <p className="mt-1 text-sm text-muted">
-        Tell us what is working and what is not, in your own words. It goes straight into the next
-        run. Saying whether you posted an individual reply happens on the reply itself, in your
-        Workspace archive, and that is the signal that sharpens the voice fastest.
+        Tell us what is working and what is not, in your own words. It goes straight into the
+        agent&apos;s next run. Once your Karos team has approved the replies, saying whether you posted a
+        reply happens on the reply itself, in{" "}
+        <a href="/tasks?tab=archive" className="underline hover:text-foreground">
+          your archive
+        </a>
+        {" "}— and that is the signal that sharpens the voice fastest.
       </p>
       {runs.length > 0 ? (
-        <ul className="mt-3 space-y-1">
-          {runs.slice(0, 4).map((r) => (
-            <li key={r.id} className="text-xs text-muted">
-              {r.href ? (
-                <a href={r.href} className="underline hover:text-foreground">
-                  Run {new Date(r.createdAt).toISOString().slice(0, 10)}
-                </a>
-              ) : (
-                <span>Run {new Date(r.createdAt).toISOString().slice(0, 10)}</span>
-              )}{" "}
-              · {r.status}
-            </li>
-          ))}
+        /* The run's state through the app's own mapper, and its date through
+           the app's own formatter. This printed the raw database word
+           ("review", "queued", "failed") beside an ISO machine date, in
+           client-facing copy — the same rows the X and LinkedIn intakes render
+           properly. */
+        <ul className="mt-3 space-y-1.5">
+          {runs.slice(0, 4).map((r) => {
+            /* A3/A4, the pass-2 stamp treatment. `Run <date>` is the generation
+               instant, and one fire produces a week of drafts — so four rows
+               printed the same date and said outright that the week came out of
+               one minute. A client's rows are already collapsed to one per day
+               server-side (toRunRowViews); here they lose the machinery noun and
+               the exact instant for the relative language every other
+               client-facing stamp uses. Staff keep the date and the /jobs link:
+               that instant is what they debug with. */
+            const label = isStaff
+              ? `Run ${formatDate(r.createdAt)}`
+              : `Worked on your content · ${relativeTime(r.createdAt)}`;
+            return (
+              <li key={r.id} className="flex items-center gap-2 text-xs text-muted">
+                {r.href ? (
+                  <a href={r.href} className="underline hover:text-foreground">
+                    {label}
+                  </a>
+                ) : (
+                  <span>{label}</span>
+                )}
+                <JobStatusBadge status={r.status} />
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       <div className="mt-4 space-y-3">
@@ -327,7 +360,7 @@ function FeedbackBox({
           <Button onClick={submit} disabled={pending || !note.trim()}>
             {pending ? "Sending…" : "Send feedback"}
           </Button>
-          {sent ? <span className="text-xs text-muted">Sent - it feeds the next run.</span> : null}
+          {sent ? <span className="text-xs text-muted">Sent — it feeds the next run.</span> : null}
         </div>
       </div>
       {recent.length > 0 ? (
@@ -339,8 +372,9 @@ function FeedbackBox({
               </span>
               {f.reasonCode ? ` · ${REASON_LABEL[f.reasonCode] ?? f.reasonCode}` : ""}
               {f.subreddit ? ` · ${f.subreddit}` : ""}
-              {f.draftRef ? ` · ${f.draftRef}` : ""} ·{" "}
-              {new Date(f.createdAt).toISOString().slice(0, 10)}
+              {/* draftRef is stored raw (it is the feedback log's join key) and
+                  humanized only here, the same way every other reader does it. */}
+              {f.draftRef ? ` · ${laneLabel(f.draftRef)}` : ""} · {relativeTime(f.createdAt)}
             </li>
           ))}
         </ul>
@@ -356,16 +390,19 @@ export function RedditAgentIntake({
   company,
   feedback,
   runs,
+  isStaff,
 }: {
   clientId: string;
   company: RedditIntakeView | null;
   feedback: RedditFeedbackRowView[];
   runs: RedditRunRowView[];
+  /** Whose vocabulary the run rows are written in — see FeedbackBox. */
+  isStaff: boolean;
 }) {
   return (
     <div className="space-y-6">
       <AccountForm clientId={clientId} intake={company} />
-      <FeedbackBox clientId={clientId} runs={runs} recent={feedback} />
+      <FeedbackBox clientId={clientId} runs={runs} recent={feedback} isStaff={isStaff} />
     </div>
   );
 }

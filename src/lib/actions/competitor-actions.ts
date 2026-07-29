@@ -1,5 +1,6 @@
 "use server";
 
+import { intelReportImportedTitle } from "@/lib/activity-titles";
 import { revalidatePath } from "next/cache";
 import {
   getClient,
@@ -20,6 +21,7 @@ import { requireStaff, requireClientAccess, logActivity } from "./_shared";
 import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
 
+import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
 /**
  * Create-or-promote a manual competitor from quick-add input — not exported.
  *
@@ -36,7 +38,7 @@ import { logger } from "@/services/logger";
 async function upsertManualCompetitor(
   clientId: string,
   rawInput: string,
-): Promise<{ company: string; created: boolean }> {
+): Promise<{ id: string; company: string; url?: string; created: boolean }> {
   const parsed = parseCompetitorInput(rawInput);
   const existing = await listClientCompetitors(clientId);
   const keys = competitorBrandKeys(parsed.company, parsed.url);
@@ -54,10 +56,15 @@ async function upsertManualCompetitor(
         updatedAt: now,
       });
     }
-    return { company: hit.company, created: false };
+    return {
+      id: hit.id,
+      company: hit.company,
+      ...(hit.url || parsed.url ? { url: hit.url ?? parsed.url } : {}),
+      created: false,
+    };
   }
 
-  await createClientCompetitor({
+  const id = await createClientCompetitor({
     clientId,
     company: parsed.company,
     ...(parsed.url ? { url: parsed.url } : {}),
@@ -70,7 +77,12 @@ async function upsertManualCompetitor(
     createdAt: now,
     updatedAt: now,
   });
-  return { company: parsed.company, created: true };
+  return {
+    id,
+    company: parsed.company,
+    ...(parsed.url ? { url: parsed.url } : {}),
+    created: true,
+  };
 }
 
 /** Core AI competitor analysis helper — not exported. */
@@ -194,7 +206,7 @@ export async function importReportAction(
     clientId,
     timestamp: now,
     type: "INTEL_GENERATION",
-    title: "Intel Report imported",
+    title: intelReportImportedTitle(),
     description: `Markdown report parsed - score ${report.overallScore}/100 (${report.overallGrade}), ${parsed.competitorRows.length} competitors`,
     actor: user.name,
     actorRole: "staff",
@@ -353,7 +365,7 @@ export async function addCompetitorAndAnalyzeAction(
       type: "COMPETITOR_ANALYZED",
       title: "Competitor intelligence updated",
       description: "AI analyzed all tracked competitors and refreshed profiles",
-      actor: "System AI",
+      actor: SYSTEM_AI_ACTOR_NAME,
       actorRole: "system",
     });
   } catch {
@@ -446,7 +458,7 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
     type: "COMPETITOR_ANALYZED",
     title: "Competitors discovered & analyzed",
     description: `AI identified and profiled ${object.competitors.length} competitors`,
-    actor: "System AI",
+    actor: SYSTEM_AI_ACTOR_NAME,
     actorRole: "system",
   });
 
@@ -458,13 +470,17 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
  * client themselves. Staff trigger AI re-analysis after saving; CLIENT_USER
  * saves the record only.
  */
-export async function addCompetitorByNameAction(clientId: string, name: string): Promise<void> {
+export async function addCompetitorByNameAction(
+  clientId: string,
+  name: string,
+): Promise<{ id: string; company: string; url?: string; created: boolean }> {
   const user = await requireClientAccess(clientId);
   if (!name.trim()) throw new Error("Competitor name required");
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
-  const { company } = await upsertManualCompetitor(clientId, name);
+  const result = await upsertManualCompetitor(clientId, name);
+  const { company } = result;
 
   await logActivity({
     clientId,
@@ -484,7 +500,7 @@ export async function addCompetitorByNameAction(clientId: string, name: string):
         type: "COMPETITOR_ANALYZED",
         title: "Competitor intelligence updated",
         description: "AI analyzed all tracked competitors and refreshed profiles",
-        actor: "System AI",
+        actor: SYSTEM_AI_ACTOR_NAME,
         actorRole: "system",
       });
     } catch {
@@ -493,4 +509,9 @@ export async function addCompetitorByNameAction(clientId: string, name: string):
   }
 
   revalidatePath(`/clients/${clientId}`);
+  // Returned so the caller can render the new row immediately: the sidebar's
+  // competitor list comes from route-scoped context that only the client-page
+  // layout refills, so off a client page revalidate + refresh could never show
+  // it (QA F62).
+  return result;
 }

@@ -12,6 +12,7 @@ vi.mock("@/lib/data", () => ({
 }));
 
 import type { BrandingGuidelines } from "@/lib/types";
+import { stripDocPreamble } from "@/lib/doc-render";
 import {
   normalizeHex,
   brandingToContextDocContent,
@@ -146,6 +147,20 @@ describe("buildBrandVoiceSection", () => {
     );
   });
 
+  /**
+   * This block is injected into a CLIENT-VISIBLE document, so the "edit it in
+   * the guidelines UI instead" note is addressed to the wrong reader. It lives
+   * in a comment, which every renderer drops, rather than as the italic line it
+   * used to be — the same line the client read verbatim next to the sentinel.
+   */
+  it("keeps its own housekeeping note inside a comment, not on the page", () => {
+    const result = buildBrandVoiceSection(fullGuidelines);
+    const visible = result.replace(/<!--[\s\S]*?-->/g, "");
+    expect(visible).not.toMatch(/auto-synced from the Branding Guidelines UI/i);
+    expect(visible).not.toContain("_");
+    expect(result).toMatch(/<!--[^>]*overwritten on the next sync/i);
+  });
+
   it("includes primary accent color", () => {
     const result = buildBrandVoiceSection(fullGuidelines);
     expect(result).toContain("**Primary Accent:** #ff0000");
@@ -203,6 +218,34 @@ describe("injectBrandVoiceSection", () => {
     const result = injectBrandVoiceSection(content, newSection);
     expect(result.startsWith("BEFORE\n")).toBe(true);
     expect(result.endsWith("AFTER")).toBe(true);
+  });
+
+  /**
+   * Below the title, not above it. The block opens with a `## ` heading, and a
+   * `## ` above the `# ` title puts the title out of reach of
+   * stripDocPreamble's title rule, which is anchored at the top of the
+   * document. The title then fell into the first section's body and the client
+   * read it there, hash mark and all.
+   */
+  const TITLED_DOC =
+    "---\nmodule: brand-voice\n---\n\n# Brand Voice — Acme\n\n## Voice in one line\nWarm.";
+
+  it("inserts after the document title, not above it", () => {
+    const result = injectBrandVoiceSection(TITLED_DOC, newSection);
+    expect(result.indexOf("# Brand Voice — Acme")).toBeLessThan(
+      result.indexOf("<!-- BRAND_SYNC_START -->"),
+    );
+    expect(result.indexOf("<!-- BRAND_SYNC_END -->")).toBeLessThan(
+      result.indexOf("## Voice in one line"),
+    );
+    expect(result).toContain("Warm.");
+  });
+
+  it("leaves the title where the preamble strip can still reach it", () => {
+    const clean = stripDocPreamble(injectBrandVoiceSection(TITLED_DOC, newSection));
+    expect(clean).not.toContain("Brand Voice — Acme");
+    expect(clean).not.toMatch(/^#[ \t]/m); // no H1 left to render as body text
+    expect(clean).toContain("Voice in one line");
   });
 
   it("inserts after YAML frontmatter when present (no existing block)", () => {

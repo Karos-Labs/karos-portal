@@ -11,7 +11,7 @@ import {
   upsertClientReport,
   replaceReportCompetitors,
 } from "@/lib/data";
-import { ENGINE_LABELS, type SeoGeoInsights } from "@/lib/seo-geo";
+import { ENGINE_LABELS, categoryMetrics, type SeoGeoInsights } from "@/lib/seo-geo";
 import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
 import { applyBrandingForClient, effectiveDominantColors } from "@/lib/branding";
 import type { BrandingGuidelines } from "@/lib/types";
@@ -104,12 +104,24 @@ function compileSeoGeoContext(insights: SeoGeoInsights | null): string {
     `- GEO readiness: ${insights.geoReadiness}/100 (coverage ${insights.geoReadinessCoveragePct}%)`,
     `- GEO visibility index: ${insights.geoVisibilityIndex}/100 (coverage ${insights.geoVisibilityCoveragePct}%)`,
   ];
-  const live = insights.perEngine.filter((e) => e.captureTier !== "UNAVAILABLE" && e.promptsMeasured > 0);
+  // CD-B3: CATEGORY prompts only. The branded questions name the client by
+  // construction, so full-set mentionRate/shareOfVoice runs high and would have
+  // told this model a different story than every rendered surface — the tile,
+  // the engine cards and the score all read `categoryMetrics`. Same accessor, so
+  // the prompt and the UI cannot drift; it carries the legacy fallback for
+  // snapshots captured before `category` existed.
+  const live = insights.perEngine.filter(
+    (e) => e.captureTier !== "UNAVAILABLE" && categoryMetrics(e).promptsMeasured > 0,
+  );
   if (live.length) {
-    lines.push("", "Per-engine visibility (each row labeled with the model provider that measured it):");
+    lines.push(
+      "",
+      "Per-engine visibility across CATEGORY (non-brand) buyer-intent prompts — branded questions are excluded because they name the client by construction. Each row is labeled with the model provider that measured it:",
+    );
     for (const e of live) {
+      const c = categoryMetrics(e);
       lines.push(
-        `- ${ENGINE_LABELS[e.engine]} (source: ${e.source}): named in ${Math.round(e.mentionRate * 100)}% of buyer-intent answers, ${Math.round(e.shareOfVoice)}% share of voice${e.topCompetitor ? `, leading competitor ${e.topCompetitor.name} at ${Math.round(e.topCompetitor.shareOfVoice)}%` : ""}`,
+        `- ${ENGINE_LABELS[e.engine]} (source: ${e.source}): named in ${Math.round(c.mentionRate * 100)}% of category answers, ${Math.round(c.shareOfVoice)}% share of voice${c.topCompetitor ? `, leading competitor ${c.topCompetitor.name} at ${Math.round(c.topCompetitor.shareOfVoice)}%` : ""}`,
       );
     }
   }

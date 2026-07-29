@@ -151,7 +151,7 @@ function UserRow({
                 disabled={impersonatePending}
               >
                 <Icon name="Eye" className="h-3.5 w-3.5" />
-                {impersonatePending ? "Loading..." : "View as"}
+                {impersonatePending ? "Loading..." : "Sign in as"}
               </Button>
             )}
           </>

@@ -47,13 +47,26 @@ export function ClientContextSync({
 }: ActiveClientData) {
   const { setActiveClient } = useActiveClient();
 
+  // Content signature, not a count: Regenerate and Correct Info change document
+  // CONTENT, and a count-only dependency left the sidebar serving the document
+  // the client had already replaced. `version` is bumped on every write by
+  // updateContextDocContent, so this changes exactly when the text does.
+  const docSignature = contextDocs.map((d) => `${d.id}:${d.version}`).join("|");
+  // The sidebar also reads the processing lock off this same snapshot to grey
+  // out Regenerate, so the fields that lock depends on belong in the signature.
+  const processingSignature = `${client.isAiProcessing ? 1 : 0}:${client.aiProcessingStartedAt ?? 0}`;
+  // Same reasoning for competitors: a count-only dependency missed every change
+  // that leaves the total alone — a report→manual promotion, a rename, a
+  // simultaneous add+remove — so the rail kept serving the stale roster
+  // (QA F62).
+  const competitorSignature = competitors
+    .map((c) => `${c.id}:${c.source}:${c.company}`)
+    .join("|");
+
   useEffect(() => {
     setActiveClient({ client, contextDocs, competitors, isAdmin });
-    // Re-sync when the client changes OR when the doc/competitor counts change (e.g. after
-    // an add/delete + revalidatePath). Content changes within same count are rare and
-    // will be picked up on the next navigation anyway.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client.id, contextDocs.length, competitors.length, isAdmin]);
+  }, [client.id, docSignature, competitorSignature, isAdmin, processingSignature]);
 
   return null;
 }

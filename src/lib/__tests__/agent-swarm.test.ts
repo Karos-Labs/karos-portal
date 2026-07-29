@@ -258,7 +258,31 @@ describe("runSwarm — campaign shift on a high-weight trend", () => {
     const campaign = events.find((e) => e.type === "campaign");
     expect(campaign).toMatchObject({ type: "campaign", campaignId: "camp1", taskCount: 4 });
     // Campaign lands after persistence, before done; done stays last.
-    expect(events.at(-1)?.type).toBe("done");
+    const last = events.at(-1);
+    expect(last?.type).toBe("done");
+    // The closing count includes the campaign's tasks — it used to report the
+    // debate's total only, so the client was told fewer cards than landed
+    // (QA F92).
+    const persisted = events.find((e) => e.type === "persisted");
+    expect(last).toMatchObject({
+      created: (persisted as { created: number }).created + 4,
+    });
+  });
+
+  it("reports a skipped campaign in the console instead of dropping it silently", async () => {
+    // null ⇒ the board was full or the anchor already existed; nothing written.
+    generateCampaignBundleMock.mockResolvedValue(null);
+
+    const events = await collect(runSwarm(withTrend(92)));
+
+    expect(events.some((e) => e.type === "campaign")).toBe(false);
+    const note = events.find((e) => e.type === "agent_message" && e.agentName === "Campaign Director");
+    expect(note).toBeTruthy();
+    const persisted = events.find((e) => e.type === "persisted");
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      created: (persisted as { created: number }).created,
+    });
   });
 
   it("stays with standalone tasks when the trend weight is below the threshold", async () => {

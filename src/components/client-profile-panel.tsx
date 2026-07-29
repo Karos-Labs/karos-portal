@@ -179,7 +179,13 @@ function BrandProfileModal({ client, onClose }: { client: Client; onClose: () =>
   );
 }
 
-export function ClientProfilePanel({ client }: { client: Client }) {
+/**
+ * `compact` is the desktop rail, which is a no-scroll fixed layout (CD-E3):
+ * tighter spacing and the description clamped to two lines, so a long brief
+ * cannot push Competitor Track and Brand Colors off the viewport. The mobile
+ * Company sheet scrolls and keeps the full panel.
+ */
+export function ClientProfilePanel({ client, compact = false }: { client: Client; compact?: boolean }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -215,14 +221,14 @@ export function ClientProfilePanel({ client }: { client: Client }) {
   return (
     <div className="px-1">
       {/* Company header */}
-      <div className="mb-2.5 flex items-center gap-2.5">
+      <div className={cn("flex items-center gap-2.5", compact ? "mb-2.5 py-1" : "mb-2.5")}>
         <BrandFavicon
           src={client.logoUrl || client.brandingGuidelines?.logoUrl}
           website={client.website}
           name={client.name}
           accentColor={client.accentColor ?? "#2dff9e"}
           faviconSize={64}
-          className="h-8 w-8 rounded-md text-xs"
+          className={cn("rounded-md text-xs", compact ? "h-8 w-8" : "h-8 w-8")}
           imgClassName="border border-border bg-surface-2 object-contain"
         />
         <span className="flex-1 truncate text-sm font-semibold text-foreground">{client.name}</span>
@@ -251,7 +257,14 @@ export function ClientProfilePanel({ client }: { client: Client }) {
       {!editing ? (
         <>
           {/* Meta + social chips */}
-          <div className="mb-2 flex flex-wrap gap-1.5">
+          {/* nowrap in the rail: a second chip row is exactly the kind of
+              content-dependent growth the no-scroll contract cannot absorb. */}
+          <div
+            className={cn(
+              "flex gap-1.5",
+              compact ? "mb-0 flex-nowrap overflow-hidden" : "mb-2 flex-wrap",
+            )}
+          >
             {hasMeta ? (
               <>
                 {client.teamSize && (
@@ -290,7 +303,12 @@ export function ClientProfilePanel({ client }: { client: Client }) {
             })}
           </div>
 
-          {(client.description || client.brief) && (
+          {/* The description is deliberately absent from the compact rail: it
+              is free text of unbounded length, and the rail must have a
+              DETERMINISTIC height to honour the no-scroll contract (CD-E3).
+              It stays in the mobile Company sheet and the brand-profile
+              modal, neither of which is height-constrained. */}
+          {!compact && (client.description || client.brief) && (
             <p className="text-xs leading-relaxed text-muted-2">
               {client.description || client.brief}
             </p>

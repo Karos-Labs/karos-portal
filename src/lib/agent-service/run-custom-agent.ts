@@ -1,4 +1,5 @@
 import "server-only";
+import { jobTitleForClient } from "@/lib/job-title";
 
 import { revalidatePath } from "next/cache";
 import { createJob, deleteJob, updateJob } from "@/lib/data";
@@ -6,6 +7,7 @@ import { chargeClientCredits } from "@/lib/data";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CreditError } from "@/lib/credits";
 import { logActivity } from "@/lib/actions/_shared";
+import { customRunStartedTitle } from "@/lib/activity-titles";
 import { cancelAgentServiceJob, isAgentServiceConfigured, submitAgentServiceJob } from "./client";
 import type { AgentServiceContextFile } from "./types";
 import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "./x-agent-context";
@@ -92,7 +94,11 @@ export async function submitCustomAgentRun(args: {
   if (isXAgent(agent.key)) {
     if (!(await hasXAgentIntake(client.id))) {
       return {
-        error: `${X_SETUP_REQUIRED_PREFIX} first: fill in the company page, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
+        // CD-E1: "Agent-specific documents" was a rail section that no longer
+        // exists — intake moved onto the agent's own page. Kept identical to
+        // the submit core's twin; a client must not read two different routes
+        // to the same form depending on which path refused.
+        error: `${X_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
     try {
@@ -108,10 +114,16 @@ export async function submitCustomAgentRun(args: {
   // drop as company-updates.md, CVs, learning logs, and prior batches (see
   // linkedin-agent-context.ts) — so scheduler-fired LinkedIn runs read the
   // same live client data as manual ones. Hard-gated the same way.
+  //
+  // KEYED (ruling 6), matching submit-custom.ts and schedule-gate.ts: the
+  // Path-B master gates on ANY LinkedIn intake, company-page instances on the
+  // company form. Unkeyed here, a seat-only workspace whose schedule the gate
+  // accepted would refuse on every fire — invisibly, since the refusal happens
+  // before any job row is written.
   if (isLinkedInAgent(agent.key)) {
-    if (!(await hasLinkedInAgentIntake(client.id))) {
+    if (!(await hasLinkedInAgentIntake(client.id, agent.key))) {
       return {
-        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first: save the company page form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
+        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
     try {
@@ -133,7 +145,7 @@ export async function submitCustomAgentRun(args: {
   if (isRedditAgent(agent.key)) {
     if (!(await hasRedditAgentIntake(client.id))) {
       return {
-        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first: save the account form, which is what the agent drafts from. The agent data sits with the agent on the AI Agents page. Nothing has run.`,
+        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the account form there. Nothing has run.`,
       };
     }
     try {
@@ -150,7 +162,7 @@ export async function submitCustomAgentRun(args: {
     clientId: client.id,
     agentId: "agent-service",
     agentName: agent.name,
-    title: `${agent.name} - ${client.name}`,
+    title: jobTitleForClient(agent.name, client.name),
     status: "queued",
     input: { agent: agent.name, prompt },
     assetIds: [],
@@ -243,7 +255,7 @@ export async function submitCustomAgentRun(args: {
     clientId: client.id,
     timestamp: Date.now(),
     type: "CAMPAIGN_CREATED",
-    title: `Agent run started: ${agent.name}`,
+    title: customRunStartedTitle(agent.name),
     actor: actor.name,
     actorRole: actor.role,
     metadata: { jobId, taskType: "custom", agentKey: agent.key },

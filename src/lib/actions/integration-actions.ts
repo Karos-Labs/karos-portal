@@ -67,6 +67,16 @@ export async function saveIntegrationAction(
 }
 
 /**
+ * NOTE: the two card-control actions below return errors as data ({ error })
+ * instead of throwing. Thrown server-action errors are MASKED in production —
+ * Next replaces the message with an opaque digest — so a refusal that throws
+ * reaches the browser as unreadable boilerplate. The integrations card renders
+ * these strings to clients, so the message has to survive the boundary and has
+ * to be written for a client to read. Same convention as credit-actions.ts.
+ */
+export type IntegrationActionResult = { ok: true; error?: never } | { ok?: never; error: string };
+
+/**
  * Toggle auto-publishing for a connected platform. Off ⇒ the publish cron skips
  * it and content goes out only via manual "Publish Now" (or stays a placeholder).
  * Clients may toggle their own integrations — opting out of automated posting is
@@ -76,23 +86,43 @@ export async function setIntegrationAutoPublishAction(
   clientId: string,
   platform: string,
   enabled: boolean,
-): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
-  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
-  if (!isStaff && user.clientId !== clientId) throw new Error("Forbidden");
-  await setIntegrationAutoPublish(clientId, platform, enabled);
-  revalidatePath(`/clients/${clientId}`);
+): Promise<IntegrationActionResult> {
+  try {
+    const user = await getCurrentUser();
+    if (!user || user.disabled) return { error: "Please sign in again to change this setting." };
+    const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+    if (!isStaff && user.clientId !== clientId) {
+      return { error: "You don't have access to this channel." };
+    }
+    await setIntegrationAutoPublish(clientId, platform, enabled);
+    revalidatePath(`/clients/${clientId}`);
+    return { ok: true };
+  } catch {
+    return { error: "Couldn't change auto-publish. Please try again." };
+  }
 }
 
-/** Remove a platform integration and all stored credentials for a client. */
+/**
+ * Remove a platform integration and all stored credentials for a client.
+ * Staff-only — a client disconnecting their own channel would orphan the
+ * agents publishing to it, so this stays an agency operation.
+ */
 export async function deleteIntegrationAction(
   clientId: string,
   platform: string,
-): Promise<void> {
-  await requireStaff();
-  await deleteClientIntegration(clientId, platform);
-  revalidatePath(`/clients/${clientId}`);
+): Promise<IntegrationActionResult> {
+  try {
+    const user = await getCurrentUser();
+    if (!user || user.disabled) return { error: "Please sign in again to disconnect this channel." };
+    if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") {
+      return { error: "Only your Karos team can disconnect a channel — message us and we'll do it." };
+    }
+    await deleteClientIntegration(clientId, platform);
+    revalidatePath(`/clients/${clientId}`);
+    return { ok: true };
+  } catch {
+    return { error: "Couldn't disconnect this channel. Please try again." };
+  }
 }
 
 /** Mint a personal access token for MCP clients. Returns the plaintext ONCE. */

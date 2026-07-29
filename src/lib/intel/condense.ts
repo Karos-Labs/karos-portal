@@ -5,7 +5,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
 import { CONDENSATION_RULES } from "./brain";
 import { MODELS, CONDENSE_MAX_TOKENS } from "@/lib/constants";
-import { stripPreamble } from "@/lib/text-utils";
+import { stripPreamble, stripTrailingMetaCommentary } from "@/lib/text-utils";
 import { logger } from "@/services/logger";
 
 export interface CondensedDoc {
@@ -85,7 +85,9 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
   const firstInternalSection = internalSections[0]?.replace(/^## /, "").trim();
   const lastInternalSection = internalSections[internalSections.length - 1]?.replace(/^## /, "").trim();
 
-  const condensed = stripPreamble(text);
+  // Strip model preamble, then any trailing meta-commentary the model appended
+  // after the document ("If you intended a different template…").
+  const condensed = stripTrailingMetaCommentary(stripPreamble(text));
   // Match the heading boundary (## prefix) to avoid substring false-positives.
   const missingFirst = firstInternalSection && !condensed.includes(`## ${firstInternalSection}`);
   const missingLast = lastInternalSection && !condensed.includes(`## ${lastInternalSection}`);
@@ -111,9 +113,13 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
       clientId: client.id, agentId: null, agentName: `Condense (retry): ${docType}`,
       modelName: MODELS.SONNET, operation: "doc_condense",
     });
-    const rewritten = stripPreamble(cont);
-    // Fall back to the first-pass result if the rewrite returned empty content.
-    return { docType, content: rewritten.length > 0 ? rewritten : condensed };
+    const rewritten = stripTrailingMetaCommentary(stripPreamble(cont));
+    // Fall back to the first-pass result if the rewrite returned empty content,
+    // or if it covers fewer of the internal doc's sections — a retry must never
+    // be allowed to hand back less than the pass that triggered it.
+    const coverage = (doc: string) => internalSections.filter((h) => doc.includes(h)).length;
+    const keepRewrite = rewritten.length > 0 && coverage(rewritten) >= coverage(condensed);
+    return { docType, content: keepRewrite ? rewritten : condensed };
   }
 
   return { docType, content: condensed };

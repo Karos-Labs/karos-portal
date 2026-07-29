@@ -5,11 +5,76 @@ import { useRouter } from "next/navigation";
 import { Card, CardTitle, Button, Badge, Label, Input } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { adjustCreditsAction, setCreditLimitsAction } from "@/lib/actions";
-import { relativeTime } from "@/lib/utils";
+import { ContactUsButton } from "@/components/contact-us-modal";
+import {
+  CREDIT_BLOCK_REASON,
+  CREDIT_COSTS,
+  CREDIT_WINDOW_RESET,
+  TASK_EXECUTION_COSTS,
+  availableCredits,
+  bindingCreditLimit,
+  CREDIT_BUCKET_LABEL,
+} from "@/lib/credits";
+import type { AgentSpendRow } from "@/lib/credit-reporting";
+import { cn, relativeTime } from "@/lib/utils";
 import type { ClientCredits, CreditLedgerEntry, Role } from "@/lib/types";
 
+/**
+ * Every client-billable price, read straight off the pricing constants so the
+ * card can never quote a stale figure. Agent runs are deliberately "from N":
+ * CustomAgent.creditCost overrides the flat default per agent, so the real price
+ * lives on the agent card, not here.
+ */
+/**
+ * The rate card. These labels are BILLING vocabulary — the priced units a
+ * client is charged in — and the §7.3 identity helper deliberately does not
+ * touch them (F147/WP-7).
+ *
+ * The boundary: identity answers "who made this thing in front of me", so a
+ * post, a run row and an archive group all have to say the same name. A price
+ * list answers "what does one of these cost", which is a question about the
+ * product line and has no piece of content and no agent to attribute. Resolving
+ * these through an umbrella would price "Instagram Agent" and leave a client
+ * with a social umbrella unable to find the social-post rate at all.
+ */
+const PRICE_ROWS: Array<{ label: string; price: string; note?: string }> = [
+  { label: "Copilot message", price: `${CREDIT_COSTS.chatMessage}` },
+  { label: "Correct one document", price: `${CREDIT_COSTS.targetedCorrection}` },
+  { label: "Correct every document", price: `${CREDIT_COSTS.globalCorrection}` },
+  {
+    label: "Agent run",
+    price: `from ${CREDIT_COSTS.customAgentRun}`,
+    note: "each agent shows its own price",
+  },
+  { label: "Blog article", price: `${TASK_EXECUTION_COSTS.blog_article}` },
+  { label: "Newsletter issue", price: `${TASK_EXECUTION_COSTS.newsletter_issue}` },
+  { label: "Social posts", price: `${TASK_EXECUTION_COSTS.social_post}` },
+  { label: "Landing page", price: `${TASK_EXECUTION_COSTS.landing_page}` },
+  { label: "Other task execution", price: `${CREDIT_COSTS.taskExecution}` },
+  {
+    label: "Extra LinkedIn seat",
+    price: `${CREDIT_COSTS.employeeSeat}`,
+    note: "one-time, beyond your plan's seats",
+  },
+];
+
 /** Compact "N / cap" usage line with a progress bar; cap-less shows plain spend. */
-function UsageMeter({ label, spent, limit }: { label: string; spent: number; limit: number | null }) {
+function UsageMeter({
+  label,
+  spent,
+  limit,
+  resetNote,
+}: {
+  label: string;
+  spent: number;
+  limit: number | null;
+  /**
+   * When this window's cap lifts — the clause from CREDIT_WINDOW_RESET, so it is
+   * the same sentence the denial cites. A client could previously only learn
+   * this by hitting the wall, since it lived inside assessCharge's messages.
+   */
+  resetNote?: string;
+}) {
   // A cap of 0 means "no spending allowed" — show it as fully used.
   const pct =
     limit == null ? 0 : limit === 0 ? 100 : Math.min(100, Math.round((spent / limit) * 100));
@@ -30,6 +95,12 @@ function UsageMeter({ label, spent, limit }: { label: string; spent: number; lim
           />
         </div>
       )}
+      {limit != null && resetNote && (
+        <p className={cn("mt-1 text-[11px]", pct >= 100 ? "text-warning" : "text-muted-2")}>
+          {/* Capitalised clause — the denial renders it mid-sentence. */}
+          {resetNote.charAt(0).toUpperCase() + resetNote.slice(1)}
+        </p>
+      )}
     </div>
   );
 }
@@ -43,15 +114,44 @@ export function CreditsPanel({
   clientId,
   credits,
   ledger,
+  spendByAgent,
   role,
+  viewer,
 }: {
   clientId: string;
   credits: ClientCredits;
   ledger: CreditLedgerEntry[];
+  /**
+   * The per-agent breakdown (§6.2a), aggregated SERVER-side over the whole
+   * ledger. Deliberately not derived here from `ledger`: that prop is the
+   * capped "Recent activity" feed, so a breakdown computed from it would be a
+   * breakdown of the last few rows presented as a breakdown of spend.
+   */
+  spendByAgent?: AgentSpendRow[];
   role: Role;
+  /**
+   * Signed-in viewer, for the support control offered when spending is blocked.
+   * ContactUsButton needs a name and email; omit to render the explanation
+   * without the contact route.
+   */
+  viewer?: { name: string; email: string };
 }) {
   const router = useRouter();
   const isAdmin = role === "KAROS_ADMIN";
+  // What the client can actually spend — the same helper the rail and the
+  // Agents page use, so the three surfaces can no longer disagree. `now` is
+  // omitted deliberately: the doc arrives from getClientCredits, which already
+  // rolled its windows, and calling Date.now() during a client render would
+  // make the value differ between the server and hydration passes.
+  const spendable = availableCredits(credits);
+  // Spending is walled when not even the cheapest billable action fits. Which
+  // limit did it — balance, weekly cap or monthly cap — comes from the same
+  // ladder assessCharge uses, so this card names exactly what the server would
+  // refuse on rather than guessing from whichever meter looks fullest.
+  const probeCost = CREDIT_COSTS.chatMessage;
+  const blocked = spendable < probeCost;
+  const bindingLimit = bindingCreditLimit(credits, probeCost);
+  const blockReason = CREDIT_BLOCK_REASON[bindingLimit];
 
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -114,17 +214,108 @@ export function CreditsPanel({
           <p className="mt-0.5 text-sm text-muted-2">
             AI actions (agent runs, copilot messages, task executions, doc corrections) spend credits.
           </p>
+          {/* The subtitle named the actions but never their prices, so the
+              ledger — a record of what you have ALREADY been charged — was the
+              only place in the product that told a client what anything costs.
+              Rendered from the pricing constants, never a hand-typed copy. */}
+          <p className="mt-1 text-xs text-muted-2">
+            Copilot message {CREDIT_COSTS.chatMessage} · doc correction{" "}
+            {CREDIT_COSTS.targetedCorrection} · agent run from {CREDIT_COSTS.customAgentRun}.
+          </p>
         </div>
         <div className="text-right">
-          <p className="font-mono text-2xl font-semibold">{credits.balance}</p>
+          <p className="font-mono text-2xl font-semibold">{spendable}</p>
           <p className="text-xs text-muted-2">credits available</p>
+          {/* The headline used to be credits.balance, which is NOT what the
+              client can spend: assessCharge clips it by the weekly/monthly caps.
+              With a cap binding, this card promised 180 while the Agents page
+              said 0 and every Run button was dead. The raw balance is still
+              worth showing — it's what a cap release would hand back — but it
+              is the secondary number now. */}
+          {spendable !== credits.balance && (
+            <p className="mt-0.5 text-[11px] text-muted-2">{credits.balance} on balance</p>
+          )}
         </div>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <UsageMeter label="Used this week" spent={credits.weekSpent} limit={credits.weeklyLimit} />
-        <UsageMeter label="Used this month" spent={credits.monthSpent} limit={credits.monthlyLimit} />
+        <UsageMeter
+          label="Used this week"
+          spent={credits.weekSpent}
+          limit={credits.weeklyLimit}
+          resetNote={CREDIT_WINDOW_RESET.weekly_limit}
+        />
+        <UsageMeter
+          label="Used this month"
+          spent={credits.monthSpent}
+          limit={credits.monthlyLimit}
+          resetNote={CREDIT_WINDOW_RESET.monthly_limit}
+        />
       </div>
+
+      {/* Full price list, collapsed. Native <details> so it needs no state and
+          is keyboard-operable and open-by-default for anyone printing or using
+          a reader that ignores the disclosure. */}
+      <details className="group mt-4 rounded-md border border-border">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs text-muted transition-colors hover:text-foreground">
+          <span className="flex items-center gap-1.5">
+            <Icon name="Receipt" className="h-3.5 w-3.5 text-muted-2" />
+            What actions cost
+          </span>
+          <Icon
+            name="ChevronDown"
+            className="h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform group-open:rotate-180"
+          />
+        </summary>
+        <ul className="divide-y divide-border border-t border-border">
+          {PRICE_ROWS.map((row) => (
+            <li key={row.label} className="flex items-baseline justify-between gap-3 px-3 py-1.5">
+              <span className="min-w-0 text-xs text-muted">
+                {row.label}
+                {row.note && <span className="ml-1 text-[11px] text-muted-2">({row.note})</span>}
+              </span>
+              <span className="shrink-0 font-mono text-xs text-foreground">{row.price}</span>
+            </li>
+          ))}
+        </ul>
+      </details>
+
+      {/* Hitting a cap used to be silent: two meters, one of them red, and no
+          sentence anywhere. The wording already existed but only ever appeared
+          AFTER an action failed, inside assessCharge's denial. `blocked` is the
+          real condition — availableCredits clips the balance by both caps, so a
+          maxed weekly window and an empty balance both land here — and the line
+          is creditBlockReason at the cheapest billable action, i.e. the limit
+          the server would cite for their very next spend. */}
+      {blocked && (
+        <div className="mt-4 flex flex-wrap items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-3">
+          <Icon name="Lock" className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <div className="min-w-0 flex-1 space-y-1">
+            <p className="text-xs font-medium text-foreground">{blockReason}</p>
+            {/* "until then" only parses when the reason named a reset day. A
+                balance shortfall has no date attached — it lifts on a top-up,
+                not on a Monday — so that sentence has to end differently. */}
+            <p className="text-xs text-muted">
+              Agent runs, copilot messages, task executions and doc corrections are paused
+              {bindingLimit === "insufficient_balance" ? " until credits are added." : " until then."}
+            </p>
+            {viewer && (
+              <div className="pt-1">
+                <ContactUsButton
+                  variant="row"
+                  userName={viewer.name}
+                  userEmail={viewer.email}
+                  label={
+                    bindingLimit === "insufficient_balance"
+                      ? "Request more credits"
+                      : "Ask about your limit"
+                  }
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {isAdmin && (
         <div className="mt-5 grid gap-4 border-t border-border pt-4 lg:grid-cols-2">
@@ -175,6 +366,38 @@ export function CreditsPanel({
 
       {error && <p className="mt-3 text-xs text-danger">{error}</p>}
       {notice && <p className="mt-3 text-xs text-neon">{notice}</p>}
+
+      {/* §6.2(a). "Recent activity" answers "what happened last"; it has never
+          answered "what am I paying for", which is the question a client
+          actually brings to this page. Spend per agent, split into the setup
+          they paid once for, the schedule they chose, and the runs they started
+          themselves — the three things they can act on. Aggregated server-side
+          over the whole ledger, not over the capped feed below. */}
+      {spendByAgent && spendByAgent.length > 0 && (
+        <div className="mt-5 border-t border-border pt-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-2">
+            Where your credits went
+          </p>
+          <ul className="divide-y divide-border">
+            {spendByAgent.map((row) => (
+              <li key={row.agentId ?? "__none__"} className="py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="min-w-0 truncate text-sm text-foreground">{row.agentName}</p>
+                  <span className="shrink-0 font-mono text-xs text-muted">{row.credits}</span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                  {row.buckets.map((bucket) => (
+                    <span key={bucket.bucket} className="text-[11px] text-muted-2">
+                      {CREDIT_BUCKET_LABEL[bucket.bucket]}
+                      <span className="ml-1 font-mono">{bucket.credits}</span>
+                    </span>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="mt-5 border-t border-border pt-4">
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-2">Recent activity</p>

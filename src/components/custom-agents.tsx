@@ -16,7 +16,9 @@ import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
 import { RedditAgentIntake } from "@/components/reddit-agent-intake";
 import { XAgentIntake } from "@/components/x-agent-intake";
 import { Modal } from "@/components/modal";
+import { ContactUsButton } from "@/components/contact-us-modal";
 import { JobStatusBadge } from "@/components/job-status";
+import { ManagedJobProgress } from "@/components/managed-job-progress";
 import {
   createCustomAgentAction,
   deleteCustomAgentAction,
@@ -30,14 +32,18 @@ import {
   configureClientAgentScheduleAction,
   setPlannedRunStatusAction,
 } from "@/lib/actions/planned-run-actions";
+import { cancelClientAgentJobAction } from "@/lib/actions/external-job-actions";
 import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
+import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import {
+  agentKeyMatchesClientSlug,
   buildCustomAgentPrompt,
   initialAgentBrief,
   isLinkedInAgentIdentity,
-  isRedditAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
+  perClientAgentSlug,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
@@ -51,18 +57,60 @@ import { cn, formatDate, relativeTime } from "@/lib/utils";
  * The slice of a CustomAgent that may be serialized to client-user browsers.
  * Deliberately excludes instructions (the system prompt), skill paths, and
  * repo provenance — pages map full docs down to this before passing them.
+ *
+ * `description` is NOT on it (F127). It is the lab repo's own skill manifest,
+ * no surface that receives this summary reads it, and this module's whole
+ * doctrine is that a field which crosses the boundary is readable from
+ * view-source whether or not anything paints it. The staff agent LIBRARY still
+ * shows it — that surface takes the full CustomAgent, which is the honest place
+ * for manifest text to live.
  */
-export type RunnableAgentSummary = Pick<CustomAgent, "id" | "key" | "name" | "description" | "icon" | "color"> & {
+export type RunnableAgentSummary = Pick<
+  CustomAgent,
+  "id" | "key" | "name" | "clientBlurb" | "icon" | "color"
+> & {
   creditCost?: number | null;
 };
+
+/**
+ * What a client is allowed to read about an agent: the curated `clientBlurb`,
+ * then the keyed fallback.
+ *
+ * Agents imported before that field existed used to fall back to the manifest
+ * `description`. That is the defect Albert screenshotted (CD-G2): cards on his
+ * own client pages reading "Master content-social skill. Given a brand's
+ * guidelines + any past competitor research…". The fallback is now the keyed
+ * blurb map, which always has a sentence written for a buyer — so the manifest
+ * is no longer in the chain at all, nor in the payload, and the staff library
+ * still flags agents with no curated blurb for a rewrite.
+ */
+function agentBlurb(agent: Pick<RunnableAgentSummary, "key" | "name" | "clientBlurb">): string {
+  return clientAgentBlurb({
+    key: agent.key,
+    name: agent.name,
+    clientBlurb: agent.clientBlurb ?? null,
+  });
+}
 
 /** One run-history row, pre-filtered and stripped server-side. */
 export interface CustomAgentRunRow {
   id: string;
+  /** The run's STORED agent name. A join key — the card matches its own runs on it. */
   agentName: string;
+  /**
+   * The ONE name this row prints, resolved server-side through the §7.3
+   * identity helper (F147). Equal to `agentName` for an agent with no
+   * umbrella; the umbrella's own display name when one owns this stream.
+   */
+  label: string;
   status: JobStatus;
   createdAt: number;
   assetCount: number;
+  /**
+   * The operator's raw request. STAFF VIEWERS ONLY — a client's permanent run
+   * history must not be somebody's typing, misspellings and all, so the page
+   * omits it from the client payload rather than hiding it at render.
+   */
   prompt?: string;
   /** Link target (staff viewers get /jobs/<id>); absent for client viewers. */
   href?: string;
@@ -76,14 +124,147 @@ export interface ClientAgentScheduleRow {
   postsPerWeek: number;
   outputsPerRun: number;
   nextRunAt: number;
-  prompt: string;
+  /**
+   * The ongoing direction handed to the agent on every fire — STAFF-AUTHORED,
+   * and absent for client viewers (toScheduleRows omits it). It used to ship
+   * unconditionally and be painted in an editable textarea inside the client's
+   * pace dialog, which both showed a client internal operator copy and let them
+   * rewrite the instruction every future run receives.
+   */
+  prompt?: string;
   hour: number;
   minute: number;
+  /**
+   * The scheduler's refusal from the last fire that produced nothing. When set,
+   * the card drops the "Live" badge — an always-on agent that is refused on
+   * every fire must never read as healthy.
+   */
+  lastError?: string | null;
+  /** Epoch millis of that refusal. */
+  lastErrorAt?: number | null;
+}
+
+/**
+ * The intake page an agent refuses to run without, by agent key — or null for
+ * agents with no such gate. Used on the STAFF hub, where the client is chosen
+ * inside the run dialog and per-agent readiness therefore cannot be resolved
+ * before the card is drawn (the client page passes a resolved `agentSetup` map
+ * instead). Names the gate; does not claim to know whether it is satisfied.
+ */
+function intakeDrivenLabel(key: string): string | null {
+  if (isXAgentIdentity(key)) return "X agent data";
+  if (isLinkedInAgentIdentity(key)) return "LinkedIn agent data";
+  return null;
+}
+
+/** The dialog's dropdowns, built from the same bounds the server clamps to. */
+/**
+ * The dropdown ranges, read from the SAME per-agent limits the server clamps
+ * with (scheduleLimitsFor). The Reddit agent's ceiling is lower than the
+ * generic one (F27), and a dialog offering more than the server will accept
+ * either silently rewrites the client's choice on save or bills for a pace the
+ * product does not sell.
+ */
+function countOptions(max: number): number[] {
+  return Array.from({ length: max }, (_, i) => i + 1);
 }
 
 function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
   return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
 }
+
+/**
+ * An agent's blurb wherever a client reads it. Clamped to three lines so the
+ * cut always lands on a line boundary — never mid-word — with a "More" control
+ * that expands it in place. Whether the text overflows is MEASURED rather than
+ * guessed from a character count: a length threshold is the same class of bug,
+ * and the same prose wraps to a different number of lines per card width.
+ */
+function AgentBlurb({ text, className }: { text: string; className?: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    // While expanded there is nothing to measure (the clamp is off) — keep the
+    // last answer so the control that opened it does not vanish under the cursor.
+    if (!el || expanded) return;
+    const measure = () => setOverflows(el.scrollHeight - el.clientHeight > 1);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [text, expanded]);
+
+  return (
+    <div className={className}>
+      <p ref={ref} className={cn("text-xs leading-relaxed text-muted", !expanded && "line-clamp-3")}>
+        {text}
+      </p>
+      {overflows && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+          className="mt-0.5 text-[11px] text-muted-2 underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+        >
+          {expanded ? "Less" : "More"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The intake page an agent drafts from, when it has one (X e13, LinkedIn e10).
+ *
+ * Readiness is resolved PER AGENT on the server and handed down keyed by agent
+ * id. It cannot be recomputed here from one shared flag: `hasLinkedInAgentIntake`
+ * answers differently depending on the agent key it is given (the multi-seat
+ * agent accepts any stored intake; the company-page agents require the company
+ * form), and the submit core passes that key. A single shared answer would block
+ * an agent the server would happily run.
+ */
+/**
+ * One agent's intake state, resolved server-side.
+ *
+ * It carries BOTH routes to the same form, because the two surfaces that need
+ * it can reach it differently. `href` is the agent's own data page and always
+ * exists — that is what the client's detail route offers (CD-E1/CD-G1), and it
+ * is the only option when the page did not prefetch the form. `kind`/`data`
+ * appear when it DID: the run dialog then collects the intake in place, so a
+ * staff member setting up a run does not lose the brief they were writing to a
+ * navigation.
+ *
+ * kind and data move together — a kind with no payload would render an empty
+ * pane, and a payload with no kind has no form to render it in.
+ */
+export type AgentSetupState = {
+  ready: boolean;
+  href: string;
+  /**
+   * The OPERATOR's name for the intake page, e.g. "X agent data" — it matches
+   * the route, the manifest and how staff talk about it, and staff surfaces
+   * (the run dialog, the roster note, StaffAgentControls) keep using it.
+   */
+  label: string;
+  /**
+   * The same page in a client's words, e.g. "Your X details".
+   *
+   * "Agent data" is our vocabulary, not theirs: a client reading "Manage X
+   * agent data" beside "Reddit agent data — NEEDED" is being asked to maintain
+   * a system's records rather than to tell us about themselves. Every
+   * client-facing surface — the inputs band, the sidebar card, the run gates'
+   * refusal lines — reads this one, so the three agents also stop each
+   * inventing their own phrasing.
+   */
+  clientLabel: string;
+} & (
+  | { kind?: undefined; data?: undefined }
+  | { kind: "x"; data: ComponentProps<typeof XAgentIntake> }
+  | { kind: "linkedin"; data: ComponentProps<typeof LinkedInAgentIntake> }
+  | { kind: "reddit"; data: ComponentProps<typeof RedditAgentIntake> }
+);
 
 function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon">; className?: string }) {
   return (
@@ -155,19 +336,23 @@ const INTAKE_FIRST_STEP: Record<IntakeKind, string> = {
   reddit: "Save your Reddit account below to continue.",
 };
 
-/** Which intake surface governs this agent, given what the page shipped. */
-function intakeFor(
-  agentKey: string,
-  xSetup?: XAgentSetup,
-  linkedinSetup?: LinkedInAgentSetup,
-  redditSetup?: RedditAgentSetup,
-): AgentIntakeContext | null {
-  if (xSetup && isXAgentIdentity(agentKey)) return { kind: "x", setup: xSetup };
-  if (linkedinSetup && isLinkedInAgentIdentity(agentKey)) {
-    return { kind: "linkedin", setup: linkedinSetup };
+/**
+ * Which intake surface governs this agent — read off the agent's own setup
+ * state rather than re-derived from its key.
+ *
+ * Resolving it from the key meant every caller had to be handed all three
+ * payloads and asked the identity question again, which is a second place for
+ * "is this the LinkedIn agent" to drift from the server's answer. Now the page
+ * says it once, per agent, and a state with no prefetched form yields null —
+ * the href card serves that case.
+ */
+function intakeFor(setup: AgentSetupState | null | undefined): AgentIntakeContext | null {
+  if (!setup?.kind) return null;
+  if (setup.kind === "x") return { kind: "x", setup: { ready: setup.ready, data: setup.data } };
+  if (setup.kind === "linkedin") {
+    return { kind: "linkedin", setup: { ready: setup.ready, data: setup.data } };
   }
-  if (redditSetup && isRedditAgentIdentity(agentKey)) return { kind: "reddit", setup: redditSetup };
-  return null;
+  return { kind: "reddit", setup: { ready: setup.ready, data: setup.data } };
 }
 
 function IntakeGlyph({ kind, className }: { kind: IntakeKind; className?: string }) {
@@ -252,7 +437,14 @@ export function CustomAgentsHub({
   serviceConfigured,
 }: {
   agents: CustomAgent[];
-  clients: Array<{ id: string; name: string }>;
+  /**
+   * The lab-repo slug rides along because the hub is the one surface that pairs
+   * an ARBITRARY agent with an arbitrary client: a per-client instance runs an
+   * entry skill baked under the folder its key names, and both submit cores
+   * refuse the wrong pair. Without the slug the hub can only offer every client
+   * and let the server refuse — after the whole brief has been written (F38).
+   */
+  clients: Array<{ id: string; name: string; agentsRepoSlug?: string | null }>;
   isAdmin: boolean;
   importConfigured: boolean;
   serviceConfigured: boolean;
@@ -301,7 +493,19 @@ export function CustomAgentsHub({
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          {agents.map((agent) => (
+          {agents.map((agent) => {
+            // F38. The clients this agent can actually run for. An unbound agent
+            // keeps the whole list; a per-client instance keeps its own client,
+            // and keeps NONE when that client is absent from this staff member's
+            // visible set or has no lab slug on file.
+            const eligible = clients.filter((c) =>
+              agentKeyMatchesClientSlug(agent.key, c.agentsRepoSlug),
+            );
+            // F35. What the card must say out loud: which workspace an instance
+            // belongs to. Until now the only way to learn it was to write a
+            // brief and read the refusal.
+            const boundTo = perClientAgentSlug(agent.key);
+            return (
             <div
               key={agent.id}
               className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
@@ -317,6 +521,24 @@ export function CustomAgentsHub({
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
+                  {/* Intake-driven agents refuse a run whose client has not filled
+                      in their data page — and that gate could only be discovered
+                      by writing the whole brief and reading the refusal. The
+                      readiness itself depends on the client picked inside the
+                      dialog, so the hub names the gate rather than pretending to
+                      resolve it. */}
+                  {intakeDrivenLabel(agent.key) && (
+                    <Badge tone="neutral">
+                      Needs {intakeDrivenLabel(agent.key)}
+                    </Badge>
+                  )}
+                  {/* F35: the binding, stated. An instance's entry skill is
+                      baked under one client's lab folder, so this is a property
+                      of the agent, not of whoever is looking at it. */}
+                  {boundTo && <Badge tone="neutral">{boundTo} only</Badge>}
+                  {/* No client blurb ⇒ the client's card is still falling back to
+                      the lab manifest below. Flagged here, fixed in the editor. */}
+                  {!agent.clientBlurb?.trim() && <Badge tone="warning">No client blurb</Badge>}
                   {!agent.enabled && <Badge tone="warning">Disabled</Badge>}
                   {/* Repo-catalog flag — informational until an admin reviews and enables. */}
                   {!agent.enabled && agent.source?.status === "blocked" && (
@@ -343,13 +565,20 @@ export function CustomAgentsHub({
                   <Button
                     size="sm"
                     variant="subtle"
-                    disabled={!agent.enabled || !serviceConfigured}
+                    // F38. No eligible client ⇒ every pair this dialog could
+                    // build is one the server refuses, so the refusal is stated
+                    // here instead of after the brief is written.
+                    disabled={!agent.enabled || !serviceConfigured || eligible.length === 0}
                     title={
                       !serviceConfigured
                         ? "Agent service is not configured"
                         : !agent.enabled
                           ? "Enable this agent first"
-                          : undefined
+                          : eligible.length === 0
+                            ? boundTo
+                              ? `This agent runs only for the "${boundTo}" workspace, and no client you can see has that lab repo slug.`
+                              : "No client is available to run this agent for."
+                            : undefined
                     }
                     onClick={() => setRunAgent(agent)}
                   >
@@ -358,14 +587,19 @@ export function CustomAgentsHub({
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {runAgent && (
         <RunCustomAgentModal
           agent={runAgent}
-          clients={clients}
+          // Only the clients this agent can draft for reach the picker, so a
+          // staff member cannot assemble a pair the submit core refuses.
+          clients={clients.filter((c) =>
+            agentKeyMatchesClientSlug(runAgent.key, c.agentsRepoSlug),
+          )}
           contextItems={[]}
           viewerIsClient={false}
           onClose={() => setRunAgent(null)}
@@ -385,286 +619,444 @@ export function CustomAgentsHub({
   );
 }
 
-/* ═══════════════ client-page section (staff + clients) ═══════════════ */
+/* ═════════════════ staff controls (agent detail page) ═════════════════ */
 
 /**
- * Custom agents on a client's Agents page. Staff see every enabled agent;
- * client users see only their allowlist (the page passes the right list) and
- * are billed per run, so the run button gates on spendable credits. Both
- * `agents` and `runs` arrive pre-stripped to client-safe shapes.
+ * Does this refusal name a setup problem the reader can go and fix?
+ *
+ * All THREE intake prefixes, which is the point: the Reddit one was missing,
+ * so a staff member whose Reddit schedule was refused for want of intake got
+ * the "contact us" row — advice to email somebody about a form they were one
+ * click from filling in — while the identical X and LinkedIn refusals offered
+ * the link. The three agents are gated the same way by the submit cores, so
+ * they recover the same way here.
  */
-export function ClientCustomAgents({
+function refusalNamesSetup(refusal: string): boolean {
+  return (
+    refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
+    refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
+    refusal.startsWith(REDDIT_SETUP_REQUIRED_PREFIX)
+  );
+}
+
+/**
+ * Everything staff can DO to one agent for one client (CD-I1 staff parity).
+ *
+ * The staff all-in-one card grid is retired: staff now click an agent on the
+ * roster and open the same full page a client opens, which is the second half
+ * of Albert's directive. That move is only honest if nothing staff could do
+ * before becomes unreachable, so this band carries the four capabilities that
+ * lived on the retired card — run now, set/manage the schedule, reach the
+ * agent's data, and read why a schedule is refusing — and the detail page
+ * mounts the curation pane and the economics card beside it.
+ *
+ * STAFF ONLY, and simpler for it: staff runs are free (isBillableClientActor),
+ * so there is no credit rung here at all. The client's own run gesture lives in
+ * AgentDetailPanel / LegacyAgentPanel, where the price and the gate are, and
+ * this component is never mounted for a client viewer.
+ */
+export function StaffAgentControls({
   clientId,
-  agents,
-  runs,
-  schedules = [],
+  agent,
+  schedule,
+  setup,
   contextItems,
-  viewerIsClient,
-  availableCredits,
-  xSetup,
-  linkedinSetup,
-  redditSetup,
+  reviewCount = 0,
+  reviewHref,
+  lastRunAt,
+  viewer,
 }: {
   clientId: string;
-  agents: RunnableAgentSummary[];
-  runs: CustomAgentRunRow[];
-  schedules?: ClientAgentScheduleRow[];
+  agent: RunnableAgentSummary;
+  schedule?: ClientAgentScheduleRow;
+  setup?: AgentSetupState;
   contextItems: ContextItem[];
-  viewerIsClient: boolean;
-  /** Spendable credits right now (balance clipped by caps) — client viewers only. */
-  availableCredits?: number;
-  /** X agent intake state and, when the page could prefetch it, its data form. */
-  xSetup?: XAgentSetup;
-  /** LinkedIn agent intake state — same shape for the e10 agents. */
-  linkedinSetup?: LinkedInAgentSetup;
-  redditSetup?: RedditAgentSetup;
+  /** Deliverables sitting in review for this agent — the staff queue. */
+  reviewCount?: number;
+  reviewHref: string;
+  lastRunAt?: number;
+  viewer?: { name: string; email: string };
 }) {
-  const [runAgent, setRunAgent] = useState<RunnableAgentSummary | null>(null);
+  const [runOpen, setRunOpen] = useState(false);
   const [runIntakeFirst, setRunIntakeFirst] = useState(false);
-  const [scheduleAgent, setScheduleAgent] = useState<RunnableAgentSummary | null>(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
-  const agentByName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
-  const scheduleByAgent = useMemo(
-    () => new Map(schedules.map((schedule) => [schedule.agentId, schedule])),
-    [schedules],
-  );
+  const intake = intakeFor(setup);
+  const blockedSetup = setup && !setup.ready ? setup : null;
+  // A refused schedule is never "Live". A PAUSED schedule reports paused: the
+  // person who paused it chose that, and a stale refusal from before the pause
+  // is not the current state.
+  const refusal = schedule?.status === "active" ? schedule.lastError?.trim() || null : null;
+  const refusalIsSetup = refusal !== null && refusalNamesSetup(refusal);
+  // A scheduled run fires unattended, so every fire would be refused while the
+  // company page is missing. An EXISTING schedule stays open to manage —
+  // pausing it must never be blocked.
+  const scheduleNeedsData = Boolean(intake) && !companyOnFile(intake) && !schedule;
 
-  function openRun(agent: RunnableAgentSummary, intakeFirst = false) {
+  function openRun(intakeFirst = false) {
     setRunIntakeFirst(intakeFirst);
-    setRunAgent(agent);
+    setRunOpen(true);
   }
 
-  if (agents.length === 0 && runs.length === 0) return null;
-
-  // The open schedule dialog's own copy of the card's gate: props refresh
-  // underneath it, so the agent data can go missing while it is open.
-  const scheduleIntake = scheduleAgent ? intakeFor(scheduleAgent.key, xSetup, linkedinSetup, redditSetup) : null;
-  const scheduleSetupNeeded =
-    scheduleAgent && scheduleIntake && !companyOnFile(scheduleIntake)
-      ? {
-          kind: scheduleIntake.kind,
-          onOpenData: () => {
-            setScheduleAgent(null);
-            openRun(scheduleAgent, true);
-          },
-        }
-      : null;
-
   return (
-    <section className="mt-10">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-xl text-foreground">{viewerIsClient ? "Your AI agents" : "Custom agents"}</h2>
-          <p className="mt-0.5 text-sm text-muted">
-            {viewerIsClient
-              ? "Your always-on AI team. Run an agent now or choose its weekly production pace."
-              : "Prompt-driven agents from the custom library, run against this client."}
+    <section className="rounded-[var(--radius)] border border-border bg-surface-2/40 p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h2 className="mr-auto font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+          Staff controls
+        </h2>
+        <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
+        {/* Two affordances, never both at once. Missing data is a CALL TO
+            ACTION and links the agent's own data page (CD-E1); data already on
+            file is an EDIT affordance and opens the dialog's inline pane, so a
+            staff member correcting one field does not lose the run they were
+            setting up. */}
+        {blockedSetup ? (
+          <a
+            href={blockedSetup.href}
+            className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
+            title={`Open ${blockedSetup.label} to finish setup`}
+          >
+            <Badge tone="warning">Setup needed</Badge>
+          </a>
+        ) : intake && intakeComplete(intake) ? (
+          <AgentDataButton kind={intake.kind} ready onOpen={() => openRun(true)} />
+        ) : null}
+      </div>
+
+      {/* The live-state slot. Precedence, highest first: a stored refusal (the
+          schedule fired and was turned away) → setup still missing → the
+          schedule's own next fire → drafts waiting → last run → never run. */}
+      <div className="rounded-md border border-border bg-surface-2/70 px-3 py-2">
+        {schedule && (
+          <p className="text-xs text-foreground">
+            {schedule.postsPerWeek} run{schedule.postsPerWeek === 1 ? "" : "s"}/week
+            {" · "}
+            {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
           </p>
-        </div>
-        {viewerIsClient && availableCredits !== undefined && (
-          <Badge tone={availableCredits > 0 ? "neon" : "warning"}>
-            {availableCredits} credits available
-          </Badge>
+        )}
+        {refusal ? (
+          <>
+            <p className="mt-0.5 text-[11px] text-warning">{refusal}</p>
+            {refusalIsSetup && setup ? (
+              <a
+                href={setup.href}
+                className="mt-1 inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+              >
+                Open {setup.label}
+                <Icon name="ArrowRight" className="h-3 w-3" />
+              </a>
+            ) : viewer ? (
+              <div className="-mx-3 mt-0.5">
+                <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
+              </div>
+            ) : null}
+            {schedule?.lastErrorAt ? (
+              <p className="mt-0.5 text-[10px] text-muted-2">
+                Last tried {relativeTime(schedule.lastErrorAt)}
+              </p>
+            ) : null}
+          </>
+        ) : blockedSetup ? (
+          <p className={cn("text-[11px] text-warning", !schedule && "text-xs")}>
+            Not running yet — your {blockedSetup.label} is still empty.
+          </p>
+        ) : schedule ? (
+          <p className="mt-0.5 text-[11px] text-muted-2">
+            {schedule.status === "active"
+              ? `Working toward ${formatDate(schedule.nextRunAt)}`
+              : "Schedule paused"}
+          </p>
+        ) : reviewCount > 0 ? (
+          <Link href={reviewHref} className="text-xs text-warning hover:underline">
+            {reviewCount} draft{reviewCount === 1 ? "" : "s"} waiting for review
+          </Link>
+        ) : lastRunAt ? (
+          <p className="text-xs text-muted-2">Last run {relativeTime(lastRunAt)}</p>
+        ) : (
+          <p className="text-xs text-muted-2">No runs yet.</p>
         )}
       </div>
 
-      {agents.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {agents.map((agent) => {
-            const cost = agentRunCost(agent);
-            const short = viewerIsClient && availableCredits !== undefined && availableCredits < cost;
-            const schedule = scheduleByAgent.get(agent.id);
-            const reviewRuns = runs.filter(
-              (run) => run.agentName === agent.name && run.status === "review" && run.assetCount > 0,
-            );
-            const readyAssetCount = reviewRuns.reduce((total, run) => total + run.assetCount, 0);
-            const reviewHref = viewerIsClient
-              ? "/tasks"
-              : reviewRuns[0]?.href ?? `/clients/${clientId}/assets`;
-            const intake = intakeFor(agent.key, xSetup, linkedinSetup, redditSetup);
-            // A scheduled run fires unattended, so every fire would be refused
-            // while the company page is missing. An existing schedule stays
-            // open to manage — pausing it must never be blocked.
-            const scheduleNeedsData = Boolean(intake) && !companyOnFile(intake) && !schedule;
-            return (
-              <div
-                key={agent.id}
-                className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
-              >
-                <span className="absolute inset-x-0 top-0 h-0.5 bg-foreground/40 opacity-45 transition-opacity group-hover:opacity-80" aria-hidden="true" />
-                <div className="flex items-start gap-3">
-                  <AgentChip agent={agent} />
-                  <div className="min-w-0 flex-1">
-                    <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">AI agent</p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-base font-medium">{agent.name}</p>
-                      {schedule?.status === "active" && (
-                        <Badge tone="success">
-                          <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse-neon" aria-hidden="true" />
-                          Live
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-muted">{agent.description}</p>
-                  </div>
-                  {readyAssetCount > 0 && (
-                    <Link
-                      href={reviewHref}
-                      className="flex shrink-0 items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] font-medium text-warning transition-colors hover:border-warning/50 hover:bg-warning/15"
-                      aria-label={`${readyAssetCount} new ${readyAssetCount === 1 ? "asset" : "assets"} ready to review from ${agent.name}`}
-                    >
-                      <Icon name="Bell" className="h-3.5 w-3.5" />
-                      {readyAssetCount} ready
-                    </Link>
-                  )}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
-                  {intake && (
-                    <AgentDataButton
-                      kind={intake.kind}
-                      ready={intakeComplete(intake)}
-                      onOpen={() => openRun(agent, true)}
-                    />
-                  )}
-                </div>
-                <div className="mt-3 rounded-md border border-border bg-surface-2/70 px-3 py-2">
-                  {schedule ? (
-                    <>
-                      <p className="text-xs text-foreground">
-                        {schedule.postsPerWeek} post{schedule.postsPerWeek === 1 ? "" : "s"}/week
-                        {" · "}
-                        {schedule.outputsPerRun} output{schedule.outputsPerRun === 1 ? "" : "s"} each
-                      </p>
-                      <p className="mt-0.5 text-[11px] text-muted-2">
-                        {schedule.status === "active"
-                          ? `Working toward ${formatDate(schedule.nextRunAt)}`
-                          : "Schedule paused"}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-xs text-muted-2">Ready to build your weekly content queue.</p>
-                  )}
-                </div>
-                <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
-                  <p className="text-xs text-muted-2">{cost} credits per output</p>
-                  <div className="flex gap-1.5">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={short}
-                      title={short ? "Not enough credits. Ask your Karos team for a top-up." : undefined}
-                      onClick={() => openRun(agent)}
-                    >
-                      <Icon name="Play" className="h-3.5 w-3.5" /> Run now
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="subtle"
-                      title={
-                        scheduleNeedsData && intake
-                          ? `Add the ${INTAKE_LABEL[intake.kind]} agent data first — every scheduled run drafts from it.`
-                          : undefined
-                      }
-                      onClick={() =>
-                        scheduleNeedsData ? openRun(agent, true) : setScheduleAgent(agent)
-                      }
-                    >
-                      <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" />
-                      {schedule ? "Manage" : "Set schedule"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <Button
+          size="sm"
+          variant="ghost"
+          // F131: a control the server would refuse is never left enabled.
+          // Missing intake is exactly such a refusal, so the chip above is the
+          // way in, not this button.
+          disabled={Boolean(blockedSetup)}
+          onClick={() => openRun()}
+        >
+          <Icon name="Play" className="h-3.5 w-3.5" /> Run now
+        </Button>
+        <Button
+          size="sm"
+          variant="subtle"
+          onClick={() => (scheduleNeedsData ? openRun(true) : setScheduleOpen(true))}
+        >
+          <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" />
+          {schedule ? "Manage schedule" : "Set schedule"}
+        </Button>
+        {reviewCount > 0 && (
+          <Link
+            href={reviewHref}
+            className="inline-flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] font-medium text-warning transition-colors hover:border-warning/50 hover:bg-warning/15"
+          >
+            <Icon name="Bell" className="h-3.5 w-3.5" />
+            {reviewCount} ready
+          </Link>
+        )}
+      </div>
+
+      {/* Why a control is off, PAINTED — the Button primitive sets
+          disabled:pointer-events-none, so a title on a disabled button can
+          never be shown. */}
+      {blockedSetup && (
+        <p className="mt-2 border-t border-border/60 pt-2 text-[11px] text-warning">
+          Run now needs the {blockedSetup.label} — this agent drafts from it.
+        </p>
+      )}
+      {scheduleNeedsData && intake && !blockedSetup && (
+        <p className="mt-2 text-[11px] text-muted-2">
+          Add the {INTAKE_LABEL[intake.kind]} agent data before setting a schedule — every
+          scheduled run drafts from it.
+        </p>
       )}
 
-      {runs.length > 0 && (
-        <div className="mt-6">
-          <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-            Recent agent runs
-          </p>
-          <div className="overflow-hidden rounded-[var(--radius)] border border-border">
-            {runs.map((run, i) => {
-              const agent = agentByName.get(run.agentName);
-              const row = (
-                <>
-                  {agent ? (
-                    <AgentIdentity
-                      identity={`${agent.key} ${agent.name}`}
-                      icon={agent.icon}
-                      size="sm"
-                    />
-                  ) : (
-                    <AgentIdentity identity={run.agentName} icon="Bot" size="sm" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm">{run.agentName}</p>
-                    <p className="truncate text-xs text-muted-2">
-                      {relativeTime(run.createdAt)}
-                      {run.prompt ? ` · "${run.prompt}"` : ""}
-                    </p>
-                  </div>
-                  <JobStatusBadge status={run.status} />
-                </>
-              );
-              const rowClass = cn(
-                "flex items-center gap-3 px-4 py-2.5",
-                i > 0 && "border-t border-border",
-              );
-              return run.href ? (
-                <Link
-                  key={run.id}
-                  href={run.href}
-                  className={cn(rowClass, "transition-colors hover:bg-surface-2")}
-                >
-                  {row}
-                  <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
-                </Link>
-              ) : (
-                <div key={run.id} className={rowClass}>
-                  {row}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {runAgent && (
+      {runOpen && (
         <RunCustomAgentModal
-          agent={runAgent}
+          agent={agent}
           clientId={clientId}
           contextItems={contextItems}
-          viewerIsClient={viewerIsClient}
-          {...(xSetup ? { xSetup } : {})}
-          {...(linkedinSetup ? { linkedinSetup } : {})}
-          {...(redditSetup ? { redditSetup } : {})}
+          viewerIsClient={false}
+          {...(setup ? { setup } : {})}
           {...(runIntakeFirst ? { initialPane: "data" as const } : {})}
-          onClose={() => setRunAgent(null)}
+          onClose={() => setRunOpen(false)}
         />
       )}
-      {scheduleAgent && (
+      {scheduleOpen && (
         <AgentScheduleModal
-          agent={scheduleAgent}
+          agent={agent}
           clientId={clientId}
-          schedule={scheduleByAgent.get(scheduleAgent.id)}
-          availableCredits={availableCredits}
-          {...(scheduleSetupNeeded ? { setupNeeded: scheduleSetupNeeded } : {})}
-          onClose={() => setScheduleAgent(null)}
+          {...(schedule ? { schedule } : {})}
+          {...(intake && !companyOnFile(intake)
+            ? {
+                setupNeeded: {
+                  kind: intake.kind,
+                  onOpenData: () => {
+                    setScheduleOpen(false);
+                    openRun(true);
+                  },
+                },
+              }
+            : {})}
+          onClose={() => setScheduleOpen(false)}
         />
       )}
     </section>
   );
 }
 
-function AgentScheduleModal({
+/**
+ * Recent agent runs — the staff history strip (CD-I1).
+ *
+ * Lifted out of the retired card grid rather than rewritten, and kept on BOTH
+ * staff surfaces: the roster page shows every agent's runs (the cross-agent
+ * view staff had before and would otherwise lose to per-agent pages), and the
+ * detail page shows one agent's. Client viewers never mount it — their run
+ * history is the archive, and a raw prompt or a /jobs link is staff-only.
+ */
+export function AgentRunHistory({
+  runs,
+  agents,
+  heading = "Recent agent runs",
+}: {
+  runs: CustomAgentRunRow[];
+  /** For the platform mark — matched on the stored name, as the rows are. */
+  agents: RunnableAgentSummary[];
+  heading?: string;
+}) {
+  const agentByName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
+  if (runs.length === 0) return null;
+  return (
+    <div>
+      <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{heading}</p>
+      <div className="overflow-hidden rounded-[var(--radius)] border border-border">
+        {runs.map((run, i) => {
+          const agent = agentByName.get(run.agentName);
+          const row = (
+            <>
+              {agent ? (
+                <AgentIdentity
+                  identity={`${agent.key} ${agent.name}`}
+                  icon={agent.icon}
+                  size="sm"
+                />
+              ) : (
+                <AgentIdentity identity={run.label} icon="Bot" size="sm" />
+              )}
+              <div className="min-w-0 flex-1">
+                {/* The resolved identity, never the stored name (F147). */}
+                <p className="truncate text-sm">{run.label}</p>
+                {/* What the run produced — never what somebody typed to start
+                    it, for a client. `prompt` is present only for staff. */}
+                <p className="truncate text-xs text-muted-2">
+                  {relativeTime(run.createdAt)}
+                  {run.assetCount > 0
+                    ? ` · ${run.assetCount} draft${run.assetCount === 1 ? "" : "s"}`
+                    : ""}
+                  {run.prompt ? ` · "${run.prompt}"` : ""}
+                </p>
+              </div>
+              <JobStatusBadge status={run.status} />
+            </>
+          );
+          const rowClass = cn(
+            "flex items-center gap-3 px-4 py-2.5",
+            i > 0 && "border-t border-border",
+          );
+          const inFlight = run.status === "queued" || run.status === "running";
+          return (
+            <div key={run.id}>
+              {run.href ? (
+                <Link href={run.href} className={cn(rowClass, "transition-colors hover:bg-surface-2")}>
+                  {row}
+                  <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
+                </Link>
+              ) : (
+                <div className={rowClass}>{row}</div>
+              )}
+              {inFlight && (
+                <div className="border-t border-border bg-surface-2/50">
+                  <ManagedJobProgress
+                    status={run.status}
+                    className="mb-0 rounded-none border-0 bg-transparent px-4 py-2"
+                  />
+                  <CancelRunControl runId={run.id} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Stop an in-flight run. The only cancel control used to live on the staff
+ * run-detail page, so a client who mis-fired a twenty-five-minute billable run
+ * could not stop it and could not reach the page that could. The confirm step
+ * is deliberate: cancelling costs the run, and on the staff hub the row sits
+ * one pixel from rows that are merely history.
+ *
+ * EXPORTED because CD-G1 took the client's only mount away with it (F30
+ * regression). Dropping ClientCustomAgents from the client branch left this
+ * control mounted on the staff hub alone, so the client-authorized action
+ * behind it — cancelClientAgentJobAction, which authorizes on the JOB's own
+ * clientId — had no surface. The agent DETAIL page is where a client now meets
+ * their in-flight run, so that is where the control goes: one implementation,
+ * one action, one confirm step, on both panels.
+ */
+export function CancelRunControl({
+  runId,
+  refunds = true,
+}: {
+  runId: string;
+  /**
+   * Whether stopping this run actually returns credits — i.e. whether the
+   * viewer was charged for it. Staff and impersonated sessions never spend
+   * (isBillableClientActor), so promising them a refund describes a ledger
+   * entry that does not exist. Default true: the client pressing their own
+   * Run button is the common case and it IS billed.
+   */
+  refunds?: boolean;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function cancel() {
+    setError(null);
+    startTransition(async () => {
+      // The action does not only RETURN errors — requireClientAccess throws
+      // ("Unauthorized" / "Forbidden"), and a network failure on the server
+      // action itself rejects. Unhandled, that escaped the transition and took
+      // the whole route to the error boundary: a client whose session had
+      // expired mid-run lost the page instead of reading one line. The row
+      // already has somewhere to say so.
+      try {
+        const result = await cancelClientAgentJobAction(runId);
+        if (result.error) {
+          setError(result.error);
+          setConfirming(false);
+          return;
+        }
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't stop this run.");
+        setConfirming(false);
+      }
+    });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
+      {confirming ? (
+        <>
+          <span className="text-[11px] text-muted">
+            {refunds ? "Stop this run? Credits for it are returned." : "Stop this run?"}
+          </span>
+          <Button size="sm" variant="danger" onClick={cancel} loading={pending}>
+            Stop run
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} disabled={pending}>
+            Keep going
+          </Button>
+        </>
+      ) : (
+        <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+          <Icon name="CircleSlash" className="h-3.5 w-3.5" /> Cancel run
+        </Button>
+      )}
+      {error && (
+        <span className="text-[11px] text-danger" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Exported so the live client-agent card's "Adjust pace" reuses THIS dialog
+ * rather than growing a second schedule UI over the same action. One dialog,
+ * one `configureClientAgentScheduleAction`, one set of clamps.
+ *
+ * `paceOnly` is the CLIENT face of it, and it exists for the churn rule (D3,
+ * A3/A4). The staff dialog has two dials because the schedule really has two
+ * dimensions: how many days the agent fires, and how many items each fire
+ * produces. Shown to a client, that second dial states the batch shape outright
+ * — "3 runs × 5 outputs = 15 drafts a week" tells them their week is generated
+ * in lumps ahead of time, which is exactly what the week strip is careful never
+ * to reveal. A client may be told the PACE (how many posts a week, which days),
+ * never the batching that produces it.
+ *
+ * So the client form offers one number — the days it actually changes — and
+ * READS the stored outputs-per-run into the weekly cost and the save payload
+ * rather than pinning it: a pinned 1 both under-quoted a 3×5 schedule's price
+ * and silently rewrote it on save (delta-lens bounce). The label decomposes
+ * nothing: "Posts per week" when one output per fire is stored, otherwise
+ * "Posting days a week". The server independently preserves stored
+ * outputsPerRun and prompt for client actors (planned-run-actions).
+ */
+export function AgentScheduleModal({
   agent,
   clientId,
   schedule,
   availableCredits,
+  paceOnly = false,
   setupNeeded,
   onClose,
 }: {
@@ -672,14 +1064,31 @@ function AgentScheduleModal({
   clientId: string;
   schedule?: ClientAgentScheduleRow;
   availableCredits?: number;
+  /** Client viewers: pace language only, no batch dial. */
+  paceOnly?: boolean;
   /** Set when this agent drafts from intake and its company page is missing. */
   setupNeeded?: { kind: IntakeKind; onOpenData: () => void };
   onClose: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [postsPerWeek, setPostsPerWeek] = useState(schedule?.postsPerWeek ?? 3);
-  const [outputsPerRun, setOutputsPerRun] = useState(schedule?.outputsPerRun ?? 1);
+  // Per-agent ceilings (F27). Clamped on the way IN as well: a stored row
+  // written before the cap existed would otherwise seed a value the dropdown
+  // cannot show, which renders as an empty select.
+  const limits = scheduleLimitsFor(agent.key);
+  const [postsPerWeek, setPostsPerWeek] = useState(
+    Math.min(schedule?.postsPerWeek ?? 3, limits.maxRunsPerWeek),
+  );
+  // ALWAYS the stored value, in both faces of the dialog. Pinning this to 1 for
+  // paceOnly (as it briefly did) was two bugs in one: a schedule stored at 3×5
+  // quoted its weekly cost from 3×1 — five times under — and pressing "Save
+  // pace" then wrote that 1 back, silently cutting the client's output to a
+  // fifth of what they were paying for. A client adjusting pace changes which
+  // DAYS the agent fires, and nothing else; the server enforces the same rule
+  // rather than trusting this value (configureClientAgentScheduleAction).
+  const [outputsPerRun, setOutputsPerRun] = useState(
+    Math.min(schedule?.outputsPerRun ?? 1, limits.maxOutputsPerRun),
+  );
   const [prompt, setPrompt] = useState(schedule?.prompt ?? "Create the next on-brand post for our audience.");
   const [time, setTime] = useState(
     `${String(schedule?.hour ?? 9).padStart(2, "0")}:${String(schedule?.minute ?? 0).padStart(2, "0")}`,
@@ -704,6 +1113,9 @@ function AgentScheduleModal({
         prompt,
         hour,
         minute,
+        // The time above is a wall clock the client typed in THEIR zone; without
+        // this the schedule silently anchors to the server's.
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       if (result.error) {
         setError(result.error);
@@ -734,39 +1146,89 @@ function AgentScheduleModal({
     <Modal
       open
       onClose={onClose}
-      title={`Keep ${agent.name} running`}
-      description="Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
+      title={paceOnly ? `${agent.name} pace` : `Keep ${agent.name} running`}
+      description={
+        paceOnly
+          ? "How often this agent posts for you. Change it whenever you like — it takes effect from the next post."
+          : "Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
+      }
+      footer={
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            {schedule && (
+              <Button variant="ghost" onClick={togglePause} loading={pending}>
+                {schedule.status === "active" ? "Pause agent" : "Resume agent"}
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
+            <Button
+              variant="accent"
+              onClick={save}
+              loading={pending}
+              // Setup missing ⇒ every fire this schedule writes would be
+              // refused, so the control that writes it is not left enabled.
+              disabled={insufficient || blockedBySetup}
+            >
+              {paceOnly
+                ? schedule
+                  ? "Save pace"
+                  : "Start posting"
+                : schedule
+                  ? "Update schedule"
+                  : "Start always-on agent"}
+            </Button>
+          </div>
+        </div>
+      }
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
+        <div className={cn("grid gap-3", paceOnly ? "grid-cols-1" : "grid-cols-2")}>
           <div>
-            <Label htmlFor={`schedule-posts-${agent.id}`}>Posts per week</Label>
+            {/* Staff see RUNS (days the agent fires) beside outputs-per-fire.
+                Clients see one dial. It is labelled "Posts per week" only when
+                that is literally true (one output per fire); when a staff member
+                has set more, the honest client-side name for the same dial is
+                the number of DAYS — which the ruling allows ("the modal may name
+                pace: posts per week, days") and which states no batch shape. */}
+            <Label htmlFor={`schedule-posts-${agent.id}`}>
+              {paceOnly
+                ? outputsPerRun === 1
+                  ? "Posts per week"
+                  : "Posting days a week"
+                : "Runs per week"}
+            </Label>
             <Select
               id={`schedule-posts-${agent.id}`}
               value={postsPerWeek}
               onChange={(event) => setPostsPerWeek(Number(event.target.value))}
             >
-              {[1, 2, 3, 4, 5, 6, 7].map((count) => (
+              {countOptions(limits.maxRunsPerWeek).map((count) => (
                 <option key={count} value={count}>{count}</option>
               ))}
             </Select>
           </div>
-          <div>
-            <Label htmlFor={`schedule-outputs-${agent.id}`}>Outputs per run</Label>
-            <Select
-              id={`schedule-outputs-${agent.id}`}
-              value={outputsPerRun}
-              onChange={(event) => setOutputsPerRun(Number(event.target.value))}
-            >
-              {[1, 2, 3, 4, 5].map((count) => (
-                <option key={count} value={count}>{count}</option>
-              ))}
-            </Select>
-          </div>
+          {!paceOnly && (
+            <div>
+              <Label htmlFor={`schedule-outputs-${agent.id}`}>Outputs per run</Label>
+              <Select
+                id={`schedule-outputs-${agent.id}`}
+                value={outputsPerRun}
+                onChange={(event) => setOutputsPerRun(Number(event.target.value))}
+              >
+                {countOptions(limits.maxOutputsPerRun).map((count) => (
+                  <option key={count} value={count}>{count}</option>
+                ))}
+              </Select>
+            </div>
+          )}
         </div>
 
         <div>
-          <Label htmlFor={`schedule-time-${agent.id}`}>Production time</Label>
+          <Label htmlFor={`schedule-time-${agent.id}`}>
+            {paceOnly ? "Time of day" : "Production time"}
+          </Label>
           <Input
             id={`schedule-time-${agent.id}`}
             type="time"
@@ -775,26 +1237,57 @@ function AgentScheduleModal({
           />
         </div>
 
-        <div>
-          <Label htmlFor={`schedule-prompt-${agent.id}`}>Ongoing direction</Label>
-          <Textarea
-            id={`schedule-prompt-${agent.id}`}
-            rows={3}
-            maxLength={4000}
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-          />
-        </div>
+        {/* STAFF ONLY. This is the operator's standing instruction to the agent
+            — internal copy, written for the model — and it was rendering in the
+            client's pace dialog as an editable textarea. That showed a client
+            text never written for them AND let them rewrite the direction every
+            future run receives. Clients steer their agent through feedback,
+            which is written for that purpose and is capped, scoped and
+            reviewable; this is not that. The server also refuses to take a
+            prompt from a client actor, so hiding it is the second lock. */}
+        {!paceOnly && (
+          <div>
+            <Label htmlFor={`schedule-prompt-${agent.id}`}>Ongoing direction</Label>
+            <Textarea
+              id={`schedule-prompt-${agent.id}`}
+              rows={3}
+              maxLength={4000}
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+            />
+          </div>
+        )}
 
         <div className="rounded-md border border-neon/20 bg-neon-soft/40 px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-foreground">Estimated weekly cost</span>
             <span className="font-mono text-sm text-neon">{weeklyCost} credits</span>
           </div>
-          <p className="mt-1 text-[11px] text-muted-2">
-            {postsPerWeek} runs × {outputsPerRun} outputs × {costPerOutput} credits.
-            Credits are charged when each scheduled run starts.
-          </p>
+          {paceOnly ? (
+            /* The weekly total above is computed from the STORED multiplier, so
+               it is the real number. What it must not do is decompose: no
+               "runs", no "outputs per run", no weekly draft total — each of
+               those describes the batch rather than the pace. When one post per
+               fire is stored there is no batch to hide and the friendlier
+               sentence is also the true one. */
+            <p className="mt-1 text-[11px] text-muted-2">
+              {outputsPerRun === 1
+                ? `${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} a week at ${costPerOutput} credits each. Credits are charged as each post is made.`
+                : `${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week. Credits are charged as each post is made.`}
+            </p>
+          ) : (
+            <>
+              <p className="mt-1 text-[11px] text-muted-2">
+                {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
+                {outputsPerRun === 1 ? "" : "s"} × {costPerOutput} credits.
+                Credits are charged when each scheduled run starts.
+              </p>
+              <p className="mt-1 text-[11px] text-foreground">
+                {postsPerWeek * outputsPerRun} new draft
+                {postsPerWeek * outputsPerRun === 1 ? "" : "s"} a week.
+              </p>
+            </>
+          )}
           {availableCredits !== undefined && (
             <p className={cn("mt-1 text-[11px]", insufficient ? "text-danger" : "text-muted-2")}>
               {availableCredits} credits currently available.
@@ -817,27 +1310,6 @@ function AgentScheduleModal({
         )}
 
         {error && <p className="text-xs text-danger" role="alert">{error}</p>}
-
-        <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
-          <div>
-            {schedule && (
-              <Button variant="ghost" onClick={togglePause} loading={pending}>
-                {schedule.status === "active" ? "Pause agent" : "Resume agent"}
-              </Button>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
-            <Button
-              variant="accent"
-              onClick={save}
-              loading={pending}
-              disabled={insufficient || blockedBySetup}
-            >
-              {schedule ? "Update schedule" : "Start always-on agent"}
-            </Button>
-          </div>
-        </div>
       </div>
     </Modal>
   );
@@ -848,15 +1320,19 @@ function AgentScheduleModal({
 /** The brief, or the agent's own data form — the intake-driven agents own both. */
 type RunPane = "run" | "data";
 
-function RunCustomAgentModal({
+/**
+ * Exported so the agent DETAIL page can offer the same run gesture for an
+ * agent that has a live schedule but no umbrella (CD-H8). One dialog, one
+ * launch profile, one charge path — a second run form for the legacy shape
+ * would be a second place for the priced gesture to drift.
+ */
+export function RunCustomAgentModal({
   agent,
   clientId,
   clients,
   contextItems,
   viewerIsClient,
-  xSetup,
-  linkedinSetup,
-  redditSetup,
+  setup,
   initialPane,
   onClose,
 }: {
@@ -867,11 +1343,13 @@ function RunCustomAgentModal({
   clients?: Array<{ id: string; name: string }>;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
-  /** X agent intake state and, when prefetched, the data form rendered inline. */
-  xSetup?: XAgentSetup;
-  /** LinkedIn agent intake state — same shape for the e10 agents. */
-  linkedinSetup?: LinkedInAgentSetup;
-  redditSetup?: RedditAgentSetup;
+  /**
+   * This agent's intake readiness, resolved server-side for this exact agent.
+   * Carries the data form when the page prefetched it (collected inline), and
+   * always carries the href to the agent's own data page (the way out when it
+   * did not).
+   */
+  setup?: AgentSetupState;
   /** "data" opens straight on the agent's data; so does a missing company page. */
   initialPane?: RunPane;
   onClose: () => void;
@@ -886,7 +1364,7 @@ function RunCustomAgentModal({
   const [briefTouched, setBriefTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
-  const intake = intakeFor(agent.key, xSetup, linkedinSetup, redditSetup);
+  const intake = intakeFor(setup);
   const intakeReady = intake?.setup.ready ?? true;
   // The data opens on the company page being missing, not on the server gate:
   // `ready` is satisfied by a shared seat, so an X run would otherwise skip
@@ -963,9 +1441,22 @@ function RunCustomAgentModal({
       setError(`Add ${profile.attachments.label.toLowerCase()} or provide the source link above.`);
       return;
     }
-    const prompt = buildCustomAgentPrompt(profile, fields);
+    // An agent whose only field is labelled "Optional" must be runnable with the
+    // form left exactly as instructed — that is the run the intake-driven
+    // agents are documented to support, and they draft from their stored data
+    // either way. The brief joins non-empty fields only, so an untouched form
+    // produced an empty prompt and a refusal naming a requirement that does not
+    // exist. Fall back to the first starting point: the same text the chips
+    // above insert, so the run is identical to clicking one.
+    let prompt = buildCustomAgentPrompt(profile, fields);
+    if (!prompt && !profile.fields.some((field) => field.required) && profile.quickStarts[0]) {
+      prompt = buildCustomAgentPrompt(profile, {
+        ...fields,
+        [primaryField.key]: profile.quickStarts[0],
+      });
+    }
     if (!prompt) {
-      setError("Complete the brief before starting the run.");
+      setError("Add at least one line to the brief before starting the run.");
       return;
     }
     if (prompt.length > 4000) {
@@ -996,15 +1487,52 @@ function RunCustomAgentModal({
     return (
       <Modal open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3 text-center">
-          <Icon name="CheckCircle2" className="mx-auto h-8 w-8 text-success" />
+          <Icon name="CircleCheck" className="mx-auto h-8 w-8 text-success" />
           <p className="text-sm text-foreground">Run started</p>
+          {/* Drafts no longer reach the client archive at all: F149 filters it
+              to approved, non-future items. phase3-design §3's sentence is for
+              run-FINISHED surfaces; this one fires the moment a run starts, so
+              it takes the future-tense "reviews it when it lands" form —
+              nobody is reviewing anything yet. */}
           <p className="text-xs text-muted">
-            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Deliverables appear in your
-            Workspace archive once your Karos team approves them.
+            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Your Karos team
+            reviews it when it lands — finished posts appear in your Workspace once approved.
           </p>
           <Button variant="subtle" onClick={onClose}>
             Done
           </Button>
+        </div>
+      </Modal>
+    );
+  }
+
+  // One gate for every intake-driven agent whose form this dialog does NOT
+  // carry. `setup` is already this agent's own answer, so the modal never
+  // re-derives readiness from the agent key. When the page DID prefetch the
+  // form (`intake`), the pane below collects it in place instead — a link out
+  // would throw away the run the reader was setting up (ruling 7).
+  if (setup && !setup.ready && !intake) {
+    return (
+      <Modal open onClose={onClose} title={agent.name}>
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-foreground">Set up the {setup.label} first.</p>
+          <p className="text-xs leading-relaxed text-muted">
+            This agent drafts from the {setup.label} page: the company page, a seat per
+            person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
+            will not run without it.
+          </p>
+          <div className="flex items-center gap-2 pt-1">
+            <a
+              href={setup.href}
+              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
+            >
+              Set up {setup.label}
+              <Icon name="ArrowRight" className="h-3.5 w-3.5" />
+            </a>
+            <Button variant="ghost" onClick={onClose}>
+              Not now
+            </Button>
+          </div>
         </div>
       </Modal>
     );
@@ -1016,23 +1544,48 @@ function RunCustomAgentModal({
   const continueToRun = openedForSetup && companyOnFile(intake);
 
   return (
+    // The blurb goes in the body, not Modal's `description`: that slot is an
+    // unclamped <p>, so a long fallback manifest pushed the whole brief below
+    // the fold. Same clamp + "More" as the card. It is also never
+    // `agent.description` — that is the lab manifest, written for the people
+    // who build agents, and this dialog is a client surface (CD-G2). The
+    // estimate + Start run row is the pinned footer: on the long agent briefs
+    // it used to scroll out of sight in the same box as the title.
     <Modal
       open
       onClose={onClose}
       title={showData && intake ? `${INTAKE_LABEL[intake.kind]} agent data` : agent.name}
-      description={
-        showData
-          ? companyOnFile(intake)
-            ? "This is what the agent drafts from. Change or add anything; it applies to the next run."
-            : `We draft from this, so we ask for it before the first run: ${intake ? INTAKE_ASKS[intake.kind] : ""}.`
-          : agent.description
-      }
+      {...(showData
+        ? {
+            description: companyOnFile(intake)
+              ? "This is what the agent drafts from. Change or add anything; it applies to the next run."
+              : `We draft from this, so we ask for it before the first run: ${intake ? INTAKE_ASKS[intake.kind] : ""}.`,
+          }
+        : {})}
       className={showData ? "max-w-3xl" : "max-w-2xl"}
       // Both panes hold work a mis-click must not throw away: the intake form
-      // in one, the brief in the other. Escape, the ✕ and the pane's own
-      // dismiss stay the deliberate ways out.
+      // in one, the brief in the other. Escape, the close button and the pane's
+      // own dismiss stay the deliberate ways out.
       closeOnBackdrop={!intake && !briefTouched}
       scrollRef={scrollRef}
+      // The data pane carries its own dismiss row; pinning "Start run" under it
+      // would offer the run from the form that has to be saved first.
+      {...(showData
+        ? {}
+        : {
+            footer: (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-muted-2">
+                  <Icon name="Clock" className="mr-1 inline h-3 w-3" />
+                  {profile.estimate}. You can leave this page; the run continues.
+                  {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
+                </p>
+                <Button variant="accent" onClick={submit} loading={pending}>
+                  {pending ? "Starting…" : "Start run"}
+                </Button>
+              </div>
+            ),
+          })}
     >
       {intake && (
         // Both panes stay mounted. Every field in the intake cards is local
@@ -1086,6 +1639,7 @@ function RunCustomAgentModal({
         className="space-y-5 focus:outline-none"
         hidden={showData}
       >
+        <AgentBlurb text={agentBlurb(agent)} />
         {intake && (
           <div className="flex flex-wrap items-center gap-2">
             {/* Reaching the brief at all means the company page is on file, so
@@ -1122,20 +1676,37 @@ function RunCustomAgentModal({
         {!clientId && clients && (
           <div>
             <Label htmlFor="ca-client">Client</Label>
-            <Select
-              id="ca-client"
-              value={selectedClientId}
-              onChange={(event) => {
-                setSelectedClientId(event.target.value);
-                setSelectedFiles([]);
-              }}
-            >
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
+            {clients.length === 1 ? (
+              // F38. A per-client agent instance has exactly one client it can
+              // draft for, and a dropdown of one is a question with a single
+              // answer — worse, it reads as though there were a choice. The
+              // fixed chip states the binding instead.
+              <div
+                id="ca-client"
+                className="mt-1 inline-flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-xs text-foreground"
+              >
+                <Icon name="Building2" className="h-3.5 w-3.5 text-muted-2" />
+                {clients[0].name}
+                {perClientAgentSlug(agent.key) ? (
+                  <span className="text-muted-2">· this agent&apos;s own client</span>
+                ) : null}
+              </div>
+            ) : (
+              <Select
+                id="ca-client"
+                value={selectedClientId}
+                onChange={(event) => {
+                  setSelectedClientId(event.target.value);
+                  setSelectedFiles([]);
+                }}
+              >
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
           </div>
         )}
 
@@ -1246,16 +1817,6 @@ function RunCustomAgentModal({
           </p>
         )}
 
-        <div className="flex items-center justify-between gap-3 pt-1">
-          <p className="text-xs text-muted-2">
-            <Icon name="Clock" className="mr-1 inline h-3 w-3" />
-            {profile.estimate}. You can leave this page; the run continues.
-            {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
-          </p>
-          <Button variant="accent" onClick={submit} loading={pending}>
-            {pending ? "Starting…" : "Start run"}
-          </Button>
-        </div>
       </div>
     </Modal>
   );
@@ -1272,6 +1833,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
   const [name, setName] = useState(agent?.name ?? "");
   const [key, setKey] = useState(agent?.key ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
+  const [clientBlurb, setClientBlurb] = useState(agent?.clientBlurb ?? "");
   const [icon, setIcon] = useState(agent?.icon ?? "Sparkles");
   const [color, setColor] = useState(agent?.color ?? "#A3E635");
   const [entrySkillDir, setEntrySkillDir] = useState(agent?.entrySkillDir ?? "");
@@ -1279,6 +1841,9 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
   const [includeClientSkills, setIncludeClientSkills] = useState(agent?.includeClientSkills ?? true);
   const [instructions, setInstructions] = useState(agent?.instructions ?? "");
   const [creditCost, setCreditCost] = useState(agent?.creditCost != null ? String(agent.creditCost) : "");
+  const [launchCreditCost, setLaunchCreditCost] = useState(
+    agent?.launchCreditCost != null ? String(agent.launchCreditCost) : "",
+  );
   const [enabled, setEnabled] = useState(agent?.enabled ?? true);
 
   function save() {
@@ -1287,6 +1852,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       name,
       key: key || name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""),
       description,
+      clientBlurb,
       icon,
       color,
       entrySkillDir,
@@ -1294,6 +1860,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       includeClientSkills,
       instructions,
       creditCost: creditCost.trim() === "" ? null : Number(creditCost),
+      launchCreditCost: launchCreditCost.trim() === "" ? null : Number(launchCreditCost),
       enabled,
     };
     startTransition(async () => {
@@ -1328,6 +1895,32 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       title={agent ? `Edit ${agent.name}` : "New custom agent"}
       description="The instructions are the agent's system prompt. The run adds the client context and the user's request around them."
       className="max-w-2xl"
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          {agent ? (
+            confirmDelete ? (
+              <span className="flex items-center gap-2 text-xs">
+                Delete this agent?
+                <Button size="sm" variant="danger" onClick={remove} loading={pending}>
+                  Delete
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+                  Keep
+                </Button>
+              </span>
+            ) : (
+              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)}>
+                <Icon name="Trash2" className="h-3.5 w-3.5" /> Delete
+              </Button>
+            )
+          ) : (
+            <span />
+          )}
+          <Button variant="accent" onClick={save} loading={pending}>
+            {agent ? "Save changes" : "Create agent"}
+          </Button>
+        </div>
+      }
     >
       <div className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -1341,8 +1934,26 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           </div>
         </div>
         <div>
-          <Label htmlFor="ae-desc">Description</Label>
+          <Label htmlFor="ae-desc">Description (internal)</Label>
           <Textarea id="ae-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+          <p className="mt-1 text-xs text-muted-2">
+            The lab manifest blurb. Staff surfaces only — clients never see this.
+          </p>
+        </div>
+        <div>
+          <Label htmlFor="ae-blurb">Client blurb</Label>
+          <Textarea
+            id="ae-blurb"
+            rows={2}
+            maxLength={300}
+            value={clientBlurb}
+            onChange={(e) => setClientBlurb(e.target.value)}
+            placeholder="Drafts a week of on-brand posts for your team to review and publish."
+          />
+          <p className="mt-1 text-xs text-muted-2">
+            What the client reads on the agent card and in the run dialog: 1–2 sentences, sentence
+            case, no product codes. Leave empty and the card falls back to the internal description.
+          </p>
         </div>
         <div>
           <Label htmlFor="ae-entry">Entry skill dir (in karos-agents)</Label>
@@ -1396,7 +2007,34 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
               onChange={(e) => setCreditCost(e.target.value)}
               placeholder={`${CREDIT_COSTS.customAgentRun} (default)`}
             />
+            <p className="mt-1 text-xs text-muted-2">
+              What this agent charges a client per run, on its card and in the run dialog. Left
+              empty every agent prices the same, and a video edit costs what a single post does.
+            </p>
           </div>
+        </div>
+        {/* §6.3. Until this is set the client's self-serve Launch button stays
+            disabled with a visible "pricing is being finalized" reason — gated
+            rather than provisional, because billing an invented number that
+            later changes is the F130 placeholder-pricing failure at the most
+            expensive SKU. Staff launches stay free and ARE the measurement runs;
+            the economics card on the client's agents page surfaces the measured
+            ratio and a suggested price to type in here. */}
+        <div className="sm:max-w-xs">
+          <Label htmlFor="ae-launch-cost">Credits for setup (one time)</Label>
+          <Input
+            id="ae-launch-cost"
+            type="number"
+            min={0}
+            value={launchCreditCost}
+            onChange={(e) => setLaunchCreditCost(e.target.value)}
+            placeholder="not priced yet"
+          />
+          <p className="mt-1 text-xs text-muted-2">
+            The one-off setup run that researches the brand and designs the template set. Must be
+            higher than the per-run price. Left empty, clients cannot launch this agent themselves
+            and staff run the setup for them.
+          </p>
         </div>
         <div className="flex items-center gap-4">
           <label className="flex cursor-pointer items-center gap-2 text-xs">
@@ -1416,36 +2054,11 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
 
         {agent?.source?.status === "blocked" && (
           <p className="rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
-            <Icon name="AlertTriangle" className="mr-1 inline h-3.5 w-3.5 text-warning" />
+            <Icon name="TriangleAlert" className="mr-1 inline h-3.5 w-3.5 text-warning" />
             The repo catalog marks this skill blocked. Review before enabling.
           </p>
         )}
         {error && <p className="text-xs text-danger">{error}</p>}
-
-        <div className="flex items-center justify-between gap-3 pt-1">
-          {agent ? (
-            confirmDelete ? (
-              <span className="flex items-center gap-2 text-xs">
-                Delete this agent?
-                <Button size="sm" variant="danger" onClick={remove} loading={pending}>
-                  Delete
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-                  Keep
-                </Button>
-              </span>
-            ) : (
-              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)}>
-                <Icon name="Trash2" className="h-3.5 w-3.5" /> Delete
-              </Button>
-            )
-          ) : (
-            <span />
-          )}
-          <Button variant="accent" onClick={save} loading={pending}>
-            {agent ? "Save changes" : "Create agent"}
-          </Button>
-        </div>
       </div>
     </Modal>
   );
@@ -1535,7 +2148,7 @@ function ImportAgentsModal({ onClose }: { onClose: () => void }) {
       <div className="mt-4 space-y-4">
         {!candidates && !error && (
           <p className="py-8 text-center text-sm text-muted">
-            <Icon name="Loader2" className="mr-2 inline h-4 w-4 animate-spin" />
+            <Icon name="LoaderCircle" className="mr-2 inline h-4 w-4 animate-spin" />
             Scanning the repo catalog…
           </p>
         )}

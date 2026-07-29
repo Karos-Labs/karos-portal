@@ -141,14 +141,33 @@ export function buildBrandVoiceSection(g: BrandingGuidelines): string {
   if (g.fontHeading) lines.push(`- **Heading Font:** ${g.fontHeading}`);
   if (g.fontBody) lines.push(`- **Body Font:** ${g.fontBody}`);
   if (g.toneKeywords?.length) lines.push(`- **Tone Keywords:** ${g.toneKeywords.join(", ")}`);
+  // The "edit it in the guidelines UI instead" note is for whoever opens the
+  // stored document, not for the client reading it in the portal — so it goes
+  // inside a comment, which the renderers drop, rather than on the page as the
+  // italic line it used to be. The END sentinel keeps its exact text:
+  // injectBrandVoiceSection finds an already-stored block by that string, and a
+  // reworded one would append a second block instead of replacing the first.
   lines.push(
     "",
-    "_This section is auto-synced when branding guidelines are updated. Edit the guidelines UI to change it._",
+    "<!-- Auto-synced from the Branding Guidelines UI whenever guidelines change. Edits made here are overwritten on the next sync. -->",
     "<!-- BRAND_SYNC_END -->",
   );
   return lines.join("\n");
 }
 
+/**
+ * Insert (or refresh) the auto-synced block inside a stored context document.
+ *
+ * Landing point, in order: an existing block is replaced where it stands; else
+ * the block goes after the `# ` title; else after the YAML frontmatter; else at
+ * the top.
+ *
+ * The title step is the one that matters. Inserting between the frontmatter and
+ * the title put a `## ` heading ABOVE the title, and stripDocPreamble's title
+ * rule is anchored at the top of the document — so the title stopped being
+ * stripped, fell into the first section's body, and the client read it there
+ * with its hash mark. Below the title, the rule reaches it again.
+ */
 export function injectBrandVoiceSection(content: string, section: string): string {
   const START = "<!-- BRAND_SYNC_START -->";
   const END = "<!-- BRAND_SYNC_END -->";
@@ -156,6 +175,11 @@ export function injectBrandVoiceSection(content: string, section: string): strin
   const endIdx = content.indexOf(END);
   if (startIdx !== -1 && endIdx !== -1) {
     return content.slice(0, startIdx) + section + content.slice(endIdx + END.length);
+  }
+  const titleMatch = content.match(/^[\s\S]*?^#[ \t]+.+\r?\n/m);
+  if (titleMatch) {
+    const offset = titleMatch[0].length;
+    return content.slice(0, offset) + "\n" + section + "\n\n" + content.slice(offset);
   }
   const fmMatch = content.match(/^---[\s\S]*?---\n/);
   if (fmMatch) {
@@ -748,9 +772,13 @@ export async function applyBrandingForClient(
   };
 
   // ── Context doc writes ───────────────────────────────────────────
+  // "internal" is the tier this write already declared as its default; naming it
+  // makes the target deterministic instead of "whichever row came back first".
+  // The internal copy is what condensation reads, so the client tier picks the
+  // change up on the next run.
   const [brandingDoc, voiceDoc] = await Promise.all([
-    getClientContextDoc(clientId, "branding-guidelines"),
-    getClientContextDoc(clientId, "brand-voice"),
+    getClientContextDoc(clientId, "branding-guidelines", "internal"),
+    getClientContextDoc(clientId, "brand-voice", "internal"),
   ]);
 
   await Promise.all([

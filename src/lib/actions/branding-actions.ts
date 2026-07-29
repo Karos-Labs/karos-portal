@@ -15,8 +15,30 @@ import {
   injectBrandVoiceSection,
   type BrandingGenResult,
 } from "@/lib/branding";
-import type { BrandingGuidelines } from "@/lib/types";
+import type { BrandColor, BrandingGuidelines } from "@/lib/types";
 import { requireStaff, requireAdmin, requireClientAccess, logActivity } from "./_shared";
+
+/**
+ * usagePct is internal mix guidance (CD-E2): a CLIENT_USER never receives it
+ * and their form never sends it, so a client editing the palette would
+ * otherwise silently blank the agency's numbers. Re-apply the stored values,
+ * matched on hex first (a reorder keeps its share) and position second.
+ * Staff payloads pass through untouched — that is how a share gets cleared.
+ */
+function preserveInternalUsage(
+  incoming: BrandColor[] | undefined,
+  stored: BrandColor[] | undefined,
+): BrandColor[] | undefined {
+  if (!incoming?.length || !stored?.length) return incoming;
+  const byHex = new Map<string, number>();
+  for (const c of stored) {
+    if (c.usagePct != null) byHex.set(c.hex.toLowerCase(), c.usagePct);
+  }
+  return incoming.map((c, i) => {
+    const pct = byHex.get(c.hex.toLowerCase()) ?? stored[i]?.usagePct;
+    return pct != null ? { ...c, usagePct: pct } : c;
+  });
+}
 
 /** Save or update branding guidelines for a client. Single source of truth:
  *  writes the structured client field AND keeps both context docs in sync so
@@ -28,14 +50,29 @@ export async function saveBrandingGuidelinesAction(
 ): Promise<void> {
   const user = await requireClientAccess(clientId);
 
-  const fullGuidelines: BrandingGuidelines = { ...guidelines, updatedAt: Date.now() };
+  // Read BEFORE the write: a client's payload carries no usagePct, so the
+  // stored values have to be merged back in (CD-E2).
+  const client = await getClient(clientId);
+  const dominantColors =
+    user.role === "CLIENT_USER"
+      ? preserveInternalUsage(
+          guidelines.dominantColors,
+          client?.brandingGuidelines?.dominantColors,
+        )
+      : guidelines.dominantColors;
+
+  const fullGuidelines: BrandingGuidelines = {
+    ...guidelines,
+    ...(dominantColors ? { dominantColors } : {}),
+    updatedAt: Date.now(),
+  };
   const now = Date.now();
 
-  const [, client, brandingDoc, voiceDoc] = await Promise.all([
+  const [, brandingDoc, voiceDoc] = await Promise.all([
     updateClient(clientId, { brandingGuidelines: fullGuidelines }),
-    getClient(clientId),
-    getClientContextDoc(clientId, "branding-guidelines"),
-    getClientContextDoc(clientId, "brand-voice"),
+    // Deterministic tier — see the matching write in src/lib/branding.ts.
+    getClientContextDoc(clientId, "branding-guidelines", "internal"),
+    getClientContextDoc(clientId, "brand-voice", "internal"),
   ]);
 
   const clientName = client?.name ?? clientId;
