@@ -132,6 +132,53 @@ export interface ClientAgentCardRow {
   availableCredits?: number;
 }
 
+/* ─────────────────── template click-through (CD-K1) ─────────────────── */
+
+/**
+ * One post this agent already delivered under a template.
+ *
+ * Built from the SAME set the page's archive rides — `agentProducedAssets`,
+ * which runs a client viewer through `getClientArchiveAssets` — so opening a
+ * template can never become a second, laxer route to work that has not been
+ * delivered. There is deliberately no status, no draft marker and no "ready"
+ * field: a template's history is a list of things that exist, and anything that
+ * distinguished a pre-generated post from a day-of one would put the batch
+ * shape back on the page the archive filter took it off (A3/A4).
+ *
+ * `at` is the deliverable stamp for THIS viewer (delivery for a client, the
+ * generation instant for staff), resolved server-side by `deliverableStamp`.
+ */
+export interface TemplatePostRow {
+  id: string;
+  title: string;
+  /** Epoch millis. */
+  at: number;
+}
+
+/**
+ * What clicking a template opens onto.
+ *
+ * Keyed by template key beside the registry rather than folded into
+ * `ClientAgentTemplate`: the registry entry is the STORED document (and the
+ * shape the curation pane writes), while this is a per-viewer projection of it.
+ */
+export interface TemplateDetail {
+  key: string;
+  /**
+   * The launch run's full reasoning. The collapsed row clamps it to two lines;
+   * this is what the expansion exists to show.
+   */
+  rationale?: string;
+  /** When this template joined the registry (epoch millis). */
+  addedAt: number;
+  /** Where it came from — a launch run, a backfill, or a human. */
+  source: ClientAgentTemplate["source"];
+  /** Newest first, capped. */
+  posts: TemplatePostRow[];
+  /** How many delivered posts this viewer may see under it, before the cap. */
+  postCount: number;
+}
+
 /**
  * One feedback entry as a browser may see it.
  *

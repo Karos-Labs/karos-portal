@@ -40,7 +40,18 @@ import {
   buildClipMakerView,
   buildDailyFinderView,
   deliverableStamp,
+  templateDetails,
 } from "@/lib/agent-detail-archetypes";
+import {
+  agentInputsView,
+  buildAgentSetupFacts,
+  readAgentInputDocs,
+} from "@/lib/agent-detail-sections";
+import {
+  AgentInputsSection,
+  AgentSetupSection,
+  AgentStatusStrip,
+} from "@/components/client-agents/agent-sections";
 import {
   buildLinkedInAgentIntakeView,
   buildRedditAgentIntakeView,
@@ -196,17 +207,21 @@ export default async function ClientAgentDetailPage({
   // the form (their run dialog collects it in place); a client's own route
   // reaches the same form through AgentSetupState.href, which is the CD-E1
   // model and stays a full page.
-  const panes = isStaff
-    ? await agentIntakePane(
-        id,
-        agent,
-        {
+  //
+  // The intake DOCUMENTS ride alongside, not after: the inputs band (CD-K1)
+  // wants a dated index of the same collections the panes are built from, and
+  // making it wait for the panes would add a serial round trip to every staff
+  // page load for data neither call needs from the other.
+  const [panes, inputDocs] = await Promise.all([
+    isStaff
+      ? agentIntakePane(id, agent, {
           isStaff,
           jobs,
           ...(client.socialLinks?.linkedin ? { linkedinPageUrl: client.socialLinks.linkedin } : {}),
-        },
-      )
-    : undefined;
+        })
+      : Promise.resolve(undefined),
+    readAgentInputDocs(id, agent.key),
+  ]);
   const agentSetup = await buildAgentSetup(id, [summary], panes);
   const scheduleRows = toScheduleRows(scheduledRuns, viewerIsClient);
   const umbrella = umbrellas.find((u) => u.customAgentId === agent.id) ?? null;
@@ -416,6 +431,64 @@ export default async function ClientAgentDetailPage({
         )
         .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null);
 
+  // ── THE SECTIONED LAYOUT (CD-K1) ──
+  // Albert: "under each agent, everything Daniel created is there, WITH DATES,
+  // categorized in sections — all inputs, all outputs, all settings." Outputs
+  // already had a home (the hero and the archive under it); these are the other
+  // two bands, and both are read-only projections that link the surfaces which
+  // already own the writes. Building editors here would be a second write path
+  // for documents that have one, which is how two screens start disagreeing
+  // about the same record.
+  const inputs = agentInputsView(inputDocs, setup);
+
+  // The registry rows the FORMAT list can be opened onto. `row.templates` is
+  // the viewer-redacted registry, never `umbrella.templates` — a `curating`
+  // umbrella's registry holds what the setup run proposed and staff have not
+  // confirmed, and the row projection empties it for a client for that reason.
+  // `produced` is the same delivered-work-only set the archive below rides, so
+  // opening a format cannot become a laxer route to undelivered work.
+  const templateDetailMap = umbrella
+    ? templateDetails({ templates: row?.templates ?? [], assets: produced, viewerIsClient })
+    : undefined;
+
+  const setupFacts = umbrella
+    ? buildAgentSetupFacts({
+        umbrella,
+        templates: row?.templates ?? [],
+        schedule: schedule
+          ? {
+              status: schedule.status,
+              postsPerWeek: schedule.postsPerWeek,
+              outputsPerRun: schedule.outputsPerRun,
+              nextRunAt: schedule.nextRunAt,
+            }
+          : null,
+        viewerIsClient,
+      })
+    : [];
+
+  // The only work this page may announce as happening NOW: a run this viewer's
+  // own side started. Exactly the two the run banners already mount. A
+  // scheduled fire is deliberately excluded — it is not something the reader
+  // just asked for, and saying it is running states outright that production is
+  // not day-of (A3/A4). A launch in flight is excluded too: the launch card is
+  // already narrating it in three phases, and a second voice would be a second
+  // copy of that story to keep in step.
+  const running = Boolean(row?.activeRun || legacyRun);
+
+  // Order-independent: `produced` is sorted for a client and unsorted for
+  // staff, and this line has to give the same answer to both.
+  const lastDelivered = produced.reduce<number | null>((newest, asset) => {
+    const at = deliverableStamp(asset, viewerIsClient);
+    return newest === null || at > newest ? at : newest;
+  }, null);
+  const statusFacts = [
+    ...(lastDelivered !== null ? [{ label: "Last delivered", at: lastDelivered }] : []),
+    ...(produced.length > 0
+      ? [{ label: "Delivered so far", value: String(produced.length) }]
+      : []),
+  ];
+
   return (
     <>
       {(launchInFlight || row?.activeRun || legacyRun) && <AutoRefresh />}
@@ -452,6 +525,16 @@ export default async function ClientAgentDetailPage({
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
+          {/* ── STATUS (CD-K1) ──
+              The header badge says the same word in the same breath, and that
+              is the point: Albert's directive is about how LOUDLY the page says
+              it, not whether the word appears. The strip leads the column with
+              a breathing halo; the badge stays the compact form for the header
+              row. Both read the SAME resolved `status`, so the rule that a
+              schedule refusal outranks Live (F24/F129) cannot hold in one place
+              and not the other. */}
+          <AgentStatusStrip status={status} running={running} facts={statusFacts} />
+
           {/* ── THE ARCHETYPE HERO (CD-I1) ──
               Deliberately ABOVE the controls band. Albert asked for the clip
               maker to be deliverables-first and the finder to lead with what it
@@ -502,6 +585,7 @@ export default async function ClientAgentDetailPage({
               viewer={{ name: user.name, email: user.email }}
               archetype={archetype}
               staffNotes={isStaff}
+              {...(templateDetailMap ? { templateDetails: templateDetailMap } : {})}
             />
           ) : row ? (
             <ClientAgentLaunchCard
@@ -551,6 +635,22 @@ export default async function ClientAgentDetailPage({
               description="Your Karos team sets this agent up for your brand before it starts producing. They will let you know when it is ready."
             />
           )}
+
+          {/* ── INPUTS (CD-K1 directive 1) ──
+              Daniel's intake surfaces, reachable from the agent they belong to.
+              They have always lived at /clients/<id>/<platform>-agent; the
+              redesign removed the sidebar links, so for two months the only way
+              to reach a seat form was to know the URL. Each row carries its own
+              date and links the page that owns its writes — the forms are
+              REUSED, never forked. */}
+          {inputs && <AgentInputsSection view={inputs} />}
+
+          {/* ── SETTINGS (CD-K1 directive 2) ──
+              What the launch run decided: the registry, the rotation, the pace,
+              and when any of it last moved. Read-only by design — every field
+              here already has an editor above or beside it, and the gap this
+              fills is that none of those editors ever says WHEN. */}
+          {setupFacts.length > 0 && <AgentSetupSection facts={setupFacts} />}
 
           {/* ── STAFF CONTROLS (CD-I1 staff parity) ──
               The four gestures the retired card carried — run now, set/manage
@@ -649,12 +749,22 @@ export default async function ClientAgentDetailPage({
               hint={launchProfileFor({ key: agent.key, name: agent.name }).attachments.hint}
             />
           ) : archetype === "daily_finder" && setup ? (
+            /* Kept even though the inputs band lists the same document: this
+               card shows the ANSWERS (which communities it is welcome in, which
+               it is banned from), and "did they actually record that we were
+               banned from r/SEO" is not a question a dated row can answer. */
             <FinderIntakeCard
               intake={finderIntake}
               href={setup.href}
               label={setup.label}
               ready={setup.ready}
             />
+          ) : inputs ? (
+            /* The inputs band in the content column says all of this, per
+               document and with dates. One link and a Saved/Needed badge beside
+               it would be the same sentence twice, and the two would have to be
+               kept in step forever. */
+            null
           ) : (
           <section>
             <SectionHeading title="What it knows about you" />

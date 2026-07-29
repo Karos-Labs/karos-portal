@@ -305,6 +305,17 @@ body {
 }
 .animate-slide-in-right { animation: slide-in-right 0.28s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 
+/* The LIVE mark on an agent (CD-K1). A halo that breathes outward, so "this is
+   running right now" reads from across the page rather than only on the dot's
+   own two pixels. Pair it with a background colour on the element itself —
+   the shadow is the whole animation, and a bare ring on nothing is invisible. */
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 7px color-mix(in srgb, var(--success) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 0%, transparent); }
+}
+.animate-pulse-ring { animation: pulse-ring 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
 /* Skeleton shimmer — use alongside a size class (e.g. h-4 w-32) */
 @keyframes shimmer {
   0%   { background-position: -200% 0; }
@@ -324,6 +335,7 @@ body {
 /* Respect reduced motion (§13) */
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse-neon,
+  .animate-pulse-ring,
   .animate-spin-slow,
   .animate-fade-up,
   .animate-fade-in,

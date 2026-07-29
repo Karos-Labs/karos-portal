@@ -8,7 +8,14 @@ import { clientDeliveryStamp, getClientArchiveAssets } from "@/lib/asset-visibil
 import { assetVideos } from "@/lib/asset-images";
 import { parseRedditDrafts, type RedditParsedAccount } from "@/lib/reddit-drafts";
 import type { ClientAgentIdentity } from "@/lib/agent-identity-map";
-import type { Asset, ClientAgent, Job, PlannedScheduledRun } from "@/lib/types";
+import type { TemplateDetail } from "@/components/client-agents/types";
+import type {
+  Asset,
+  ClientAgent,
+  ClientAgentTemplate,
+  Job,
+  PlannedScheduledRun,
+} from "@/lib/types";
 
 /**
  * The per-archetype projections behind the agent detail page (CD-I1).
@@ -81,6 +88,72 @@ export function agentProducedAssets(args: {
  */
 export function deliverableStamp(asset: Asset, viewerIsClient: boolean): number {
   return viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt;
+}
+
+/* ─────────────────── the template click-through (CD-K1) ────────────────── */
+
+/** How many posts one template's expansion keeps. */
+export const TEMPLATE_POSTS_SHOWN = 6;
+
+/**
+ * Every post this agent made under each of its templates, joined on
+ * `Asset.templateKey` — the key `ClientAgentTemplate.key` was defined to equal.
+ *
+ * `assets` MUST already be `agentProducedAssets` output. That is the whole
+ * safety of this function and the reason it lives in this module rather than
+ * beside the component that renders it: for a client that set has already been
+ * through `getClientArchiveAssets`, so a template's history inherits the
+ * delivered-work-only filter instead of re-deriving one. A version of this that
+ * read `listAssets` and filtered on `templateKey` alone would hand a client
+ * every draft in the batch the moment they opened a format — the A3/A4 failure
+ * in its most direct form, on the one surface that groups work by the stream
+ * that produced it.
+ *
+ * `postCount` counts what this VIEWER may see, not what exists. It is therefore
+ * a count of delivered work for a client and of everything for staff, which is
+ * the same split every other number on the page already carries.
+ *
+ * Retired templates are included: a client who has posts under a stream that
+ * was later retired still needs somewhere for them to appear. Which templates
+ * are OFFERED is `visibleTemplates`' decision, upstream of this.
+ */
+export function templateDetails(args: {
+  templates: ClientAgentTemplate[];
+  assets: Asset[];
+  viewerIsClient: boolean;
+  perTemplate?: number;
+}): Record<string, TemplateDetail> {
+  const cap = args.perTemplate ?? TEMPLATE_POSTS_SHOWN;
+  const byKey = new Map<string, Asset[]>();
+  for (const asset of args.assets) {
+    const key = asset.templateKey;
+    if (!key) continue;
+    const bucket = byKey.get(key);
+    if (bucket) bucket.push(asset);
+    else byKey.set(key, [asset]);
+  }
+
+  const details: Record<string, TemplateDetail> = {};
+  for (const template of args.templates) {
+    const posts = (byKey.get(template.key) ?? [])
+      .map((asset) => ({
+        id: asset.id,
+        // The archive rows settle on the same fallback, so a titleless
+        // deliverable reads the same wherever it is listed.
+        title: asset.title || "Untitled",
+        at: deliverableStamp(asset, args.viewerIsClient),
+      }))
+      .sort((a, b) => b.at - a.at);
+    details[template.key] = {
+      key: template.key,
+      ...(template.rationale ? { rationale: template.rationale } : {}),
+      addedAt: template.addedAt,
+      source: template.source,
+      posts: posts.slice(0, cap),
+      postCount: posts.length,
+    };
+  }
+  return details;
 }
 
 /* ──────────────────────────── the daily strip ─────────────────────────── */

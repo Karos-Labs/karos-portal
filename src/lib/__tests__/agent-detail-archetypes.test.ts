@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { Asset, Job, PlannedScheduledRun } from "@/lib/types";
+import type { Asset, ClientAgentTemplate, Job, PlannedScheduledRun } from "@/lib/types";
 
 vi.mock("server-only", () => ({}));
 
@@ -11,6 +11,7 @@ const {
   buildDailyFinderView,
   deliverableStamp,
   finderDays,
+  templateDetails,
 } = await import("@/lib/agent-detail-archetypes");
 
 /**
@@ -149,6 +150,116 @@ describe("deliverableStamp", () => {
   it("prefers the posting time once work is published", () => {
     const asset = makeAsset({ createdAt: 1_000, updatedAt: 9_000, publishedAt: 5_000 });
     expect(deliverableStamp(asset, true)).toBe(5_000);
+  });
+});
+
+/* ─────────────────── the template click-through (CD-K1) ────────────────── */
+
+describe("templateDetails", () => {
+  const templates: ClientAgentTemplate[] = [
+    {
+      key: "numbers",
+      name: "By The Numbers",
+      rationale: "Your audience responds to hard figures.",
+      status: "active",
+      position: 0,
+      source: "launch",
+      addedAt: NOW - 40 * DAY,
+    },
+    {
+      key: "story",
+      name: "Founder Story",
+      status: "paused",
+      position: 1,
+      source: "manual",
+      addedAt: NOW - 10 * DAY,
+    },
+  ];
+
+  it("joins posts on Asset.templateKey and stamps them for this viewer", () => {
+    const details = templateDetails({
+      templates,
+      assets: [
+        makeAsset({ id: "n1", templateKey: "numbers", createdAt: 1_000, updatedAt: 5_000 }),
+        makeAsset({ id: "n2", templateKey: "numbers", createdAt: 1_000, updatedAt: 9_000 }),
+        makeAsset({ id: "s1", templateKey: "story", createdAt: 2_000, updatedAt: 2_000 }),
+      ],
+      viewerIsClient: true,
+    });
+    // Newest first, by the stamp this viewer reads — a batch shares one
+    // createdAt, so ordering on it would shuffle a client's list arbitrarily.
+    expect(details.numbers.posts.map((p) => p.id)).toEqual(["n2", "n1"]);
+    expect(details.numbers.posts[0].at).toBe(9_000);
+    expect(details.numbers.postCount).toBe(2);
+    expect(details.story.posts.map((p) => p.id)).toEqual(["s1"]);
+  });
+
+  it("gives staff the generation instant for the same rows", () => {
+    const details = templateDetails({
+      templates,
+      assets: [makeAsset({ id: "n1", templateKey: "numbers", createdAt: 1_000, updatedAt: 9_000 })],
+      viewerIsClient: false,
+    });
+    expect(details.numbers.posts[0].at).toBe(1_000);
+  });
+
+  it("ignores assets that belong to no template, and never invents a key", () => {
+    // A deliverable with no templateKey is not "unfiled under this format" —
+    // it belongs to no stream, and bucketing it anywhere would credit a post to
+    // a format that did not produce it (the F147 shape, one level down).
+    const details = templateDetails({
+      templates,
+      assets: [
+        makeAsset({ id: "loose" }),
+        makeAsset({ id: "other", templateKey: "not-in-registry" }),
+      ],
+      viewerIsClient: true,
+    });
+    expect(Object.keys(details).sort()).toEqual(["numbers", "story"]);
+    expect(details.numbers.postCount).toBe(0);
+    expect(details.numbers.posts).toEqual([]);
+  });
+
+  it("caps the list but keeps the true count beside it", () => {
+    const many = Array.from({ length: 9 }, (_, i) =>
+      makeAsset({ id: `a${i}`, templateKey: "numbers", updatedAt: 1_000 + i }),
+    );
+    const details = templateDetails({ templates, assets: many, viewerIsClient: true, perTemplate: 3 });
+    expect(details.numbers.posts).toHaveLength(3);
+    expect(details.numbers.postCount).toBe(9);
+    expect(details.numbers.posts.map((p) => p.id)).toEqual(["a8", "a7", "a6"]);
+  });
+
+  it("carries the registry's own dates and nothing a client may not read", () => {
+    const details = templateDetails({ templates, assets: [], viewerIsClient: true });
+    expect(details.numbers.addedAt).toBe(NOW - 40 * DAY);
+    expect(details.numbers.rationale).toBe("Your audience responds to hard figures.");
+    expect(details.story.source).toBe("manual");
+    // No status, no draft marker, no "ready" field anywhere in the projection:
+    // anything that told a pre-generated post from a day-of one would put the
+    // batch shape back on the page the archive filter took it off (A3/A4).
+    expect(Object.keys(details.numbers).sort()).toEqual([
+      "addedAt",
+      "key",
+      "postCount",
+      "posts",
+      "rationale",
+      "source",
+    ]);
+    expect(Object.keys(details.numbers.posts).length).toBe(0);
+  });
+
+  it("keeps a retired template's history reachable", () => {
+    // A client with posts under a stream that was later retired still needs
+    // somewhere for them to appear. WHICH templates are offered is
+    // visibleTemplates' decision, upstream of this.
+    const retired: ClientAgentTemplate = { ...templates[0], key: "gone", status: "retired" };
+    const details = templateDetails({
+      templates: [retired],
+      assets: [makeAsset({ id: "old", templateKey: "gone" })],
+      viewerIsClient: true,
+    });
+    expect(details.gone.postCount).toBe(1);
   });
 });
 

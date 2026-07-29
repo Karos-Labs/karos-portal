@@ -13,7 +13,7 @@ import { OptionPicked, OptionPicker } from "./option-picker";
 import { noRunnableTemplateReason, visibleTemplates } from "@/lib/client-agent-runs";
 import { runClientAgentTemplateAction } from "@/lib/actions/client-agent-run-actions";
 import type { AgentArchetype } from "@/lib/agent-archetype";
-import type { ClientAgentCardRow } from "./types";
+import type { ClientAgentCardRow, TemplateDetail } from "./types";
 
 /**
  * What one run of this agent makes, in the client's words (CD-I1).
@@ -54,6 +54,7 @@ export function AgentDetailPanel({
   viewer,
   archetype = "template_calendar",
   staffNotes,
+  templateDetails,
 }: {
   agent: ClientAgentCardRow;
   viewerIsClient: boolean;
@@ -72,6 +73,16 @@ export function AgentDetailPanel({
   archetype?: AgentArchetype;
   /** Staff only: the client's per-day notes, rendered beside the plan (B2). */
   staffNotes?: boolean;
+  /**
+   * What clicking a format opens onto (CD-K1) — its full reasoning and the
+   * posts made under it, joined server-side on `Asset.templateKey`.
+   *
+   * Threaded rather than fetched here for the reason everything else on this
+   * row is: the join runs through `agentProducedAssets`, so a client's list
+   * inherits the delivered-work-only archive filter instead of a component
+   * deciding for itself what counts as a post.
+   */
+  templateDetails?: Record<string, TemplateDetail>;
 }) {
   const router = useRouter();
   const [feedback, setFeedback] = useState<
@@ -243,6 +254,7 @@ export function AgentDetailPanel({
           <TemplateRows
             agent={agent}
             templates={templates}
+            {...(templateDetails ? { details: templateDetails } : {})}
             {...(viewer ? { viewer } : {})}
             onFeedback={(template) =>
               setFeedback({ scope: "template", key: template.key, name: template.name })
