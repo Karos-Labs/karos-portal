@@ -1476,6 +1476,12 @@ export function dedupeNearDuplicates(prompts: string[], threshold = 0.7): string
 /**
  * Select a balanced final prompt set from a larger pool by per-intent quota (a3 Phase-1),
  * then backfill any shortfall from the leftovers. Preserves input order within each intent.
+ *
+ * SUPERSEDED by `buildQuestionSet` (CD-J1) and no longer called by the capture — kept
+ * because its behaviour is still the honest description of a best-effort selection
+ * from a pool. DO NOT wire it back into a capture path: the quota here is a ceiling
+ * only, so a thin pool yields a short, differently-shaped set, which is exactly the
+ * variable-denominator problem the question plan exists to remove.
  */
 export function selectByIntentQuota(prompts: string[], gazetteer: Gazetteer, total: number): string[] {
   const byIntent = new Map<PromptIntent, string[]>();
