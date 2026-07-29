@@ -482,10 +482,20 @@ export default async function ClientAgentDetailPage({
     const at = deliverableStamp(asset, viewerIsClient);
     return newest === null || at > newest ? at : newest;
   }, null);
+  // NOT "delivered so far". A client's `produced` is their ARCHIVE set, and
+  // `isInClientArchive` drops published work past the 30-day window — so the
+  // number is what is in the Workspace right now, and a label promising a
+  // lifetime total would be wrong for exactly the clients who have the most.
+  // Staff see every asset, so for them it is the count without a window.
   const statusFacts = [
     ...(lastDelivered !== null ? [{ label: "Last delivered", at: lastDelivered }] : []),
     ...(produced.length > 0
-      ? [{ label: "Delivered so far", value: String(produced.length) }]
+      ? [
+          {
+            label: viewerIsClient ? "In your Workspace" : "Deliverables",
+            value: String(produced.length),
+          },
+        ]
       : []),
   ];
 
