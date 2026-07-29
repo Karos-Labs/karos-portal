@@ -584,7 +584,9 @@ export function SeoGeoPanel({
         <CardTitle className="mb-1">Do buyers find you?</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
           Whether AI engines name you when buyers ask by name versus when they ask open category
-          questions.
+          questions. Click a score to see how it was measured. Only the category side feeds your
+          comparison against competitors — being named in a question about you isn&apos;t
+          visibility.
         </p>
         <div className="grid gap-4 @xl:grid-cols-2">
           {[presence.brand, presence.category].map((tile) => (
@@ -621,6 +623,8 @@ export function SeoGeoPanel({
               <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
                 Your share of the conversation
               </p>
+              {/* Basis stated in the caption below and in this explainer: category
+                  questions only (CD-J1 directive 3). */}
               <InfoTip text={presence.rosterShare.explainer} />
             </div>
             <div className="mt-1.5 flex items-center gap-3">
@@ -641,11 +645,16 @@ export function SeoGeoPanel({
       {!captureFailed && (
       <Card>
         <CardTitle className="mb-1">You vs competitors on each AI engine</CardTitle>
+        {/* CD-J1 directive 3: name the basis in the subline. Every number in this
+            section is measured on category questions only — a question that
+            contains your name names you by construction, so counting those would
+            hand you a lead over every competitor before an engine said anything. */}
         <p className="mb-4 text-xs text-muted-2">
-          How often each brand gets named when we ask the engines {insights.categoryPresence.total} real
-          buyer question{insights.categoryPresence.total === 1 ? "" : "s"} — excluding the{" "}
-          {insights.brandPresence.total} question{insights.brandPresence.total === 1 ? "" : "s"} that name
-          you directly, so the comparison is like-for-like.
+          Measured on category questions only. How often each brand gets named when we ask the
+          engines {insights.categoryPresence.total} real buyer question
+          {insights.categoryPresence.total === 1 ? "" : "s"} — the{" "}
+          {insights.brandPresence.total} question{insights.brandPresence.total === 1 ? "" : "s"} that
+          name you directly are left out, so the comparison is like-for-like.
           {competitorCount === 0 && " No competitors tracked yet · ask us to add some."}
         </p>
         {drift.isStale && (

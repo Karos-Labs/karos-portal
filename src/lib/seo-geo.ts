@@ -556,23 +556,28 @@ export function computeVisibilityIndex(
  * Client share among the LOCKED roster (client + tracked competitors) across every
  * measured answer this run, as a percentage — the run-record `roster_share_pct`.
  *
- * @param isCategory optional predicate marking a prompt as a category (non-brand,
- *   non-navigational) question. When supplied, only those prompts count toward the
- *   share — brand/nav prompts name the client by construction and would otherwise
- *   inflate this to a near-meaningless number even when competitor shares are 0
- *   (QA Fix 2: same like-for-like rule as computePerEngineVisibility's `category`).
+ * @param isCategory predicate marking a prompt as a category (non-brand,
+ *   non-navigational) question — only those count toward the share. Brand/nav
+ *   prompts name the client by construction and would otherwise inflate this to a
+ *   near-meaningless number even when every competitor sits at 0 (QA Fix 2: the
+ *   same like-for-like rule as computePerEngineVisibility's `category`).
+ *
+ *   REQUIRED, unlike the sibling predicates (CD-J1 directive 3). This number is
+ *   rendered to clients as "your share of the conversation" with nothing else to
+ *   qualify it, and there is no honest reading of it over the full prompt set — so
+ *   the scope is a parameter you cannot forget rather than one you should remember.
  */
 export function computeRosterSharePct(
   probes: GeoProbe[],
   gazetteer: Gazetteer,
-  isCategory?: (prompt: string) => boolean,
+  isCategory: (prompt: string) => boolean,
 ): number {
   const clientName = gazetteer.client[0];
   const roster = [clientName, ...Object.keys(gazetteer.competitors)];
   const counts = new Map<string, number>(roster.map((b) => [b, 0]));
   for (const p of probes) {
     if (p.captureTier === "UNAVAILABLE") continue;
-    if (isCategory && !isCategory(p.prompt)) continue;
+    if (!isCategory(p.prompt)) continue;
     for (const b of p.mentionedBrands) counts.set(b, (counts.get(b) ?? 0) + 1);
   }
   const total = [...counts.values()].reduce((a, b) => a + b, 0);
