@@ -119,7 +119,9 @@ export interface PlanSummary {
   priorImport: PriorImport | null;
 }
 
-export type { PriorImport };
+// NOTE: PriorImport is imported from lib/ops-import-history by consumers —
+// a type re-export from a "use server" module becomes a real (undefined)
+// runtime binding under the RSC bundler and crashes the page.
 
 export interface SeoGeoPlanSummary {
   ok: boolean;
