@@ -294,30 +294,62 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   })();
 
   // `@mention` focus — set when the client picked an agent from the chat's
-  // mention dropdown. A FOCUS, not a hard scope: the model still answers
-  // anything else asked, but leads with this agent's own context. Validated
-  // against THIS client's own live umbrellas so a stale/foreign id from the
-  // browser can't focus the prompt on another client's agent.
+  // mention dropdown, or via set_agent_focus in plain text. A FOCUS, not a
+  // hard scope: the model still answers anything else asked, but leads with
+  // this agent's own context.
+  //
+  // Two id spaces, tried in order, both scoped to THIS client so a stale or
+  // foreign id from the browser can't focus the prompt on another client's
+  // agent: a LIVE umbrella's own id (richer identity — templates, feedback),
+  // falling back to a bare custom-agent id for an agent this client has been
+  // assigned but never launched (mentionable/route.ts hands that id out when
+  // there's no umbrella to point at yet — see its own comment). The two
+  // spaces never collide, so no prefix is needed to tell them apart.
   const focusUmbrella = body.focusAgentId
     ? liveUmbrellas.find((u) => u.id === body.focusAgentId)
     : undefined;
-  const focusAppendix = focusUmbrella
-    ? `\n\n## FOCUSED AGENT\nThe user is currently focused on **${focusUmbrella.displayName}** — this STAYS active across turns ` +
+  const focusCatalogAgent =
+    !focusUmbrella && body.focusAgentId
+      ? customAgents.find((a) => a.id === body.focusAgentId)
+      : undefined;
+  const focusedAgent = focusUmbrella
+    ? {
+        customAgentId: focusUmbrella.customAgentId,
+        displayName: focusUmbrella.displayName,
+        templates: focusUmbrella.templates,
+        feedbackRows: feedbackByUmbrella.get(focusUmbrella.id) ?? [],
+      }
+    : focusCatalogAgent
+      ? {
+          customAgentId: focusCatalogAgent.id,
+          displayName: focusCatalogAgent.name,
+          templates: [],
+          feedbackRows: [],
+        }
+      : null;
+
+  // Same "prefer the live umbrella's name" rule mentionable/route.ts uses, so
+  // the names named in this prompt match what the client sees in the dropdown.
+  const liveByCustomAgentId = new Map(liveUmbrellas.map((u) => [u.customAgentId, u]));
+  const mentionableNames = customAgents.map((a) => liveByCustomAgentId.get(a.id)?.displayName ?? a.name);
+
+  const focusAppendix = focusedAgent
+    ? `\n\n## FOCUSED AGENT\nThe user is currently focused on **${focusedAgent.displayName}** — this STAYS active across turns ` +
       `until they explicitly ask to switch to a different agent or return to the general copilot; never drop it on your own. ` +
-      `Prioritize this agent in your answers — its templates: ${focusUmbrella.templates.map((t) => t.name).join(", ") || "none yet"}. ` +
+      `Prioritize this agent in your answers${focusedAgent.templates.length > 0 ? ` — its templates: ${focusedAgent.templates.map((t) => t.name).join(", ")}` : ""}. ` +
       `Still answer anything else they ask; this is a focus, not a restriction. ` +
       `If they ask (in plain text, not @mention) to switch to another agent or go back to general, call set_agent_focus.` +
       (() => {
         const md = renderFeedbackMarkdown({
-          agentName: focusUmbrella.displayName,
-          rows: feedbackByUmbrella.get(focusUmbrella.id) ?? [],
-          templates: focusUmbrella.templates,
+          agentName: focusedAgent.displayName,
+          rows: focusedAgent.feedbackRows,
+          templates: focusedAgent.templates,
         });
         return md ? `\n\n${md}` : "";
       })()
-    : liveUmbrellas.length > 0
+    : mentionableNames.length > 0
       ? `\n\n## AGENT FOCUS\nNo agent is focused right now — you're the general copilot. If the user asks in plain text ` +
-        `to talk to / focus on one of their agents (${liveUmbrellas.map((u) => u.displayName).join(", ")}), call set_agent_focus ` +
+        `to talk to / focus on one of their agents (${mentionableNames.join(", ")}), call set_agent_focus ` +
         `to switch into it; it then stays focused across turns until they ask to switch again or return here.`
       : "";
 
@@ -677,10 +709,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // agent — directing tasks to the agent the client tagged is the whole
       // point of picking it. Only fills the gap; the model's own
       // agentId/productType, when given, always wins.
-      const withFocusDefault = focusUmbrella
+      const withFocusDefault = focusedAgent
         ? tasks.map((t) =>
             t.owner === "karos_managed" && !t.agentId && !t.productType
-              ? { ...t, agentId: focusUmbrella.customAgentId }
+              ? { ...t, agentId: focusedAgent.customAgentId }
               : t,
           )
         : tasks;
@@ -997,7 +1029,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     description:
       "Switch which agent this conversation is focused on, or return to the general copilot. Call this when the user asks " +
       "IN PLAIN TEXT (not via the @mention picker) to talk to/focus on a specific agent, to switch to a different one, or to " +
-      "stop focusing / go back to the general copilot. Once focused, it stays focused across turns until they ask again — never call action='clear' unasked.",
+      "stop focusing / go back to the general copilot. Matches against ALL of this client's agents, not only live ones. " +
+      "Once focused, it stays focused across turns until they ask again — never call action='clear' unasked.",
     inputSchema: z.object({
       action: z.enum(["focus", "clear"]),
       agentQuery: z.string().optional().describe("Required when action is 'focus' — the agent's name"),
@@ -1008,15 +1041,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
       const q = (agentQuery ?? "").trim().toLowerCase();
       if (!q) return "Which agent would you like to focus on?";
-      const match = liveUmbrellas.find((u) => u.displayName.toLowerCase().includes(q));
-      if (!match) {
-        return liveUmbrellas.length > 0
-          ? `I couldn't match "${agentQuery}" to one of this client's live agents. Live agents: ${liveUmbrellas.map((u) => u.displayName).join(", ")}.`
-          : "This client has no live agents to focus on yet.";
+      // Same two-id-space resolution as body.focusAgentId above: a live
+      // umbrella's own id first (richer identity), else the bare custom-agent
+      // id for an assigned agent that has never been launched.
+      const umbrellaMatch = liveUmbrellas.find((u) => u.displayName.toLowerCase().includes(q));
+      const catalogMatch = umbrellaMatch ? undefined : customAgents.find((a) => a.name.toLowerCase().includes(q));
+      const resolved = umbrellaMatch
+        ? { id: umbrellaMatch.id, name: umbrellaMatch.displayName }
+        : catalogMatch
+          ? { id: catalogMatch.id, name: catalogMatch.name }
+          : null;
+      if (!resolved) {
+        return mentionableNames.length > 0
+          ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${mentionableNames.join(", ")}.`
+          : "This client has no agents to focus on yet.";
       }
-      const payload = JSON.stringify({ id: match.id, name: match.displayName });
+      const payload = JSON.stringify(resolved);
       return (
-        `Switched focus to **${match.displayName}** — I'll prioritize it until you ask to focus on a different agent ` +
+        `Switched focus to **${resolved.name}** — I'll prioritize it until you ask to focus on a different agent ` +
         `or go back to general.\n\n<!-- COPILOT_FOCUS:${payload} -->`
       );
     },
