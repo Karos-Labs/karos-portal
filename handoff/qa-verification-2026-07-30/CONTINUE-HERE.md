@@ -258,17 +258,49 @@ If a section below is empty, that sweep did not finish and is still owed:
 ### A. Unrequested-work audit (credits · auth/roles · scheduler · webhook · regressions · silent
 ### reverts · copy · data-compat · coherence · test-quality)
 
-_Status: launched twice. First run killed by the org monthly spend limit with zero results; re-run
-in progress at the time this branch was pushed. If nothing follows this line, treat the whole area as
-unreviewed and re-run it — it is the largest remaining hole, and the Firestore
+_Status: **NEVER COMPLETED — zero results, twice.** Killed by the org spend limit on the first run,
+then stopped mid-flight on the re-run when credit ran out. Treat the whole area as unreviewed and re-run it — it is the largest remaining hole, and the Firestore
 backward-compatibility question in §7b is the highest-stakes part of it._
 
-### B. Navigation and button-wiring sweep (10 surface clusters, every control → destination, per role,
-### at both widths)
+### B. Navigation and button-wiring sweep — PARTIAL (5 of 10 clusters)
 
-_Status: in progress at the time this branch was pushed. Calibrated on Daniel's "account settings"
-example, so it also hunts stranded controls, controls unreachable below `md`, `?tab=` deep links whose
-destination ignores the param, and buttons enabled where the server is guaranteed to refuse. If
-nothing follows this line, re-run it — the script is at
-`.claude/.../workflows/scripts/portal-navigation-sweep-*.js` in the producing session, or re-author
-from the brief in §7b._
+Stopped early: Daniel ran out of credit. **5 of 10 clusters completed; 55 findings.** The clusters that finished are staff-shell, client-shell, settings, agents and part of dashboard/SEO. **Not yet swept: intake pages, workspace/tasks/archive, calendar/documents, notifications/deep-links, admin/ops-import/jobs/assets/team/connect.** Re-run those five.
+
+**These are UNREFUTED** — the adversarial confirm stage did not run. Two independent clusters found the sign-out blocker separately, and the settings cluster independently confirmed Daniel's own "account settings" complaint, so the high-severity end is credible. Verify before acting on the medium/low tail.
+
+Machine-readable, with full clickPath / control / destination / suggestedFix for each: **`nav-sweep-partial.json`** in this directory.
+
+Severity: **2 blocker · 19 high · 20 medium · 14 low**
+
+| Sev | Kind | Role | Finding | Control |
+|---|---|---|---|---|
+| blocker | unreachable-at-width | CLIENT_USER | CLIENT_USER has no sign-out at any width below md — the campaign deleted the only phone-reachable one | `src/components/client-rail.tsx:209` |
+| blocker | unreachable-at-width | CLIENT_USER | CLIENT_USER cannot sign out at phone width — the only sign-out is inside the desktop-only aside, and the campa | `src/components/client-rail.tsx:280` |
+| high | stranded-control | CLIENT_USER | Client shell's "Settings" is built as a nav item and then never rendered in the nav — it hides in a credits pi | `src/components/client-rail.tsx:88` |
+| high | 404 | CLIENT_USER | A CLIENT_USER whose client document is gone gets the STAFF sidebar, and two of its nav rows 404 | `src/components/sidebar.tsx:411` |
+| high | unreachable-at-width | CLIENT_USER | CLIENT_USER has no sign-out control below md — LogoutButton is only inside the desktop-only aside | `src/components/account-menu.tsx:99` |
+| high | wrong-destination | CLIENT_USER | Credits pill in the client rail lands on the Channels tab, not Credits | `src/components/client-rail.tsx:190` |
+| high | 404 | CLIENT_USER | Meetings tab links a client to transcripts that are hidden from clients — the destination 404s | `src/app/(app)/clients/[id]/settings/page.tsx:194` |
+| high | role-dead-end | CLIENT_USER | A client group admin cannot reach /team above md — the Team tab shows only the invite key and never links to t | `src/components/client-rail.tsx:294` |
+| high | wrong-destination | CLIENT_USER | Client attention row "N pending tasks" lands on the board tab that filters those tasks out | `src/components/client-home-overview.tsx:148-155 (Attention` |
+| high | unreachable-at-width | CLIENT_USER | Group-admin CLIENT_USER can only reach /team below md — the desktop rail has no Team link at all | `src/components/client-rail.tsx:294` |
+| high | param-ignored | CLIENT_USER | The "Credits" pill lands on the Channels tab, not Credits — the destination reads ?tab= and no control in the  | `src/components/client-rail.tsx:191` |
+| high | lying-state | CLIENT_USER | Notification-bell rows inside the Company sheet leave the sheet open — the same same-route trap the campaign f | `src/components/client-rail.tsx:307` |
+| high | lying-state | CLIENT_USER | "Generate with AI" in the client's Brand Colors editor is enabled for a CLIENT_USER but the server action requ | `src/components/branding-modal.tsx:224` |
+| high | lying-state | CLIENT_USER | Client roster badge and agent-page badge disagree for any agent bound with "Add as live" | `src/app/(app)/clients/[id]/agents/page.tsx:124` |
+| high | wrong-destination | CLIENT_USER | "Open your Workspace" lands a client on the task board, not the archive that holds the agent's work | `src/app/(app)/clients/[id]/agents/[agentId]/page.tsx:770` |
+| high | dead-end | CLIENT_USER | Inputs band badges an agent "Ready to run" on a page that offers a client no way to run it | `src/components/client-agents/agent-sections.tsx:151` |
+| high | role-dead-end | KAROS_EMPLOYEE | KAROS_EMPLOYEE's client-context picker is structurally always empty — the layout never passes them a client li | `src/components/sidebar.tsx:617` |
+| high | wrong-destination | KAROS_EMPLOYEE | Every staff-facing "manage channels / reconnect" link lands on the Profile tab instead of Channels | `src/app/(app)/clients/[id]/agents/page.tsx:353` |
+| high | stranded-control | any | "Account settings" is a detached PageHeader link sitting beside — not inside — the settings tab row | `src/app/(app)/clients/[id]/settings/page.tsx:239` |
+| high | wrong-destination | any | LinkedIn seat OAuth returns to the default settings tab and its status param is read by nothing | `src/app/api/integrations/linkedin/employee/callback/route.` |
+| high | lying-state | any | Reddit agent renders posting vocabulary throughout the legacy panel | `src/components/client-agents/legacy-agent-panel.tsx:135` |
+
+The medium and low findings are in the JSON; they are mostly copy-and-placement items of the same family. Themes worth reading as a group rather than one at a time:
+
+- **Settings deep links are systematically wrong.** `SettingsTabs` reads `?tab=` but **no control anywhere in the app ever sets it**, so every link into settings opens whatever tab happens to be first after role filtering. The client "Credits" pill lands on Channels; every staff "Manage integrations →" / "reconnect" link lands on Profile. One fix — set `?tab=` at the call sites — closes several findings at once, and it is the same root cause as Daniel's "account settings" complaint: the settings row is the app's weakest-wired surface.
+- **Controls enabled where the server refuses.** "Generate with AI" in the client Brand Colors modal is enabled for a CLIENT_USER but the action requires staff, so it fails with a raw "Forbidden". Same family as findings #131 and #25.
+- **Client destinations that filter out the thing that sent you there.** The attention row's "N pending tasks" lands on a board tab that excludes them; "Open your Workspace" on an agent page lands on the task board rather than the archive holding that agent's work; the client Meetings tab lists staff-hidden transcripts whose rows 404. Same family as #51/#64/#65.
+- **Below-`md` gaps beyond sign-out.** A group-admin client can only reach `/team` on a phone; the desktop rail has no Team link at all. Notification rows inside the Company sheet leave the sheet open on a same-route tap.
+- **A CLIENT_USER whose client document is deleted gets the STAFF sidebar**, and two of its nav rows 404. Worth a guard regardless of how rare it is.
+- Two things I had already flagged from the 137 verification were independently re-found here, which raises confidence in both: the **employee client-context picker is structurally always empty**, and the **Reddit agent renders posting vocabulary** in the legacy panel.
