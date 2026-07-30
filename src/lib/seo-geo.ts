@@ -519,10 +519,30 @@ export interface VisibilityIndexResult {
 }
 
 /**
+ * The single aggregation rule for turning a set of per-engine 0–100 scores into
+ * the one headline number shown next to them. Deliberately just the arithmetic
+ * mean of the SAME rounded integers the per-engine cards render — a client-facing
+ * surface that shows both a total and its parts must have the parts sum to the
+ * total under grade-school arithmetic, or the total reads as broken regardless of
+ * how it was actually derived (bug: headline showed 37 next to engine cards of
+ * 23/26/25, whose mean is 25 — see computeVisibilityIndex).
+ */
+export function calculateOverallVisibilityScore(engineScores: number[]): number {
+  if (engineScores.length === 0) return 0;
+  return Math.round(engineScores.reduce((a, b) => a + b, 0) / engineScores.length);
+}
+
+/**
  * Appearance-led visibility index across every engine captured this run. Engines
  * that returned no answer (UNAVAILABLE) are excluded from the mean and surfaced via
  * enginesScored / enginesTotal — mirroring the run contract's "N of 5 engines
  * measured" disclosure rather than a renormalized coverage grade.
+ *
+ * The headline is derived from the SAME rounded per-engine scores returned in
+ * `perEngineScore` (via calculateOverallVisibilityScore), not from a separate
+ * average of the raw 0–1 signals — so the big number is always exactly the mean
+ * of the sub-scores rendered next to it, never a different rounding path that
+ * can drift away from what's on screen.
  */
 export function computeVisibilityIndex(
   perEngine: PerEngineVisibility[],
@@ -533,22 +553,20 @@ export function computeVisibilityIndex(
   const live = perEngine.filter(
     (e) => e.captureTier !== "UNAVAILABLE" && categoryMetrics(e).promptsMeasured > 0,
   );
-  const index = live.length
-    ? Math.round((live.reduce((a, e) => a + engineVisibilityScore(e), 0) / live.length) * 100)
-    : 0;
+  const perEngineScore = live.map((e) => ({
+    engine: e.engine,
+    source: e.source,
+    tier: e.captureTier,
+    score: Math.round(engineVisibilityScore(e) * 100),
+  }));
   return {
-    index,
+    index: calculateOverallVisibilityScore(perEngineScore.map((e) => e.score)),
     model: GEO_VISIBILITY_MODEL,
     enginesScored: live.length,
     enginesMeasured: live.filter((e) => e.captureTier === "MEASURED" || e.captureTier === "MEASURED_grounded").length,
     enginesTotal: enginesTotal || live.length,
     dataCoveragePct: enginesTotal ? Math.round((live.length / enginesTotal) * 100) : 0,
-    perEngineScore: live.map((e) => ({
-      engine: e.engine,
-      source: e.source,
-      tier: e.captureTier,
-      score: Math.round(engineVisibilityScore(e) * 100),
-    })),
+    perEngineScore,
   };
 }
 

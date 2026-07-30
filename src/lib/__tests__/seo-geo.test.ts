@@ -12,6 +12,7 @@ import {
   buildAnswerGrid,
   buildGazetteer,
   buildRecommendations,
+  calculateOverallVisibilityScore,
   categoryMetrics,
   classifyIntent,
   countBrandInAnswers,
@@ -42,6 +43,7 @@ import {
   rootDomain,
   tagPromptIntents,
   type EngineAnswer,
+  type PerEngineVisibility,
   type SeoGeoCheck,
 } from "../seo-geo";
 
@@ -245,6 +247,55 @@ describe("visibility index (appearance-led geo-score-v3, PR#6 contract)", () => 
     const legacy = { ...vis, category: undefined as unknown as typeof vis.category };
     expect(categoryMetrics(legacy).mentionRate).toBe(vis.mentionRate);
     expect(engineVisibilityScore(legacy)).toBeCloseTo(1, 10);
+  });
+});
+
+/**
+ * Dashboard bug: the headline "AI Visibility Today" tile showed 37/100 next to
+ * per-engine cards of ChatGPT 23% / Gemini 26% / Claude 25% — whose arithmetic
+ * mean is 25, not 37. `calculateOverallVisibilityScore` is the one function that
+ * turns a set of per-engine percentages into the headline; it must be a plain
+ * mean of exactly those numbers so the tile and its own breakdown can never
+ * contradict each other again.
+ */
+describe("calculateOverallVisibilityScore (aggregate score maths)", () => {
+  it("averages measured engine scores deterministically", () => {
+    expect(calculateOverallVisibilityScore([23, 26, 25])).toBe(25);
+  });
+
+  it("rounds to the nearest whole percent", () => {
+    expect(calculateOverallVisibilityScore([1, 1, 2])).toBe(1); // mean 1.333 → 1
+    expect(calculateOverallVisibilityScore([1, 2, 2])).toBe(2); // mean 1.667 → 2
+  });
+
+  it("returns 0 for an empty (no engines measured) input, never NaN", () => {
+    expect(calculateOverallVisibilityScore([])).toBe(0);
+  });
+
+  it("is a no-op mean for a single engine", () => {
+    expect(calculateOverallVisibilityScore([42])).toBe(42);
+  });
+
+  it("computeVisibilityIndex's headline is always calculateOverallVisibilityScore of its own perEngineScore — never a separately-rounded figure that can drift from the displayed breakdown", () => {
+    const engines: PerEngineVisibility[] = [
+      computePerEngineVisibility(
+        "chatgpt",
+        [analyzeAnswer(answer({ engine: "chatgpt", source: "OpenAI", answerText: "Acme Fintech is solid, Rival One too." }), gaz)],
+        gaz,
+      ),
+      computePerEngineVisibility(
+        "gemini",
+        [analyzeAnswer(answer({ engine: "gemini", source: "Gemini", answerText: "Rival One leads the category." }), gaz)],
+        gaz,
+      ),
+      computePerEngineVisibility(
+        "claude",
+        [analyzeAnswer(answer({ engine: "claude", source: "Anthropic", answerText: "Acme Fintech is the best choice.", citations: ["acmefintech.com"] }), gaz)],
+        gaz,
+      ),
+    ];
+    const result = computeVisibilityIndex(engines, 5);
+    expect(result.index).toBe(calculateOverallVisibilityScore(result.perEngineScore.map((e) => e.score)));
   });
 });
 

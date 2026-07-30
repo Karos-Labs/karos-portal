@@ -35,6 +35,7 @@ import {
   SEO_CHECKS,
   SEO_GEO_METHODOLOGY_VERSION,
   SEO_GEO_PIPELINE_VERSION,
+  calculateOverallVisibilityScore,
   computeCheckGaps,
   computeVisibilityGaps,
   type PerEngineVisibility,
@@ -653,12 +654,76 @@ describe("score views + context line (fixes 2 + 3)", () => {
 
   it("renders absent data as null values, never a zero grade", () => {
     const views = buildScoreViews(
-      insights({ seoDataCoveragePct: 0, geoVisibilityEnginesScored: 0 }),
+      insights({ seoDataCoveragePct: 0, geoVisibilityEnginesScored: 0, perEngine: [] }),
     );
     expect(views[0].value).toBeNull();
     expect(views[0].bandLabel).toBe("not measured yet");
     expect(views[2].value).toBeNull();
     expect(views[2].bandLabel).toBe("no engines measured this run");
+  });
+
+  /**
+   * Regression: the "AI visibility today" tile once showed 37/100 next to a
+   * "Score by engine" breakdown of ChatGPT 23% / Gemini 26% / Claude 25% — an
+   * arithmetic mean of 25, not 37 — because the headline read a stored
+   * `geoVisibilityIndex` field frozen at capture time while the breakdown below
+   * it recomputed live from `insights.perEngine` on every render. A snapshot
+   * captured under an older scoring formula silently drifted the two apart.
+   * The headline must now always equal calculateOverallVisibilityScore() of the
+   * exact per-engine numbers rendered in its own breakdown, never the stored
+   * field on its own.
+   */
+  it("derives the headline from its own breakdown's scores, not a stale stored index", () => {
+    const gemini = engineRow({
+      engine: "gemini",
+      source: "Gemini",
+      mentionRate: 0.4,
+      citationRate: 0.2,
+      firstPositionRate: 0.2,
+      shareOfVoice: 30,
+      netSentiment: 0.5,
+      category: {
+        promptsMeasured: 10,
+        mentionRate: 0.4,
+        citationRate: 0.2,
+        firstPositionRate: 0.2,
+        shareOfVoice: 30,
+        netSentiment: 0.5,
+        ghostCitationRate: 0,
+        topCompetitor: null,
+        brandMentions: [],
+      },
+    });
+    const claude = engineRow({
+      engine: "claude",
+      source: "Anthropic",
+      mentionRate: 0.35,
+      citationRate: 0.15,
+      firstPositionRate: 0.15,
+      shareOfVoice: 25,
+      netSentiment: 0.2,
+      category: {
+        promptsMeasured: 10,
+        mentionRate: 0.35,
+        citationRate: 0.15,
+        firstPositionRate: 0.15,
+        shareOfVoice: 25,
+        netSentiment: 0.2,
+        ghostCitationRate: 0,
+        topCompetitor: null,
+        brandMentions: [],
+      },
+    });
+    const data = insights({
+      geoVisibilityIndex: 99, // deliberately stale/wrong — must never be trusted directly
+      perEngine: [engineRow(), gemini, claude],
+    });
+    const [, , visibility] = buildScoreViews(data);
+    const mean = calculateOverallVisibilityScore(
+      visibility.breakdown.map((b) => b.pct).filter((pct): pct is number => pct !== null),
+    );
+    expect(visibility.value).toBe(mean);
+    expect(visibility.value).not.toBe(99);
   });
 
   it("bands scores at the existing 40/70 thresholds", () => {

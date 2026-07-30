@@ -24,8 +24,8 @@ import {
   brandKeys,
   categoryMetrics,
   computeCheckScore,
+  computeVisibilityIndex,
   dedupeGapsByRecId,
-  engineVisibilityScore,
   intentBasis,
   normalizeBrandKey,
   presenceCounts,
@@ -130,11 +130,23 @@ function checkBreakdown(registry: typeof SEO_CHECKS, checks: SeoGeoInsights["seo
 export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   const seoBand = scoreBand(insights.seoScore);
   const geoBand = scoreBand(insights.geoReadiness);
-  const visBand = scoreBand(insights.geoVisibilityIndex);
+  // The headline is derived LIVE from insights.perEngine — the exact same array
+  // and the exact same per-engine scores the "Score by engine" breakdown below
+  // renders — rather than trusted from the stored geoVisibilityIndex field. A
+  // persisted snapshot's index was computed by whatever scoring formula was live
+  // at capture time and then frozen; the breakdown below has always been
+  // recomputed fresh on every render. On a snapshot captured under an older
+  // formula version those two silently diverged (bug: headline "37" next to
+  // engine cards "23% / 26% / 25%", whose mean is 25, not 37). Deriving both
+  // from one computeVisibilityIndex call makes that contradiction structurally
+  // impossible: the big number is always calculateOverallVisibilityScore() of
+  // the same rounded integers shown in the cards beneath it.
+  const liveVisibility = computeVisibilityIndex(insights.perEngine);
+  const visBand = scoreBand(liveVisibility.index);
 
   const seoMeasured = insights.seoDataCoveragePct > 0;
   const readinessMeasured = insights.geoReadinessCoveragePct > 0;
-  const visibilityMeasured = insights.geoVisibilityEnginesScored > 0;
+  const visibilityMeasured = liveVisibility.enginesScored > 0;
   const basis = buildMeasurementBasis(insights);
   // State the denominator (QA F10): the index is scored on the CATEGORY questions,
   // the same set every card and gap below uses — not the full prompt set, which
@@ -175,7 +187,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       explainer: basis.categoryScoped
         ? `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand — the questions new customers ask. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we can measure. This is the number the fixes below are designed to move.`
         : `How often AI assistants actually named or recommended you on this snapshot, measured across all the buyer questions we asked — including the ones naming your brand, which is why it isn't comparable with a current snapshot. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we could measure.`,
-      value: visibilityMeasured ? insights.geoVisibilityIndex : null,
+      value: visibilityMeasured ? liveVisibility.index : null,
       tone: visibilityMeasured ? visBand.tone : "neutral",
       bandLabel: visibilityMeasured ? visBand.label : "no engines measured this run",
       coveragePct:
@@ -184,13 +196,14 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
           : 0,
       coverageLine: `based on ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} AI engines`,
       breakdownTitle: "Score by engine",
-      breakdown: insights.perEngine
-        .filter((e) => e.captureTier !== "UNAVAILABLE" && categoryMetrics(e).promptsMeasured > 0)
-        .map((e) => ({
-          label: ENGINE_LABELS[e.engine] ?? "Engine",
-          pct: Math.round(engineVisibilityScore(e) * 100),
-          note: null,
-        })),
+      // Same perEngineScore array the headline above was averaged from
+      // (calculateOverallVisibilityScore) — the tile and its own breakdown can
+      // no longer drift onto two different numbers for the same run.
+      breakdown: liveVisibility.perEngineScore.map((e) => ({
+        label: ENGINE_LABELS[e.engine] ?? "Engine",
+        pct: e.score,
+        note: null,
+      })),
     },
   ];
 }
