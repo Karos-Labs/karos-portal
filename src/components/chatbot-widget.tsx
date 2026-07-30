@@ -212,12 +212,17 @@ function useCopilot(
   // let the next signed-in user restore the previous one's transcript, which
   // for a staff→client handover means internal-tier context in a client's pane.
   const storageKey = `${THREAD_KEY_PREFIX}${viewerUid || "anon"}.${clientId}`;
+  /** Separate key, same scoping — the focus survives independently of clearing the transcript. */
+  const focusStorageKey = `${THREAD_KEY_PREFIX}focus.${viewerUid || "anon"}.${clientId}`;
   /** Blocks the write-back below until the restore pass has run. */
   const hydratedRef = useRef(false);
 
-  // Restore the transcript for this client. Runs after mount rather than in a
-  // lazy initializer so the server-rendered (empty) markup and the first client
-  // render still agree.
+  // Restore the transcript AND the focused agent for this client. Runs after
+  // mount rather than in a lazy initializer so the server-rendered (empty)
+  // markup and the first client render still agree. The two live in the same
+  // effect so `hydratedRef` gates both write-backs from the same instant —
+  // a client who picked an agent expects it to survive a reload exactly like
+  // the transcript already does, not silently reset to the general copilot.
   useEffect(() => {
     hydratedRef.current = false;
     try {
@@ -231,8 +236,36 @@ function useCopilot(
     } catch {
       /* unreadable / disabled storage — start clean */
     }
+    try {
+      const rawFocus = sessionStorage.getItem(focusStorageKey);
+      const parsedFocus: unknown = rawFocus ? JSON.parse(rawFocus) : null;
+      if (
+        parsedFocus &&
+        typeof parsedFocus === "object" &&
+        typeof (parsedFocus as Record<string, unknown>).id === "string" &&
+        typeof (parsedFocus as Record<string, unknown>).name === "string"
+      ) {
+        setFocusAgent(parsedFocus as FocusAgent);
+      }
+    } catch {
+      /* unreadable / disabled storage — starts unfocused */
+    }
     hydratedRef.current = true;
-  }, [storageKey]);
+  }, [storageKey, focusStorageKey]);
+
+  // Write the focus back on every change once hydrated — unlike the transcript,
+  // an explicit clear (null) DOES get persisted here: there is no dual-mount
+  // "empty means not-yet-restored" ambiguity for a single id, only ever a
+  // deliberate pick, a deliberate clear, or the restore pass itself.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    try {
+      if (focusAgent) sessionStorage.setItem(focusStorageKey, JSON.stringify(focusAgent));
+      else sessionStorage.removeItem(focusStorageKey);
+    } catch {
+      /* quota or private mode — focus stays in memory for this session only */
+    }
+  }, [focusAgent, focusStorageKey]);
 
   // Write back once a turn settles. Skipped mid-stream so a long answer isn't
   // serialized on every chunk.
@@ -316,6 +349,10 @@ function useCopilot(
         let accumulated = "";
         let brandingUpdated = false;
         let tasksCreated = false;
+        // Set once the marker is seen, so a later chunk containing more
+        // "<!--" text (unlikely, but the model writes free text) can't
+        // re-trigger this and stomp a focus change the user made meanwhile.
+        let focusMarkerSeen = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -324,6 +361,23 @@ function useCopilot(
           if (chunk.includes("Branding guidelines updated")) brandingUpdated = true;
           if (chunk.includes("Created") && chunk.includes("task")) tasksCreated = true;
           accumulated += chunk;
+          // The plain-text half of @mention focus (set_agent_focus, chat/route.ts):
+          // the tool rides its answer inside an HTML comment the same way the
+          // brand-sync block already does, so it renders invisibly
+          // (stripPipelineMarkers, doc-render.ts) while still being sniffable
+          // here, on the raw stream, before that stripping happens.
+          if (!focusMarkerSeen) {
+            const m = /<!--\s*COPILOT_FOCUS:([\s\S]*?)\s*-->/.exec(accumulated);
+            if (m) {
+              focusMarkerSeen = true;
+              try {
+                const payload = JSON.parse(m[1]) as { id: string; name: string } | null;
+                setFocusAgent(payload);
+              } catch {
+                /* malformed payload — leave focus exactly as it was */
+              }
+            }
+          }
           setMessages((prev) =>
             prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m)),
           );
@@ -715,17 +769,25 @@ export function ChatbotWidget({
     commandQuery !== undefined
       ? SLASH_COMMANDS.filter((c) => c.id.replace(/-/g, "").includes(commandQuery.toLowerCase().replace(/\//g, ""))).slice(0, 6)
       : [];
+  // True autocomplete, not just a click-only list: which row Tab/Enter commits.
+  // Reset to 0 on every keystroke (the input's onChange) since the filtered
+  // list itself changes underneath whatever was highlighted.
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const activeMatches = mentionMatches.length > 0 ? mentionMatches : commandMatches;
+  const clampedIndex = activeMatches.length > 0 ? highlightedIndex % activeMatches.length : 0;
 
   function pickMention(agent: MentionableAgent) {
     setFocusAgent({ id: agent.id, name: agent.displayName });
     // Strip the trailing "@query" the user was typing — the chip carries the
     // focus from here, so the literal "@" text would otherwise double it up.
     setInput((prev) => prev.replace(/(?:^|\s)@\S*$/, (m) => (m.startsWith(" ") ? " " : "")));
+    setHighlightedIndex(0);
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
   function pickCommand(cmd: SlashCommand) {
     setInput(cmd.scaffold ?? "/add-task ");
+    setHighlightedIndex(0);
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -742,11 +804,13 @@ export function ChatbotWidget({
 
   // Shared by both the form's submit and the input's Enter key — kept as one
   // function taking no event so it isn't tied to either handler's event type.
+  // Commits whichever row is HIGHLIGHTED, not always the top one — arrow keys
+  // (handleKeyDown) move `highlightedIndex` before this ever fires.
   function submitOrDispatch() {
-    // A dropdown open picks the top suggestion rather than sending half-typed
-    // "@" or "/" text as a literal message.
-    if (mentionMatches.length > 0) return pickMention(mentionMatches[0]);
-    if (commandMatches.length > 0) return pickCommand(commandMatches[0]);
+    // A dropdown open commits the highlighted suggestion rather than sending
+    // half-typed "@" or "/" text as a literal message.
+    if (mentionMatches.length > 0) return pickMention(mentionMatches[clampedIndex]);
+    if (commandMatches.length > 0) return pickCommand(commandMatches[clampedIndex]);
     submitCurrentInput();
   }
 
@@ -756,6 +820,28 @@ export function ChatbotWidget({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    // Arrow/Tab only apply while a dropdown is actually open — otherwise
+    // Tab should do its normal browser thing (move focus to the next control).
+    if (activeMatches.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHighlightedIndex((i) => (i + 1) % activeMatches.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlightedIndex((i) => (i - 1 + activeMatches.length) % activeMatches.length);
+        return;
+      }
+      if (e.key === "Tab") {
+        // Tab commits without sending — lets the client keep typing to
+        // complete the sentence (an @mention leaves the input empty to type
+        // into; a /command's scaffold ends mid-sentence on purpose).
+        e.preventDefault();
+        submitOrDispatch();
+        return;
+      }
+    }
     if (e.key === "Escape" && (mentionQuery !== undefined || commandQuery !== undefined)) {
       // Drop the trigger character so re-pressing Escape doesn't just reopen it.
       setInput((prev) => prev.replace(/(?:^|\s)@\S*$/, "").replace(/^\/\S*$/, ""));
@@ -947,7 +1033,9 @@ export function ChatbotWidget({
 
           {/* Focused-agent chip — a bias, not a lock (chat/route.ts's FOCUSED
               AGENT block still answers anything else asked). Persists across
-              turns until cleared here or by picking a different @mention. */}
+              turns AND reloads (sessionStorage) until cleared here, by picking
+              a different @mention, or by telling the copilot in plain text to
+              switch agents / go back to general (set_agent_focus). */}
           {focusAgent && (
             <div className="mx-3 mb-2 flex w-fit items-center gap-1.5 rounded-full border border-neon/30 bg-neon-soft px-2.5 py-1 text-[11px] text-neon">
               <Icon name="AtSign" className="h-3 w-3" />
@@ -973,24 +1061,32 @@ export function ChatbotWidget({
                 className="absolute bottom-full left-3 right-3 z-10 mb-1 max-h-56 overflow-y-auto rounded-md border border-border bg-surface shadow-lg"
               >
                 {mentionQuery !== undefined &&
-                  mentionMatches.map((a) => (
+                  mentionMatches.map((a, i) => (
                     <button
                       key={a.id}
                       type="button"
                       onClick={() => pickMention(a)}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2"
+                      onMouseEnter={() => setHighlightedIndex(i)}
+                      className={cn(
+                        "flex w-full items-center gap-2 px-3 py-2 text-left transition-colors",
+                        i === clampedIndex ? "bg-surface-2" : "hover:bg-surface-2",
+                      )}
                     >
                       <Icon name={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
                       <span className="flex-1 truncate text-xs text-foreground">{a.displayName}</span>
                     </button>
                   ))}
                 {commandQuery !== undefined &&
-                  commandMatches.map((c) => (
+                  commandMatches.map((c, i) => (
                     <button
                       key={c.id}
                       type="button"
                       onClick={() => pickCommand(c)}
-                      className="flex w-full flex-col items-start px-3 py-2 text-left transition-colors hover:bg-surface-2"
+                      onMouseEnter={() => setHighlightedIndex(i)}
+                      className={cn(
+                        "flex w-full flex-col items-start px-3 py-2 text-left transition-colors",
+                        i === clampedIndex ? "bg-surface-2" : "hover:bg-surface-2",
+                      )}
                     >
                       <span className="font-mono text-xs text-foreground">{c.label}</span>
                       <span className="text-[11px] text-muted-2">{c.hint}</span>
@@ -1005,7 +1101,10 @@ export function ChatbotWidget({
             <input
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                setHighlightedIndex(0);
+              }}
               onKeyDown={handleKeyDown}
               placeholder={
                 showProactiveWelcome

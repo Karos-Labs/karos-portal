@@ -302,9 +302,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ? liveUmbrellas.find((u) => u.id === body.focusAgentId)
     : undefined;
   const focusAppendix = focusUmbrella
-    ? `\n\n## FOCUSED AGENT\nThe user is currently focused on **${focusUmbrella.displayName}** (picked via @mention). ` +
+    ? `\n\n## FOCUSED AGENT\nThe user is currently focused on **${focusUmbrella.displayName}** — this STAYS active across turns ` +
+      `until they explicitly ask to switch to a different agent or return to the general copilot; never drop it on your own. ` +
       `Prioritize this agent in your answers — its templates: ${focusUmbrella.templates.map((t) => t.name).join(", ") || "none yet"}. ` +
-      `Still answer anything else they ask; this is a focus, not a restriction.` +
+      `Still answer anything else they ask; this is a focus, not a restriction. ` +
+      `If they ask (in plain text, not @mention) to switch to another agent or go back to general, call set_agent_focus.` +
       (() => {
         const md = renderFeedbackMarkdown({
           agentName: focusUmbrella.displayName,
@@ -313,7 +315,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         });
         return md ? `\n\n${md}` : "";
       })()
-    : "";
+    : liveUmbrellas.length > 0
+      ? `\n\n## AGENT FOCUS\nNo agent is focused right now — you're the general copilot. If the user asks in plain text ` +
+        `to talk to / focus on one of their agents (${liveUmbrellas.map((u) => u.displayName).join(", ")}), call set_agent_focus ` +
+        `to switch into it; it then stays focused across turns until they ask to switch again or return here.`
+      : "";
 
   // Relative-date reasoning for `/reschedule-post` — `buildCopilotSystemPrompt`
   // already states "Today is <date>" in prose; this restates it as an
@@ -971,6 +977,51 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     },
   });
 
+  /**
+   * Plain-text half of the `@mention` focus. Picking `@AgentName` in the input
+   * sets it client-side instantly, with no model turn — this tool exists for
+   * the OTHER way in: "let's talk about my Instagram agent" / "switch to the
+   * LinkedIn agent" / "go back to the general copilot", typed as a sentence
+   * instead of the mention chip.
+   *
+   * The client holds `focusAgentId` in its own state (sent back on every
+   * turn) — there is no other channel from server to client mid-stream, so
+   * the change rides inside a plain HTML comment in the reply text:
+   * `<!-- COPILOT_FOCUS:{...} -->`. `stripPipelineMarkers` (doc-render.ts)
+   * already strips every HTML comment before render — the SAME mechanism the
+   * brand-sync block already relies on to stay invisible — so this needs no
+   * new rendering code; the client only needs to sniff the raw stream for it
+   * (chatbot-widget.tsx) before the marker is stripped away.
+   */
+  const setAgentFocusTool = tool({
+    description:
+      "Switch which agent this conversation is focused on, or return to the general copilot. Call this when the user asks " +
+      "IN PLAIN TEXT (not via the @mention picker) to talk to/focus on a specific agent, to switch to a different one, or to " +
+      "stop focusing / go back to the general copilot. Once focused, it stays focused across turns until they ask again — never call action='clear' unasked.",
+    inputSchema: z.object({
+      action: z.enum(["focus", "clear"]),
+      agentQuery: z.string().optional().describe("Required when action is 'focus' — the agent's name"),
+    }),
+    execute: async ({ action, agentQuery }) => {
+      if (action === "clear") {
+        return "Back to the general copilot — I'm not focused on a specific agent anymore.\n\n<!-- COPILOT_FOCUS:null -->";
+      }
+      const q = (agentQuery ?? "").trim().toLowerCase();
+      if (!q) return "Which agent would you like to focus on?";
+      const match = liveUmbrellas.find((u) => u.displayName.toLowerCase().includes(q));
+      if (!match) {
+        return liveUmbrellas.length > 0
+          ? `I couldn't match "${agentQuery}" to one of this client's live agents. Live agents: ${liveUmbrellas.map((u) => u.displayName).join(", ")}.`
+          : "This client has no live agents to focus on yet.";
+      }
+      const payload = JSON.stringify({ id: match.id, name: match.displayName });
+      return (
+        `Switched focus to **${match.displayName}** — I'll prioritize it until you ask to focus on a different agent ` +
+        `or go back to general.\n\n<!-- COPILOT_FOCUS:${payload} -->`
+      );
+    },
+  });
+
   /* ── onFinish: log copilot token usage ───────────────────────────── */
 
   function logCopilotUsage(usage: { inputTokens?: number; outputTokens?: number }) {
@@ -1006,6 +1057,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       run_agent_now: runAgentNowTool,
       reschedule_output: rescheduleOutputTool,
       provide_feedback: provideFeedbackTool,
+      set_agent_focus: setAgentFocusTool,
     }),
     onFinish: ({ usage }) => logCopilotUsage(usage),
   });

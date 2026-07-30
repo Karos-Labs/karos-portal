@@ -35,6 +35,8 @@ import type { AppUser } from "@/lib/types";
  * `reschedule_output` branches internally on `isStaffCopilotActor` — a client
  * session can only ever reach its own scoped `clientRescheduleAssetAction`
  * path (own asset, approved/scheduled only, date only), never the staff one.
+ * `set_agent_focus` only ever reads this client's own live umbrella names and
+ * returns a client-safe confirmation string — it writes nothing.
  *
  * The tool that is NOT here is `update_branding_guidelines`: it rewrites the
  * `branding-guidelines` context doc, which lives at the INTERNAL tier —
@@ -54,6 +56,7 @@ export const CLIENT_SAFE_COPILOT_TOOLS = [
   "run_agent_now",
   "reschedule_output",
   "provide_feedback",
+  "set_agent_focus",
 ] as const;
 
 export type ClientSafeCopilotTool = (typeof CLIENT_SAFE_COPILOT_TOOLS)[number];
