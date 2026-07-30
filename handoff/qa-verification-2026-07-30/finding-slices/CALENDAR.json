@@ -1,0 +1,178 @@
+[
+ {
+  "n": 107,
+  "severity": "high",
+  "title": "Choosing \"Manual push\" when approving tells you to publish from the calendar. There is no Publish Now button on the calendar \u2014 or anywhere else",
+  "surface": "Approve panel on a draft (/assets, staff) \u2192 then Calendar (/calendar) \u2192 day \u2192 post detail",
+  "whatYouSee": "When approving a deliverable you pick a publishing tier. Choosing \"Manual push\" shows the hint \"On the calendar, you push it live with Publish Now.\" You go to the Calendar, click the scheduled post, and the detail panel offers only \"Mark as posted\". There is no Publish Now on the calendar. In fact the Publish Now button never appears anywhere in the app, because the list that renders it is never given the client's connected channels \u2014 the condition that reveals it can never be true. The integrations tooltip (\"Publish through the Publish Now button only\") and the task ticket (\"lands on the calendar for a manual Publish Now\") point at the same button.",
+  "whyItsWrong": "Three separate pieces of user-facing copy name a control that has no reachable location. The calendar opens the read-only asset detail panel, which has no publish path at all. And the one place the button is coded \u2014 the staff assets list \u2014 never satisfies its own visibility condition, so the whole \"manual\" tier is instruction-only: the app tells you to push it live and gives you nothing to push.",
+  "evidence": [
+   "src/components/asset-card.tsx:146 \u2014 approve-panel hint: \"On the calendar, you push it live with Publish Now\"",
+   "src/components/asset-card.tsx:500 \u2014 `canPublishNow = canApprove && compatibleConnected.length > 0 && \u2026`",
+   "src/components/asset-card.tsx:498 \u2014 compatibleConnected filters against the `connectedPlatforms` prop",
+   "src/components/assets-view.tsx:113 \u2014 `<AssetCard asset={asset} canApprove={canApprove} />` \u2014 connectedPlatforms is never passed",
+   "src/app/(app)/jobs/[id]/page.tsx:61 \u2014 `<AssetCard key={a.id} asset={a} canApprove />` \u2014 also no connectedPlatforms; these are the only two AssetCard call sites in the repo",
+   "src/components/asset-card.tsx:1017 \u2014 the Publish Now button, gated on canPublishNow",
+   "src/components/run-calendar.tsx:578 \u2014 the calendar opens AssetDetailModal",
+   "src/components/asset-detail-modal.tsx:291 \u2014 MarkPostedRow is the only action in that modal",
+   "src/components/integrations-tab.tsx:323 \u2014 toggle tooltip: \"Auto-posting is off. Publish through the Publish Now button only\"",
+   "src/components/task-ticket-modal.tsx:235 \u2014 \"lands on the calendar for a manual Publish Now\"",
+   "src/lib/types.ts:370 \u2014 PublishMode doc: manual = \"a user triggers 'Publish Now'\"",
+   "src/lib/actions/asset-actions.ts:279 \u2014 publishAssetNowAction starts with `await requireStaff()`"
+  ],
+  "fix": "Two parts. (1) Make the button reachable for staff: pass the client's connected platforms into AssetCard from src/components/assets-view.tsx:113 and src/app/(app)/jobs/[id]/page.tsx:61 (listClientIntegrations + integrationIsUsable, as src/lib/actions/asset-actions.ts:284-285 does), otherwise canPublishNow at asset-card.tsx:500 can never be true. (2) Fix the three copy strings so they name a real location: asset-card.tsx:146, integrations-tab.tsx:323, task-ticket-modal.tsx:235 should say the post is pushed live from the Assets list (or, for clients, that they post it by hand and use \"Mark as posted\"). Do NOT add Publish Now to src/components/asset-detail-modal.tsx for clients \u2014 publishAssetNowAction calls requireStaff() (asset-actions.ts:279), so a client-facing button there would always error; if it is added to that modal, gate it on a staff viewer prop and pass connectedPlatforms in from src/components/run-calendar.tsx.",
+  "ledgerCluster": "CALENDAR",
+  "ledgerStatus": "RESOLVED",
+  "track": "B",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 108,
+  "severity": "high",
+  "title": "Scheduled runs are previewed in your timezone but stored and printed in the server's",
+  "surface": "Calendar \u2192 \"Schedule a run\" modal, then the day-detail card for that run",
+  "whatYouSee": "In the schedule modal you pick Weekly / Monday / 09:00 and the green preview says it fires Monday at 9:00 AM. After saving, the card for that run on the calendar says \"Weekly \u00b7 Mon 09:00\" and, in the same sentence, a different clock time \u2014 and the chip can land in a day cell either side of the one you expected.",
+  "whyItsWrong": "The next fire time is worked out twice in two different timezones: the browser computes the preview, then the server throws that away and recomputes with the same helper in the server's own timezone (the helper file states this outright). The card then prints the stored hour and minute raw next to a time converted into whoever is looking. Nothing in the deployment pins a timezone, so a hosted container runs on UTC while the team is not \u2014 every recurring schedule fires hours away from the time the person picked, and the day bucketing is computed from the runtime's timezone on both the server render and the browser, so chips and the \"today\" highlight can move on hydration. A one-off run is worse: the instant is stored correctly from the browser but the printed hour is re-derived in the server's timezone.",
+  "evidence": [
+   "src/lib/scheduled-runs.ts:5",
+   "src/lib/scheduled-runs.ts:36",
+   "src/components/schedule-run-modal.tsx:53",
+   "src/lib/actions/planned-run-actions.ts:99",
+   "src/lib/actions/planned-run-actions.ts:91",
+   "src/components/run-calendar.tsx:90",
+   "src/components/run-calendar.tsx:188",
+   "src/components/run-calendar.tsx:85",
+   "src/app/(app)/calendar/calendar-body.tsx:139"
+  ],
+  "fix": "Persist the intent, not a server-local instant. Add an IANA timezone to PlannedScheduledRun (src/lib/types.ts:489 \u2014 the sibling ScheduledRun type already carries RunCadence.timezone at src/lib/types.ts:264) and compute nextRunAt with the timezone-aware helper that already exists for the other scheduler, computeNextRunAt in src/lib/run-cadence.ts:91, instead of computeNextRun from src/lib/scheduled-runs.ts. Have ScheduleRunModal send the browser zone (Intl.DateTimeFormat().resolvedOptions().timeZone) so createPlannedRunAction (src/lib/actions/planned-run-actions.ts:62) stores the same zone the preview used, and pass that zone as timeZone into the toLocaleTimeString call in timeStr (src/components/run-calendar.tsx:90) and into dayKey (line 85) so server render and browser agree. Minimum shippable version: print the zone next to the time in both the modal preview and ScheduledRunCard so the two strings cannot silently contradict each other.",
+  "ledgerCluster": "CALENDAR",
+  "ledgerStatus": "RESOLVED",
+  "track": "B",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 109,
+  "severity": "medium",
+  "title": "A calendar run badged \"Ready to review\" has nothing to click",
+  "surface": "Calendar \u2192 click a day \u2192 \"Completed runs\"",
+  "whatYouSee": "A completed run shows an orange \"Ready to review\" badge, the agent name, the time and thumbnails. There is no link to the run, no Review button, nothing that gets you to where you would approve it. You have to leave the calendar and hunt for it on the Jobs or Assets page. The post cards immediately below it do open a detail view, which makes the run cards look broken by comparison.",
+  "whyItsWrong": "The card already holds the identifier of the run it is describing, and the app has a working run detail page that the notification bell links to. Telling someone something is ready to review and then giving them no way to review it is the same hand-off gap that was called out on the SEO/GEO cards.",
+  "evidence": [
+   "src/components/run-calendar.tsx:229",
+   "src/components/run-calendar.tsx:208",
+   "src/app/(app)/calendar/calendar-body.tsx:159",
+   "src/components/notification-bell.tsx:197",
+   "src/app/(app)/jobs/[id]/page.tsx:20",
+   "src/components/run-calendar.tsx:287"
+  ],
+  "fix": "In PastRunCard (src/components/run-calendar.tsx:208) make the header actionable. For staff, wrap it in a Link to `/jobs/${run.id}` (calendar-body.tsx:158-159 sets CalendarRun.id to the job id for past runs) and add an explicit \"Review deliverable \u2192\" button when run.jobStatus === \"review\". Do not point client viewers there \u2014 src/app/(app)/jobs/[id]/page.tsx:20 is guarded to staff and silently redirects a client to /dashboard; for clients call the setOpenAssetId handler already wired in this component (line 352, used by PostCard at line 287) with run.assets[0].id. Pass a canOpenJob-style flag down from RunCalendar's existing canSchedule prop rather than inferring role in the card.",
+  "ledgerCluster": "CALENDAR",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 110,
+  "severity": "medium",
+  "title": "Pause and Cancel on a scheduled run fail silently, and Cancel deletes it forever with no confirmation",
+  "surface": "Calendar \u2192 click a day \u2192 \"Upcoming runs\" card \u2192 Pause / Cancel",
+  "whatYouSee": "\"Cancel\" sits next to \"Pause\" and permanently deletes the schedule on one click \u2014 no confirm step, no undo. If the call is refused, for example because the schedule was already removed in another tab, the button spins forever, no message appears, and the card stays on screen as if nothing happened.",
+  "whyItsWrong": "Both handlers ignore the error the server hands back and never clear the busy flag, so a refused delete looks like a hang and a refused pause looks like a no-op \u2014 the person walks away believing the run is stopped when it will still fire. And labelling an irreversible delete \"Cancel\", right next to a card you can dismiss, invites the one mis-click that cannot be taken back. The same file already proves the right pattern is available elsewhere in the app: the agent schedule dialog surfaces the returned error inline.",
+  "evidence": [
+   "src/components/run-calendar.tsx:163",
+   "src/components/run-calendar.tsx:169",
+   "src/components/run-calendar.tsx:196",
+   "src/lib/actions/planned-run-actions.ts:253",
+   "src/lib/actions/planned-run-actions.ts:299",
+   "src/components/custom-agents.tsx:717"
+  ],
+  "fix": "In ScheduledRunCard (src/components/run-calendar.tsx:153) capture the result of both setPlannedRunStatusAction and deletePlannedRunAction, render res.error inline, and clear busy in a finally so the button always recovers \u2014 mirror the handler in src/components/custom-agents.tsx:717 (togglePause), which already does exactly this. Rename the danger button to \"Delete schedule\" and gate it behind a confirm step. Optionally pass canManage for client viewers too (it is currently hardcoded to canSchedule at run-calendar.tsx:543, and calendar-body.tsx:71 only sets that for staff) so clients can pause from the calendar as well as from the AI Agents page.",
+  "ledgerCluster": "CALENDAR",
+  "ledgerStatus": "RESOLVED",
+  "track": "B",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 111,
+  "severity": "medium",
+  "title": "The month calendar is a fixed seven-column grid at every screen size, with chips well under the minimum touch target",
+  "surface": "Calendar (/calendar and /clients/[id]/calendar)",
+  "whatYouSee": "On a phone the month grid still renders seven columns across roughly 340 pixels \u2014 about 48 pixels per day, each holding chips whose text truncates to nothing, so the month reads as rows of coloured slivers with no labels. On a client's laptop with the copilot dock open the cells are about 78 pixels. The chips themselves are around seventeen pixels tall, and tapping one is how you open a post.",
+  "whyItsWrong": "The calendar has no responsive alternative at all \u2014 not a single width-dependent class anywhere in the component \u2014 so the same seven-column layout and the same ten-pixel chips render on a phone as on a desktop. Seventeen pixels is well under the twenty-four pixel minimum for a control, and this control is the way into a post's detail.",
+  "evidence": [
+   "src/components/run-calendar.tsx:448-451",
+   "src/components/run-calendar.tsx:455",
+   "src/components/run-calendar.tsx:484",
+   "src/components/run-calendar.tsx:139-147",
+   "src/components/run-calendar.tsx:508"
+  ],
+  "fix": "In src/components/run-calendar.tsx render the seven-column grid and its day-label row (448-455) only from `sm:` up (`hidden sm:grid`) and add a mobile sibling listing only days that have content as an agenda \u2014 a `<ul>` of date headers with full-width rows reusing RunChip and PostChip at `text-xs` and `py-2`. Bump the desktop PostChip at 139-142 to `py-1 text-[11px] min-h-[24px]` and give RunChip the same, and raise the \"+N more\" line at 508 from `text-[9px]` to `text-[11px]`. Cell `min-h-[84px]` at 484 can stay.",
+  "ledgerCluster": "CALENDAR",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 112,
+  "severity": "low",
+  "title": "A client's Calendar is read-only and its empty state offers no next step",
+  "surface": "Client portal \u2192 Calendar",
+  "whatYouSee": "A brand-new client opens Calendar and gets a full month of empty squares, a legend, and the words \"No runs yet\". There is no \"Schedule a run\" button, clicking a day does nothing unless it already has something on it, and nothing on the page says where schedules come from.",
+  "whyItsWrong": "The page header promises what the agents will run and everything they have produced, then offers no way to make either happen. Clients can set up a weekly agent schedule \u2014 just on the AI Agents page, one item up the same rail \u2014 so this is a missing pointer rather than a missing capability, and the calendar dead-ends instead of handing off.",
+  "evidence": [
+   "src/app/(app)/calendar/calendar-body.tsx:41",
+   "src/app/(app)/calendar/calendar-body.tsx:71",
+   "src/app/(app)/calendar/calendar-body.tsx:46",
+   "src/components/run-calendar.tsx:429",
+   "src/components/run-calendar.tsx:470",
+   "src/components/run-calendar.tsx:417",
+   "src/lib/actions/planned-run-actions.ts:141"
+  ],
+  "fix": "In src/app/(app)/calendar/calendar-body.tsx, when runs.length + posts.length === 0, render the EmptyState primitive above the grid using its action slot (src/components/ui.tsx:188-198, already imported at line 5) with a button to `/clients/${clientId}/agents` \u2014 \"Set up an agent schedule\" \u2014 since configureClientAgentScheduleAction (src/lib/actions/planned-run-actions.ts:141) lets clients do exactly that. Separately, for staff, make empty day cells clickable in src/components/run-calendar.tsx:470 and pass the clicked date into ScheduleRunModal as a prefill (the modal currently exposes only a datetime-local field for one-offs, line 153, and ignores the day you clicked).",
+  "ledgerCluster": "CALENDAR",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 142,
+  "severity": "low",
+  "title": "The calendar\u2019s primary button wraps to two lines",
+  "surface": "Calendar (/clients/[id]/calendar)",
+  "whatYouSee": "The orange primary button reads \u201cSchedule a / run\u201d across two lines, next to a two-line \u201cAgent / Calendar\u201d heading.",
+  "whyItsWrong": "The header row has no minimum widths, so the primary action breaks first. It looks broken at exactly the width a laptop uses.",
+  "evidence": [
+   "src/components/run-calendar.tsx \u2014 calendar header row"
+  ],
+  "fix": "Add whitespace-nowrap to the button and let the heading shrink, or drop the header to a stacked layout under the tablet breakpoint.",
+  "ledgerCluster": "CALENDAR",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 151,
+  "severity": "high",
+  "title": "The calendar day detail prints the raw run record \u2014 internal status, product code, job hash, markdown and all",
+  "surface": "Calendar \u2192 click a day \u2192 Completed runs",
+  "whatYouSee": "Photographed on 22 Jul's detail: \"# Karos X \u2014 full draft batch across every avenue (company page + seat) status: pending_review \u00b7 product e13 \u00b7 2026-07-22 \u00b7 job e52ffe1e \u00b7 draft-only, nothing posted This batch drafts **one post in every avenue** for both managed accounts:\". Literal #, literal **, the internal status word, the lab product code and a job hash \u2014 in the panel a client opens to see what ran. This is the \"too much text / messy\" calendar the call complained about, in one block.",
+  "whyItsWrong": "It is the run record's internal summary dumped verbatim into a client surface \u2014 four leak classes at once (markdown syntax, raw enum, internal product id, database hash). The portal already has a status label map that would render \"In review\".",
+  "evidence": [
+   "src/components/run-calendar.tsx:229 area \u2014 the day-detail run card renders the run summary text verbatim",
+   "The status label map already exists (finding 120's evidence) and is unused here"
+  ],
+  "fix": "Compose the line instead of echoing the record: agent name + what it produced + status through the existing label map (\"X Agent \u00b7 drafted 8 posts \u00b7 In review\"). Strip markdown from any model-written summary at render, and keep product/job ids to a staff-only tooltip. Cross-ref findings 57/89 (same leak class elsewhere).",
+  "ledgerCluster": "CALENDAR",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ }
+]

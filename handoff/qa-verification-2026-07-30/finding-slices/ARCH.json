@@ -1,0 +1,43 @@
+[
+ {
+  "n": 147,
+  "severity": "high",
+  "title": "One content stream, two agent identities: \u201cInstagram Agent\u201d and \u201cSocial posts (IG/TikTok)\u201d run side by side",
+  "surface": "Calendar, Jobs, run history \u2014 everywhere runs are labelled",
+  "whatYouSee": "On the calendar, 27 Jul stacks an \"Instagram Agent\" run chip directly above a \"Social posts (IG/TikTok)\" post chip; 21 Jul shows \"TikTok Agent\" twice from two different systems. The agents page sells \"Instagram Agent\"; deliverables and some runs are labelled \"Social posts\". On the call: \"Why is it still social posts and Instagram agent is not the same? It's the same thing\u2026 this pisses me off.\"",
+  "whyItsWrong": "The managed-product catalog (task_type social_post, name \"Social posts\") and the customAgents Instagram Agent are two identities for the same deliverable stream, so calendar, jobs and analytics double-report it and a client sees two agents where there is one. The team decided on the call to unify them.",
+  "evidence": [
+   "src/lib/agent-service/products.ts:42\u201343 \u2014 taskType social_post, name \"Social posts\"",
+   "customAgents collection \u2014 the Instagram Agent instance for the same client",
+   "src/components/run-calendar.tsx \u2014 chips render both identities on the same days",
+   "Team decision, portal review call 27 Jul 2026"
+  ],
+  "fix": "One identity per stream. Map task_type \u2192 the client's custom agent identity in a single shared label helper used by calendar, jobs, run history and analytics (the same helper fixes \"TikTok Agent\" duplicates); retire the client-facing \"Social posts\" catalog card for clients whose workspace has the Instagram agent. Cross-ref findings 39/45 \u2014 the managed products are already unrunnable from the UI, so nothing breaks.",
+  "ledgerCluster": "ARCH",
+  "ledgerStatus": "RESOLVED",
+  "track": "B",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 148,
+  "severity": "high",
+  "title": "The portal has no launch-vs-runs model \u2014 the architecture the team decided on has nowhere to live",
+  "surface": "AI Agents (/clients/[id]/agents) \u2014 agent cards, schedule dialog, feedback",
+  "whatYouSee": "Every agent card offers exactly two verbs: \"Run now\" and \"Set schedule\". There is no launch step that produces the template set, no template list on the card, no per-template run or feedback, no way to reorder the calendar's templates or leave a note for run day. The call spec'd all of it: launch = a setup run producing research + 3\u20135 templates, CTAs and goals; runs = day-of generation; feedback at the global level or per template; 25 credits to run one template on demand; clients reorder the calendar and drop notes the engine reads when it runs.",
+  "whyItsWrong": "The data layer is already half-way there \u2014 every post is stamped with templateKey/templateName (\"By The Numbers\", \u2026) \u2014 but no UI groups by template, so the concept the team is selling (\"give feedback to this format\" / \"run this format now\") has no surface. It also blocks the cost split the call asked for: launch cost vs recurring run cost cannot be separated when both are just \"a run\".",
+  "evidence": [
+   "src/lib/types.ts:449\u2013456 \u2014 templateKey/templateName exist on posts and are rendered nowhere as a group",
+   "src/lib/custom-agent-launch.ts \u2014 a guided run brief, not a launch lifecycle",
+   "src/components/schedule-run-modal.tsx \u2014 one \"Ongoing direction\" textarea, no templates",
+   "Feedback actions are per-draft only (x/li/reddit draft feedback) \u2014 no template or agent-level target",
+   "Team decision, portal review call 27 Jul 2026"
+  ],
+  "fix": "Add a launch state and a per-client template registry to the agent instance: the launch run persists its templates; the card renders them with per-template Run (25 credits) and per-template feedback; a second feedback control targets the whole agent; calendar slots reference a templateKey plus an optional client note consumed at run time; analytics tag runs launch vs recurring. This is the biggest single work item in the document \u2014 it is the product model, not a patch.",
+  "ledgerCluster": "ARCH",
+  "ledgerStatus": "RESOLVED",
+  "track": "B",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "\u2014"
+ }
+]

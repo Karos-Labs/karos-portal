@@ -1,0 +1,149 @@
+[
+ {
+  "n": 97,
+  "severity": "blocker",
+  "title": "The client's top call to action promises an approval they cannot make, and the link lands on the wrong screen",
+  "surface": "Client Dashboard (/clients/[id]) \u2192 Workspace (/tasks)",
+  "whatYouSee": "A client logs in and the first card says \"3 posts awaiting your approval \u2014 Review and approve to keep content moving.\" They click it and land on the Workspace task board: a column of tasks, no drafts, no filter, nothing about the three posts. If they hunt around, find the Archive tab and open a draft tile, the panel offers Copy, Download and \"Already posted it?\" \u2014 there is no Approve anywhere, and there never can be, because approval is deliberately reserved for the Karos team.",
+  "whyItsWrong": "Three separate breaks stack up. The count comes from agent runs sitting in review, but the link filters deliverables by draft \u2014 different data. The link target bounces every client user to the task board and throws the filter away. The tab the drafts actually live on is held in local component state, so no link can ever open it. And the approve action itself is staff-only by explicit design (the comment says letting a client approve would also let them arm auto-publish), so the sentence describes a loop that has no code path for a client. This is the portal telling a paying client to do something the portal will not let them do.",
+  "evidence": [
+   "src/components/client-home-overview.tsx:42",
+   "src/components/client-home-overview.tsx:80-84",
+   "src/app/(app)/assets/page.tsx:24",
+   "src/components/progress-view.tsx:39",
+   "src/lib/actions/asset-actions.ts:133",
+   "src/components/asset-detail-modal.tsx:273",
+   "src/app/(app)/clients/[id]/assets/page.tsx:17-19",
+   "src/components/client-home-overview.tsx:80 \u2014 `href=\"/assets?view=library&status=draft\"`",
+   "src/components/client-home-overview.tsx:77-79 \u2014 the comment: \"Client users cannot open the staff-only Jobs screen. Draft deliverables are reviewed from their library instead.\"",
+   "src/app/(app)/assets/page.tsx:24 \u2014 `if (user.role === \"CLIENT_USER\") redirect(\"/tasks\")` \u2014 no params carried over",
+   "src/app/(app)/assets/page.tsx:13 \u2014 searchParams type is `{ clientId?, status? }`; `view` is never read anywhere in the repo",
+   "src/components/progress-view.tsx:38 \u2014 the Workspace view state is local (`useState<View>(\"board\")`), so it cannot be deep-linked today"
+  ],
+  "fix": "Two edits, in this order. (1) src/components/progress-view.tsx:39 \u2014 replace `useState<View>(\"board\")` with URL-driven state (`useSearchParams()` for the initial value plus `router.replace(\"?tab=archive\")` on change, default \"board\") so board/activity/archive become linkable. (2) src/components/client-home-overview.tsx:80-84 \u2014 repoint `href` to `/tasks?tab=archive` and rewrite the AttentionRow label/hint to match reality: label `${n} deliverable(s) in review`, hint \"Your Karos team is reviewing these \u2014 they'll appear in your archive when ready.\" Also fix the count source at line 42 so the number matches what the link shows (count draft assets, or keep counting review jobs and say \"runs in review\"). Do NOT add an Approve control to AssetDetailModal: approveAssetAction calls requireStaff at src/lib/actions/asset-actions.ts:133 precisely so a client cannot approve and arm auto-publish.",
+  "ledgerCluster": "DASHBOARD",
+  "ledgerStatus": "RESOLVED",
+  "track": "B",
+  "specFile": "findings-p123-160.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 99,
+  "severity": "medium",
+  "title": "The client dashboard is one unbroken scroll and the plain-English weekly briefing sits dead last",
+  "surface": "Client Dashboard (/clients/[id])",
+  "whatYouSee": "A large \"Welcome back\" banner, then two overview cards, then four stat tiles plus two cards plus a whole bordered panel holding a single sentence about agent runs, then three score tiles and six more full-width panels of search and AI visibility \u2014 and only then the streamed briefing that explains what changed this week and what the team is doing about it. On a laptop that is roughly five screens of scrolling, everything expanded, nothing collapsed, no in-page navigation.",
+  "whyItsWrong": "Every section renders at full detail at once, in the reverse of value order: the two things a client most wants \u2014 the weekly briefing and the fix list \u2014 are the deepest, while the shallowest element is a large heading that carries no information. One bordered panel is spent on a single sentence that would fit as a fifth stat tile.",
+  "evidence": [
+   "src/app/(app)/clients/[id]/page.tsx:81-119",
+   "src/components/seo-geo-panel.tsx:281-513",
+   "src/components/client-analytics.tsx:121-136",
+   "src/components/client-analytics.tsx:45-50",
+   "src/components/ui.tsx:245-253"
+  ],
+  "fix": "In src/app/(app)/clients/[id]/page.tsx: move the AI Insights section (lines 113-118) to directly after the Overview section (ends line 90) so the briefing sits above Performance; render the fix list as its own section right below it once finding 4's swap is in. Put the remaining heavy sections (Performance, Search & AI visibility) behind a segmented control copied from src/components/progress-view.tsx:42-67 with the active tab in a `?tab=` param. Reduce the client PageHeader at lines 73-77 to a single small line. In src/components/client-analytics.tsx delete the standalone Agent activity Card (121-136) and add its run count as a fifth StatCard in the row at 45-50, changing that grid to five columns.",
+  "ledgerCluster": "DASHBOARD",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p123-160.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 100,
+  "severity": "low",
+  "title": "British and American spellings sit side by side \u2014 \"Analysing\" on one screen, \"Analyzing\" on another, \"favourites\" in client draft copy",
+  "surface": "Meetings (/transcripts), client dashboard AI insights, Assets / Workspace archive, X drafts reader",
+  "whatYouSee": "Meetings page: \"Fireflies transcripts, auto-summarised and routed to clients\", \"Karos will summarise it\", a button reading \"Ingest & analyse\" / \"Analysing\u2026\". Client dashboard: \"Analyzing\u2026\". Client analytics: \"will be summarized here\". Archive: \"organized per agent\". Draft cards: \"Expand to read and pick favourites\" and \"Pick your favourites\".",
+  "whyItsWrong": "The same verbs are spelled two ways inside one product, and \"favourites\" appears in client-facing draft copy while \"organized\" and \"summarized\" appear two screens away. It reads as unproofed. The two spellings of analyse/analyze are two clicks apart for a staff user who also views as a client.",
+  "evidence": [
+   "src/components/transcript-tools.tsx:179",
+   "src/components/transcript-tools.tsx:108",
+   "src/app/(app)/transcripts/page.tsx:30",
+   "src/app/(app)/transcripts/page.tsx:59",
+   "src/components/ai-insights.tsx:97",
+   "src/components/archive-view.tsx:68",
+   "src/components/client-analytics.tsx:60",
+   "src/components/asset-card.tsx:762",
+   "src/components/x-drafts-review.tsx:325"
+  ],
+  "fix": "Standardize on US spelling (the majority). src/components/transcript-tools.tsx:179 \u2014 `{loading ? \"Analysing\u2026\" : \"Ingest & analyse\"}` becomes \"Analyzing\u2026\" / \"Ingest & analyze\". transcript-tools.tsx:108 \"Karos will summarise it\" \u2192 \"summarize it\". src/app/(app)/transcripts/page.tsx:30 \"auto-summarised\" \u2192 \"auto-summarized\". Same file line 59 \"are summarised and matched\" \u2192 \"are summarized and matched\". src/components/asset-card.tsx:762 \"pick favourites\" \u2192 \"pick favorites\". src/components/x-drafts-review.tsx:325 \"Pick your favourites\" \u2192 \"Pick your favorites\". Prioritize the last two: they are the only client-facing hits.",
+  "ledgerCluster": "DASHBOARD",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 124,
+  "severity": "medium",
+  "title": "The dashboard opens with four counters that the two cards beneath them restate",
+  "surface": "Client dashboard (/clients/[id]) \u2014 top of page",
+  "whatYouSee": "Four tiles: Published 14, Scheduled 0, Channels 3, Deliverables 21. Directly beneath, \u201cContent by status\u201d repeats Published 14 (plus Draft 4, Approved 3) and \u201cConnected channels\u201d lists the same three channels. Deliverables 21 is 14 + 4 + 3.",
+  "whyItsWrong": "A full screen of duplicated counters before anything actionable. The scores, the fix list and the failing agent \u2014 the things worth reacting to \u2014 are all below the fold.",
+  "evidence": [
+   "the stat-tile row and the two cards below it on the client dashboard page"
+  ],
+  "fix": "Drop the Published and Channels tiles, keep Scheduled and Deliverables in one thin summary row, and lift the three score tiles plus a \u201cneeds your attention\u201d block above the fold.",
+  "ledgerCluster": "DASHBOARD",
+  "ledgerStatus": "STRUCK-BY-ALBERT",
+  "track": "A",
+  "specFile": "findings-p123-160.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 125,
+  "severity": "blocker",
+  "title": "AI Insights is badged \u201cDemo data\u201d and still tells the client to cut LinkedIn spend",
+  "surface": "Client dashboard (/clients/[id]) \u2192 AI Insights",
+  "whatYouSee": "Under a \u201cBeta\u201d + \u201cDemo data\u201d badge: \u201cActivity dropped sharply: zero posts this week vs. 8 last week (\u2212100%)\u2026 Instagram dominates\u2026 Reduce LinkedIn spend \u2013 1 post, weak signal; focus budget on Instagram until data grows.\u201d Instagram is not one of this client\u2019s connected channels \u2014 the card above lists Google, LinkedIn and YouTube.",
+  "whyItsWrong": "A small warning chip does not offset three paragraphs of specific, numbered budget advice derived from invented figures about a channel the client does not use. The badge is honest; the content is not.",
+  "evidence": [
+   "src/components/ai-insights.tsx:18-21, :89 \u2014 the demo-data badge, set from the X-Insights-Data-Source: mock response header",
+   "/api/clients/[id]/insights \u2014 serves deterministic mock metrics when no live social token exists"
+  ],
+  "fix": "When the header is mock, do not render a briefing at all: show the empty state (\u201cConnect a social account and we\u2019ll brief you weekly on what\u2019s working\u201d) with the connect link, and gate the demo prose behind a staff check. Separately, filter the prompt\u2019s channel list to the client\u2019s connected channels so it cannot recommend a channel they do not have.",
+  "ledgerCluster": "DASHBOARD",
+  "ledgerStatus": "RESOLVED",
+  "track": "B",
+  "specFile": "findings-p123-160.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 126,
+  "severity": "medium",
+  "title": "Single-asterisk emphasis renders as literal asterisks in AI Insights",
+  "surface": "Client dashboard (/clients/[id]) \u2192 AI Insights",
+  "whatYouSee": "Intermittent, depending on what the model emits. An earlier generation rendered \u201cTop performers: *Playbook* (4.2 score, 6.8% engagement) and *Special Edition*\u201d with the asterisks visible. The current generation happens to use quotation marks, so the card looks clean right now.",
+  "whyItsWrong": "The renderer handles **bold**, headings and bullets but not single-asterisk emphasis, so whenever the model reaches for italics the syntax lands on the page. It is latent rather than always visible, which is why it survived review.",
+  "evidence": [
+   "src/components/ai-insights.tsx:139 \u2014 line.split(/(\\*\\*[^*]+\\*\\*)/g) matches only the double form",
+   "src/components/ai-insights.tsx:131-135 \u2014 the comment states the renderer exists precisely to stop raw syntax reaching the page"
+  ],
+  "fix": "Extend the split to /(\\*\\*[^*]+\\*\\*|\\*[^*\\n]+\\*|_[^_\\n]+_)/g and render single-delimiter spans as <em>. Add a test asserting no * or # survives into rendered output \u2014 the presenter\u2019s no-leak test is the model to copy.",
+  "ledgerCluster": "DASHBOARD",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p123-160.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 145,
+  "severity": "medium",
+  "title": "A channel whose token dies silently vanishes from \u201cConnected channels\u201d instead of asking to be reconnected",
+  "surface": "Client dashboard (/clients/[id]) \u2192 Connected channels",
+  "whatYouSee": "The card lists Google, Linkedin, Youtube \u2014 every row with the same green \"Connected\" badge. The call asked: \"Connected channels \u2014 is this accurate or not? Is LinkedIn actually working?\" The honest answer: rows that show are genuinely usable, but a channel whose token has expired is filtered out of the list entirely \u2014 it just disappears, and the \"Channels\" stat drops by one with no explanation.",
+  "whyItsWrong": "The health truth exists \u2014 the integration layer has expired/reauthenticate states and the Settings tab renders a \"Reconnect needed\" chip \u2014 but the dashboard shows only healthy rows, so a dead LinkedIn reads as \"not set up\" rather than \"broken, click to fix\". The client's first question (\"is LinkedIn working?\") is exactly the one this card silently refuses to answer. Bonus: the badge's icon name CheckCircle2 is one of the eight missing lucide names, so the check mark is actually the sparkle fallback (finding 63).",
+  "evidence": [
+   "src/components/client-analytics.tsx:32 \u2014 activeChannels = integrations.filter(integrationIsUsable) \u2014 dead channels dropped",
+   "src/components/client-analytics.tsx:110\u2013113 \u2014 hardcoded neon \"Connected\" badge for every remaining row",
+   "src/lib/integration-status.ts \u2014 expired / reauthenticate states exist",
+   "src/components/integrations-tab.tsx:264\u2013267 \u2014 the \"Reconnect needed\" pattern already built for Settings"
+  ],
+  "fix": "In client-analytics.tsx, keep needsReconnect integrations in the list and render them with the warning badge and a link to Settings (\"Reconnect needed \u2192\"), reusing the integrations-tab pattern. Only usable rows keep the green badge. Count both in the Channels stat with a \"1 needs attention\" sub-line.",
+  "ledgerCluster": "DASHBOARD",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p123-160.md",
+  "hasShot": "yes"
+ }
+]

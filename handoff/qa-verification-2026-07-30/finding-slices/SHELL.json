@@ -1,0 +1,254 @@
+[
+ {
+  "n": 113,
+  "severity": "high",
+  "title": "Opening any client page swallows the whole staff sidebar \u2014 and employees have no way to get it back",
+  "surface": "Staff sidebar, everywhere after visiting /clients/[id] (any sub-route)",
+  "whatYouSee": "An employee clicks a client from the Clients grid. The sidebar instantly stops showing Clients, Agents, Jobs, Meetings, Assets, Calendar, Tasks, Connect and Analytics, and shows only four client tabs (Dashboard / AI Agents / Calendar / Workspace). A client copilot panel also appears on the right, uninvited. There is no close control and no \"back to workspace\" link. The nav stays that way as they keep clicking around. The only escapes are the logo \u2014 which lands on the staff dashboard with a sidebar still showing the four client tabs and nothing highlighted \u2014 or a full browser reload of a non-client page.",
+  "whyItsWrong": "Nobody asked to enter client view \u2014 merely opening a client page seeds it, because the nested client layout mounts the context sync for all staff, employees included. The nav swap is keyed on staff-or-not, but the only control that clears the context lives inside the admin-only client picker at the bottom of the rail. So for every employee this is a one-way door, escapable only by a full page reload. The context is deliberately built to persist across navigation, which makes the trap sticky rather than transient.",
+  "evidence": [
+   "src/app/(app)/clients/[id]/layout.tsx:24 \u2014 isStaff includes KAROS_EMPLOYEE",
+   "src/app/(app)/clients/[id]/layout.tsx:36 \u2014 ClientContextSync mounted unconditionally for staff",
+   "src/components/sidebar.tsx:314 \u2014 items = (isStaff && activeClient) ? clientViewNav(...) : adminItems",
+   "src/components/sidebar.tsx:435 \u2014 ClientContextPicker rendered only when user.role === \"KAROS_ADMIN\"",
+   "src/components/sidebar.tsx:81 \u2014 setActiveClient(null) exists only inside that admin-only picker",
+   "src/lib/active-client-context.tsx:39 \u2014 \"Context intentionally persists when navigating elsewhere; only cleared by the picker X\"",
+   "src/app/(app)/layout.tsx:162 \u2014 StaffCopilotDock also appears for any staff with an active client (src/components/staff-chatbot-widget.tsx:15)"
+  ],
+  "fix": "In src/components/sidebar.tsx: (a) move ClientContextPicker out of the `user.role === \"KAROS_ADMIN\"` guard at line 435 so employees get the same labelled exit, or add an always-visible \"\u2190 Back to workspace\" row above the client tabs inside `clientSections` (line 356) that calls setActiveClient(null) and routes to /clients \u2014 the same body as clearClient at lines 79-85; (b) better, stop swapping the nav wholesale at line 314 \u2014 keep adminItems and render clientViewNav(activeClient.client.id) as a labelled sub-group under the client header in clientSections, so no staff member can lose the workspace nav at all.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 115,
+  "severity": "medium",
+  "title": "An approved user is never told they were approved; the pending screen is a static dead end",
+  "surface": "/pending (disabled / awaiting-approval landing)",
+  "whatYouSee": "\"Awaiting approval \u2014 your account dh@example.com is registered as a client for Acme. An agency admin needs to approve it\u2026\" and one Sign out button. That is the entire screen. It never updates. When an admin approves the account minutes later, nothing happens: no email, no notification, no page change \u2014 the user has to guess and reload. If the admin rejects them, their account and sign-in record are deleted and they are told nothing; their next sign-in attempt simply fails.",
+  "whyItsWrong": "The approve and reject actions flip the flags and revalidate the Team page; neither sends mail \u2014 the file imports no email helper at all \u2014 nor writes any notification, even though Resend is wired up and used elsewhere for support mail and deliveries. The pending page has no polling either, although a small auto-refresh component already exists in the codebase for exactly this pattern, and the page already redirects to the workspace as soon as the account is enabled. There is also no support link on the screen, so a user stuck here has no in-product way to ask what is happening \u2014 and this is the very first impression the portal makes on a new client.",
+  "evidence": [
+   "src/app/pending/page.tsx:9 \u2014 already redirects to /dashboard the moment the account is enabled, so a refresh is all that is missing",
+   "src/app/pending/page.tsx:31 \u2014 LogoutButton is the only control on the page",
+   "src/lib/actions/user-actions.ts:13 \u2014 the import block pulls in data + auth + adminAuth only; no email helper",
+   "src/lib/actions/user-actions.ts:112 \u2014 approveRegistrationAction ends at revalidatePath(\"/team\"); no mail, no notification",
+   "src/lib/actions/user-actions.ts:118 \u2014 rejectRegistrationAction deletes the Firestore doc and the auth account silently",
+   "src/components/auto-refresh.tsx:11 \u2014 AutoRefresh(intervalMs) already exists",
+   "src/lib/email.ts:16 \u2014 sendEmail via Resend, soft-failing, ready to use"
+  ],
+  "fix": "Three additions. (1) In src/lib/actions/user-actions.ts, after the upsert at line 110 send a Resend mail with sendEmail from src/lib/email.ts (\"You're in \u2014 sign in here\"), and a neutral decline mail in rejectRegistrationAction before the delete at line 118 (capture the email first); reuse the existing emailShell helper for markup. (2) In src/app/pending/page.tsx mount `<AutoRefresh intervalMs={15000} />` from src/components/auto-refresh.tsx \u2014 the existing redirect at line 9 then flips the user into the workspace with no manual reload. (3) Add an expected-timeframe line and a support mailto beside the Sign out button at line 30-32 so the screen has one forward action.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "B",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 116,
+  "severity": "medium",
+  "title": "Clients get no notification badge on desktop \u2014 the bell is buried in the account menu",
+  "surface": "Client portal, any page: desktop left rail (bottom) versus mobile top bar",
+  "whatYouSee": "On a phone there is a bell with a count in the top bar. On a desktop the bell exists only as a \"Notifications\" row inside the account dropdown at the bottom of the rail, and the count is only visible once that dropdown is open. Nothing on the visible page hints that drafts are waiting for review.",
+  "whyItsWrong": "The point of a badge is ambient signal. A client with items sitting in \"Ready for review\" sees nothing until they happen to click their own avatar, so approvals stall and the portal looks idle. Staff get a permanently visible bell in the workspace header, so the two shells behave differently for no reason a client can see.",
+  "evidence": [
+   "src/components/client-rail.tsx:174",
+   "src/components/client-rail.tsx:210",
+   "src/components/account-menu.tsx:95",
+   "src/components/notification-bell.tsx:70",
+   "src/components/app-header.tsx:19"
+  ],
+  "fix": "Render the icon variant of NotificationBell in the client rail's bottom block (src/components/client-rail.tsx:161, next to the Credits pill at line 162) with panelPlacement=\"up\", passing the actionItems / reviewJobs / taskAlerts already handed to the rail, and drop the nested row from src/components/account-menu.tsx:95. If the row must stay, compute the same total and mirror it onto the AccountMenu trigger (account-menu.tsx:64) as a dot so the count is visible without opening the menu.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 117,
+  "severity": "medium",
+  "title": "No admin surface shows any client's credit balance, yet every denial tells the client to \"ask your Karos team\"",
+  "surface": "Admin Clients list /clients and Admin Analytics /admin/analytics",
+  "whatYouSee": "The Clients grid shows each brand with asset and job counts \u2014 no credits. Admin Analytics shows model cost in dollars, tokens, runs, errors, logins and feedback \u2014 no credits. To learn that a client is out of credits an admin must open that one client's Settings page and scroll to the Credits card. There is no list, no sort, no low-balance flag, no alert.",
+  "whyItsWrong": "The client-facing wall says to ask the Karos team for a top-up, and the copilot is instructed to say the same below 20 credits \u2014 but the Karos team has no queue, no notification and no dashboard telling them who is asking. The only credit-granting control in the product is inside a single client's settings page, so the remedy for every credit denial is an out-of-band conversation the portal neither triggers nor records. A client can sit blocked indefinitely while the agency's own analytics page reports everything green.",
+  "evidence": [
+   "src/app/(app)/clients/page.tsx:11 \u2014 fetches assets and jobs only; getClientCredits is never called",
+   "src/app/(app)/clients/page.tsx:25 \u2014 ClientsGrid receives clients/assets/jobs, and renders only asset and job counts (src/components/clients-grid.tsx:386-389)",
+   "src/app/(app)/admin/analytics/page.tsx:51 \u2014 the analytics fetch block; `grep -in credit` over that file returns nothing",
+   "src/components/credits-panel.tsx:129 \u2014 the grant/deduct form is admin-only and lives on one client's settings page",
+   "src/lib/credits.ts:254 \u2014 \"Ask your Karos team for a top-up\" in the denial the client sees",
+   "src/app/api/clients/[id]/chat/route.ts:165 \u2014 the copilot is told to suggest the same under 20 credits"
+  ],
+  "fix": "Add a credits column to the Clients grid: in src/app/(app)/clients/page.tsx fetch getClientCredits for the listed clients alongside the existing assets/jobs reads (line 11), pass a clientId \u2192 availableCredits(credits) map into ClientsGrid, and render it as a Badge next to the asset/job counts in src/components/clients-grid.tsx:386-389 \u2014 warning tone under a threshold, danger tone at 0, linking to /clients/[id]/settings. Then add a \"Clients low on credits\" block to src/app/(app)/admin/analytics/page.tsx using the same helper, so the agency sees the ask before the client has to send an email.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "B",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 118,
+  "severity": "medium",
+  "title": "The Connect page promises \"submit managed jobs\" and walks through an Instagram job the MCP server has no tool for",
+  "surface": "Connect Claude Code (/connect), staff only",
+  "whatYouSee": "The page header says Karos exposes an MCP server your Claude Code can use to \"read client data, browse jobs & assets, submit managed jobs, and upload files.\" Step 3 gives the worked example: \"submit a 3-post Instagram job focused on their summer launch and tell me the job id\", then states Claude Code will read the client's context and submit the managed job to the agent service. A staff member follows it and Claude Code reports there is no such tool.",
+  "whyItsWrong": "The server exposes twelve tools and the only one that starts work runs a repo agent with a prompt. There is no submit-managed-job tool. The page's own \"Available tools\" sidebar confirms it \u2014 it lists the run-a-repo-agent tool and says nothing about managed jobs. So the headline promise and the worked example both describe a capability the server does not have, and the two halves of the same page contradict each other.",
+  "evidence": [
+   "src/app/(app)/connect/page.tsx:20 \u2014 header: \"\u2026browse jobs & assets, submit managed jobs, and upload files\"",
+   "src/app/(app)/connect/page.tsx:62-64 \u2014 the Instagram job example",
+   "src/app/(app)/connect/page.tsx:66-68 \u2014 \"Claude Code will read the client's context, submit the managed job to the agent service\"",
+   "src/app/(app)/connect/page.tsx:75-86 \u2014 the Available tools list: run_agent is \"Run a repo agent for a client with a prompt\"; no managed-job entry",
+   "src/lib/mcp/tools.ts:85,110,139,166,198,229,243,270,297,312,341,387 \u2014 all twelve tool names; grep for submit_job / submitManagedJob in src/lib/mcp returns nothing",
+   "src/lib/actions/external-job-actions.ts:12 \u2014 a stale comment claiming \"the MCP `submit_job` tool runs the identical path\"",
+   "src/lib/jobs/submit-managed.ts \u2014 the shared core, already factored for non-web callers"
+  ],
+  "fix": "Pick one. Either add a submit_managed_job tool to src/lib/mcp/tools.ts wrapping submitManagedJob from src/lib/jobs/submit-managed.ts (same pattern as run_agent at tools.ts:312; the core already takes an AppUser, so PAT auth works) and add it to the sidebar array at src/app/(app)/connect/page.tsx:75-86 \u2014 or rewrite connect/page.tsx line 20 and lines 62-68 to describe running a repo agent with a prompt, which is what actually happens. Either way fix the stale comment at src/lib/actions/external-job-actions.ts:12, which names a tool that does not exist.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 119,
+  "severity": "medium",
+  "title": "The smallest type in the portal sits below the accessibility contrast floor in 143 places",
+  "surface": "Whole portal (every card caption, meta line, stat sub-label, timestamp)",
+  "whatYouSee": "The ten and eleven pixel supporting text everywhere \u2014 the sub-labels under the analytics headline numbers, the per-million pricing in the model table, the coverage lines under the search score tiles, relative timestamps on run rows, platform descriptions on channel cards, the \"plus three more\" in calendar cells \u2014 is a mid grey that visibly fades into the card behind it, especially on a laptop screen at an angle or in daylight.",
+  "whyItsWrong": "The dim grey against the card surface computes to roughly 3.5 to 1, under the 4.5 to 1 floor for normal-size text \u2014 and these are the smallest sizes in the app, so the large-text exemption does not apply. The token is used 463 times, 143 of them on a line that also sets ten or eleven pixel type. The numbers and units that qualify every metric end up the hardest things on the page to read. Light mode is no better, at roughly 3.6 to 1.",
+  "evidence": [
+   "src/app/globals.css:29",
+   "src/app/globals.css:212",
+   "src/app/globals.css:21",
+   "src/app/(app)/admin/analytics/page.tsx:260",
+   "src/components/seo-geo-panel.tsx:90",
+   "src/components/run-calendar.tsx:508",
+   "src/components/integrations-tab.tsx:282",
+   "src/components/integrations-tab.tsx:285"
+  ],
+  "fix": "In src/app/globals.css:29 lighten `--muted-2` from #77777e to about #8f8f97 (measures 4.8:1 against --surface #242429 at line 21, still clearly subordinate to --muted) and lift the light-mode value at line 212 from #8a887f to about #767469 (currently 3.6:1 on white). Add a separate `--muted-3` pinned to the old #77777e for genuinely decorative uses \u2014 icon strokes, dividers, disabled states, the Meter fill at src/components/seo-geo-panel.tsx:89 \u2014 and repoint those so the change does not flatten the hierarchy. Then sweep the ten-pixel cases: anything carrying a number or a unit moves to `text-[11px] text-muted`, leaving text-muted-2 for labels.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 120,
+  "severity": "medium",
+  "title": "The three agent pages print the raw database job status \"review\" to clients, when the portal already has a label map that says \"In review\"",
+  "surface": "X agent / LinkedIn agent / Reddit agent \u2192 Feedback card, recent-runs list (/clients/[id]/x-agent, /linkedin-agent, /reddit-agent)",
+  "whatYouSee": "A list of recent runs reading \"Run 2026-07-24 \u00b7 review\", \"Run 2026-07-22 \u00b7 queued\", \"Run 2026-07-19 \u00b7 delivered\".",
+  "whyItsWrong": "The status word is printed exactly as it is stored. \"review\" is not a sentence and not a state a client can interpret, and the same underlying state is displayed as \"In review\" everywhere else in the portal (dashboard, jobs list, job detail) by the shared status badge. The value is typed as a plain string on the way to the screen, so nothing catches the mismatch.",
+  "evidence": [
+   "src/components/x-agent-intake.tsx:686",
+   "src/components/x-agent-intake.tsx:58",
+   "src/components/linkedin-agent-intake.tsx:638",
+   "src/components/reddit-agent-intake.tsx:313",
+   "src/components/job-status.tsx:4",
+   "src/components/job-status.tsx:7"
+  ],
+  "fix": "src/components/job-status.tsx \u2014 export a plain label map alongside the existing MAP (line 4), e.g. `export const JOB_STATUS_LABEL: Record<string, string> = { queued: \"Queued\", running: \"Running\", review: \"In review\", approved: \"Approved\", delivered: \"Delivered\", failed: \"Failed\" }` (or export MAP and read `.label`). Then replace `\u00b7 {r.status}` with `\u00b7 {JOB_STATUS_LABEL[r.status] ?? r.status}` at src/components/x-agent-intake.tsx:686, src/components/linkedin-agent-intake.tsx:638 and src/components/reddit-agent-intake.tsx:313. While there, the run date on those same lines is an ISO slice \u2014 consider the existing formatDate helper in src/lib/utils.ts.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 121,
+  "severity": "low",
+  "title": "Dismissing a \"new content ready\" notification only hides it until the next page load",
+  "surface": "Notifications bell \u2192 \"New content ready: \u2026\" row \u2192 X",
+  "whatYouSee": "You click the X on a content-ready notification, tooltip \"Dismiss\". It disappears and the count drops. Navigate anywhere, or let the page refresh, and it is back with the count restored.",
+  "whyItsWrong": "The handler only writes to in-page state \u2014 there is no server call and nothing is stored. The identical-looking X on meeting action items right below does reach the server and sticks, so the two behave differently for no visible reason and the badge stops being trustworthy.",
+  "evidence": [
+   "src/components/notification-bell.tsx:64",
+   "src/components/notification-bell.tsx:204",
+   "src/components/notification-bell.tsx:239",
+   "src/lib/actions/transcript-actions.ts:298",
+   "src/lib/data.ts:1641"
+  ],
+  "fix": "Either persist it \u2014 add a dismissedBy/seenBy field on the job and filter it in listReviewJobs (src/lib/data.ts:1641), behind a small action alongside dismissAssignedActionItemAction (src/lib/actions/transcript-actions.ts:298) \u2014 or delete the X (src/components/notification-bell.tsx:204) and let the row clear when the job leaves review, which is how the task rows already behave (see the comment at line 45). Do not ship a Dismiss button whose only effect is local. While in this row: its click-through goes to `/jobs/${j.jobId}` (line 197), which is staff-only and bounces a client to /dashboard \u2014 point client viewers at the asset instead.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "B",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 122,
+  "severity": "low",
+  "title": "Platform names are title-cased from their ids: \u201cLinkedin\u201d, \u201cYoutube\u201d",
+  "surface": "Client dashboard (/clients/[id]) \u2192 Connected channels; competitor chips elsewhere",
+  "whatYouSee": "The channel rows read \u201cGoogle\u201d, \u201cLinkedin\u201d, \u201cYoutube\u201d. Competitor chips show \u201cploy.ai\u201d in the sidebar and \u201cPLOY.AI\u201d in the report.",
+  "whyItsWrong": "\u201cLinkedin\u201d and \u201cYoutube\u201d are misspellings of the brands. They come from title-casing a provider id rather than looking up a display name, so every surface that does this is wrong the same way.",
+  "evidence": [
+   "the connected-channels list on the client dashboard page",
+   "provider ids are capitalised for display instead of mapped",
+   "src/components/client-analytics.tsx:107 \u2014 className=\"capitalize\" on {i.platform} is the exact mechanism"
+  ],
+  "fix": "Add one PROVIDER_LABELS map (\u201clinkedin\u201d \u2192 \u201cLinkedIn\u201d, \u201cyoutube\u201d \u2192 \u201cYouTube\u201d, \u201cx\u201d \u2192 \u201cX\u201d, \u201ctiktok\u201d \u2192 \u201cTikTok\u201d) beside the icon helper and use it everywhere a provider is displayed.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 123,
+  "severity": "low",
+  "title": "\u201c20 agent runs \u00b7 last 9h ago.\u201d",
+  "surface": "Client dashboard (/clients/[id]) \u2192 Agent activity",
+  "whatYouSee": "The Agent activity card\u2019s only line reads \u201c20 agent runs \u00b7 last 9h ago.\u201d",
+  "whyItsWrong": "\u201clast 9h ago\u201d is not a sentence. It is the first card many clients read.",
+  "evidence": [
+   "the agent-activity block on the client dashboard page"
+  ],
+  "fix": "\u201c20 runs \u00b7 last run 9h ago\u201d.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 143,
+  "severity": "medium",
+  "title": "Every notification is truncated mid-sentence and none of them are notifications",
+  "surface": "Notification bell (any page)",
+  "whatYouSee": "Both rows read as cut-off task descriptions: \u201cProvide feedback on the Instagram agent UI and output quality after the\u2026\u201d and \u201cWork with Yair to have all product agents ready and integrated on the\u2026\u201d, each stamped \u201cPortal final sprint \u00b7 19d ago\u201d. The panel footer says \u201cView all meetings \u2192\u201d.",
+  "whyItsWrong": "These are internal task rows surfaced as notifications, cut mid-sentence, under a footer that links to meetings. Nothing here tells the reader what happened or what to do, and a 19-day-old item is still presented as active.",
+  "evidence": [
+   "src/components/notification-bell.tsx \u2014 row rendering and the footer link",
+   "the rows are drawn from task/action-item records rather than events"
+  ],
+  "fix": "Write notifications as events with a subject and a verb (\u201cInstagram agent run failed \u00b7 9h ago\u201d), let them wrap to two lines instead of clipping, point the footer at whatever the rows actually are, and age out or visually de-emphasise anything older than a week.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 146,
+  "severity": "medium",
+  "title": "The Meetings list is not in date order \u2014 synced meetings land wherever the sync ran",
+  "surface": "Meetings (/transcripts)",
+  "whatYouSee": "Live right now, top to bottom: Jun 21 \u2192 Jun 23 \u2192 7h ago \u2192 4h ago \u2192 8d ago \u2192 7d ago. On the call: \"Why is it not in order?\" \u2014 noticed the moment three freshly synced meetings appeared above newer ones.",
+  "whyItsWrong": "The list is sorted by createdAt \u2014 the moment the record was synced into Firestore \u2014 not by when the meeting happened. Fireflies backfills insert old meetings at the top, and the type already carries the real meetingDate field the sort ignores.",
+  "evidence": [
+   "src/lib/data.ts:769\u2013784 \u2014 listTranscripts sorts (b.createdAt ?? 0) \u2212 (a.createdAt ?? 0)",
+   "src/lib/types.ts:1016 \u2014 meetingDate?: number exists on Transcript",
+   "src/app/(app)/transcripts/page.tsx \u2014 no re-sort after fetch"
+  ],
+  "fix": "Sort by (meetingDate ?? createdAt) descending in listTranscripts, and show meetingDate on the row when present so the displayed date is the one being sorted. One line plus a display touch.",
+  "ledgerCluster": "SHELL",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p161-199.md",
+  "hasShot": "yes"
+ }
+]

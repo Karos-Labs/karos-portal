@@ -1,0 +1,280 @@
+[
+ {
+  "n": 40,
+  "severity": "medium",
+  "title": "The schedule dialog's \"Posts per week\" is actually runs per week \u2014 the cost line one paragraph below contradicts the label",
+  "surface": "Client AI Agents \u2192 agent card \u2192 \"Keep <Agent> running\" dialog (/clients/[id]/agents)",
+  "whatYouSee": "A dropdown labelled \"Posts per week\" (1-7) next to \"Outputs per run\" (1-5). Pick 3 and 5 and the cost box directly below reads \"3 runs x 5 outputs x 12 credits\" \u2014 15 posts a week, not 3. The confirmation that lands in the client's activity feed also says \"Set <Agent> to 3 posts per week\".",
+  "whyItsWrong": "The number is the count of days the agent fires; each firing produces the \"outputs per run\" number of items. So a client sizing their weekly content volume off this label is understating it by up to five times, and the same wrong wording is repeated back to them in the activity log entry. The dialog disproves its own label one paragraph later.",
+  "evidence": [
+   "src/components/custom-agents.tsx:743",
+   "src/components/custom-agents.tsx:755",
+   "src/components/custom-agents.tsx:795",
+   "src/components/custom-agents.tsx:689",
+   "src/lib/actions/planned-run-actions.ts:167",
+   "src/lib/actions/planned-run-actions.ts:177",
+   "src/lib/actions/planned-run-actions.ts:236",
+   "src/lib/scheduled-runs.ts:97"
+  ],
+  "fix": "src/components/custom-agents.tsx:743 \u2014 change the label text \"Posts per week\" to \"Runs per week\". Add the resulting volume to the cost box after line 796 (\"Credits are charged when each scheduled run starts.\"): `{postsPerWeek * outputsPerRun} new drafts a week.` Also fix the activity-log copy at src/lib/actions/planned-run-actions.ts:236, which writes \"Set <agent> to N posts per week\" \u2014 make it \"N runs per week (M drafts)\". Leave the field name postsPerWeek alone; it is persisted and read in several places.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 41,
+  "severity": "low",
+  "title": "Clients are shown the raw internal status word for their agent runs \u2014 \"Run 2026-07-27 \u00b7 review\", \"\u00b7 failed\"",
+  "surface": "AI Agents run dialog \u2192 X / LinkedIn / Reddit agent data pane \u2192 Feedback card",
+  "whatYouSee": "Above the feedback box, a list of recent runs reads \"Run 2026-07-27 \u00b7 review\", \"Run 2026-07-25 \u00b7 queued\", \"Run 2026-07-24 \u00b7 failed\". Lowercase internal words, no explanation, and for a client no link \u2014 a failed run is a dead line of text with nothing to click and no reason given.",
+  "whyItsWrong": "These are the internal status values printed verbatim into client-facing copy on three separate surfaces, when the app already has a mapper that renders them as \"In review\", \"Queued\", \"Failed\" with a colour and is used everywhere else. The date is likewise printed in raw machine format while the rest of the app formats dates.",
+  "evidence": [
+   "src/components/x-agent-intake.tsx:686",
+   "src/components/linkedin-agent-intake.tsx:638",
+   "src/components/reddit-agent-intake.tsx:313",
+   "src/components/job-status.tsx:4-15",
+   "src/lib/agent-intake-views.ts:116-121"
+  ],
+  "fix": "In all three feedback run lists, replace `\u00b7 {r.status}` with <JobStatusBadge status={r.status} /> from src/components/job-status.tsx \u2014 x-agent-intake.tsx:686, linkedin-agent-intake.tsx:638, reddit-agent-intake.tsx:313; the row views already carry the typed status (src/lib/agent-intake-views.ts:116-121). Replace the raw ISO dates (x-agent-intake.tsx:681/684, linkedin-agent-intake.tsx:633/636, reddit-agent-intake.tsx:308/311) with relativeTime or formatDate from src/lib/utils, and do the same for the feedback-history dates at x:725, linkedin:677, reddit:343.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 42,
+  "severity": "low",
+  "title": "Seat forms refuse to save over a field that is not marked required",
+  "surface": "AI Agents run dialog \u2192 X agent data \u2192 \"Add a seat\" and each seat card (and the same two LinkedIn forms)",
+  "whatYouSee": "You add a seat: type the person's name, their handle, skip \"Anything we must never post\" because nothing indicates it is required, press Add seat. Red text: \"Tell us what we must never post (or write nothing).\" The company form above marks its two mandatory questions with a red asterisk; the seat form marks nothing, and the field's own placeholder invites you to skip it.",
+  "whyItsWrong": "The server rejects an empty off-limits answer on both seat paths, add and edit, but neither label carries the required marker that the same file already defines and uses on the company form. The user has to fail the save to learn the rule. The LinkedIn seat forms have the identical mismatch.",
+  "evidence": [
+   "src/components/x-agent-intake.tsx:84",
+   "src/components/x-agent-intake.tsx:285-288",
+   "src/components/x-agent-intake.tsx:492",
+   "src/components/x-agent-intake.tsx:584",
+   "src/lib/actions/x-agent-actions.ts:187",
+   "src/lib/actions/x-agent-actions.ts:305",
+   "src/components/linkedin-agent-intake.tsx:423",
+   "src/components/linkedin-agent-intake.tsx:551",
+   "src/lib/actions/linkedin-agent-actions.ts:141",
+   "src/lib/actions/linkedin-agent-actions.ts:219"
+  ],
+  "fix": "Add <RequiredMark /> (defined at src/components/x-agent-intake.tsx:84) to the \"Anything we must never post\" labels in SeatCard (line 492) and AddSeatForm (line 584), matching the company form at 285-288, and soften the placeholders so they read as a required choice rather than an optional one. Do the same in src/components/linkedin-agent-intake.tsx at 423 and 551 \u2014 its server actions reject the empty answer at src/lib/actions/linkedin-agent-actions.ts:141 and 219. Leave the LinkedIn company field at 159 alone: it is genuinely optional there and already labelled so.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 43,
+  "severity": "low",
+  "title": "Staff land on a completely blank AI Agents page for any client whose agent list is empty",
+  "surface": "AI Agents (/clients/<id>/agents) \u2014 staff view",
+  "whatYouSee": "Page header \"AI Agents \u2014 Run custom AI agents for this client and track their deliverables\", three small header links, and then nothing. No cards, no empty state, no hint that agents need importing or that the client's lab-repo slug is unset. Just white space to the bottom of the viewport.",
+  "whyItsWrong": "The agents section returns nothing at all when there are no agents and no run history, and the page's only empty state belongs to the other branch (service unconfigured). This is the first thing a staff member sees for a brand-new client and it offers no next action, even though both causes \u2014 no enabled custom agents imported, or every enabled agent being a per-client instance bound to a different client's slug \u2014 are named right there in the filter.",
+  "evidence": [
+   "src/app/(app)/clients/[id]/agents/page.tsx:298-307",
+   "src/app/(app)/clients/[id]/agents/page.tsx:247-249",
+   "src/components/custom-agents.tsx:437",
+   "src/lib/custom-agent-launch.ts:829-835"
+  ],
+  "fix": "In src/app/(app)/clients/[id]/agents/page.tsx, before rendering <ClientCustomAgents> in the staff branch, add an EmptyState (from src/components/ui) when enabledAgents.length === 0 and toRunRows(jobs, true).length === 0: name both causes and link to /agents to import or enable an agent, plus /clients/<id>/settings when client.agentsRepoSlug is unset, since that is what the agentKeyMatchesClientSlug filter at line 248 drops per-client instances on.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 44,
+  "severity": "low",
+  "title": "The client AI Agents page stacks two near-identical headings and taglines on top of each other",
+  "surface": "Client AI Agents page (/clients/[id]/agents)",
+  "whatYouSee": "\"AI Agents \u2014 Your active AI team, run agents now or set their weekly production pace.\" and below it a second heading \"Your AI agents \u2014 Your always-on AI team. Run an agent now or choose its weekly production pace.\"",
+  "whyItsWrong": "The page header and the section header say the same thing twice in slightly different words (\"active AI team\" versus \"always-on AI team\", \"set their weekly production pace\" versus \"choose its weekly production pace\"), one in Title Case and one in sentence case. It reads like two people wrote the page and neither deleted the other's line, and it spends the top of the fold on nothing.",
+  "evidence": [
+   "src/app/(app)/clients/[id]/agents/page.tsx:216",
+   "src/app/(app)/clients/[id]/agents/page.tsx:217",
+   "src/components/custom-agents.tsx:457",
+   "src/components/custom-agents.tsx:459",
+   "src/components/custom-agents.tsx:460"
+  ],
+  "fix": "Keep one. src/app/(app)/clients/[id]/agents/page.tsx:216-217 \u2014 set `title=\"AI agents\"` and `description=\"Your always-on AI team. Run an agent now, or set its weekly production pace.\"`. Then in src/components/custom-agents.tsx:457-461 suppress the duplicate for client viewers: render the h2 only when `!viewerIsClient` (keep \"Custom agents\" for staff) and gate the `<p>` at 458-462 the same way. Keep the credits badge at 464-468 unconditionally \u2014 it is the only unique content in that header row.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 45,
+  "severity": "low",
+  "title": "Two managed-product run components and their submit action are dead code \u2014 the four catalog products cannot be started from the agents area at all",
+  "surface": "Agents (/agents) and AI Agents (/clients/<id>/agents)",
+  "whatYouSee": "Staff open Agents or a client's AI Agents page looking for Social posts, Newsletter issue, Blog article or Landing page \u2014 the four catalog products with taglines, deliverables and time estimates. Neither page lists them. No card, no Run button, no mention. The only way to start one is to put a task on the client's board and let the board execute it.",
+  "whyItsWrong": "A complete guided run dialog for these four (per-product brief fields, attachment profiles, live/dormant cards, run history) exists as one component, and a client-facing view of them exists as another, and neither component is imported anywhere in the repo. The server action they call has no other caller, so it is unreachable too. That is a few hundred lines of maintained-looking dead UI that will drift out of sync with the catalog, and staff who expect to launch a blog article from the Agents page have no signpost telling them the task board is where it happens.",
+  "evidence": [
+   "src/components/managed-products.tsx:34",
+   "src/components/client-managed-agents.tsx:61",
+   "src/lib/actions/external-job-actions.ts:16-26",
+   "src/app/(app)/agents/page.tsx:57-63",
+   "src/app/(app)/clients/[id]/agents/page.tsx:298-307",
+   "src/app/(app)/clients/[id]/agents/page.tsx:270-278",
+   "src/lib/execution-engine.ts:315-323",
+   "src/lib/actions/task-actions.ts:133",
+   "src/lib/agent-service/products.ts:40"
+  ],
+  "fix": "Pick one direction. To retire: delete src/components/managed-products.tsx and src/components/client-managed-agents.tsx, delete submitManagedJobAction from src/lib/actions/external-job-actions.ts:16-26 (keep the submitManagedJob core \u2014 the task engine calls it at src/lib/execution-engine.ts:318), and drop the now-unused jobPreviews block at src/app/(app)/clients/[id]/agents/page.tsx:270-278. To restore: mount <ManagedProducts clientId contextItems jobs jobPreviews /> in that page's staff branch alongside <ClientCustomAgents>, and <ClientManagedAgents> in the client branch.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "\u2014"
+ },
+ {
+  "n": 127,
+  "severity": "blocker",
+  "title": "Agent descriptions are raw lab-repo skill manifests, shipped to clients unedited",
+  "surface": "AI Agents (/clients/[id]/agents) \u2014 every agent card, and the run dialog",
+  "whatYouSee": "Every card's description is the internal skill blurb from the lab repo. On screen right now: \u201cBranded Shorts Editor (e18)\u201d, \u201cHLG->SDR tonemap, never washed\u201d, \u201cpixel-verifiable and gated\u201d, \u201cinterview-clips (e17)\u201d, \u201cparameterized clone of the proven reference engine\u201d, \u201c~4 continuous generator sub-skills\u201d, \u201cFORGE-blessed bar\u201d, \u201cLinkedIn company-page posts \u2026 (Path A)\u201d, \u201ccontext router docs\u201d, \u201cEMITS per-client generator sub-skills\u201d.",
+  "whyItsWrong": "This is the page that sells the product back to the client every week, and it reads as engineering notes. It leaks the lab's internal product codes (e13/e16/e17/e18) and pipeline architecture to anyone with a client login, and it breaks the house rule that no raw repo or model copy reaches a client. The same string is reused in the run dialog, so there is no surface where the client gets a plain description.",
+  "evidence": [
+   "src/components/custom-agents.tsx \u2014 card body renders agent.description verbatim",
+   "src/lib/lab-outputs.ts \u2014 the import path that stores the manifest string as description",
+   "customAgents documents \u2014 description holds the lab manifest, with no client-facing alternative field"
+  ],
+  "fix": "Add a clientBlurb field (1\u20132 sentences, sentence case, no codes) to the customAgents document and render that on the card and in the run dialog; keep description as the internal field, shown only to staff. Backfill the seven existing agents by hand. Add a guard in the lab-import path that refuses or flags any blurb matching /\\be\\d{1,2}\\)|sub-skill|tonemap|FORGE|Path [A-Z]\\b/i so the next import cannot reintroduce it.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "OPS-PENDING",
+  "track": "B",
+  "specFile": "findings-p009-046.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 128,
+  "severity": "high",
+  "title": "Agent descriptions are cut off mid-word, with no ellipsis and no way to read the rest",
+  "surface": "AI Agents (/clients/[id]/agents) \u2014 agent cards",
+  "whatYouSee": "Instagram Agent's description ends \u201c\u2026video/clip content is the TikTok Agent (e16), a\u201d. Reddit's ends on \u201c(one per\u201d. TikTok's ends on \u201c(mandatory\u201d. The card just stops mid-word. There is no \u201cmore\u201d control anywhere.",
+  "whyItsWrong": "It reads as a rendering bug because it is one \u2014 a hard character cut applied to prose that was never written to be truncated. The information is simply lost, and three of the seven cards are affected.",
+  "evidence": [
+   "src/components/custom-agents.tsx \u2014 description block on the agent card"
+  ],
+  "fix": "Stop cutting by character count. Clamp visually with -webkit-line-clamp: 3 so the cut always lands on a line boundary, and add a \u201cMore\u201d disclosure that expands in place \u2014 reuse Disclosure from src/components/seo-geo/disclosure.tsx rather than writing a new toggle. Fixing #127 makes most cards short enough that the clamp never fires.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 129,
+  "severity": "high",
+  "title": "\u201cReady to build your weekly content queue.\u201d sits on all seven cards \u2014 including the one that says Setup needed",
+  "surface": "AI Agents (/clients/[id]/agents) \u2014 the status strip on every agent card",
+  "whatYouSee": "The identical sentence occupies the status strip of every agent. On the Reddit card it appears directly under a \u201cSetup needed\u201d chip. On Branded Shorts \u2014 which cannot run without an uploaded video \u2014 it also claims readiness.",
+  "whyItsWrong": "It is filler in the one slot on the card that should carry real state, and on two cards it flatly contradicts the state shown immediately above it. Repeated verbatim seven times, it reads as a placeholder nobody replaced.",
+  "evidence": [
+   "src/components/custom-agents.tsx:546 \u2014 the constant string"
+  ],
+  "fix": "Make that line state-derived. Precedence: blocked \u2192 what is missing plus a link to fix it (\u201cAdd your Reddit accounts to run this\u201d); scheduled \u2192 next run date; drafts waiting \u2192 \u201cN drafts waiting for review\u201d linking to the review view; otherwise \u2192 \u201cNo runs yet\u201d. Delete the constant.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 130,
+  "severity": "medium",
+  "title": "Every agent is priced identically at \u201c25 credits per output\u201d",
+  "surface": "AI Agents (/clients/[id]/agents) \u2014 agent card footer",
+  "whatYouSee": "All seven cards print \u201c25 credits per output\u201d \u2014 a full video edit, a website rebuild and a single LinkedIn post are priced the same.",
+  "whyItsWrong": "A flat number across wildly different work reads as a placeholder, and it is the number a client budgets against. (The schedule dialog does correctly derive a weekly total \u2014 \u201c3 runs \u00d7 1 outputs \u00d7 25 credits = 75 credits\u201d \u2014 so only the per-agent price is wrong, not the arithmetic.)",
+  "evidence": [
+   "src/components/custom-agents.tsx:550 \u2014 cost line",
+   "src/lib/credits.ts \u2014 single default cost rather than a per-agent value"
+  ],
+  "fix": "Put the cost on the agent record so each agent can price its own output, defaulting to the current value. Leave the schedule dialog's derived weekly total as-is \u2014 it is already correct.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "OPS-PENDING",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 131,
+  "severity": "blocker",
+  "title": "\u201cRun now\u201d is fully enabled on an agent whose own card says \u201cSetup needed\u201d",
+  "surface": "AI Agents (/clients/[id]/agents) \u2014 Reddit agent card",
+  "whatYouSee": "The Reddit card shows an amber \u201cSetup needed\u201d chip and, directly beneath it, an active \u201cRun now\u201d button. Nothing states what setup is missing or where to do it. \u201cSetup needed\u201d is itself a button, so the card offers two competing calls to action.",
+  "whyItsWrong": "Either the click spends credits on a run that cannot succeed, or it fails with an error the client cannot act on. Both are worse than a disabled button, and this is the most likely thing to break in a live demo. The credit-shortfall case already does this correctly \u2014 that button is disabled with a title explaining why \u2014 so the pattern exists and simply is not applied to the setup case.",
+  "evidence": [
+   "src/components/custom-agents.tsx:555-559 \u2014 disabled={short} with an explanatory title for the credits case, but no equivalent for the setup case",
+   "src/lib/actions/custom-agent-actions.ts \u2014 the server-side gate that will refuse the run"
+  ],
+  "fix": "Compute readiness where the \u201cSetup needed\u201d chip is rendered and pass it to the run button: when not ready, disable it and set the title to the unblocking step, using the same shape as the existing credits case at custom-agents.tsx:555. Never render an enabled Run beside a blocked chip.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 132,
+  "severity": "high",
+  "title": "Run history rows are labelled with the operator's raw typing, typos included",
+  "surface": "AI Agents (/clients/[id]/agents) \u2014 Recent agent runs",
+  "whatYouSee": "Verbatim rows on screen: \u201cCreate 1 linkein post for the company\u201d, \u201cCreate 1 linkedIn post\u201d, \u201ccreate 1 post for linkedin\u201d, \u201cCreate a Linkedin post for the company\u201d.",
+  "whyItsWrong": "The client's permanent run history is somebody's typing \u2014 misspellings and inconsistent capitals and all. Read together with the failures on those same rows, it looks like flailing.",
+  "evidence": [
+   "src/components/custom-agents.tsx \u2014 recent-runs list renders the submitted prompt as the row label",
+   "src/lib/actions/custom-agent-actions.ts \u2014 the prompt is stored on the job and echoed back"
+  ],
+  "fix": "Label rows by what was produced, not what was typed: \u201cLinkedIn company post \u00b7 1 draft\u201d. Keep the raw prompt in the run detail for staff. Never echo free-text input as a client-facing label.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 134,
+  "severity": "high",
+  "title": "An unfilled template placeholder is shown to the user: \u201cFocus this batch on [person]\u2019s seat.\u201d",
+  "surface": "AI Agents \u2192 Run now \u2192 X agent run dialog \u2192 \u201cCommon starting points\u201d",
+  "whatYouSee": "One of the three suggestion chips reads, literally, \u201cFocus this batch on [person]\u2019s seat.\u201d Clicking it would put that text into the run prompt.",
+  "whyItsWrong": "A square-bracket placeholder that was never substituted. It tells the client the feature is unfinished, and if clicked it sends a literal \u201c[person]\u201d into the agent prompt.",
+  "evidence": [
+   "the run dialog\u2019s starting-point suggestions (src/components/custom-agents.tsx / the X intake view config in src/lib/agent-intake-views.ts)"
+  ],
+  "fix": "Either substitute a real seat name from the client's seat roster (the X agent data already holds the seat list) or reword the chip so it needs no substitution: \u201cFocus this batch on one person\u2019s seat.\u201d Add a test that fails on any user-facing string matching /\\[[a-z_]+\\]/.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ },
+ {
+  "n": 135,
+  "severity": "low",
+  "title": "\u201c3 runs \u00d7 1 outputs \u00d7 25 credits\u201d \u2014 unpluralised units in the cost line",
+  "surface": "AI Agents \u2192 Set schedule \u2192 \u201cKeep X Agent running\u201d",
+  "whatYouSee": "The estimated-cost line reads \u201c3 runs \u00d7 1 outputs \u00d7 25 credits\u201d.",
+  "whyItsWrong": "\u201c1 outputs\u201d. The rest of the dialog is carefully written, so this reads as unfinished.",
+  "evidence": [
+   "src/components/schedule-run-modal.tsx \u2014 the estimated weekly cost line"
+  ],
+  "fix": "Pluralise from the value: `${n} ${n === 1 ? \"output\" : \"outputs\"}`.",
+  "ledgerCluster": "AGENTS",
+  "ledgerStatus": "RESOLVED",
+  "track": "A",
+  "specFile": "findings-p047-084.md",
+  "hasShot": "yes"
+ }
+]
