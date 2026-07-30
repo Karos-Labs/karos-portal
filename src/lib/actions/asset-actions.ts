@@ -173,6 +173,13 @@ export async function clientRescheduleAssetAction(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const asset = await requireAssetAccess(id);
 
+  // Same defense-in-depth as updateAssetAction: staff-only working material
+  // (a launch deliverable, a Control Room Test Run) is never a client's to
+  // move, even if it somehow carries an approved/scheduled status.
+  if (isLaunchDeliverable(asset) || isTestRunAsset(asset)) {
+    return { ok: false, error: "This output isn't available to reschedule." };
+  }
+
   if (asset.status !== "approved" && asset.status !== "scheduled") {
     return {
       ok: false,
