@@ -136,7 +136,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
       }));
     const agentLabelByAssetId = contentLabelsByAsset(assets, jobs, umbrellas);
     const timelineJobs: TimelineJob[] = jobs
-      .filter((job) => !isClientViewer || job.runType !== "launch")
+      .filter((job) => !isClientViewer || (job.runType !== "launch" && job.runType !== "test"))
       .map((job) => ({
         id: job.id,
         agentName: runRowLabel(job, umbrellas),

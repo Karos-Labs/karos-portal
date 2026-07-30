@@ -2,10 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Mocks are hoisted above imports; define them with vi.hoisted so the factories
 // can reference them safely.
-const { generateObjectMock, generateTextMock, logUsageMock } = vi.hoisted(() => ({
+const { generateObjectMock, generateTextMock, logUsageMock, logGenerationFailureMock } = vi.hoisted(() => ({
   generateObjectMock: vi.fn(),
   generateTextMock: vi.fn(),
   logUsageMock: vi.fn(),
+  logGenerationFailureMock: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -13,7 +14,9 @@ vi.mock("ai", () => ({ generateObject: generateObjectMock, generateText: generat
 vi.mock("@ai-sdk/anthropic", () => ({ anthropic: vi.fn(() => "mock-model") }));
 // after() runs its callback synchronously so we can assert usage logging.
 vi.mock("next/server", () => ({ after: (fn: () => void) => fn() }));
-vi.mock("@/services/logger", () => ({ logger: { logUsage: logUsageMock } }));
+vi.mock("@/services/logger", () => ({
+  logger: { logUsage: logUsageMock, logGenerationFailure: logGenerationFailureMock },
+}));
 
 import {
   MAX_PERSONAS,

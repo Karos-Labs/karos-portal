@@ -12,11 +12,12 @@ import {
 import {
   MAX_FEEDBACK_CHARS,
   clampFeedbackText,
+  isFeedbackCategory,
   validateFeedbackScope,
   type FeedbackScope,
 } from "@/lib/client-agent-feedback";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
-import type { AppUser, ClientAgent, ClientAgentFeedback } from "@/lib/types";
+import type { AppUser, ClientAgent, ClientAgentFeedback, FeedbackCategory } from "@/lib/types";
 
 /**
  * Two-level client-agent feedback (Phase 3 §5, CD-A2).
@@ -71,6 +72,8 @@ export async function addClientAgentFeedbackAction(input: {
   scope: FeedbackScope;
   templateKey?: string | null;
   text: string;
+  /** Untrusted browser input — validated below, never passed straight through. */
+  category?: string | null;
 }): Promise<{ id?: string; error?: string }> {
   const loaded = await loadUmbrella(input.clientAgentId, input.clientId);
   if (!loaded.ok) return { error: loaded.error };
@@ -78,6 +81,13 @@ export async function addClientAgentFeedbackAction(input: {
 
   const text = clampFeedbackText(input.text);
   if (!text) return { error: "Write what you'd like this agent to do differently." };
+
+  // Cosmetic tag, not a scope: an unrecognized value is dropped rather than
+  // refused, so a stale client build (or a model that guesses) never blocks
+  // the write it is attached to.
+  const category: FeedbackCategory | null = isFeedbackCategory(input.category)
+    ? input.category
+    : null;
 
   const scope = validateFeedbackScope({
     scope: input.scope,
@@ -109,6 +119,7 @@ export async function addClientAgentFeedbackAction(input: {
     scope: scope.templateKey ? "template" : "agent",
     templateKey: scope.templateKey,
     text,
+    category,
     status: "active",
     createdBy: user.uid,
     createdByName: user.name,

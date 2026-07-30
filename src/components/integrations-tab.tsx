@@ -975,7 +975,13 @@ export function IntegrationsTab({
       }
     }
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      // The popup-closed poll started by openOAuthPopup outlives this effect
+      // (it's keyed off a ref, not effect state) — without this, navigating
+      // away while a popup is still open leaves its setInterval running forever.
+      if (popupTimerRef.current) clearInterval(popupTimerRef.current);
+    };
   }, [router]);
 
   function openOAuthPopup(provider: string) {

@@ -34,6 +34,18 @@ export interface UsageLog {
   jobId?: string | null;
   durationMs?: number;
   timestamp: number;
+  /**
+   * Omitted/undefined on historic docs is treated as "success" everywhere
+   * this is read. "cancelled" is kept distinct from "failed" (mirroring
+   * `JobStatus`'s own split) so a deliberate Force Cancel doesn't inflate the
+   * Agent Leaderboard's failure count the way a genuine breakage should —
+   * both still count toward totalCostUsd/totalRuns (the spend is real
+   * either way), only the failedRuns/failedCostUsd reliability signal cares
+   * about the distinction.
+   */
+  status?: "success" | "failed" | "cancelled";
+  /** Set when status is "failed"/"cancelled" — the thrown error or upstream failure/cancellation reason. */
+  errorMessage?: string;
 }
 
 export interface ErrorLog {
@@ -59,8 +71,11 @@ export interface AnalyticsSnapshot {
   totalOutputTokens: number;
   totalRuns: number;
   totalErrors: number;
+  /** Overlay on the totals above — spend/runs already counted in totalCostUsd/totalRuns that failed. */
+  failedRuns?: number;
+  failedCostUsd?: number;
   lastUpdated: number;
-  [key: string]: number; // model_* flattened fields
+  [key: string]: number | undefined; // model_* flattened fields
 }
 
 /* ── Pricing matrix ──────────────────────────────────────────────── */

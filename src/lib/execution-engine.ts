@@ -434,6 +434,10 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown execution error";
+    logger.logGenerationFailure(
+      { clientId, agentId: null, agentName: "Task Execution", modelName: selectModelName(task), operation: "task_execution" },
+      err,
+    );
     await updateClientTask(taskId, {
       status: "pending",
       metadata: {

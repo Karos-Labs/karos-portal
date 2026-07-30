@@ -395,6 +395,10 @@ async function gatherSiteIntelligence(
     return text?.trim() || null;
   } catch (err) {
     console.warn(`[branding] Site intelligence gathering failed for ${domain}:`, err);
+    logger.logGenerationFailure(
+      { clientId, agentId: null, agentName: "Branding · Site Intelligence", modelName: MODELS.HAIKU, operation: "branding_extraction" },
+      err,
+    );
     return null;
   }
 }
@@ -709,43 +713,48 @@ export async function applyBrandingForClient(
     logoContext,
   );
 
-  let object: z.infer<typeof BrandingAISchema>;
+  const paletteUsageMeta = {
+    clientId, agentId: null, agentName: "Branding · Palette Extraction",
+    modelName: MODELS.HAIKU, operation: "branding_extraction",
+  };
 
-  if (logoContext?.kind === "vision") {
-    // Vision mode: pass logo image as Claude image part alongside the text prompt
-    const result = await generateObject({
-      model: anthropic(MODELS.HAIKU),
-      schema: BrandingAISchema,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "image", image: logoContext.imageBytes, mediaType: logoContext.mimeType },
-            { type: "text", text: promptText },
-          ],
-        },
-      ],
-    });
-    object = result.object;
-    logger.logUsage({
-      clientId, agentId: null, agentName: "Branding · Palette Extraction",
-      modelName: MODELS.HAIKU, operation: "branding_extraction",
-      inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0,
-    });
-  } else {
+  async function runPaletteExtraction() {
+    if (logoContext?.kind === "vision") {
+      // Vision mode: pass logo image as Claude image part alongside the text prompt
+      return generateObject({
+        model: anthropic(MODELS.HAIKU),
+        schema: BrandingAISchema,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "image", image: logoContext.imageBytes, mediaType: logoContext.mimeType },
+              { type: "text", text: promptText },
+            ],
+          },
+        ],
+      });
+    }
     // Text-only mode: SVG colors and/or site intelligence are embedded in the prompt text
-    const result = await generateObject({
+    return generateObject({
       model: anthropic(MODELS.HAIKU),
       schema: BrandingAISchema,
       prompt: promptText,
     });
-    object = result.object;
-    logger.logUsage({
-      clientId, agentId: null, agentName: "Branding · Palette Extraction",
-      modelName: MODELS.HAIKU, operation: "branding_extraction",
-      inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0,
-    });
   }
+
+  let object: z.infer<typeof BrandingAISchema>;
+  let usage: { inputTokens?: number; outputTokens?: number };
+  try {
+    ({ object, usage } = await runPaletteExtraction());
+  } catch (err) {
+    logger.logGenerationFailure(paletteUsageMeta, err);
+    throw err;
+  }
+  logger.logUsage({
+    ...paletteUsageMeta,
+    inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+  });
 
   // ── Normalize and assemble guidelines ───────────────────────────
   const dominantColors: BrandColor[] = object.dominantColors.map((c, i) => ({

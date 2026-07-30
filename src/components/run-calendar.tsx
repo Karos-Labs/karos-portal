@@ -12,7 +12,7 @@ import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
 import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
-import { cn } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 import type { AssetImage } from "@/lib/asset-images";
 import type { Asset, AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
 
@@ -62,6 +62,35 @@ export interface CalendarRun {
   /** The free-text request this run fires each time. */
   prompt?: string;
   agentDescription?: string;
+  /**
+   * The schedule's OWN track record — distinct from `jobStatus` above, which
+   * only exists on a "past" (already-fired) entry. A "scheduled" card is a
+   * pure future projection with no job of its own yet, so this is the only
+   * way it can say anything about whether the schedule has actually been
+   * firing: when it last ran, whether that fire produced a job to inspect,
+   * and whether the fire itself was refused before a job ever existed
+   * (PlannedScheduledRun.lastError — a submission refusal, not a job failure).
+   */
+  lastRunAt?: number;
+  /** Staff-only: the job the schedule's most recent fire produced, if any — links to /jobs/[id]. */
+  lastJobId?: string;
+  lastError?: string | null;
+  lastErrorAt?: number | null;
+  /**
+   * The schedule's raw stored `nextRunAt` was already behind "now" when this
+   * occurrence was projected — it hasn't fired when it should have. Distinct
+   * from `lastError` (a recorded refusal reason may or may not exist yet;
+   * this is purely "the clock says it's overdue").
+   *
+   * `stuckLabel`/`stuckMessage` are resolved server-side (calendar-body.tsx),
+   * not derived here from a plain boolean — the copy differs by viewer
+   * (staff get the operational "Stuck" / "check the Jobs page" wording;
+   * clients get a professional, reassuring line with none of that internal
+   * vocabulary), and this codebase's rule is that redaction happens at the
+   * server boundary, never at render. Both present together or neither.
+   */
+  stuckLabel?: string;
+  stuckMessage?: string;
 }
 
 /** Repo agent option for the schedule-a-run form. */
@@ -79,15 +108,20 @@ export interface CalendarPost {
   clientName?: string;
   title: string;
   at: number;
-  kind: "scheduled" | "published" | "placeholder";
+  kind: "scheduled" | "published" | "placeholder" | "failed" | "draft";
   images: AssetImage[];
   textPreview: string;
+  /** Set when kind is "failed" — the last publish attempt's error, shown in the chip tooltip and detail modal. */
+  publishError?: string;
 }
 
 export interface CalendarClientOption {
   id: string;
   name: string;
 }
+
+/** The named calendar statuses a viewer can hide. "review" maps to CalendarRun.jobStatus, the rest to CalendarPost.kind. */
+type StatusFilterKey = CalendarPost["kind"] | "review";
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
@@ -174,6 +208,16 @@ const POST_CHIP_CLASS: Record<CalendarPost["kind"], string> = {
   published: "bg-success/15 text-success",
   scheduled: "border border-dashed border-info/50 bg-info/10 text-info",
   placeholder: "border border-dashed border-muted-2/50 bg-foreground/[0.04] text-muted",
+  failed: "bg-danger/15 text-danger",
+  draft: "border border-dashed border-muted-2/40 bg-foreground/[0.02] text-muted-2",
+};
+
+const POST_KIND_LABEL: Record<CalendarPost["kind"], string> = {
+  published: "Published",
+  scheduled: "Scheduled post",
+  placeholder: "Placeholder",
+  failed: "Failed to publish",
+  draft: "Draft",
 };
 
 function PostChip({
@@ -197,7 +241,7 @@ function PostChip({
         CHIP_SIZE[size],
         POST_CHIP_CLASS[post.kind],
       )}
-      title={`${post.kind === "published" ? "Published" : post.kind === "scheduled" ? "Scheduled post" : "Placeholder"} · ${post.title} · ${timeStr(post.at)}`}
+      title={`${POST_KIND_LABEL[post.kind]}${post.kind === "failed" && post.publishError ? ` — ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{post.title}</span>
@@ -211,12 +255,15 @@ function ScheduledRunCard({
   run,
   canManage,
   canDelete,
+  canOpenJob,
 }: {
   run: CalendarRun;
   /** Pause this schedule. Clients may manage their own (requireClientAccess). */
   canManage: boolean;
   /** Delete it outright — staff only; a client's undo is a staff member. */
   canDelete: boolean;
+  /** Staff. /jobs/[id] is staff-guarded and silently redirects a client to /dashboard. */
+  canOpenJob: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<null | "pause" | "delete">(null);
@@ -276,16 +323,23 @@ function ScheduledRunCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium">{run.productName}</p>
-            <Badge tone="info">Upcoming</Badge>
+            {/* A stuck schedule's "next" time below is a stale, already-passed
+                cursor (see projectRunOccurrences's doc comment) — labeling it
+                "Upcoming" would restate the exact misrepresentation this flag
+                exists to stop. Label/message are both resolved server-side
+                (calendar-body.tsx) so the copy is already correct for this
+                viewer — never decided here. */}
+            <Badge tone={run.stuckLabel ? "danger" : "info"}>{run.stuckLabel ?? "Upcoming"}</Badge>
             {run.clientName && <Badge tone="neutral">{run.clientName}</Badge>}
           </div>
           {/* One clock, stated once. The cadence label already carries the
               wall-clock time and its zone, so printing a second, differently
               derived time here is what made the two contradict each other. */}
           <p className="mt-0.5 text-xs text-muted-2">
-            {run.cadenceLabel} · next {timeStr(run.at, run.timeZone)}
+            {run.cadenceLabel} · {run.stuckLabel ? "was due" : "next"} {timeStr(run.at, run.timeZone)}
             {run.zoneLabel ? ` ${run.zoneLabel}` : ""}
           </p>
+          {run.stuckMessage && <p className="mt-1.5 text-xs text-danger">{run.stuckMessage}</p>}
           {run.agentDescription && <p className="mt-1.5 text-xs text-muted-2">{run.agentDescription}</p>}
           <div className="mt-2.5 border-t border-border pt-2">
             <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-2">Will run</p>
@@ -293,6 +347,36 @@ function ScheduledRunCard({
               {run.prompt ? `“${run.prompt}”` : "Runs the agent's default playbook."}
             </p>
           </div>
+          {/* The schedule's own track record — this card IS a future
+              projection with no job of its own, so this is the only place it
+              can say whether the schedule has actually been firing. A recent
+              lastError means the fire was REFUSED before a job ever existed
+              (credit cap, missing intake, agent service unreachable) — there
+              is nothing to link to for that outcome, only the reason. */}
+          {(run.lastRunAt || run.lastError) && (
+            <div className="mt-2.5 border-t border-border pt-2">
+              <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-2">
+                Last fire
+              </p>
+              {run.lastError ? (
+                <p className="text-xs text-danger">
+                  Failed to fire {run.lastErrorAt ? relativeTime(run.lastErrorAt) : ""} — {run.lastError}
+                </p>
+              ) : run.lastRunAt ? (
+                <p className="text-xs text-muted-2">
+                  Ran {relativeTime(run.lastRunAt)}
+                  {canOpenJob && run.lastJobId && (
+                    <>
+                      {" · "}
+                      <Link href={`/jobs/${run.lastJobId}`} className="text-neon-dim hover:text-neon">
+                        View job
+                      </Link>
+                    </>
+                  )}
+                </p>
+              ) : null}
+            </div>
+          )}
           {paused ? (
             <p className="mt-3 text-xs text-muted-2">
               Paused. It won&apos;t fire again until you resume it on the AI Agents page.
@@ -384,6 +468,7 @@ function PastRunCard({
   const status = run.jobStatus
     ? JOB_STATUS_META[run.jobStatus] ?? { tone: "neutral" as const, label: "Done" }
     : { tone: "neutral" as const, label: "Done" };
+  const inFlight = run.jobStatus === "queued" || run.jobStatus === "running";
 
   // Where "review this" actually goes. Staff get the run detail page the
   // notification bell already links to; a client gets the deliverable itself,
@@ -431,7 +516,8 @@ function PastRunCard({
             <div className="flex flex-wrap items-center gap-2">{heading}</div>
           )}
           <p className="mt-0.5 text-xs text-muted-2">
-            {run.outputSummary ? `${run.outputSummary} · ` : ""}Ran {timeStr(run.at)}
+            {run.outputSummary ? `${run.outputSummary} · ` : ""}
+            {inFlight ? "Started" : "Ran"} {timeStr(run.at)}
           </p>
 
           {reviewable && (href || openAsset) && (
@@ -450,7 +536,9 @@ function PastRunCard({
             </div>
           )}
 
-          {run.jobStatus === "failed" ? (
+          {inFlight ? (
+            <p className="mt-2 text-xs text-muted-2">In progress…</p>
+          ) : run.jobStatus === "failed" ? (
             <p className="mt-2 text-xs text-danger">The run failed and produced no assets.</p>
           ) : images.length === 0 && textAssets.length === 0 ? (
             <p className="mt-2 text-xs text-muted-2">No client-facing assets from this run.</p>
@@ -594,26 +682,46 @@ export function RunCalendar({
   const [scheduleOpen, setScheduleOpen] = useState(false);
   /** Day clicked on an empty cell, carried into the schedule form as a prefill. */
   const [schedulePrefillAt, setSchedulePrefillAt] = useState<number | null>(null);
+  // Status filter: which of the named calendar statuses are currently hidden.
+  // "review" is a CalendarRun bucket (jobStatus === "review", i.e. Pending
+  // Review) — everything else is a CalendarPost kind.
+  const [hiddenStatuses, setHiddenStatuses] = useState<Set<StatusFilterKey>>(new Set());
+  const toggleStatus = (key: StatusFilterKey) =>
+    setHiddenStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
   const openAsset = openAssetId ? assetById.get(openAssetId) ?? null : null;
 
+  const visiblePosts = useMemo(
+    () => posts.filter((p) => !hiddenStatuses.has(p.kind)),
+    [posts, hiddenStatuses],
+  );
+  const visibleRuns = useMemo(
+    () => runs.filter((r) => !(r.jobStatus === "review" && hiddenStatuses.has("review"))),
+    [runs, hiddenStatuses],
+  );
+
   const runsByDay = useMemo(() => {
     const m = new Map<string, CalendarRun[]>();
-    for (const r of runs) {
+    for (const r of visibleRuns) {
       const k = dayKey(r.at, r.timeZone);
       (m.get(k) ?? m.set(k, []).get(k)!).push(r);
     }
     return m;
-  }, [runs]);
+  }, [visibleRuns]);
 
   const postsByDay = useMemo(() => {
     const m = new Map<string, CalendarPost[]>();
-    for (const p of posts) {
+    for (const p of visiblePosts) {
       const k = dayKey(p.at);
       (m.get(k) ?? m.set(k, []).get(k)!).push(p);
     }
     return m;
-  }, [posts]);
+  }, [visiblePosts]);
 
   const totalDays = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
@@ -829,12 +937,19 @@ export function RunCalendar({
           )}
         </ul>
 
-        {/* Legend */}
+        {/* Legend + status filter — each chip toggles that status's visibility on the grid above. */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
           <LegendDot className="border border-dashed border-foreground/40 bg-foreground/[0.03]" label="Scheduled run" />
           <LegendDot className="bg-foreground/25" label="Completed run" />
-          <LegendDot className="border border-dashed border-info/60 bg-info/10" label="Scheduled post" />
-          <LegendDot className="bg-success opacity-80" label="Published" />
+          {STATUS_FILTER_CHIPS.map((chip) => (
+            <FilterChip
+              key={chip.key}
+              className={chip.className}
+              label={chip.label}
+              hidden={hiddenStatuses.has(chip.key)}
+              onClick={() => toggleStatus(chip.key)}
+            />
+          ))}
         </div>
       </div>
 
@@ -860,6 +975,7 @@ export function RunCalendar({
                       run={r}
                       canManage={canManageRuns || canSchedule}
                       canDelete={canSchedule}
+                      canOpenJob={canSchedule}
                     />
                   ))}
                 </Section>
@@ -934,6 +1050,44 @@ function LegendDot({ className, label }: { className: string; label: string }) {
       <div className={cn("h-2.5 w-3.5 rounded-sm", className)} />
       {label}
     </div>
+  );
+}
+
+const STATUS_FILTER_CHIPS: Array<{ key: StatusFilterKey; label: string; className: string }> = [
+  { key: "draft", label: "Draft", className: POST_CHIP_CLASS.draft },
+  { key: "scheduled", label: "Scheduled", className: POST_CHIP_CLASS.scheduled },
+  { key: "published", label: "Published", className: POST_CHIP_CLASS.published },
+  { key: "placeholder", label: "Placeholder", className: POST_CHIP_CLASS.placeholder },
+  { key: "failed", label: "Failed", className: POST_CHIP_CLASS.failed },
+  { key: "review", label: "Pending review", className: "bg-warning/25" },
+];
+
+/** A legend dot that also toggles that status's visibility on the grid — dimmed while hidden. */
+function FilterChip({
+  className,
+  label,
+  hidden,
+  onClick,
+}: {
+  className: string;
+  label: string;
+  hidden: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={!hidden}
+      title={hidden ? `Show ${label.toLowerCase()} items` : `Hide ${label.toLowerCase()} items`}
+      className={cn(
+        "flex items-center gap-1.5 rounded text-[11px] transition-opacity hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-neon/50",
+        hidden ? "opacity-40" : "opacity-100",
+      )}
+    >
+      <div className={cn("h-2.5 w-3.5 rounded-sm", className)} />
+      <span className={hidden ? "text-muted-2 line-through" : "text-muted-2"}>{label}</span>
+    </button>
   );
 }
 

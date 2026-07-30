@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { getJob, updateJob } from "@/lib/data";
 import { cancelAgentServiceJob } from "@/lib/agent-service/client";
-import type { Job } from "@/lib/types";
+import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
+import { reconcileOneJob } from "@/lib/agent-service/reconcile-job";
+import type { Job, JobStatus } from "@/lib/types";
 import { requireClientAccess, requireStaff } from "./_shared";
 
 /*
@@ -63,6 +65,68 @@ export async function cancelClientAgentJobAction(jobId: string): Promise<{ error
   const result = await requestJobCancellation(jobId, job);
   if (!result.error) revalidatePath(`/clients/${job.clientId}/agents`);
   return result;
+}
+
+/**
+ * Re-submit a failed custom-agent run with the same agent/client/prompt (staff
+ * only — item 4's execution transparency asked for a retry trigger, and today
+ * there is none; a failed run otherwise requires firing a brand-new run by
+ * hand). Reconstructs from what the job doc actually persisted — `input.prompt`
+ * (see submitCustomAgentJob, which stamps `input: { agent, prompt }`) plus the
+ * run-type/umbrella/template fields already on the job. `contextItemIds` were
+ * never persisted past the original submission, so a retry can't reattach the
+ * exact context files the first attempt used — an acceptable gap for a retry
+ * button versus building new context-recovery plumbing for it.
+ */
+export async function retryJobAction(jobId: string): Promise<{ jobId?: string; error?: string }> {
+  const user = await requireStaff();
+  const job = await getJob(jobId);
+  if (!job) return { error: NOT_FOUND };
+  if (job.status !== "failed") return { error: "Only a failed run can be retried." };
+  if (!job.customAgentId) return { error: "This run has no retryable agent reference." };
+  const prompt = job.input?.prompt;
+  if (!prompt) return { error: "Original prompt not found for this run." };
+
+  const result = await submitCustomAgentJob(user, {
+    agentId: job.customAgentId,
+    clientId: job.clientId,
+    prompt,
+    runType: job.runType,
+    clientAgentId: job.clientAgentId,
+    templateKey: job.templateKey,
+  });
+  if (result.jobId) {
+    revalidatePath(`/clients/${job.clientId}/agents`);
+    revalidatePath("/jobs");
+  }
+  return result;
+}
+
+/**
+ * On-demand single-job reconcile (staff only) — the Control Room calls this
+ * right after Force Cancel requests a cancellation, since `cancelAgentServiceJob`
+ * only asks the remote service to stop the run: locally, `Job.status` stays
+ * `queued`/`running` until a webhook arrives or the ~10-minute reconcile cron
+ * happens to sweep it (`src/app/api/agent-service/reconcile/route.ts`). This
+ * runs the SAME per-job logic (`reconcileOneJob`) immediately instead, so a
+ * cancelled run's status reflects reality in seconds rather than up to the
+ * cron's full interval.
+ */
+export async function refreshJobStatusAction(
+  jobId: string,
+): Promise<{ status?: JobStatus; action?: string; error?: string }> {
+  await requireStaff();
+  const job = await getJob(jobId);
+  if (!job) return { error: NOT_FOUND };
+  try {
+    const { action } = await reconcileOneJob(job);
+    const fresh = await getJob(jobId);
+    revalidatePath(`/jobs/${jobId}`);
+    if (fresh) revalidatePath(`/clients/${fresh.clientId}/agents`);
+    return { status: fresh?.status, action };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Couldn't refresh this run's status." };
+  }
 }
 
 async function requestJobCancellation(jobId: string, preloaded?: Job): Promise<{ error?: string }> {

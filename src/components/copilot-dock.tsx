@@ -85,7 +85,6 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
         const s = saved as Record<string, unknown>;
         // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring persisted state on mount is the point
         if (typeof s.collapsed === "boolean") setCollapsed(s.collapsed);
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring persisted state on mount is the point
         if (typeof s.sheetOpen === "boolean") setSheetOpen(s.sheetOpen);
       }
     } catch {

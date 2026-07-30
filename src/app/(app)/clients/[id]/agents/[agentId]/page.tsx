@@ -64,9 +64,10 @@ import {
   launchProfileFor,
 } from "@/lib/custom-agent-launch";
 import { summarizeAgentEconomics } from "@/lib/credit-reporting";
-import { AgentRunHistory, StaffAgentControls } from "@/components/custom-agents";
-import { AgentEconomicsCard } from "@/components/client-agents/agent-economics";
+import { ControlRoom } from "@/components/client-agents/control-room";
 import { CurationPane } from "@/components/client-agents/client-agents-section";
+import { deriveAgentHealth } from "@/lib/agent-health";
+import { nextRunCountdown } from "@/lib/scheduled-runs";
 import {
   buildAgentSetup,
   type AgentIntakePanes,
@@ -145,11 +146,17 @@ async function agentIntakePane(
  */
 export default async function ClientAgentDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string; agentId: string }>;
+  /** `asset` — Copilot chat's staff deep link, lands on Control Room's Outputs
+   *  tab with this asset pre-opened (OutputsHub/ControlRoom). Staff-only: a
+   *  CLIENT_USER never receives this param (their side has no Control Room). */
+  searchParams: Promise<{ asset?: string }>;
 }) {
   const user = await requireUser();
   const { id, agentId } = await params;
+  const { asset: deepLinkAssetId } = await searchParams;
 
   if (user.role === "CLIENT_USER") {
     if (user.clientId !== id) redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
@@ -195,6 +202,7 @@ export default async function ClientAgentDetailPage({
   }
 
   const summary = toSummary(agent);
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const now = Date.now();
   const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
   const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
@@ -364,6 +372,29 @@ export default async function ClientAgentDetailPage({
     ? summarizeAgentEconomics(jobs.filter((job) => job.customAgentId === agent.id))
     : null;
 
+  // ── CONTROL ROOM: health + next-scheduled-execution (real signals only) ──
+  // `scheduledRuns` (unlike `scheduleRows`/`schedule` above, which only cover
+  // WEEKLY umbrella-paced schedules) is the raw PlannedScheduledRun set for
+  // every cadence, so a one-off or daily/monthly schedule still counts toward
+  // health/next-run — deriveAgentHealth and nextRunCountdown are both pure
+  // (agent-health.ts / scheduled-runs.ts), so this is just wiring real rows in.
+  const agentSchedules = scheduledRuns.filter((r) => r.customAgentId === agent.id);
+  const activeAgentSchedules = agentSchedules
+    .filter((r) => r.status === "active")
+    .sort((a, b) => a.nextRunAt - b.nextRunAt);
+  const soonestActiveSchedule = activeAgentSchedules[0] ?? null;
+  const pausedAgentSchedule = agentSchedules.find((r) => r.status === "paused") ?? null;
+  const agentHealth = isStaff
+    ? deriveAgentHealth({
+        runs: agentRuns.map((r) => ({ status: r.status, createdAt: r.createdAt })),
+        scheduleStatus: soonestActiveSchedule ? "active" : pausedAgentSchedule ? "paused" : null,
+        scheduleLastError: (soonestActiveSchedule ?? pausedAgentSchedule)?.lastError ?? null,
+      })
+    : "healthy";
+  const nextRunLabel = soonestActiveSchedule
+    ? `Next run ${nextRunCountdown(soonestActiveSchedule.nextRunAt, now)}`
+    : null;
+
   const sourceFiles: SourceFile[] =
     archetype === "clip_maker"
       ? contextItems
@@ -432,6 +463,7 @@ export default async function ClientAgentDetailPage({
             job.external?.taskType === "custom" &&
             (job.status === "queued" || job.status === "running") &&
             job.runType !== "launch" &&
+            job.runType !== "test" &&
             job.createdBy === user.uid &&
             (job.customAgentId === agent.id ||
               (!job.customAgentId && job.agentName === agent.name)),
@@ -701,14 +733,17 @@ export default async function ClientAgentDetailPage({
               fills is that none of those editors ever says WHEN. */}
           {setupFacts.length > 0 && <AgentSetupSection facts={setupFacts} />}
 
-          {/* ── STAFF CONTROLS (CD-I1 staff parity) ──
-              The four gestures the retired card carried — run now, set/manage
-              the schedule, reach the agent's data, read why a schedule is
-              refusing — mounted for the ONE agent this page is about. Placed
-              under the client-facing band deliberately: staff read this page to
-              see what the client sees, then act. */}
+          {/* ── CONTROL ROOM (AgentOps upgrade) ──
+              Consolidates what used to be three scattered staff-only sections
+              (StaffAgentControls, AgentRunHistory, AgentEconomicsCard) into one
+              tabbed panel, plus what none of them had: a real (not fabricated)
+              health read, an explicit next-scheduled-execution line, and a
+              Test Run trigger. Staff only — never mounted for a CLIENT_USER,
+              same gate every section it replaces already used. */}
           {isStaff && (
-            <StaffAgentControls
+            <ControlRoom
+              health={agentHealth}
+              nextRunLabel={nextRunLabel}
               clientId={id}
               agent={summary}
               {...(schedule ? { schedule } : {})}
@@ -718,6 +753,13 @@ export default async function ClientAgentDetailPage({
               reviewHref={agentRuns.find((run) => run.status === "review")?.href ?? `/clients/${id}/assets`}
               {...(lastStaffRun ? { lastRunAt: lastStaffRun.createdAt } : {})}
               viewer={{ name: user.name, email: user.email }}
+              runs={agentRuns}
+              agents={[summary]}
+              economics={economics}
+              economicsAgentName={umbrella?.displayName ?? agent.name}
+              launchCreditCost={agent.launchCreditCost ?? null}
+              outputs={produced}
+              {...(deepLinkAssetId ? { initialOpenAssetId: deepLinkAssetId } : {})}
             />
           )}
 
@@ -773,15 +815,6 @@ export default async function ClientAgentDetailPage({
               Open your Workspace <Icon name="ArrowRight" className="h-3 w-3" />
             </Link>
           </section>
-
-          {/* This agent's own run history, with the /jobs links and the
-              submitted prompt — the staff slice of the same list the roster
-              page shows across every agent. Client viewers never mount it:
-              toRunRows only fills `prompt` and `href` for staff, and this page
-              only builds the rows at all when isStaff. */}
-          {isStaff && agentRuns.length > 0 && (
-            <AgentRunHistory runs={agentRuns} agents={[summary]} heading="This agent's runs" />
-          )}
         </div>
 
         <aside className="space-y-6">
@@ -895,19 +928,6 @@ export default async function ClientAgentDetailPage({
             </Link>
           </section>
 
-          {/* §6.2(b), staff only: what this agent has actually cost in USD.
-              It rode the umbrella card before, so it was invisible for any
-              agent nobody had bound — which is most of them. Keyed off the
-              lab agent rather than the umbrella now, so it appears wherever
-              the runs did. */}
-          {isStaff && economics && (
-            <AgentEconomicsCard
-              customAgentId={agent.id}
-              agentName={umbrella?.displayName ?? agent.name}
-              economics={economics}
-              launchCreditCost={agent.launchCreditCost ?? null}
-            />
-          )}
         </aside>
       </div>
     </>

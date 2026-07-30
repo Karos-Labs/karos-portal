@@ -338,6 +338,10 @@ export async function simulatePersona(
 ): Promise<PersonaSimulationResult> {
   const system = buildPersonaSystemPrompt(persona);
   const prompt = buildUserPrompt(artifact, ctx);
+  const simUsageMeta = {
+    clientId: ctx.clientId, agentId: null, agentName: `Simulation: ${persona.name}`,
+    modelName: MODELS.HAIKU, operation: "audience_simulation",
+  };
   let verdict: PersonaVerdict;
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
@@ -350,6 +354,10 @@ export async function simulatePersona(
     verdict = first.object;
     usage = first.usage;
   } catch (firstError) {
+    // Tier 1 (strict schema) spent real tokens even though it failed
+    // validation/generation — log it before falling through to tier 2, or it
+    // simply vanishes once a later tier succeeds and logs its own usage.
+    logger.logGenerationFailure(simUsageMeta, firstError);
     try {
       const second = await generateObject({
         model: anthropic(MODELS.HAIKU),
@@ -359,7 +367,8 @@ export async function simulatePersona(
       });
       verdict = normalizeVerdict(second.object);
       usage = second.usage;
-    } catch {
+    } catch (secondError) {
+      logger.logGenerationFailure(simUsageMeta, secondError);
       try {
         const third = await generateText({
           model: anthropic(MODELS.HAIKU),
@@ -378,7 +387,8 @@ No markdown, no code fences, no extra text.`,
         if (!fromText) throw new Error("Text fallback could not produce a valid verdict");
         verdict = fromText;
         usage = third.usage ?? {};
-      } catch {
+      } catch (thirdError) {
+        logger.logGenerationFailure(simUsageMeta, thirdError);
         // All three tiers failed — surface the original (strict schema) error; it's
         // the one most likely to reflect the real root cause (model/network failure),
         // while the fallback tiers exist purely to rescue malformed-but-valid responses.
@@ -389,11 +399,7 @@ No markdown, no code fences, no extra text.`,
 
   after(() =>
     logger.logUsage({
-      clientId: ctx.clientId,
-      agentId: null,
-      agentName: `Simulation: ${persona.name}`,
-      modelName: MODELS.HAIKU,
-      operation: "audience_simulation",
+      ...simUsageMeta,
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
     }),

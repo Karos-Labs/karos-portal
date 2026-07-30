@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useTransition } from "react";
-import Link from "next/link";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
@@ -24,6 +23,20 @@ interface Message {
    * `content` is still what goes to the API.
    */
   display?: string;
+}
+
+/** One of this client's LIVE agents, offered in the `@mention` dropdown. */
+interface MentionableAgent {
+  id: string;
+  displayName: string;
+  icon: string;
+  platform: string | null;
+}
+
+/** A focused-agent chip set by picking `@AgentName` — biases, not locks, the chat. */
+interface FocusAgent {
+  id: string;
+  name: string;
 }
 
 /* ── Transcript persistence ──────────────────────────────────────────── */
@@ -58,6 +71,13 @@ interface ProactiveAction {
   /** Chat message this chip sends. Omitted for chips handled by a dedicated UI. */
   trigger?: string;
   color: string;
+  /**
+   * Opts into Sonnet instead of the copilot's default Haiku model — this is a
+   * plain chatbot, so most turns (including a focused-agent conversation) run
+   * cheap. These three run multi-step tool orchestration over a full strategy
+   * write-up, not a quick Q&A turn, so they ask for the stronger model.
+   */
+  deep?: boolean;
 }
 
 function buildProactiveActions(): ProactiveAction[] {
@@ -85,6 +105,7 @@ function buildProactiveActions(): ProactiveAction[] {
       trigger:
         "Give me an intel brief on one of the competitors in our tracker, built from the tracked competitor data you already hold. Start by asking me which tracked competitor to focus on.",
       color: "#6b9fd4",
+      deep: true,
     },
     {
       id: "brand_audit",
@@ -94,6 +115,7 @@ function buildProactiveActions(): ProactiveAction[] {
       trigger:
         "Run a brand visibility and market presence audit. Identify gaps in our brand positioning and generate specific optimization action items.",
       color: "#d9a13d",
+      deep: true,
     },
     {
       // "Queue" claimed an execution step this path never performs: the only
@@ -112,9 +134,62 @@ function buildProactiveActions(): ProactiveAction[] {
       trigger:
         "Propose which Karos managed products (social posts, newsletter, blog article, landing page) to plan for content creation this week, and suggest a concrete content plan I can turn into tasks.",
       color: "#e5484d",
+      deep: true,
     },
   ];
 }
+
+/**
+ * The `/` command palette. Each entry either inserts a scaffold sentence into
+ * the input — the same idiom the action chips' `trigger` strings already use,
+ * so completing it and sending is an ordinary chat turn the new capability-
+ * matrix tools (find_output/edit_output/run_agent_now/reschedule_output/
+ * provide_feedback, chat/route.ts) answer — or, for `/add-task`, is handled
+ * entirely client-side (see `sendAddTask`) to keep the cheap, deterministic
+ * Haiku-routed path `QuickTaskForm` used to front, now reached from the main
+ * input instead of a separate card.
+ */
+interface SlashCommand {
+  id: string;
+  label: string;
+  hint: string;
+  /** Absent only for `add-task`, which is special-cased in handleSubmit. */
+  scaffold?: string;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { id: "add-task", label: "/add-task", hint: "Quickly add a task to your board" },
+  {
+    id: "edit-output",
+    label: "/edit-output",
+    hint: "Revise a post or asset you already have",
+    scaffold: "I'd like to revise one of my generated posts — here's what to change: ",
+  },
+  {
+    id: "schedule-run",
+    label: "/schedule-run",
+    hint: "Run one of your agents right now",
+    scaffold: "Please run ",
+  },
+  {
+    id: "reschedule-post",
+    label: "/reschedule-post",
+    hint: "Move a scheduled post to a new date/time",
+    scaffold: "I'd like to move the publish date for ",
+  },
+  {
+    id: "inspect-job",
+    label: "/inspect-job",
+    hint: "Check the status of a specific output",
+    scaffold: "What's the status of ",
+  },
+  {
+    id: "provide-feedback",
+    label: "/provide-feedback",
+    hint: "Give standing feedback on one of your agents",
+    scaffold: "I want to give feedback on ",
+  },
+];
 
 /* ── Copilot hook ────────────────────────────────────────────────────── */
 
@@ -129,6 +204,8 @@ function useCopilot(
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set by picking `@AgentName` — sent as `focusAgentId` on every turn until cleared. */
+  const [focusAgent, setFocusAgent] = useState<FocusAgent | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Scoped to viewer AND client: sessionStorage survives sign-out in the same
   // tab, and StaffCopilotDock writes under this prefix too — an unscoped key
@@ -192,8 +269,10 @@ function useCopilot(
      * @param display Shown in the user bubble instead of `text` — used by the
      * action chips, whose trigger is an instruction to the model, not a
      * sentence the client typed (QA F15). `text` is what the API receives.
+     * @param deep Opts this one turn into Sonnet — the 3 substantive proactive
+     * actions set it; everything else runs on the copilot's default cheap model.
      */
-    async (text: string, display?: string) => {
+    async (text: string, display?: string, deep?: boolean) => {
       const trimmed = text.trim();
       if (!trimmed || streaming) return;
 
@@ -219,7 +298,11 @@ function useCopilot(
         const response = await fetch(`/api/clients/${clientId}/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history }),
+          body: JSON.stringify({
+            messages: history,
+            ...(focusAgent ? { focusAgentId: focusAgent.id } : {}),
+            ...(deep ? { deep: true } : {}),
+          }),
           signal: controller.signal,
         });
 
@@ -262,10 +345,61 @@ function useCopilot(
         setStreaming(false);
       }
     },
-    [clientId, messages, streaming, onBrandingChange, onTasksCreated, router],
+    [clientId, messages, streaming, focusAgent, onBrandingChange, onTasksCreated, router],
   );
 
-  return { messages, input, setInput, send, streaming, error, reset };
+  /**
+   * `/add-task` — the fast path `QuickTaskForm` used to front, reached from
+   * the main input instead of a separate card. Deliberately NOT a chat turn:
+   * it calls `ingestCustomUserTaskAction` directly (its own cheap Haiku
+   * routing + dedup, its own `task_assist` credit charge), so folding task
+   * creation into the main input doesn't also fold it into the pricier,
+   * slower `chat_message` path. The transcript still shows it as a turn —
+   * the user's literal command, then the routed result — so the two ways of
+   * adding a task don't read as two different features.
+   */
+  const sendAddTask = useCallback(
+    async (taskText: string) => {
+      const trimmed = taskText.trim();
+      if (!trimmed || streaming) return;
+
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: `/add-task ${trimmed}`,
+      };
+      const assistantId = crypto.randomUUID();
+      setMessages((prev) => [...prev, userMsg, { id: assistantId, role: "assistant", content: "" }]);
+      setInput("");
+      setStreaming(true);
+      setError(null);
+
+      try {
+        const result = await ingestCustomUserTaskAction(clientId, trimmed);
+        const reply = result.ok
+          ? `Added${result.title ? ` "${result.title}"` : ""} to your task board.`
+          : result.duplicate
+            ? (result.error ?? "That's already on your task board.")
+            : (result.error ?? "Couldn't add that task — try again.");
+        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: reply } : m)));
+        if (result.ok) onTasksCreated();
+      } catch {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: "Couldn't add that task — try again." } : m,
+          ),
+        );
+      } finally {
+        setStreaming(false);
+      }
+    },
+    [clientId, streaming, onTasksCreated],
+  );
+
+  return {
+    messages, input, setInput, send, sendAddTask, streaming, error, reset,
+    focusAgent, setFocusAgent,
+  };
 }
 
 /* ── Typing dots ─────────────────────────────────────────────────────── */
@@ -284,128 +418,6 @@ function TypingDots() {
   );
 }
 
-/* ── Quick task ingestion form ───────────────────────────────────────── */
-
-/**
- * Extracted from the welcome column so it can also render in the actions strip
- * above the input bar — the whole action surface used to exist only while the
- * transcript was empty (QA F88).
- */
-function QuickTaskForm({
-  clientId,
-  onTasksCreated,
-}: {
-  clientId: string;
-  onTasksCreated: () => void;
-}) {
-  const [taskText, setTaskText] = useState("");
-  const [isPending, startTransition] = useTransition();
-  // "info" is the duplicate case: nothing failed, the work is already on the
-  // board — it used to render in the red danger style (QA F61).
-  const [taskFeedback, setTaskFeedback] = useState<{
-    type: "success" | "info" | "error";
-    message: string;
-    /** Where the created task lives, so the confirmation can hand you off (QA F65). */
-    href?: string;
-  } | null>(null);
-
-  function handleTaskSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmed = taskText.trim();
-    if (!trimmed || isPending) return;
-    setTaskFeedback(null);
-    startTransition(async () => {
-      const result = await ingestCustomUserTaskAction(clientId, trimmed);
-      if (result.ok) {
-        // Show the title the router actually created — it rewrites what the
-        // user typed, so the card may not carry their words (QA F65).
-        const label = result.title
-          ? `Added “${result.title}”`
-          : result.owner === "karos_managed"
-            ? "AI-managed task added"
-            : "Action item added";
-        const owner = result.owner === "client_managed" ? "client" : "karos";
-        setTaskFeedback({
-          type: "success",
-          message: label,
-          href: result.taskId ? `/tasks?owner=${owner}&task=${result.taskId}` : "/tasks",
-        });
-        setTaskText("");
-        onTasksCreated();
-      } else {
-        setTaskFeedback({
-          type: result.duplicate ? "info" : "error",
-          message: result.error ?? "Failed to add task",
-        });
-      }
-    });
-  }
-
-  return (
-    <form onSubmit={handleTaskSubmit} className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-2 transition-colors focus-within:border-foreground/25">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon-soft text-neon">
-          <Icon name="Plus" className="h-3 w-3" />
-        </span>
-        <input
-          value={taskText}
-          onChange={(e) => setTaskText(e.target.value)}
-          placeholder="Describe a task you need done…"
-          disabled={isPending}
-          maxLength={1000}
-          className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-2 outline-none disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={!taskText.trim() || isPending}
-          className="flex h-6 items-center gap-1 rounded-md bg-primary px-2 text-[10px] font-semibold text-primary-foreground transition-opacity disabled:opacity-40"
-        >
-          {isPending ? (
-            <Icon name="Loader" className="h-3 w-3 animate-spin" />
-          ) : (
-            <>
-              <Icon name="Sparkles" className="h-2.5 w-2.5" />
-              Add
-            </>
-          )}
-        </button>
-      </div>
-      {taskFeedback && (
-        <div
-          className={cn(
-            "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[10px]",
-            taskFeedback.type === "success"
-              ? "border border-success/25 bg-success/10 text-success"
-              : taskFeedback.type === "info"
-                ? "border border-border bg-surface-2 text-muted"
-                : "border border-danger/20 bg-danger/5 text-danger",
-          )}
-        >
-          <Icon
-            name={
-              taskFeedback.type === "success"
-                ? "CircleCheck"
-                : taskFeedback.type === "info"
-                  ? "Info"
-                  : "TriangleAlert"
-            }
-            className="h-3 w-3 shrink-0"
-          />
-          <span className="min-w-0 flex-1 truncate">{taskFeedback.message}</span>
-          {taskFeedback.href && (
-            <Link
-              href={taskFeedback.href}
-              className="shrink-0 font-semibold underline underline-offset-2 hover:opacity-80"
-            >
-              View
-            </Link>
-          )}
-        </div>
-      )}
-    </form>
-  );
-}
-
 /* ── Action chips ────────────────────────────────────────────────────── */
 
 /**
@@ -418,7 +430,7 @@ function ActionChips({
   isAiProcessing,
 }: {
   /** Sends the action's chat trigger; `display` is what the transcript shows (QA F15). */
-  onRun: (trigger: string, display: string) => void;
+  onRun: (trigger: string, display: string, deep?: boolean) => void;
   onRefreshTaskMap: () => void;
   isAiProcessing?: boolean;
 }) {
@@ -433,7 +445,7 @@ function ActionChips({
             key={action.id}
             disabled={locked}
             onClick={() =>
-              action.trigger ? onRun(action.trigger, action.label) : onRefreshTaskMap()
+              action.trigger ? onRun(action.trigger, action.label, action.deep) : onRefreshTaskMap()
             }
             title={locked ? "Karos Agents are already building your workspace strategy" : undefined}
             className={cn(
@@ -468,21 +480,17 @@ function ActionChips({
 /* ── Proactive welcome (CLIENT_USER initial view) ────────────────────── */
 
 function ProactiveWelcome({
-  clientId,
   clientName,
   userName,
   hasGoogleIntegration,
   send,
-  onTasksCreated,
   onRefreshTaskMap,
   isAiProcessing,
 }: {
-  clientId: string;
   clientName: string;
   userName?: string;
   hasGoogleIntegration: boolean;
   send: (t: string, display?: string) => void;
-  onTasksCreated: () => void;
   /** Launches the multi-agent Strategy War Room instead of a single-shot chat scan. */
   onRefreshTaskMap: () => void;
   /** True while a background AI generation cycle is running — locks the Refresh Task Map chip. */
@@ -514,10 +522,15 @@ function ProactiveWelcome({
             phone filled the sheet on its own (QA F94). */}
         <div className="rounded-md border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
           <p className="font-medium">{greeting} I&apos;m your AI Copilot for <strong>{clientName}</strong>.</p>
+          {/* Describing a task no longer needs its own card — the main input
+              below does it, either conversationally or via /add-task (QA CD-L1). */}
+          <p className="mt-1 text-xs text-muted">
+            Describe a task, type <code className="rounded bg-surface-3 px-1 py-0.5 font-mono text-[10px]">/</code> for
+            commands, or <code className="rounded bg-surface-3 px-1 py-0.5 font-mono text-[10px]">@</code> to focus on
+            one of your agents.
+          </p>
         </div>
       </div>
-
-      <QuickTaskForm clientId={clientId} onTasksCreated={onTasksCreated} />
 
       {/* Divider */}
       <div className="flex items-center gap-2 px-1">
@@ -650,12 +663,10 @@ export function ChatbotWidget({
   const onTasksCreated = useCallback(() => router.refresh(), [router]);
   const openWarRoom = useCallback(() => setWarRoomOpen(true), []);
 
-  const { messages, input, setInput, send, streaming, error, reset } = useCopilot(
-    clientId,
-    viewerUid,
-    onBrandingChange,
-    onTasksCreated,
-  );
+  const {
+    messages, input, setInput, send, sendAddTask, streaming, error, reset,
+    focusAgent, setFocusAgent,
+  } = useCopilot(clientId, viewerUid, onBrandingChange, onTasksCreated);
 
   // Whether to show the proactive welcome instead of the standard empty state
   const showProactiveWelcome = defaultOpen && messages.length === 0;
@@ -670,15 +681,89 @@ export function ChatbotWidget({
     if (panelOpen) setTimeout(() => inputRef.current?.focus(), 50);
   }, [panelOpen]);
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  /* ── @mention roster ──────────────────────────────────────────────── */
+  // Fetched independently of a chat turn — the `@` dropdown has to be ready
+  // the moment the client starts typing, not after their first message lands.
+  const [mentionableAgents, setMentionableAgents] = useState<MentionableAgent[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/clients/${clientId}/agents/mentionable`)
+      .then((r) => (r.ok ? r.json() : { agents: [] }))
+      .then((data: { agents?: MentionableAgent[] }) => {
+        if (!cancelled) setMentionableAgents(data.agents ?? []);
+      })
+      .catch(() => {
+        /* dropdown just stays empty — chat itself still works */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  /* ── `@` / `/` dispatch ───────────────────────────────────────────── */
+  // Single-line input, so both triggers are read off the END of the current
+  // value — the same simplification most single-line mention comboboxes make.
+  // `@` fires on the trailing word anywhere; `/` only when it is the WHOLE
+  // input so far, since a command is something typed first, not mid-sentence.
+  const mentionQuery = /(?:^|\s)@(\S*)$/.exec(input)?.[1];
+  const commandQuery = /^\/(\S*)$/.exec(input)?.[1];
+  const mentionMatches =
+    mentionQuery !== undefined
+      ? mentionableAgents.filter((a) => a.displayName.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
+      : [];
+  const commandMatches =
+    commandQuery !== undefined
+      ? SLASH_COMMANDS.filter((c) => c.id.replace(/-/g, "").includes(commandQuery.toLowerCase().replace(/\//g, ""))).slice(0, 6)
+      : [];
+
+  function pickMention(agent: MentionableAgent) {
+    setFocusAgent({ id: agent.id, name: agent.displayName });
+    // Strip the trailing "@query" the user was typing — the chip carries the
+    // focus from here, so the literal "@" text would otherwise double it up.
+    setInput((prev) => prev.replace(/(?:^|\s)@\S*$/, (m) => (m.startsWith(" ") ? " " : "")));
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  function pickCommand(cmd: SlashCommand) {
+    setInput(cmd.scaffold ?? "/add-task ");
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  function submitCurrentInput() {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith("/add-task ")) {
+      sendAddTask(trimmed.slice("/add-task ".length));
+      return;
+    }
+    if (trimmed === "/add-task") return; // nothing to route yet
     send(input);
   }
 
+  // Shared by both the form's submit and the input's Enter key — kept as one
+  // function taking no event so it isn't tied to either handler's event type.
+  function submitOrDispatch() {
+    // A dropdown open picks the top suggestion rather than sending half-typed
+    // "@" or "/" text as a literal message.
+    if (mentionMatches.length > 0) return pickMention(mentionMatches[0]);
+    if (commandMatches.length > 0) return pickCommand(commandMatches[0]);
+    submitCurrentInput();
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    submitOrDispatch();
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape" && (mentionQuery !== undefined || commandQuery !== undefined)) {
+      // Drop the trigger character so re-pressing Escape doesn't just reopen it.
+      setInput((prev) => prev.replace(/(?:^|\s)@\S*$/, "").replace(/^\/\S*$/, ""));
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      send(input);
+      submitOrDispatch();
     }
   }
 
@@ -768,12 +853,10 @@ export function ChatbotWidget({
           {messages.length === 0 ? (
             showProactiveWelcome ? (
               <ProactiveWelcome
-                clientId={clientId}
                 clientName={clientName}
                 userName={userName}
                 hasGoogleIntegration={hasGoogleIntegration}
                 send={send}
-                onTasksCreated={onTasksCreated}
                 onRefreshTaskMap={openWarRoom}
                 isAiProcessing={client?.isAiProcessing}
               />
@@ -844,7 +927,6 @@ export function ChatbotWidget({
               </button>
               {actionsOpen && (
                 <div className="flex max-h-[45dvh] flex-col gap-3 overflow-y-auto border-t border-border px-3 py-3">
-                  <QuickTaskForm clientId={clientId} onTasksCreated={onTasksCreated} />
                   <ActionChips
                     onRun={send}
                     onRefreshTaskMap={openWarRoom}
@@ -863,11 +945,63 @@ export function ChatbotWidget({
             </div>
           )}
 
-          {/* Input bar */}
-          <form
-            onSubmit={handleSubmit}
-            className="flex shrink-0 items-center gap-2 border-t border-border px-3 py-3"
-          >
+          {/* Focused-agent chip — a bias, not a lock (chat/route.ts's FOCUSED
+              AGENT block still answers anything else asked). Persists across
+              turns until cleared here or by picking a different @mention. */}
+          {focusAgent && (
+            <div className="mx-3 mb-2 flex w-fit items-center gap-1.5 rounded-full border border-neon/30 bg-neon-soft px-2.5 py-1 text-[11px] text-neon">
+              <Icon name="AtSign" className="h-3 w-3" />
+              Focused on {focusAgent.name}
+              <button
+                type="button"
+                onClick={() => setFocusAgent(null)}
+                aria-label="Clear focused agent"
+                className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-neon/20"
+              >
+                <Icon name="X" className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Input bar — `relative` hosts the @mention / /command dropdown,
+              which floats ABOVE the bar (bottom-full) since the bar itself
+              sits at the very bottom of the panel. */}
+          <div className="relative shrink-0">
+            {(mentionMatches.length > 0 || commandMatches.length > 0) && (
+              <div
+                role="listbox"
+                className="absolute bottom-full left-3 right-3 z-10 mb-1 max-h-56 overflow-y-auto rounded-md border border-border bg-surface shadow-lg"
+              >
+                {mentionQuery !== undefined &&
+                  mentionMatches.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => pickMention(a)}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2"
+                    >
+                      <Icon name={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                      <span className="flex-1 truncate text-xs text-foreground">{a.displayName}</span>
+                    </button>
+                  ))}
+                {commandQuery !== undefined &&
+                  commandMatches.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => pickCommand(c)}
+                      className="flex w-full flex-col items-start px-3 py-2 text-left transition-colors hover:bg-surface-2"
+                    >
+                      <span className="font-mono text-xs text-foreground">{c.label}</span>
+                      <span className="text-[11px] text-muted-2">{c.hint}</span>
+                    </button>
+                  ))}
+              </div>
+            )}
+            <form
+              onSubmit={handleSubmit}
+              className="flex items-center gap-2 border-t border-border px-3 py-3"
+            >
             <input
               ref={inputRef}
               value={input}
@@ -875,7 +1009,7 @@ export function ChatbotWidget({
               onKeyDown={handleKeyDown}
               placeholder={
                 showProactiveWelcome
-                  ? "Or type your own question…"
+                  ? "Describe a task, or ask a question…"
                   : "Ask about performance, brand, competitors…"
               }
               disabled={streaming}
@@ -893,7 +1027,8 @@ export function ChatbotWidget({
                 <Icon name="ArrowUp" className="h-4 w-4" />
               )}
             </button>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 

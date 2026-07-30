@@ -382,9 +382,15 @@ export interface ExternalJobInfo {
  *   scheduled       — a recurring fire of the umbrella's schedule
  *   manual_template — client pressed "Run this template now"
  *   manual          — any other hand-fired run (incl. note revision passes)
+ *   test            — staff Control Room "Test Run": fires for real (real
+ *                     cost, real generation) but its output is excluded from
+ *                     scheduling/chain-reflow and every client-facing surface
+ *                     (mirrors the existing launchDeliverable exclusion), and
+ *                     gets its own economics bucket rather than biasing
+ *                     "manual"/"untyped" — see credit-reporting.ts.
  * Absent on legacy jobs; analytics buckets those as "before run-type tracking".
  */
-export type JobRunType = "launch" | "scheduled" | "manual_template" | "manual";
+export type JobRunType = "launch" | "scheduled" | "manual_template" | "manual" | "test";
 
 export interface Job {
   id: string;
@@ -446,7 +452,7 @@ export interface Asset {
   content: string;
   /** Extra structured bits e.g. hashtags, image concept, subject line. */
   meta?: Record<string, unknown>;
-  /** Public URL of the generated visual (Vercel Blob), when one exists. */
+  /** Public URL of the generated visual (Firebase Cloud Storage), when one exists. */
   imageUrl?: string | null;
   /**
    * Public URL of the deliverable's video clip (podcast cuts, branded shorts,
@@ -1862,6 +1868,9 @@ export interface AgentSlot {
  * The per-draft learning logs (XDraftFeedback / LiDraftFeedback) stay the
  * third, item-level tier.
  */
+/** What kind of note a feedback row is — see `ClientAgentFeedback.category`. */
+export type FeedbackCategory = "tone" | "formatting" | "topic_preference" | "other";
+
 export interface ClientAgentFeedback {
   id: string;
   clientId: string;
@@ -1872,6 +1881,15 @@ export interface ClientAgentFeedback {
   templateKey?: string | null;
   /** ≤ 500 chars, plain text (server-clamped). */
   text: string;
+  /**
+   * Optional tag for what kind of note this is. Cosmetic only — it changes
+   * nothing about scope, caps, or injection (`selectInjectedFeedback` and
+   * `renderFeedbackMarkdown` both ignore it entirely); it exists so the
+   * analytics history table can be filtered/grouped without re-reading every
+   * row's free text. Absent on every row written before this field existed —
+   * callers must treat missing as "uncategorized", never backfill a guess.
+   */
+  category?: FeedbackCategory | null;
   /**
    * active    = injected into every future run.
    * resolved  = STAFF addressed it. Kept, not injected.

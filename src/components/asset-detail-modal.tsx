@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
-import { Badge } from "@/components/ui";
+import { Badge, TabButton } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AudienceSimulation } from "@/components/audience-simulation";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
@@ -18,7 +18,6 @@ import { MarkPostedRow } from "@/components/mark-posted-row";
 import { publishAssetNowAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { assetImages, assetLiMedia, assetVideos } from "@/lib/asset-images";
-import { cn } from "@/lib/utils";
 import { templateForAsset } from "@/lib/post-chain";
 import type { Asset } from "@/lib/types";
 
@@ -366,6 +365,16 @@ export function AssetDetailModal({
           </div>
         )}
 
+        {/* Unconditional on eligibility — a viewer with no Publish Now button (a
+            client, or staff with no compatible connected platform) is exactly
+            who most needs to see WHY a scheduled post never went out; the
+            retry control below stays gated, the fact of the failure does not. */}
+        {asset.publishError && asset.status !== "published" && (
+          <div className="rounded-[var(--radius)] border border-danger/30 bg-danger/10 px-3 py-2.5">
+            <p className="text-xs font-medium text-danger">Publish failed</p>
+            <p className="mt-0.5 text-xs text-danger/90">{asset.publishError}</p>
+          </div>
+        )}
         <PublishNowRow
           asset={asset}
           canPublish={canPublish}
@@ -484,34 +493,6 @@ function PublishNowRow({
  * into the platform), so this is where the loop has to be closed — without it
  * nothing the user does can ever move the asset off approved/scheduled.
  */
-
-function TabButton({
-  active,
-  onClick,
-  icon,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-        active
-          ? "border-neon text-foreground"
-          : "border-transparent text-muted-2 hover:text-muted",
-      )}
-    >
-      <Icon name={icon} className="h-3.5 w-3.5" />
-      {children}
-    </button>
-  );
-}
 
 function Meta({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (

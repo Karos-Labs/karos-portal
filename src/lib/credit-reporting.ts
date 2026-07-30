@@ -110,6 +110,14 @@ export interface AgentEconomics {
   scheduled: UsdBucket;
   manual: UsdBucket;
   /**
+   * Control Room staff "Test Run" jobs (runType: "test"). Real dollars, same
+   * as any other run — but a staff member verifying the pipeline is not a
+   * normal production run, and folding it into "manual" would understate what
+   * a client's own hand-fired runs actually cost while also (via §6.3's
+   * denominator) skewing the launch-price ratio measured against it.
+   */
+  test: UsdBucket;
+  /**
    * Jobs that predate run-type stamping. Reported as its own bucket and
    * labelled as such rather than folded into "runs": these are real dollars
    * that genuinely cannot be attributed, and burying them in a run average
@@ -128,6 +136,7 @@ function bucketForRunType(runType?: JobRunType | null): keyof Omit<AgentEconomic
   if (runType === "launch") return "launch";
   if (runType === "scheduled") return "scheduled";
   if (runType === "manual_template" || runType === "manual") return "manual";
+  if (runType === "test") return "test";
   return "untyped";
 }
 
@@ -144,6 +153,7 @@ export function summarizeAgentEconomics(jobs: Job[]): AgentEconomics {
     launch: EMPTY_BUCKET(),
     scheduled: EMPTY_BUCKET(),
     manual: EMPTY_BUCKET(),
+    test: EMPTY_BUCKET(),
     untyped: EMPTY_BUCKET(),
     totalUsd: 0,
   };

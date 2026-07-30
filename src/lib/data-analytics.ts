@@ -160,6 +160,9 @@ export interface AgentStat {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /** Subset of runs/costUsd above where the run failed — spend already counted, just also broken out. */
+  failedRuns: number;
+  failedCostUsd: number;
 }
 
 export interface RangeStats {
@@ -184,11 +187,17 @@ function aggregateAgentStats(logs: UsageLog[]): AgentStat[] {
       inputTokens: 0,
       outputTokens: 0,
       costUsd: 0,
+      failedRuns: 0,
+      failedCostUsd: 0,
     };
     s.runs          += 1;
     s.inputTokens   += log.inputTokens;
     s.outputTokens  += log.outputTokens;
     s.costUsd       += log.estimatedCostUsd;
+    if (log.status === "failed") {
+      s.failedRuns     += 1;
+      s.failedCostUsd  += log.estimatedCostUsd;
+    }
     agentMap.set(agentKey, s);
   }
   return [...agentMap.values()].sort((a, b) => b.costUsd - a.costUsd);

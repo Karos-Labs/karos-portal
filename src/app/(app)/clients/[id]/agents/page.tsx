@@ -93,6 +93,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // show the gate only to billable client actors. `now` rolls the spend
     // windows on read: a schedule doc read after a week rollover would otherwise
     // still count last week's spend and mis-name the limit.
+    // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
     const now = Date.now();
     const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
     // Which limit clips that number — computed PER AGENT, because the binding

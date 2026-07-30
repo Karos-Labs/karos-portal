@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { listClients, listLoginLogs, listFeedbacks, getClientCredits } from "@/lib/data";
+import { listAllClientAgentFeedback, listClientAgents } from "@/lib/data-client-agents";
 import { availableCredits } from "@/lib/credits";
 import { LOW_CREDIT_THRESHOLD } from "@/lib/constants";
 import {
@@ -22,8 +23,9 @@ import {
 } from "@/lib/data-analytics";
 import { Card, CardTitle, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { AnalyticsFilters, FeedbackTable } from "@/components/analytics-dashboard";
+import { AgentFeedbackHistoryTable, AnalyticsFilters, FeedbackTable } from "@/components/analytics-dashboard";
 import { relativeTime, cn } from "@/lib/utils";
+import type { ClientAgentFeedback } from "@/lib/types";
 
 interface LowCreditClient {
   id: string;
@@ -78,13 +80,15 @@ export default async function AnalyticsPage({
   let agentDisplayName: string | undefined;
 
   if (range) {
-    const [rs, errs, clients, loginLogs, feedbacks, drilldown] = await Promise.all([
+    const [rs, errs, clients, loginLogs, feedbacks, drilldown, agentFeedbackRows, umbrellas] = await Promise.all([
       getRangeStats({ since, clientId }),
       listRecentErrors({ clientId, since, limit: 20 }),
       listClients(),
       clientId ? Promise.resolve([]) : listLoginLogs({ since, limit: 500 }),
       listFeedbacks(),
       agentKey ? getAgentDrilldown({ agentKey, since, clientId }) : Promise.resolve(null),
+      listAllClientAgentFeedback(),
+      listClientAgents(),
     ]);
 
     totalCostUsd      = rs.totalCostUsd;
@@ -118,21 +122,26 @@ export default async function AnalyticsPage({
       errors: errs,
       loginCount: loginLogs.length,
       feedbacks,
+      agentFeedbackRows,
+      agentNames: Object.fromEntries(umbrellas.map((u) => [u.id, u.displayName])),
       lowCredits: await lowCreditClients(clients),
     });
   }
 
   // All-time: use O(1) snapshot for global KPIs + a bounded raw-log scan for
   // the agent leaderboard (the snapshot has no per-agent breakdown).
-  const [snapshot, errors, clients, loginLogs, feedbacks, allTimeAgentStats, drilldown] = await Promise.all([
-    clientId ? getClientSnapshot(clientId) : getGlobalSnapshot(),
-    listRecentErrors({ clientId, limit: 20 }),
-    listClients(),
-    clientId ? Promise.resolve([]) : listLoginLogs({ limit: 500 }),
-    listFeedbacks(),
-    getAllTimeAgentStats({ clientId }),
-    agentKey ? getAgentDrilldown({ agentKey, since: 0, clientId }) : Promise.resolve(null),
-  ]);
+  const [snapshot, errors, clients, loginLogs, feedbacks, allTimeAgentStats, drilldown, agentFeedbackRows, umbrellas] =
+    await Promise.all([
+      clientId ? getClientSnapshot(clientId) : getGlobalSnapshot(),
+      listRecentErrors({ clientId, limit: 20 }),
+      listClients(),
+      clientId ? Promise.resolve([]) : listLoginLogs({ limit: 500 }),
+      listFeedbacks(),
+      getAllTimeAgentStats({ clientId }),
+      agentKey ? getAgentDrilldown({ agentKey, since: 0, clientId }) : Promise.resolve(null),
+      listAllClientAgentFeedback(),
+      listClientAgents(),
+    ]);
 
   totalCostUsd      = snapshot.totalCostUsd;
   totalInputTokens  = snapshot.totalInputTokens;
@@ -162,6 +171,8 @@ export default async function AnalyticsPage({
     errors,
     loginCount: loginLogs.length,
     feedbacks,
+    agentFeedbackRows,
+    agentNames: Object.fromEntries(umbrellas.map((u) => [u.id, u.displayName])),
     lowCredits: await lowCreditClients(clients),
   });
 }
@@ -185,12 +196,15 @@ function renderPage(p: {
   errors: Awaited<ReturnType<typeof listRecentErrors>>;
   loginCount: number;
   feedbacks: Awaited<ReturnType<typeof listFeedbacks>>;
+  agentFeedbackRows: ClientAgentFeedback[];
+  /** clientAgentId → the umbrella's display name. */
+  agentNames: Record<string, string>;
   lowCredits: LowCreditClient[];
 }) {
   const {
     rangeLabel, range, clientId, clients, agentKey, agentDisplayName,
     totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
-    modelStats, agentStats, errors, loginCount, feedbacks, lowCredits,
+    modelStats, agentStats, errors, loginCount, feedbacks, agentFeedbackRows, agentNames, lowCredits,
   } = p;
 
   /** Build an /admin/analytics href preserving clientId/range, overriding agentKey. */
@@ -206,6 +220,9 @@ function renderPage(p: {
   const displayFeedbacks = clientId
     ? feedbacks.filter((f) => f.clientId === clientId)
     : feedbacks;
+  const displayAgentFeedbackRows = clientId
+    ? agentFeedbackRows.filter((r) => r.clientId === clientId)
+    : agentFeedbackRows;
 
   const errorRate =
     totalRuns > 0
@@ -412,6 +429,11 @@ function renderPage(p: {
                         </span>
                         <span className="shrink-0 font-mono tabular-nums text-muted-2">
                           {a.runs} run{a.runs === 1 ? "" : "s"} · {fmtTokens(a.inputTokens + a.outputTokens)} · {fmtCost(a.costUsd)}
+                          {a.failedRuns > 0 && (
+                            <span className="ml-1.5 text-danger">
+                              · {a.failedRuns} failed{a.failedCostUsd > 0 ? ` · ${fmtCost(a.failedCostUsd)}` : ""}
+                            </span>
+                          )}
                         </span>
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
@@ -429,9 +451,15 @@ function renderPage(p: {
         </Card>
       </div>
 
-      {/* Agent feedback */}
+      {/* Agent feedback (doc-correction log) */}
       <Card>
         <FeedbackTable feedbacks={displayFeedbacks} clients={clients} />
+      </Card>
+
+      {/* Agent feedback history (Phase 3 two-level client-agent feedback) —
+          distinct collection from the doc-correction table above. */}
+      <Card>
+        <AgentFeedbackHistoryTable rows={displayAgentFeedbackRows} clients={clients} agentNames={agentNames} />
       </Card>
 
       {/* Error log feed */}

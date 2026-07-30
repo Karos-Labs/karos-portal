@@ -119,24 +119,31 @@ export async function generateClientBriefAction(
   const { generateText } = await import("ai");
   const { anthropic } = await import("@ai-sdk/anthropic");
   const MODEL = MODELS.HAIKU;
-  const { text, usage } = await generateText({
-    model: anthropic(MODEL),
-    system:
-      "Write a plain, factual company description in exactly two short sentences (about two lines total). " +
-      "Describe what the company does and who it serves. " +
-      "Do NOT use em dashes (—). Do NOT use marketing hype or adjectives like 'leading' or 'innovative'. " +
-      "Return only the description text, no preamble.",
-    messages: [{ role: "user", content: `Company: ${client.name}\n\n${source}` }],
-    maxOutputTokens: 160,
-  });
+  const briefUsageMeta = {
+    clientId, agentId: null, agentName: "Company Brief",
+    modelName: MODEL, operation: "client_brief",
+  };
+  let text: string;
+  let usage: { inputTokens?: number; outputTokens?: number };
+  try {
+    ({ text, usage } = await generateText({
+      model: anthropic(MODEL),
+      system:
+        "Write a plain, factual company description in exactly two short sentences (about two lines total). " +
+        "Describe what the company does and who it serves. " +
+        "Do NOT use em dashes (—). Do NOT use marketing hype or adjectives like 'leading' or 'innovative'. " +
+        "Return only the description text, no preamble.",
+      messages: [{ role: "user", content: `Company: ${client.name}\n\n${source}` }],
+      maxOutputTokens: 160,
+    }));
+  } catch (err) {
+    logger.logGenerationFailure(briefUsageMeta, err);
+    throw err;
+  }
 
   after(() =>
     logger.logUsage({
-      clientId,
-      agentId: null,
-      agentName: "Company Brief",
-      modelName: MODEL,
-      operation: "client_brief",
+      ...briefUsageMeta,
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
     }),
@@ -422,26 +429,37 @@ export async function generateDocSummaryAction(
   const { generateText } = await import("ai");
   const { anthropic } = await import("@ai-sdk/anthropic");
   const MODEL = MODELS.HAIKU;
-  const { text, usage } = await generateText({
-    model: anthropic(MODEL),
-    system:
-      "You are a strategic analyst. Distill the document into exactly 4-5 high-impact executive insights. " +
-      "Return ONLY a valid JSON array of strings — no markdown, no preamble, no trailing text. " +
-      "Each string: max 20 words, starts with an action verb or key noun, concrete and specific.",
-    messages: [
-      {
-        role: "user",
-        // Markers out before the slice: the brand sync block sits at the top of
-        // the brand-voice document, so its sentinels were inside the 4,000
-        // characters the summariser reads and could be echoed into a bullet the
-        // client reads under "In short".
-        content: stripPipelineMarkers(doc.content)
-          .replace(/^---[\s\S]*?---\n?/, "")
-          .slice(0, 4000),
-      },
-    ],
-    maxOutputTokens: 450,
-  });
+  const summaryUsageMeta = {
+    clientId, agentId: null, agentName: "Executive Summary",
+    modelName: MODEL, operation: "doc_summary",
+  };
+  let text: string;
+  let usage: { inputTokens?: number; outputTokens?: number };
+  try {
+    ({ text, usage } = await generateText({
+      model: anthropic(MODEL),
+      system:
+        "You are a strategic analyst. Distill the document into exactly 4-5 high-impact executive insights. " +
+        "Return ONLY a valid JSON array of strings — no markdown, no preamble, no trailing text. " +
+        "Each string: max 20 words, starts with an action verb or key noun, concrete and specific.",
+      messages: [
+        {
+          role: "user",
+          // Markers out before the slice: the brand sync block sits at the top of
+          // the brand-voice document, so its sentinels were inside the 4,000
+          // characters the summariser reads and could be echoed into a bullet the
+          // client reads under "In short".
+          content: stripPipelineMarkers(doc.content)
+            .replace(/^---[\s\S]*?---\n?/, "")
+            .slice(0, 4000),
+        },
+      ],
+      maxOutputTokens: 450,
+    }));
+  } catch (err) {
+    logger.logGenerationFailure(summaryUsageMeta, err);
+    throw err;
+  }
 
   let bullets: string[];
   try {
@@ -463,11 +481,7 @@ export async function generateDocSummaryAction(
     // Persist summary so the next request is served from cache (no LLM call).
     await updateContextDocSummary(docId, bullets, docVersion);
     logger.logUsage({
-      clientId,
-      agentId: null,
-      agentName: "Executive Summary",
-      modelName: MODEL,
-      operation: "doc_summary",
+      ...summaryUsageMeta,
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
     });

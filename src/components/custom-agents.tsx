@@ -25,6 +25,7 @@ import {
   importCustomAgentsAction,
   listCustomAgentImportCandidatesAction,
   runCustomAgentAction,
+  runCustomAgentTestAction,
   setClientCustomAgentsAction,
   updateCustomAgentAction,
 } from "@/lib/actions";
@@ -32,10 +33,15 @@ import {
   configureClientAgentScheduleAction,
   setPlannedRunStatusAction,
 } from "@/lib/actions/planned-run-actions";
-import { cancelClientAgentJobAction } from "@/lib/actions/external-job-actions";
+import {
+  cancelClientAgentJobAction,
+  refreshJobStatusAction,
+  retryJobAction,
+} from "@/lib/actions/external-job-actions";
 import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
+import { classifyJobError } from "@/lib/job-error-taxonomy";
 import {
   agentKeyMatchesClientSlug,
   buildCustomAgentPrompt,
@@ -48,7 +54,7 @@ import {
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
-import type { ContextItem, CustomAgent, JobStatus } from "@/lib/types";
+import type { ContextItem, CustomAgent, JobRunType, JobStatus } from "@/lib/types";
 import { cn, formatDate, relativeTime } from "@/lib/utils";
 
 /* ═══════════════════════ shared bits ═══════════════════════ */
@@ -114,6 +120,14 @@ export interface CustomAgentRunRow {
   prompt?: string;
   /** Link target (staff viewers get /jobs/<id>); absent for client viewers. */
   href?: string;
+  /**
+   * Raw failure text (STAFF VIEWERS ONLY, same reasoning as `prompt`) — the
+   * Control Room's Runs & Telemetry tab runs this through `classifyJobError`
+   * for a human-readable label, keeping the raw string alongside it.
+   */
+  error?: string;
+  /** How the run was initiated — staff-only, so a Test Run can badge itself distinctly. */
+  runType?: JobRunType;
 }
 
 /** Client-safe recurring schedule fields shown on an activated agent card. */
@@ -858,6 +872,101 @@ export function StaffAgentControls({
 }
 
 /**
+ * Control Room "Test Run" (item 3's dry-run equivalent) — staff only. The
+ * agent-service has no dry-run parameter, so this fires for real: same cost,
+ * same generation. What's different is what happens to the OUTPUT afterward
+ * — runCustomAgentTestAction stamps runType: "test", which the webhook reads
+ * to keep the resulting draft off the calendar and every client-facing
+ * surface (asset-visibility.ts's isTestRunAsset, mirroring the existing
+ * launchDeliverable exclusion). Deliberately a simpler form than
+ * RunCustomAgentModal — no client picker (already scoped to one client), no
+ * intake/attachment dance (a staff member testing the pipeline can just type
+ * a brief) — reusing that heavier modal here would drag in machinery this
+ * flow doesn't need.
+ */
+export function TestRunButton({ agentId, clientId }: { agentId: string; clientId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [prompt, setPrompt] = useState("");
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  function submit() {
+    if (!prompt.trim()) {
+      setError("Add a brief to test.");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const result = await runCustomAgentTestAction({ agentId, clientId, prompt: prompt.trim() });
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setDone(true);
+      router.refresh();
+    });
+  }
+
+  function close() {
+    setOpen(false);
+    setPrompt("");
+    setError(null);
+    setDone(false);
+  }
+
+  return (
+    <>
+      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+        <Icon name="FlaskConical" className="h-3.5 w-3.5" /> Test run
+      </Button>
+      {open && (
+        <Modal open onClose={close} title="Test run">
+          {done ? (
+            <div className="mt-4 space-y-3 text-center">
+              <Icon name="CircleCheck" className="mx-auto h-8 w-8 text-success" />
+              <p className="text-sm text-foreground">Test run started</p>
+              <p className="text-xs text-muted-2">
+                Real generation, real cost — the output is flagged TEST and will never reach the
+                client&apos;s Workspace, the calendar, or scheduling. Find it under Outputs &amp;
+                Artifacts once it lands, with Promote/Dismiss actions.
+              </p>
+              <Button variant="subtle" onClick={close}>
+                Done
+              </Button>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <p className="text-xs text-muted-2">
+                Fires for real — same cost, same generation — to verify this agent&apos;s prompt and
+                context pipeline still produce good output. The result never reaches the client,
+                the calendar, or scheduling.
+              </p>
+              <Textarea
+                rows={5}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="What should this test run ask the agent to do?"
+              />
+              {error && <p className="text-xs text-danger">{error}</p>}
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={close} disabled={pending}>
+                  Cancel
+                </Button>
+                <Button onClick={submit} loading={pending}>
+                  Run test
+                </Button>
+              </div>
+            </div>
+          )}
+        </Modal>
+      )}
+    </>
+  );
+}
+
+/**
  * Recent agent runs — the staff history strip (CD-I1).
  *
  * Lifted out of the retired card grid rather than rewritten, and kept on BOTH
@@ -878,12 +987,34 @@ export function AgentRunHistory({
 }) {
   const agentByName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
   if (runs.length === 0) return null;
+  // Item 4's execution-state visibility, computed off the same rows the list
+  // below already has — no second fetch, just a count.
+  const stateCounts = runs.reduce(
+    (acc, r) => {
+      if (r.status === "queued") acc.queued++;
+      else if (r.status === "running") acc.running++;
+      else if (r.status === "failed") acc.failed++;
+      else if (r.status === "delivered" || r.status === "approved") acc.succeeded++;
+      return acc;
+    },
+    { queued: 0, running: 0, succeeded: 0, failed: 0 },
+  );
   return (
     <div>
-      <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{heading}</p>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{heading}</p>
+        <div className="flex items-center gap-2.5 text-[11px] text-muted-2">
+          {stateCounts.queued > 0 && <span>{stateCounts.queued} queued</span>}
+          {stateCounts.running > 0 && <span>{stateCounts.running} running</span>}
+          <span>{stateCounts.succeeded} succeeded</span>
+          {stateCounts.failed > 0 && <span className="text-danger">{stateCounts.failed} failed</span>}
+        </div>
+      </div>
       <div className="overflow-hidden rounded-[var(--radius)] border border-border">
         {runs.map((run, i) => {
           const agent = agentByName.get(run.agentName);
+          const classifiedError = run.status === "failed" ? classifyJobError(run.error) : null;
+          const elapsed = run.status === "running" ? relativeTime(run.createdAt) : null;
           const row = (
             <>
               {agent ? (
@@ -907,7 +1038,17 @@ export function AgentRunHistory({
                     : ""}
                   {run.prompt ? ` · "${run.prompt}"` : ""}
                 </p>
+                {/* Honest timeline (no fabricated step count — the agent-service
+                    reports only terminal outcomes, see job-error-taxonomy.ts /
+                    agent-health.ts doc comments): queued → working (elapsed) →
+                    the classified error, or nothing more once it's done. */}
+                {classifiedError && (
+                  <p className="mt-0.5 truncate text-xs text-danger" title={classifiedError.raw}>
+                    {classifiedError.label}
+                  </p>
+                )}
               </div>
+              {run.runType === "test" && <Badge tone="warning">TEST</Badge>}
               <JobStatusBadge status={run.status} />
             </>
           );
@@ -932,7 +1073,20 @@ export function AgentRunHistory({
                     status={run.status}
                     className="mb-0 rounded-none border-0 bg-transparent px-4 py-2"
                   />
-                  <CancelRunControl runId={run.id} />
+                  {elapsed && (
+                    <p className="px-4 pb-1 text-[11px] text-muted-2">Working — started {elapsed}</p>
+                  )}
+                  <CancelRunControl runId={run.id} staffFastReconcile />
+                </div>
+              )}
+              {/* Item 4: a failed run used to be a dead end — the only way to
+                  try again was firing a brand-new run by hand. Re-submits with
+                  the same agent/client/prompt via retryJobAction. Labeled plainly
+                  as a full re-run, not "resume from failed step" — there is no
+                  step-level signal to resume FROM (see job-error-taxonomy.ts). */}
+              {run.status === "failed" && (
+                <div className="border-t border-border bg-surface-2/50">
+                  <RetryRunControl runId={run.id} />
                 </div>
               )}
             </div>
@@ -961,6 +1115,7 @@ export function AgentRunHistory({
 export function CancelRunControl({
   runId,
   refunds = true,
+  staffFastReconcile = false,
 }: {
   runId: string;
   /**
@@ -971,6 +1126,17 @@ export function CancelRunControl({
    * Run button is the common case and it IS billed.
    */
   refunds?: boolean;
+  /**
+   * Control Room's "Force Cancel" (staff only, default false — this component
+   * is shared with the client-facing activeRun banner, which cannot call a
+   * requireStaff() action). `cancelClientAgentJobAction` only asks the agent-
+   * service to stop the run; locally the job stays queued/running until a
+   * webhook arrives or the ~10-minute reconcile cron sweeps it. When true,
+   * this fires `refreshJobStatusAction` right after — the same reconcile
+   * logic the cron uses — so the row reflects the real terminal state in
+   * seconds instead of up to the cron's full interval.
+   */
+  staffFastReconcile?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -992,6 +1158,9 @@ export function CancelRunControl({
           setError(result.error);
           setConfirming(false);
           return;
+        }
+        if (staffFastReconcile) {
+          await refreshJobStatusAction(runId).catch(() => {});
         }
         router.refresh();
       } catch (e) {
@@ -1020,6 +1189,46 @@ export function CancelRunControl({
           <Icon name="CircleSlash" className="h-3.5 w-3.5" /> Cancel run
         </Button>
       )}
+      {error && (
+        <span className="text-[11px] text-danger" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Re-fire a failed run with the same agent/client/prompt (retryJobAction).
+ * Staff-only surface — mounted only from AgentRunHistory, which never renders
+ * for client viewers (see its own doc comment).
+ */
+function RetryRunControl({ runId }: { runId: string }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function retry() {
+    setError(null);
+    startTransition(async () => {
+      try {
+        const result = await retryJobAction(runId);
+        if (result.error) {
+          setError(result.error);
+          return;
+        }
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't retry this run.");
+      }
+    });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-4 pb-2">
+      <Button size="sm" variant="ghost" onClick={retry} loading={pending}>
+        <Icon name="RotateCw" className="h-3.5 w-3.5" /> Retry run
+      </Button>
       {error && (
         <span className="text-[11px] text-danger" role="alert">
           {error}

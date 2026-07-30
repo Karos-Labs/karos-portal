@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { Icon } from "@/components/icon";
 
 /* -------------------------------- Button --------------------------------
    Ember voices (§7): primary = paper/ink (flips in light mode), accent = the
@@ -228,6 +229,38 @@ export function StatCard({
       <p className="mt-1.5 font-mono text-2xl font-medium text-foreground">{value}</p>
       {hint && <p className="mt-1 text-xs text-muted-2">{hint}</p>}
     </Card>
+  );
+}
+
+/* -------------------------------- TabButton ------------------------------
+   Underline-style tab, lifted out of asset-detail-modal.tsx so a second tab
+   strip (the Control Room) doesn't fork its own copy of the same pattern. */
+
+export function TabButton({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+        active
+          ? "border-neon text-foreground"
+          : "border-transparent text-muted-2 hover:text-muted",
+      )}
+    >
+      <Icon name={icon} className="h-3.5 w-3.5" />
+      {children}
+    </button>
   );
 }
 

@@ -200,6 +200,7 @@ function StuckLaunchEscape({ agent }: { agent: ClientAgentCardRow }) {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // eslint-disable-next-line react-hooks/purity -- Date.now() intentional: recomputed each render to detect a stuck launch
   const runningFor = agent.launchStartedAt != null ? Date.now() - agent.launchStartedAt : 0;
   const overdue = agent.launchState === "launching" && runningFor > LAUNCH_STUCK_MS;
 

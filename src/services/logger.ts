@@ -32,7 +32,28 @@ type UsageInput = Omit<UsageLog, "id" | "timestamp" | "estimatedCostUsd" | "prov
 };
 
 /** Metadata for logging an AI SDK streaming/generate result (usage read for you). */
-type StreamMeta = Omit<UsageInput, "inputTokens" | "outputTokens" | "webSearchCount">;
+type StreamMeta = Omit<UsageInput, "inputTokens" | "outputTokens" | "webSearchCount" | "status" | "errorMessage">;
+
+/**
+ * Best-effort partial-usage extraction from a thrown AI SDK error.
+ *
+ * `generateObject`'s `NoObjectGeneratedError` carries the real `.usage` for the
+ * attempt that failed schema validation — tokens genuinely spent that every
+ * other error shape (APICallError, network failures) has no equivalent for.
+ * Duck-typed rather than `instanceof` so this doesn't need to import `ai`'s
+ * error classes here; never throws.
+ */
+function extractPartialUsage(err: unknown): SdkUsage {
+  try {
+    const usage = (err as { usage?: SdkUsage } | null)?.usage;
+    if (usage && (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number")) {
+      return { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 };
+    }
+  } catch {
+    // fall through to zero
+  }
+  return { inputTokens: 0, outputTokens: 0 };
+}
 
 /**
  * Best-effort extraction of Anthropic server-side web_search invocation count
@@ -72,6 +93,23 @@ class Logger {
   }
 
   /**
+   * Log a failed generation attempt — a call that threw before (or instead of)
+   * returning a usable result. Tokens are best-effort (0 when the error carries
+   * no recoverable usage); the point is that the attempt, and whatever it did
+   * spend, is never simply absent from `usageLogs` / the leaderboard.
+   */
+  logGenerationFailure(meta: StreamMeta, err: unknown): void {
+    const usage = extractPartialUsage(err);
+    this.logUsage({
+      ...meta,
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+      status: "failed",
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  /**
    * Log usage for an AI SDK `streamText`/`generateText` result. Reads the
    * result's `usage` (and, when present, `providerMetadata` for web_search
    * counts) then records one UsageLog. Fire-and-forget — never throws, never
@@ -95,8 +133,13 @@ class Logger {
           outputTokens: usage.outputTokens ?? 0,
           webSearchCount: readWebSearchCount(providerMetadata),
         });
-      } catch {
-        // Usage logging must never disrupt the generation path.
+      } catch (err) {
+        // Usage logging must never disrupt the generation path, but a stream
+        // that threw before resolving `usage` (rate limit, dropped connection,
+        // upstream error) still spent whatever tokens it emitted before
+        // failing — record it as a failed, best-effort-zero-token attempt
+        // instead of letting it vanish from usageLogs/analyticsSnapshot.
+        this.logGenerationFailure(meta, err);
       }
     })();
   }
@@ -118,12 +161,20 @@ class Logger {
       const key = sanitizeModelKey(data.modelName);
       const now = data.timestamp;
 
-      // Increments shared across global + (optionally) client snapshot
+      // Increments shared across global + (optionally) client snapshot. Failed
+      // runs still count toward totalCostUsd/totalRuns — the spend happened —
+      // and are additionally broken out via failedRuns/failedCostUsd so
+      // dashboards can distinguish "spend" from "spend that produced nothing."
+      const failed = data.status === "failed";
       const increments = {
         totalCostUsd:                     FieldValue.increment(data.estimatedCostUsd),
         totalInputTokens:                 FieldValue.increment(data.inputTokens),
         totalOutputTokens:                FieldValue.increment(data.outputTokens),
         totalRuns:                        FieldValue.increment(1),
+        ...(failed ? {
+          failedRuns:                     FieldValue.increment(1),
+          failedCostUsd:                  FieldValue.increment(data.estimatedCostUsd),
+        } : {}),
         [`model_${key}_costUsd`]:         FieldValue.increment(data.estimatedCostUsd),
         [`model_${key}_inputTokens`]:     FieldValue.increment(data.inputTokens),
         [`model_${key}_outputTokens`]:    FieldValue.increment(data.outputTokens),

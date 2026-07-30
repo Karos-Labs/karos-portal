@@ -3,6 +3,7 @@ import { Card, CardTitle, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
 import { clientDeliveryStamp, isInClientArchive } from "@/lib/asset-visibility";
+import { postKind } from "@/lib/calendar-kind";
 import type { Asset, ClientTask } from "@/lib/types";
 
 const ASSET_TYPE_LABEL: Record<Asset["type"], string> = {
@@ -47,8 +48,14 @@ export function ClientHomeOverview({
   const deliverablesInReview = assets.filter((a) => a.status === "draft");
   const reviewPendingTasks = tasks.filter((t) => t.status === "review_pending");
   const pendingTasks = tasks.filter((t) => t.status === "pending");
+  // A scheduled post the publish cron couldn't push (rate limit, expired
+  // integration, upstream error) used to be silent — status stays "scheduled"
+  // forever with only publishError set, and nothing on this page said so.
+  // Same "failed" classification the calendar itself renders (calendar-kind.ts)
+  // — one predicate, not a second ad hoc copy of it.
+  const failedPublishes = assets.filter((a) => postKind(a) === "failed");
   const attentionCount =
-    deliverablesInReview.length + reviewPendingTasks.length + pendingTasks.length;
+    deliverablesInReview.length + reviewPendingTasks.length + pendingTasks.length + failedPublishes.length;
 
   // Date.now() intentional: the archive is a time-windowed view (30 days) and a
   // future-dated post is not in it yet, so "does this row have a destination"
@@ -118,6 +125,19 @@ export function ClientHomeOverview({
           </div>
         ) : (
           <ul className="space-y-2">
+            {failedPublishes.length > 0 && (
+              <AttentionRow
+                tone="danger"
+                href="/calendar"
+                icon="TriangleAlert"
+                label={`${failedPublishes.length} post${failedPublishes.length === 1 ? "" : "s"} failed to publish`}
+                hint={
+                  failedPublishes.length === 1
+                    ? (failedPublishes[0]!.publishError ?? "Review it on the calendar.")
+                    : "Review them on the calendar."
+                }
+              />
+            )}
             {deliverablesInReview.length > 0 && (
               <AttentionRow
                 // Approval is staff-only by design (approveAssetAction calls
@@ -238,16 +258,18 @@ function AttentionRow({
   icon,
   label,
   hint,
+  tone = "warning",
 }: {
   href?: string;
   icon: string;
   label: string;
   hint: string;
+  tone?: "warning" | "danger";
 }) {
   const body = (
     <>
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning/10">
-        <Icon name={icon} className="h-4 w-4 text-warning" />
+      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${tone === "danger" ? "bg-danger/10" : "bg-warning/10"}`}>
+        <Icon name={icon} className={`h-4 w-4 ${tone === "danger" ? "text-danger" : "text-warning"}`} />
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-foreground">{label}</p>

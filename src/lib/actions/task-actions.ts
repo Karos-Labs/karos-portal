@@ -322,23 +322,33 @@ export async function generateTaskPlanAction(
 
   const client = await getClient(clientId);
 
-  const { text, usage } = await generateText({
-    model: anthropic(MODELS.HAIKU),
-    prompt: buildTaskExecutionPlanPrompt(
-      task.title,
-      task.description,
-      task.source,
-      task.priority,
-      client?.name ?? "the client",
-      client?.industry,
-      client?.website,
-    ),
-  });
+  const taskPlanUsageMeta = {
+    clientId, agentId: null, agentName: "Task Plan",
+    modelName: MODELS.HAIKU, operation: "task_plan",
+  };
+  let text: string;
+  let usage: { inputTokens?: number; outputTokens?: number };
+  try {
+    ({ text, usage } = await generateText({
+      model: anthropic(MODELS.HAIKU),
+      prompt: buildTaskExecutionPlanPrompt(
+        task.title,
+        task.description,
+        task.source,
+        task.priority,
+        client?.name ?? "the client",
+        client?.industry,
+        client?.website,
+      ),
+    }));
+  } catch (err) {
+    logger.logGenerationFailure(taskPlanUsageMeta, err);
+    throw err;
+  }
 
   after(() =>
     logger.logUsage({
-      clientId, agentId: null, agentName: "Task Plan",
-      modelName: MODELS.HAIKU, operation: "task_plan",
+      ...taskPlanUsageMeta,
       inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
     }),
   );
@@ -404,21 +414,31 @@ export async function ingestCustomUserTaskAction(
     owner: z.enum(["karos_managed", "client_managed"]),
   });
 
-  const { object: parsed, usage } = await generateObject({
-    model: anthropic(MODELS.HAIKU),
-    schema: routingSchema,
-    prompt: buildTaskIngestionRoutingPrompt(
-      trimmed,
-      client.name,
-      client.industry ?? "marketing",
-      agentSummary,
-    ),
-  });
+  const ingestionUsageMeta = {
+    clientId, agentId: null, agentName: "Task Ingestion Routing",
+    modelName: MODELS.HAIKU, operation: "task_ingestion",
+  };
+  let parsed: z.infer<typeof routingSchema>;
+  let usage: { inputTokens?: number; outputTokens?: number };
+  try {
+    ({ object: parsed, usage } = await generateObject({
+      model: anthropic(MODELS.HAIKU),
+      schema: routingSchema,
+      prompt: buildTaskIngestionRoutingPrompt(
+        trimmed,
+        client.name,
+        client.industry ?? "marketing",
+        agentSummary,
+      ),
+    }));
+  } catch (err) {
+    logger.logGenerationFailure(ingestionUsageMeta, err);
+    throw err;
+  }
 
   after(() =>
     logger.logUsage({
-      clientId, agentId: null, agentName: "Task Ingestion Routing",
-      modelName: MODELS.HAIKU, operation: "task_ingestion",
+      ...ingestionUsageMeta,
       inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
     }),
   );

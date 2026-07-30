@@ -818,7 +818,7 @@ function presenceTile(
   bucket: Parameters<typeof presenceCounts>[0],
   copy: { heading: string; caption: string; explainer: string; asked: string; emptyLine: string },
 ): PresenceTile {
-  const { named, measured, planned, notMeasured } = presenceCounts(bucket);
+  const { named, measured, notMeasured } = presenceCounts(bucket);
   const pct = measured > 0 ? Math.round((named / measured) * 100) : null;
   const lines = [`We asked ${measured} question${measured === 1 ? "" : "s"} ${copy.asked}.`,
     `You were named in ${named} of them.`];

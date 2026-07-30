@@ -298,6 +298,10 @@ export async function* runSwarm(input: SwarmInput): AsyncGenerator<SwarmEvent, v
           taskCount: tasks.length,
         };
       } catch (e) {
+        logger.logGenerationFailure(
+          { clientId: input.clientId, agentId: null, agentName: `Swarm: ${persona.name}`, modelName: MODELS.HAIKU, operation: "task_swarm" },
+          e,
+        );
         yield {
           type: "agent_message",
           round,

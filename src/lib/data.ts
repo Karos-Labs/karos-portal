@@ -500,6 +500,38 @@ export async function listDuePlannedScheduledRuns(before?: number, limit = 25): 
     .slice(0, limit);
 }
 
+/**
+ * Atomically claim a due PlannedScheduledRun so overlapping cron ticks (a
+ * retried invocation, a manual replay, a slow prior tick still mid-batch)
+ * never double-fire it — the same compare-and-set shape as
+ * `claimScheduledRun`, extended for this row's `"once"` vs recurring cadence.
+ * Succeeds only when the row is still `"active"` AND its `nextRunAt` still
+ * equals the value the cron read; on success it advances the cursor (or
+ * completes a one-off) and stamps `lastRunAt` in the same transaction.
+ * Returns false if another tick already claimed it, it was paused/completed,
+ * or the cadence moved on — the caller should skip the run, not retry.
+ */
+export async function claimPlannedScheduledRun(
+  id: string,
+  expectedNextRunAt: number,
+  advance: { nextRunAt: number } | { completed: true },
+): Promise<boolean> {
+  const ref = col.plannedScheduledRuns().doc(id);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const run = snap.data() as PlannedScheduledRun;
+    if (run.status !== "active") return false;
+    if (run.nextRunAt !== expectedNextRunAt) return false;
+    tx.update(ref, {
+      lastRunAt: Date.now(),
+      updatedAt: Date.now(),
+      ...("completed" in advance ? { status: "completed" as const } : { nextRunAt: advance.nextRunAt }),
+    });
+    return true;
+  });
+}
+
 /* ------------------------------ assets ----------------------------- */
 
 export async function listAssets(opts?: { clientId?: string }): Promise<Asset[]> {

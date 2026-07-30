@@ -23,7 +23,7 @@ export function getClientLibraryAssets(
   if (!opts?.forClient) return sorted;
   const now = opts.now ?? Date.now();
   return sorted
-    .filter((a) => !isLaunchDeliverable(a))
+    .filter((a) => !isLaunchDeliverable(a) && !isTestRunAsset(a))
     .map((a) => (isAssetUnlockedForClient(a, now) ? a : redactLockedAsset(a)));
 }
 
@@ -39,6 +39,20 @@ export function getClientLibraryAssets(
  */
 export function isLaunchDeliverable(a: Pick<Asset, "meta">): boolean {
   return a.meta?.launchDeliverable === true;
+}
+
+/**
+ * A Control Room staff "Test Run" deliverable — flagged by the webhook
+ * (route.ts's `isTestRun`) the same way a launch deliverable is. Excluded
+ * from the client library for the same reason: it is not a deliverable, it
+ * is staff verifying the pipeline still works. Unlike a launch deliverable it
+ * never leaves `status: "draft"` (chain-reflow is skipped for it too), so
+ * `isInClientArchive`'s existing `status === "draft"` exclusion already keeps
+ * it out of the archive — only the library's drafts-included view needs this
+ * explicit check.
+ */
+export function isTestRunAsset(a: Pick<Asset, "meta">): boolean {
+  return a.meta?.testRun === true;
 }
 
 /** How far back the client archive reaches. Older posts are hidden, never deleted. */
@@ -103,6 +117,12 @@ export function isInClientArchive(
   now: number,
 ): boolean {
   if (isLaunchDeliverable(a)) return false;
+  // Not covered by the draft-status exclusion below alone: approveAssetAction
+  // has no test-run guard, so a staff member approving one by mistake (the
+  // plain review queue shows no TEST badge) flips status away from "draft"
+  // without going through promoteTestAssetAction — this is the second,
+  // independent gate that keeps it out regardless.
+  if (isTestRunAsset(a)) return false;
   if (a.status === "draft") return false;
   if (!isAssetUnlockedForClient(a, now)) return false;
   if (a.status === "published") return clientDeliveryStamp(a) >= now - CLIENT_ARCHIVE_WINDOW_MS;

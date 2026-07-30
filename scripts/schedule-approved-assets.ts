@@ -35,7 +35,7 @@ function loadEnvFile(path: string) {
   try {
     content = readFileSync(path, "utf-8");
   } catch {
-    return; // .env.local may not exist in CI or Vercel — that's fine
+    return; // .env.local may not exist in CI or in production — that's fine
   }
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -87,8 +87,6 @@ function initAdmin() {
       "FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY in .env.local",
   );
 }
-
-const SCHEDULE_LEAD_MS = 3 * 60 * 60 * 1000; // mirror scheduling.ts MIN_LEAD_MS
 
 interface AssetRow {
   id: string;

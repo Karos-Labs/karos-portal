@@ -26,8 +26,9 @@ import {
 } from "@/lib/integrations/publishers";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { integrationIsUsable } from "@/lib/integration-status";
-import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
-import { isAssetUnlockedForClient } from "@/lib/post-chain";
+import { recommendPublishTimeWithDensity, sameLocalDay } from "@/lib/scheduling";
+import { chainFamilyFor, isAssetUnlockedForClient } from "@/lib/post-chain";
+import { isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
 import { syncSlotPostedForAsset } from "@/lib/client-agent-slots";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
 import type { Asset, PublishMode } from "@/lib/types";
@@ -52,10 +53,52 @@ export async function updateAssetAction(id: string, patch: { content?: string; t
     // to the client's Library, so it stays a staff-only transition.
     if (asset.clientId !== user.clientId) throw new Error("Forbidden");
     if (patch.status !== undefined) throw new Error("Forbidden");
+    // Defense in depth: a launch deliverable or Control Room Test Run is
+    // staff-only working material by construction (asset-visibility.ts) — a
+    // client must never be able to read-then-overwrite one even if some other
+    // path (e.g. a chat tool) ever hands them the id.
+    if (isLaunchDeliverable(asset) || isTestRunAsset(asset)) throw new Error("Forbidden");
   }
   await updateAsset(id, { ...patch, updatedAt: Date.now() });
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
+}
+
+/**
+ * Clear a Control Room Test Run's `meta.testRun` flag and let it enter the
+ * normal draft pipeline — the one path a test asset can reach a client
+ * through, and only by explicit staff action. Reflows the chain once
+ * afterward (mirrors the webhook's own reflow-on-creation, which test assets
+ * skip) so it picks up a real chain date like any other draft would have.
+ */
+export async function promoteTestAssetAction(id: string): Promise<{ error?: string }> {
+  await requireStaff();
+  const asset = await getAsset(id);
+  if (!asset) return { error: "Asset not found" };
+  if (asset.meta?.testRun !== true) return { error: "This asset isn't a test run." };
+  await updateAsset(id, { meta: { ...asset.meta, testRun: false }, updatedAt: Date.now() });
+  const { reflowClientChain } = await import("@/lib/chain");
+  await reflowClientChain(asset.clientId).catch(() => {});
+  revalidatePath(`/clients/${asset.clientId}/agents`);
+  revalidatePath("/calendar");
+  return {};
+}
+
+/**
+ * Dismiss a Control Room Test Run from the "needs review" view. Non-destructive
+ * — this codebase never hard-deletes assets (aging-out elsewhere is a VIEW
+ * filter, not a delete; see asset-visibility.ts) — so this only flags the
+ * asset as reviewed via `meta.testDismissed` rather than adding this
+ * codebase's first delete path for a test artifact nobody else can see anyway.
+ */
+export async function dismissTestAssetAction(id: string): Promise<{ error?: string }> {
+  await requireStaff();
+  const asset = await getAsset(id);
+  if (!asset) return { error: "Asset not found" };
+  if (asset.meta?.testRun !== true) return { error: "This asset isn't a test run." };
+  await updateAsset(id, { meta: { ...asset.meta, testDismissed: true }, updatedAt: Date.now() });
+  revalidatePath(`/clients/${asset.clientId}/agents`);
+  return {};
 }
 
 /**
@@ -77,6 +120,13 @@ export async function scheduleAssetAction(
   await requireStaff();
   const asset = await getAsset(id);
   if (!asset) throw new Error("Asset not found");
+  // Same reasoning as approveAssetAction: this would hand a Test Run a real
+  // scheduledAt, which puts it on the CLIENT'S calendar (postKind() has no
+  // way to tell it apart from a real scheduled post once dated) — strictly
+  // worse than the archive leak, since it never even needs "approved" first.
+  if (isTestRunAsset(asset)) {
+    throw new Error("This is a Test Run draft — use Promote (Control Room → Outputs) instead of scheduling it directly.");
+  }
   const publishMode: PublishMode = mode ?? (platform ? "auto" : "placeholder");
   if (publishMode === "auto" && !platform) {
     throw new Error("Auto-publish requires a target platform");
@@ -90,6 +140,75 @@ export async function scheduleAssetAction(
   });
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
+}
+
+/**
+ * Move an already-approved/scheduled post's publish date, from the CLIENT'S
+ * own side — the Copilot chat's `/reschedule-post` command.
+ *
+ * Deliberately narrower than `scheduleAssetAction`: it only ever touches
+ * `scheduledAt`. Status, `publishMode` and `scheduledPlatform` are untouched,
+ * because those are the staff QC gate (`approveAssetAction`) and the
+ * auto-publish integration checks it runs — a client moving a date is not a
+ * client re-approving content or re-deciding how it goes out, and letting this
+ * action brush either would reopen a gate that exists specifically so AI
+ * content is never scheduled without a human having looked at it first.
+ *
+ * Refuses on:
+ *  - anything but `approved`/`scheduled` (a draft/review asset was never
+ *    blessed onto the calendar, so there is nothing here to "move" yet);
+ *  - a time in the past;
+ *  - a claimed-for-publish window (mirrors the race guard `markAssetPostedAction`
+ *    already uses — moving the date of a post the cron may be mid-publishing
+ *    right now would not stop that publish, only make the record wrong);
+ *  - a same-day collision with another of this client's approved/scheduled
+ *    assets in the same content-chain family (`chainFamilyFor`) — the
+ *    one-post-per-day-per-family invariant `post-chain.ts` enforces at
+ *    generation time would otherwise silently break the moment a client
+ *    could pick an arbitrary new day by hand.
+ */
+export async function clientRescheduleAssetAction(
+  id: string,
+  newScheduledAt: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const asset = await requireAssetAccess(id);
+
+  if (asset.status !== "approved" && asset.status !== "scheduled") {
+    return {
+      ok: false,
+      error: "Only an already-approved or scheduled post can be moved — this one is still in review.",
+    };
+  }
+  if (newScheduledAt <= Date.now()) {
+    return { ok: false, error: "Pick a time in the future." };
+  }
+  if (asset.publishClaimedAt != null && Date.now() - asset.publishClaimedAt < PUBLISH_CLAIM_TTL_MS) {
+    return { ok: false, error: "This post is being published right now - give it a moment, then try again." };
+  }
+
+  const family = chainFamilyFor(asset.type);
+  if (family) {
+    const siblings = await listAssets({ clientId: asset.clientId });
+    const collision = siblings.some(
+      (s) =>
+        s.id !== asset.id &&
+        (s.status === "approved" || s.status === "scheduled") &&
+        chainFamilyFor(s.type) === family &&
+        s.scheduledAt != null &&
+        sameLocalDay(s.scheduledAt, newScheduledAt),
+    );
+    if (collision) {
+      return {
+        ok: false,
+        error: "That day already has another post scheduled in this content family — pick a different day.",
+      };
+    }
+  }
+
+  await updateAsset(id, { scheduledAt: newScheduledAt, updatedAt: Date.now() });
+  revalidatePath("/assets");
+  revalidatePath(`/clients/${asset.clientId}`);
+  return { ok: true };
 }
 
 /** The asset's target platform preference: an explicit schedule wins, else the first
@@ -137,6 +256,14 @@ export async function approveAssetAction(
   // approve their own asset (and via opts.platform arm auto-publish).
   await requireStaff();
   const asset = await requireAssetAccess(id);
+  // A Test Run has its own graduation path (promoteTestAssetAction, which also
+  // reflows the chain) — approving it here directly would flip it out of
+  // "draft" without clearing meta.testRun, defeating the whole point of the
+  // flag. The plain review queue shows no TEST badge, so this is the gate
+  // that actually stops the mis-click rather than relying on staff noticing.
+  if (isTestRunAsset(asset)) {
+    throw new Error("This is a Test Run draft — use Promote (Control Room → Outputs) instead of Approve.");
+  }
   const patch: Partial<Asset> = { status: "approved", updatedAt: Date.now() };
 
   if (opts?.scheduledAt != null) {

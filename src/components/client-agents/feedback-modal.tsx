@@ -2,10 +2,11 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Textarea } from "@/components/ui";
+import { Badge, Button, Select, Textarea } from "@/components/ui";
 import { Modal } from "@/components/modal";
 import { relativeTime } from "@/lib/utils";
-import { MAX_FEEDBACK_CHARS } from "@/lib/client-agent-feedback";
+import { FEEDBACK_CATEGORIES, FEEDBACK_CATEGORY_LABEL, MAX_FEEDBACK_CHARS } from "@/lib/client-agent-feedback";
+import type { FeedbackCategory } from "@/lib/types";
 import {
   addClientAgentFeedbackAction,
   setClientAgentFeedbackStatusAction,
@@ -52,6 +53,7 @@ export function ClientAgentFeedbackModal({
 }) {
   const router = useRouter();
   const [text, setText] = useState("");
+  const [category, setCategory] = useState<FeedbackCategory | "">("");
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -76,10 +78,12 @@ export function ClientAgentFeedbackModal({
         scope,
         ...(scope === "template" ? { templateKey } : {}),
         text,
+        ...(category ? { category } : {}),
       });
       if (result.error) setError(result.error);
       else {
         setText("");
+        setCategory("");
         router.refresh();
       }
     });
@@ -140,6 +144,22 @@ export function ClientAgentFeedbackModal({
             }
             aria-label="Your feedback"
           />
+          {/* Cosmetic only — filters the analytics history table, changes
+              nothing about scope or injection. Optional, so skipping it costs
+              nothing. */}
+          <Select
+            value={category}
+            onChange={(e) => setCategory(e.target.value as FeedbackCategory | "")}
+            aria-label="Category (optional)"
+            className="h-8 text-xs"
+          >
+            <option value="">No category</option>
+            {FEEDBACK_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {FEEDBACK_CATEGORY_LABEL[c]}
+              </option>
+            ))}
+          </Select>
           <div className="flex items-center justify-between gap-2">
             <p className="text-[11px] text-muted-2">
               {text.length}/{MAX_FEEDBACK_CHARS} · applied to every future run
@@ -196,6 +216,7 @@ export function ClientAgentFeedbackModal({
                         <span className="text-[11px] text-muted-2">
                           {row.authorName} · {relativeTime(row.createdAt)}
                         </span>
+                        {row.category && <Badge tone="neutral">{FEEDBACK_CATEGORY_LABEL[row.category]}</Badge>}
                         {/* Two closed states, two labels (D7). "Resolved" is a
                             claim that Karos acted on the note; a client's own
                             withdrawal is not that, and saying so told them their

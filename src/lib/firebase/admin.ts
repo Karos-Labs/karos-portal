@@ -7,11 +7,11 @@ import { getStorage } from "firebase-admin/storage";
 
 /**
  * Server-side Firebase Admin. Credentials, in order of preference:
- *  1. FIREBASE_SERVICE_ACCOUNT_KEY (full JSON, recommended for Vercel), or
+ *  1. FIREBASE_SERVICE_ACCOUNT_KEY (full JSON), or
  *  2. the three discrete FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY vars, or
  *  3. Application Default Credentials — keyless. Works when org policy blocks
  *     downloadable keys. Locally: `gcloud auth application-default login`.
- *     On Vercel/GCP: Workload Identity. Requires the project id below to be set.
+ *     On Cloud Run: Workload Identity. Requires the project id below to be set.
  */
 function getServiceAccount() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;

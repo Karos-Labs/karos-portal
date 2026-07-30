@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  FEEDBACK_CATEGORIES,
   MAX_FEEDBACK_CHARS,
   MAX_INJECTED_FEEDBACK,
   clampFeedbackText,
+  isFeedbackCategory,
   renderFeedbackMarkdown,
   selectInjectedFeedback,
   validateFeedbackScope,
@@ -168,6 +170,19 @@ describe("renderFeedbackMarkdown — re-clamps at the injection boundary (D5)", 
 
     expect(markdown).toContain("x".repeat(MAX_FEEDBACK_CHARS));
     expect(markdown).not.toContain("x".repeat(MAX_FEEDBACK_CHARS + 1));
+  });
+});
+
+describe("isFeedbackCategory — cosmetic tag validated against the closed set", () => {
+  it("accepts every documented category", () => {
+    for (const c of FEEDBACK_CATEGORIES) expect(isFeedbackCategory(c)).toBe(true);
+  });
+
+  it("rejects anything a browser or model made up, without throwing", () => {
+    expect(isFeedbackCategory("urgent")).toBe(false);
+    expect(isFeedbackCategory(undefined)).toBe(false);
+    expect(isFeedbackCategory(null)).toBe(false);
+    expect(isFeedbackCategory(42)).toBe(false);
   });
 });
 

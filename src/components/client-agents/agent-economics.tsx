@@ -24,6 +24,7 @@ export function AgentEconomicsCard({
   agentName,
   economics,
   launchCreditCost,
+  viewerIsStaff,
 }: {
   customAgentId: string;
   agentName: string;
@@ -31,16 +32,30 @@ export function AgentEconomicsCard({
   economics: AgentEconomics;
   /** The price currently set on the lab agent, for comparison. */
   launchCreditCost: number | null;
+  /**
+   * Required, not defaulted — every raw-$ figure in this card is internal
+   * cost data a CLIENT_USER must never see (item 3's role-based cost
+   * abstraction). The call site already only mounts this component for
+   * staff, but that's a positional guarantee; this is the structural one —
+   * a future caller that forgets its own `isStaff` check still can't render
+   * a dollar figure to a client by accident.
+   */
+  viewerIsStaff: boolean;
 }) {
   const [calibration, setCalibration] = useState<LaunchCalibration | null>(null);
   const [creditCost, setCreditCost] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  // Hooks above run unconditionally (Rules of Hooks) — this gate short-circuits
+  // everything after them, before any $ figure is built or rendered.
+  if (!viewerIsStaff) return null;
+
   const rows: Array<{ label: string; runs: number; usd: number }> = [
     { label: "Setup", ...economics.launch },
     { label: "Scheduled runs", ...economics.scheduled },
     { label: "Runs started by hand", ...economics.manual },
+    { label: "Test runs (Control Room)", ...economics.test },
     { label: "Before run-type tracking", ...economics.untyped },
   ].filter((row) => row.runs > 0);
 

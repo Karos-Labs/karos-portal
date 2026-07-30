@@ -22,6 +22,7 @@ import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
 
 import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
+import type { z as zType } from "zod";
 /**
  * Create-or-promote a manual competitor from quick-add input — not exported.
  *
@@ -133,26 +134,36 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
     client.description ? `— ${client.description}` : "",
   ].filter(Boolean).join(" ");
 
-  const { object, usage } = await generateObject({
-    model: anthropic(MODELS.SONNET),
-    schema,
-    system:
-      "You are a competitive intelligence analyst producing data for a compact UI dashboard table. " +
-      "Every text field you output is rendered directly in a table cell — long text BREAKS the layout. " +
-      "\n\nABSOLUTE FORMATTING RULES (violating these corrupts the UI):\n" +
-      "• positioning — max 5 words, noun phrase, no verbs. e.g. 'Enterprise marketing automation'\n" +
-      "• keyStrengths items — max 4 words each. e.g. 'Global brand authority'\n" +
-      "• keyWeaknesses items — max 4 words each. e.g. 'Complex onboarding'\n" +
-      "• NEVER write complete sentences, introductory phrases, or trailing punctuation.\n" +
-      "• NEVER use filler words: 'very', 'highly', 'extremely', 'robust', 'comprehensive', 'cutting-edge'.\n" +
-      "• Data must be specific and scannable in under 2 seconds.",
-    prompt: `Analyze these competitors for ${clientCtx}.\n\nCOMPETITORS: ${names}\n\nReturn one object per competitor.`,
-    maxOutputTokens: 3500,
-  });
-
-  logger.logUsage({
+  const competitorUsageMeta = {
     clientId, agentId: null, agentName: "Competitor Analysis",
     modelName: MODELS.SONNET, operation: "competitor_analysis",
+  };
+  let object: zType.infer<typeof schema>;
+  let usage: { inputTokens?: number; outputTokens?: number };
+  try {
+    ({ object, usage } = await generateObject({
+      model: anthropic(MODELS.SONNET),
+      schema,
+      system:
+        "You are a competitive intelligence analyst producing data for a compact UI dashboard table. " +
+        "Every text field you output is rendered directly in a table cell — long text BREAKS the layout. " +
+        "\n\nABSOLUTE FORMATTING RULES (violating these corrupts the UI):\n" +
+        "• positioning — max 5 words, noun phrase, no verbs. e.g. 'Enterprise marketing automation'\n" +
+        "• keyStrengths items — max 4 words each. e.g. 'Global brand authority'\n" +
+        "• keyWeaknesses items — max 4 words each. e.g. 'Complex onboarding'\n" +
+        "• NEVER write complete sentences, introductory phrases, or trailing punctuation.\n" +
+        "• NEVER use filler words: 'very', 'highly', 'extremely', 'robust', 'comprehensive', 'cutting-edge'.\n" +
+        "• Data must be specific and scannable in under 2 seconds.",
+      prompt: `Analyze these competitors for ${clientCtx}.\n\nCOMPETITORS: ${names}\n\nReturn one object per competitor.`,
+      maxOutputTokens: 3500,
+    }));
+  } catch (err) {
+    logger.logGenerationFailure(competitorUsageMeta, err);
+    throw err;
+  }
+
+  logger.logUsage({
+    ...competitorUsageMeta,
     inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
   });
 
@@ -416,24 +427,34 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
     client.description ? `Description: ${client.description}` : "",
   ].filter(Boolean).join("\n");
 
-  const { object, usage } = await generateObject({
-    model: anthropic(MODELS.SONNET),
-    schema,
-    system:
-      "You are a market intelligence analyst producing data for a compact UI dashboard table. " +
-      "Every text field you output is rendered directly in a table cell — long text BREAKS the layout. " +
-      "\n\nABSOLUTE FORMATTING RULES (violating these corrupts the UI):\n" +
-      "• positioning — max 5 words, noun phrase, no verbs.\n" +
-      "• keyStrengths items — max 4 words each.\n" +
-      "• keyWeaknesses items — max 4 words each.\n" +
-      "• NEVER write complete sentences or use filler words.",
-    prompt: `${clientCtx}\n\nIdentify the top 5–7 direct competitors. Return one object per competitor.`,
-    maxOutputTokens: 4500,
-  });
-
-  logger.logUsage({
+  const discoveryUsageMeta = {
     clientId, agentId: null, agentName: "Competitor Discovery",
     modelName: MODELS.SONNET, operation: "competitor_analysis",
+  };
+  let object: zType.infer<typeof schema>;
+  let usage: { inputTokens?: number; outputTokens?: number };
+  try {
+    ({ object, usage } = await generateObject({
+      model: anthropic(MODELS.SONNET),
+      schema,
+      system:
+        "You are a market intelligence analyst producing data for a compact UI dashboard table. " +
+        "Every text field you output is rendered directly in a table cell — long text BREAKS the layout. " +
+        "\n\nABSOLUTE FORMATTING RULES (violating these corrupts the UI):\n" +
+        "• positioning — max 5 words, noun phrase, no verbs.\n" +
+        "• keyStrengths items — max 4 words each.\n" +
+        "• keyWeaknesses items — max 4 words each.\n" +
+        "• NEVER write complete sentences or use filler words.",
+      prompt: `${clientCtx}\n\nIdentify the top 5–7 direct competitors. Return one object per competitor.`,
+      maxOutputTokens: 4500,
+    }));
+  } catch (err) {
+    logger.logGenerationFailure(discoveryUsageMeta, err);
+    throw err;
+  }
+
+  logger.logUsage({
+    ...discoveryUsageMeta,
     inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
   });
 

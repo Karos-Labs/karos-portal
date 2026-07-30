@@ -168,7 +168,10 @@ export function recommendPublishTime(opts: {
   return null; // unreachable in practice (60-day horizon)
 }
 
-function sameLocalDay(a: number, b: number): boolean {
+/** Exported for callers outside this file that need the same day comparison
+ *  the density recommender uses (e.g. the client reschedule action's
+ *  same-day-same-family collision guard) — one definition of "same day". */
+export function sameLocalDay(a: number, b: number): boolean {
   const da = new Date(a);
   const db = new Date(b);
   return (

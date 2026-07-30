@@ -1,20 +1,37 @@
 import { requireUser } from "@/lib/auth";
-import { listJobs, listClients } from "@/lib/data";
+import { listJobs, listClients, listPlannedScheduledRuns, listScheduledRuns } from "@/lib/data";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { identitiesByClient, runRowLabel } from "@/lib/agent-identity-map";
+import { identitiesByClient, runRowLabel, scheduleRowLabel } from "@/lib/agent-identity-map";
+import { describeCadence } from "@/lib/scheduled-runs";
+import { describeCadence as describeLegacyCadence, isValidTimeZone } from "@/lib/run-cadence";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { JobsList, type JobListRow } from "@/components/jobs-list";
+import { UpcomingRunsPanel, type UpcomingRunRow } from "@/components/jobs-upcoming";
+
+// A row written before `timeZone` existed falls back to the runtime's own zone
+// — same fallback calendar-body.tsx's runZone() uses, so this panel's "next
+// fire" time can't disagree with the Calendar's.
+const RUNTIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+function runZone(stored: string | undefined): string {
+  return isValidTimeZone(stored) ? stored : RUNTIME_ZONE;
+}
+
+const UPCOMING_LIMIT = 8;
 
 export default async function JobsPage() {
   const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
-  const [jobs, clients, umbrellas] = await Promise.all([
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const now = Date.now();
+  const [jobs, clients, umbrellas, plannedRuns, legacyRuns] = await Promise.all([
     listJobs(),
     listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined),
     // §7.3. Read once for the page, indexed per client below — this list is
     // cross-client, so resolving a row's identity by querying its client's
     // umbrellas would be one Firestore read per row.
     listClientAgents(),
+    listPlannedScheduledRuns(),
+    listScheduledRuns(),
   ]);
   const nameById = new Map(clients.map((c) => [c.id, c.name]));
   const umbrellasByClient = identitiesByClient(umbrellas);
@@ -37,11 +54,46 @@ export default async function JobsPage() {
       status: job.status,
       createdAt: job.createdAt,
       emailed: Boolean(job.emailedTo),
+      ...(job.customAgentId ? { customAgentId: job.customAgentId } : {}),
+      ...(job.error ? { error: job.error } : {}),
     }));
+
+  // ── Upcoming Scheduled Runs (item 2's "future" pane) ─────────────────
+  // Merges both scheduling systems — PlannedScheduledRun (the per-agent
+  // schedule dialog) and the legacy ScheduledRun row — into one glance panel,
+  // nearest fire first. Both already carry the fire time on `nextRunAt`
+  // (that's what the cron polls on), so no re-projection is needed here, only
+  // formatting — same helpers calendar-body.tsx uses so this can't disagree
+  // with the Calendar's own "next run" time for the same row.
+  const upcoming: UpcomingRunRow[] = [
+    ...plannedRuns
+      .filter((r) => r.status === "active" && nameById.has(r.clientId))
+      .map((r) => ({
+        id: r.id,
+        clientId: r.clientId,
+        clientName: nameById.get(r.clientId)!,
+        agentLabel: scheduleRowLabel(r, umbrellasByClient.get(r.clientId) ?? []),
+        nextRunAt: r.nextRunAt,
+        cadenceLabel: describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
+      })),
+    ...legacyRuns
+      .filter((r) => r.enabled && nameById.has(r.clientId))
+      .map((r) => ({
+        id: r.id,
+        clientId: r.clientId,
+        clientName: nameById.get(r.clientId)!,
+        agentLabel: r.label,
+        nextRunAt: r.nextRunAt,
+        cadenceLabel: describeLegacyCadence(r.cadence),
+      })),
+  ]
+    .sort((a, b) => a.nextRunAt - b.nextRunAt)
+    .slice(0, UPCOMING_LIMIT);
 
   return (
     <>
       <PageHeader title="Jobs" description="Every agent run, its output and delivery status." />
+      <UpcomingRunsPanel runs={upcoming} now={now} />
       {rows.length === 0 ? (
         <EmptyState
           icon={<Icon name="ListChecks" className="h-7 w-7" />}

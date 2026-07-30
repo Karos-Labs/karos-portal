@@ -5,6 +5,7 @@ import { assetTitleFromJobTitle } from "@/lib/job-title";
 import {
   claimExternalJobCompletion,
   createAsset,
+  getClient,
   getJob,
   getJobByExternalServiceId,
   updateJob,
@@ -27,6 +28,7 @@ import { applyLaunchOutcome, isLaunchTemplatesArtifact } from "@/lib/jobs/launch
 import { getClientAgent } from "@/lib/data-client-agents";
 import { syncOptionsFromBatchAsset } from "@/lib/client-agent-slots";
 import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
+import { notifyJobFailure } from "@/lib/job-alerts";
 import { logger } from "@/services/logger";
 
 export const maxDuration = 120;
@@ -54,17 +56,6 @@ const ASSET_TYPE_MAP = {
   "social_post" | "newsletter_issue" | "blog_article" | "landing_page" | "custom",
   AssetType
 >;
-
-/**
- * Custom agents can produce anything, so we infer the library bucket from the
- * deliverables: images ⇒ a schedulable social post (so it auto-places on the
- * calendar), a long-form .md/.html ⇒ an article, everything else ⇒ a note.
- */
-function inferAssetType(hasImages: boolean, primaryTextName?: string): AssetType {
-  if (hasImages) return "social_post";
-  if (primaryTextName && /\.(md|html?)$/i.test(primaryTextName)) return "article";
-  return "note";
-}
 
 // Asset types a custom job may request via metadata.asset_type (whitelist — a
 // hint is only honored if it's one of these, otherwise we fall back to "note").
@@ -262,6 +253,11 @@ export async function POST(req: NextRequest) {
   const clientAgentId = job.clientAgentId ?? payload.metadata?.karos_client_agent_id ?? null;
   const isLaunchRun =
     (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(clientAgentId);
+  // Control Room "Test Run" (item 3, dry-run equivalent): the run is real, but
+  // its output must never reach a client or a calendar slot — same treatment
+  // as a launch deliverable, just for a different reason (staff verifying the
+  // pipeline, not a one-time setup artifact).
+  const isTestRun = (job.runType ?? payload.metadata?.karos_run_type) === "test";
   let launchTemplatesJson: string | null = null;
 
   // The template stream this run was fired against, WHITELISTED against the
@@ -389,88 +385,113 @@ export async function POST(req: NextRequest) {
       // Only real catalog products get a template chip; "custom" runs have no
       // managed product (getManagedProduct would fall back to the first one).
       const managedProduct = MANAGED_PRODUCTS.find((p) => p.taskType === payload.task_type);
-      const assetId = await createAsset({
-        clientId: job.clientId,
-        jobId: job.id,
-        agentId: "agent-service",
-        type: assetType,
-        title: assetTitle,
-        content: primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "",
-        meta: {
-          taskType: payload.task_type,
-          agentsRepoSha: payload.agents_repo_sha,
-          artifacts: artifacts.filter((a) => a.clientFacing),
-          ...(slides ? { slides } : {}),
-          // Staff-only working material, excluded from every client library
-          // surface by getClientLibraryAssets. Flagged on the asset itself
-          // rather than inferred later: the exclusion has to survive whatever
-          // status or date this asset ends up with.
-          ...(isLaunchRun ? { launchDeliverable: true, clientAgentId } : {}),
-        },
-        imageUrl: orderedImageUrls[0] ?? null,
-        ...(platform ? { channels: [platform] } : {}),
-        status: "draft",
-        // Template attribution, in precedence order. A managed product IS its
-        // own template. A custom run fired against one of the umbrella's
-        // template streams carries the key on the job (submit-custom stores it
-        // and echoes karos_template_key) — and until now the webhook dropped it
-        // on the floor, so every post a per-template run produced arrived with
-        // no template at all. That is the join the archive groups by, the chip
-        // the calendar paints and the key per-template feedback is scoped to:
-        // without it a client's own streams are invisible on their deliverables.
-        ...(managedProduct
-          ? { templateKey: payload.task_type, templateName: managedProduct.name }
-          : runTemplate
-            ? {
-                templateKey: runTemplate.key,
-                ...(runTemplate.name ? { templateName: runTemplate.name } : {}),
-              }
-            : {}),
-        orderKey: orderKeyForCreatedAt(now, job.id),
-        ...recommendedScheduleFields(assetType, 0, platform),
-        createdBy: "agent-service",
-        createdAt: now,
-        updatedAt: now,
-      });
-      assetIds.push(assetId);
-      createdAssetId = assetId;
-      // Auto-assign the new post its one-per-day chain date. Best-effort: the
-      // job is already claimed (single delivery), so a reflow failure must not
-      // fail the webhook — it self-heals on the next import/webhook/staff reflow.
-      // Launch deliverables are skipped entirely: they are not calendar
-      // entities, and reflowing them would hand a client's chain a day for a
-      // document about templates.
-      if (!isLaunchRun) {
-        await reflowClientChain(job.clientId).catch(() =>
-          events.push({
-            at: Date.now(),
-            level: "error",
-            message: "Calendar reflow failed - run the staff reflow action",
-          }),
-        );
-
-        // §4.5b — an X drafts BATCH landing is the moment its days can be
-        // sliced into daily options. This is where the batch actually arrives:
-        // the recurring X run delivers here every week, and the horizon path
-        // (which is template-gated, and an options umbrella has no templates)
-        // never sees it. Identified by the same parse predicate as every other
-        // X surface, and looked up BY this job's client so a crafted payload
-        // cannot reach another tenant's plan.
-        //
-        // Safe after the single-use claim: assignment never touches a day that
-        // already has options, so a redelivery adds nothing. Best-effort for
-        // the same reason the reflow above is — the deliverable is already
-        // written, and the next batch re-attempts any day still unassigned.
-        await syncOptionsFromBatchAsset({
+      // The job is already claimed (single delivery, see above), so a write
+      // failure here can't fall back to redelivery — a naive throw would 500
+      // and strand the run with no asset, no cost/usage log (the after() below
+      // never registers), and for a client-charged custom-agent run, no refund.
+      // Catch, log, refund the charge (a no-op for staff-fired runs), and let
+      // the job-status/cost-logging writes below still run instead of dying here.
+      try {
+        const assetId = await createAsset({
           clientId: job.clientId,
-          assetId,
-          content: primaryText ? primaryText.content : "",
-        }).catch(() =>
-          events.push({
-            at: Date.now(),
-            level: "error",
-            message: "Daily options assignment failed - retries on the next batch",
-          }),
+          jobId: job.id,
+          agentId: "agent-service",
+          type: assetType,
+          title: assetTitle,
+          content: primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "",
+          meta: {
+            taskType: payload.task_type,
+            agentsRepoSha: payload.agents_repo_sha,
+            artifacts: artifacts.filter((a) => a.clientFacing),
+            ...(slides ? { slides } : {}),
+            // Staff-only working material, excluded from every client library
+            // surface by getClientLibraryAssets. Flagged on the asset itself
+            // rather than inferred later: the exclusion has to survive whatever
+            // status or date this asset ends up with.
+            ...(isLaunchRun ? { launchDeliverable: true, clientAgentId } : {}),
+            // Same exclusion mechanism, for a Control Room Test Run — see
+            // isTestRun above and asset-visibility.ts's isTestRunAsset().
+            ...(isTestRun ? { testRun: true } : {}),
+          },
+          imageUrl: orderedImageUrls[0] ?? null,
+          ...(platform ? { channels: [platform] } : {}),
+          status: "draft",
+          // Template attribution, in precedence order. A managed product IS its
+          // own template. A custom run fired against one of the umbrella's
+          // template streams carries the key on the job (submit-custom stores it
+          // and echoes karos_template_key) — and until now the webhook dropped it
+          // on the floor, so every post a per-template run produced arrived with
+          // no template at all. That is the join the archive groups by, the chip
+          // the calendar paints and the key per-template feedback is scoped to:
+          // without it a client's own streams are invisible on their deliverables.
+          ...(managedProduct
+            ? { templateKey: payload.task_type, templateName: managedProduct.name }
+            : runTemplate
+              ? {
+                  templateKey: runTemplate.key,
+                  ...(runTemplate.name ? { templateName: runTemplate.name } : {}),
+                }
+              : {}),
+          orderKey: orderKeyForCreatedAt(now, job.id),
+          ...recommendedScheduleFields(assetType, 0, platform),
+          createdBy: "agent-service",
+          createdAt: now,
+          updatedAt: now,
+        });
+        assetIds.push(assetId);
+        createdAssetId = assetId;
+        // Auto-assign the new post its one-per-day chain date. Best-effort: the
+        // job is already claimed (single delivery), so a reflow failure must not
+        // fail the webhook — it self-heals on the next import/webhook/staff reflow.
+        // Launch deliverables are skipped entirely: they are not calendar
+        // entities, and reflowing them would hand a client's chain a day for a
+        // document about templates. Test-run output is skipped the same way — it
+        // must never get a calendar date until (if ever) promoted out of test.
+        if (!isLaunchRun && !isTestRun) {
+          await reflowClientChain(job.clientId).catch(() =>
+            events.push({
+              at: Date.now(),
+              level: "error",
+              message: "Calendar reflow failed - run the staff reflow action",
+            }),
+          );
+
+          // §4.5b — an X drafts BATCH landing is the moment its days can be
+          // sliced into daily options. This is where the batch actually arrives:
+          // the recurring X run delivers here every week, and the horizon path
+          // (which is template-gated, and an options umbrella has no templates)
+          // never sees it. Identified by the same parse predicate as every other
+          // X surface, and looked up BY this job's client so a crafted payload
+          // cannot reach another tenant's plan.
+          //
+          // Safe after the single-use claim: assignment never touches a day that
+          // already has options, so a redelivery adds nothing. Best-effort for
+          // the same reason the reflow above is — the deliverable is already
+          // written, and the next batch re-attempts any day still unassigned.
+          await syncOptionsFromBatchAsset({
+            clientId: job.clientId,
+            assetId,
+            content: primaryText ? primaryText.content : "",
+          }).catch(() =>
+            events.push({
+              at: Date.now(),
+              level: "error",
+              message: "Daily options assignment failed - retries on the next batch",
+            }),
+          );
+        }
+      } catch (e) {
+        console.error("[webhook] asset creation failed:", e);
+        events.push({
+          at: Date.now(),
+          level: "error",
+          message: `Failed to create deliverable asset: ${e instanceof Error ? e.message : "unknown error"}`,
+        });
+        await refundJobCharge(
+          job.id,
+          `Auto-refund · asset creation failed · ${job.agentName}`.slice(0, 120),
+        ).catch((refundErr) =>
+          console.error("[webhook] refund after asset-creation failure also failed:", refundErr),
         );
       }
     }
@@ -502,23 +523,33 @@ export async function POST(req: NextRequest) {
   const inputTokens = Object.values(payload.usage?.models ?? {}).reduce((s, m) => s + m.inputTokens, 0);
   const outputTokens = Object.values(payload.usage?.models ?? {}).reduce((s, m) => s + m.outputTokens, 0);
 
-  await updateJob(job.id, {
-    status,
-    assetIds,
-    events,
-    error: payload.status === "done" ? null : (payload.error ?? payload.status),
-    external: {
-      ...job.external,
-      ...(payload.agents_repo_sha ? { agentsRepoSha: payload.agents_repo_sha } : {}),
-      ...(payload.model ? { model: payload.model } : {}),
-      ...(payload.usage?.totalCostUsd !== undefined ? { totalCostUsd: payload.usage.totalCostUsd } : {}),
-      inputTokens,
-      outputTokens,
-      artifacts,
-      ...(payload.transcript_url ? { transcriptUrl: payload.transcript_url } : {}),
-    },
-    updatedAt: now,
-  });
+  // Best-effort like the blocks below it: the job is already claimed (single
+  // delivery), so redelivery on a throw here would just be skipped as
+  // "already processed" and never retry this write. Catching and continuing
+  // keeps the launch-outcome/task-sync updates AND the after() cost-logging
+  // block below reachable even when this particular write fails, instead of
+  // losing all of them to an unhandled 500.
+  try {
+    await updateJob(job.id, {
+      status,
+      assetIds,
+      events,
+      error: payload.status === "done" ? null : (payload.error ?? payload.status),
+      external: {
+        ...job.external,
+        ...(payload.agents_repo_sha ? { agentsRepoSha: payload.agents_repo_sha } : {}),
+        ...(payload.model ? { model: payload.model } : {}),
+        ...(payload.usage?.totalCostUsd !== undefined ? { totalCostUsd: payload.usage.totalCostUsd } : {}),
+        inputTokens,
+        outputTokens,
+        artifacts,
+        ...(payload.transcript_url ? { transcriptUrl: payload.transcript_url } : {}),
+      },
+      updatedAt: now,
+    });
+  } catch (e) {
+    console.error("[webhook] job record update failed:", e);
+  }
 
   // ── Client-agent launch state ──
   // Advances the umbrella (launching → curating, or → launch_failed) and seeds
@@ -593,17 +624,57 @@ export async function POST(req: NextRequest) {
   const jobId = job.id;
   const clientId = job.clientId;
   const agentName = job.agentName;
-  after(() => {
-    for (const [modelName, usage] of Object.entries(payload.usage?.models ?? {})) {
+  const runFailed = status === "failed" || status === "cancelled";
+  // Distinct from `runFailed` above (which only gates "did anything go
+  // wrong, log the error text") — the usage-log `status` field additionally
+  // separates "cancelled" from "failed" so a deliberate Force Cancel doesn't
+  // inflate the Agent Leaderboard's failedRuns count the way a genuine
+  // breakage should (see usage-log.ts's doc comment on the field).
+  const usageStatus: "success" | "failed" | "cancelled" =
+    status === "cancelled" ? "cancelled" : status === "failed" ? "failed" : "success";
+  after(async () => {
+    // Alert on "failed" only — "cancelled" is a deliberate human stop, not a
+    // failure worth paging anyone about. Best-effort: notifyJobFailure never
+    // throws, so this can't affect the usage-logging below it.
+    if (status === "failed") {
+      const client = await getClient(clientId).catch(() => null);
+      await notifyJobFailure(
+        { ...job, status, error: payload.error ?? payload.status },
+        client,
+      );
+    }
+    const models = payload.usage?.models;
+    if (models && Object.keys(models).length > 0) {
+      for (const [modelName, usage] of Object.entries(models)) {
+        logger.logUsage({
+          clientId,
+          agentId: "agent-service",
+          agentName,
+          modelName,
+          operation: "managed_job",
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          jobId,
+          status: usageStatus,
+          ...(runFailed ? { errorMessage: payload.error ?? payload.status } : {}),
+        });
+      }
+    } else if (runFailed) {
+      // The agent-service reported no per-model usage for this failure — still
+      // record a zero-cost stub so the run is visible in the leaderboard/dashboards
+      // instead of vanishing (item: "no invisible spend" applies to visibility of
+      // the *attempt*, not only to attempts that happen to carry a token count).
       logger.logUsage({
         clientId,
         agentId: "agent-service",
         agentName,
-        modelName,
+        modelName: payload.model ?? "unknown",
         operation: "managed_job",
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
+        inputTokens: 0,
+        outputTokens: 0,
         jobId,
+        status: usageStatus,
+        errorMessage: payload.error ?? payload.status,
       });
     }
   });

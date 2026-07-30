@@ -7,7 +7,7 @@ import { contextKind } from "@/lib/context";
 
 export const maxDuration = 60;
 
-const MAX_BYTES = 4 * 1024 * 1024; // 4 MB (Vercel request-body limit)
+const MAX_BYTES = 4 * 1024 * 1024; // 4 MB self-imposed cap on a context item
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();

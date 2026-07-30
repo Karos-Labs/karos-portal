@@ -238,7 +238,18 @@ export function startWorker(deps: WorkerDeps): Worker<QueuePayload> {
 
   async function afterExit(record: JobRecord): Promise<void> {
     if (record.status === "queued") {
-      await enqueueJob(queue, record);
+      // This branch is ONLY reached via the state machine's "fail"/"timeout"
+      // transitions requeuing a job that still has attempts left (see
+      // transition() in state/machine.ts) — never the original submission,
+      // which enters the queue through index.ts's `enqueue` instead. A
+      // same-cause retry that fires instantly (the previous behavior) gives a
+      // transient failure — e.g. "executor start failed: 14 UNAVAILABLE: read
+      // ECONNRESET" calling the Cloud Run Admin API — zero chance to clear
+      // before the one retry most configurations get (JOB_MAX_ATTEMPTS
+      // defaults to 2) burns through it too. A short fixed delay is enough:
+      // this system typically has only one retry to spend, so exponential
+      // backoff has no second attempt to back off further into.
+      await enqueueJob(queue, record, { delayMs: config.retryDelayMs });
       return;
     }
     if (record.status === "dead_letter") {

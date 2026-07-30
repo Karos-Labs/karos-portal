@@ -44,7 +44,7 @@ async function main() {
 
   loadEnv();
   const { initializeApp, cert } = await import("firebase-admin/app");
-  const { getFirestore, FieldValue } = await import("firebase-admin/firestore");
+  const { getFirestore } = await import("firebase-admin/firestore");
   initializeApp({ credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY!)) });
   const db = getFirestore();
 

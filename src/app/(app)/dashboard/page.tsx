@@ -42,6 +42,10 @@ export default async function DashboardPage() {
   const weekAgo = Date.now() - 7 * 86400000;
   const jobsThisWeek = jobs.filter((j) => j.createdAt > weekAgo);
   const delivered = jobs.filter((j) => j.status === "delivered").length;
+  // Upstream failures (rate limits, credit exhaustion, provider errors) used to
+  // be visible only by opening each job — nothing at a glance said "something
+  // is broken." A recent-failures banner surfaces that immediately.
+  const recentFailedJobs = jobsThisWeek.filter((j) => j.status === "failed");
 
   return (
     <>
@@ -64,6 +68,18 @@ export default async function DashboardPage() {
         <StatCard label="Jobs this week" value={jobsThisWeek.length} icon={<Icon name="ListChecks" className="h-5 w-5" />} />
         <StatCard label="Delivered" value={delivered} icon={<Icon name="Send" className="h-5 w-5" />} />
       </div>
+
+      {recentFailedJobs.length > 0 && (
+        <Link
+          href="/jobs"
+          className="mt-6 flex items-center gap-3 rounded-[var(--radius)] border border-danger/30 bg-danger/10 px-4 py-3 transition-colors hover:border-danger/50"
+        >
+          <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-danger" />
+          <p className="text-xs text-danger">
+            {recentFailedJobs.length} run{recentFailedJobs.length === 1 ? "" : "s"} failed this week — review in Jobs.
+          </p>
+        </Link>
+      )}
 
       {isAdmin && (
         <div className="mt-6">

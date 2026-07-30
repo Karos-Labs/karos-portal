@@ -21,10 +21,20 @@ import type { AppUser } from "@/lib/types";
  * be maintained should be the one whose omission is SAFE, so a new tool is
  * withheld from clients until it is named here on purpose.
  *
- * Why these three are safe to expose: `send_support_email` mails the client's
- * own Karos team, `fetch_gmail_context` reads the thread the client is already
+ * Why these are safe to expose: `send_support_email` mails the client's own
+ * Karos team, `fetch_gmail_context` reads the thread the client is already
  * party to, and `create_tasks` writes to that client's own board — all
  * client-tier state the portal already lets them change by hand.
+ *
+ * The §3 capability-matrix tools (chat/route.ts) are safe for the same reason:
+ * `find_output` only reads this client's own already-prompt-scoped assets,
+ * `edit_output` wraps `updateAssetAction`'s existing content-only client path
+ * (status stays staff-only there, unchanged), `run_agent_now` wraps the
+ * already-client-safe `runCustomAgentAction`, `provide_feedback` wraps the
+ * existing `addClientAgentFeedbackAction` (client-authorable by design), and
+ * `reschedule_output` branches internally on `isStaffCopilotActor` — a client
+ * session can only ever reach its own scoped `clientRescheduleAssetAction`
+ * path (own asset, approved/scheduled only, date only), never the staff one.
  *
  * The tool that is NOT here is `update_branding_guidelines`: it rewrites the
  * `branding-guidelines` context doc, which lives at the INTERNAL tier —
@@ -39,6 +49,11 @@ export const CLIENT_SAFE_COPILOT_TOOLS = [
   "send_support_email",
   "fetch_gmail_context",
   "create_tasks",
+  "find_output",
+  "edit_output",
+  "run_agent_now",
+  "reschedule_output",
+  "provide_feedback",
 ] as const;
 
 export type ClientSafeCopilotTool = (typeof CLIENT_SAFE_COPILOT_TOOLS)[number];

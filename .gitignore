@@ -30,6 +30,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
 
 # env files (can opt-in for committing if needed)
 .env*
@@ -39,9 +40,6 @@ env.*.local
 !.env.production
 # templates hold no secrets — always committed
 !.env.example
-
-# vercel
-.vercel
 
 # local Codex connector configuration (may contain credentials)
 .codex/

@@ -159,6 +159,21 @@ export const SCHEDULE_PROJECTION_DAYS = 90;
  * projects onto the previous day, which puts a weekday-only run on a weekend.
  * The stored first fire stays correct throughout, so the calendar disagrees
  * with itself rather than being uniformly wrong (F108).
+ *
+ * A recurring cadence's stored `nextRunAt` can be STALE — overdue because the
+ * cron hasn't advanced it (a stuck/misconfigured cron, an agent-service
+ * outage, etc.). Without correcting for that, this walked forward from the
+ * frozen past cursor and returned it as the FIRST "occurrence", so a schedule
+ * that hasn't fired in two days showed an "UPCOMING · next 9:00 AM" card on
+ * the day it was ORIGINALLY due — silently misrepresenting a stuck schedule
+ * as an imminent one instead of surfacing that anything was wrong. Occurrences
+ * before `opts.from` are skipped by fast-forwarding the cursor first, so this
+ * only ever returns genuinely future (or right-now) fire times; whether the
+ * underlying schedule is stuck is a separate signal callers compute from the
+ * raw stored `nextRunAt` vs "now" (e.g. calendar-body.tsx's `stuck` flag) —
+ * this function's job is projecting occurrences, not diagnosing health.
+ * "once" is unaffected: it has no next slot to fast-forward to, so an overdue
+ * one-off still returns its own (stuck) stored time.
  */
 export function projectRunOccurrences(
   run: {
@@ -176,22 +191,26 @@ export function projectRunOccurrences(
   if (run.cadence === "once") {
     return run.nextRunAt <= horizon ? [run.nextRunAt] : [];
   }
-  const occurrences: number[] = [];
-  let cursor = run.nextRunAt;
-  while (cursor <= horizon) {
-    occurrences.push(cursor);
-    cursor = computeNextRun({
-      cadence: run.cadence,
+  const cadence = run.cadence;
+  const next = (from: number) =>
+    computeNextRun({
+      cadence,
       hour: run.hour,
       minute: run.minute,
       weekday: run.weekday,
       weekdays: run.weekdays,
       dayOfMonth: run.dayOfMonth,
-      from: cursor,
-      // Same clock the stored nextRunAt was computed on, so occurrence 2
-      // onwards lands on the same wall time as occurrence 1.
+      from,
+      // Same clock the stored nextRunAt was computed on, so every occurrence
+      // lands on the same wall time as the first.
       ...(opts.timeZone ? { timeZone: opts.timeZone } : {}),
     });
+  let cursor = run.nextRunAt;
+  while (cursor < opts.from) cursor = next(cursor);
+  const occurrences: number[] = [];
+  while (cursor <= horizon) {
+    occurrences.push(cursor);
+    cursor = next(cursor);
   }
   return occurrences;
 }
@@ -216,6 +235,24 @@ export function shortZoneLabel(timeZone: string | undefined, at: number = Date.n
     .formatToParts(new Date(at))
     .find((p) => p.type === "timeZoneName");
   return part?.value ?? timeZone;
+}
+
+/**
+ * "in 2h 15m" / "in 3d" / "due any moment" — a relative countdown to a
+ * schedule's `nextRunAt`, for the Control Room's "Next Scheduled Execution"
+ * line. `now` is required (not defaulted to Date.now()) so this stays a pure,
+ * directly-testable function, matching every other date helper in this file.
+ */
+export function nextRunCountdown(nextRunAt: number, now: number): string {
+  const ms = nextRunAt - now;
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 1) return "due any moment";
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  if (hours < 24) return remMinutes > 0 ? `in ${hours}h ${remMinutes}m` : `in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `in ${days}d`;
 }
 
 /**

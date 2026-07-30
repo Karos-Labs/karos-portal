@@ -7,6 +7,7 @@ import {
   describeCadence,
   MAX_OUTPUTS_PER_RUN,
   MAX_RUNS_PER_WEEK,
+  nextRunCountdown,
   projectRunOccurrences,
   scheduleLimitsFor,
   weeklyCadenceDays,
@@ -274,6 +275,52 @@ describe("projectRunOccurrences", () => {
     ]);
   });
 
+  describe("a stale stored nextRunAt (the cron missed one or more fires)", () => {
+    it("fast-forwards a recurring cadence past every already-elapsed slot", () => {
+      // nextRunAt frozen two days before `from` — as if daily fires on Sat/Sun
+      // never happened and nobody advanced the cursor.
+      const run = { cadence: "daily" as const, hour: 9, minute: 0, nextRunAt: local(2026, 6, 4, 9) };
+      const occurrences = projectRunOccurrences(run, { from: MON_8AM, horizonDays: 3 });
+      // Never includes Sat 7/4 or Sun 7/5 — only genuinely future/current slots.
+      expect(occurrences).toEqual([
+        local(2026, 6, 6, 9),
+        local(2026, 6, 7, 9),
+        local(2026, 6, 8, 9),
+      ]);
+    });
+
+    it("still returns nothing once fast-forwarding runs past the horizon", () => {
+      const run = { cadence: "daily" as const, hour: 9, minute: 0, nextRunAt: local(2025, 0, 1, 9) };
+      const occurrences = projectRunOccurrences(run, { from: MON_8AM, horizonDays: 1 });
+      expect(occurrences).toEqual([local(2026, 6, 6, 9)]);
+    });
+
+    it("a weekly cadence skips every stale weekday, landing on the next real one", () => {
+      const run = {
+        cadence: "weekly" as const,
+        weekdays: [1, 2, 3, 4, 5],
+        hour: 9,
+        minute: 0,
+        // Frozen at the PREVIOUS Monday — a whole week behind.
+        nextRunAt: local(2026, 5, 29, 9),
+      };
+      const occurrences = projectRunOccurrences(run, { from: MON_8AM, horizonDays: 4 });
+      expect(occurrences).toEqual([
+        local(2026, 6, 6, 9),
+        local(2026, 6, 7, 9),
+        local(2026, 6, 8, 9),
+        local(2026, 6, 9, 9),
+      ]);
+    });
+
+    it("a 'once' run does NOT fast-forward — an overdue one-off has no next slot, so it keeps its own stuck time", () => {
+      const overdue = local(2026, 6, 4, 9);
+      expect(
+        projectRunOccurrences({ cadence: "once", hour: 9, minute: 0, nextRunAt: overdue }, { from: MON_8AM }),
+      ).toEqual([overdue]);
+    });
+  });
+
   /**
    * F108. Only the FIRST occurrence comes from the stored nextRunAt, which the
    * scheduler computed in the schedule's own zone. Every later one is
@@ -424,5 +471,30 @@ describe("the server clamps to those limits, not only the dialog", () => {
     expect(ui).toContain("scheduleLimitsFor(agent.key)");
     expect(ui).toContain("countOptions(limits.maxRunsPerWeek)");
     expect(ui).toContain("countOptions(limits.maxOutputsPerRun)");
+  });
+});
+
+describe("nextRunCountdown", () => {
+  const now = MON_8AM;
+
+  it("rounds to minutes under an hour", () => {
+    expect(nextRunCountdown(now + 5 * 60_000, now)).toBe("in 5m");
+  });
+
+  it("shows hours and minutes under a day", () => {
+    expect(nextRunCountdown(now + (2 * 60 + 15) * 60_000, now)).toBe("in 2h 15m");
+  });
+
+  it("drops the minutes when they round to zero", () => {
+    expect(nextRunCountdown(now + 3 * 60 * 60_000, now)).toBe("in 3h");
+  });
+
+  it("shows whole days at 24h and beyond", () => {
+    expect(nextRunCountdown(now + 25 * 60 * 60_000, now)).toBe("in 1d");
+  });
+
+  it("reads as due once the moment has passed, rather than a negative countdown", () => {
+    expect(nextRunCountdown(now - 1, now)).toBe("due any moment");
+    expect(nextRunCountdown(now, now)).toBe("due any moment");
   });
 });

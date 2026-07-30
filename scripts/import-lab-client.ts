@@ -72,9 +72,10 @@ import {
   pickPrimaryFiles,
   type LabFile,
 } from "../src/lib/lab-outputs-shared";
-import { chainFamilyFor, orderKeyForLabItem, templateFromItemKey } from "../src/lib/post-chain";
+import { chainFamilyFor, orderKeyForLabItem, planClientChain, templateFromItemKey } from "../src/lib/post-chain";
 import { recommendedScheduleFields } from "../src/lib/scheduling";
 import type {
+  Asset,
   BrandColor,
   BrandingGuidelines,
   Client,
@@ -625,6 +626,50 @@ async function main() {
   }
   console.log(`  ✓ assets: ${assetsCreated} imported, ${assetsSkipped} skipped (already imported / empty)`);
 
+  // ── 4b · Chain reflow ───────────────────────────────────────────────
+  // The in-app importer (lab-output-actions.ts) calls reflowClientChain right
+  // after creating drafts, so chain-family types (social/email/article) land
+  // with a scheduledAt immediately. This script can't import reflowClientChain
+  // (src/lib/chain.ts → data.ts → "server-only", unresolvable outside the
+  // Next.js runtime) — so without this step, every chain-family draft this
+  // script creates would sit with scheduledAt/recommendedAt permanently null:
+  // invisible on the calendar even after staff approval. planClientChain
+  // itself is pure/client-safe, so re-implement just the write here.
+  //
+  // Unconditional (not just when assetsCreated > 0): re-running this script
+  // against an already-imported client is also the recovery path for any
+  // client left stuck by an earlier run of this script, before this reflow
+  // step existed. A no-op run costs one read and zero writes.
+  if (!dryRun && db) {
+    const snap = await db.collection("assets").where("clientId", "==", clientId).get();
+    const clientAssets = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Asset, "id">) }));
+    const assignments = planClientChain(clientAssets, { now });
+    if (assignments.length > 0) {
+      const batch = db.batch();
+      for (const a of assignments) {
+        batch.set(
+          db.collection("assets").doc(a.id),
+          {
+            scheduledAt: a.scheduledAt,
+            orderKey: a.orderKey,
+            recommendedAt: a.scheduledAt,
+            recommendedReason: "One post per day - assigned by the content chain",
+            // Always manual, never auto: a bulk historical import is not the
+            // live per-post trust context applyChainAssignments' auto-schedule
+            // branch assumes, so skip that check and stay conservative.
+            publishMode: "manual",
+            updatedAt: now,
+          },
+          { merge: true },
+        );
+      }
+      await batch.commit();
+      console.log(`  ✓ chain reflow: ${assignments.length} asset(s) dated`);
+    } else {
+      console.log("  ✓ chain reflow: nothing to date");
+    }
+  }
+
   // ── 5 · Activity log ───────────────────────────────────────────────
   if (!dryRun && db && (assetsCreated || compCreated || docsCreated)) {
     await db.collection("clientActivityLogs").add({
@@ -641,6 +686,7 @@ async function main() {
   console.log(`\n✔ ${dryRun ? "Dry run complete" : "Import complete"} for ${name}${clientId && clientId !== "(new)" ? ` (client ${clientId})` : ""}.`);
   if (!dryRun) {
     console.log("  Next: open the client in the portal — sidebar Competitor Track, docs, and Archive should all be populated.");
+    console.log("  Imported assets land as drafts (dated, chain-scheduled) — staff must still approve each one from /assets before a client can see it.");
     console.log("  The first Intel/SEO-GEO run can be triggered from the client page (Regenerate) when you want measured AI-visibility data.");
   }
 }

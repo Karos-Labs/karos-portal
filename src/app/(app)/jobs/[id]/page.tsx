@@ -11,9 +11,11 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { ManagedJobCancelButton } from "@/components/managed-job-cancel";
 import { ManagedJobProgress } from "@/components/managed-job-progress";
 import { JobDeleteButton } from "@/components/job-delete";
+import { JobRetryButton } from "@/components/job-retry";
 import { JobTranscript, TranscriptCount } from "@/components/job-transcript";
 import { fetchJobTranscript } from "@/lib/agent-service/transcript";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
+import { classifyJobError } from "@/lib/job-error-taxonomy";
 import type { Job } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
@@ -28,6 +30,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   ]);
   const realAssets = assets.filter((a) => !!a);
   const inProgress = job.status === "running" || job.status === "queued";
+  const classifiedError = classifyJobError(job.error);
 
   // F107 — without this the deliverables here rendered with no connectedPlatforms,
   // so Publish Now never appeared on the job page even for an approved post whose
@@ -53,6 +56,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
         </div>
         <div className="flex items-center gap-3">
           {job.external && inProgress && <ManagedJobCancelButton jobId={job.id} />}
+          {job.status === "failed" && job.customAgentId && <JobRetryButton jobId={job.id} />}
           {user.role === "KAROS_ADMIN" && <JobDeleteButton jobId={job.id} />}
           <JobStatusBadge status={job.status} />
         </div>
@@ -81,6 +85,12 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           {job.error && (
             <Card className="border-danger/30 bg-danger/5">
               <CardTitle className="mb-1 text-danger">Error</CardTitle>
+              {/* Best-effort classification over the raw text below — see
+                  job-error-taxonomy.ts's doc comment. Not shown when it can't
+                  do better than restate the raw string. */}
+              {classifiedError && classifiedError.label !== "Unexpected error" && (
+                <p className="mb-1 text-sm font-medium text-danger">{classifiedError.label}</p>
+              )}
               <p className="text-sm text-muted">{job.error}</p>
             </Card>
           )}

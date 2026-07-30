@@ -9,6 +9,7 @@ import {
 import { submitCustomAgentRun } from "@/lib/agent-service/run-custom-agent";
 import { computeNextRunAt } from "@/lib/run-cadence";
 import { requireCronSecret } from "@/lib/cron-auth";
+import { notifyScheduleFireFailure } from "@/lib/job-alerts";
 
 import { SCHEDULER_ACTOR_NAME } from "@/lib/activity-actors";
 export const maxDuration = 120;
@@ -67,6 +68,13 @@ export async function GET(req: NextRequest) {
           lastErrorAt: Date.now(),
           updatedAt: Date.now(),
         });
+        await notifyScheduleFireFailure({
+          clientId: run.clientId,
+          ...(client?.name ? { clientName: client.name } : {}),
+          agentLabel: run.label,
+          scheduleId: run.id,
+          error,
+        });
         return { scheduledRunId: run.id, status: "disabled", error };
       }
 
@@ -90,6 +98,13 @@ export async function GET(req: NextRequest) {
           lastError: result.error.slice(0, MAX_ERROR_CHARS),
           lastErrorAt: Date.now(),
           updatedAt: Date.now(),
+        });
+        await notifyScheduleFireFailure({
+          clientId: run.clientId,
+          clientName: client.name,
+          agentLabel: run.label,
+          scheduleId: run.id,
+          error: result.error,
         });
         return { scheduledRunId: run.id, status: "failed", jobId: result.jobId, error: result.error };
       }

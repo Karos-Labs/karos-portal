@@ -3,7 +3,7 @@ import "server-only";
 import { Resend } from "resend";
 
 export interface SendEmailInput {
-  to: string;
+  to: string | string[];
   subject: string;
   html: string;
   replyTo?: string;
@@ -38,7 +38,7 @@ export async function sendEmail(input: SendEmailInput): Promise<
   }
 }
 
-function esc(s: string): string {
+export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 

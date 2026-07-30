@@ -87,8 +87,9 @@ export function NotificationBell({
   // screen-reader text already call it: unread.
   const badgeLabel = total > 99 ? "99+" : String(total);
 
-  // eslint-disable-next-line react-hooks/purity -- Date.now() intentional: rows
-  // are stepped back once they age past STALE_MS; recomputed on every open.
+  // Date.now() intentional: rows are stepped back once they age past
+  // STALE_MS; recomputed on every open.
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
 
   function dismissTranscriptItem(transcriptId: string, itemIndex: number) {

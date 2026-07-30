@@ -98,9 +98,24 @@ the Managed products UI appears once it's present.
 
 ## 6. Schedule the crons (Cloud Scheduler)
 
+Cloud Scheduler jobs are bound to your project's **App Engine location** — a
+separate namespace from the `us-central1` Cloud Run region used everywhere
+else in this doc, and `gcloud scheduler` commands need it explicit on newer
+`gcloud` versions ("Please use the location flag to manually specify a
+location"). Find it once, then reuse it:
+
 ```bash
-for path in publish cleanup-logs scheduler "agent-service/reconcile" "credits/reconcile" intel-report-schedule analytics/sync; do
-  gcloud scheduler jobs create http ${path//\//-} \
+gcloud app describe --format="value(locationId)"
+# No App Engine app yet (a Firestore-enabled project usually already has one,
+# auto-created at Firestore setup)? Create one — this is a one-time,
+# irreversible-region choice for the whole project:
+#   gcloud app create --region=us-central1
+LOCATION=<value from above>
+```
+
+```bash
+for path in publish cleanup-logs scheduler run-scheduled "agent-service/reconcile" "credits/reconcile" intel-report-schedule analytics/sync; do
+  gcloud scheduler jobs create http ${path//\//-} --location="$LOCATION" \
     --schedule="*/10 * * * *" --uri="<platform-url>/api/$path" \
     --http-method=GET --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)"
 done
@@ -108,14 +123,26 @@ done
 # Runway autopilot — weekly all-clients top-up so every active client keeps a
 # rolling 14-day runway of posts. Deficit-based + idempotent, so a weekly
 # cadence is enough (running it more often is harmless).
-gcloud scheduler jobs create http runway \
+gcloud scheduler jobs create http runway --location="$LOCATION" \
   --schedule="0 8 * * 1" --uri="<platform-url>/api/runway" \
   --http-method=GET --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)"
 ```
 
-(`publish` every 5 min, `cleanup-logs` daily, `scheduler` every ~15 min, both
-`reconcile`s every ~10 min, `analytics/sync` daily, `runway` weekly (Mon 08:00)
-— adjust schedules to taste.)
+To check whether a job already exists rather than re-create it:
+`gcloud scheduler jobs describe <name> --location="$LOCATION"` (404 = missing).
+
+(`publish` every 5 min, `cleanup-logs` daily, `scheduler` every ~15 min,
+`run-scheduled` every ~10 min, both `reconcile`s every ~10 min, `analytics/sync`
+daily, `runway` weekly (Mon 08:00) — adjust schedules to taste.)
+
+**`run-scheduled` (`/api/run-scheduled`) was missing from this list until
+2026-07-30** — it's the newer per-agent schedule dialog's cron
+(`PlannedScheduledRun`, distinct from the older `scheduler` job above which
+only drains the legacy `ScheduledRun` collection). If a project was bootstrapped
+before this line was added, that job was never created in Cloud Scheduler and
+every `PlannedScheduledRun` schedule is silently unreachable — check with
+`gcloud scheduler jobs describe run-scheduled --location="$LOCATION"`
+(404 = missing) and create it with the single command from the loop above if so.
 
 **Runway autopilot env flags** (set on the platform Cloud Run service):
 - `RUNWAY_AUTOGEN_ENABLED=1` — master switch. Unset ⇒ the cron only *measures*

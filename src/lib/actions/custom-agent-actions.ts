@@ -24,7 +24,7 @@ import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { clientSafeRunError } from "@/lib/custom-agent-launch";
 import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
-import { requireAdmin, requireClientAccess } from "./_shared";
+import { requireAdmin, requireClientAccess, requireStaff } from "./_shared";
 
 /* ── limits (mirror agent-service/src/schemas/task-types/custom.json) ── */
 const MAX_INSTRUCTIONS_CHARS = 12_000;
@@ -382,6 +382,29 @@ export async function runCustomAgentAction(input: {
   // actors — staff, and admins in "View as Client", keep the raw message.
   if (result.error && isBillableClientActor(user)) {
     return { error: clientSafeRunError(result.error) };
+  }
+  return result;
+}
+
+/**
+ * Staff-only "Test Run" — the Control Room's dry-run equivalent. The
+ * agent-service has no dry-run parameter, so this fires for real: same cost,
+ * same generation. What changes is the OUTPUT's fate afterward — stamping
+ * `runType: "test"` tells the webhook to flag the resulting draft `testRun`
+ * (mirroring the existing `launchDeliverable` exclusion), which keeps it off
+ * the calendar/chain-reflow and every client-facing surface, and gives it its
+ * own economics bucket instead of biasing "manual"/"untyped" (credit-reporting.ts).
+ */
+export async function runCustomAgentTestAction(input: {
+  agentId: string;
+  clientId: string;
+  prompt: string;
+}): Promise<{ jobId?: string; error?: string }> {
+  const user = await requireStaff();
+  const result = await submitCustomAgentJob(user, { ...input, runType: "test" });
+  if (result.jobId && !result.error) {
+    revalidatePath(`/clients/${input.clientId}/agents`);
+    revalidatePath("/jobs");
   }
   return result;
 }

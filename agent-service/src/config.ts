@@ -33,6 +33,14 @@ export interface ServiceConfig {
   redditAccount?: string;
   defaultTimeoutMs: number;
   maxAttempts: number;
+  /**
+   * Delay before a requeued (retried) job re-enters the queue. Instant
+   * retries give a transient failure — a Cloud Run Admin API blip
+   * ("executor start failed: 14 UNAVAILABLE"), a brief Redis hiccup — zero
+   * time to clear before the one retry most deployments get (maxAttempts
+   * defaults to 2) burns through it too.
+   */
+  retryDelayMs: number;
   jobTtlSeconds: number;
   workerConcurrency: number;
   /** proxy URL injected into job containers; empty string disables */
@@ -78,6 +86,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     runnerImage: env.RUNNER_IMAGE ?? "karos-agent-runner:latest",
     defaultTimeoutMs: Number(env.JOB_DEFAULT_TIMEOUT_MS ?? 15 * 60 * 1000),
     maxAttempts: Number(env.JOB_MAX_ATTEMPTS ?? 2),
+    retryDelayMs: Number(env.JOB_RETRY_DELAY_MS ?? 5000),
     jobTtlSeconds: Number(env.JOB_TTL_SECONDS ?? 30 * 24 * 3600),
     workerConcurrency: Number(env.WORKER_CONCURRENCY ?? 2),
     allowInsecureCallbacks: env.ALLOW_INSECURE_CALLBACKS === "1",

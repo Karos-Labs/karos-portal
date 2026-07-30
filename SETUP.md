@@ -112,6 +112,3 @@ gcloud builds submit --config cloudbuild.yaml \
 Server-side secrets are mounted from Secret Manager (see the `--set-secrets` list in
 `cloudbuild.yaml`); the public `NEXT_PUBLIC_FIREBASE_*` values come from `.env.production`
 at build time. Point your Fireflies webhook at the production URL.
-
-Vercel is not used. `vercel.json` sets `git.deploymentEnabled: false` so pushes don't
-trigger Vercel builds.

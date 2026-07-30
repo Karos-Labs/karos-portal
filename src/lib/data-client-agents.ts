@@ -292,6 +292,23 @@ export async function listClientAgentFeedback(opts: {
   return snap.docs.map((d) => withId<ClientAgentFeedback>(d)).sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/**
+ * Every feedback row there is, across every client — the admin analytics
+ * "Agent Feedback History" table's read. Unfiltered on purpose, the same
+ * trade-off `listClientAgents()`'s unfiltered mode already makes: reading the
+ * whole (small, capped-at-write-time) collection once is cheaper than one
+ * query per umbrella for a cross-client surface. Newest first, capped so a
+ * long history can't blow up the admin page's payload the way an uncapped
+ * per-client read would be fine to but a global one is not.
+ */
+export async function listAllClientAgentFeedback(limit = 500): Promise<ClientAgentFeedback[]> {
+  const snap = await col.clientAgentFeedback().get();
+  return snap.docs
+    .map((d) => withId<ClientAgentFeedback>(d))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit);
+}
+
 export async function getClientAgentFeedback(id: string): Promise<ClientAgentFeedback | null> {
   const doc = await col.clientAgentFeedback().doc(id).get();
   return doc.exists ? withId<ClientAgentFeedback>(doc) : null;

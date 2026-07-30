@@ -3,12 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
   generateObjectMock,
   logUsageMock,
+  logGenerationFailureMock,
   getTaskBoardCapacityMock,
   createClientTaskMock,
   generateCampaignBundleMock,
 } = vi.hoisted(() => ({
   generateObjectMock: vi.fn(),
   logUsageMock: vi.fn(),
+  logGenerationFailureMock: vi.fn(),
   getTaskBoardCapacityMock: vi.fn(),
   createClientTaskMock: vi.fn(),
   generateCampaignBundleMock: vi.fn(),
@@ -18,7 +20,9 @@ vi.mock("server-only", () => ({}));
 vi.mock("ai", () => ({ generateObject: generateObjectMock }));
 vi.mock("@ai-sdk/anthropic", () => ({ anthropic: vi.fn(() => "mock-model") }));
 vi.mock("next/server", () => ({ after: (fn: () => void) => fn() }));
-vi.mock("@/services/logger", () => ({ logger: { logUsage: logUsageMock } }));
+vi.mock("@/services/logger", () => ({
+  logger: { logUsage: logUsageMock, logGenerationFailure: logGenerationFailureMock },
+}));
 // Campaign generation is exercised in its own test file; mock it here.
 vi.mock("@/lib/campaign-engine", () => ({ generateCampaignBundle: generateCampaignBundleMock }));
 // Real task-dedup (pure) is used; only the Firestore I/O is mocked.

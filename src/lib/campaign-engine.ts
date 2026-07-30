@@ -188,20 +188,30 @@ export async function generateCampaignBundle(
     "You are the Karos AI Campaign Director. You design tight, cohesive omnichannel campaigns where every channel reinforces one theme and one anchor. Return only the structured blueprint." +
     (constraints ? `\n\n${constraints}` : "");
 
-  const { object: blueprint, usage } = await generateObject({
-    model: anthropic(MODELS.SONNET),
-    schema: campaignBlueprintSchema,
-    system,
-    prompt: buildCampaignPrompt(client.name, client.industry, input.trend),
-  });
+  const campaignUsageMeta = {
+    clientId: input.clientId,
+    agentId: null,
+    agentName: "Campaign Director",
+    modelName: MODELS.SONNET,
+    operation: "campaign_generation",
+  };
+  let blueprint: CampaignBlueprint;
+  let usage: { inputTokens?: number; outputTokens?: number };
+  try {
+    ({ object: blueprint, usage } = await generateObject({
+      model: anthropic(MODELS.SONNET),
+      schema: campaignBlueprintSchema,
+      system,
+      prompt: buildCampaignPrompt(client.name, client.industry, input.trend),
+    }));
+  } catch (err) {
+    logger.logGenerationFailure(campaignUsageMeta, err);
+    throw err;
+  }
 
   after(() =>
     logger.logUsage({
-      clientId: input.clientId,
-      agentId: null,
-      agentName: "Campaign Director",
-      modelName: MODELS.SONNET,
-      operation: "campaign_generation",
+      ...campaignUsageMeta,
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
     }),

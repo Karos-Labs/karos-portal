@@ -15,10 +15,29 @@
  * write time (length) and at injection time (count).
  */
 
-import type { ClientAgentFeedback, ClientAgentTemplate } from "@/lib/types";
+import type { ClientAgentFeedback, ClientAgentTemplate, FeedbackCategory } from "@/lib/types";
 
 /** Hard per-row length. Clamped server-side, not trusted from the browser. */
 export const MAX_FEEDBACK_CHARS = 500;
+
+/**
+ * The closed set a category may be, and its label everywhere one is painted
+ * (the modal's select, the analytics history table, the chat tool's schema).
+ * One map, so a category never reads differently on two surfaces.
+ */
+export const FEEDBACK_CATEGORY_LABEL: Record<FeedbackCategory, string> = {
+  tone: "Tone",
+  formatting: "Formatting",
+  topic_preference: "Topic preference",
+  other: "Other",
+};
+
+export const FEEDBACK_CATEGORIES = Object.keys(FEEDBACK_CATEGORY_LABEL) as FeedbackCategory[];
+
+/** Is this a real category, or something a browser/model made up? */
+export function isFeedbackCategory(value: unknown): value is FeedbackCategory {
+  return typeof value === "string" && value in FEEDBACK_CATEGORY_LABEL;
+}
 
 /** Newest N active rows are injected into a run. Older active rows are kept. */
 export const MAX_INJECTED_FEEDBACK = 50;
@@ -36,7 +55,6 @@ export function clampFeedbackText(raw: string): string {
     .replace(/\r\n?/g, "\n")
     // Control characters other than newline survive JSON and reappear inside
     // the markdown the agent reads as literal escapes.
-    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim()

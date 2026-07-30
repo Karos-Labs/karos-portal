@@ -1,4 +1,4 @@
-import type { ClientAgentLaunchState, ClientAgentTemplate } from "@/lib/types";
+import type { ClientAgentLaunchState, ClientAgentTemplate, FeedbackCategory } from "@/lib/types";
 import type { LaunchBlockCode } from "@/lib/client-agents";
 import type { TemplateRunBlockCode } from "@/lib/client-agent-runs";
 import type { XOption } from "@/lib/x-options";
@@ -195,6 +195,8 @@ export interface ClientAgentFeedbackRow {
   scope: "agent" | "template";
   templateKey: string | null;
   text: string;
+  /** Cosmetic tag, absent on rows written before it existed — see types.ts. */
+  category: FeedbackCategory | null;
   /** Mirrors ClientAgentFeedback["status"] — "withdrawn" is the author's own
    *  retraction and must never be painted as "Resolved" (D7). */
   status: "active" | "resolved" | "withdrawn";

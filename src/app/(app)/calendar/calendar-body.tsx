@@ -16,6 +16,8 @@ import {
   type ClientAgentIdentity,
 } from "@/lib/agent-identity-map";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
+import { postKind } from "@/lib/calendar-kind";
+import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import {
   clientCadenceLabel,
@@ -39,10 +41,24 @@ import {
 import type { ReactNode } from "react";
 import type { Asset, AppUser, AssetType } from "@/lib/types";
 
-// Jobs that have actually run (produced or attempted output). "cancelled" is a
-// terminal outcome of its own since F30 — without it here a stopped run would
-// simply vanish from the calendar instead of showing what happened that day.
-const PAST_JOB_STATUSES = new Set(["review", "approved", "delivered", "failed", "cancelled"]);
+// Jobs the calendar renders as a run card. "cancelled" is a terminal outcome
+// of its own since F30 — without it here a stopped run would simply vanish
+// from the calendar instead of showing what happened that day. "queued" and
+// "running" are included so an IN-FLIGHT run stays visible the whole time it
+// executes: the schedule projection below only projects FUTURE fires (a fired
+// occurrence falls out of `projectRunOccurrences(from: now)` the instant it's
+// claimed), so without these two statuses a run vanishes from the calendar
+// entirely from the moment it's claimed until it reaches a terminal status —
+// exactly the "no visibility into why it failed" gap this exists to close.
+const PAST_JOB_STATUSES = new Set([
+  "queued",
+  "running",
+  "review",
+  "approved",
+  "delivered",
+  "failed",
+  "cancelled",
+]);
 
 /** Plain-English noun for what a run actually produced. */
 const OUTPUT_NOUN: Record<AssetType, [string, string]> = {
@@ -87,14 +103,6 @@ function runZone(stored: string | undefined): string {
 /** Titles come straight from the agent — a leading `#` or `**` is not a title. */
 function cleanTitle(title: string): string {
   return stripInlineMarkdown(title.replace(/^#{1,6}\s+/, "")) || title;
-}
-
-function postKind(a: Asset): CalendarPost["kind"] | null {
-  if (a.status === "published" && (a.scheduledAt != null || a.publishedAt != null)) return "published";
-  if ((a.status === "scheduled" || a.status === "approved") && a.scheduledAt != null) {
-    return a.publishMode === "placeholder" ? "placeholder" : "scheduled";
-  }
-  return null;
 }
 
 /**
@@ -253,6 +261,28 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       // Sao Paulo 09:00 run would slide to 06:00, and a Tokyo 22:00 run would
       // land on the previous day — putting a weekday-only run on a weekend
       // (F108).
+      //
+      // Computed off the RAW stored nextRunAt, before projectRunOccurrences
+      // fast-forwards it — a schedule whose cursor is already behind "now"
+      // hasn't fired when it should have (the cron missed it, or it's been
+      // failing before it can advance). Every projected occurrence for this
+      // row carries the resolved copy so the card can say so instead of
+      // quietly showing "Upcoming · next 9:00 AM" for a time that has already
+      // passed. Resolved HERE, not at render: a client reads a professional,
+      // reassuring line with no internal vocabulary ("cron", "Jobs page",
+      // "stuck"); staff get the operational detail, same split this file
+      // already applies to `lastError` via clientSafeRefusal below.
+      const stuck = r.nextRunAt < scheduleNow;
+      const stuckLabel = stuck ? (isClient ? "Delayed" : "Stuck") : undefined;
+      const stuckMessage = stuck
+        ? isClient
+          ? "This run hasn't started yet — your Karos team can look into it."
+          : `This was expected to fire and hasn't — the schedule looks stuck.${
+              r.lastError || r.lastRunAt
+                ? " See its last fire below."
+                : " It has no recorded fire at all yet; check the Jobs page for what's blocking it."
+            }`
+        : undefined;
       return projectRunOccurrences(r, {
         from: scheduleNow,
         timeZone: runZone(r.timeZone),
@@ -284,11 +314,26 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         // Per OCCURRENCE, not per row: a projection that crosses a DST boundary
         // prints the offset in force on that day.
         zoneLabel: shortZoneLabel(runZone(r.timeZone), at),
+        ...(stuckLabel ? { stuckLabel, stuckMessage: stuckMessage! } : {}),
         // The schedule's standing instruction is staff-authored direction —
         // run-calendar paints it under "Will run", so a client would read the
         // internal brief verbatim. Same shape as staffRef below (delta-lens).
         ...(isClient ? {} : { prompt: r.prompt }),
         ...(blurb ? { agentDescription: blurb } : {}),
+        // The schedule's own track record (§ "Last fire" on the card) — the
+        // ONLY signal a future-projection card can show about whether the
+        // schedule has actually been firing, since it has no job of its own.
+        // Same redaction `toScheduleRows` already applies to this same field
+        // on the AI Agents page: staff get the raw refusal, a client gets the
+        // safe paraphrase (never the internal provider/credit/service detail).
+        ...(r.lastRunAt ? { lastRunAt: r.lastRunAt } : {}),
+        ...(isClient ? {} : r.lastJobId ? { lastJobId: r.lastJobId } : {}),
+        ...(r.lastError
+          ? {
+              lastError: isClient ? clientSafeRefusal(r.lastError) : r.lastError,
+              ...(r.lastErrorAt ? { lastErrorAt: r.lastErrorAt } : {}),
+            }
+          : {}),
       }));
     });
 
@@ -364,6 +409,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         images: assetImages(a),
         // Same leak class as the run cards above — same treatment.
         textPreview: toPlainSummary(a.content, 160),
+        ...(kind === "failed" && a.publishError ? { publishError: a.publishError } : {}),
       };
     })
     .filter((p): p is CalendarPost => p != null);

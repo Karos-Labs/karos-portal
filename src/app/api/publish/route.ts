@@ -29,8 +29,8 @@ import { integrationIsUsable } from "@/lib/integration-status";
  * that cron's reconciler would flip a held post to "published" behind our back.
  */
 export async function GET(req: NextRequest) {
-  // Auth: Vercel Cron sends Authorization: Bearer <CRON_SECRET>. Fails closed in
-  // production if CRON_SECRET is unset; open only for local dev convenience.
+  // Auth: Cloud Scheduler sends Authorization: Bearer <CRON_SECRET>. Fails closed
+  // in production if CRON_SECRET is unset; open only for local dev convenience.
   const denied = requireCronSecret(req);
   if (denied) return denied;
 

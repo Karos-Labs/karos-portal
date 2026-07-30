@@ -97,7 +97,7 @@ export function toRunRows(
 ): CustomAgentRunRow[] {
   return jobs
     .filter((j) => j.agentId === "agent-service" && j.external?.taskType === "custom")
-    .filter((j) => staff || j.runType !== "launch")
+    .filter((j) => staff || (j.runType !== "launch" && j.runType !== "test"))
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 8)
     .map((j) => ({
@@ -109,6 +109,8 @@ export function toRunRows(
       assetCount: j.assetIds.length,
       ...(staff && j.input.prompt ? { prompt: j.input.prompt } : {}),
       ...(staff ? { href: `/jobs/${j.id}` } : {}),
+      ...(staff && j.error ? { error: j.error } : {}),
+      ...(staff && j.runType ? { runType: j.runType } : {}),
     }));
 }
 
@@ -493,6 +495,7 @@ export async function toClientAgentRows(args: {
         scope: row.scope,
         templateKey: row.templateKey ?? null,
         text: row.text,
+        category: row.category ?? null,
         status: row.status,
         // Denormalized at write time — a client viewer never receives the uid
         // of the staff member who answered them.

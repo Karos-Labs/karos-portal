@@ -41,7 +41,7 @@ function loadEnvFile(path: string) {
       if (!process.env[key]) process.env[key] = val;
     }
   } catch {
-    // .env.local may not exist in CI or Vercel — that's fine
+    // .env.local may not exist in CI or in production — that's fine
   }
 }
 

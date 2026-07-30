@@ -12,6 +12,7 @@ import {
   listClientContextDocs,
   listJobs,
   listAssets,
+  getAsset,
   updateClient,
   upsertClientContextDoc,
   getClientContextDoc,
@@ -23,6 +24,7 @@ import {
   chargeClientCredits,
   getClientCredits,
 } from "@/lib/data";
+import { listClientAgents, listClientAgentFeedback } from "@/lib/data-client-agents";
 import { findDuplicateReason } from "@/lib/task-dedup";
 import {
   CREDIT_COSTS,
@@ -39,6 +41,8 @@ import {
   isStaffCopilotActor,
 } from "@/lib/copilot-tool-access";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
+import { isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
+import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { getClientCustomAgents, buildAgentCatalog } from "@/lib/agent-roster";
@@ -47,12 +51,18 @@ import { sendEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
 import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
 import { logger } from "@/services/logger";
-import type { BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
+import { runCustomAgentAction } from "@/lib/actions/custom-agent-actions";
+import { updateAssetAction, clientRescheduleAssetAction, scheduleAssetAction } from "@/lib/actions/asset-actions";
+import { addClientAgentFeedbackAction } from "@/lib/actions/client-agent-feedback-actions";
+import {
+  FEEDBACK_CATEGORIES,
+  renderFeedbackMarkdown,
+} from "@/lib/client-agent-feedback";
+import type { Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
 import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 
 export const maxDuration = 60;
 
-const MODEL = anthropic(MODELS.SONNET);
 const STOP_WHEN = [isLoopFinished(), stepCountIs(6)];
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -69,10 +79,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const body = await req.json() as {
     messages?: Array<{ role: "user" | "assistant"; content: string }>;
+    /** Set by the `@agent` mention chip — focuses the system prompt on one live umbrella. */
+    focusAgentId?: string;
+    /**
+     * This is a plain chatbot, so it defaults to Haiku — the 3 substantive
+     * proactive actions (Competitor Deep-Dive, Brand Visibility Audit,
+     * Content Plan) opt into Sonnet by setting this, since they run
+     * multi-step tool orchestration over a full strategy write-up rather
+     * than a quick Q&A turn. Everything else, including plain questions and
+     * a focused-agent conversation, stays on the cheap model.
+     */
+    deep?: boolean;
   };
   const messages = (body.messages ?? []) as ModelMessage[];
+  const modelId = body.deep ? MODELS.SONNET : MODELS.HAIKU;
+  const MODEL = anthropic(modelId);
 
-  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks, customAgents] =
+  const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks, customAgents, umbrellas] =
     await Promise.all([
       getClient(clientId),
       getClientReport(clientId),
@@ -84,7 +107,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       getTaskBoardCapacity(clientId),
       getClientPerformanceBenchmarks(clientId),
       getClientCustomAgents(clientId),
+      listClientAgents({ clientId }),
     ]);
+  const liveUmbrellas = umbrellas.filter((u) => u.launchState === "live");
 
   if (!client) {
     return Response.json({ error: "Client not found" }, { status: 404 });
@@ -114,9 +139,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     credits = await getClientCredits(clientId);
   }
 
-  // Locked (future-dated) content never reaches a client-facing model prompt.
+  // Locked (future-dated) content never reaches a client-facing model prompt —
+  // and neither does staff-only working material. Launch deliverables and
+  // Control Room Test Run output are both undated (isAssetUnlockedForClient
+  // trivially returns true for anything with no scheduledAt), so without this
+  // they passed the lock check and a client could ask find_output/edit_output
+  // to read or overwrite them — the exact "never reaches a client-facing
+  // surface" guarantee those two flags exist to make (asset-visibility.ts).
   const promptAssets =
-    user.role === "CLIENT_USER" ? assets.filter((a) => isAssetUnlockedForClient(a, Date.now())) : assets;
+    user.role === "CLIENT_USER"
+      ? assets.filter(
+          (a) => isAssetUnlockedForClient(a, Date.now()) && !isLaunchDeliverable(a) && !isTestRunAsset(a),
+        )
+      : assets;
   // Same boundary for documents: internal-tier docs are analyst-grade copy that
   // types.ts restricts to admin/employee, and internal-only is never published —
   // neither may reach a prompt the client is talking to. Mirrors the asset filter
@@ -236,6 +271,56 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     engagementRate: r.metrics.engagementRate,
   });
 
+  /* ── Agent feedback + @mention focus appendix ────────────────────── */
+  // Both blocks read the SAME two builders `client-agent-feedback-context.ts`
+  // already uses to attach `agent-feedback.md` to a run (renderFeedbackMarkdown
+  // + listClientAgentFeedback) — this is a second CONSUMER of that data, not a
+  // second write path or a second serialization.
+  const feedbackByUmbrella = new Map(
+    await Promise.all(
+      liveUmbrellas.map(
+        async (u) =>
+          [u.id, await listClientAgentFeedback({ clientAgentId: u.id, status: "active" })] as const,
+      ),
+    ),
+  );
+
+  const agentFeedbackAppendix = (() => {
+    const sections = liveUmbrellas
+      .map((u) => renderFeedbackMarkdown({ agentName: u.displayName, rows: feedbackByUmbrella.get(u.id) ?? [], templates: u.templates }))
+      .filter((md): md is string => md != null);
+    if (sections.length === 0) return "";
+    return `\n\n## AGENT FEEDBACK\nStanding feedback this client has already given on their live agents. Reference it when discussing an agent; do not repeat it verbatim unless asked.\n\n${sections.join("\n")}`;
+  })();
+
+  // `@mention` focus — set when the client picked an agent from the chat's
+  // mention dropdown. A FOCUS, not a hard scope: the model still answers
+  // anything else asked, but leads with this agent's own context. Validated
+  // against THIS client's own live umbrellas so a stale/foreign id from the
+  // browser can't focus the prompt on another client's agent.
+  const focusUmbrella = body.focusAgentId
+    ? liveUmbrellas.find((u) => u.id === body.focusAgentId)
+    : undefined;
+  const focusAppendix = focusUmbrella
+    ? `\n\n## FOCUSED AGENT\nThe user is currently focused on **${focusUmbrella.displayName}** (picked via @mention). ` +
+      `Prioritize this agent in your answers — its templates: ${focusUmbrella.templates.map((t) => t.name).join(", ") || "none yet"}. ` +
+      `Still answer anything else they ask; this is a focus, not a restriction.` +
+      (() => {
+        const md = renderFeedbackMarkdown({
+          agentName: focusUmbrella.displayName,
+          rows: feedbackByUmbrella.get(focusUmbrella.id) ?? [],
+          templates: focusUmbrella.templates,
+        });
+        return md ? `\n\n${md}` : "";
+      })()
+    : "";
+
+  // Relative-date reasoning for `/reschedule-post` — `buildCopilotSystemPrompt`
+  // already states "Today is <date>" in prose; this restates it as an
+  // unambiguous ISO instant so a tool call's datetime input is computed from
+  // the same instant the model reasons about, not re-derived from prose.
+  const nowAppendix = `\n\n## CURRENT DATE/TIME\n${new Date().toISOString()} (UTC). Convert relative dates ("next Thursday", "in two weeks") from this instant.`;
+
   const systemPrompt =
     `${baseSystemPrompt}\n\n` +
     buildProactiveSystemAppendix({
@@ -254,7 +339,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         sampleSize: promptBenchmarks.sampleSize,
       },
     }) +
-    creditsAppendix;
+    creditsAppendix +
+    agentFeedbackAppendix +
+    focusAppendix +
+    nowAppendix;
 
   /* ── Shared tools ─────────────────────────────────────────────────── */
 
@@ -525,6 +613,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Use for competitor research, brand audits, content dispatch plans, or any other actionable output. " +
       "Set owner='karos_managed' for tasks Karos AI or staff will execute; 'client_managed' for tasks the client must do themselves. " +
       "Every karos_managed content task MUST name its executing agent: set productType for a managed product, OR agentId for a custom agent (from AVAILABLE AI EXECUTION AGENTS). Never set both. " +
+      "Exception: if the user has @mentioned/focused one agent (see FOCUSED AGENT below), a karos_managed task with neither set defaults to that agent automatically. " +
       `The Karos AI execution queue holds at most ${MAX_ACTIVE_TASKS} active karos_managed tasks per client — karos_managed proposals beyond the free capacity are rejected; client_managed tasks are uncapped. ` +
       "Pass an empty tasks array when the board already covers all observable signals.",
     inputSchema: z.object({
@@ -577,13 +666,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return "No new tasks created - the task board already covers all observable signals.";
       }
 
+      // @mention default (§3): a karos_managed task with no executor named
+      // while the chat is FOCUSED on one agent is presumed to be for that
+      // agent — directing tasks to the agent the client tagged is the whole
+      // point of picking it. Only fills the gap; the model's own
+      // agentId/productType, when given, always wins.
+      const withFocusDefault = focusUmbrella
+        ? tasks.map((t) =>
+            t.owner === "karos_managed" && !t.agentId && !t.productType
+              ? { ...t, agentId: focusUmbrella.customAgentId }
+              : t,
+          )
+        : tasks;
+
       // Three-tier dedup (task-dedup.ts): exact normalized title vs ALL
       // statuses, near-identical wording vs active tasks, and same
       // productType+platform scope within the same week. Accepted proposals
       // join the pool so a batch can't duplicate itself either.
       const { activeCount, tasks: boardTasks } = await getTaskBoardCapacity(clientId);
       const pool = [...boardTasks];
-      const freshTasks: typeof tasks = [];
+      const freshTasks: typeof withFocusDefault = [];
       const dupReasons: string[] = [];
       // Single pass: dedup and the karos cap decide together, and ONLY tasks
       // that will actually be created join the dedup pool — a cap-dropped
@@ -592,7 +694,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // tasks (onboarding, approvals) pass through uncapped.
       let karosSlotsFree = Math.max(0, MAX_ACTIVE_TASKS - activeCount);
       let capSkipped = 0;
-      for (const t of tasks) {
+      for (const t of withFocusDefault) {
         // Only an agentId the client actually has is a real executor link.
         const validCustomAgentId =
           t.agentId && customAgentsById.has(t.agentId) ? t.agentId : undefined;
@@ -686,6 +788,189 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     },
   });
 
+  /* ── Capability-matrix tools (§3): lookup, edit, run, reschedule, feedback ── */
+
+  /**
+   * One deep link per viewer role, resolved server-side (redaction-at-the-
+   * boundary, same doctrine every other projection on this route follows).
+   * Staff get the exact per-job route (`/jobs/{id}`) when one exists, or the
+   * agent page with `?asset=` (OutputsHub auto-opens the modal from it).
+   * Clients never get `/jobs` or `/assets` — both redirect a CLIENT_USER away
+   * — so they get the agent detail page they actually have, or the Workspace
+   * as a last resort.
+   */
+  // Arrow expression, not a function declaration — narrowing `user` to
+  // non-null (the route's early `if (!user...) return` above) does not
+  // survive into a hoisted `function` declaration's body, only into a
+  // closure, which is also why every tool below is defined the same way.
+  const deepLinkForAsset = (asset: Asset): string => {
+    const job = asset.jobId ? (jobs.find((j) => j.id === asset.jobId) ?? null) : null;
+    const identity = resolveContentIdentity({ asset, job }, umbrellas as ClientAgentIdentity[]);
+    const umbrella = identity.clientAgentId
+      ? umbrellas.find((u) => u.id === identity.clientAgentId)
+      : undefined;
+    if (isStaffCopilotActor(user)) {
+      if (job) return `/jobs/${job.id}`;
+      if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}?asset=${asset.id}`;
+      return `/assets?clientId=${clientId}`;
+    }
+    if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}`;
+    return "/tasks";
+  };
+
+  const findOutputTool = tool({
+    description:
+      "Look up one of this client's own generated outputs (assets) by id or a fragment of its title. " +
+      "Call this BEFORE edit_output, reschedule_output, or when the user asks about the status of something specific — you need the exact id first.",
+    inputSchema: z.object({
+      query: z.string().describe("An asset id, or part of its title"),
+    }),
+    execute: async ({ query }) => {
+      const trimmed = query.trim();
+      if (!trimmed) return "Give me an id or part of a title to search for.";
+      const byId = promptAssets.find((a) => a.id === trimmed);
+      const matches = byId
+        ? [byId]
+        : promptAssets.filter((a) => (a.title ?? "").toLowerCase().includes(trimmed.toLowerCase()));
+      if (matches.length === 0) return `No output found matching "${query}".`;
+      if (matches.length > 1) {
+        const top = matches.slice(0, 5);
+        return (
+          `Found ${matches.length} matching outputs — which one did you mean?\n` +
+          top.map((a) => `- "${a.title || "Untitled"}" (${a.status}) — id: ${a.id}`).join("\n")
+        );
+      }
+      const asset = matches[0];
+      const rawContent = asset.content ?? "";
+      const content = rawContent.slice(0, 4000);
+      return [
+        `**${asset.title || "Untitled"}** — status: ${asset.status}` +
+          (asset.scheduledAt ? `, scheduled for ${new Date(asset.scheduledAt).toISOString()}` : ""),
+        `id: ${asset.id}`,
+        "",
+        content + (rawContent.length > 4000 ? "\n[…truncated]" : ""),
+        "",
+        `[View this output](${deepLinkForAsset(asset)})`,
+      ].join("\n");
+    },
+  });
+
+  const editOutputTool = tool({
+    description:
+      "Save a revised version of one of this client's own generated outputs. Look it up with find_output first, " +
+      "draft the full replacement text yourself based on what the user asked to change (not a diff — the complete new content), then call this.",
+    inputSchema: z.object({
+      assetId: z.string().describe("Exact asset id from find_output"),
+      newContent: z.string().describe("The complete replacement content"),
+      newTitle: z.string().optional(),
+    }),
+    execute: async ({ assetId, newContent, newTitle }) => {
+      const existing = promptAssets.find((a) => a.id === assetId);
+      if (!existing) return "I don't have that output — look it up with find_output first.";
+      try {
+        await updateAssetAction(assetId, { content: newContent, ...(newTitle ? { title: newTitle } : {}) });
+      } catch (e) {
+        return `Couldn't save that: ${e instanceof Error ? e.message : "unknown error"}.`;
+      }
+      return `Saved. [View this output](${deepLinkForAsset(existing)})`;
+    },
+  });
+
+  const runAgentNowTool = tool({
+    description:
+      "Trigger an ad-hoc run of one of this client's custom agents right now, billed at its normal per-run rate. " +
+      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling — this spends credits.",
+    inputSchema: z.object({
+      agentQuery: z.string().describe("The agent's name"),
+      prompt: z.string().optional().describe("Optional extra instruction for this run"),
+    }),
+    execute: async ({ agentQuery, prompt }) => {
+      const q = agentQuery.trim().toLowerCase();
+      const match = customAgents.find((a) => a.name.toLowerCase().includes(q));
+      if (!match) {
+        return customAgents.length > 0
+          ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${customAgents.map((a) => a.name).join(", ")}.`
+          : "This client has no AI agents assigned yet.";
+      }
+      const result = await runCustomAgentAction({
+        agentId: match.id,
+        clientId,
+        prompt: prompt?.trim() || "Run requested via Copilot chat.",
+      });
+      if (result.error) return `Couldn't start that run: ${result.error}`;
+      return `Started a run of **${match.name}** — it takes 10–20 minutes, and your Karos team reviews the result before it reaches your Workspace.`;
+    },
+  });
+
+  const rescheduleOutputTool = tool({
+    description:
+      "Move the publish date/time of one of this client's own already-approved or scheduled outputs. " +
+      "Look it up with find_output first. Give the new time as ISO 8601, computed from CURRENT DATE/TIME above. " +
+      "Refuses on a draft/in-review output, a time in the past, or a same-day collision with another post in the same content family.",
+    inputSchema: z.object({
+      assetId: z.string().describe("Exact asset id from find_output"),
+      newScheduledAt: z.string().describe("New publish date/time, ISO 8601 (e.g. 2026-08-06T13:00:00.000Z)"),
+    }),
+    execute: async ({ assetId, newScheduledAt }) => {
+      const parsed = Date.parse(newScheduledAt);
+      if (Number.isNaN(parsed)) {
+        return "That date didn't parse — give it as ISO 8601, e.g. 2026-08-06T13:00:00.000Z.";
+      }
+      // Real (non-impersonated) staff get the full-power path — no day/status
+      // guard rails, since that surface is already theirs via the Assets UI.
+      // A client session (including an admin impersonating one) gets the
+      // scoped action instead: own asset, approved/scheduled only, date only.
+      if (isStaffCopilotActor(user)) {
+        try {
+          const asset = await getAsset(assetId);
+          if (!asset) return "Couldn't find that output.";
+          await scheduleAssetAction(assetId, parsed, asset.scheduledPlatform, asset.publishMode);
+        } catch (e) {
+          return `Couldn't reschedule: ${e instanceof Error ? e.message : "unknown error"}.`;
+        }
+        return `Moved to ${new Date(parsed).toISOString()}.`;
+      }
+      const result = await clientRescheduleAssetAction(assetId, parsed);
+      if (!result.ok) return result.error;
+      return `Moved to ${new Date(parsed).toISOString()}.`;
+    },
+  });
+
+  const provideFeedbackTool = tool({
+    description:
+      "Record standing feedback on one of this client's LIVE agents — tone, formatting, or topic preferences that should " +
+      "shape everything it makes from here on (or one format only, if scoped to a template). This is not a one-off request: " +
+      "it's injected into every future run of that agent.",
+    inputSchema: z.object({
+      agentQuery: z.string().describe("The agent's name, matched against this client's live agents"),
+      text: z.string().describe("The feedback itself, in the client's own words"),
+      scope: z.enum(["agent", "template"]).default("agent"),
+      templateKey: z.string().optional().describe("Required when scope is 'template' — one of the agent's own format keys"),
+      category: z.enum(FEEDBACK_CATEGORIES as [string, ...string[]]).optional(),
+    }),
+    execute: async ({ agentQuery, text, scope, templateKey, category }) => {
+      const q = agentQuery.trim().toLowerCase();
+      const umbrella = liveUmbrellas.find((u) => u.displayName.toLowerCase().includes(q));
+      if (!umbrella) {
+        return liveUmbrellas.length > 0
+          ? `I couldn't match "${agentQuery}" to one of this client's live agents. Live agents: ${liveUmbrellas.map((u) => u.displayName).join(", ")}.`
+          : "This client has no live agents to give feedback on yet.";
+      }
+      const result = await addClientAgentFeedbackAction({
+        clientId,
+        clientAgentId: umbrella.id,
+        scope,
+        ...(scope === "template" ? { templateKey } : {}),
+        text,
+        ...(category ? { category } : {}),
+      });
+      if (result.error) return result.error;
+      return `Saved — this ${
+        scope === "template" ? `shapes only "${templateKey}" posts` : `applies to everything ${umbrella.displayName} makes`
+      } from here on.`;
+    },
+  });
+
   /* ── onFinish: log copilot token usage ───────────────────────────── */
 
   function logCopilotUsage(usage: { inputTokens?: number; outputTokens?: number }) {
@@ -694,7 +979,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         clientId,
         agentId: null,
         agentName: "chat_copilot",
-        modelName: MODELS.SONNET,
+        modelName: modelId,
         operation: "chat_copilot",
         inputTokens: usage.inputTokens ?? 0,
         outputTokens: usage.outputTokens ?? 0,
@@ -716,6 +1001,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       send_support_email: sendSupportEmailTool,
       fetch_gmail_context: fetchGmailContextTool,
       create_tasks: createTasksTool,
+      find_output: findOutputTool,
+      edit_output: editOutputTool,
+      run_agent_now: runAgentNowTool,
+      reschedule_output: rescheduleOutputTool,
+      provide_feedback: provideFeedbackTool,
     }),
     onFinish: ({ usage }) => logCopilotUsage(usage),
   });
