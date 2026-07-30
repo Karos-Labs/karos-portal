@@ -7,7 +7,7 @@ import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
-import { assetImages, assetLiMedia } from "@/lib/asset-images";
+import { assetImages, assetLiMedia, assetVideos } from "@/lib/asset-images";
 import {
   updateAssetAction,
   approveAssetAction,
@@ -507,6 +507,10 @@ export function AssetCard({
   // images — drew a card with no preview at all while its Download button
   // happily offered the very photos the card wasn't showing.
   const galleryImages = assetImages(asset);
+  // Video deliverables — podcast cuts, branded shorts, TikTok (bulk-uploaded
+  // clips carry ONLY this, no caption or photo, so it must count toward
+  // hasPreview below or the card renders the empty "no preview" state).
+  const videos = assetVideos(asset);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // When the webhook didn't write structured meta.slides, treat the recovered
@@ -539,7 +543,7 @@ export function AssetCard({
     ...((asset.meta?.files as MetaFile[] | undefined) ?? []),
     ...((asset.meta?.artifacts as MetaFile[] | undefined) ?? []),
   ].filter((f): f is MetaFile & { url: string } => typeof f?.url === "string");
-  const hasPreview = Boolean(asset.content) || isCarousel || coverImageUrl != null;
+  const hasPreview = Boolean(asset.content) || isCarousel || coverImageUrl != null || videos.length > 0;
 
   // Template/format chip (e.g. "By The Numbers") — data-driven, legacy-safe.
   const template = templateForAsset(asset);
@@ -799,6 +803,18 @@ export function AssetCard({
                 View
               </span>
             </button>
+          ) : videos.length > 0 ? (
+            <div className="mt-2 space-y-2">
+              {videos.map((v) => (
+                <video
+                  key={v.url}
+                  src={v.url}
+                  controls
+                  preload="metadata"
+                  className="max-h-96 w-full max-w-sm rounded-lg border border-border bg-black object-contain"
+                />
+              ))}
+            </div>
           ) : null}
 
           {/* No caption and no photo. Show the deliverables by name rather than

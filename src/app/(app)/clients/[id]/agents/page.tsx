@@ -14,6 +14,7 @@ import { AgentRunHistory } from "@/components/custom-agents";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
+import { BulkUploadClips } from "@/components/bulk-upload-clips";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
@@ -349,6 +350,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         action={
           <div className="flex items-center gap-3">
             {isLabOutputsConfigured() && <LabImportButton clientId={id} />}
+            <BulkUploadClips clientId={id} bucketName={process.env.GCS_MEDIA_BUCKET} />
             <ReplanCalendarButton clientId={id} />
             <a
               href={`/clients/${id}/settings`}
