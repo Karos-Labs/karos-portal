@@ -8,6 +8,28 @@ Read this file first, then the two prompts in §7.
 
 ---
 
+## 0. Division of labour — read this before you touch anything
+
+The session that produced this branch **deliberately changed no portal code.** It was a verification
+and preparation session only: `git diff origin/main..<this branch> -- src/ docs/ scripts/` is empty,
+and the branch adds nothing but this `handoff/` directory.
+
+**You are the session that makes the changes.** Specifically:
+
+1. Daniel will paste **Albert's meeting notes** — the list of what Albert actually wants fixed. Those
+   notes are the priority order. This document is the map you read them against, not a competing
+   backlog. Where a note and this document describe the same thing, use the `file:line` references
+   here (they are current as of `5b28c29`) instead of searching from scratch.
+2. Anything in §3, §4 or §5 that Albert's notes do not mention is **not automatically in scope.**
+   Surface it, let Daniel decide, and do not quietly widen the job.
+3. Run the deeper sweeps here, on this account — see §7b. Two of them were cut short by a spend limit
+   and their findings, where they exist, are appended at the end of this file under
+   "Appendix — later sweep results".
+
+Branch from `main` for the fix work. Do not commit to `main`, and do not merge this carrier branch.
+
+---
+
 ## 1. Where things stand
 
 The 137-finding QA sweep (Daniel's document, 2026-07-27) was implemented by Albert's agent run over
@@ -213,3 +235,40 @@ gcloud run services describe karos-cmo --region europe-west1 --project karoscmo 
 
 `gcloud auth login` expires every day or two and must go through Chrome. `timeout` is not installed
 on Daniel's Mac — don't wrap `gcloud` in it.
+
+---
+
+## 11. Slot for Albert's meeting notes
+
+Paste them here (or alongside, as `ALBERT-MEETING-NOTES.md` in this directory) before starting the fix
+work, so the priority list travels with the branch instead of living only in a chat scrollback.
+
+Known from Daniel already, ahead of the notes:
+
+- **"Account settings" must join the settings row** and stop being its own button — §4. Bundle the
+  phone sign-out lockout (`#103`) into the same change; they are one problem.
+
+---
+
+## Appendix — later sweep results
+
+Two sweeps were commissioned after the main verification and are recorded here when they complete.
+If a section below is empty, that sweep did not finish and is still owed:
+
+### A. Unrequested-work audit (credits · auth/roles · scheduler · webhook · regressions · silent
+### reverts · copy · data-compat · coherence · test-quality)
+
+_Status: launched twice. First run killed by the org monthly spend limit with zero results; re-run
+in progress at the time this branch was pushed. If nothing follows this line, treat the whole area as
+unreviewed and re-run it — it is the largest remaining hole, and the Firestore
+backward-compatibility question in §7b is the highest-stakes part of it._
+
+### B. Navigation and button-wiring sweep (10 surface clusters, every control → destination, per role,
+### at both widths)
+
+_Status: in progress at the time this branch was pushed. Calibrated on Daniel's "account settings"
+example, so it also hunts stranded controls, controls unreachable below `md`, `?tab=` deep links whose
+destination ignores the param, and buttons enabled where the server is guaranteed to refuse. If
+nothing follows this line, re-run it — the script is at
+`.claude/.../workflows/scripts/portal-navigation-sweep-*.js` in the producing session, or re-author
+from the brief in §7b._
