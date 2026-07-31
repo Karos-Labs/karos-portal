@@ -10,7 +10,7 @@ import type { RedditIntakeView } from "@/components/reddit-agent-intake";
  * The generic card answers that question with one link, which is right for an
  * agent whose data is a form. It is wrong for both new shapes: a clip maker
  * runs on FILES the client has to hand over, and a daily finder runs on a list
- * of communities it is welcome in and a list it is banned from — and being
+ * of communities it is welcome in and a list it is banned from - and being
  * banned from a subreddit is the kind of fact a client wants to SEE on the
  * page, not behind a link.
  *
@@ -31,8 +31,8 @@ export interface SourceFile {
 /**
  * What the clip maker cuts FROM.
  *
- * A clip maker cannot invent footage — its launch profile makes source material
- * a required attachment unless a link is pasted instead — so a page that never
+ * A clip maker cannot invent footage - its launch profile makes source material
+ * a required attachment unless a link is pasted instead - so a page that never
  * mentioned source material left the client with a gallery that stayed empty
  * and no idea that they were the blocker.
  */
@@ -79,7 +79,7 @@ export function SourceMaterialCard({
  * The communities this agent works in, and the ones it must never touch.
  *
  * `offLimitsSubreddits` is BINDING (the intake doc says so) and it is the one
- * field on this page a client will want to verify at a glance — "did they
+ * field on this page a client will want to verify at a glance - "did they
  * actually record that we were banned from r/SEO" is not a question anyone
  * should have to open a form to answer.
  *

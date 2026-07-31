@@ -6,7 +6,7 @@ import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { MAX_ACTIVE_TASKS } from "@/lib/constants";
-// Type-only import — the server-only swarm engine never reaches the client bundle.
+// Type-only import - the server-only swarm engine never reaches the client bundle.
 import type { SwarmEvent, SwarmAgentId } from "@/lib/agent-swarm";
 
 /** Terminal accent per agent. */
@@ -27,7 +27,7 @@ type Line =
 type Status = "running" | "done" | "error";
 
 /**
- * The Strategy War Room — a live terminal that streams the multi-agent Task Map
+ * The Strategy War Room - a live terminal that streams the multi-agent Task Map
  * debate over SSE. Replaces the plain refresh spinner: the SEO, Creative, and
  * Data agents argue round-by-round in the console; on consensus it flashes the
  * result, refreshes the board, and closes.
@@ -39,7 +39,7 @@ export function StrategyWarRoom({
 }: {
   clientId: string;
   onClose: () => void;
-  /** Fired once when consensus is persisted — parent refreshes the Task Map. */
+  /** Fired once when consensus is persisted - parent refreshes the Task Map. */
   onComplete: () => void;
 }) {
   const [lines, setLines] = useState<Line[]>([]);
@@ -47,8 +47,8 @@ export function StrategyWarRoom({
   const [created, setCreated] = useState<number | null>(null);
   /**
    * Why the save produced what it produced. Zero created is a routine outcome
-   * — every candidate that duplicates the board or overflows the active-task
-   * ceiling is dropped — and the only explanation used to be one grey console
+   * - every candidate that duplicates the board or overflows the active-task
+   * ceiling is dropped - and the only explanation used to be one grey console
    * line under a green "Consensus reached" banner (QA F90).
    */
   const [outcome, setOutcome] = useState<{
@@ -61,7 +61,7 @@ export function StrategyWarRoom({
   const [progress, setProgress] = useState<{ round: number; total: number } | null>(null);
   /**
    * Escape and a backdrop click both reach Modal's onClose, which unmounts this
-   * component and aborts the stream — the server then skips persistence, so
+   * component and aborts the stream - the server then skips persistence, so
    * six sequential model calls are discarded with no warning (QA F93). While a
    * run is live, a close request raises this confirmation instead.
    */
@@ -172,7 +172,7 @@ export function StrategyWarRoom({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [lines]);
 
-  // Once consensus lands, refresh the board — but stay open. The modal used to
+  // Once consensus lands, refresh the board - but stay open. The modal used to
   // close itself after 1.6s, which left nothing to click and no way to reach
   // the tasks it had just created (QA F65).
   useEffect(() => {
@@ -181,7 +181,7 @@ export function StrategyWarRoom({
     onComplete();
   }, [status, onComplete]);
 
-  // Every dismissal path — Escape, the backdrop, the corner X — comes through
+  // Every dismissal path - Escape, the backdrop, the corner X - comes through
   // Modal's onClose, so intercepting here covers all three.
   const requestClose = useCallback(() => {
     if (status === "running") {
@@ -194,7 +194,7 @@ export function StrategyWarRoom({
   return (
     <Modal open onClose={requestClose} className="max-w-2xl">
       <div className="space-y-3">
-        {/* Header — pr-8 clears the Modal's absolutely-positioned close button,
+        {/* Header - pr-8 clears the Modal's absolutely-positioned close button,
             same convention as Modal's own title. */}
         <div className="flex items-center gap-2.5 pr-8">
           <span className="relative flex h-2.5 w-2.5">
@@ -223,7 +223,7 @@ export function StrategyWarRoom({
           )}
         </div>
         <p className="text-xs text-muted-2">
-          Three specialist agents are debating your Task Map live — proposing, critiquing, and
+          Three specialist agents are debating your Task Map live - proposing, critiquing, and
           stress-testing against your analytics until they reach consensus. This takes about a
           minute; leaving before it finishes discards the run.
         </p>
@@ -246,14 +246,14 @@ export function StrategyWarRoom({
           </div>
         </div>
 
-        {/* Running footer — an explicit way out, so Escape is not the only
+        {/* Running footer - an explicit way out, so Escape is not the only
             instinct available mid-run (QA F93). */}
         {status === "running" &&
           (confirmingClose ? (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
               <p className="flex min-w-0 items-center gap-2 text-sm text-warning">
                 <Icon name="TriangleAlert" className="h-4 w-4 shrink-0" />
-                The agents are still working. Leaving now discards the run — nothing is saved.
+                The agents are still working. Leaving now discards the run - nothing is saved.
               </p>
               <div className="flex shrink-0 items-center gap-3">
                 <button
@@ -274,7 +274,7 @@ export function StrategyWarRoom({
             </div>
           ) : (
             <div className="flex items-center justify-between gap-2 px-1">
-              <p className="text-[11px] text-muted-2">Keep this open — the run stops if you leave.</p>
+              <p className="text-[11px] text-muted-2">Keep this open - the run stops if you leave.</p>
               <button
                 type="button"
                 onClick={() => setConfirmingClose(true)}
@@ -285,7 +285,7 @@ export function StrategyWarRoom({
             </div>
           ))}
 
-        {/* Footer — a green tick over "0 tasks locked" was the last thing a
+        {/* Footer - a green tick over "0 tasks locked" was the last thing a
             client saw after a minute of waiting, with no idea why nothing
             happened (QA F90). Zero created gets its own neutral panel that
             says what was dropped and what to do next. */}
@@ -293,7 +293,7 @@ export function StrategyWarRoom({
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
             <p className="flex min-w-0 items-center gap-2">
               <Icon name="CircleCheck" className="h-4 w-4 shrink-0" />
-              Consensus reached — {created} task{created === 1 ? "" : "s"} locked into your map.
+              Consensus reached - {created} task{created === 1 ? "" : "s"} locked into your map.
             </p>
             <Link
               href="/tasks"
@@ -308,7 +308,7 @@ export function StrategyWarRoom({
           <div className="space-y-1.5 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
             <p className="flex items-center gap-2 font-medium">
               <Icon name="Info" className="h-4 w-4 shrink-0" />
-              Nothing new to add — no tasks were created.
+              Nothing new to add - no tasks were created.
             </p>
             <p className="text-xs opacity-90">{zeroOutcomeExplanation(outcome)}</p>
             <div className="flex flex-wrap items-center gap-3 pt-0.5">
@@ -357,7 +357,7 @@ function zeroOutcomeExplanation(
     return `Your board is already at the ${MAX_ACTIVE_TASKS}-active-task limit, so ${capSkipped} proposal${capSkipped === 1 ? "" : "s"} could not be added. Approve or complete some tasks, then run this again.`;
   }
   if (duplicatesSkipped > 0) {
-    return `All ${duplicatesSkipped} proposal${duplicatesSkipped === 1 ? "" : "s"} already exist on your board — your task map is up to date.`;
+    return `All ${duplicatesSkipped} proposal${duplicatesSkipped === 1 ? "" : "s"} already exist on your board - your task map is up to date.`;
   }
   return outcome.note;
 }
@@ -387,7 +387,7 @@ function ConsoleLine({ line }: { line: Line }) {
     case "consensus":
       return (
         <p className="pt-1 font-semibold text-neon">
-          ✅ Consensus locked — {line.count} optimal task{line.count === 1 ? "" : "s"}.
+          ✅ Consensus locked - {line.count} optimal task{line.count === 1 ? "" : "s"}.
         </p>
       );
     case "persisted":
@@ -395,7 +395,7 @@ function ConsoleLine({ line }: { line: Line }) {
     case "campaign":
       return (
         <p className="pt-1 text-info">
-          🎬 Campaign built — “{line.title}” ({line.themeScope}): {line.count} extra task
+          🎬 Campaign built - “{line.title}” ({line.themeScope}): {line.count} extra task
           {line.count === 1 ? "" : "s"} added to your board.
         </p>
       );

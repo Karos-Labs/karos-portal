@@ -51,7 +51,7 @@ export function MeetingActionItems({
   const [pendingToggle, setPendingToggle] = useState<Set<number>>(new Set());
   const [pendingAssign, setPendingAssign] = useState<Set<number>>(new Set());
 
-  // Group item indices by owner name for display (must precede any early return — hooks must not be conditional)
+  // Group item indices by owner name for display (must precede any early return - hooks must not be conditional)
   const groups = useMemo(() => {
     const map = new Map<string, number[]>();
     owners.forEach((owner, i) => {
@@ -282,7 +282,7 @@ function ActionItem({
         {text}
       </span>
 
-      {/* Assignee dropdown — visible when there are users to choose from */}
+      {/* Assignee dropdown - visible when there are users to choose from */}
       {showDropdown && (
         <select
           value={assignedUserId ?? ""}

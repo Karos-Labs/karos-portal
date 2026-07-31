@@ -17,7 +17,7 @@ const WEEKDAYS = [
   { value: 6, label: "Saturday" },
 ];
 
-/** `YYYY-MM-DDTHH:mm` in the browser's zone — the format datetime-local wants. */
+/** `YYYY-MM-DDTHH:mm` in the browser's zone - the format datetime-local wants. */
 function toLocalInputValue(at: number): string {
   const d = new Date(at);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -152,7 +152,7 @@ export function ScheduleRunModal({
             onChange={(e) => setPrompt(e.target.value)}
           />
           <p className="mt-1 text-[11px] text-muted-2">
-            A plain-language request run every time — the agent already knows the brand and its playbook.
+            A plain-language request run every time - the agent already knows the brand and its playbook.
           </p>
         </div>
 

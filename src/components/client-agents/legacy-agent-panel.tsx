@@ -22,13 +22,13 @@ import type { LegacyRunGateResult } from "@/lib/client-agent-runs";
  *
  * This is the flagship case, not an edge one: Karos Labs' own Instagram Agent
  * has a live weekly schedule and predates the umbrella model entirely. Its
- * detail page rendered a stub — a sentence saying it was producing, and nothing
- * else — so the agent Albert screenshots most often was the one with no way to
+ * detail page rendered a stub - a sentence saying it was producing, and nothing
+ * else - so the agent Albert screenshots most often was the one with no way to
  * make a post, no way to change its pace, and no sign of anything it had ever
  * made.
  *
  * WHAT IT GETS: the two gestures that need no umbrella. "Create a new post" is
- * the standard priced custom-agent run — the same dialog, launch profile and
+ * the standard priced custom-agent run - the same dialog, launch profile and
  * charge path the generic card uses, not a second implementation. "Adjust pace"
  * is the same paceOnly schedule modal the live card uses, and it is offered
  * because the schedule is exactly what this shape DOES have.
@@ -37,21 +37,21 @@ import type { LegacyRunGateResult } from "@/lib/client-agent-runs";
  * produce no visible change whatsoever: the panel showed no run row and no
  * progress, and the page mounted no AutoRefresh for this branch, so a client sat
  * on a static page for the twenty minutes the run takes with no way to tell
- * whether anything had started — and, once F30's control was reachable again,
+ * whether anything had started - and, once F30's control was reachable again,
  * nothing to cancel from. The strip is the pieces that already exist, not a new
  * idiom: the same banner promise the umbrella panel makes, the ManagedJobProgress
  * strip the run rows use, and the same CancelRunControl. What the run PRODUCES
- * still arrives the umbrella way — under "What it has made for you" on the page
+ * still arrives the umbrella way - under "What it has made for you" on the page
  * below, which links the Workspace.
  *
  * WHAT IT DOES NOT GET, deliberately: template rows, the week strip, per-template
  * feedback, notes. Every one of those reads the umbrella's registry or its slot
  * plan, and this agent has neither. Faking them would put invented streams in
- * front of a client — the §9 backfill script is the real fix, and it creates the
+ * front of a client - the §9 backfill script is the real fix, and it creates the
  * umbrella rather than pretending one exists.
  *
  * The gate is evaluated SERVER-side and painted, never a title on a disabled
- * control (F25 — the Button primitive sets disabled:pointer-events-none, so a
+ * control (F25 - the Button primitive sets disabled:pointer-events-none, so a
  * tooltip there can never be read).
  */
 export function LegacyAgentPanel({
@@ -70,14 +70,14 @@ export function LegacyAgentPanel({
 }: {
   clientId: string;
   agent: RunnableAgentSummary;
-  /** Null for staff — quoting them a price they never pay would be a lie. */
+  /** Null for staff - quoting them a price they never pay would be a lie. */
   cost: number | null;
   /** Server-evaluated, already resolved to a paintable reason (F25/F131). */
   gate: LegacyRunGateResult;
   schedule: ClientAgentScheduleRow | null;
   /**
    * This agent's run that has not landed yet (F31). Resolved server-side from
-   * the client's own jobs, and deliberately just an id and a phase — the strip
+   * the client's own jobs, and deliberately just an id and a phase - the strip
    * says a run is happening, never what it will contain.
    */
   activeRun?: { id: string; status: "queued" | "running"; refunds: boolean } | null;
@@ -111,7 +111,7 @@ export function LegacyAgentPanel({
               aria-hidden="true"
             />
             <p className="text-xs text-info">
-              Making your next post now — this takes 10–20 minutes. Your Karos team reviews it when
+              Making your next post now - this takes 10–20 minutes. Your Karos team reviews it when
               it lands, and finished posts appear in your Workspace once approved.
             </p>
           </div>
@@ -127,7 +127,7 @@ export function LegacyAgentPanel({
         <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 p-4">
           {/* `basis-56 grow`, not `flex-1`: flex-1 is basis-0, so in a narrow
               column the label had no preferred width at all and shrank to
-              about 30px — "Create a new post" wrapped one word per line and the
+              about 30px - "Create a new post" wrapped one word per line and the
               button rode over it. A basis wide enough for the sentence means
               the row wraps the BUTTON to its own line instead, which is what
               flex-wrap is on this container for. */}
@@ -173,7 +173,7 @@ export function LegacyAgentPanel({
           <p className="mt-1 text-xs text-muted-2">
             {schedule
               ? "This agent is already posting for you on a schedule. Change how often whenever you like."
-              : "This agent has no schedule yet — your Karos team sets one up."}
+              : "This agent has no schedule yet - your Karos team sets one up."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

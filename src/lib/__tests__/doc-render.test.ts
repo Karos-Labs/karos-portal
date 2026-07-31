@@ -354,11 +354,16 @@ describe("renderSectionBody: dashes and rules", () => {
    * sentence became two items with the row's gap wedged between them, and the
    * em dash opened a second column instead of reading as punctuation. One span
    * around the item text keeps the row at two items: marker, then text.
+   *
+   * normalizeDashes (Task 6, global dash sanitizer) now also normalizes that
+   * em dash to a plain hyphen — this test's job is only to prove the em dash
+   * still reads as inline punctuation within ONE flex item, not a second one,
+   * whichever character it ends up as.
    */
-  it("keeps an inline em dash inside the sentence it belongs to", () => {
+  it("keeps the punctuation between the bold word and the rest inside one flex item", () => {
     const html = renderSectionBody("- **Precise** — Every sentence carries weight.");
     expect(html).toContain(
-      "<li><span class=\"min-w-0 flex-1\"><strong>Precise</strong> — Every sentence carries weight.</span></li>",
+      "<li><span class=\"min-w-0 flex-1\"><strong>Precise</strong> - Every sentence carries weight.</span></li>",
     );
     expect(html).not.toContain("<hr");
   });
@@ -371,10 +376,10 @@ describe("renderSectionBody: dashes and rules", () => {
     expect(item.match(/<span/g) ?? []).toHaveLength(1);
   });
 
-  it("does not promote an em dash in prose to a rule", () => {
+  it("does not promote an em dash in prose to a rule, and normalizes it to a hyphen", () => {
     const html = renderSectionBody("Precise — every sentence carries weight.");
     expect(html).not.toContain("<hr");
-    expect(html).toContain("Precise — every sentence carries weight.");
+    expect(html).toContain("Precise - every sentence carries weight.");
   });
 });
 

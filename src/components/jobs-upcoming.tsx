@@ -3,12 +3,12 @@ import { Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { nextRunCountdown } from "@/lib/scheduled-runs";
 
-/** One projected future fire, from either scheduling system — see jobs/page.tsx. */
+/** One projected future fire, from either scheduling system - see jobs/page.tsx. */
 export interface UpcomingRunRow {
   id: string;
   clientId: string;
   clientName: string;
-  /** The resolved display identity — never the stored/lab agent name (F147). */
+  /** The resolved display identity - never the stored/lab agent name (F147). */
   agentLabel: string;
   nextRunAt: number;
   /** Already carries its own zone suffix (describeCadence/describeLegacyCadence). */
@@ -18,7 +18,7 @@ export interface UpcomingRunRow {
 /**
  * Item 2's "Upcoming Scheduled Runs" pane: exact trigger time + target agent
  * + client, nearest first, across BOTH scheduling systems (jobs/page.tsx does
- * the merge). A glance panel, not the full picture — the Calendar already
+ * the merge). A glance panel, not the full picture - the Calendar already
  * shows every projected occurrence across a month; this is capped by the
  * caller to a handful of "what's coming up next" rows.
  */

@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * The Reddit drafts reader: a parsed draft batch rendered as readable cards —
- * grouped per managed account, one card per drafted reply — with the four
+ * The Reddit drafts reader: a parsed draft batch rendered as readable cards -
+ * grouped per managed account, one card per drafted reply - with the four
  * outcome actions from the lab's portal contract wired into the per-account
  * feedback loop (posted / posted with edits / didn't post + reason / request a
  * change).
  *
  * Reddit's hand-off differs from X's and LinkedIn's: a drafted reply answers an
- * EXISTING thread, so there is no compose deep link to prefill — the reply is
+ * EXISTING thread, so there is no compose deep link to prefill - the reply is
  * typed in the thread itself. Posting copies the reply text and opens the
  * thread; the human pastes and presses reply. As with LinkedIn, the clipboard
  * write is AWAITED before window.open (Chrome rejects a clipboard write once
@@ -41,7 +41,7 @@ import { splitMetaLinks } from "@/lib/draft-meta";
 type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
 
 /**
- * Why a draft was not posted. These codes are the lab contract's — the weekly
+ * Why a draft was not posted. These codes are the lab contract's - the weekly
  * manager acts on them, and two "too promotional" rows on one subreddit
  * downgrade that subreddit to value-only.
  */
@@ -69,7 +69,7 @@ function charLabel(chars?: string): string | null {
  * The promo verdict badge. Amber for value-only because it is the constraint
  * the poster must respect (a plug there risks the account); slate for
  * mention-ok because a disclosed mention is merely permitted. No badge at all
- * when the draft names no verdict — guessing the permissive one is the
+ * when the draft names no verdict - guessing the permissive one is the
  * dangerous direction.
  */
 function VerdictBadge({ draft }: { draft: RedditParsedDraft }) {
@@ -114,7 +114,7 @@ function DraftCard({
   async function send(action: SentState, textUsed?: string) {
     setError(null);
     // Posting IS the hand-off (skips and change requests never open the
-    // thread). Clipboard first and AWAITED, then the open — the copy is what
+    // thread). Clipboard first and AWAITED, then the open - the copy is what
     // carries the reply, since a thread URL cannot prefill a comment box. A
     // retry after a failed feedback write must NOT open a second tab.
     if (action !== "not_posted" && action !== "edit_request" && !handedOff) {
@@ -147,7 +147,7 @@ function DraftCard({
       if (result.error) {
         setError(
           handedOff && action !== "not_posted" && action !== "edit_request"
-            ? `${result.error} The thread is already open — click again to save your choice here (we will not open it a second time).`
+            ? `${result.error} The thread is already open - click again to save your choice here (we will not open it a second time).`
             : result.error,
         );
         return;
@@ -221,7 +221,7 @@ function DraftCard({
         <div className="min-w-0">
           {/* The lab's own lane vocabulary ("Draft 1 · Thorough value
               answer") is production shorthand, not something a client has
-              any way to read (F70) — humanized here, at the render
+              any way to read (F70) - humanized here, at the render
               boundary only, because the RAW formula is the draftRef the
               feedback actions log against. */}
           <p className="text-sm font-medium text-foreground">
@@ -301,7 +301,7 @@ function DraftCard({
                 rows={8}
                 value={finalText}
                 onChange={(e) => setFinalText(e.target.value)}
-                placeholder="Your final version — the wording you will actually post."
+                placeholder="Your final version - the wording you will actually post."
               />
               {overCap ? (
                 <p className="text-xs text-red-400">
@@ -328,7 +328,7 @@ function DraftCard({
                 rows={2}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="What should change? Tone, angle, a fact to fix — in your own words."
+                placeholder="What should change? Tone, angle, a fact to fix - in your own words."
               />
               <div className="flex gap-2">
                 <Button size="sm" onClick={() => send("edit_request")} disabled={pending || !reason.trim()}>
@@ -394,8 +394,8 @@ function DraftCard({
               </div>
               <p className="text-[11px] text-muted-2">
                 {draft.threadUrl
-                  ? "This copies the reply and opens the thread. You paste it and press reply — nothing is ever posted for you."
-                  : "This copies the reply. The draft names no thread link, so open the thread yourself — nothing is ever posted for you."}{" "}
+                  ? "This copies the reply and opens the thread. You paste it and press reply - nothing is ever posted for you."
+                  : "This copies the reply. The draft names no thread link, so open the thread yourself - nothing is ever posted for you."}{" "}
                 Edit it into your own words first; Reddit rewards that.
               </p>
             </>
@@ -437,15 +437,15 @@ function DraftCard({
       ) : (
         <p className="mt-3 text-[11px] text-muted-2">
           {draft.subreddit
-            ? `Logged — the reason tunes ${draft.subreddit}'s rules and the account's voice for the next run.`
-            : "Logged — the reason tunes the account's voice for the next run."}
+            ? `Logged - the reason tunes ${draft.subreddit}'s rules and the account's voice for the next run.`
+            : "Logged - the reason tunes the account's voice for the next run."}
         </p>
       )}
     </div>
   );
 }
 
-/** A parsed batch, chrome-less — the host (asset card, job page) owns the frame. */
+/** A parsed batch, chrome-less - the host (asset card, job page) owns the frame. */
 export function RedditDraftsBatch({
   clientId,
   jobId,

@@ -70,7 +70,7 @@ export function CreateClientButton() {
     try {
       const { id } = await createClientAction(form);
       if (logoFile) {
-        // Best-effort: the client record exists either way — a failed logo
+        // Best-effort: the client record exists either way - a failed logo
         // upload shouldn't block creation, it can be added from Settings later.
         const body = new FormData();
         body.append("file", logoFile);

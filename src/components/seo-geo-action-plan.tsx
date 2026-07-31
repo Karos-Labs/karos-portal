@@ -9,22 +9,22 @@ import type { Lever, Recommendation, RecImpact } from "@/lib/seo-geo";
 /**
  * Client-facing SEO/GEO action plan (dev-handoff §3b, QA Fix 6). Each row has a REAL
  * "Approve" control: it persists the client's approval (server action → clientSeoGeo doc +
- * activity timeline the team monitors) and flips to "Approved" — no navigation, so a
+ * activity timeline the team monitors) and flips to "Approved" - no navigation, so a
  * client viewer never lands on an empty-agents dead end. Renders only the client-safe
  * fields (impact + vertical + plain title + description + owner); no internal producer
  * fields cross the boundary (§4).
  */
 
 /**
- * F144/CD-B1: the vertical badge rendered `r.vertical` — the raw lever code "SEO" /
- * "GEO" / "BOTH" — on every row of the plan a client reads, the one surface on this
+ * F144/CD-B1: the vertical badge rendered `r.vertical` - the raw lever code "SEO" /
+ * "GEO" / "BOTH" - on every row of the plan a client reads, the one surface on this
  * page that had escaped the presenter's mapping discipline.
  *
  * The words are the presenter's LEVER_LABELS verbatim (seo-geo/presenter.ts), so the
  * badge a client reads on a plan row and the channel chip staff read on the gap
  * behind it say the same thing; seo-geo-presenter.test.ts pins the two together.
  * Copied rather than imported because this is a client leaf and the presenter pulls
- * the whole domain module in with it — the boundary its own header comment sets.
+ * the whole domain module in with it - the boundary its own header comment sets.
  *
  * `Record<Lever, …>`: a new lever is a compile error here, not a leaked code.
  */
@@ -135,7 +135,7 @@ export function SeoGeoActionPlan({
               {r.description && <p className="mt-1 text-xs text-muted">{r.description}</p>}
               {isApproved ? (
                 <p className="mt-1 text-[11px] text-success">
-                  With your Karos team — it&apos;ll show in your next snapshot.
+                  With your Karos team - it&apos;ll show in your next snapshot.
                 </p>
               ) : (
                 <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.06em] text-muted-2">
@@ -147,10 +147,10 @@ export function SeoGeoActionPlan({
         })}
       </ul>
       {/* CD-J1 directive 6: say what the button does BEFORE it is pressed. Approve
-          is authorization, not execution — a person makes the change — and the
+          is authorization, not execution - a person makes the change - and the
           plan never said so anywhere. */}
       <p className="mt-3 text-[11px] text-muted-2">
-        Approving sends it to your Karos team — they make the change and it shows in your next
+        Approving sends it to your Karos team - they make the change and it shows in your next
         snapshot. Nothing on your site changes when you click.
       </p>
     </>

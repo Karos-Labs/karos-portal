@@ -34,7 +34,7 @@ export default async function LinkedInAgentPage({ params }: { params: Promise<{ 
     <>
       <PageHeader
         title="LinkedIn agent"
-        description="What we collect to run LinkedIn for you: the company page, a seat per person, and your ongoing drops. Drafts only — a person always posts."
+        description="What we collect to run LinkedIn for you: the company page, a seat per person, and your ongoing drops. Drafts only - a person always posts."
         action={
           <a
             href={`/clients/${id}/agents`}

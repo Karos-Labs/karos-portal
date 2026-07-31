@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { Button, Badge, Skeleton, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
-// Type-only import — erased at compile time, so the server-only engine never
+// Type-only import - erased at compile time, so the server-only engine never
 // reaches the client bundle.
 import type { PersonaSimulationResult } from "@/lib/simulation-engine";
 
@@ -26,7 +26,7 @@ const SENTIMENT_META: Record<Sentiment, { tone: "success" | "warning" | "danger"
 };
 
 /**
- * Audience Simulation panel — runs the asset's artifact past the synthetic
+ * Audience Simulation panel - runs the asset's artifact past the synthetic
  * persona panel on demand and renders each verdict with a color-coded score
  * bar, sentiment indicator, and the raw qualitative critique. Handles the
  * parallel run with a graceful skeleton grid and isolates per-persona failures.
@@ -35,8 +35,8 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
   const [results, setResults] = useState<PersonaSimulationResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A ref (not state) so a double-click within the same render pass — before
-  // `loading` re-renders the button away — still can't fire a second request.
+  // A ref (not state) so a double-click within the same render pass - before
+  // `loading` re-renders the button away - still can't fire a second request.
   const runningRef = useRef(false);
 
   const run = useCallback(async () => {
@@ -64,7 +64,7 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
     }
   }, [clientId, assetId]);
 
-  // Intro state — nothing run yet.
+  // Intro state - nothing run yet.
   if (!results && !loading && !error) {
     return (
       <EmptyState
@@ -118,7 +118,7 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
       {!loading && results && results.length > 0 && (
         <p className="flex items-start gap-1.5 text-[11px] text-muted-2">
           <Icon name="Info" className="mt-0.5 h-3 w-3 shrink-0" />
-          Simulated reactions from AI personas — directional signal to refine before publishing, not a guarantee of real-world results.
+          Simulated reactions from AI personas - directional signal to refine before publishing, not a guarantee of real-world results.
         </p>
       )}
     </div>

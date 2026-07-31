@@ -16,7 +16,7 @@ const DOCK_STATE_KEY = "karos.copilot.dock";
 
 /**
  * Which app shell hosts the dock. The two differ only in the width of their
- * left nav column — ClientRail is `w-72`, the staff Sidebar is `w-64` — but the
+ * left nav column - ClientRail is `w-72`, the staff Sidebar is `w-64` - but the
  * strip has to start exactly at that column's right edge, and both numbers used
  * to be hardcoded to the client portal's geometry (CD-G8).
  */
@@ -28,7 +28,7 @@ export type CopilotShell = "client" | "staff";
  * The bottom is the same in both shells: every shell that shows the client
  * 4-tab nav renders the mobile bottom bar below `md` (CD-G9a), so the strip
  * parks directly above it and drops to the viewport edge from `md` up, where
- * that nav is a left column instead. `right-0` is unconditional — running to
+ * that nav is a left column instead. `right-0` is unconditional - running to
  * the viewport's right edge is the whole point of the contract.
  */
 const SHELL_ANCHOR: Record<CopilotShell, string> = {
@@ -39,7 +39,7 @@ const SHELL_ANCHOR: Record<CopilotShell, string> = {
 /**
  * Whether an element is actually painted. The shell swaps its two dock surfaces
  * with `lg:hidden` / `hidden lg:block`, and a `display:none` element still holds
- * a live ref — so this is how the outside-click pass below tells "the sheet is
+ * a live ref - so this is how the outside-click pass below tells "the sheet is
  * the surface on screen" from "we are at lg+ and the rail is".
  *
  * `getClientRects()` rather than `offsetParent`: the sheet is `position: fixed`,
@@ -51,14 +51,14 @@ function isPainted(el: HTMLElement | null): el is HTMLElement {
 
 interface Props {
   clientId: string;
-  /** Signed-in viewer — scopes the persisted copilot transcript. */
+  /** Signed-in viewer - scopes the persisted copilot transcript. */
   viewerUid: string;
   clientName: string;
   userName?: string;
   hasGoogleIntegration?: boolean;
   client?: Pick<Client, "name" | "website" | "industry" | "isAiProcessing">;
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
-  /** Host shell — sets the left offset of the pinned strip. Defaults to the client portal. */
+  /** Host shell - sets the left offset of the pinned strip. Defaults to the client portal. */
   shell?: CopilotShell;
 }
 
@@ -88,7 +88,7 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
         if (typeof s.sheetOpen === "boolean") setSheetOpen(s.sheetOpen);
       }
     } catch {
-      /* unreadable / disabled storage — keep the defaults */
+      /* unreadable / disabled storage - keep the defaults */
     }
     hydratedRef.current = true;
   }, []);
@@ -98,14 +98,14 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
     try {
       localStorage.setItem(DOCK_STATE_KEY, JSON.stringify({ collapsed, sheetOpen }));
     } catch {
-      /* quota or private mode — state stays in memory */
+      /* quota or private mode - state stays in memory */
     }
   }, [collapsed, sheetOpen]);
 
   /**
    * Dismiss the sheet on any click outside it (CD-G9b): it stays open only
    * while the viewer is working inside it. Same idiom as the export menu in
-   * client-documents.tsx — a document `mousedown` plus a ref containment test —
+   * client-documents.tsx - a document `mousedown` plus a ref containment test -
    * rather than the full-screen click-catcher some menus use, because a catcher
    * would swallow the first click on every page while the copilot is open.
    *
@@ -115,14 +115,14 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
    * and then persist that through DOCK_STATE_KEY. It keeps its explicit handle
    * as the only way to collapse it.
    *
-   * The sheet is not unmounted either — it is hidden with `display:none`, so a
+   * The sheet is not unmounted either - it is hidden with `display:none`, so a
    * half-typed message and the restored transcript both survive an accidental
    * dismissal (QA F88).
    *
    * The Strategy War Room opens FROM the sheet but does not render inside it:
    * it goes through Modal, which portals to document.body. Its DOM is therefore
-   * outside this ref, so every mousedown in the dialog — backdrop, "Keep
-   * running", the console — used to count as an outside click and close the
+   * outside this ref, so every mousedown in the dialog - backdrop, "Keep
+   * running", the console - used to count as an outside click and close the
    * sheet behind it. On a phone that made the copilot vanish the moment you
    * touched the War Room. Overlays carry `data-overlay-root` for exactly this
    * test (modal.tsx), so any portaled dialog counts as inside.
@@ -165,11 +165,11 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
           The sheet is capped rather than fixed at 70dvh: a fixed box left a
           dead region between the sparse welcome content and the input row. It
           now grows with the transcript up to the cap, and only then scrolls.
-          (The cap itself is QA F94 — at 35vh the greeting filled the sheet and
+          (The cap itself is QA F94 - at 35vh the greeting filled the sheet and
           the four AI actions sat below the fold on first open.)
 
           Both states stay mounted and swap with `hidden`, so dismissing the
-          sheet — by the close control or by clicking outside it — keeps a
+          sheet - by the close control or by clicking outside it - keeps a
           half-typed message alive (CD-G9b). */}
       <div className="lg:hidden">
         <div
@@ -201,19 +201,19 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
 
       <aside
         className={cn(
-          // min-w-0 beats the flex automatic minimum — without it the fixed-width
+          // min-w-0 beats the flex automatic minimum - without it the fixed-width
           // chat inside keeps the rail at 380px and w-12 never takes effect.
           "relative hidden min-w-0 shrink-0 border-l border-border bg-background transition-[width] duration-300 ease-in-out lg:block",
           collapsed ? "w-12" : "w-[380px]",
         )}
       >
       {/* z-40: sticky always forms its own stacking context, so the handle's
-          own z-index cannot lift it above sibling chrome from in here — the
+          own z-index cannot lift it above sibling chrome from in here - the
           frame itself has to outrank anything sticky in the column it borders,
           or that chrome clips the handle's left half. Stays above the z-30 band
           the shells use for their rails and any sticky page chrome. */}
       <div className="sticky top-0 z-40 h-screen">
-        {/* Edge handle — inside the sticky frame so it pins to the viewport
+        {/* Edge handle - inside the sticky frame so it pins to the viewport
             near the top (never scrolls away), and above the column's own
             chrome so the full circle always shows. */}
         <button
@@ -225,10 +225,10 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
           <Icon name={collapsed ? "ChevronLeft" : "ChevronRight"} className="h-4 w-4" />
         </button>
 
-        {/* Clip lives on this inner frame — not the sticky one — so the
+        {/* Clip lives on this inner frame - not the sticky one - so the
             handle can hang past the border without being cut off. */}
         <div className="relative h-full overflow-hidden">
-          {/* Fixed-width chat — clipped by the parent as the rail narrows (no reflow) */}
+          {/* Fixed-width chat - clipped by the parent as the rail narrows (no reflow) */}
           <div className="h-full w-[380px]">
             <ChatbotWidget docked defaultOpen {...widgetProps} />
           </div>

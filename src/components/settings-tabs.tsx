@@ -15,7 +15,7 @@ export interface SettingsTab {
 
 /**
  * Task grouping for the client settings page, which was a nine-section
- * single-column stack with no tabs, anchors or index — so "where do I top up
+ * single-column stack with no tabs, anchors or index - so "where do I top up
  * credits" or "where do I disconnect LinkedIn" was a scroll-and-scan exercise.
  *
  * The active tab lives in `?tab=` so a link can point at one (support can send

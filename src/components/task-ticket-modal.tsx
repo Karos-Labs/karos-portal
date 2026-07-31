@@ -4,6 +4,7 @@ import { useState, useEffect, useTransition, useRef } from "react";
 import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { renderAssetBody } from "@/lib/doc-render";
+import { normalizeDashes } from "@/lib/text-utils";
 import {
   getTaskCommentsAction,
   addTaskCommentAction,
@@ -24,7 +25,7 @@ const PRIORITY_COLOR: Record<string, string> = {
 
 /**
  * The badge a task wears in its ticket. Clients open this modal, so the labels
- * name the WORK, never the pipeline that produced it — `content_dispatch`
+ * name the WORK, never the pipeline that produced it - `content_dispatch`
  * reads "Content", matching the board chip in tasks-board.tsx so the same task
  * does not carry two names between its card and its ticket (A3). This map is
  * not role-branched: there is no staff-only variant of these labels.
@@ -48,7 +49,7 @@ const STATUS_NEXT: Record<TaskStatus, TaskStatus> = {
 
 /**
  * Review Pending is the state an AI draft sits in while Karos reviews it, so
- * client-owned work never belongs there — the "Depending on you" board doesn't
+ * client-owned work never belongs there - the "Depending on you" board doesn't
  * even render that column, and a task pushed into it from this footer vanished
  * with no way back (QA F54). Client-managed work goes straight to Done.
  */
@@ -90,7 +91,7 @@ function inferOwner(task: ClientTask): TaskOwner {
   return task.owner ?? (task.source === "manual" ? "client_managed" : "karos_managed");
 }
 
-/* ── Artifact section (Review Pending — Flow A & B) ──────────────── */
+/* ── Artifact section (Review Pending - Flow A & B) ──────────────── */
 
 const VIDEO_EXT = /\.(mp4|webm|mov|m4v)(\?|$)/i;
 
@@ -140,7 +141,7 @@ function ArtifactSection({
 
       <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
         <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
-          {artifact}
+          {normalizeDashes(artifact)}
         </pre>
       </div>
     </div>
@@ -251,7 +252,7 @@ function ReviewPanel({
               Auto-publish at the scheduled time
             </span>
             <span className="block text-[11px] text-muted">
-              Requires the target channel to be connected with auto-publish enabled — otherwise it
+              Requires the target channel to be connected with auto-publish enabled - otherwise it
               lands on the calendar, where you open the post and press Publish Now.
             </span>
           </span>
@@ -412,7 +413,7 @@ function AiPlanSection({
           />
         ) : (
           <p className="text-xs text-muted">
-            Execution guide ready — {countPlanSteps(plan)}. Press Show to read it.
+            Execution guide ready - {countPlanSteps(plan)}. Press Show to read it.
           </p>
         )
       ) : (
@@ -442,7 +443,7 @@ function CommentsSection({
   clientId: string;
 }) {
   const [comments, setComments] = useState<TaskComment[]>([]);
-  // Start as true so the spinner shows immediately on mount — no synchronous setState in effect.
+  // Start as true so the spinner shows immediately on mount - no synchronous setState in effect.
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -579,7 +580,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   const failedUpload = task.metadata?.failedUpload as boolean | undefined;
   const failedUploadError = task.metadata?.failedUploadError as string | undefined;
   const nextStatus = nextStatusFor(task);
-  // The AI plan is a guide for the client to execute the task themselves —
+  // The AI plan is a guide for the client to execute the task themselves -
   // not useful for karos_managed tasks our own agents already run.
   const isClientManaged = inferOwner(task) === "client_managed";
 
@@ -601,7 +602,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   }, []);
 
   function handleApprove() {
-    // The approve/publish server action already completed the task — only
+    // The approve/publish server action already completed the task - only
     // reflect it locally (a second updateTaskStatusAction would double-write).
     onLocalUpdate({
       ...task,
@@ -681,6 +682,15 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
             </h2>
             {task._clientName && (
               <p className="mt-0.5 text-xs text-muted-2">{task._clientName}</p>
+            )}
+            {task.campaignId && (
+              <a
+                href={`/campaigns/${task.campaignId}`}
+                className="mt-1 inline-flex items-center gap-1 text-xs text-neon hover:underline"
+              >
+                <Icon name="Boxes" className="h-3 w-3" />
+                Part of a campaign - view run
+              </a>
             )}
           </div>
           <button

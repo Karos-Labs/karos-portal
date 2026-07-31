@@ -3,7 +3,7 @@ import type { JobStatus } from "@/lib/types";
 
 /**
  * The one place a raw job status becomes words a client may read. Exported
- * because every surface that shows run state has to go through it — printing
+ * because every surface that shows run state has to go through it - printing
  * `job.status` renders the database enum ("review", "delivered") on screen.
  */
 export const JOB_STATUS_META: Record<

@@ -10,13 +10,13 @@ type BannerClient = Pick<
 
 /**
  * Shown on the Dashboard, Task Map, and Settings views while the client's
- * workspace lock is active — surfaces it to every user on the account so a
+ * workspace lock is active - surfaces it to every user on the account so a
  * teammate on another tab understands why the run controls are greyed out. Once
  * the lock clears, if the run that held it failed (e.g. out of credits), shows
  * what went wrong instead of just silently disappearing.
  *
  * QA F20: the copy used to name Regenerate and Refresh Task Map to EVERY viewer,
- * including CLIENT_USERs, who have neither control — both are staff-only actions.
+ * including CLIENT_USERs, who have neither control - both are staff-only actions.
  * `isClientViewer` picks the wording; `isAdmin` still gates the raw error string.
  * Employees (staff, not admin) keep the control names, which the old `isAdmin`
  * split got wrong in the other direction.
@@ -38,8 +38,8 @@ export function AiProcessingBanner({
           <span className="font-medium">Karos Agents are building your workspace strategy</span>{" "}
           <span className="text-muted">
             {isClientViewer
-              ? "— this usually takes a few minutes. Your workspace updates on its own when it finishes."
-              : "— Regenerate and Refresh Task Map are locked until this finishes."}
+              ? "- this usually takes a few minutes. Your workspace updates on its own when it finishes."
+              : "- Regenerate and Refresh Task Map are locked until this finishes."}
           </span>
         </p>
       </div>
@@ -64,10 +64,10 @@ export function AiProcessingBanner({
           <p>
             <span className="font-medium">We hit a snag building your workspace strategy.</span>{" "}
             {/* Says only what the product does: the failure is on the client's
-                activity timeline and badged on the staff client list — no email
+                activity timeline and badged on the staff client list - no email
                 or push is sent, so it must not claim one (QA F69). */}
             <span className="text-muted">
-              Your Karos team can see it and is on it — nothing for you to do.
+              Your Karos team can see it and is on it - nothing for you to do.
             </span>
           </p>
         ) : (

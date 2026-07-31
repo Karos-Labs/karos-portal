@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { Icon } from "@/components/icon";
 import { Badge } from "@/components/ui";
+import { normalizeDashes } from "@/lib/text-utils";
 import type { TranscriptTurn, TranscriptBlock } from "@/lib/agent-service/transcript";
 
 /**
- * Renders the agent's run transcript — its reasoning ("thinking"), the text it
+ * Renders the agent's run transcript - its reasoning ("thinking"), the text it
  * wrote, and the tool calls / results that produced the deliverables. Tool
  * details and results are collapsed by default to keep the run scannable.
  */
@@ -39,7 +40,11 @@ function Turn({ turn }: { turn: TranscriptTurn }) {
 function Block({ block }: { block: TranscriptBlock }) {
   switch (block.kind) {
     case "text":
-      return <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{block.text}</p>;
+      return (
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+          {normalizeDashes(block.text)}
+        </p>
+      );
 
     case "thinking":
       return (
@@ -47,10 +52,12 @@ function Block({ block }: { block: TranscriptBlock }) {
           icon="Brain"
           label="Thinking"
           tone="muted"
-          preview={firstLine(block.text)}
+          preview={firstLine(normalizeDashes(block.text))}
           defaultOpen={block.text.length < 400}
         >
-          <p className="whitespace-pre-wrap text-xs italic leading-relaxed text-muted">{block.text}</p>
+          <p className="whitespace-pre-wrap text-xs italic leading-relaxed text-muted">
+            {normalizeDashes(block.text)}
+          </p>
         </Disclosure>
       );
 

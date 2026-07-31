@@ -65,7 +65,7 @@ export default async function ConnectPage() {
             <p className="text-sm text-muted">
               Claude Code will read the client&apos;s context, start the repo agent through the agent
               service, and you can poll it; results land in Jobs and Assets for review as usual.
-              Running an agent is the only thing the server starts — the catalog products run from
+              Running an agent is the only thing the server starts - the catalog products run from
               the client&apos;s own task board, not over MCP.
             </p>
           </Card>

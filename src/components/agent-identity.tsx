@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 export type SocialPlatform = "instagram" | "x" | "tiktok" | "linkedin" | "reddit" | "facebook" | "youtube";
 
 /**
- * Real platform logos (simple-icons paths, 24x24, currentColor) — the same
+ * Real platform logos (simple-icons paths, 24x24, currentColor) - the same
  * marks the karos-labs landing page hero uses, so an agent carries one
  * identity from the marketing site through the whole app.
  */
@@ -92,7 +92,7 @@ export function AgentMark({ identity, icon, className }: { identity: string; ico
 }
 
 /**
- * The agent avatar chip — the landing page hero treatment: the real mark in
+ * The agent avatar chip - the landing page hero treatment: the real mark in
  * light gray on a neutral dark rounded square. Agents spanning two platforms
  * (e.g. Instagram + TikTok social posts) stack both logos.
  */

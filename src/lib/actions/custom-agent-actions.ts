@@ -194,6 +194,26 @@ export async function updateCustomAgentAction(
   return {};
 }
 
+/**
+ * Admin-only Live/Paused toggle for the Agents page — a fast one-click flip
+ * that doesn't require opening the full editor. Pausing an agent blocks new
+ * client runs immediately (submitCustomAgentJob already refuses a disabled
+ * agent) and turns its card into "Coming Soon" on every client roster that
+ * had it granted.
+ */
+export async function setCustomAgentEnabledAction(
+  id: string,
+  enabled: boolean,
+): Promise<{ error?: string }> {
+  await requireAdmin();
+  const agent = await getCustomAgent(id);
+  if (!agent) return { error: "Agent not found." };
+  await updateCustomAgent(id, { enabled, updatedAt: Date.now() });
+  revalidatePath("/agents");
+  revalidatePath("/clients");
+  return {};
+}
+
 export async function deleteCustomAgentAction(id: string): Promise<{ error?: string }> {
   await requireAdmin();
   await deleteCustomAgent(id);

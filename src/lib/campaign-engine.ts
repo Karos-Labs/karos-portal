@@ -30,7 +30,7 @@ import {
 } from "@/lib/data";
 import { taskWeekKey, findDuplicateReason } from "@/lib/task-dedup";
 import { freshnessGuard } from "@/lib/entropy-guard";
-import type { TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
+import type { ClientTask, TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
 
 const SOCIAL_PLATFORMS = ["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"] as const;
 
@@ -113,6 +113,34 @@ export function buildCampaignTaskDrafts(blueprint: CampaignBlueprint): CampaignT
     dependsOnRoles: ["anchor"],
   }));
   return [anchor, newsletter, ...socials];
+}
+
+/**
+ * A dependency's content is usable by the piece that depends on it once it has
+ * actually produced a deliverable — review_pending (drafted, awaiting
+ * approval) or completed. Still pending/in_progress means there is nothing yet
+ * for a dependent piece (e.g. the newsletter) to build on.
+ */
+function dependencyContentExists(status: ClientTask["status"]): boolean {
+  return status === "review_pending" || status === "completed";
+}
+
+/**
+ * The titles of this task's campaign dependencies that haven't produced a
+ * deliverable yet — empty when the task is clear to execute. Pure so the
+ * resume/start action paths and the Run View UI can share one readiness rule.
+ * A dependency id that no longer resolves to a task (deleted) is NOT treated
+ * as blocking — it can never become satisfied, and would strand the campaign.
+ */
+export function unmetCampaignDependencyTitles(
+  task: Pick<ClientTask, "dependsOnTaskIds">,
+  tasksById: Map<string, Pick<ClientTask, "title" | "status">>,
+): string[] {
+  return (task.dependsOnTaskIds ?? [])
+    .map((id) => tasksById.get(id))
+    .filter((dep): dep is { title: string; status: ClientTask["status"] } => !!dep)
+    .filter((dep) => !dependencyContentExists(dep.status))
+    .map((dep) => dep.title);
 }
 
 /* ── Generation + persistence ────────────────────────────────────────── */

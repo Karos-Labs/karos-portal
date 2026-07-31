@@ -53,7 +53,7 @@ function EditClientModal({
     agentsRepoSlug: client.agentsRepoSlug ?? "",
   });
 
-  // Logo — uploaded/removed immediately via the logo API route (client already exists).
+  // Logo - uploaded/removed immediately via the logo API route (client already exists).
   const [logoUrl, setLogoUrl] = useState(client.logoUrl ?? "");
   const [logoFileName, setLogoFileName] = useState<string | null>(null);
   const [logoUploading, setLogoUploading] = useState(false);
@@ -351,11 +351,11 @@ export function ClientsGrid({
   clients: Client[];
   /**
    * Keyed by client id. The grid used to receive every asset and every job in
-   * the database — the whole collections serialized into the RSC payload — to
+   * the database - the whole collections serialized into the RSC payload - to
    * print two numbers per card.
    */
   counts: Record<string, ClientCardCounts>;
-  /** Spendable credits per client id — availableCredits(), resolved server-side. */
+  /** Spendable credits per client id - availableCredits(), resolved server-side. */
   credits?: Record<string, number>;
 }) {
   const [clients, setClients] = useState(initialClients);
@@ -468,7 +468,7 @@ export function ClientsGrid({
                 </Card>
               </Link>
 
-              {/* Action buttons — revealed on card hover */}
+              {/* Action buttons - revealed on card hover */}
               <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                 <button
                   onClick={() => setEditTarget(c)}

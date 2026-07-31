@@ -44,7 +44,7 @@ function renderMarkdown(text: string) {
       listItems.push(line.replace(/^[->*]\s+/, "").trim());
     } else if (line.startsWith("|")) {
       flushList();
-      // skip table rows — markdown tables are raw, skip for now
+      // skip table rows - markdown tables are raw, skip for now
     } else if (line.trim()) {
       flushList();
       nodes.push(

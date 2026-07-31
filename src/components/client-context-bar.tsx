@@ -5,7 +5,7 @@ import { Icon } from "@/components/icon";
 import { useActiveClient } from "@/lib/active-client-context";
 
 /**
- * Persistent bar for CLIENT-CONTEXT mode — the staff picker that re-points the
+ * Persistent bar for CLIENT-CONTEXT mode - the staff picker that re-points the
  * workspace at one client.
  *
  * Two different features used to share the "View as" label and the eye icon:

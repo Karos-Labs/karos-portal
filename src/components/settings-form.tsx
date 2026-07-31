@@ -181,16 +181,16 @@ function ProfileTab({
         </form>
       </Card>
 
-      {/* Resume / CV — powers the LinkedIn advocacy voice */}
+      {/* Resume / CV - powers the LinkedIn advocacy voice */}
       <Card>
         <CardTitle className="mb-1">Resume / CV</CardTitle>
         <p className="mb-3 text-xs text-muted-2">
-          Stored for your Karos team — they use it when writing your LinkedIn advocacy posts.
+          Stored for your Karos team - they use it when writing your LinkedIn advocacy posts.
         </p>
         <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
       </Card>
 
-      {/* Account metadata — read-only */}
+      {/* Account metadata - read-only */}
       <Card>
         <CardTitle className="mb-4">Account details</CardTitle>
         <dl className="space-y-3">
@@ -306,7 +306,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
         </div>
       </Card>
 
-      {/* Password change — only for email/password accounts */}
+      {/* Password change - only for email/password accounts */}
       {hasPassword && (
         <Card>
           <CardTitle className="mb-4">Change password</CardTitle>

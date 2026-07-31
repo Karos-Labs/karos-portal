@@ -45,7 +45,7 @@ export function TokenManager({ tokens, mcpUrl }: { tokens: AccessToken[]; mcpUrl
 
   return (
     <div className="space-y-4">
-      {/* Newly minted token — shown once */}
+      {/* Newly minted token - shown once */}
       {fresh && (
         <div className="space-y-2 rounded-md border border-neon/40 bg-neon-soft p-3">
           <p className="flex items-center gap-1.5 text-xs font-medium text-neon">

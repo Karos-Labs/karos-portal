@@ -28,12 +28,12 @@ const HEALTH_TONE: Record<AgentHealth, "success" | "warning" | "danger" | "neutr
 };
 
 /**
- * Staff-only Control Room — consolidates what used to be three scattered
+ * Staff-only Control Room - consolidates what used to be three scattered
  * sections on the agent detail page (StaffAgentControls, AgentRunHistory,
  * AgentEconomicsCard) into one tabbed panel, adding the capability item 1/2/3
  * actually asked for: a real (not fabricated) health read, an explicit next-
  * scheduled-execution line, a Test Run trigger, and per-run error
- * classification. Nothing here is shown to a CLIENT_USER — this component is
+ * classification. Nothing here is shown to a CLIENT_USER - this component is
  * only ever mounted from the page's existing `isStaff` gate, same as the
  * three sections it replaces.
  */
@@ -58,7 +58,7 @@ export function ControlRoom({
   initialOpenAssetId,
 }: {
   health: AgentHealth;
-  /** e.g. "Next run in 2h 15m" — null when there's no active schedule to project. */
+  /** e.g. "Next run in 2h 15m" - null when there's no active schedule to project. */
   nextRunLabel: string | null;
   clientId: string;
   agent: RunnableAgentSummary;
@@ -72,12 +72,12 @@ export function ControlRoom({
   runs: CustomAgentRunRow[];
   agents: RunnableAgentSummary[];
   economics: AgentEconomics | null;
-  /** Umbrella display name when one exists, else the raw agent name — matches what the economics card showed before this consolidation. */
+  /** Umbrella display name when one exists, else the raw agent name - matches what the economics card showed before this consolidation. */
   economicsAgentName: string;
   launchCreditCost: number | null;
-  /** This agent's full output set (uncapped) — see OutputsHub's doc comment. */
+  /** This agent's full output set (uncapped) - see OutputsHub's doc comment. */
   outputs: Asset[];
-  /** Copilot chat's deep link — lands on the Outputs tab with this asset already open. */
+  /** Copilot chat's deep link - lands on the Outputs tab with this asset already open. */
   initialOpenAssetId?: string;
 }) {
   const [tab, setTab] = useState<ControlRoomTab>(initialOpenAssetId ? "outputs" : "overview");

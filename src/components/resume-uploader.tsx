@@ -15,7 +15,7 @@ function fileNameFromUrl(url: string): string {
 }
 
 /**
- * Shared resume/CV drag-and-drop uploader — used by both the onboarding wizard
+ * Shared resume/CV drag-and-drop uploader - used by both the onboarding wizard
  * (step 1) and the account settings profile tab. Uploads immediately; the URL
  * powers the employee-advocacy LLM voice (execution-engine.ts).
  */

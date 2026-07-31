@@ -437,7 +437,7 @@ export function deliveredAgentIds(
   );
 }
 
-export type RosterStatusTone = "live" | "attention" | "progress" | "idle";
+export type RosterStatusTone = "live" | "attention" | "progress" | "idle" | "disabled";
 
 export interface RosterStatus {
   tone: RosterStatusTone;
@@ -484,7 +484,17 @@ export function rosterStatus(input: {
    * the same way.
    */
   hasDelivered?: boolean;
+  /**
+   * False when an admin has paused this agent (`CustomAgent.enabled`) — the
+   * roster card must say "Coming Soon" rather than any live/progress/idle
+   * word, whatever the umbrella or schedule underneath it looks like. This
+   * outranks even a schedule refusal: a paused agent isn't "needing
+   * attention", it simply isn't running for anyone right now. Defaults to
+   * true so every existing caller (managed products, tests) is unaffected.
+   */
+  enabled?: boolean;
 }): RosterStatus {
+  if (input.enabled === false) return { tone: "disabled", label: "Coming Soon" };
   if (input.scheduleRefusal?.trim()) return { tone: "attention", label: "Needs attention" };
 
   if (input.launchState === null) {

@@ -54,7 +54,7 @@ export function CompetitorTrack({
   // whatever's left after a removal so the next-best rival fills the freed slot.
   // Rows added from this rail since the last server render. The sidebar's list
   // is route-scoped context that only the client-page layout refills, so on any
-  // other route a refresh can't bring a new row back (QA F62) — we hold it here
+  // other route a refresh can't bring a new row back (QA F62) - we hold it here
   // until the server list catches up.
   const [addedRows, setAddedRows] = useState<ClientCompetitor[]>([]);
 
@@ -127,7 +127,7 @@ export function CompetitorTrack({
           },
         ]);
         // A row that was already tracked (or promoted from "report" to
-        // "manual") leaves the count unchanged — say so rather than looking
+        // "manual") leaves the count unchanged - say so rather than looking
         // like nothing happened.
         if (!row.created) setAddError(`${row.company} is already tracked.`);
         setAddName("");
@@ -208,7 +208,7 @@ export function CompetitorTrack({
         <ul>
           {displayed.map((c) => {
             // CD-H3: a stored url wins, but a row that has none and whose NAME
-            // is a domain ("Okara.ai", "ploy.ai") is just as linkable — and the
+            // is a domain ("Okara.ai", "ploy.ai") is just as linkable - and the
             // favicon beside it already resolves through exactly this fallback,
             // so the row showed the brand's real icon and then refused to open
             // it. Same derivation, one source (lib/favicon). Neither present
@@ -230,7 +230,7 @@ export function CompetitorTrack({
                 </span>
                 {/* CD-G4: the same ↗ the client chip uses, so "opens a site in
                     a new tab" reads identically everywhere in the rail. Shown
-                    to staff and clients alike — only the trash beside it is
+                    to staff and clients alike - only the trash beside it is
                     staff-gated. opacity-0 rather than conditional rendering so
                     the row keeps its width on hover and the favicon never
                     shifts. */}
@@ -300,7 +300,7 @@ export function BrandColorsSection({
   /**
    * Staff shells only. Gates the internal usage-percentage display and the
    * matching editor field (CD-E2). This is defence in depth, not the boundary:
-   * a client's payload has no usagePct at all — toClientPortalView strips it.
+   * a client's payload has no usagePct at all - toClientPortalView strips it.
    */
   isStaff?: boolean;
 }) {
@@ -317,7 +317,7 @@ export function BrandColorsSection({
   }, [copied]);
 
   async function copyHex(hex: string, index: number) {
-    // Insecure origin, an older browser, or a denied permission — say nothing
+    // Insecure origin, an older browser, or a denied permission - say nothing
     // and leave the tooltip showing the hex, which is still readable and
     // selectable. Claiming a copy that never happened is the worse failure.
     if (!navigator.clipboard?.writeText) return;
@@ -325,7 +325,7 @@ export function BrandColorsSection({
       await navigator.clipboard.writeText(hex);
       setCopied(index);
     } catch {
-      // Same reasoning — no false confirmation.
+      // Same reasoning - no false confirmation.
     }
   }
 
@@ -358,9 +358,9 @@ export function BrandColorsSection({
 
         {effective.length > 0 ? (
         /* 20px swatches at a 4px gap is what the STAFF rail can actually give
-           this row. w-64 less px-4 is 223px of content — 213px while the rail
+           this row. w-64 less px-4 is 223px of content - 213px while the rail
            is scrolled, because a classic scrollbar takes its 10px out of the
-           content box — and the label (79) + the edit control (20) + two 8px
+           content box - and the label (79) + the edit control (20) + two 8px
            gaps leave 98px for four swatches. At the old 28px they overflowed
            by 60px and the rail grew a horizontal scrollbar of its own. */
         <div className="flex min-w-0 flex-1 items-center gap-1">
@@ -386,7 +386,7 @@ export function BrandColorsSection({
                   // Widest that still clears the rail now that the swatches
                   // start AFTER the label (CD-H2): the binding case is the
                   // second swatch, left-anchored 115px into a 223px staff row.
-                  // The label wraps rather than running off-screen — and an
+                  // The label wraps rather than running off-screen - and an
                   // absolutely-positioned tooltip counts toward scrollWidth
                   // even at opacity 0, so overflowing here would put the
                   // horizontal scrollbar straight back.
@@ -411,7 +411,7 @@ export function BrandColorsSection({
                       {color.role && (
                         <span className="ml-1 font-sans text-muted-2">· {color.role}</span>
                       )}
-                      {/* Internal mix share — staff only; a client's payload
+                      {/* Internal mix share - staff only; a client's payload
                           never carries the number (CD-E2). It used to be a
                           caption UNDER the swatch, which is the second line
                           this section no longer has (CD-H2); the number itself
@@ -419,7 +419,7 @@ export function BrandColorsSection({
                           shows the hex and the role. */}
                       {showUsage && (
                         <span className="ml-1 font-sans text-muted-2">
-                          · {color.usagePct != null ? `${color.usagePct}%` : "—"}
+                          · {color.usagePct != null ? `${color.usagePct}%` : "-"}
                         </span>
                       )}
                     </>

@@ -22,7 +22,7 @@ function parseView(value: string | null): View {
 }
 
 /**
- * Client-facing Workspace view — the task board (what's next), the activity
+ * Client-facing Workspace view - the task board (what's next), the activity
  * timeline (what happened), and the per-agent archive (everything delivered)
  * behind a single segmented toggle.
  *
@@ -45,21 +45,21 @@ export function ProgressView({
   currentUserRole: Role;
   clientId: string;
   /**
-   * Projected and redacted per viewer role (see TasksBody) — never whole
+   * Projected and redacted per viewer role (see TasksBody) - never whole
    * ActivityLog docs, whose stored actor names and staff notes would then be
    * in the payload for a client to read.
    */
   activityLogs: TimelineActivity[];
-  /** Projected to the five fields the timeline renders — never whole Job docs. */
+  /** Projected to the five fields the timeline renders - never whole Job docs. */
   jobs: TimelineJob[];
   report: ClientReport | null;
-  /** Pre-redacted per viewer role (see TasksBody) — feeds the Archive tab. */
+  /** Pre-redacted per viewer role (see TasksBody) - feeds the Archive tab. */
   assets: Asset[];
   /**
    * assetId → the ONE name its archive group may carry, resolved server-side
    * through the §7.3 identity helper (F147). This used to be a jobId →
    * job.agentName map built right here, which made the archive a second
-   * answer to "who made this" — and the one that still printed the
+   * answer to "who made this" - and the one that still printed the
    * managed-product label next to the umbrella's own name.
    */
   agentLabelByAssetId: Record<string, string>;

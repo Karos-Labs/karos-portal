@@ -10,7 +10,7 @@ import { LabImportButton } from "@/components/lab-import";
 import { OpsImport } from "@/components/ops-import";
 
 /**
- * Ops Import (admin only) — land work produced locally into the live portal.
+ * Ops Import (admin only) - land work produced locally into the live portal.
  *
  * Two discovery sources for proposals, one write path:
  *   · the karos-agents lab repo (clients/<slug>/refresh/*.json), scanned by
@@ -23,7 +23,7 @@ import { OpsImport } from "@/components/ops-import";
  * implementation. That flow already reads the committed karos-agents run
  * outputs and creates draft assets through the same createAsset path the
  * agent-service webhook uses, with per-item idempotency and the one-post/day
- * chain reflow. Reimplementing it here would have forked the asset writer —
+ * chain reflow. Reimplementing it here would have forked the asset writer -
  * the one thing this page must not do.
  *
  * Runbook: docs/qa-sweep-2026-07/refresh/OPS-IMPORT.md
@@ -79,7 +79,7 @@ export default async function OpsImportPage() {
         </div>
         <p className="mb-3 text-xs text-muted">
           Imports the committed <code className="font-mono">client/</code> deliverables from a lab run. Everything lands
-          as a <strong>draft</strong> for staff review — a client never sees an imported post until it is approved.
+          as a <strong>draft</strong> for staff review - a client never sees an imported post until it is approved.
           &ldquo;Check for updates&rdquo; above tells you which clients have runs you have not imported yet.
         </p>
 
@@ -122,7 +122,7 @@ export default async function OpsImportPage() {
  * What this page can and cannot reach, named by env var.
  *
  * Written because the AI Agents tab simply HIDES its "Import lab outputs"
- * button when AGENTS_REPO_GITHUB_TOKEN is missing — a missing feature looks
+ * button when AGENTS_REPO_GITHUB_TOKEN is missing - a missing feature looks
  * identical to a feature that was never built, and Albert lost time to exactly
  * that. A missing capability should say its own name.
  */
@@ -146,7 +146,7 @@ function ConfigStrip({
         detail={
           labReady
             ? `${repo} · ${wiredClients} client${wiredClients === 1 ? "" : "s"} with a lab slug`
-            : "Unset — Check for updates cannot scan, and the per-client “Import lab outputs” button is hidden everywhere in the app."
+            : "Unset - Check for updates cannot scan, and the per-client “Import lab outputs” button is hidden everywhere in the app."
         }
       />
       <ConfigRow
@@ -155,7 +155,7 @@ function ConfigStrip({
         label="Ops inbox"
         detail={
           inboxDir ??
-          "Unset — proposals dropped on the server are not read, and SEO/GEO snapshots cannot be imported. The lab-repo source still works."
+          "Unset - proposals dropped on the server are not read, and SEO/GEO snapshots cannot be imported. The lab-repo source still works."
         }
       />
     </div>

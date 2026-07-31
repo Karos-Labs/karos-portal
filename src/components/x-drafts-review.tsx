@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * The X drafts reader: a parsed draft batch rendered as readable cards —
+ * The X drafts reader: a parsed draft batch rendered as readable cards -
  * grouped per account, one card per avenue, the post text large and scannable
- * — with pick / edit / skip actions wired into the per-account feedback loop.
+ * - with pick / edit / skip actions wired into the per-account feedback loop.
  *
  * Picking is also the posting hand-off: the pick copies the final text to the
  * clipboard and opens X's compose window pre-filled (replies pre-addressed to
  * the target post, quote-comments carrying the quoted URL). Draft-only stays
- * true — the human presses Post on X.
+ * true - the human presses Post on X.
  *
  * Chrome-less by design: it embeds wherever outputs live (the asset card in
  * the archive and on the job page).
@@ -36,7 +36,7 @@ function charLabel(chars?: string): string | null {
   return Number(n) > 280 ? `${Number(n).toLocaleString()} chars · long-form` : `${n} / 280`;
 }
 
-/** A look at the post a reply or quote-comment aims at — records nothing. */
+/** A look at the post a reply or quote-comment aims at - records nothing. */
 function TargetLink({ href, label }: { href: string; label: string }) {
   return (
     <a
@@ -83,7 +83,7 @@ function DraftCard({
   async function send(action: SentState, textUsed?: string) {
     setError(null);
     // Picking IS the posting hand-off. The clipboard write is AWAITED before
-    // window.open — Chrome rejects clipboard writes once the new tab steals
+    // window.open - Chrome rejects clipboard writes once the new tab steals
     // focus, and for threads the clipboard is what carries posts 2..N. The
     // await stays inside the click gesture's transient activation, so popup
     // blockers still allow the open. A retry after a failed feedback write
@@ -122,7 +122,7 @@ function DraftCard({
       if (result.error) {
         setError(
           handedOff && action !== "not_posted"
-            ? `${result.error} Your post is already open on X — click again to retry recording the pick (X will not reopen).`
+            ? `${result.error} Your post is already open on X - click again to retry recording the pick (X will not reopen).`
             : result.error,
         );
         return;
@@ -312,7 +312,7 @@ function DraftCard({
   );
 }
 
-/** A parsed batch, chrome-less — the host (asset card, job page) owns the frame. */
+/** A parsed batch, chrome-less - the host (asset card, job page) owns the frame. */
 export function XDraftsBatch({
   clientId,
   jobId,
@@ -328,7 +328,7 @@ export function XDraftsBatch({
   return (
     <div className="space-y-5">
       {/* A3/A4: this used to open "About a week of posting to choose from" and
-          close on "the next batch" — two statements of the batch shape on the
+          close on "the next batch" - two statements of the batch shape on the
           one client-reachable surface where the drafts are visibly a set. The
           LinkedIn twin was scrubbed already; this is the same treatment, so the
           two reviews say the same thing about how the work arrives (nothing). */}

@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/ui";
 import { RedditAgentIntake } from "@/components/reddit-agent-intake";
 
 /**
- * The client's Reddit agent page: the account form and feedback — the one
+ * The client's Reddit agent page: the account form and feedback - the one
  * canonical set of Reddit intake surfaces, mounted with the same props the run
  * dialog renders inline. Nothing in the navigation points here; it is the
  * fallback for a caller that ships the setup flag without the inline payload,
@@ -32,7 +32,7 @@ export default async function RedditAgentPage({ params }: { params: Promise<{ id
     <>
       <PageHeader
         title="Reddit agent"
-        description="What we collect to run Reddit for you: the account we draft as, how much history it has, and how you want mentions handled. We work out the subreddits and the questions worth answering. Drafts only — we never post to Reddit, you post the reply yourself."
+        description="What we collect to run Reddit for you: the account we draft as, how much history it has, and how you want mentions handled. We work out the subreddits and the questions worth answering. Drafts only - we never post to Reddit, you post the reply yourself."
         action={
           <a
             href={`/clients/${id}/agents`}

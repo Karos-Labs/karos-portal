@@ -26,8 +26,8 @@ import type { ClientCredits, CreditLedgerEntry, Role } from "@/lib/types";
  * lives on the agent card, not here.
  */
 /**
- * The rate card. These labels are BILLING vocabulary — the priced units a
- * client is charged in — and the §7.3 identity helper deliberately does not
+ * The rate card. These labels are BILLING vocabulary - the priced units a
+ * client is charged in - and the §7.3 identity helper deliberately does not
  * touch them (F147/WP-7).
  *
  * The boundary: identity answers "who made this thing in front of me", so a
@@ -69,13 +69,13 @@ function UsageMeter({
   spent: number;
   limit: number | null;
   /**
-   * When this window's cap lifts — the clause from CREDIT_WINDOW_RESET, so it is
+   * When this window's cap lifts - the clause from CREDIT_WINDOW_RESET, so it is
    * the same sentence the denial cites. A client could previously only learn
    * this by hitting the wall, since it lived inside assessCharge's messages.
    */
   resetNote?: string;
 }) {
-  // A cap of 0 means "no spending allowed" — show it as fully used.
+  // A cap of 0 means "no spending allowed" - show it as fully used.
   const pct =
     limit == null ? 0 : limit === 0 ? 100 : Math.min(100, Math.round((spent / limit) * 100));
   return (
@@ -97,7 +97,7 @@ function UsageMeter({
       )}
       {limit != null && resetNote && (
         <p className={cn("mt-1 text-[11px]", pct >= 100 ? "text-warning" : "text-muted-2")}>
-          {/* Capitalised clause — the denial renders it mid-sentence. */}
+          {/* Capitalised clause - the denial renders it mid-sentence. */}
           {resetNote.charAt(0).toUpperCase() + resetNote.slice(1)}
         </p>
       )}
@@ -138,14 +138,14 @@ export function CreditsPanel({
 }) {
   const router = useRouter();
   const isAdmin = role === "KAROS_ADMIN";
-  // What the client can actually spend — the same helper the rail and the
+  // What the client can actually spend - the same helper the rail and the
   // Agents page use, so the three surfaces can no longer disagree. `now` is
   // omitted deliberately: the doc arrives from getClientCredits, which already
   // rolled its windows, and calling Date.now() during a client render would
   // make the value differ between the server and hydration passes.
   const spendable = availableCredits(credits);
   // Spending is walled when not even the cheapest billable action fits. Which
-  // limit did it — balance, weekly cap or monthly cap — comes from the same
+  // limit did it - balance, weekly cap or monthly cap - comes from the same
   // ladder assessCharge uses, so this card names exactly what the server would
   // refuse on rather than guessing from whichever meter looks fullest.
   const probeCost = CREDIT_COSTS.chatMessage;
@@ -215,7 +215,7 @@ export function CreditsPanel({
             AI actions (agent runs, copilot messages, task executions, doc corrections) spend credits.
           </p>
           {/* The subtitle named the actions but never their prices, so the
-              ledger — a record of what you have ALREADY been charged — was the
+              ledger - a record of what you have ALREADY been charged - was the
               only place in the product that told a client what anything costs.
               Rendered from the pricing constants, never a hand-typed copy. */}
           <p className="mt-1 text-xs text-muted-2">
@@ -230,7 +230,7 @@ export function CreditsPanel({
               client can spend: assessCharge clips it by the weekly/monthly caps.
               With a cap binding, this card promised 180 while the Agents page
               said 0 and every Run button was dead. The raw balance is still
-              worth showing — it's what a cap release would hand back — but it
+              worth showing - it's what a cap release would hand back - but it
               is the secondary number now. */}
           {spendable !== credits.balance && (
             <p className="mt-0.5 text-[11px] text-muted-2">{credits.balance} on balance</p>
@@ -283,8 +283,8 @@ export function CreditsPanel({
       {/* Hitting a cap used to be silent: two meters, one of them red, and no
           sentence anywhere. The wording already existed but only ever appeared
           AFTER an action failed, inside assessCharge's denial. `blocked` is the
-          real condition — availableCredits clips the balance by both caps, so a
-          maxed weekly window and an empty balance both land here — and the line
+          real condition - availableCredits clips the balance by both caps, so a
+          maxed weekly window and an empty balance both land here - and the line
           is creditBlockReason at the cheapest billable action, i.e. the limit
           the server would cite for their very next spend. */}
       {blocked && (
@@ -293,8 +293,8 @@ export function CreditsPanel({
           <div className="min-w-0 flex-1 space-y-1">
             <p className="text-xs font-medium text-foreground">{blockReason}</p>
             {/* "until then" only parses when the reason named a reset day. A
-                balance shortfall has no date attached — it lifts on a top-up,
-                not on a Monday — so that sentence has to end differently. */}
+                balance shortfall has no date attached - it lifts on a top-up,
+                not on a Monday - so that sentence has to end differently. */}
             <p className="text-xs text-muted">
               Agent runs, copilot messages, task executions and doc corrections are paused
               {bindingLimit === "insufficient_balance" ? " until credits are added." : " until then."}
@@ -371,7 +371,7 @@ export function CreditsPanel({
           answered "what am I paying for", which is the question a client
           actually brings to this page. Spend per agent, split into the setup
           they paid once for, the schedule they chose, and the runs they started
-          themselves — the three things they can act on. Aggregated server-side
+          themselves - the three things they can act on. Aggregated server-side
           over the whole ledger, not over the capped feed below. */}
       {spendByAgent && spendByAgent.length > 0 && (
         <div className="mt-5 border-t border-border pt-4">

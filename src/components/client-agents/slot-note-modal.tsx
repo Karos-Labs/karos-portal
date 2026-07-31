@@ -22,8 +22,8 @@ const WEEKDAY_LONG = [
 /**
  * A note about ONE day (§4.3, CD-A3).
  *
- * The copy is the load-bearing part. A note is not feedback — feedback shapes
- * everything the agent writes from here on, a note is about Thursday — and the
+ * The copy is the load-bearing part. A note is not feedback - feedback shapes
+ * everything the agent writes from here on, a note is about Thursday - and the
  * dialog says so, because a client who leaves "make this one about the launch"
  * expecting it to become a standing rule has been misled by the surface.
  *
@@ -71,7 +71,7 @@ export function SlotNoteModal({
       title={`Note for ${dayName}`}
       // The label is already a noun for the post ("Daily post", "By The Numbers"),
       // so appending "post" produced "About this one Daily post post".
-      description={`About this one — the ${day.label} going out that day, not a standing rule. To change what this agent always does, use Give feedback instead.`}
+      description={`About this one - the ${day.label} going out that day, not a standing rule. To change what this agent always does, use Give feedback instead.`}
       footer={
         <div className="flex items-center justify-end gap-2">
           <Button variant="ghost" onClick={onClose} disabled={pending}>

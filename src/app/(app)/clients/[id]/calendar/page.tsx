@@ -6,7 +6,7 @@ import { CalendarBody } from "@/app/(app)/calendar/calendar-body";
 /**
  * Staff browsing a single client's Calendar via the sidebar's "View as
  * client" picker. CLIENT_USER already has their own Calendar at the flat
- * /calendar route — sent back there rather than duplicating it here.
+ * /calendar route - sent back there rather than duplicating it here.
  */
 export default async function ClientCalendarPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();

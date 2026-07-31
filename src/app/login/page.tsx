@@ -68,7 +68,7 @@ export default function LoginPage() {
 
   // Posts the Firebase ID token to the session endpoint. Returns the server's
   // decision: the account needs email verification, or the session was accepted
-  // with a role/clientId. Does NOT navigate — callers decide when.
+  // with a role/clientId. Does NOT navigate - callers decide when.
   async function establishSession(): Promise<SessionResult> {
     const idToken = await auth.currentUser!.getIdToken(true);
     const res = await fetch("/api/auth/session", {
@@ -129,11 +129,11 @@ export default function LoginPage() {
         return;
       }
 
-      // Save the Google access token before navigating — if the browser navigates
+      // Save the Google access token before navigating - if the browser navigates
       // first, the in-flight server-action fetch can be aborted.
       if (googleAccessToken) {
         // Non-blocking: a failed token save shouldn't block login, but it must
-        // not vanish silently — otherwise Google-gated features appear "not
+        // not vanish silently - otherwise Google-gated features appear "not
         // connected" with no clue why. Log it so it's diagnosable.
         const saved = await saveGoogleOAuthTokenAction(googleAccessToken).catch(
           (e) => ({ ok: false as const, error: e instanceof Error ? e.message : "save failed" }),
@@ -171,7 +171,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm animate-fade-up">
 
-        {/* Wordmark lockup — head disc + Spectral (brand §2.2) */}
+        {/* Wordmark lockup - head disc + Spectral (brand §2.2) */}
         <div className="mb-8 text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -245,7 +245,7 @@ export default function LoginPage() {
             </Button>
           </div>
 
-          {/* Unverified email — offer to resend the verification link */}
+          {/* Unverified email - offer to resend the verification link */}
           {needsVerify && (
             <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-center">
               <p className="text-[11px] text-muted">

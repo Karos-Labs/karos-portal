@@ -19,7 +19,7 @@ import type { ClientAgentCardRow } from "./types";
  * the same full page a client opens, so an umbrella's launch card, live card,
  * template rows and week strip are rendered ONCE, by the detail route, for both
  * audiences. What survives here are the two controls that were never per-card
- * in spirit — binding an agent to this client, which is a roster-level gesture,
+ * in spirit - binding an agent to this client, which is a roster-level gesture,
  * and curating a template set, which belongs beside the agent it curates.
  *
  * Both are exported now rather than private to a section component, because the
@@ -29,7 +29,7 @@ import type { ClientAgentCardRow } from "./types";
 /* ─────────────────────────── staff: bind ───────────────────────────── */
 
 /**
- * Bind a lab agent to this client — the gesture that creates the umbrella a
+ * Bind a lab agent to this client - the gesture that creates the umbrella a
  * template set and schedule hang off. Roster-level: it is about which agents
  * this client HAS, which is the question the roster answers.
  */
@@ -61,7 +61,7 @@ export function BindAgentControl({
         setError(result.error);
         return;
       }
-      // The agent is already working for this client — binding it as
+      // The agent is already working for this client - binding it as
       // not-set-up would take its Run button, its schedule row and its run
       // history off the client's page and replace them with "Not set up yet"
       // (W6). Nothing was written; staff choose which of the two they meant.
@@ -112,7 +112,7 @@ export function BindAgentControl({
         <div className="max-w-sm rounded-[var(--radius)] border border-warning/30 bg-warning/10 p-2.5 text-right">
           <p className="text-[11px] text-warning">
             {selectedName} is already producing for this client. Adding it as new hides its Run
-            button, its schedule row and its run history from the client until you launch it — its
+            button, its schedule row and its run history from the client until you launch it - its
             weekly schedule keeps firing, so pause that too if you mean to stop it.
           </p>
           <div className="mt-1.5 flex justify-end gap-1.5">
@@ -138,7 +138,7 @@ export function BindAgentControl({
 /**
  * Where staff confirm the template set before a client ever sees it (the Q3
  * default: the curation gate survives even once the setup run emits
- * templates.json — it just becomes one click).
+ * templates.json - it just becomes one click).
  *
  * Keys are the JOIN with Asset.templateKey, so they are validated here and
  * again on the server; a key that drifts silently unhooks every future post
@@ -251,7 +251,7 @@ export function CurationPane({ agent }: { agent: ClientAgentCardRow }) {
               <Textarea
                 value={row.rationale ?? ""}
                 onChange={(e) => update(index, { rationale: e.target.value })}
-                placeholder="Why this format fits this client — the client reads this line."
+                placeholder="Why this format fits this client - the client reads this line."
                 rows={2}
                 className="text-xs"
                 aria-label="Template rationale"

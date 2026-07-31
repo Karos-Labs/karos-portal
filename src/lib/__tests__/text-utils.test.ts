@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { stripPreamble, stripTrailingMetaCommentary, escapeHtml } from "../text-utils";
+import { stripPreamble, stripTrailingMetaCommentary, escapeHtml, normalizeDashes } from "../text-utils";
 
 /**
  * Regression suite for the 2026-07 fleet document corruption.
@@ -408,5 +408,49 @@ describe("condenseDocs — fleet corruption regression", () => {
     const [doc] = await condenseDocs(CLIENT, ["target-audience"] as never, {}, "rules");
     expect(doc.content).toBe("");
     expect(streamCalls).toHaveLength(0);
+  });
+});
+
+describe("normalizeDashes", () => {
+  it("replaces an em dash with a plain hyphen", () => {
+    expect(normalizeDashes("great work—really")).toBe("great work-really");
+  });
+
+  it("replaces a spaced double hyphen with a spaced single hyphen", () => {
+    expect(normalizeDashes("great work -- really good")).toBe("great work - really good");
+  });
+
+  it("leaves a CLI flag (no trailing space) alone", () => {
+    expect(normalizeDashes("run with --verbose enabled")).toBe("run with --verbose enabled");
+  });
+
+  it("leaves a markdown horizontal rule (three dashes) alone", () => {
+    expect(normalizeDashes("above\n\n---\n\nbelow")).toBe("above\n\n---\n\nbelow");
+  });
+
+  it("does not touch a real shell separator inside a fenced code block", () => {
+    const input = "Run this:\n```bash\nnpm run test -- --watch\n```\nThen check output.";
+    expect(normalizeDashes(input)).toBe(input);
+  });
+
+  it("does not touch double hyphens inside an inline code span", () => {
+    expect(normalizeDashes("use `foo -- bar` on the command line")).toBe(
+      "use `foo -- bar` on the command line",
+    );
+  });
+
+  it("handles multiple occurrences across a longer passage", () => {
+    expect(normalizeDashes("First point — clear. Second point -- also clear.")).toBe(
+      "First point - clear. Second point - also clear.",
+    );
+  });
+
+  it("is idempotent", () => {
+    const once = normalizeDashes("word -- word—word");
+    expect(normalizeDashes(once)).toBe(once);
+  });
+
+  it("passes through empty/falsy input unchanged", () => {
+    expect(normalizeDashes("")).toBe("");
   });
 });

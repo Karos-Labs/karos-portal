@@ -9,7 +9,7 @@ const STEPS = [
 ] as const;
 
 /**
- * Three-step progress strip for managed (agent-service) jobs. Server-safe —
+ * Three-step progress strip for managed (agent-service) jobs. Server-safe -
  * pure render from the job status; the page's AutoRefresh keeps it live.
  */
 export function ManagedJobProgress({
@@ -24,7 +24,7 @@ export function ManagedJobProgress({
   const cancelled = status === "cancelled";
   // Neither a failed nor a cancelled managed job ever reached "review" (that's a
   // success state), so pin the outcome to the working step rather than the final
-  // one. A cancelled run is reported neutrally — somebody chose to stop it.
+  // one. A cancelled run is reported neutrally - somebody chose to stop it.
   const stopped = failed || cancelled;
   const current = status === "queued" ? 0 : status === "running" || stopped ? 1 : 2;
 

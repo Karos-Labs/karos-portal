@@ -7,7 +7,7 @@ import { markAssetPostedAction } from "@/lib/actions";
 import type { Asset } from "@/lib/types";
 
 /**
- * The client's "I posted this" attestation — the ONE client-side transition to
+ * The client's "I posted this" attestation - the ONE client-side transition to
  * `published` (markAssetPostedAction). Mounted in the asset detail modal and on
  * the calendar day card; Phase 3 adds call sites, never a second mechanism.
  *
@@ -25,10 +25,10 @@ export function MarkPostedRow({ asset, compact = false }: { asset: Asset; compac
 
   // A locked (future-dated) card is a redacted placeholder: redactLockedAsset
   // keeps `status` and drops `publishMode`, so the plain predicate said TRUE
-  // and one click per future day would flip the post to published — ending the
+  // and one click per future day would flip the post to published - ending the
   // redaction and revealing the whole pre-generated batch. That is exactly the
   // churn scenario A3/A4 exists to prevent, so locked cards get no control at
-  // all (the action refuses it too — the UI is not the guard).
+  // all (the action refuses it too - the UI is not the guard).
   const eligible =
     !asset.locked &&
     (asset.status === "approved" || asset.status === "scheduled" || asset.status === "delivered") &&
@@ -52,7 +52,7 @@ export function MarkPostedRow({ asset, compact = false }: { asset: Asset; compac
   if (compact) {
     return (
       <div
-        // The day card itself opens the asset modal on click — the attestation
+        // The day card itself opens the asset modal on click - the attestation
         // button must not also trigger it.
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}

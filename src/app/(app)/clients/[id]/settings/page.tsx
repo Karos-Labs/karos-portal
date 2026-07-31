@@ -77,7 +77,7 @@ export default async function ClientSettingsPage({
 
   // §6.2(a). The split between a scheduled fire and a run the client started
   // lives on the JOB, not the ledger row, so the jobs are joined here on the
-  // server — the browser never needs them and a client payload carrying every
+  // server - the browser never needs them and a client payload carrying every
   // job would be both wasteful and a staff-detail leak.
   const spendJobs = await listJobs({ clientId: id });
   const runTypeByJobId: Record<string, JobRunType | undefined> = {};
@@ -101,17 +101,17 @@ export default async function ClientSettingsPage({
     agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
   );
 
-  // Sanitized LinkedIn seats for the multi-seat workspace — strip tokens; the UI
+  // Sanitized LinkedIn seats for the multi-seat workspace - strip tokens; the UI
   // never needs (and must never receive) the credentials, encrypted or not.
   const linkedIntegration = integrations.find((i) => i.platform === "linkedin") as ClientIntegration | undefined;
   const sanitizedLinkedinSeats = sanitizeLinkedinSeats(linkedIntegration?.employeeSeats as EmployeeSeat[] | undefined);
 
   // Same rule for the integrations themselves: the docs carry OAuth access/refresh
   // tokens and pasted API keys in `credentials`, so only the non-secret fields cross
-  // — plus which secrets are set, for the form's placeholder.
+  // - plus which secrets are set, for the form's placeholder.
   const sanitizedIntegrations = sanitizeIntegrations(integrations);
 
-  // Grouped by task instead of stacked. Sections keep their existing markup —
+  // Grouped by task instead of stacked. Sections keep their existing markup -
   // only where they live changes. A tab whose content is entirely staff-gated
   // collapses to null and is dropped below, so a client is never shown an empty
   // tab (the Profile tab is admin/employee-only in practice).
@@ -144,7 +144,7 @@ export default async function ClientSettingsPage({
     <div className="space-y-8">
       <AutoScheduleToggle clientId={client.id} enabled={settings?.autoScheduleEnabled} />
 
-      {/* Agent access (admin) — which custom agents this client may fire themselves */}
+      {/* Agent access (admin) - which custom agents this client may fire themselves */}
       {isAdmin && (
         <Card>
           <CardTitle className="mb-1">AI agent access</CardTitle>
@@ -160,7 +160,7 @@ export default async function ClientSettingsPage({
         </Card>
       )}
 
-      {/* Scheduled runs (admin) — recurring generators fired on a cadence, draft-first + free */}
+      {/* Scheduled runs (admin) - recurring generators fired on a cadence, draft-first + free */}
       {isAdmin && (
         <Card>
           <CardTitle className="mb-1">Scheduled runs</CardTitle>
@@ -208,7 +208,7 @@ export default async function ClientSettingsPage({
     </Card>
   );
 
-  // F56: the key is a standing credential — staff and the workspace's own group
+  // F56: the key is a standing credential - staff and the workspace's own group
   // admin only, and whoever can see it can rotate it.
   const teamSection =
     client.clientKeyId && (isStaff || user.isGroupAdmin) ? (
@@ -246,7 +246,7 @@ export default async function ClientSettingsPage({
         }
       />
 
-      {/* CLIENT_USER already sees this via the (app) shell's own wrapper — only
+      {/* CLIENT_USER already sees this via the (app) shell's own wrapper - only
           render here for staff, who use the plain Sidebar shell with no such wrapper. */}
       {user.role !== "CLIENT_USER" && (
         <div className="mb-6">

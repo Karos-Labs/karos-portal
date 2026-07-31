@@ -36,7 +36,7 @@ export function Modal({
   className?: string;
   /**
    * Set false when a stray click outside would discard typed input. Escape and
-   * the ✕ still close — those are deliberate gestures.
+   * the ✕ still close - those are deliberate gestures.
    */
   closeOnBackdrop?: boolean;
   /**
@@ -89,7 +89,7 @@ export function Modal({
       // dismissal (the copilot dock's sheet, CD-G9b) therefore reads a click in
       // here as "outside" and closes itself behind the dialog. This attribute is
       // how such a test recognises a click that is still inside the UI the user
-      // is working in — an attribute rather than a class name so it survives
+      // is working in - an attribute rather than a class name so it survives
       // restyling and covers every overlay that portals through this component.
       data-overlay-root=""
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -100,14 +100,14 @@ export function Modal({
       />
       <div
         ref={panelRef}
-        // Focus target only — a container draws no ring of its own.
+        // Focus target only - a container draws no ring of its own.
         tabIndex={-1}
         className={cn(
           // Capped, not uncapped: the body scrolls, so a content-heavy dialog
           // must not stretch to a tall monitor's full height. 1100px clears
           // F32's "Start run scrolls out of sight" on normal displays while
           // staying bounded on very tall ones. focus:outline-none because the
-          // panel is only a focus TARGET (tabIndex -1) — a container drawing a
+          // panel is only a focus TARGET (tabIndex -1) - a container drawing a
           // ring of its own would ring the whole dialog on open.
           "relative z-10 flex max-h-[min(calc(100dvh-3rem),1100px)] w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius)] border border-border-strong bg-surface shadow-2xl animate-fade-up focus:outline-none",
           className,

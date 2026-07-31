@@ -21,7 +21,7 @@ import type { AppUser, ClientTask } from "@/lib/types";
 
 /**
  * Shared body for the Tasks route: a CLIENT_USER's own Progress view, staff
- * browsing a single client's Progress view (/clients/[id]/tasks — the
+ * browsing a single client's Progress view (/clients/[id]/tasks - the
  * sidebar's "View as client" picker), or the staff cross-client Task Board
  * overview when no client is in scope. The id is re-validated against a
  * real client here, never trusted as-is, so it can't be used to peek at an
@@ -30,7 +30,7 @@ import type { AppUser, ClientTask } from "@/lib/types";
 export async function TasksBody({ user, viewClientId }: { user: AppUser; viewClientId?: string }) {
   let scopedClientId: string | undefined;
   if (user.role === "CLIENT_USER") {
-    // A client user with no linked client renders an empty state — redirecting
+    // A client user with no linked client renders an empty state - redirecting
     // would loop (/dashboard → /assets → /tasks → …), and there is nothing
     // cross-client a clientless viewer may ever see.
     if (!user.clientId) {
@@ -41,7 +41,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
             description="What's next on the board, what already happened, and everything your agents have delivered."
           />
           <p className="text-sm text-muted-2">
-            Your account isn&apos;t linked to a workspace yet — contact your Karos account manager.
+            Your account isn&apos;t linked to a workspace yet - contact your Karos account manager.
           </p>
         </div>
       );
@@ -53,7 +53,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
   }
 
   // Archiving is handled at query level (listClientTasks hides tasks Done ≥7d)
-  // plus a physical sweep in the /api/credits/reconcile cron — no page-load work.
+  // plus a physical sweep in the /api/credits/reconcile cron - no page-load work.
   if (scopedClientId) {
     const [tasks, activityLogs, jobs, report, rawAssets, umbrellas] = await Promise.all([
       listClientTasks({ clientId: scopedClientId }),
@@ -64,7 +64,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
       listClientAgents({ clientId: scopedClientId }),
     ]);
     // Archive tab data. A client's archive is POSTED work from the last ~30
-    // days only (F149/A4) — filtered HERE, at the server boundary, so nothing
+    // days only (F149/A4) - filtered HERE, at the server boundary, so nothing
     // unposted crosses into the RSC payload at all; redaction still runs behind
     // it as the standing guard for anything future-dated. Staff keep the full
     // library.
@@ -75,15 +75,15 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     // The activity timeline narrates these runs, and on failure prints the
     // stored error verbatim. Two things must not go
     // through that door for a client: a LAUNCH run (its story is the launch
-    // card's three phases — a second telling is the double identity again, and
+    // card's three phases - a second telling is the double identity again, and
     // it announces a deliverable that is staff-only by design), and the raw
     // service error, which is the same internal string every other client
     // surface routes through clientSafeRefusal. Both are handled HERE, at the
     // server boundary, because everything below is serialized into the RSC
     // payload whether or not it is painted.
     //
-    // §7.3 identity (F147). The Workspace shows the same stream twice — the
-    // Activity tab narrates the runs, the Archive tab groups their output — and
+    // §7.3 identity (F147). The Workspace shows the same stream twice - the
+    // Activity tab narrates the runs, the Archive tab groups their output - and
     // before this the two read the JOB's stored agentName and the ASSET's
     // derived label independently, which is exactly how one agent came to have
     // two names one tab apart. Both are resolved HERE, through the one helper,
@@ -94,20 +94,20 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     // PROJECTED, not spread. This list is serialized into the RSC payload the
     // browser downloads, and a whole Job carries `input` (the operator's prompt
     // and brief), `events` (the internal execution trace), `clientAgentId` and
-    // `meta.agentsRepoSha` — the git SHA of the private lab repo. The timeline
+    // `meta.agentsRepoSha` - the git SHA of the private lab repo. The timeline
     // paints five fields; five fields is what crosses. Built by CONSTRUCTION so
     // a field added to Job later is excluded by default (the redactLockedAsset
     // rule), which is exactly what a `{ ...job }` here defeated.
     // The timeline's OTHER half, projected by the same rule and for the same
     // reason. An ActivityLog carries `clientId` and a free-form `metadata` bag
-    // nothing paints, and its `actor` is whatever the writer stored — the
+    // nothing paints, and its `actor` is whatever the writer stored - the
     // automated writers store internal service names ("Runway autopilot", see
     // activity-actors.ts). All of it shipped, and the redaction ran in the
     // BROWSER on a payload the browser already had.
     //
     // MANUAL_NOTE rows go the same way. They are written by the staff-only
     // composer in the timeline ("Add an internal note…"), and they were dropped
-    // at render for a client while crossing the boundary in full — title, body
+    // at render for a client while crossing the boundary in full - title, body
     // and the staff author's name. Dropped HERE instead, exactly like the
     // launch runs below.
     //
@@ -116,7 +116,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     // verbatim: the machine's vocabulary on the one screen that narrates their
     // work, one row per dispatch, so a runway top-up wrote up to fourteen of
     // them inside a single minute (the batch tell the run aggregation below was
-    // added to close). The client is told nothing less — every writer of these
+    // added to close). The client is told nothing less - every writer of these
     // rows mints a job too, and a client's jobs are already narrated here,
     // collapsed to one row per agent per day in outcome language. See
     // activity-titles.ts for why the launch/setup row is on that list as well.
@@ -169,7 +169,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
 
   // Staff overview (no client selected): the cross-client Task Board.
   // Visibility fence: employees only see tasks of their ASSIGNED clients
-  // (matching /jobs, /assets, /calendar — this board used to show every
+  // (matching /jobs, /assets, /calendar - this board used to show every
   // client's tasks to any staff member), and tasks whose client no longer
   // exists (orphans of deleted clients) never surface for anyone.
   const [allTasks, clients] = await Promise.all([

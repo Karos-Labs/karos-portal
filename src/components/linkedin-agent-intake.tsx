@@ -77,7 +77,7 @@ function fieldError(error: string | null) {
 }
 
 /**
- * Reads the fallback field back in the seat summary — see FallbackField. No
+ * Reads the fallback field back in the seat summary - see FallbackField. No
  * kind means no sample was captured, so it stays empty for the summary card's
  * own empty-value treatment.
  */
@@ -93,7 +93,7 @@ function CompanyForm({
 }: {
   clientId: string;
   intake: LiIntakeView | null;
-  /** The LinkedIn URL already on the client profile — confirm, don't re-ask. */
+  /** The LinkedIn URL already on the client profile - confirm, don't re-ask. */
   pageUrlSuggestion?: string;
 }) {
   const router = useRouter();
@@ -142,7 +142,7 @@ function CompanyForm({
     >
       <p className="mt-1 text-sm text-muted">
         One per business. The page runs on your brand voice and your own first-party material; we
-        only ask what we cannot find ourselves. Drafts only — a person always posts.
+        only ask what we cannot find ourselves. Drafts only - a person always posts.
       </p>
       <div className="mt-4 space-y-4">
         <div>
@@ -218,13 +218,13 @@ function FallbackField({
     <div>
       <Label htmlFor={`${idPrefix}-fallback`}>If this person is not very active on LinkedIn (optional)</Label>
       <Select id={`${idPrefix}-fallback`} value={kind} onChange={(e) => onKind(e.target.value)}>
-        <option value="">They post regularly — we learn the voice from their real posts</option>
+        <option value="">They post regularly - we learn the voice from their real posts</option>
         <option value="writing">Drop a long piece of their own genuine writing</option>
         <option value="about">Tell us who they are (typed, or a transcribed voice note)</option>
       </Select>
       <p className="mt-1 text-xs text-muted">
         Being inactive on LinkedIn is a first-class case, not a problem. This is how we learn a real
-        voice for someone who does not post — a spoken sample is the best source.
+        voice for someone who does not post - a spoken sample is the best source.
       </p>
       {kind ? (
         <Textarea
@@ -234,7 +234,7 @@ function FallbackField({
           onChange={(e) => onText(e.target.value)}
           placeholder={
             kind === "writing"
-              ? "Paste the piece here — an essay, a long email, anything they genuinely wrote themselves."
+              ? "Paste the piece here - an essay, a long email, anything they genuinely wrote themselves."
               : "Who are they, what have they actually done, how do they talk? Paste a voice-note transcript if you have one."
           }
         />
@@ -277,7 +277,7 @@ function SeatCv({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
     <div className="mt-4 border-t border-border pt-4">
       <p className="text-sm font-medium">Resume / CV</p>
       <p className="mt-1 text-xs text-muted">
-        Private — only our team and the agent read it, and it is never posted. The CV is for
+        Private - only our team and the agent read it, and it is never posted. The CV is for
         substance (their real experience), not voice. Not strictly required: their real posts or
         the voice sample also work, but it is the strongest single source.
       </p>
@@ -354,7 +354,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
     setEditing(false);
   }
 
-  // The input-contract minimum: ONE genuine source of substance and voice —
+  // The input-contract minimum: ONE genuine source of substance and voice -
   // their profile (real posts), a CV, or the voice sample. Warn, never block:
   // the CV can only be attached after the seat exists.
   const belowMinimum =
@@ -362,8 +362,8 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
   // The warning shows in both states, so it has to point at the right place.
   // The CV sits below the form in both, so only the other two move behind "Edit".
   const noVoiceSource = editing
-    ? "This seat has no voice source yet. Add their profile URL or the voice sample below, or attach a CV — drafts need at least one genuine source of who they are."
-    : 'This seat has no voice source yet. Attach a CV below, or press "Edit" to add their profile URL or the voice sample — drafts need at least one genuine source of who they are.';
+    ? "This seat has no voice source yet. Add their profile URL or the voice sample below, or attach a CV - drafts need at least one genuine source of who they are."
+    : 'This seat has no voice source yet. Attach a CV below, or press "Edit" to add their profile URL or the voice sample - drafts need at least one genuine source of who they are.';
 
   return (
     <SavedFormCard
@@ -454,7 +454,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
         />
         <p className="text-xs text-muted">
           No voice questions here on purpose: we build the voice from their real posts, CV and
-          edits — and if they already have a seat for another agent, we reuse what we already know.
+          edits - and if they already have a seat for another agent, we reuse what we already know.
         </p>
         {fieldError(error)}
         <div className="flex items-center gap-3">
@@ -641,22 +641,22 @@ function FeedbackBox({
     <Card className="p-5">
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
-        Tell us what is working and what is not — in your own words, as much detail as you like.
+        Tell us what is working and what is not - in your own words, as much detail as you like.
         It goes straight into the agent&apos;s next run. Once your Karos team has approved the drafts,
         picking, editing and skipping happens on the drafts themselves, in{" "}
         <a href="/tasks?tab=archive" className="underline hover:text-foreground">
           your archive
         </a>
-        — and each of those choices reaches the agent too.
+        - and each of those choices reaches the agent too.
       </p>
       {runs.length > 0 ? (
-        /* The run's state through the app's own mapper — these used to print the
+        /* The run's state through the app's own mapper - these used to print the
            raw database word ("review", "queued", "failed") into client-facing
            copy, beside a machine date, on a line with nothing to click. */
         <ul className="mt-3 space-y-1.5">
           {runs.slice(0, 4).map((r) => {
             /* A3/A4, the pass-2 stamp treatment. `Run <date>` is the generation
-               instant, and one fire produces a week of drafts — so four rows
+               instant, and one fire produces a week of drafts - so four rows
                printed the same date and said outright that the week came out of
                one minute. A client's rows are already collapsed to one per day
                server-side (toRunRowViews); here they lose the machinery noun and
@@ -705,7 +705,7 @@ function FeedbackBox({
           <Button onClick={submit} disabled={pending || !note.trim()}>
             {pending ? "Sending…" : "Send feedback"}
           </Button>
-          {sent ? <span className="text-xs text-muted">Sent — it feeds the next run.</span> : null}
+          {sent ? <span className="text-xs text-muted">Sent - it feeds the next run.</span> : null}
         </div>
       </div>
       {recent.length > 0 ? (
@@ -742,7 +742,7 @@ export function LinkedInAgentIntake({
   feedback: LiFeedbackRowView[];
   runs: LiRunRowView[];
   pageUrlSuggestion?: string;
-  /** Whose vocabulary the run rows are written in — see FeedbackBox. */
+  /** Whose vocabulary the run rows are written in - see FeedbackBox. */
   isStaff: boolean;
 }) {
   return (

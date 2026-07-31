@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 /**
  * The parts of the LIVE client agent surface (Phase 3 §7.1 cards 4 and 5).
  *
- * The card that composed them — `ClientAgentLiveCard` — is gone: the archetype
+ * The card that composed them - `ClientAgentLiveCard` - is gone: the archetype
  * detail pages (CD-I1) took over that job, and `agent-detail-panel.tsx` mounts
  * these pieces directly. It was exported and imported by nothing, which on a
  * "use client" module means dead weight shipped to the browser and, worse, a
@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
  * THE CHURN RULE (A3/A4) governs every line here. Nothing on this surface may
  * reveal that content for a future day already exists:
  *  • the week strip paints template NAMES on days, never posts, never counts,
- *    and never a "ready"/"generated" distinction — the server sends a label and
+ *    and never a "ready"/"generated" distinction - the server sends a label and
  *    a date and nothing else, so there is no state here to leak;
  *  • there is no batch run history, no "7 drafts" pill, no last-run line. A row
  *    reading "ran 2 hours ago · 7 assets" beside a week of daily slots is the
@@ -61,13 +61,13 @@ export function TemplateRows({
    * What clicking a format opens onto (CD-K1), keyed by template key.
    *
    * Optional so the rows still render for a caller that has not joined the
-   * archive — the expansion is the extra, never the row's reason to exist.
+   * archive - the expansion is the extra, never the row's reason to exist.
    */
   details?: Record<string, TemplateDetail>;
   viewer?: { name: string; email: string };
   /**
    * A client's `postCount` is the archive set, which drops published work past
-   * its window — the same reason the page labels its own count "In your
+   * its window - the same reason the page labels its own count "In your
    * Workspace" rather than a lifetime total. The copy below must make the same
    * disclosure, so the two numbers never claim to be different things.
    */
@@ -83,7 +83,7 @@ export function TemplateRows({
   if (templates.length === 0) {
     return (
       <p className="mt-4 rounded-md border border-border bg-surface-2/70 px-3 py-2 text-xs text-muted-2">
-        This agent has no formats registered yet — your Karos team is setting them up.
+        This agent has no formats registered yet - your Karos team is setting them up.
       </p>
     );
   }
@@ -239,9 +239,9 @@ export function TemplateRows({
             </div>
             {/* ── The format, opened (CD-K1) ──
                 Why this stream exists, and everything it has actually made.
-                The post list is the SAME set the page's archive rides — a
+                The post list is the SAME set the page's archive rides - a
                 client's is delivered-work-only, joined server-side on
-                Asset.templateKey — so opening a format can never become a
+                Asset.templateKey - so opening a format can never become a
                 second route to work that has not been delivered. There is no
                 status, no draft count and no "ready" marker anywhere in it,
                 for the reason the week strip has none (§4.1). */}
@@ -280,8 +280,8 @@ export function TemplateRows({
                     ))}
                   </ul>
                 )}
-                {/* The cap is deliberate — this is a peek at a stream, not the
-                    archive — but "newest 6 of 23" with no way to reach the
+                {/* The cap is deliberate - this is a peek at a stream, not the
+                    archive - but "newest 6 of 23" with no way to reach the
                     other 17 is a dead end. The Workspace is where all of them
                     already live, and it is the same href the page's archive
                     section links, so the two cannot drift apart. */}
@@ -300,7 +300,7 @@ export function TemplateRows({
                 </p>
               </div>
             )}
-            {/* The reason the run is off, PAINTED — not a tooltip on a control
+            {/* The reason the run is off, PAINTED - not a tooltip on a control
                 that cannot receive a pointer. A paused format explains itself
                 through its own toggle, so only the other blockers get a line. */}
             {!allowed && gate?.reason && gate.code !== "template_paused" && (
@@ -323,15 +323,15 @@ export function TemplateRows({
 /* ──────────────────────── options mode (X, card 5) ──────────────────────── */
 
 /**
- * The daily pick-of-3 product has no template streams — its product IS the
+ * The daily pick-of-3 product has no template streams - its product IS the
  * day's choice (§4.5).
  *
  * The picker lands with WP-9. Until it does, this row may only describe what
  * actually ships in this branch (D6): the previous copy said "Pick the one you
  * like, edit it if you want, and post it", which describes three controls that
  * do not exist anywhere in the portal yet. A client who read it would go
- * looking for them. It now names only what is real — the feedback button on
- * this card, and the Workspace where approved posts land — and makes no promise
+ * looking for them. It now names only what is real - the feedback button on
+ * this card, and the Workspace where approved posts land - and makes no promise
  * about a future release, since a promise dated "soon" is the same defect one
  * release later.
  */
@@ -387,7 +387,7 @@ export function WeekStrip({
               </span>
               <span className="ml-1.5 text-foreground">{day.label}</span>
               {/* A note marker, never a fulfilment marker. It says the CLIENT
-                  wrote something about this day — which they already know —
+                  wrote something about this day - which they already know -
                   and reveals nothing about whether the post exists yet. */}
               {day.note && (
                 <Icon
@@ -433,7 +433,7 @@ export function WeekStrip({
  *
  * Path 3 of §4.3 is the one that ships: a human reads the note and folds it
  * into that day's post. That only works if the note actually reaches a human,
- * and until now it reached none — the write logged an activity row whose TITLE
+ * and until now it reached none - the write logged an activity row whose TITLE
  * named the day but whose text lived only in metadata nothing renders, and
  * `markSlotNoteAppliedAction` had no caller at all, so "applied" was a state the
  * product could describe and never enter.

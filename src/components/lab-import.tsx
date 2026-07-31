@@ -15,7 +15,7 @@ interface RunRow {
   hasClientFolder: boolean;
 }
 
-/** Fallback lucide icon per lab agent folder — AgentMark resolves the real platform logos first. */
+/** Fallback lucide icon per lab agent folder - AgentMark resolves the real platform logos first. */
 function runVisual(agentFolder: string): { icon: string } {
   const f = agentFolder.toLowerCase();
   if (f.includes("instagram") || f.includes("tiktok")) return { icon: "Camera" };

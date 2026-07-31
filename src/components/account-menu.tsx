@@ -11,7 +11,7 @@ import { LogoutButton } from "@/components/logout-button";
 import type { AppUser, Client } from "@/lib/types";
 
 /**
- * Notifications deliberately do NOT live in here — the bell is rendered on the
+ * Notifications deliberately do NOT live in here - the bell is rendered on the
  * rail itself so its count is ambient (QA F116). A badge behind a dropdown is
  * not a badge.
  */
@@ -27,7 +27,7 @@ export function AccountMenu({
   const [open, setOpen] = useState(false);
 
   // Close the menu when navigation completes (instead of on click), so a <Link>
-  // isn't unmounted mid-click — which would cancel the navigation.
+  // isn't unmounted mid-click - which would cancel the navigation.
   const pathname = usePathname();
   const [prevPath, setPrevPath] = useState(pathname);
   if (prevPath !== pathname) {

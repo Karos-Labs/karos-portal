@@ -26,6 +26,7 @@ import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
 import { relativeTime, cn } from "@/lib/utils";
+import { normalizeDashes } from "@/lib/text-utils";
 import type { Asset, PublishMode } from "@/lib/types";
 
 /* ── Constants ───────────────────────────────────────────────────────── */
@@ -258,7 +259,7 @@ function ApprovePanel({
                   })}
                 </button>
               )}
-              {suggestedReason ? ` — ${suggestedReason}` : ""}
+              {suggestedReason ? ` - ${suggestedReason}` : ""}
             </span>
           </p>
         )
@@ -393,7 +394,7 @@ function Carousel({ slides, onOpenLightbox }: { slides: SlideMeta[]; onOpenLight
         ))}
       </div>
 
-      {/* Visible dot indicators — keyboard focusable */}
+      {/* Visible dot indicators - keyboard focusable */}
       <div className="mt-2 flex items-center justify-center gap-2">
         {slides.map((_, i) => (
           <button
@@ -421,7 +422,7 @@ export function AssetCard({
   asset: Asset;
   canApprove?: boolean;
   connectedPlatforms?: string[];
-  /** The generating agent's distribution channels — gate auto-publish to these platforms. */
+  /** The generating agent's distribution channels - gate auto-publish to these platforms. */
   agentChannels?: string[];
 }) {
   const router = useRouter();
@@ -431,7 +432,7 @@ export function AssetCard({
   const [content, setContent] = useState(asset.content);
   const [busy, setBusy] = useState(false);
 
-  // Agent draft batches carry pinned markdown structures — render them as the
+  // Agent draft batches carry pinned markdown structures - render them as the
   // drafts reader (pick / edit / skip per draft) instead of raw text.
   //
   // ORDER IS LOAD-BEARING. LinkedIn and Reddit both use "## Account N · …"
@@ -461,7 +462,7 @@ export function AssetCard({
   const redditDraftCount = redditBatch
     ? redditBatch.accounts.reduce((n, a) => n + a.drafts.length, 0)
     : 0;
-  // The run's attachable media (slides, PDFs, video) for the LinkedIn reader —
+  // The run's attachable media (slides, PDFs, video) for the LinkedIn reader -
   // shared definition, see assetLiMedia.
   const liMedia = useMemo<LiMediaFile[]>(
     () => (liBatch ? assetLiMedia(asset.meta) : []),
@@ -481,7 +482,7 @@ export function AssetCard({
   const canPublishNow =
     canApprove && compatibleConnected.length > 0 && asset.status !== "published";
 
-  // Marking a by-hand post live needs no integration and no staff role — it's a
+  // Marking a by-hand post live needs no integration and no staff role - it's a
   // statement about what the user already did, and for a client posting from
   // their phone it's the ONLY thing that can move the asset off "approved".
   // Drafts are excluded (nothing's been approved to post yet) as are
@@ -499,15 +500,15 @@ export function AssetCard({
   const metaSlides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
 
   // Every photo in the post, from whichever meta shape the ingest path left
-  // behind — assetImages() is the one definition shared with the download
+  // behind - assetImages() is the one definition shared with the download
   // route and the lightbox. This card used to re-derive its own narrower
   // fallback (meta.artifacts / meta.images only) and render the cover from
-  // asset.imageUrl alone, so an import whose photos landed in meta.files —
+  // asset.imageUrl alone, so an import whose photos landed in meta.files -
   // which is every lab import whose files the importer didn't classify as
-  // images — drew a card with no preview at all while its Download button
+  // images - drew a card with no preview at all while its Download button
   // happily offered the very photos the card wasn't showing.
   const galleryImages = assetImages(asset);
-  // Video deliverables — podcast cuts, branded shorts, TikTok (bulk-uploaded
+  // Video deliverables - podcast cuts, branded shorts, TikTok (bulk-uploaded
   // clips carry ONLY this, no caption or photo, so it must count toward
   // hasPreview below or the card renders the empty "no preview" state).
   const videos = assetVideos(asset);
@@ -535,7 +536,7 @@ export function AssetCard({
   // photo (assetImages already applies that precedence).
   const coverImageUrl = galleryImages.length === 1 ? galleryImages[0].url : null;
 
-  // Deliverables that aren't photos and aren't the caption — a reference doc's
+  // Deliverables that aren't photos and aren't the caption - a reference doc's
   // .pdf, a run's data.json. When they're ALL an asset has, they're the only
   // thing standing between the reader and an empty card, so name them.
   type MetaFile = { name?: string; relPath?: string; url?: string };
@@ -545,7 +546,7 @@ export function AssetCard({
   ].filter((f): f is MetaFile & { url: string } => typeof f?.url === "string");
   const hasPreview = Boolean(asset.content) || isCarousel || coverImageUrl != null || videos.length > 0;
 
-  // Template/format chip (e.g. "By The Numbers") — data-driven, legacy-safe.
+  // Template/format chip (e.g. "By The Numbers") - data-driven, legacy-safe.
   const template = templateForAsset(asset);
   // Resolve a primary platform (scheduledPlatform, fallback to agent channels)
   const primaryPlatform = asset.scheduledPlatform ?? (asset.channels && asset.channels.length ? asset.channels[0] : undefined);
@@ -567,7 +568,7 @@ export function AssetCard({
     return (
       <Card className="overflow-hidden">
         <div className="flex items-start gap-3">
-          {/* Creation language, matching the modal (§4.1 item 1) — a padlock
+          {/* Creation language, matching the modal (§4.1 item 1) - a padlock
               says "this exists and you may not see it". */}
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-muted-2">
             <Icon name="CalendarClock" className="h-4 w-4" />
@@ -588,7 +589,7 @@ export function AssetCard({
   }
 
 
-  /** Approve a non-schedulable draft (e.g. a note) straight through — no calendar slot. */
+  /** Approve a non-schedulable draft (e.g. a note) straight through - no calendar slot. */
   async function handleSimpleApprove() {
     setBusy(true);
     setActionError(null);
@@ -602,7 +603,7 @@ export function AssetCard({
     }
   }
 
-  /** Record a by-hand post. See markAssetPostedAction — this is the only route
+  /** Record a by-hand post. See markAssetPostedAction - this is the only route
    *  to "published" that doesn't go through a platform integration. */
   async function handleMarkPosted() {
     setBusy(true);
@@ -745,7 +746,7 @@ export function AssetCard({
               </div>
             ) : (
               <p className="mt-1 text-sm text-muted">
-                {xDraftCount} drafts across {xBatch.accounts.length} accounts — about a week of posting.
+                {xDraftCount} drafts across {xBatch.accounts.length} accounts - about a week of posting.
                 Expand to read and pick favorites.
               </p>
             )
@@ -758,7 +759,7 @@ export function AssetCard({
                   !open && "line-clamp-2",
                 )}
               >
-                {asset.content}
+                {normalizeDashes(asset.content)}
               </p>
               <CopyCaptionButton asset={asset} className="absolute right-0 top-0" />
             </div>
@@ -818,7 +819,7 @@ export function AssetCard({
           ) : null}
 
           {/* No caption and no photo. Show the deliverables by name rather than
-              the empty body this used to render — an asset always has SOMETHING
+              the empty body this used to render - an asset always has SOMETHING
               (that's why it exists), it just isn't always inlineable. */}
           {!hasPreview && (
             <div className="mt-2 rounded-lg border border-dashed border-border px-3 py-2.5">
@@ -839,7 +840,7 @@ export function AssetCard({
                   ))}
                 </ul>
               ) : (
-                <p className="text-xs text-muted-2">No preview — this asset has no caption or photos yet.</p>
+                <p className="text-xs text-muted-2">No preview - this asset has no caption or photos yet.</p>
               )}
             </div>
           )}
@@ -896,7 +897,7 @@ export function AssetCard({
             </>
           )}
 
-          {/* Scheduled info strip — shown for scheduled and approved-on-calendar assets */}
+          {/* Scheduled info strip - shown for scheduled and approved-on-calendar assets */}
           {(asset.status === "scheduled" || asset.status === "approved") && asset.scheduledAt && (
             <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5">
               <Icon
@@ -1034,7 +1035,7 @@ export function AssetCard({
                   variant="outline"
                   onClick={handleMarkPosted}
                   loading={busy}
-                  title="You posted this yourself — mark it live so the calendar and status reflect it"
+                  title="You posted this yourself - mark it live so the calendar and status reflect it"
                 >
                   <Icon name="CheckCheck" className="h-3.5 w-3.5" />
                   Mark as posted

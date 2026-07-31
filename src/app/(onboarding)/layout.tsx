@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { needsOnboarding } from "@/lib/onboarding";
 
-/** Distraction-free, centered shell for the onboarding wizard — no sidebar/rail. */
+/** Distraction-free, centered shell for the onboarding wizard - no sidebar/rail. */
 export default async function OnboardingLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");

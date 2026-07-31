@@ -19,7 +19,7 @@ export function StaffCopilotDock({ userName, viewerUid }: { userName?: string; v
   return (
     <CopilotDock
       key={client.id}
-      /* The staff sidebar is w-64, the client rail w-72 — the pinned strip has
+      /* The staff sidebar is w-64, the client rail w-72 - the pinned strip has
          to start at the right edge of whichever one is on screen (CD-G8). */
       shell="staff"
       clientId={client.id}

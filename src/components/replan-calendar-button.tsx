@@ -8,7 +8,7 @@ import { reflowClientCalendarAction } from "@/lib/actions";
 
 /**
  * Staff-only recovery control: re-runs the content-chain reflow for this
- * client. Reflow already fires after every lab import and webhook delivery —
+ * client. Reflow already fires after every lab import and webhook delivery -
  * this exists for the rare case where one of those best-effort calls failed
  * and no further import/webhook has healed the calendar since.
  */

@@ -10,7 +10,7 @@ import { JobsList, type JobListRow } from "@/components/jobs-list";
 import { UpcomingRunsPanel, type UpcomingRunRow } from "@/components/jobs-upcoming";
 
 // A row written before `timeZone` existed falls back to the runtime's own zone
-// — same fallback calendar-body.tsx's runZone() uses, so this panel's "next
+// - same fallback calendar-body.tsx's runZone() uses, so this panel's "next
 // fire" time can't disagree with the Calendar's.
 const RUNTIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 function runZone(stored: string | undefined): string {
@@ -26,7 +26,7 @@ export default async function JobsPage() {
   const [jobs, clients, umbrellas, plannedRuns, legacyRuns] = await Promise.all([
     listJobs(),
     listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined),
-    // §7.3. Read once for the page, indexed per client below — this list is
+    // §7.3. Read once for the page, indexed per client below - this list is
     // cross-client, so resolving a row's identity by querying its client's
     // umbrellas would be one Firestore read per row.
     listClientAgents(),
@@ -35,7 +35,7 @@ export default async function JobsPage() {
   ]);
   const nameById = new Map(clients.map((c) => [c.id, c.name]));
   const umbrellasByClient = identitiesByClient(umbrellas);
-  // Admins and employees alike only see jobs of EXISTING (visible) clients —
+  // Admins and employees alike only see jobs of EXISTING (visible) clients -
   // orphaned jobs of deleted clients used to leak into this cross-client view.
   // Stripped to what the list renders: no run events, no input payloads, no
   // asset ids cross the RSC boundary just to print a row.
@@ -45,7 +45,7 @@ export default async function JobsPage() {
       id: job.id,
       // §7.3 identity (F147), not the stored name: staff read this list beside
       // the client surfaces, so a run has to be called here what the client is
-      // told it is called. The job doc keeps its own agentName untouched — /jobs/[id]
+      // told it is called. The job doc keeps its own agentName untouched - /jobs/[id]
       // is the forensic view of the record and still prints it verbatim.
       agentName: runRowLabel(job, umbrellasByClient.get(job.clientId) ?? []),
       title: job.title,
@@ -59,11 +59,11 @@ export default async function JobsPage() {
     }));
 
   // ── Upcoming Scheduled Runs (item 2's "future" pane) ─────────────────
-  // Merges both scheduling systems — PlannedScheduledRun (the per-agent
-  // schedule dialog) and the legacy ScheduledRun row — into one glance panel,
+  // Merges both scheduling systems - PlannedScheduledRun (the per-agent
+  // schedule dialog) and the legacy ScheduledRun row - into one glance panel,
   // nearest fire first. Both already carry the fire time on `nextRunAt`
   // (that's what the cron polls on), so no re-projection is needed here, only
-  // formatting — same helpers calendar-body.tsx uses so this can't disagree
+  // formatting - same helpers calendar-body.tsx uses so this can't disagree
   // with the Calendar's own "next run" time for the same row.
   const upcoming: UpcomingRunRow[] = [
     ...plannedRuns

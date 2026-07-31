@@ -7,7 +7,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
-import { requireTaskAccess } from "./_shared";
+import { requireTaskAccess, campaignDependencyBlocker } from "./_shared";
 import {
   createClientTask,
   updateClientTask,
@@ -137,6 +137,17 @@ export async function updateTaskStatusAction(
     // same refusal while its umbrella is not live. Evaluated before the claim.
     const blocked = await clientTaskRunRefusal({ user, clientId, task });
     if (blocked) return { ok: false, error: blocked };
+
+    // A campaign step (e.g. the newsletter) can't run ahead of the piece it
+    // depends on (the anchor blog) — there's nothing yet for it to build on.
+    // Checked before the claim so a premature attempt costs nothing.
+    const blocker = await campaignDependencyBlocker(task);
+    if (blocker) {
+      return {
+        ok: false,
+        error: `Waiting on "${blocker}" to finish first - this campaign step runs after it.`,
+      };
+    }
 
     // Re-opening a completed task is a NET NEW active slot (pending/review_pending
     // are already counted in the cap) — enforce the same queue cap that task

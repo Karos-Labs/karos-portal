@@ -5,9 +5,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardTitle, Badge, EmptyState, Skeleton } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { stripPipelineMarkers } from "@/lib/doc-render";
+import { normalizeDashes } from "@/lib/text-utils";
 
 /**
- * AI Insights — the client-facing readout of the Self-Improving Marketing Loop.
+ * AI Insights - the client-facing readout of the Self-Improving Marketing Loop.
  * Streams a plain-language week-over-week performance briefing (and the
  * optimization moves the engine is making) from /api/clients/[id]/insights, the
  * same way the copilot dock consumes /chat. Mounted in the client dashboard's
@@ -23,14 +24,14 @@ export function AiInsights({ clientId }: { clientId: string }) {
   const [isDemoData, setIsDemoData] = useState(false);
   // QA F125: the API refuses to narrate mock engagement figures to a client and answers
   // X-Insights-State: needs-connection instead. Render the connect-a-channel empty state
-  // rather than any prose — a warning badge doesn't make invented budget advice safe.
+  // rather than any prose - a warning badge doesn't make invented budget advice safe.
   const [needsConnection, setNeedsConnection] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   // The fetch + stream itself. Every setState here happens after the first
   // `await`, so it's safe to kick off directly from an effect (the
   // set-state-in-effect rule only forbids synchronous updates on mount).
-  // `force` bypasses the server's content-based cache — only the explicit
+  // `force` bypasses the server's content-based cache - only the explicit
   // "Refresh" click sets it, so a plain page load never re-spends an LLM call
   // on a briefing that hasn't changed.
   const run = useCallback(
@@ -67,7 +68,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
     [clientId],
   );
 
-  // Manual refresh (event handler — synchronous resets are fine here). Forces
+  // Manual refresh (event handler - synchronous resets are fine here). Forces
   // the server to regenerate rather than serve its cached briefing.
   const load = useCallback(() => {
     abortRef.current?.abort();
@@ -81,7 +82,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
   }, [run]);
 
   // Initial fetch on mount. State already starts at loading/empty, so no
-  // synchronous setState is needed here — just start streaming. Not forced:
+  // synchronous setState is needed here - just start streaming. Not forced:
   // reuses the cached briefing when nothing's changed since last time.
   useEffect(() => {
     const controller = new AbortController();
@@ -147,7 +148,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
       ) : text.trim() === "" ? (
         // A briefing that fails mid-stream still answers 200 with an empty body
         // (the SDK masks the error into the stream), and an empty body used to
-        // render as nothing at all — a badged card with a blank 92px body, seen
+        // render as nothing at all - a badged card with a blank 92px body, seen
         // on the staff lens during the wave-1 walk. Say what happened instead.
         <EmptyState
           icon={<Icon name="Sparkles" className="h-6 w-6" />}
@@ -182,11 +183,11 @@ export function AiInsights({ clientId }: { clientId: string }) {
  * QA F126: this used to match only the double-asterisk form, so whenever the
  * model reached for italics the delimiters landed on the page verbatim ("Top
  * performers: *Playbook* (4.2 score) and *Special Edition*"). Latent rather
- * than always visible — it depends on what the model emits that week — which is
+ * than always visible - it depends on what the model emits that week - which is
  * how it survived review.
  *
  * The shapes below are the follow-up pass. Each one left a literal delimiter on
- * the page under the first fix — the very symptom F126 is about:
+ * the page under the first fix - the very symptom F126 is about:
  * - `**bold with *nested* inside**`: `[^*]+` can't cross the inner star, so the
  *   outer span never matched and the inner one matched across the wrong
  *   boundary. `(?:[^*]|\*(?!\*))+?` accepts single stars but stops at the
@@ -194,7 +195,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
  * - `***triple***` and `__bold__`: matched one delimiter in from the edge and
  *   spat the outermost one onto the page. Both now have their own alternative.
  * - `client_id_value`: the underscore branch ate the middle of ordinary tokens
- *   (reachable — asset labels are quoted verbatim into briefings). Word-boundary
+ *   (reachable - asset labels are quoted verbatim into briefings). Word-boundary
  *   guards mean an underscore only opens emphasis at a non-word boundary.
  */
 export const INLINE_EMPHASIS_RE =
@@ -211,7 +212,7 @@ function unwrap(part: string, delim: string): string | null {
   if (!part.startsWith(delim) || !part.endsWith(delim)) return null;
   const inner = part.slice(delim.length, -delim.length);
   // A leftover delimiter char at either edge means we're one level off (e.g.
-  // reading "***x***" as bold) — let the correct alternative claim it.
+  // reading "***x***" as bold) - let the correct alternative claim it.
   return inner.startsWith(delim[0]) || inner.endsWith(delim[0]) ? null : inner;
 }
 
@@ -257,10 +258,10 @@ export function renderBriefing(text: string): React.ReactNode {
   // The briefing is written over the client's context documents, so anything
   // the pipeline wrote into those can be quoted back into it. This renderer
   // emits React nodes, which means a comment would be shown as text rather
-  // than parsed away — same reason doc-render.ts drops them.
-  const lines = stripPipelineMarkers(text).split("\n");
+  // than parsed away - same reason doc-render.ts drops them.
+  const lines = normalizeDashes(stripPipelineMarkers(text)).split("\n");
 
-  // Drop a leading H1 — it's the model restating a title ("# CLIENT - WEEKLY
+  // Drop a leading H1 - it's the model restating a title ("# CLIENT - WEEKLY
   // BRIEFING") that only duplicates the card's own "AI Insights" header.
   const firstIdx = lines.findIndex((l) => l.trim() !== "");
   if (firstIdx !== -1 && /^#\s+\S/.test(lines[firstIdx].trim())) {

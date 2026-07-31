@@ -68,6 +68,7 @@ export function toSummary(agent: CustomAgent): RunnableAgentSummary {
     icon: agent.icon,
     color: agent.color,
     creditCost: agent.creditCost ?? null,
+    enabled: agent.enabled,
   };
 }
 

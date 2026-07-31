@@ -4,16 +4,16 @@ import { icons, type LucideProps } from "lucide-react";
 /**
  * Render a lucide icon by name (icons are user-configurable on agents).
  * Falls back to a sparkles glyph when the name is unknown.
- * Default stroke is 1.5 — thin, minimal line work across the whole app.
+ * Default stroke is 1.5 - thin, minimal line work across the whole app.
  */
 export function Icon({ name, strokeWidth = 1.5, ...props }: { name: string } & LucideProps) {
   const Cmp = (icons as Record<string, React.ComponentType<LucideProps>>)[name];
   if (!Cmp && process.env.NODE_ENV !== "production" && !warned.has(name)) {
     // Loud in dev: the silent sparkle fallback hid 37 renamed icons across 24
-    // files after a lucide major (QA F63) — including a cheerful sparkle beside
+    // files after a lucide major (QA F63) - including a cheerful sparkle beside
     // a red error message.
     warned.add(name);
-    console.warn(`[Icon] unknown lucide icon "${name}" — falling back to Sparkles`);
+    console.warn(`[Icon] unknown lucide icon "${name}" - falling back to Sparkles`);
   }
   const Resolved = Cmp ?? icons.Sparkles;
   return <Resolved strokeWidth={strokeWidth} {...props} />;
@@ -24,7 +24,7 @@ const warned = new Set<string>();
 
 /**
  * The X (Twitter) wordmark. lucide dropped brand glyphs, so the platform logo
- * is a hand-rolled SVG — a filled glyph, not a stroked icon, so it ignores the
+ * is a hand-rolled SVG - a filled glyph, not a stroked icon, so it ignores the
  * stroke props the lucide icons take. Sized via className (h-/w-).
  */
 export function XLogo({ className }: { className?: string }) {
@@ -35,7 +35,7 @@ export function XLogo({ className }: { className?: string }) {
   );
 }
 
-/** The LinkedIn "in" glyph — same hand-rolled-brand-logo rule as XLogo. */
+/** The LinkedIn "in" glyph - same hand-rolled-brand-logo rule as XLogo. */
 export function LinkedInLogo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>

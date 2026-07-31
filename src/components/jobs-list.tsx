@@ -13,7 +13,7 @@ import { classifyJobError } from "@/lib/job-error-taxonomy";
 import type { JobStatus } from "@/lib/types";
 import { cn, relativeTime } from "@/lib/utils";
 
-/** One job as the cross-client list needs it — never the whole doc. */
+/** One job as the cross-client list needs it - never the whole doc. */
 export interface JobListRow {
   id: string;
   agentName: string;
@@ -23,7 +23,7 @@ export interface JobListRow {
   status: JobStatus;
   createdAt: number;
   emailed: boolean;
-  /** Present only for custom-agent runs — gates the Retry button (retryJobAction requires it). */
+  /** Present only for custom-agent runs - gates the Retry button (retryJobAction requires it). */
   customAgentId?: string;
   /** Raw failure text, classified inline via job-error-taxonomy.ts. */
   error?: string | null;
@@ -40,7 +40,7 @@ const STATUSES: JobStatus[] = [
   "cancelled",
 ];
 
-/** The three buckets the summary chips group by — a superset of one-status filtering. */
+/** The three buckets the summary chips group by - a superset of one-status filtering. */
 type StatusFilter = "" | "active" | "failed" | "completed" | JobStatus;
 
 const COMPLETED_STATUSES = new Set<JobStatus>(["review", "approved", "delivered"]);
@@ -59,13 +59,13 @@ const PAGE = 50;
  * every agent run, then 50 rows at a time.
  *
  * This page renders one flat row per run across every client, and it is the
- * page staff use most — at agency scale, finding anything meant scrolling the
+ * page staff use most - at agency scale, finding anything meant scrolling the
  * whole database. Filtering is client-side over rows the server already sent,
  * which is what makes the search instant; the paging cap is what keeps the DOM
  * from being the bottleneck.
  *
  * The summary chips (Active / Failed / Completed) are a second, coarser filter
- * over the SAME `status` state the dropdown drives — clicking one sets it to a
+ * over the SAME `status` state the dropdown drives - clicking one sets it to a
  * composite bucket ("active" = queued|running, "completed" = review|approved|
  * delivered), clicking the same chip again clears it. This mirrors the
  * dashboard's other filter-on-click surfaces (e.g. the Agent Leaderboard)
@@ -123,8 +123,8 @@ export function JobsList({ jobs, isAdmin }: { jobs: JobListRow[]; isAdmin: boole
   return (
     <>
       {/* Autonomously ticks the whole list (and every running-row timer on it)
-          while any run is in flight — same 4s polling AutoRefresh already
-          uses on the single-job detail page — so nobody has to hit refresh to
+          while any run is in flight - same 4s polling AutoRefresh already
+          uses on the single-job detail page - so nobody has to hit refresh to
           watch a run finish. */}
       {counts.active > 0 && <AutoRefresh />}
 

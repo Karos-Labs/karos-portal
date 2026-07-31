@@ -11,7 +11,7 @@ import {
   removeEmployeeSeatAction,
 } from "@/lib/actions/seat-actions";
 
-/** Client-safe seat view — never carries tokens, only whether one is present. */
+/** Client-safe seat view - never carries tokens, only whether one is present. */
 export interface SeatView {
   id: string;
   employeeName: string;
@@ -27,7 +27,7 @@ function initials(name: string): string {
 }
 
 /**
- * LinkedIn Employee Advocacy workspace — a "Company Employee Roster" for the
+ * LinkedIn Employee Advocacy workspace - a "Company Employee Roster" for the
  * connected LinkedIn integration. Staff/clients add seats (gated by the plan +
  * credit monetization guard), pause/resume, and remove them. Each seat is an
  * employee handle the analytics sync measures independently.
@@ -59,7 +59,7 @@ export function LinkedInSeatsWorkspace({
   /**
    * Whether re-adding someone after this removal would be charged again.
    * evaluateSeatAddition charges when `currentSeatCount >= seatLimit`, so after
-   * dropping one seat the re-add is free iff `seats.length - 1 < seatLimit` —
+   * dropping one seat the re-add is free iff `seats.length - 1 < seatLimit` -
    * i.e. it costs credits exactly when the roster is currently OVER the limit.
    * Derived from the live count rather than a stored per-seat price because the
    * charge that matters here is the future re-add, not the original purchase.
@@ -122,7 +122,7 @@ export function LinkedInSeatsWorkspace({
 
   return (
     <div className="border-t border-border bg-surface-2/40 p-4">
-      {/* Header — wraps so the Add button never overflows narrow cards */}
+      {/* Header - wraps so the Add button never overflows narrow cards */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Icon name="Users" className="h-4 w-4 shrink-0 text-neon" />
@@ -152,7 +152,7 @@ export function LinkedInSeatsWorkspace({
           </div>
           {atLimit && (
             <p className="text-[11px] text-muted-2">
-              This is beyond your {seatLimit}-seat plan — adding a seat is a one-time {seatCost}-credit
+              This is beyond your {seatLimit}-seat plan - adding a seat is a one-time {seatCost}-credit
               charge.
             </p>
           )}
@@ -254,7 +254,7 @@ export function LinkedInSeatsWorkspace({
                 </div>
               </div>
 
-              {/* Row 3: two-step remove confirm — same warning-strip shape as
+              {/* Row 3: two-step remove confirm - same warning-strip shape as
                   the monetization gate above. Removal is not refunded and the
                   employee's LinkedIn sign-in goes with the seat, so the first
                   click can no longer be the destructive one. */}
@@ -269,11 +269,11 @@ export function LinkedInSeatsWorkspace({
                       Their LinkedIn sign-in is removed with the seat, so they would have to sign in
                       again.{" "}
                       {reAddCharges
-                        ? `You're over your ${seatLimit}-seat plan, so adding someone back is a one-time ${seatCost}-credit charge — removing a seat is not refunded.`
+                        ? `You're over your ${seatLimit}-seat plan, so adding someone back is a one-time ${seatCost}-credit charge - removing a seat is not refunded.`
                         : "Removing a seat is not refunded."}
                     </p>
                     <p className="text-[11px] text-muted-2">
-                      To stop their posts temporarily, pause the seat instead — that keeps the
+                      To stop their posts temporarily, pause the seat instead - that keeps the
                       sign-in and can be undone.
                     </p>
                     <div className="flex flex-wrap gap-2 pt-0.5">

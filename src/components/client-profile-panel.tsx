@@ -11,7 +11,7 @@ import type { Client, SocialLinks } from "@/lib/types";
 
 const TEAM_SIZES = ["1–10", "11–50", "51–200", "201–500", "500+"];
 
-// Only channels we actually handle — @-handles.
+// Only channels we actually handle - @-handles.
 const SOCIALS: { key: keyof SocialLinks; placeholder: string }[] = [
   { key: "instagram", placeholder: "instagram handle" },
   { key: "x", placeholder: "x / twitter handle" },
@@ -181,9 +181,9 @@ function BrandProfileModal({ client, onClose }: { client: Client; onClose: () =>
 
 /**
  * `compact` is the desktop rail, which is a no-scroll fixed layout (CD-E3):
- * tighter spacing and the description clamped to two lines, so a long brief
- * cannot push Competitor Track and Brand Colors off the viewport. The mobile
- * Company sheet scrolls and keeps the full panel.
+ * tighter spacing so the panel cannot push Competitor Track and Brand Colors
+ * off the viewport. The mobile Company sheet scrolls and uses the roomier
+ * spacing.
  */
 export function ClientProfilePanel({ client, compact = false }: { client: Client; compact?: boolean }) {
   const router = useRouter();
@@ -302,17 +302,6 @@ export function ClientProfilePanel({ client, compact = false }: { client: Client
               );
             })}
           </div>
-
-          {/* The description is deliberately absent from the compact rail: it
-              is free text of unbounded length, and the rail must have a
-              DETERMINISTIC height to honour the no-scroll contract (CD-E3).
-              It stays in the mobile Company sheet and the brand-profile
-              modal, neither of which is height-constrained. */}
-          {!compact && (client.description || client.brief) && (
-            <p className="text-xs leading-relaxed text-muted-2">
-              {client.description || client.brief}
-            </p>
-          )}
         </>
       ) : (
         /* ── Edit form (pill chips) ── */

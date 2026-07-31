@@ -13,13 +13,13 @@ function parseTab(value: string | null): Tab {
 }
 
 /**
- * QA F99 — the two heavy halves of the client dashboard (Performance, Search &
+ * QA F99 - the two heavy halves of the client dashboard (Performance, Search &
  * AI visibility) behind one segmented control instead of both rendered at full
  * detail on a single five-screen scroll.
  *
  * Same pattern as the Workspace's ProgressView toggle: the active tab lives in
  * `?tab=` so it's linkable, seeded from the URL into local state and written
- * back with the native history API rather than router.replace — this route
+ * back with the native history API rather than router.replace - this route
  * fetches its data server-side, and router.replace would re-run every one of
  * those fetches on each click. `?tab=` on /clients/[id] is independent of the
  * one ProgressView claimed on /tasks.

@@ -10,7 +10,7 @@ import { MOBILE_TAB_BAR_H } from "@/lib/constants";
 /**
  * The narrow-width (<md) chrome both portal shells share: a fixed bottom tab
  * bar whose LAST tab is Company, and the full-screen sheet that tab opens.
- * There is no top menu and no hamburger at this width by contract (CD-G9a) —
+ * There is no top menu and no hamburger at this width by contract (CD-G9a) -
  * the client shell has rendered this since the portal redesign, and the staff
  * shell adopts it whenever a client context is active.
  *
@@ -24,7 +24,7 @@ export interface MobileTabItem {
   href: string;
   label: string;
   icon: string;
-  /** Match the path exactly — otherwise a parent tab stays lit on its children. */
+  /** Match the path exactly - otherwise a parent tab stays lit on its children. */
   exact?: boolean;
 }
 
@@ -35,14 +35,14 @@ function isTabActive(pathname: string, item: MobileTabItem): boolean {
 
 /**
  * Tailwind's `md`, as a media query. The sheet and the bar exist only below it
- * — above it both shells show a rail instead — so this is the width at which
+ * - above it both shells show a rail instead - so this is the width at which
  * the sheet stops being a thing that can be open.
  */
 const MD_QUERY = "(min-width: 48rem)";
 
 /**
- * Company-sheet open state that closes itself on navigation — tapping a link
- * inside the sheet has to reveal the page it just routed to — and on crossing
+ * Company-sheet open state that closes itself on navigation - tapping a link
+ * inside the sheet has to reveal the page it just routed to - and on crossing
  * `md`.
  *
  * The breakpoint half is CD-H6: `md:hidden` stops PAINTING the sheet at desktop
@@ -64,7 +64,7 @@ export function useCompanySheet(): [boolean, (open: boolean) => void] {
 
   useEffect(() => {
     // Mount-time sync is unnecessary: `open` starts false, so there is nothing
-    // to close until someone opens it — and this listener fires the moment the
+    // to close until someone opens it - and this listener fires the moment the
     // viewport crosses the boundary after that.
     const mq = window.matchMedia(MD_QUERY);
     const closeAboveMd = () => {
@@ -97,7 +97,7 @@ export function MobileTabBar({
 
   return (
     <nav
-      /* Height comes from lib/constants (MOBILE_TAB_BAR_H) — the copilot dock
+      /* Height comes from lib/constants (MOBILE_TAB_BAR_H) - the copilot dock
          offsets its collapsed strip off the same number (CD-G9b). */
       className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-border bg-background/95 backdrop-blur-sm md:hidden"
       style={{ height: MOBILE_TAB_BAR_H }}

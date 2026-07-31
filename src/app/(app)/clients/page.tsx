@@ -13,7 +13,7 @@ export default async function ClientsPage() {
     listAssets(),
     listJobs(),
     // Every credit denial tells the client to "ask your Karos team", but no
-    // staff surface showed a balance — the only credits control in the product
+    // staff surface showed a balance - the only credits control in the product
     // was buried in one client's Settings page (QA F117). SPENDABLE, not raw
     // balance: it is the number the charge transaction actually honours.
     Promise.all(
@@ -27,7 +27,7 @@ export default async function ClientsPage() {
   //
   // Fenced to the VISIBLE clients, the same skip /jobs does (QA F37). `clients`
   // is scoped to an employee's assignments and `credits` is built from it, but
-  // `counts` was keyed off the unfiltered listAssets()/listJobs() — so the map
+  // `counts` was keyed off the unfiltered listAssets()/listJobs() - so the map
   // handed to ClientsGrid carried the ids, volumes and last-run times of every
   // client in the database, including ones outside the employee's assignment
   // and orphans of deleted clients. Replacing the two full scans with a

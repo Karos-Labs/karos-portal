@@ -3,25 +3,25 @@
 import { useState } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
+import { normalizeDashes } from "@/lib/text-utils";
 import type { Asset } from "@/lib/types";
 
 /**
  * The exact text a user needs on their clipboard to post by hand: the caption
  * plus the asset's hashtags. Shared so every copy affordance puts the SAME
- * thing on the clipboard — a card that copies hashtags and a modal that
+ * thing on the clipboard - a card that copies hashtags and a modal that
  * doesn't is a silent trap when the phone is the posting surface.
  */
 export function captionText(asset: Pick<Asset, "content" | "meta">): string {
   // meta is an untyped bag filled by webhooks and lab imports, so validate the
-  // shape rather than trusting the cast — a malformed hashtags value must not
+  // shape rather than trusting the cast - a malformed hashtags value must not
   // take the copy button down with it.
   const raw = asset.meta?.hashtags;
   const hashtags = (Array.isArray(raw) ? raw : []).filter(
     (h): h is string => typeof h === "string" && h.length > 0,
   );
-  return hashtags.length
-    ? `${asset.content}\n\n${hashtags.map((h) => "#" + h).join(" ")}`
-    : asset.content;
+  const content = normalizeDashes(asset.content);
+  return hashtags.length ? `${content}\n\n${hashtags.map((h) => "#" + h).join(" ")}` : content;
 }
 
 /**
@@ -41,7 +41,7 @@ async function writeToClipboard(text: string): Promise<boolean> {
   try {
     const el = document.createElement("textarea");
     el.value = text;
-    // Keep it off-screen but still selectable — display:none can't be selected.
+    // Keep it off-screen but still selectable - display:none can't be selected.
     el.setAttribute("readonly", "");
     el.style.position = "fixed";
     el.style.top = "-9999px";
@@ -61,8 +61,8 @@ type Variant = "icon" | "full";
 /**
  * One-tap "copy the caption so I can paste it into the app I'm posting from".
  *
- * `icon` — the compact affordance on a dense asset card.
- * `full` — a labelled button for the detail modal, which is the phone's main
+ * `icon` - the compact affordance on a dense asset card.
+ * `full` - a labelled button for the detail modal, which is the phone's main
  *          path into a post (the client Library opens on the calendar and taps
  *          through to the modal, so an icon-only control on the card alone left
  *          the primary flow with no copy at all).

@@ -408,6 +408,31 @@ describe("rosterStatus", () => {
       label: "Not set up yet",
     });
   });
+
+  it("defaults to enabled when the caller omits it, unaffected", () => {
+    expect(rosterStatus({ launchState: "live" })).toEqual({ tone: "live", label: "Live" });
+  });
+
+  it("says Coming Soon for a paused agent, outranking every other input", () => {
+    // enabled:false has to win over EVERYTHING else — a live umbrella with an
+    // active, unrefused schedule and delivered work is still "Coming Soon" the
+    // moment an admin pauses it, not a stale "Live" the toggle can't override.
+    expect(
+      rosterStatus({
+        launchState: "live",
+        scheduleActive: true,
+        hasDelivered: true,
+        enabled: false,
+      }),
+    ).toEqual({ tone: "disabled", label: "Coming Soon" });
+  });
+
+  it("says Coming Soon for a paused agent with no umbrella at all", () => {
+    expect(rosterStatus({ launchState: null, enabled: false })).toEqual({
+      tone: "disabled",
+      label: "Coming Soon",
+    });
+  });
 });
 
 /**

@@ -16,6 +16,7 @@ import { JobTranscript, TranscriptCount } from "@/components/job-transcript";
 import { fetchJobTranscript } from "@/lib/agent-service/transcript";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
+import { normalizeDashes } from "@/lib/text-utils";
 import type { Job } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
@@ -32,7 +33,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   const inProgress = job.status === "running" || job.status === "queued";
   const classifiedError = classifyJobError(job.error);
 
-  // F107 — without this the deliverables here rendered with no connectedPlatforms,
+  // F107 - without this the deliverables here rendered with no connectedPlatforms,
   // so Publish Now never appeared on the job page even for an approved post whose
   // client has a usable integration. Same helper /assets uses, so the "pushable"
   // predicate cannot drift; this page is already staff-only, and what crosses to
@@ -85,7 +86,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           {job.error && (
             <Card className="border-danger/30 bg-danger/5">
               <CardTitle className="mb-1 text-danger">Error</CardTitle>
-              {/* Best-effort classification over the raw text below — see
+              {/* Best-effort classification over the raw text below - see
                   job-error-taxonomy.ts's doc comment. Not shown when it can't
                   do better than restate the raw string. */}
               {classifiedError && classifiedError.label !== "Unexpected error" && (
@@ -98,7 +99,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           {job.rawOutput && (
             <Card>
               <CardTitle className="mb-2">Raw model output</CardTitle>
-              <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-3 text-xs text-muted">{job.rawOutput}</pre>
+              <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-3 text-xs text-muted">{normalizeDashes(job.rawOutput)}</pre>
             </Card>
           )}
 

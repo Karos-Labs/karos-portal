@@ -15,14 +15,14 @@ const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  *
  * Albert on the Reddit agent: "it will find a thread every day… fully connected
  * to the calendar itself." So the page leads with what it found TODAY, and the
- * calendar under it is a strip of days rather than a week of formats — this
+ * calendar under it is a strip of days rather than a week of formats - this
  * agent has no formats. It does not write to a template set; it goes looking,
  * once a day, and comes back with one thread and one reply.
  *
  * THE FINDS THEMSELVES ARE NOT RE-RENDERED HERE. `RedditDraftsBatch` is the
  * existing reader and it stays the reader: the markdown-stripping rules on it
  * are pinned by reddit-drafts.test.ts at the source level (which fields get
- * `stripInlineMarkdown` and — just as load-bearing — which two never do,
+ * `stripInlineMarkdown` and - just as load-bearing - which two never do,
  * because `draft.text` and `draft.disclosure` are what the client actually
  * posts), and the four outcome actions behind it are the RedditDraftFeedback
  * path. A second reader on this page would be a second set of those rules, and
@@ -30,7 +30,7 @@ const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  * the reply the client is about to paste into Reddit.
  *
  * CHURN A3/A4: `today` is today only. The server never puts a later day's finds
- * in the payload, so there is no "tomorrow's thread" to hide at render — and
+ * in the payload, so there is no "tomorrow's thread" to hide at render - and
  * the strip below carries dates and nothing else, exactly as the template
  * agents' week strip does.
  */
@@ -42,7 +42,7 @@ export function DailyFinderPanel({
 }: {
   clientId: string;
   view: DailyFinderView;
-  /** Whether a schedule is actually firing — changes what "nothing today" means. */
+  /** Whether a schedule is actually firing - changes what "nothing today" means. */
   scheduleActive: boolean;
   emptyHint: string;
 }) {
@@ -51,7 +51,7 @@ export function DailyFinderPanel({
       <section>
         <SectionHeading
           title="Found today"
-          hint="One thread a day, with a reply drafted in your voice. Tell it what you did with each one — that is what tunes the next find."
+          hint="One thread a day, with a reply drafted in your voice. Tell it what you did with each one - that is what tunes the next find."
         />
         {view.today.length > 0 ? (
           <div className="space-y-4">
@@ -97,7 +97,7 @@ export function DailyFinderPanel({
 /**
  * The days this agent goes looking.
  *
- * Dates and nothing else — the same rule the template agents' week strip
+ * Dates and nothing else - the same rule the template agents' week strip
  * follows (§4.1). A future day may not carry a count, a "found" mark or any
  * other tell that the work already exists; a past day is simply greyed, because
  * whether it found something is answered by the archive below, not by a chip.
@@ -106,7 +106,7 @@ function DailyStrip({ days }: { days: FinderDay[] }) {
   if (days.length === 0) {
     return (
       <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 text-[11px] text-muted-2">
-        No schedule yet — your Karos team sets how often this agent goes looking.
+        No schedule yet - your Karos team sets how often this agent goes looking.
       </p>
     );
   }
@@ -141,8 +141,8 @@ function DailyStrip({ days }: { days: FinderDay[] }) {
 /**
  * The per-agent archive of finds, collapsed.
  *
- * Every batch stays readable — the four outcome actions on an older draft are
- * still the way a client tells the agent what happened — but only one is open
+ * Every batch stays readable - the four outcome actions on an older draft are
+ * still the way a client tells the agent what happened - but only one is open
  * at a time, because ten expanded batches is a page nobody scrolls.
  */
 function EarlierFinds({ clientId, view }: { clientId: string; view: DailyFinderView }) {

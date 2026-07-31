@@ -43,10 +43,10 @@ export interface CalendarRun {
   jobStatus?: JobStatus;
   /** Composed by the server: "drafted 8 posts". Never the record's own summary text. */
   outputSummary?: string;
-  /** Staff-only tooltip carrying the job id — omitted from a client's payload. */
+  /** Staff-only tooltip carrying the job id - omitted from a client's payload. */
   staffRef?: string;
   assets?: RunAssetView[];
-  /** Every image across the run's assets, in order — feeds the run lightbox. */
+  /** Every image across the run's assets, in order - feeds the run lightbox. */
   images?: AssetImage[];
   // scheduled
   cadence?: PlannedRunCadence;
@@ -63,27 +63,27 @@ export interface CalendarRun {
   prompt?: string;
   agentDescription?: string;
   /**
-   * The schedule's OWN track record — distinct from `jobStatus` above, which
+   * The schedule's OWN track record - distinct from `jobStatus` above, which
    * only exists on a "past" (already-fired) entry. A "scheduled" card is a
    * pure future projection with no job of its own yet, so this is the only
    * way it can say anything about whether the schedule has actually been
    * firing: when it last ran, whether that fire produced a job to inspect,
    * and whether the fire itself was refused before a job ever existed
-   * (PlannedScheduledRun.lastError — a submission refusal, not a job failure).
+   * (PlannedScheduledRun.lastError - a submission refusal, not a job failure).
    */
   lastRunAt?: number;
-  /** Staff-only: the job the schedule's most recent fire produced, if any — links to /jobs/[id]. */
+  /** Staff-only: the job the schedule's most recent fire produced, if any - links to /jobs/[id]. */
   lastJobId?: string;
   lastError?: string | null;
   lastErrorAt?: number | null;
   /**
    * The schedule's raw stored `nextRunAt` was already behind "now" when this
-   * occurrence was projected — it hasn't fired when it should have. Distinct
+   * occurrence was projected - it hasn't fired when it should have. Distinct
    * from `lastError` (a recorded refusal reason may or may not exist yet;
    * this is purely "the clock says it's overdue").
    *
    * `stuckLabel`/`stuckMessage` are resolved server-side (calendar-body.tsx),
-   * not derived here from a plain boolean — the copy differs by viewer
+   * not derived here from a plain boolean - the copy differs by viewer
    * (staff get the operational "Stuck" / "check the Jobs page" wording;
    * clients get a professional, reassuring line with none of that internal
    * vocabulary), and this codebase's rule is that redaction happens at the
@@ -111,7 +111,7 @@ export interface CalendarPost {
   kind: "scheduled" | "published" | "placeholder" | "failed" | "draft";
   images: AssetImage[];
   textPreview: string;
-  /** Set when kind is "failed" — the last publish attempt's error, shown in the chip tooltip and detail modal. */
+  /** Set when kind is "failed" - the last publish attempt's error, shown in the chip tooltip and detail modal. */
   publishError?: string;
 }
 
@@ -134,7 +134,7 @@ const MONTH_NAMES = [
 /**
  * Which day cell an entry belongs in.
  *
- * With `timeZone` the day is resolved in that zone — the same answer on the
+ * With `timeZone` the day is resolved in that zone - the same answer on the
  * server render and in the browser, whatever either runtime's own zone is. A
  * scheduled run passes its stored zone (the day the person actually picked);
  * past runs and published posts are instants and stay in the viewer's day.
@@ -171,7 +171,7 @@ function timeStr(at: number, timeZone?: string): string {
 /**
  * Chip metrics. `cell` is the month grid; `row` is the mobile agenda, where a
  * chip is the full-width control you tap to open a post. Both clear the 24px
- * minimum for a touch target — the grid chips were about 17px tall.
+ * minimum for a touch target - the grid chips were about 17px tall.
  */
 const CHIP_SIZE = {
   cell: "px-1 py-1 text-[11px] min-h-[24px]",
@@ -196,7 +196,7 @@ function RunChip({ run, size = "cell" }: { run: CalendarRun; size?: ChipSize }) 
       )}
       title={`${scheduled ? "Scheduled" : "Ran"} · ${run.productName} · ${timeStr(run.at, run.timeZone)}${
         scheduled && run.zoneLabel ? ` ${run.zoneLabel}` : ""
-      }${run.clientName ? ` — ${run.clientName}` : ""}`}
+      }${run.clientName ? ` - ${run.clientName}` : ""}`}
     >
       <AgentMark identity={run.productName} icon={run.productIcon} className="h-2.5 w-2.5 shrink-0" />
       <span className="truncate">{run.productName}</span>
@@ -241,7 +241,7 @@ function PostChip({
         CHIP_SIZE[size],
         POST_CHIP_CLASS[post.kind],
       )}
-      title={`${POST_KIND_LABEL[post.kind]}${post.kind === "failed" && post.publishError ? ` — ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
+      title={`${POST_KIND_LABEL[post.kind]}${post.kind === "failed" && post.publishError ? ` - ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{post.title}</span>
@@ -260,7 +260,7 @@ function ScheduledRunCard({
   run: CalendarRun;
   /** Pause this schedule. Clients may manage their own (requireClientAccess). */
   canManage: boolean;
-  /** Delete it outright — staff only; a client's undo is a staff member. */
+  /** Delete it outright - staff only; a client's undo is a staff member. */
   canDelete: boolean;
   /** Staff. /jobs/[id] is staff-guarded and silently redirects a client to /dashboard. */
   canOpenJob: boolean;
@@ -304,7 +304,7 @@ function ScheduledRunCard({
         return;
       }
       // The calendar only carries active schedules, so this card is about to
-      // disappear — say so rather than letting it blink out.
+      // disappear - say so rather than letting it blink out.
       setPaused(true);
       router.refresh();
     } catch (e) {
@@ -324,11 +324,11 @@ function ScheduledRunCard({
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium">{run.productName}</p>
             {/* A stuck schedule's "next" time below is a stale, already-passed
-                cursor (see projectRunOccurrences's doc comment) — labeling it
+                cursor (see projectRunOccurrences's doc comment) - labeling it
                 "Upcoming" would restate the exact misrepresentation this flag
                 exists to stop. Label/message are both resolved server-side
                 (calendar-body.tsx) so the copy is already correct for this
-                viewer — never decided here. */}
+                viewer - never decided here. */}
             <Badge tone={run.stuckLabel ? "danger" : "info"}>{run.stuckLabel ?? "Upcoming"}</Badge>
             {run.clientName && <Badge tone="neutral">{run.clientName}</Badge>}
           </div>
@@ -347,11 +347,11 @@ function ScheduledRunCard({
               {run.prompt ? `“${run.prompt}”` : "Runs the agent's default playbook."}
             </p>
           </div>
-          {/* The schedule's own track record — this card IS a future
+          {/* The schedule's own track record - this card IS a future
               projection with no job of its own, so this is the only place it
               can say whether the schedule has actually been firing. A recent
               lastError means the fire was REFUSED before a job ever existed
-              (credit cap, missing intake, agent service unreachable) — there
+              (credit cap, missing intake, agent service unreachable) - there
               is nothing to link to for that outcome, only the reason. */}
           {(run.lastRunAt || run.lastError) && (
             <div className="mt-2.5 border-t border-border pt-2">
@@ -360,7 +360,7 @@ function ScheduledRunCard({
               </p>
               {run.lastError ? (
                 <p className="text-xs text-danger">
-                  Failed to fire {run.lastErrorAt ? relativeTime(run.lastErrorAt) : ""} — {run.lastError}
+                  Failed to fire {run.lastErrorAt ? relativeTime(run.lastErrorAt) : ""} - {run.lastError}
                 </p>
               ) : run.lastRunAt ? (
                 <p className="text-xs text-muted-2">
@@ -482,14 +482,14 @@ function PastRunCard({
   const heading = (
     <>
       <p className="text-sm font-medium">{run.productName}</p>
-      {/* Never `run.jobStatus` raw — that prints the database enum. */}
+      {/* Never `run.jobStatus` raw - that prints the database enum. */}
       <Badge tone={status.tone}>{status.label}</Badge>
       {run.clientName && <Badge tone="neutral">{run.clientName}</Badge>}
     </>
   );
 
   return (
-    // Product code and job id are staff bookkeeping — a tooltip the server only
+    // Product code and job id are staff bookkeeping - a tooltip the server only
     // fills in for staff, never body copy on a client's screen.
     <div className="rounded-lg border border-border bg-surface p-3" title={run.staffRef}>
       <div className="flex items-start gap-2.5">
@@ -544,7 +544,7 @@ function PastRunCard({
             <p className="mt-2 text-xs text-muted-2">No client-facing assets from this run.</p>
           ) : null}
 
-          {/* Image gallery — click any to slide through the whole run */}
+          {/* Image gallery - click any to slide through the whole run */}
           {images.length > 0 && (
             <div className="mt-2.5 flex flex-wrap gap-1.5">
               {images.map((img, i) => (
@@ -585,7 +585,7 @@ function PostCard({
   onOpenDetails,
 }: {
   post: CalendarPost;
-  /** The underlying asset, when the viewer has it — drives Mark as posted. */
+  /** The underlying asset, when the viewer has it - drives Mark as posted. */
   asset?: Asset;
   onOpenLightbox: (images: AssetImage[], index: number) => void;
   onOpenDetails: (assetId: string) => void;
@@ -629,7 +629,7 @@ function PostCard({
         </div>
         <p className="mt-0.5 text-xs text-muted-2">{timeStr(post.at)}</p>
         {post.textPreview && <p className="mt-1 line-clamp-2 text-[11px] text-muted-2">{post.textPreview}</p>}
-        {/* Day-card attestation: the client posts by hand, then says so here —
+        {/* Day-card attestation: the client posts by hand, then says so here -
             the same single transition the detail modal offers (QA F149). */}
         {asset && <MarkPostedRow asset={asset} compact />}
       </div>
@@ -653,7 +653,7 @@ export function RunCalendar({
   runs: CalendarRun[];
   posts: CalendarPost[];
   assets: Asset[];
-  /** Staff on their own clients — shows the "Schedule a run" button + staff-only controls. */
+  /** Staff on their own clients - shows the "Schedule a run" button + staff-only controls. */
   canSchedule?: boolean;
   /**
    * May pause a scheduled run. True for clients on their own calendar too:
@@ -684,7 +684,7 @@ export function RunCalendar({
   const [schedulePrefillAt, setSchedulePrefillAt] = useState<number | null>(null);
   // Status filter: which of the named calendar statuses are currently hidden.
   // "review" is a CalendarRun bucket (jobStatus === "review", i.e. Pending
-  // Review) — everything else is a CalendarPost kind.
+  // Review) - everything else is a CalendarPost kind.
   const [hiddenStatuses, setHiddenStatuses] = useState<Set<StatusFilterKey>>(new Set());
   const toggleStatus = (key: StatusFilterKey) =>
     setHiddenStatuses((prev) => {
@@ -728,7 +728,7 @@ export function RunCalendar({
   const totalCells = Math.ceil((firstDayOfWeek + totalDays) / 7) * 7;
   const isCurrentMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth();
 
-  // Distinct scheduled runs, not chip count — a recurring run now projects one
+  // Distinct scheduled runs, not chip count - a recurring run now projects one
   // chip per future occurrence, which would otherwise inflate this summary.
   const upcomingCount = new Set(runs.filter((r) => r.kind === "scheduled").map((r) => r.id)).size;
   const pastCount = runs.filter((r) => r.kind === "past").length;
@@ -774,7 +774,7 @@ export function RunCalendar({
   return (
     <div className="space-y-4">
       <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
-        {/* Header — wraps as a row before it wraps a control's label. Nothing
+        {/* Header - wraps as a row before it wraps a control's label. Nothing
             here had a minimum width, so at laptop width the primary action
             broke first and read "Schedule a / run" beside a two-line heading. */}
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border px-4 py-3">
@@ -819,7 +819,7 @@ export function RunCalendar({
           </div>
         </div>
 
-        {/* Day-of-week header — seven columns need width to mean anything */}
+        {/* Day-of-week header - seven columns need width to mean anything */}
         <div className="hidden grid-cols-7 border-b border-border sm:grid">
           {DAY_LABELS.map((d) => (
             <div key={d} className="py-1.5 text-center text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">{d}</div>
@@ -839,7 +839,7 @@ export function RunCalendar({
             const isLastCol = (i + 1) % 7 === 0;
             const isSelected = key !== "" && key === selectedKey;
 
-            // An empty day is where staff want to PUT something — clicking one
+            // An empty day is where staff want to PUT something - clicking one
             // opens the schedule form with that date already filled in.
             const canScheduleHere = isValid && chipCount === 0 && canSchedule;
             const activate = () => {
@@ -900,7 +900,7 @@ export function RunCalendar({
           })}
         </div>
 
-        {/* Phone agenda — only the days with something on them */}
+        {/* Phone agenda - only the days with something on them */}
         <ul className="divide-y divide-border sm:hidden">
           {agendaDays.length === 0 ? (
             <li className="px-4 py-6 text-center text-xs text-muted-2">
@@ -937,7 +937,7 @@ export function RunCalendar({
           )}
         </ul>
 
-        {/* Legend + status filter — each chip toggles that status's visibility on the grid above. */}
+        {/* Legend + status filter - each chip toggles that status's visibility on the grid above. */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
           <LegendDot className="border border-dashed border-foreground/40 bg-foreground/[0.03]" label="Scheduled run" />
           <LegendDot className="bg-foreground/25" label="Completed run" />
@@ -1062,7 +1062,7 @@ const STATUS_FILTER_CHIPS: Array<{ key: StatusFilterKey; label: string; classNam
   { key: "review", label: "Pending review", className: "bg-warning/25" },
 ];
 
-/** A legend dot that also toggles that status's visibility on the grid — dimmed while hidden. */
+/** A legend dot that also toggles that status's visibility on the grid - dimmed while hidden. */
 function FilterChip({
   className,
   label,

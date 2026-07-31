@@ -24,8 +24,8 @@ import { cn } from "@/lib/utils";
 /**
  * The client-agent card before the agent is live (Phase 3 §7.1 cards 1–3).
  *
- * Its whole job is to make the launch a thing the client can DO — "I want to
- * launch my Instagram agent" → press → watch it happen — without ever offering
+ * Its whole job is to make the launch a thing the client can DO - "I want to
+ * launch my Instagram agent" → press → watch it happen - without ever offering
  * a press the server would refuse. Every gated state renders the button
  * DISABLED with its reason painted underneath (F25): the Button primitive sets
  * `disabled:pointer-events-none`, so a `title` on a disabled control can never
@@ -121,7 +121,7 @@ export function ClientAgentLaunchCard({
       </div>
 
       {/* W7: an umbrella whose setup job never reported back sits in
-          `launching` forever — the client sees perpetual progress and staff had
+          `launching` forever - the client sees perpetual progress and staff had
           no control at all, because Reset only rendered on launch_failed. It is
           the same action (it already accepts any non-live state); it just had
           nowhere to be pressed. Confirmed, because the run may genuinely still
@@ -156,7 +156,7 @@ export function ClientAgentLaunchCard({
             </div>
           </div>
 
-          {/* The reason the button is off, PAINTED — not a tooltip on a control
+          {/* The reason the button is off, PAINTED - not a tooltip on a control
               that cannot receive a pointer. */}
           {!agent.gate.allowed && agent.gate.reason && (
             <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
@@ -217,7 +217,7 @@ function StuckLaunchEscape({ agent }: { agent: ClientAgentCardRow }) {
     <div className="mt-3 border-t border-border/60 pt-2">
       {overdue && (
         <p className="mb-1 text-[11px] text-warning">
-          This setup has been running for over an hour — it may be stuck.
+          This setup has been running for over an hour - it may be stuck.
         </p>
       )}
       {confirming ? (
@@ -271,7 +271,7 @@ const PHASE_ORDER: ClientLaunchPhase[] = ["researching", "designing", "live"];
  *
  * The stage never claims work it cannot see. Until the service emits progress
  * events (seam T2) the split between "researching" and "designing" is a clock,
- * not a report — so while the job is still `launching`, a passed step advances
+ * not a report - so while the job is still `launching`, a passed step advances
  * the COPY but is drawn without its check-mark. The tick is the claim: a green
  * ✓ on "Researching your brand" at minute 13, sourced from nothing but elapsed
  * time, is the portal asserting an outcome it has no evidence for. Once the
@@ -320,7 +320,7 @@ function LaunchProgress({
         );
       })}
       <p className="pt-1 text-[11px] text-muted-2">
-        This takes {LAUNCH_ESTIMATE}. You can leave this page — it keeps running.
+        This takes {LAUNCH_ESTIMATE}. You can leave this page - it keeps running.
       </p>
     </div>
   );

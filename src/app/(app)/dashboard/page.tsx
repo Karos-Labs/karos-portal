@@ -17,7 +17,7 @@ export default async function DashboardPage() {
     redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
   }
 
-  // Managed action items — admin-only view for now (see action-item-actions.ts
+  // Managed action items - admin-only view for now (see action-item-actions.ts
   // for the client rollout note).
   const isAdmin = user.role === "KAROS_ADMIN";
   const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
@@ -43,7 +43,7 @@ export default async function DashboardPage() {
   const jobsThisWeek = jobs.filter((j) => j.createdAt > weekAgo);
   const delivered = jobs.filter((j) => j.status === "delivered").length;
   // Upstream failures (rate limits, credit exhaustion, provider errors) used to
-  // be visible only by opening each job — nothing at a glance said "something
+  // be visible only by opening each job - nothing at a glance said "something
   // is broken." A recent-failures banner surfaces that immediately.
   const recentFailedJobs = jobsThisWeek.filter((j) => j.status === "failed");
 
@@ -76,7 +76,7 @@ export default async function DashboardPage() {
         >
           <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-danger" />
           <p className="text-xs text-danger">
-            {recentFailedJobs.length} run{recentFailedJobs.length === 1 ? "" : "s"} failed this week — review in Jobs.
+            {recentFailedJobs.length} run{recentFailedJobs.length === 1 ? "" : "s"} failed this week - review in Jobs.
           </p>
         </Link>
       )}

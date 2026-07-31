@@ -33,8 +33,8 @@ export default async function TeamPage() {
       (u) => u.clientId === user.clientId && !(u.disabled && !u.approvedAt),
     );
     // Scope the roster's clients too: it crosses to a client component, so every
-    // client doc handed over here — clientKeyId included, which is enough to join
-    // that client's workspace — is readable in the RSC payload.
+    // client doc handed over here - clientKeyId included, which is enough to join
+    // that client's workspace - is readable in the RSC payload.
     clients = allClients.filter((c) => c.id === user.clientId);
   }
 

@@ -22,7 +22,7 @@ export function ClientEditor({ client }: { client: Client }) {
     brandVoice: client.brandVoice ?? "",
   });
 
-  // Logo state — managed independently (API route writes directly to DB)
+  // Logo state - managed independently (API route writes directly to DB)
   const [logoUrl, setLogoUrl] = useState(client.logoUrl ?? "");
   const [logoFileName, setLogoFileName] = useState<string | null>(null);
   const [logoUploading, setLogoUploading] = useState(false);

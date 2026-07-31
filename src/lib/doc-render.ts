@@ -1,5 +1,7 @@
 /** Client-safe Markdown → styled HTML helpers for rendering client context docs. */
 
+import { normalizeDashes } from "@/lib/text-utils";
+
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -225,7 +227,7 @@ export function toPlainSummary(text: string | null | undefined, maxChars = 240):
     if (parts.join(" ").length >= maxChars) break;
   }
 
-  const flat = parts.join(" ").replace(/\s+/g, " ").trim();
+  const flat = normalizeDashes(parts.join(" ").replace(/\s+/g, " ").trim());
   if (flat.length <= maxChars) return flat;
   const cut = flat.slice(0, maxChars);
   const lastSpace = cut.lastIndexOf(" ");
@@ -263,7 +265,7 @@ export function renderSectionBody(md: string): string {
   // is load-bearing — a trailing space is invisible in the source and used to
   // leave a literal "---" on screen — and it is spaces/tabs rather than `\s`
   // so the match cannot run past the end of its own line.
-  let out = esc(stripPipelineMarkers(md)).replace(
+  let out = esc(normalizeDashes(stripPipelineMarkers(md))).replace(
     /^---+[ \t]*$/gm,
     '<hr class="my-4 border-0 border-t border-border" />',
   );
