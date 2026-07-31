@@ -248,6 +248,61 @@ the manual-only promotion.
 
 ---
 
+## Cutting production over from Cloud Run's native CD
+
+If `karos-cmo` in the production project (`karoscmo`) was set up via Cloud Run's own
+**"Continuously deploy from a repository"** feature (Cloud Run console → service → the
+"Continuous Deployment" / Deploy tab shows a connected GitHub repo), that is a *second*,
+independent auto-deploy path — it watches push-to-main directly, same as prep's GitHub
+Actions workflow, but with no approval gate at all. As long as it's connected, every push to
+`main` deploys to production immediately, regardless of `promote-production.yml` — the two
+paths don't know about each other.
+
+**No second Workload Identity pool is needed in `karoscmo`.** The single WIF pool lives in
+`karoscmo-prep`; the deployer service account is granted `roles/cloudbuild.builds.editor` on
+*both* projects (see step 6 above / `deploy/bootstrap-prep-gcp.sh`), which is all
+`promote-production.yml` needs to submit a build in `karoscmo`.
+
+1. **Disconnect the native CD** (GCP Console is the reliable path — it's Cloud
+   Run-managed, so editing the underlying trigger directly can get fought by Cloud Run's own
+   state): Cloud Run → `karos-cmo` service → **Continuous Deployment** tab → **Disconnect
+   repository** / delete the setup. To confirm it's really gone:
+
+   ```bash
+   gcloud builds triggers list --project=karoscmo \
+     --format="table(id,name,github.push.branch,filename,disabled)"
+   ```
+
+   Look for one filtering on `main` that references this service; it should no longer be
+   listed (or show `disabled: True`) once disconnected.
+
+2. **Confirm the cross-project grants exist** (idempotent — safe to re-run):
+
+   ```bash
+   # Deployer SA can submit builds in prod:
+   gcloud projects add-iam-policy-binding karoscmo \
+     --member="serviceAccount:github-actions-deployer@karoscmo-prep.iam.gserviceaccount.com" \
+     --role="roles/cloudbuild.builds.editor"
+
+   # Prod's own Cloud Build SA can pull from prep's Artifact Registry (needed by
+   # cloudbuild.promote.yaml's pull-from-prep step) — requires prep's AR repo to
+   # already exist, i.e. after billing is linked and deploy/bootstrap-prep-gcp.sh
+   # (or its Artifact Registry step) has actually run:
+   PROD_PROJECT_NUMBER=$(gcloud projects describe karoscmo --format='value(projectNumber)')
+   gcloud artifacts repositories add-iam-policy-binding karos-cmo \
+     --project=karoscmo-prep --location=us-central1 \
+     --member="serviceAccount:${PROD_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+     --role="roles/artifactregistry.reader"
+   ```
+
+   The standard bindings on production's own Cloud Build service account
+   (`roles/run.admin`, `roles/iam.serviceAccountUser`, `roles/secretmanager.secretAccessor` —
+   the original cloudbuild.yaml header's steps 3–4) should already exist from whenever
+   production was first set up; nothing new needed there.
+
+3. From this point, `main` never auto-touches production. The only way production changes is
+   someone running **Promote to Production** with a commit SHA that's already live in prep.
+
 ## Day to day
 
 1. Push to `main` → `quality` job runs (lint/type-check/test) → on success, `deploy-prep.yml`
