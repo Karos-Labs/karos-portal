@@ -164,7 +164,7 @@ have iam service-accounts describe "$DEPLOYER_SA" --project="$PREP_PROJECT_ID" \
 gcloud iam service-accounts add-iam-policy-binding "$DEPLOYER_SA" \
   --project="$PREP_PROJECT_ID" \
   --role="roles/iam.workloadIdentityUser" \
-  --member="principalSet://iam.googleapis.com/${WIF_POOL_RESOURCE#*/}/attribute.repository/${GITHUB_REPO}" -q >/dev/null
+  --member="principalSet://iam.googleapis.com/${WIF_POOL_RESOURCE}/attribute.repository/${GITHUB_REPO}" -q >/dev/null
 
 gcloud projects add-iam-policy-binding "$PREP_PROJECT_ID" \
   --member="serviceAccount:${DEPLOYER_SA}" --role="roles/cloudbuild.builds.editor" --condition=None -q >/dev/null
