@@ -19,7 +19,12 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { deliveredAgentIds, isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
+import {
+  deliveredAgentIds,
+  isLaunchInFlight,
+  lastRunFailedAgentIds,
+  rosterStatus,
+} from "@/lib/client-agents";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
@@ -259,12 +264,20 @@ export default async function ClientAgentDetailPage({
   // client's `produced` is the 30-day archive set, so an agent whose only
   // delivery was two months ago would be "Not set up yet" on this page and
   // "Runs on request" on the card that opened it.
-  const hasDelivered = deliveredAgentIds(jobs, new Map([[agent.name, agent.id]])).has(agent.id);
+  const agentIdByName = new Map([[agent.name, agent.id]]);
+  const hasDelivered = deliveredAgentIds(jobs, agentIdByName).has(agent.id);
   const status = rosterStatus({
     launchState: umbrella?.launchState ?? null,
     scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
+    scheduleRefusalAt: schedule?.lastErrorAt ?? null,
     scheduleActive: schedule?.status === "active",
     hasDelivered,
+    // Read through the SAME helper the roster uses (lastRunFailedAgentIds), not
+    // re-derived from `agentRuns` below: that list is staff-only and capped at
+    // eight rows, so a client's page would answer this differently — or not at
+    // all — from the card that opened it.
+    lastRunFailed: lastRunFailedAgentIds(jobs, agentIdByName).has(agent.id),
+    now,
   });
   const blurb = clientAgentBlurb({
     key: agent.key,
@@ -650,10 +663,19 @@ export default async function ClientAgentDetailPage({
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
             />
-          ) : status.tone === "live" || hasDelivered ? (
+          ) : schedule?.status === "active" || hasDelivered ? (
             /* The legacy shape (CD-H8): no umbrella was ever bound, but a weekly
                schedule is firing — so this agent genuinely IS producing, and the
-               roster and header badge it Live. It is also the flagship case, not
+               roster and header badge it Live.
+
+               THE SCHEDULE, not `status.tone === "live"`. The tone was standing
+               in for "a schedule is firing", and it stopped being able to the
+               moment anything else could outrank Live: a failed last run (or a
+               refusal) flipped the tone to `attention` and this whole panel
+               vanished, replaced by an EmptyState reading "Not set up yet" — on
+               an agent with an active weekly schedule. A run that failed is
+               precisely when its owner needs the controls, so the branch now
+               asks the question it always meant. It is also the flagship case, not
                an edge one: Karos Labs' own Instagram Agent predates the umbrella
                model. It used to render one sentence and nothing else, which made
                the most-looked-at agent in the portal the one with no way to make

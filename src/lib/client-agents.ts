@@ -437,11 +437,106 @@ export function deliveredAgentIds(
   );
 }
 
+/**
+ * Which agents' MOST RECENT finished run failed, by customAgentId.
+ *
+ * The sibling of `deliveredAgentIds`, over the same job population and the same
+ * name fallback, because it answers the other half of the same question. The
+ * roster's status word was built from four inputs — launch state, schedule
+ * refusal, schedule active, delivered — and NONE of them can see a run that
+ * failed at the agent service: `schedule.lastError` only ever records a
+ * SUBMIT-time refusal (out of credits, a cap, a missing intake, the service
+ * down), while a run that submits cleanly and then fails writes `job.error`
+ * through the webhook and never touches the schedule row. So the pilot client's
+ * Instagram Agent carried a green "Live" badge whose only run, two days
+ * earlier, read "Failed".
+ *
+ * THE ORDERING RULE, and it is the whole helper:
+ *
+ *  1. Only the most recent run with a VERDICT counts. An old failure followed
+ *     by a later success is not "needs attention" — it is an agent that had a
+ *     bad day and then worked, and a badge that remembers the failure forever
+ *     is the stale-refusal defect wearing a different hat.
+ *  2. A run still in flight (queued/running) carries no verdict and is skipped
+ *     rather than treated as a success. Skipping is deliberate: a retry running
+ *     right now does not mean the last failure is fixed, so the previous
+ *     verdict stands until the retry produces one of its own — the same call
+ *     `deriveAgentHealth` makes when it reports "retrying" rather than
+ *     "healthy".
+ *  3. A CANCELLED run is skipped too. Somebody stopped it by hand; that says
+ *     nothing about whether the agent works, so it may neither raise attention
+ *     nor clear a failure that came before it.
+ *
+ * Ties (two verdicts on the same millisecond, which submission timestamps make
+ * all but impossible) resolve to the failure, so the answer never depends on
+ * the order the jobs happened to arrive in.
+ */
+export function lastRunFailedAgentIds(
+  jobs: Pick<Job, "status" | "external" | "customAgentId" | "agentName" | "createdAt">[],
+  agentIdByName: Map<string, string>,
+): Set<string> {
+  const latest = new Map<string, { at: number; failed: boolean }>();
+  for (const job of jobs) {
+    if (job.external?.taskType !== "custom") continue;
+    const failed = job.status === "failed";
+    // Everything that is neither a landing nor a failure — queued, running,
+    // cancelled — is not a verdict and does not take part in the comparison.
+    if (!failed && !DELIVERED_JOB_STATUSES.has(job.status)) continue;
+    const agentId = job.customAgentId ?? agentIdByName.get(job.agentName);
+    if (!agentId) continue;
+    const seen = latest.get(agentId);
+    if (!seen || job.createdAt > seen.at || (job.createdAt === seen.at && failed)) {
+      latest.set(agentId, { at: job.createdAt, failed });
+    }
+  }
+  return new Set(
+    [...latest].filter(([, verdict]) => verdict.failed).map(([agentId]) => agentId),
+  );
+}
+
+/**
+ * How long a stored schedule refusal keeps forcing "Needs attention".
+ *
+ * `PlannedScheduledRun.lastError` clears only on the next CLEAN fire, so on a
+ * weekly cadence a refusal that a top-up fixed an hour later kept telling the
+ * client their agent needed them for up to seven more days. Three days is
+ * chosen against that cadence from both ends: comfortably shorter than the
+ * longest gap between fires (weekly), so a stale refusal can never sit out a
+ * whole cycle; and long enough to survive a weekend, so a Friday-evening
+ * refusal is still on the card on Monday morning when somebody is there to act
+ * on it.
+ *
+ * Ageing out is not forgetting. Nothing is written — this is a read-path
+ * window — so a refusal that is still true is re-raised by the very next
+ * refused fire (within a day for a daily schedule), and the refusal text and
+ * its "Last tried" stamp stay on the staff surfaces that render them
+ * regardless of age.
+ */
+export const SCHEDULE_REFUSAL_FRESH_MS = 3 * 24 * 60 * 60 * 1000;
+
 export type RosterStatusTone = "live" | "attention" | "progress" | "idle";
 
 export interface RosterStatus {
   tone: RosterStatusTone;
   label: string;
+}
+
+/**
+ * Whether a stored schedule refusal is recent enough to still be the client's
+ * current state. Blank is not a refusal; an UNDATED one is kept, because every
+ * writer sets `lastErrorAt` in the same patch as `lastError` (the scheduler
+ * routes, and planned-run-actions clears both together), so a refusal with no
+ * timestamp is a row we cannot age rather than one we know to be old — and
+ * hiding an alarm we cannot date is the wrong way to be wrong.
+ */
+function refusalIsCurrent(input: {
+  scheduleRefusal?: string | null;
+  scheduleRefusalAt?: number | null;
+  now?: number;
+}): boolean {
+  if (!input.scheduleRefusal?.trim()) return false;
+  if (input.scheduleRefusalAt == null) return true;
+  return (input.now ?? Date.now()) - input.scheduleRefusalAt < SCHEDULE_REFUSAL_FRESH_MS;
 }
 
 /**
@@ -456,6 +551,19 @@ export interface RosterStatus {
  * whose every scheduled fire is being turned away is not live, whatever its
  * umbrella says, and painting it green because a database field says `live`
  * is the exact lie those two defects were about.
+ *
+ * A FAILED LAST RUN outranks "Live" for the same reason and closes the other
+ * half of it. The refusal rung can only see a fire the scheduler turned away
+ * BEFORE a job existed; a run that submits cleanly and then fails at the agent
+ * service is invisible to it, which is how the pilot client's Instagram Agent
+ * came to show a green "Live" badge two days after its only run failed. The
+ * verdict comes from `lastRunFailedAgentIds`, which every call site shares so
+ * the card and the page it opens cannot hold two opinions.
+ *
+ * Both rungs say "Needs attention" — one phrase, deliberately. The roster
+ * answers "is this working for me right now", and "no" is one answer however it
+ * got there; WHY is the detail page's job. A second phrase here would also be a
+ * second label map, and those are a standing defect class in this codebase.
  *
  * "Live" is then either of the two things a client would call live: an umbrella
  * that has gone live, or — for an agent with no umbrella at all — a weekly
@@ -475,6 +583,12 @@ export function rosterStatus(input: {
   launchState: ClientAgentLaunchState | null;
   /** The agent's weekly schedule refusal, already client-redacted. */
   scheduleRefusal?: string | null;
+  /**
+   * When that refusal was recorded (PlannedScheduledRun.lastErrorAt). Past
+   * SCHEDULE_REFUSAL_FRESH_MS it stops forcing the badge — see that constant
+   * for why, and note that nothing is written to make it so.
+   */
+  scheduleRefusalAt?: number | null;
   /** True when a weekly schedule exists and is not paused. */
   scheduleActive?: boolean;
   /**
@@ -484,8 +598,30 @@ export function rosterStatus(input: {
    * the same way.
    */
   hasDelivered?: boolean;
+  /**
+   * True when this agent's most recent run WITH A VERDICT failed. Resolved by
+   * the callers through `lastRunFailedAgentIds` — the ordering rule lives
+   * there, not here, so all three surfaces answer it identically.
+   */
+  lastRunFailed?: boolean;
+  /** Clock, for the refusal's freshness window. Defaults to now. */
+  now?: number;
 }): RosterStatus {
-  if (input.scheduleRefusal?.trim()) return { tone: "attention", label: "Needs attention" };
+  const attention: RosterStatus = { tone: "attention", label: "Needs attention" };
+  if (refusalIsCurrent(input)) return attention;
+  // A failed last run outranks Live, but never the launch states: `launching`
+  // and `curating` are a NEWER event than any finished run and the launch card
+  // is already narrating them, and `launch_failed` is the same alarm in more
+  // specific words. Replacing either with the generic phrase would lose
+  // information, not add it.
+  if (
+    input.lastRunFailed &&
+    input.launchState !== "launching" &&
+    input.launchState !== "curating" &&
+    input.launchState !== "launch_failed"
+  ) {
+    return attention;
+  }
 
   if (input.launchState === null) {
     // No umbrella and no schedule firing: nobody has set this agent up for this

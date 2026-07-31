@@ -20,7 +20,12 @@ import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { deliveredAgentIds, isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
+import {
+  deliveredAgentIds,
+  isLaunchInFlight,
+  lastRunFailedAgentIds,
+  rosterStatus,
+} from "@/lib/client-agents";
 import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { BindAgentControl } from "@/components/client-agents/client-agents-section";
 import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
@@ -80,6 +85,11 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // of them are plainly set up already. It used to be spelled out inline here
     // and nowhere else, which is why the status word could not read it.
     const completedAgentIds = deliveredAgentIds(jobs, agentIdByName);
+    // The other half of the same read: which agents' most recent finished run
+    // FAILED. A schedule refusal cannot see that — it only records a fire the
+    // scheduler turned away before a job existed — so without this a green
+    // "Live" badge sits above a run history whose last row says Failed.
+    const failedAgentIds = lastRunFailedAgentIds(jobs, agentIdByName);
     const agents = allAgents
       .filter(
         (agent) =>
@@ -194,10 +204,15 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           // "Live" (F24/F129) — an agent whose every fire is turned away is
           // not live, whatever its umbrella says.
           scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
+          // …but only while it is still current. It clears in Firestore on the
+          // next CLEAN fire, which on a weekly cadence is up to a week away.
+          scheduleRefusalAt: schedule?.lastErrorAt ?? null,
           scheduleActive: schedule?.status === "active",
           // "Not set up yet" beside a shelf of delivered work is the card
           // contradicting itself; an agent that has produced says so instead.
           hasDelivered: completedAgentIds.has(agent.id),
+          lastRunFailed: failedAgentIds.has(agent.id),
+          now,
         }),
       };
     });
@@ -291,10 +306,15 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   const staffScheduleByAgentId = new Map(staffScheduleRows.map((row) => [row.agentId, row]));
   // Same delivered-work read the client branch makes, so the two rosters cannot
   // call one agent "Not set up yet" and the other "Runs on request".
-  const staffDeliveredAgentIds = deliveredAgentIds(
-    jobs,
-    new Map(customAgents.map((a) => [a.name, a.id])),
-  );
+  const staffAgentIdByName = new Map(customAgents.map((a) => [a.name, a.id]));
+  const staffDeliveredAgentIds = deliveredAgentIds(jobs, staffAgentIdByName);
+  // Same failed-last-run read the client branch makes, for the same reason: the
+  // two rosters must not disagree about whether an agent needs someone.
+  const staffFailedAgentIds = lastRunFailedAgentIds(jobs, staffAgentIdByName);
+  // The clock the refusal window is measured against — resolved once for the
+  // whole roster so every card ages a refusal from the same instant.
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const staffNow = Date.now();
   // Drafts waiting on staff, per agent — the queue the retired card surfaced
   // as its "N ready" chip. Counted from the jobs already loaded.
   const reviewCountByAgentName = new Map<string, number>();
@@ -335,8 +355,11 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       status: rosterStatus({
         launchState: umbrella?.launchState ?? null,
         scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
+        scheduleRefusalAt: schedule?.lastErrorAt ?? null,
         scheduleActive: schedule?.status === "active",
         hasDelivered: staffDeliveredAgentIds.has(agent.id),
+        lastRunFailed: staffFailedAgentIds.has(agent.id),
+        now: staffNow,
       }),
       note,
     };

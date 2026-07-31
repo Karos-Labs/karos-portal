@@ -18,7 +18,9 @@ import {
   weekdayOfDateKey,
   activeTemplates,
   deliveredAgentIds,
+  lastRunFailedAgentIds,
   rosterStatus,
+  SCHEDULE_REFUSAL_FRESH_MS,
 } from "@/lib/client-agents";
 import type { ClientAgentTemplate } from "@/lib/types";
 
@@ -407,6 +409,209 @@ describe("rosterStatus", () => {
     expect(rosterStatus({ launchState: "not_launched", hasDelivered: true })).toMatchObject({
       label: "Not set up yet",
     });
+  });
+
+  /* ── a failed last run outranks Live ── */
+
+  it("stops badging Live when the most recent run failed", () => {
+    // The production case: the pilot's Instagram Agent, green "Live" badge, one
+    // run two days earlier reading "Failed". The refusal rung could not see it —
+    // that run SUBMITTED fine and died at the agent service, which writes
+    // job.error and never touches schedule.lastError.
+    expect(rosterStatus({ launchState: "live", lastRunFailed: true })).toEqual({
+      tone: "attention",
+      label: "Needs attention",
+    });
+    // Same for the unbound-but-scheduled shape (Instagram's own): a schedule
+    // that is firing does not make a failing agent live.
+    expect(
+      rosterStatus({ launchState: null, scheduleActive: true, lastRunFailed: true }),
+    ).toMatchObject({ tone: "attention", label: "Needs attention" });
+  });
+
+  it("reuses 'Needs attention' rather than inventing a second failure phrase", () => {
+    // One phrase for one answer. A second label here would also be a second
+    // status-label map, which is a standing defect class in this codebase.
+    expect(rosterStatus({ launchState: "live", lastRunFailed: true }).label).toBe(
+      rosterStatus({ launchState: "live", scheduleRefusal: "Turned away." }).label,
+    );
+  });
+
+  it("keeps the launch narration — it is newer, or more specific, than a finished run", () => {
+    // A setup in flight is a NEWER event than any completed run, and the launch
+    // card is already narrating it in three phases.
+    expect(rosterStatus({ launchState: "launching", lastRunFailed: true })).toMatchObject({
+      tone: "progress",
+    });
+    expect(rosterStatus({ launchState: "curating", lastRunFailed: true })).toMatchObject({
+      tone: "progress",
+    });
+    // Same alarm, more specific words — swapping in the generic phrase would
+    // lose the fact that it is the SETUP that failed.
+    expect(rosterStatus({ launchState: "launch_failed", lastRunFailed: true })).toEqual({
+      tone: "attention",
+      label: "Setup needs attention",
+    });
+  });
+
+  /* ── a refusal ages out (read-path only, nothing is written) ── */
+
+  it("stops a stale refusal forcing 'Needs attention' forever", () => {
+    const now = 1_800_000_000_000;
+    const refusal = { launchState: "live" as const, scheduleRefusal: "Turned away.", now };
+    // Fresh: still the client's current state.
+    expect(
+      rosterStatus({ ...refusal, scheduleRefusalAt: now - 60 * 60 * 1000 }),
+    ).toMatchObject({ tone: "attention", label: "Needs attention" });
+    // Just inside the window.
+    expect(
+      rosterStatus({ ...refusal, scheduleRefusalAt: now - SCHEDULE_REFUSAL_FRESH_MS + 1 }),
+    ).toMatchObject({ tone: "attention" });
+    // Past it: lastError only clears on the next CLEAN fire, so on a weekly
+    // cadence a refusal a top-up fixed an hour later kept saying "Needs
+    // attention" for another week.
+    expect(
+      rosterStatus({ ...refusal, scheduleRefusalAt: now - SCHEDULE_REFUSAL_FRESH_MS - 1 }),
+    ).toEqual({ tone: "live", label: "Live" });
+  });
+
+  it("shows an undated refusal rather than hiding an alarm it cannot age", () => {
+    // Every writer sets lastErrorAt in the same patch as lastError, so an
+    // undated refusal is a row we cannot date, not one we know to be old.
+    expect(
+      rosterStatus({ launchState: "live", scheduleRefusal: "Turned away.", now: 1 }),
+    ).toMatchObject({ tone: "attention" });
+  });
+
+  it("still lets a stale refusal's agent fail on its own account", () => {
+    // Ageing the refusal out must not paint over a run that actually failed.
+    const now = 1_800_000_000_000;
+    expect(
+      rosterStatus({
+        launchState: "live",
+        scheduleRefusal: "Turned away.",
+        scheduleRefusalAt: now - SCHEDULE_REFUSAL_FRESH_MS - 1,
+        lastRunFailed: true,
+        now,
+      }),
+    ).toMatchObject({ tone: "attention", label: "Needs attention" });
+  });
+});
+
+/**
+ * The ordering rule behind the badge: only the most recent run WITH A VERDICT
+ * counts. An old failure followed by a success is an agent that had a bad day
+ * and then worked — and a badge that remembers the failure forever is the
+ * stale-refusal defect wearing a different hat.
+ */
+describe("lastRunFailedAgentIds", () => {
+  const byName = new Map([["Instagram Agent", "ca-ig"]]);
+  const job = (over: Record<string, unknown>) =>
+    ({
+      id: "j1",
+      clientId: "c1",
+      agentId: "agent-service",
+      agentName: "Instagram Agent",
+      status: "failed",
+      createdAt: 1_000,
+      external: { taskType: "custom" },
+      ...over,
+    }) as never;
+
+  it("flags an agent whose most recent run failed", () => {
+    expect([...lastRunFailedAgentIds([job({ customAgentId: "ca-ig" })], byName)]).toEqual(["ca-ig"]);
+  });
+
+  it("clears the flag when a later run succeeded — order-independently", () => {
+    const older = job({ customAgentId: "ca-ig", status: "failed", createdAt: 1_000 });
+    const newer = job({ customAgentId: "ca-ig", status: "delivered", createdAt: 2_000 });
+    // Both input orders, because listJobs' sort is not this helper's business.
+    expect(lastRunFailedAgentIds([older, newer], byName).size).toBe(0);
+    expect(lastRunFailedAgentIds([newer, older], byName).size).toBe(0);
+    // And the reverse: a success followed by a failure IS flagged.
+    expect(
+      lastRunFailedAgentIds(
+        [
+          job({ customAgentId: "ca-ig", status: "delivered", createdAt: 1_000 }),
+          job({ customAgentId: "ca-ig", status: "failed", createdAt: 2_000 }),
+        ],
+        byName,
+      ).size,
+    ).toBe(1);
+  });
+
+  it("does not treat a run in flight as a failure, or as a fix", () => {
+    // No verdict yet: a queued/running job alone flags nothing…
+    for (const status of ["queued", "running"]) {
+      expect(lastRunFailedAgentIds([job({ customAgentId: "ca-ig", status })], byName).size).toBe(0);
+    }
+    // …and a retry now in flight does not clear the failure it is retrying.
+    expect(
+      lastRunFailedAgentIds(
+        [
+          job({ customAgentId: "ca-ig", status: "failed", createdAt: 1_000 }),
+          job({ customAgentId: "ca-ig", status: "running", createdAt: 2_000 }),
+        ],
+        byName,
+      ).size,
+    ).toBe(1);
+  });
+
+  it("ignores a cancelled run — a human stopping a run is not a verdict", () => {
+    expect(lastRunFailedAgentIds([job({ customAgentId: "ca-ig", status: "cancelled" })], byName).size).toBe(0);
+    expect(
+      lastRunFailedAgentIds(
+        [
+          job({ customAgentId: "ca-ig", status: "failed", createdAt: 1_000 }),
+          job({ customAgentId: "ca-ig", status: "cancelled", createdAt: 2_000 }),
+        ],
+        byName,
+      ).size,
+    ).toBe(1);
+  });
+
+  it("counts review and approved as landings, like deliveredAgentIds does", () => {
+    for (const status of ["review", "approved", "delivered"]) {
+      expect(
+        lastRunFailedAgentIds(
+          [
+            job({ customAgentId: "ca-ig", status: "failed", createdAt: 1_000 }),
+            job({ customAgentId: "ca-ig", status, createdAt: 2_000 }),
+          ],
+          byName,
+        ).size,
+      ).toBe(0);
+    }
+  });
+
+  it("keeps the same job scope and name fallback as its sibling", () => {
+    // Non-custom jobs are not this roster's runs.
+    expect(
+      lastRunFailedAgentIds(
+        [job({ customAgentId: "ca-ig", external: { taskType: "social_post" } })],
+        byName,
+      ).size,
+    ).toBe(0);
+    // Runs fired before customAgentId existed still attribute by name…
+    expect([...lastRunFailedAgentIds([job({})], byName)]).toEqual(["ca-ig"]);
+    // …and what cannot be attributed is dropped rather than guessed at.
+    expect(lastRunFailedAgentIds([job({ agentName: "Someone Else" })], byName).size).toBe(0);
+  });
+
+  it("answers per agent, not per client", () => {
+    const twoAgents = new Map([
+      ["Instagram Agent", "ca-ig"],
+      ["X Agent", "ca-x"],
+    ]);
+    expect([
+      ...lastRunFailedAgentIds(
+        [
+          job({ customAgentId: "ca-ig", status: "failed" }),
+          job({ customAgentId: "ca-x", agentName: "X Agent", status: "delivered" }),
+        ],
+        twoAgents,
+      ),
+    ]).toEqual(["ca-ig"]);
   });
 });
 
