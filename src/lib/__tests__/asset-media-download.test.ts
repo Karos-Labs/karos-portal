@@ -661,3 +661,27 @@ describe("the wiring the executed tests rest on", () => {
     expect(clipBranch).not.toContain("zip.file");
   });
 });
+
+/* ── added on review of the bounce round ─────────────────────────────────── */
+
+describe("an out-of-range clip index answers 404, not 500", () => {
+  // `?i=` is user input. The bounce built the download filename from
+  // videos[index].url BEFORE the guard that proves the clip exists, so
+  // ?kind=video&i=99 raised a TypeError and answered 500 while the route's own
+  // 404 sat below it, unreachable.
+  const route = source("src/app/api/assets/[id]/download/route.ts");
+
+  it("binds the index to a real clip before naming the file", () => {
+    const clipGuard = route.indexOf("const clip = videos[index]");
+    const notFound = route.indexOf('"This asset has no video"');
+    const naming = route.indexOf("const filename = ");
+    expect(clipGuard).toBeGreaterThan(-1);
+    expect(notFound).toBeGreaterThan(clipGuard);
+    expect(naming).toBeGreaterThan(notFound);
+  });
+
+  it("never dereferences videos[index] before that guard", () => {
+    const beforeGuard = route.slice(0, route.indexOf("const clip = videos[index]"));
+    expect(beforeGuard).not.toContain("videos[index].url");
+  });
+});

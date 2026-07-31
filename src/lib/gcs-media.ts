@@ -146,7 +146,13 @@ export async function createReadSignedUrl(gcsPath: string, ttlMs = READ_URL_TTL_
  * signed and handed to a third party — nothing that can close the quote or
  * break the header gets in.
  */
-function dispositionFilename(filename: string): string {
+/**
+ * The only escaping between a caller-supplied name and the quoted
+ * `response-content-disposition` parameter inside a signed URL. Exported so it
+ * is asserted by CALLING it on adversarial input rather than by trusting the
+ * shape of a mock.
+ */
+export function dispositionFilename(filename: string): string {
   const cleaned = filename.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return cleaned.slice(0, 120) || "download";
 }

@@ -87,8 +87,15 @@ export async function GET(
 
     const asked = Number.parseInt(query.get("i") ?? "0", 10);
     const index = Number.isInteger(asked) && asked > 0 ? asked : 0;
+    // `i` is user input, so bind it to a real clip BEFORE using it to build a
+    // name. Reading the clip's url first turned an out-of-range index into a
+    // 500 and left the 404 below unreachable.
+    const clip = videos[index];
+    if (!clip) {
+      return NextResponse.json({ error: "This asset has no video" }, { status: 404 });
+    }
     const name = videos.length > 1 ? `${stem}-${index + 1}` : stem;
-    const filename = `${name}.${videoExtFromUrl(videos[index].url)}`;
+    const filename = `${name}.${videoExtFromUrl(clip.url)}`;
 
     // Re-signed from meta.gcsPath per request: the URL stored on the asset is
     // usually expired by the day the clip is shown.
