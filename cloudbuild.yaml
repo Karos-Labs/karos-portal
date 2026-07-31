@@ -149,7 +149,7 @@ steps:
           --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA \
           --region=${_REGION} \
           --platform=managed \
-          $AUTH_FLAG \
+          $$AUTH_FLAG \
           --port=3000 \
           --min-instances=1 \
           --max-instances=10 \
