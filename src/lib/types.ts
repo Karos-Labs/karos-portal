@@ -598,7 +598,20 @@ export interface PlannedScheduledRun {
   timeZone?: string;
   /** Distinct deliverables requested from each scheduled run. Defaults to 1. */
   outputsPerRun?: number;
-  /** Whether each scheduled fire spends the client's credits. */
+  /**
+   * Whether each scheduled fire spends the client's credits — the money switch,
+   * and the only field that decides it. The cron passes it to the submit core as
+   * `bill`, overriding the actor test that `createdBy` would otherwise imply.
+   *
+   * Set ONCE, at creation, from the creating actor, and never rewritten: an edit
+   * of the pace preserves it. (It used to be recomputed on every save while
+   * `createdBy` stayed frozen, so the two disagreed and fires were billed to the
+   * wrong party — or to nobody.)
+   *
+   * `undefined` on rows written before the field existed. Those fall back to the
+   * actor test, deliberately: an absent flag is no recorded intent, and reading
+   * it as `false` would silently stop charging a fleet of live schedules.
+   */
   billClientCredits?: boolean;
   /** Next fire time (epoch millis) — the scheduling cursor the cron drains. */
   nextRunAt: number;

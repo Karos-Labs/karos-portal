@@ -283,7 +283,6 @@ export async function configureClientAgentScheduleAction(
     from: now,
     timeZone,
   });
-  const billClientCredits = isBillableClientActor(user);
   const weeklyCredits = scheduledAgentWeeklyCost(
     agent.creditCost ?? CREDIT_COSTS.customAgentRun,
     postsPerWeek,
@@ -302,7 +301,8 @@ export async function configureClientAgentScheduleAction(
     weekday: weekdays[0],
     weekdays,
     outputsPerRun,
-    billClientCredits,
+    // billClientCredits is DELIBERATELY absent from the shared patch — see the
+    // note on the create branch below. It is create-only.
     nextRunAt,
     status: "active" as const,
     // The schedule just cleared the setup gate, so a refusal recorded by an
@@ -315,12 +315,31 @@ export async function configureClientAgentScheduleAction(
   let id: string;
   if (existing) {
     id = existing.id;
+    // An EDIT changes the pace, never who pays for it: `patch` carries no
+    // billClientCredits, so the stored flag survives untouched.
     await updatePlannedScheduledRun(existing.id, patch);
   } else {
     id = await createPlannedScheduledRun({
       clientId: input.clientId,
       customAgentId: agent.id,
       ...patch,
+      // WHO PAYS is decided ONCE, here, alongside createdBy — and the two are
+      // written together so they can never disagree about money.
+      //
+      // /api/run-scheduled hands this flag to the submit core as the explicit
+      // `bill` decision for every fire. It used to be recomputed from whoever
+      // pressed Save and written on edits too, while createdBy (the actor the
+      // cron resolves) stayed frozen at creation — so the pair drifted and money
+      // moved both ways: a client pressing Save on a staff-set pace flipped the
+      // flag to true against a staff createdBy, and staff bumping Outputs per
+      // run on a client's own schedule flipped it to false while the client was
+      // still being charged, at multiplier 1 for N drafts.
+      //
+      // Same shape as the outputsPerRun/prompt preservation above — the stored
+      // value beats whatever the current save implies — with one difference:
+      // this is preserved for EVERY actor, not just clients. Staff editing a
+      // pace must neither start billing a client nor stop billing one.
+      billClientCredits: isBillableClientActor(user),
       createdBy: user.uid,
       createdAt: now,
     });

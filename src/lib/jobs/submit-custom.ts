@@ -89,6 +89,22 @@ export interface SubmitCustomAgentInput {
   /** Server-controlled multiplier for scheduled runs requesting multiple outputs. */
   chargeMultiplier?: number;
   /**
+   * EXPLICIT billing decision, overriding the actor test below.
+   *
+   * Only for callers that hold a STORED billing intent the acting user cannot
+   * express — today just the scheduled-run cron. A schedule row carries
+   * `billClientCredits` (who agreed to pay) while `createdBy` (the actor the
+   * cron resolves) is frozen at creation, so the two could disagree and the
+   * actor won: a client's pace saved on a staff-created schedule fired free
+   * despite the dialog quoting a weekly price, and an admin's "View as Client"
+   * creation charged the client the flag said not to charge.
+   *
+   * Absent ⇒ `isBillableClientActor(user)` decides, exactly as before. Every
+   * other caller (the run dialog, launches, MCP, the task engine) leaves it
+   * absent, so nothing but the cron changes behaviour.
+   */
+  bill?: boolean;
+  /**
    * How this run was initiated in the launch-vs-runs model. Stamped on the job
    * doc AND echoed to the service as `karos_run_type`, so the webhook can
    * branch and the staff economics card can split launch vs recurring USD
@@ -313,14 +329,16 @@ export async function submitCustomAgentJob(
     updatedAt: now,
   });
 
-  // Charge upfront (billable client actors only — staff and cron never charge)
-  // with jobId pairing so the webhook's failure refund and the reconcile sweeps
-  // can hand the credits back.
+  // Charge upfront (billable client actors only — staff and cron never charge,
+  // unless the caller states otherwise via `bill`) with jobId pairing so the
+  // webhook's failure refund and the reconcile sweeps can hand the credits back.
+  // Both are keyed off the ledger entry's jobId, not the actor, so a charge made
+  // on an explicit `bill` still refunds normally.
   const multiplier = Math.max(1, Math.min(10, Math.round(input.chargeMultiplier ?? 1)));
   const runCost = input.charge
     ? input.charge.amount
     : (agent.creditCost ?? CREDIT_COSTS.customAgentRun) * multiplier;
-  if (isBillableClientActor(user)) {
+  if (input.bill ?? isBillableClientActor(user)) {
     try {
       await chargeClientCredits({
         clientId: input.clientId,

@@ -23,9 +23,16 @@ const MAX_ERROR_CHARS = 400;
  * has passed and fires the custom agent via the same core the web action uses
  * (submitCustomAgentJob) — so a scheduled run is indistinguishable from a manual
  * one once it fires. One-off runs complete; recurring runs advance to their next
- * slot. The actor is the run's creator: a staff-created schedule fires free,
- * while a schedule a client switched on (billClientCredits) charges that
- * client's credits on every fire, outputsPerRun included.
+ * slot.
+ *
+ * TWO SEPARATE QUESTIONS, deliberately answered by two different fields:
+ *  · WHO ACTS is `createdBy` — provenance for the activity log and the
+ *    CLIENT_USER allowlist gate. Frozen at creation; never rewritten.
+ *  · WHO PAYS is `billClientCredits`, handed to the submit core as `bill`. A
+ *    schedule a client switched on charges that client's credits on every fire,
+ *    outputsPerRun included; a staff-set pace fires free.
+ * These used to collapse into one — the actor decided both — so an edit that
+ * rewrote the flag without touching createdBy moved money the wrong way.
  *
  * Every fire that produces nothing — a credit refusal, a spend cap, missing
  * intake, the agent service being unreachable — is refused by the submit core
@@ -56,7 +63,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ processed: 0, results: [] });
   }
 
-  // The run's creator is the acting user (for provenance / activity logs).
+  // The run's creator is the acting user (for provenance / activity logs, and
+  // the submit core's CLIENT_USER allowlist gate). It no longer decides who
+  // pays — `bill` below does — so a resolved actor whose role disagrees with the
+  // stored flag can't move money any more.
   // Fall back to a synthetic system actor if that account is gone.
   const actorCache = new Map<string, AppUser>();
   async function actorFor(run: PlannedScheduledRun): Promise<AppUser> {
@@ -126,7 +136,34 @@ export async function GET(req: NextRequest) {
           (run.outputsPerRun ?? 1) > 1
             ? `Create exactly ${run.outputsPerRun} distinct outputs for this scheduled run.\n\n${run.prompt}`
             : run.prompt,
-        chargeMultiplier: run.billClientCredits ? (run.outputsPerRun ?? 1) : 1,
+        // WHO PAYS: the STORED flag, not the resolved actor.
+        //
+        // `billClientCredits` is documented as the switch for whether each fire
+        // spends the client's credits, and until now it decided nothing of the
+        // kind — the submit core charged purely on isBillableClientActor(actor),
+        // and the actor comes from `createdBy`, which an edit never rewrites
+        // while the flag was recomputed on every save. The two drifted and money
+        // moved the wrong way in both directions (staff-created + client-saved
+        // fired free against a quoted price; a "View as Client" creation charged
+        // the client the flag said not to charge). Passing it as `bill` makes the
+        // documented field the decision.
+        //
+        // LEGACY ROWS: `billClientCredits` is optional, and rows written before
+        // it existed have it undefined. `=== true` would silently make every one
+        // of those free — a fleet of schedules quietly stopping charging is the
+        // worst outcome available here — so an absent flag omits `bill`
+        // entirely and the core falls back to the actor test, i.e. that row
+        // keeps doing exactly what it does today. Only a row that actually
+        // recorded an intent gets to override the actor.
+        ...(typeof run.billClientCredits === "boolean" ? { bill: run.billClientCredits } : {}),
+        // Unconditional now that billing is explicit: the multiplier prices the
+        // batch, it does not decide whether to charge. A billed fire lands on
+        // the same figure as before (flag true ⇒ outputsPerRun either way), and
+        // an unbilled one never reaches the charge at all. Safe for legacy rows
+        // too: outputsPerRun and billClientCredits were added in the same commit
+        // and are written together by the only action that writes either, so no
+        // row can carry outputsPerRun > 1 with the flag unset.
+        chargeMultiplier: run.outputsPerRun ?? 1,
         // A scheduled fire is a run TYPE, and until now it was the only one
         // that never said so — launches and manual template runs both stamp
         // themselves, so every recurring fire landed in the untyped bucket.
