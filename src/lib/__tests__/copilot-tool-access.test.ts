@@ -8,6 +8,8 @@ import {
   COPILOT_TOOL_REFUSAL,
   copilotToolRefusal,
   copilotToolsFor,
+  GMAIL_UNAVAILABLE_MESSAGE,
+  integrationBelongsToCaller,
   isStaffCopilotActor,
 } from "@/lib/copilot-tool-access";
 import type { AppUser } from "@/lib/types";
@@ -26,6 +28,10 @@ import type { AppUser } from "@/lib/types";
 
 const src = (rel: string) => readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
 const route = src("app/api/clients/[id]/chat/route.ts");
+const access = src("lib/copilot-tool-access.ts");
+/** The Gmail tool's own body, so a fence elsewhere in the route can't pass for one here. */
+const gmailTool =
+  /const fetchGmailContextTool = tool\(\{[\s\S]*?\n  \}\);/.exec(route)?.[0] ?? "";
 
 const actor = (role: AppUser["role"], impersonatedBy?: string) =>
   ({ role, ...(impersonatedBy ? { impersonatedBy } : {}) }) as AppUser;
@@ -166,5 +172,166 @@ describe("chat route wiring", () => {
     for (const name of CLIENT_SAFE_COPILOT_TOOLS) {
       expect(route).toMatch(new RegExp(`\\b${name}:\\s*\\w+Tool\\b`));
     }
+  });
+});
+
+/**
+ * `fetch_gmail_context` reads a real human's unread primary inbox through a token
+ * stored ONE PER WORKSPACE (`${clientId}_google`) from one individual's personal
+ * OAuth grant. The tool resolved it by platform alone, so in a multi-seat
+ * workspace — the designed norm — user B asking the copilot to scan "their" inbox
+ * was handed user A's private email, and staff opening that client's copilot got
+ * it too. The grantor's verified address was already recorded in `accountName`
+ * (task-actions.ts) and simply never consulted. These tests pin the gate that
+ * consults it.
+ */
+describe("gmail grantor gate", () => {
+  const granted = (accountName?: string) => ({ accountName });
+
+  it("resolves for the person who granted the token", () => {
+    expect(integrationBelongsToCaller(granted("owner@acme.com"), "owner@acme.com")).toBe(true);
+  });
+
+  it("ignores case and surrounding whitespace on both sides", () => {
+    // An address is the same address either way, and a gate that leaks on a
+    // stray trailing space is not a gate.
+    expect(integrationBelongsToCaller(granted("Owner@Acme.com"), "owner@acme.com")).toBe(true);
+    expect(integrationBelongsToCaller(granted("owner@acme.com"), "OWNER@ACME.COM")).toBe(true);
+    expect(integrationBelongsToCaller(granted("  owner@acme.com  "), "owner@acme.com")).toBe(true);
+    expect(integrationBelongsToCaller(granted("owner@acme.com"), " Owner@Acme.com\t")).toBe(true);
+  });
+
+  it("does not resolve for anybody else in the same workspace", () => {
+    // The defect, in one line: a second seat in the same client workspace.
+    expect(integrationBelongsToCaller(granted("owner@acme.com"), "colleague@acme.com")).toBe(false);
+    // Nor for staff, who share no address with the grantor. Closed by default.
+    expect(integrationBelongsToCaller(granted("owner@acme.com"), "staff@karoslabs.com")).toBe(false);
+    // Not a prefix/substring match either.
+    expect(integrationBelongsToCaller(granted("owner@acme.com"), "owner@acme.com.evil.tld")).toBe(false);
+    expect(integrationBelongsToCaller(granted("owner@acme.com"), "owner@acme.co")).toBe(false);
+  });
+
+  it("FAILS CLOSED when the grant cannot be attributed to a person", () => {
+    // A grant we cannot attribute is not one we may read on anyone's behalf —
+    // and a blank/blank comparison must never come out equal.
+    expect(integrationBelongsToCaller(granted(undefined), "owner@acme.com")).toBe(false);
+    expect(integrationBelongsToCaller(granted(""), "owner@acme.com")).toBe(false);
+    expect(integrationBelongsToCaller(granted("   "), "owner@acme.com")).toBe(false);
+    expect(integrationBelongsToCaller(granted(undefined), undefined)).toBe(false);
+    expect(integrationBelongsToCaller(granted(""), "")).toBe(false);
+    expect(integrationBelongsToCaller(granted("   "), "  ")).toBe(false);
+    // A caller with no address of their own resolves nothing either.
+    expect(integrationBelongsToCaller(granted("owner@acme.com"), null)).toBe(false);
+    expect(integrationBelongsToCaller(granted("owner@acme.com"), "")).toBe(false);
+  });
+
+  it("says nothing about roles — the gate is identity, not tier", () => {
+    // Same call, same answer, whoever is asking: there is no staff parameter to
+    // widen by accident. Widening is a product decision, taken on purpose.
+    expect(integrationBelongsToCaller.length).toBe(2);
+  });
+});
+
+describe("gmail refusal is indistinguishable from no connection", () => {
+  it("is one shared string, not two that can drift apart", () => {
+    // Both reasons — no grant here, and a grant that is somebody else's — return
+    // this exact constant. Two copies of the same prose would be an invitation to
+    // "improve" one of them into a disclosure.
+    const branch = /if \(!googleIntegration\) \{[\s\S]*?\n      \}/.exec(gmailTool)?.[0] ?? "";
+    expect(branch).not.toBe("");
+    expect(branch).toMatch(/return GMAIL_UNAVAILABLE_MESSAGE;/);
+    // Exactly one producer of the message inside the tool.
+    expect(gmailTool.match(/GMAIL_UNAVAILABLE_MESSAGE/g)).toHaveLength(1);
+  });
+
+  it("is byte-identical to the original unconnected-case copy", () => {
+    // Pinned as one literal: the refused path must read as the unconnected path,
+    // down to the bytes, so a future edit cannot make one of them leak.
+    expect(GMAIL_UNAVAILABLE_MESSAGE).toBe(
+      "No Google Workspace integration found for this account. " +
+        "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab) - " +
+        "you will be prompted to grant Gmail read access. " +
+        "In the meantime, I can still build a task map from your meetings and context documents.",
+    );
+  });
+
+  it("never names the grantor or hints that a token exists", () => {
+    // A different message IS the disclosure — it tells user B that user A
+    // connected their mail. So: no grantor, no "someone else", no "already
+    // connected", no email address of any kind.
+    for (const leak of [
+      /connected by/i,
+      /another (user|account|person)/i,
+      /someone else/i,
+      /a colleague/i,
+      /belongs to/i,
+      /not your/i,
+      /different account/i,
+      /already connected/i,
+      /@[\w.-]+\.\w+/,
+      /accountName/,
+    ]) {
+      expect(GMAIL_UNAVAILABLE_MESSAGE).not.toMatch(leak);
+    }
+  });
+});
+
+describe("chat route wires the grantor gate", () => {
+  it("found the tool body it is asserting about", () => {
+    // Without this the negative assertions below would pass vacuously on "" if
+    // the tool were ever renamed.
+    expect(gmailTool).not.toBe("");
+    expect(gmailTool).toMatch(/fetchGmailMessages\(accessToken/);
+  });
+
+  it("gates the shared lookup, not just the tool body", () => {
+    // Gating at the lookup is what keeps the degraded path indistinguishable:
+    // `hasGmailIntegration` goes false too, so the prompt withholds Scenario D
+    // and applies its silence rule. A gate inside `execute` would leave the
+    // system prompt telling a non-grantor that Gmail is connected.
+    const lookup =
+      /const googleIntegration = integrations\.find\([\s\S]*?\);/.exec(route)?.[0] ?? "";
+    expect(lookup).not.toBe("");
+    expect(lookup).toMatch(/integrationBelongsToCaller\(i, user\.email\)/);
+    expect(route).toMatch(/hasGmailIntegration: !!googleIntegration/);
+  });
+
+  it("has no staff bypass on the way to the mailbox", () => {
+    // A token that reads one human's private mail is usable only by that human.
+    // Staff access is a product call for Daniel to make deliberately, not a
+    // default that survives because nobody looked.
+    expect(gmailTool).not.toMatch(/isStaffCopilotActor/);
+    const lookup =
+      /const googleIntegration = integrations\.find\([\s\S]*?\);/.exec(route)?.[0] ?? "";
+    expect(lookup).not.toMatch(/isStaffCopilotActor|role/);
+  });
+
+  it("reads the token only after the gate has resolved an integration", () => {
+    const gateAt = gmailTool.indexOf("if (!googleIntegration)");
+    const tokenAt = gmailTool.indexOf("googleIntegration.credentials.access_token");
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(tokenAt).toBeGreaterThan(-1);
+    expect(gateAt).toBeLessThan(tokenAt);
+  });
+
+  it("keeps the tool on the client allowlist — the premise is fixed, not the capability", () => {
+    // The wrong fix would be deleting the entry. Clients keep their own inbox
+    // scan; what changed is that "their own" is now enforced.
+    expect(CLIENT_SAFE_COPILOT_TOOLS).toContain("fetch_gmail_context");
+    expect(copilotToolsFor(actor("CLIENT_USER"), ALL_TOOLS)).toHaveProperty(
+      "fetch_gmail_context",
+    );
+    expect(copilotToolRefusal(actor("CLIENT_USER"), "fetch_gmail_context")).toBeNull();
+  });
+
+  it("no longer justifies the entry with the claim that was false", () => {
+    // "reads the thread the client is already party to" was true only in a
+    // single-seat workspace. The list's next reader must not be misled the way
+    // this entry misled everyone.
+    expect(access).not.toMatch(/reads the thread the client is already\s*\n?\s*\*?\s*party to/);
+    expect(access).not.toMatch(/thread the client is already party to/);
+    // Replaced by what is actually true after the fix.
+    expect(access).toMatch(/integrationBelongsToCaller/);
+    expect(access).toMatch(/caller's OWN mailbox/);
   });
 });

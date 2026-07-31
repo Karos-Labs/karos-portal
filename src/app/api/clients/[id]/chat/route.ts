@@ -38,6 +38,8 @@ import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
 import {
   brandingToolRefusal,
   copilotToolsFor,
+  GMAIL_UNAVAILABLE_MESSAGE,
+  integrationBelongsToCaller,
   isStaffCopilotActor,
 } from "@/lib/copilot-tool-access";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
@@ -169,8 +171,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   );
 
   /* ── Shared Google integration lookup ────────────────────────────── */
+  // Gated on GRANTOR IDENTITY, not just usability. The `google` integration is
+  // one row per WORKSPACE (`${clientId}_google`) written from one individual's
+  // personal OAuth grant, and multi-seat workspaces are the norm — so resolving
+  // it by platform alone handed user B user A's private inbox (and staff opening
+  // that client's copilot got it too). `integrationBelongsToCaller` matches the
+  // recorded grantor against the caller and fails closed when it cannot.
+  //
+  // Gating HERE rather than inside the tool is what makes the degraded path
+  // indistinguishable from an unconnected workspace: `hasGmailIntegration` below
+  // goes false as well, so the prompt's Scenario-D block is withheld and its
+  // silence rule ("never mention email integration, Gmail, or inbox
+  // connectivity") applies. A non-grantor's session cannot tell a token exists.
   const googleIntegration = integrations.find(
-    (i) => i.platform === "google" && integrationIsUsable(i),
+    (i) =>
+      i.platform === "google" &&
+      integrationIsUsable(i) &&
+      integrationBelongsToCaller(i, user.email),
   );
 
   // Build dynamic proactive appendix with the managed-product catalog (karos-agents
@@ -497,13 +514,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       ),
     }),
     execute: async ({ maxEmails }) => {
+      // One branch, two reasons: no grant in this workspace, or a grant that is
+      // not the caller's. They MUST stay one branch returning one string — a
+      // separate message for the second case would disclose that someone else
+      // connected their mail. Hence the shared constant, pinned by a test.
       if (!googleIntegration) {
-        return (
-          "No Google Workspace integration found for this account. " +
-          "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab) - " +
-          "you will be prompted to grant Gmail read access. " +
-          "In the meantime, I can still build a task map from your meetings and context documents."
-        );
+        return GMAIL_UNAVAILABLE_MESSAGE;
       }
 
       const accessToken = googleIntegration.credentials.access_token;
