@@ -1,6 +1,7 @@
 import { listClientIntegrations } from "@/lib/data";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { isAssetPublishable } from "@/lib/asset-visibility";
 import type { Asset } from "@/lib/types";
 
 /**
@@ -14,6 +15,14 @@ import type { Asset } from "@/lib/types";
  * Shared by /assets and the job detail page so the "is this pushable" predicate
  * cannot drift between them: the job page rendered AssetCard with no
  * connectedPlatforms at all, so Publish Now never appeared there.
+ *
+ * The per-asset half of that question is `isAssetPublishable` — the same rule
+ * the card, the modal and `publishAssetNowAction` now answer with. This used to
+ * hand-roll its own `approved || scheduled` copy, which was a FOURTH answer and
+ * a stricter one: a client whose only pushable post was `delivered` got no
+ * platform list, so the control the other three surfaces agreed to show could
+ * not appear. What stays local is the part this function actually owns — which
+ * platforms a TYPE can go to, and which of them the client has connected.
  */
 export async function pushablePlatformsByClient(
   assets: Asset[],
@@ -21,12 +30,7 @@ export async function pushablePlatformsByClient(
   const pushableClientIds = [
     ...new Set(
       assets
-        .filter(
-          (a) =>
-            (a.status === "approved" || a.status === "scheduled") &&
-            a.publishMode !== "placeholder" &&
-            (PUBLISHABLE_PLATFORMS[a.type] ?? []).length > 0,
-        )
+        .filter((a) => isAssetPublishable(a) && (PUBLISHABLE_PLATFORMS[a.type] ?? []).length > 0)
         .map((a) => a.clientId),
     ),
   ];

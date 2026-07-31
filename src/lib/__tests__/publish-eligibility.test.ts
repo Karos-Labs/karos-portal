@@ -241,3 +241,40 @@ describe("the shared rule did not bring Reddit into scope", () => {
     expect(rule.slice(0, rule.indexOf("\n}"))).not.toMatch(/reddit|twitter|linkedin/i);
   });
 });
+
+/* ── added on review: no fourth copy of the rule ─────────────────────────── */
+
+describe("every publish-eligibility gate answers with the shared rule", () => {
+  const flat = (s: string) => s.replace(/\s+/g, " ");
+  const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
+
+  it("the per-client platform lookup no longer hand-rolls its own status list", () => {
+    // It used to filter `approved || scheduled` itself — a fourth answer, and a
+    // stricter one: a client whose only pushable post was `delivered` got no
+    // platform list, so the control the other three surfaces agreed to show
+    // could not render.
+    const targets = flat(read("src/lib/publish-targets.ts"));
+    expect(targets).toContain("isAssetPublishable(a)");
+    expect(targets).not.toContain('a.status === "approved" || a.status === "scheduled"');
+    expect(targets).not.toContain('a.publishMode !== "placeholder"');
+  });
+
+  it("keeps the part that lookup does own — type-to-platform and connectedness", () => {
+    const targets = flat(read("src/lib/publish-targets.ts"));
+    expect(targets).toContain("PUBLISHABLE_PLATFORMS[a.type]");
+    expect(targets).toContain("integrations.filter(integrationIsUsable)");
+  });
+
+  it("has no remaining hand-written placeholder-or-status publish gate", () => {
+    // A regression tripwire for the whole family: if a fifth copy appears in
+    // any of these files, this fails and points at the shared predicate.
+    for (const rel of [
+      "src/lib/publish-targets.ts",
+      "src/components/asset-card.tsx",
+      "src/components/asset-detail-modal.tsx",
+    ]) {
+      const src = flat(read(rel));
+      expect(src).not.toMatch(/status === "approved" \|\| [a-z.]*status === "scheduled"[^)]*publishMode !== "placeholder"/);
+    }
+  });
+});
