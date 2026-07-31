@@ -1,17 +1,22 @@
 name: Promote to Production
 
-# Manual path only — never triggered by a push. Run this from the Actions tab
-# (or `gh workflow run promote-production.yml -f sha=<sha>`) after you've
-# verified the corresponding prep deploy. It does NOT rebuild from source: it
-# copies the exact image already built and tested in prep into production's
-# own Artifact Registry, then deploys that image. What you approved in prep is
-# byte-for-byte what ships to production.
+# Triggers automatically after every successful prep deploy, then pauses for
+# a human approval before touching production. The approval gate lives on the
+# "production" GitHub Environment — configure required reviewers at:
+#   Settings → Environments → production → Deployment protection rules
+#
+# For an emergency manual promote, use workflow_dispatch (SHA defaults to
+# the latest commit on main if left blank).
 on:
+  workflow_run:
+    workflows: ["Deploy to Prep"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       sha:
-        description: "Commit SHA already built & deployed to prep (the tag on the prep image)"
-        required: true
+        description: "Commit SHA to promote (leave blank for latest main)"
+        required: false
 
 permissions:
   contents: read
@@ -20,13 +25,24 @@ permissions:
 jobs:
   promote:
     name: Promote prep image → production
+    # For workflow_run: only proceed when prep actually succeeded.
+    # For workflow_dispatch: always proceed (manual caller decides).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    environment: production
+    environment: production   # ← approval gate; add required reviewers in repo settings
+
     steps:
+      - name: Resolve SHA
+        id: sha
+        run: |
+          SHA="${{ inputs.sha || github.event.workflow_run.head_sha || github.sha }}"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Promoting SHA: $SHA"
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ steps.sha.outputs.sha }}
 
       - name: Validate required repo variables
         run: |
@@ -61,4 +77,4 @@ jobs:
             --project="${{ vars.PROD_PROJECT_ID }}" \
             --config=cloudbuild.promote.yaml \
             --no-source \
-            --substitutions=_REGION="${{ vars.PROD_REGION }}",_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ inputs.sha }}",_APP_URL="${{ vars.PROD_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PROD_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PROD_ADMIN_EMAIL }}"
+            --substitutions=_REGION="${{ vars.PROD_REGION }}",_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ steps.sha.outputs.sha }}",_APP_URL="${{ vars.PROD_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PROD_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PROD_ADMIN_EMAIL }}"
