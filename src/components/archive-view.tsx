@@ -7,6 +7,11 @@ import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { assetImages, assetVideos } from "@/lib/asset-images";
+// The client's vocabulary for a stored status ("published" reads as "Posted")
+// used to be a local const here. It is shared now because the publish cron's
+// ordering-hold message interpolated the RAW enum into a sentence a client
+// reads, and one map is the only way those two agree.
+import { CLIENT_ASSET_STATUS_LABEL, clientAssetStatusLabel } from "@/lib/asset-status-copy";
 import { clientDeliveryStamp } from "@/lib/asset-visibility";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { cn, relativeTime } from "@/lib/utils";
@@ -18,15 +23,6 @@ const STATUS_TONE: Record<Asset["status"], "neutral" | "success" | "warning" | "
   scheduled: "info",
   published: "success",
   delivered: "success",
-};
-
-/** Client vocabulary for the stored status — "published" reads as "Posted". */
-const STATUS_LABEL: Record<Asset["status"], string> = {
-  draft: "Draft",
-  approved: "Approved",
-  scheduled: "Scheduled",
-  published: "Posted",
-  delivered: "Delivered",
 };
 
 interface AgentGroup {
@@ -201,7 +197,7 @@ export function ArchiveView({
           <option value="all">All statuses</option>
           {STATUS_ORDER.map((option) => (
             <option key={option} value={option}>
-              {STATUS_LABEL[option]}
+              {CLIENT_ASSET_STATUS_LABEL[option]}
             </option>
           ))}
         </select>
@@ -366,7 +362,7 @@ function ArchiveTile({
           <span className="text-[11px] text-muted-2">
             {relativeTime(viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt)}
           </span>
-          <Badge tone={STATUS_TONE[asset.status]}>{STATUS_LABEL[asset.status] ?? asset.status}</Badge>
+          <Badge tone={STATUS_TONE[asset.status]}>{clientAssetStatusLabel(asset.status)}</Badge>
         </div>
       </div>
     </button>

@@ -2,26 +2,35 @@ import Link from "next/link";
 import { Card, CardTitle, StatCard, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
+import { assetStatusLabel } from "@/lib/asset-status-copy";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
 import type { Asset, ClientIntegration, Job } from "@/lib/types";
 
 /* Judgment scale: in-progress = amber, live/done = green, in-between = slate.
  *
+ * The LABELS that used to sit beside these colours were a third asset-status
+ * label map, and this component is read by clients as well as staff — so the
+ * chart printed "Published" to the same client whose archive, one tab away, said
+ * "Posted". The words now come from the two registers in
+ * lib/asset-status-copy.ts, chosen by `viewerIsClient`. Colour stays here
+ * because presentation is this component's business, and a colour has no reader.
+ *
  * WP-7 swept this file for a per-surface AGENT label map to delete (§7.3) and
  * found none: the analytics stack counts and charts assets, jobs and channels
- * and never names the agent behind one. This map is asset-STATUS vocabulary,
- * the same class as archive-view's STATUS_LABEL, and identity resolution has
- * nothing to say about it. Add an agent-named row here later — a per-agent
- * breakdown, a "top producing agent" tile — and it takes resolveContentIdentity
- * like every other surface. */
-const STATUS_META: Record<string, { label: string; color: string }> = {
-  draft: { label: "Draft", color: "var(--warning)" },
-  approved: { label: "Approved", color: "var(--success)" },
-  scheduled: { label: "Scheduled", color: "var(--info)" },
-  published: { label: "Published", color: "var(--success)" },
-  delivered: { label: "Delivered", color: "var(--success)" },
+ * and never names the agent behind one. Add an agent-named row here later — a
+ * per-agent breakdown, a "top producing agent" tile — and it takes
+ * resolveContentIdentity like every other surface. */
+const STATUS_COLOR: Record<Asset["status"], string> = {
+  draft: "var(--warning)",
+  approved: "var(--success)",
+  scheduled: "var(--info)",
+  published: "var(--success)",
+  delivered: "var(--success)",
 };
+
+/** A status Firestore holds and the union doesn't still gets a bar, in slate. */
+const UNKNOWN_STATUS_COLOR = "#9c9ca3";
 
 /**
  * The five counter tiles, on their own so a caller can place them somewhere the
@@ -76,12 +85,21 @@ export function ClientAnalytics({
   assets,
   jobs,
   integrations,
+  viewerIsClient,
   hideStats = false,
 }: {
   clientId: string;
   assets: Asset[];
   jobs: Job[];
   integrations: ClientIntegration[];
+  /**
+   * Which status register the chart reads. REQUIRED, with no default: this
+   * component serves both readers from one mount, so a default would quietly
+   * hand one of them the other's vocabulary — and deliberately NOT derived from
+   * `hideStats`, which answers a different question (has the caller lifted the
+   * counter row?) and would tie the words to a layout decision.
+   */
+  viewerIsClient: boolean;
   /** The caller renders <ClientAnalyticsStats/> itself, higher up the page (CD-H1). */
   hideStats?: boolean;
 }) {
@@ -113,17 +131,19 @@ export function ClientAnalytics({
           ) : (
             <ul className="space-y-3">
               {statusRows.map(([status, count]) => {
-                const meta = STATUS_META[status] ?? { label: status, color: "#9c9ca3" };
+                const color = STATUS_COLOR[status as Asset["status"]] ?? UNKNOWN_STATUS_COLOR;
                 return (
                   <li key={status}>
                     <div className="mb-1 flex items-center justify-between text-xs">
-                      <span className="font-medium text-foreground">{meta.label}</span>
+                      <span className="font-medium text-foreground">
+                        {assetStatusLabel(status, viewerIsClient)}
+                      </span>
                       <span className="text-muted-2">{count}</span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-sm bg-surface-2">
                       <div
                         className="h-full rounded-sm"
-                        style={{ width: `${(count / maxCount) * 100}%`, background: meta.color }}
+                        style={{ width: `${(count / maxCount) * 100}%`, background: color }}
                       />
                     </div>
                   </li>

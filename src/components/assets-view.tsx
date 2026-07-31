@@ -5,16 +5,14 @@ import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { EmptyState } from "@/components/ui";
 import { AssetCard } from "@/components/asset-card";
+// The staff register. These words were a local const here; they are unchanged
+// byte for byte, and this is now the only place they are written down — the
+// analytics chart was printing a third, drifted set of them to the same reader
+// (see asset-status-copy.ts).
+import { STAFF_ASSET_STATUS_LABEL } from "@/lib/asset-status-copy";
 import type { Asset } from "@/lib/types";
 
 const STATUS_ORDER: Asset["status"][] = ["draft", "approved", "scheduled", "delivered", "published"];
-const STATUS_LABEL: Record<Asset["status"], string> = {
-  draft: "Awaiting review",
-  approved: "Approved",
-  scheduled: "Scheduled",
-  delivered: "Delivered",
-  published: "Published",
-};
 const STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info"> = {
   draft: "warning",
   approved: "success",
@@ -83,7 +81,7 @@ export function AssetsView({
           className="h-8 rounded-md border border-border bg-surface px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
         >
           <option value="all">All statuses</option>
-          {STATUS_ORDER.map((option) => <option key={option} value={option}>{STATUS_LABEL[option]}</option>)}
+          {STATUS_ORDER.map((option) => <option key={option} value={option}>{STAFF_ASSET_STATUS_LABEL[option]}</option>)}
         </select>
         {channels.length > 0 && (
           <select
@@ -107,9 +105,9 @@ export function AssetsView({
         />
       ) : (
         groupedAssets.map((group) => (
-          <section key={group.status} aria-label={STATUS_LABEL[group.status]}>
+          <section key={group.status} aria-label={STAFF_ASSET_STATUS_LABEL[group.status]}>
             <div className="mb-3 flex items-center gap-2">
-              <Badge tone={STATUS_TONE[group.status]}>{STATUS_LABEL[group.status]}</Badge>
+              <Badge tone={STATUS_TONE[group.status]}>{STAFF_ASSET_STATUS_LABEL[group.status]}</Badge>
               <span className="text-xs text-muted-2">{group.items.length}</span>
             </div>
             <div className="grid items-start gap-3 lg:grid-cols-2">

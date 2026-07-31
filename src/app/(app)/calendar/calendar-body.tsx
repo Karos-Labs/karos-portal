@@ -439,6 +439,13 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         images: assetImages(a),
         // Same leak class as the run cards above — same treatment.
         textPreview: toPlainSummary(a.content, 160),
+        // Deliberately un-branched, unlike `lastError` above: for a client this
+        // field was already replaced by the getClientLibraryAssets projection
+        // near the top of this file, which is the only place that CAN fix it —
+        // `assets` is handed to RunCalendar whole for its detail modal, so a
+        // branch here would have left the exception in the same payload. Staff
+        // read the asset un-projected and keep the raw error. One rule, one
+        // place (lib/custom-agent-launch clientSafePublishError).
         ...(kind === "failed" && a.publishError ? { publishError: a.publishError } : {}),
       };
     })

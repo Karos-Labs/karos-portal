@@ -79,6 +79,11 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       assets={analyticsAssets}
       jobs={jobs}
       integrations={integrations}
+      // The chart names statuses, and this one mount serves both readers: a
+      // client reads "Posted", staff read "Awaiting review" (asset-status-copy's
+      // two registers). Separate from hideStats below on purpose — that one is
+      // about layout, this one is about vocabulary.
+      viewerIsClient={isClientViewer}
       // CD-H1: for a client the counter row is lifted to the top of Overview
       // (below), so the Performance tab must not repeat it — the same
       // hide-what-was-lifted contract the visibility panel already uses.

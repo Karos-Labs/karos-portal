@@ -591,11 +591,18 @@ export default async function ClientAgentDetailPage({
         }
       />
 
+      {/* One banner, two registers — the roster page's idiom (agents/page.tsx),
+          for the same reason. This tree renders for BOTH readers, so the client
+          sentence was telling a KAROS_ADMIN to contact the Karos team; staff are
+          the people who clear this, so theirs names the cause instead. Problem,
+          then what to do, then the reassurance: the reassurance sat between the
+          other two and buried the action. */}
       {!agentServiceConfigured && (
         <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
           <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-          Agent runs are paused right now — starting a new post will not work until this clears. Your
-          Karos team has been notified. Everything below is unaffected.
+          {viewerIsClient
+            ? "Agent runs are paused right now — starting a new post will not work until this clears. Contact your Karos team if you need a post today. Everything below is unaffected."
+            : "Agent runs are paused — the agent-service environment is not configured, so starting a post will fail until it is set. Everything below is unaffected."}
         </p>
       )}
 

@@ -8,6 +8,7 @@
  * still receive the outcome-focused fallback at the bottom of this file.
  */
 
+import { PUBLISH_HOLD_PREFIX } from "@/lib/asset-status-copy";
 import { isCreditDenialMessage } from "@/lib/credits";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 
@@ -832,10 +833,58 @@ export function clientSafeRefusal(refusal: string): string {
  * (both are written for the client and the dialog links off the setup ones).
  */
 export function clientSafeRunError(error: string): string {
-  return isClientReadableRefusal(error)
-    ? error
-    : "This run could not be started right now. Your Karos team has been notified.";
+  return isClientReadableRefusal(error) ? error : CLIENT_RUN_REFUSAL_MESSAGE;
 }
+
+/**
+ * The one sentence a client gets for a run their press could not start.
+ *
+ * It used to end "Your Karos team has been notified." — and on this path
+ * nothing notified anyone: no email, no Slack, no task, no activity row, not
+ * even a logger. Every agent-service outage, timeout and 5xx landed here, so
+ * the strongest promise in the product sat on the path with the least backing
+ * behind it, while the SCHEDULED twin (notifyScheduleFireFailure, fired from
+ * the run-scheduled and scheduler routes) pairs a weaker sentence with a real
+ * alert. Neither existing notifier fits a client-fired run — one wants a
+ * `scheduleId` this path has none of and would email "Scheduled run failed to
+ * fire" about a manual press; the other stamps `INTEL_GENERATION` /
+ * "Workspace generation stopped early" onto the client's timeline — so the
+ * sentence is now one the code can keep, and it hands the client the two
+ * things they can actually do. A ContactUsButton already sits in both cards
+ * that render this.
+ */
+export const CLIENT_RUN_REFUSAL_MESSAGE =
+  "This run could not be started right now. Try again shortly, or contact your Karos team.";
+
+/**
+ * What a client is allowed to read of a FAILED PUBLISH — the publish twin of
+ * clientSafeRefusal above.
+ *
+ * `Asset.publishError` holds whatever the platform SDK threw: "Could not
+ * determine LinkedIn person URN", "No Instagram Business Account linked to any
+ * page", "Media container failed: <Meta's own message>", "Publisher not
+ * implemented for platform: <x>". The codebase already classes the field as
+ * internal — redactLockedAsset excludes it by construction — but that redaction
+ * only covers LOCKED assets, and a failed publish is by definition past due,
+ * so every one of them took the un-redacted path.
+ *
+ * The client still learns their post did not go out and that Karos can get it
+ * out; what they no longer read is the exception. The ONE allowlisted string is
+ * the ordering hold, which is composed as client copy in the first place
+ * (publishHoldMessage) and explains a benign, self-clearing wait.
+ *
+ * Applied at the server boundary — asset-visibility.ts's two client
+ * projections — so the raw string never reaches the RSC payload. Staff
+ * surfaces read the asset un-projected and keep the exception.
+ */
+export function clientSafePublishError(publishError: string): string {
+  return publishError.startsWith(PUBLISH_HOLD_PREFIX)
+    ? publishError
+    : CLIENT_PUBLISH_FAILURE_MESSAGE;
+}
+
+export const CLIENT_PUBLISH_FAILURE_MESSAGE =
+  "This post didn't go out as scheduled. Your Karos team can get it posted.";
 
 /**
  * Key prefixes of the per-client agent instances: one imported customAgents doc

@@ -1,5 +1,29 @@
 import type { Asset } from "@/lib/types";
+import { clientSafePublishError } from "@/lib/custom-agent-launch";
 import { isAssetUnlockedForClient, templateForAsset } from "@/lib/post-chain";
+
+/**
+ * THE server boundary for a failed publish's reason.
+ *
+ * `publishError` holds the platform SDK's own exception, and every client-facing
+ * asset payload goes through one of the two functions below — so this is where
+ * the raw string stops. Four surfaces read the field once it has crossed (the
+ * calendar's chip tooltip and its projected CalendarPost, the dashboard's
+ * "needs your attention" hint, and the detail modal's "Publish failed" panel),
+ * and none of them can be the fix: `RunCalendar` is handed the whole `Asset`
+ * for its detail modal, so sanitizing the projected CalendarPost alone would
+ * still have shipped the exception in the same payload.
+ *
+ * Not covered by `redactLockedAsset`, which excludes the field by construction:
+ * that only runs for LOCKED assets, and a failed publish is past due — so every
+ * one of them took the un-redacted path. The COPY rule itself lives in
+ * clientSafePublishError, once; this only decides where it is applied.
+ */
+function withClientSafePublishError(a: Asset): Asset {
+  if (a.publishError == null) return a;
+  const safe = clientSafePublishError(a.publishError);
+  return safe === a.publishError ? a : { ...a, publishError: safe };
+}
 
 /**
  * Returns the asset set that should be visible in the client-facing library.
@@ -24,7 +48,9 @@ export function getClientLibraryAssets(
   const now = opts.now ?? Date.now();
   return sorted
     .filter((a) => !isLaunchDeliverable(a) && !isTestRunAsset(a))
-    .map((a) => (isAssetUnlockedForClient(a, now) ? a : redactLockedAsset(a)));
+    .map((a) =>
+      isAssetUnlockedForClient(a, now) ? withClientSafePublishError(a) : redactLockedAsset(a),
+    );
 }
 
 /**
@@ -81,7 +107,13 @@ export function getClientArchiveAssets(assets: Asset[], opts?: { now?: number })
   const now = opts?.now ?? Date.now();
   return assets
     .filter((a) => isInClientArchive(a, now))
-    .sort((a, b) => clientDeliveryStamp(b) - clientDeliveryStamp(a));
+    .sort((a, b) => clientDeliveryStamp(b) - clientDeliveryStamp(a))
+    // The archive is the OTHER client asset projection — the agent detail page
+    // feeds `agentProducedAssets` straight from here for a client viewer, and
+    // that set reaches the same detail modal (via the archive rows and the clip
+    // gallery) without passing getClientLibraryAssets. A held or failed post is
+    // `status: "scheduled"` and past due, so it is squarely in this set.
+    .map(withClientSafePublishError);
 }
 
 /**
