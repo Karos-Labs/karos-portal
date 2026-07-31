@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authorizeAssetMedia, resolveAssetVideoUrl } from "@/lib/asset-media";
+import { authorizeAssetMedia, resolveAssetVideo } from "@/lib/asset-media";
 
 export const runtime = "nodejs";
 
@@ -11,11 +11,14 @@ export const runtime = "nodejs";
  * that nothing ever refreshes, while `bulkScheduleClipsAction` spreads the
  * batch one clip per day across weeks — so by the day a client was shown a
  * clip, its URL had usually expired and the player simply never loaded. Every
- * `<video>` in the product points here instead, so the URL is minted per
- * request and no raw signed bucket URL reaches the browser at all.
+ * `<video>` in the product points here instead, so the URL it follows is minted
+ * for that request. The browser does still end up holding a signed bucket URL
+ * (it is the redirect target), but it is one this request minted, not the
+ * long-dead one sitting in Firestore.
  *
  * A redirect rather than a proxy: the bytes go browser↔GCS directly, which
- * keeps range requests, seeking and 2 GB clips off this server.
+ * keeps range requests, seeking and 2 GB clips off this server — and off Cloud
+ * Run's request timeout (`--timeout=300` in cloudbuild.yaml).
  */
 export async function GET(
   req: Request,
@@ -27,8 +30,8 @@ export async function GET(
 
   const asked = Number.parseInt(new URL(req.url).searchParams.get("i") ?? "0", 10);
   const index = Number.isInteger(asked) && asked > 0 ? asked : 0;
-  const url = await resolveAssetVideoUrl(access.asset, index);
-  if (!url) {
+  const source = await resolveAssetVideo(access.asset, index);
+  if (!source) {
     return NextResponse.json({ error: "This asset has no video" }, { status: 404 });
   }
 
@@ -36,6 +39,6 @@ export async function GET(
   // cached redirect would hand a client an expired link all over again.
   return new NextResponse(null, {
     status: 302,
-    headers: { Location: url, "Cache-Control": "private, no-store" },
+    headers: { Location: source.url, "Cache-Control": "private, no-store" },
   });
 }

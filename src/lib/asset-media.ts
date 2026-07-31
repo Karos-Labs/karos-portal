@@ -4,8 +4,12 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser, isStaff } from "@/lib/auth";
 import { getAsset } from "@/lib/data";
-import { assetVideos } from "@/lib/asset-images";
-import { PLAYBACK_URL_TTL_MS, createReadSignedUrl } from "@/lib/gcs-media";
+import { resolveAssetVideoSource, type AssetVideoSource } from "@/lib/asset-video-source";
+import {
+  PLAYBACK_URL_TTL_MS,
+  createDownloadSignedUrl,
+  createReadSignedUrl,
+} from "@/lib/gcs-media";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
 import type { Asset } from "@/lib/types";
 
@@ -57,39 +61,31 @@ export async function authorizeAssetMedia(id: string): Promise<AssetMediaAccess>
 }
 
 /**
- * The URL a clip can actually be fetched from RIGHT NOW.
+ * The URL a clip can actually be fetched from RIGHT NOW, with the real signer
+ * wired in. The decision itself — which of the four branches applies — lives in
+ * `resolveAssetVideoSource` (src/lib/asset-video-source.ts), which takes the
+ * signer as a parameter so every branch can be exercised by a test.
  *
- * `api/assets/bulk-upload` mints a V4 signed GCS URL with a 7-day TTL and
- * persists it as `asset.videoUrl`. Nothing re-signs it, and
- * `bulkScheduleClipsAction` spreads a batch one clip per day across weeks, so
- * most of a batch is a dead link by the day it is shown: the player never
- * loads, and anything the browser saves from that URL is GCS's 403 `<Error>`
- * XML document rather than the video — a file that will not open.
- *
- * The durable identifier was stored all along, so re-sign from `meta.gcsPath`
- * on every request instead. Re-signing is request-time only — nothing is
- * written back to Firestore.
- *
- * Assets with no `gcsPath` — webhook clips whose files were re-hosted to
- * Firebase Storage, lab imports carrying `meta.videos` — keep their stored URL,
- * which is durable already. A signing failure (bucket unset in an environment,
- * IAM hiccup) also degrades to the stored URL: a possibly-stale link still
- * beats a dead page.
- *
- * Returns null when the asset has no clip at that index.
+ * Pass `downloadFilename` to get a URL that GCS will serve as an attachment
+ * under that name; omit it for inline playback.
  */
-export async function resolveAssetVideoUrl(asset: Asset, index: number): Promise<string | null> {
-  const video = assetVideos(asset)[index];
-  if (!video) return null;
-
-  const gcsPath = typeof asset.meta?.gcsPath === "string" ? asset.meta.gcsPath : null;
-  // gcsPath names exactly one object: the clip that landed in `videoUrl`.
-  // Clips discovered in meta.videos / meta.files are other files entirely.
-  if (!gcsPath || !asset.videoUrl || video.url !== asset.videoUrl) return video.url;
-
-  try {
-    return await createReadSignedUrl(gcsPath, PLAYBACK_URL_TTL_MS);
-  } catch {
-    return video.url;
-  }
+export async function resolveAssetVideo(
+  asset: Asset,
+  index: number,
+  opts: { downloadFilename?: string } = {},
+): Promise<AssetVideoSource | null> {
+  return resolveAssetVideoSource(
+    asset,
+    index,
+    async (gcsPath, signOpts) =>
+      signOpts.downloadFilename
+        ? createDownloadSignedUrl({
+            gcsPath,
+            filename: signOpts.downloadFilename,
+            ...(signOpts.contentType ? { contentType: signOpts.contentType } : {}),
+            ttlMs: PLAYBACK_URL_TTL_MS,
+          })
+        : createReadSignedUrl(gcsPath, PLAYBACK_URL_TTL_MS),
+    opts,
+  );
 }

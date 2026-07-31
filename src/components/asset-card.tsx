@@ -517,8 +517,9 @@ export function AssetCard({
   // clips carry ONLY this, no caption or photo, so it must count toward
   // hasPreview below or the card renders the empty "no preview" state).
   const videos = assetVideos(asset);
-  // Photos and clips are both downloadable; the shared helper also carries the
-  // locked-asset refusal, so this row cannot drift from the detail modal's.
+  // Photos and clips are both downloadable. The helper answers WHAT is on
+  // offer, not who may have it: this card's locked handling is the early return
+  // below, exactly as it was, and the server gate is the one that counts.
   const downloads = assetDownloadTargets(asset);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 

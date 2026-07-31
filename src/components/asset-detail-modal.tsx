@@ -59,10 +59,14 @@ function fmt(t: number): string {
 }
 
 /** Native download action for an asset's deliverables — anchors to the shared download
- *  route (a photo, a zip when the asset carries a carousel, or a clip). Every target
- *  comes from `assetDownloadTargets`, which also holds the locked-asset refusal, so a
- *  video-only asset gets a control and the card cannot disagree with this modal. */
+ *  route (a photo, a zip when the asset carries a carousel, or a clip). What is on offer
+ *  comes from `assetDownloadTargets`, so a video-only asset gets a control instead of the
+ *  old photos-only gate; WHO may have it stays this component's own call, unchanged. */
 export function AssetDownloadButtons({ asset, className }: { asset: Asset; className?: string }) {
+  // This modal's own pre-existing refusal, kept here rather than pushed into the
+  // shared helper: the card never had it, and the server gate (authorizeAssetMedia)
+  // is what actually withholds a future-dated post.
+  if (asset.locked) return null;
   const targets = assetDownloadTargets(asset);
   if (targets.length === 0) return null;
   return (
@@ -207,7 +211,9 @@ export function AssetDetailModal({
   const coverImageUrl = images.length > 0 ? images[0].url : null;
   const videos = assetVideos(asset);
   // Whether this asset offers anything to download at all — same helper the
-  // buttons use, so the section and its contents cannot disagree.
+  // buttons use, so the section and its contents cannot disagree. Locked assets
+  // returned at the guard above, so this is only ever an unlocked asset and the
+  // section can never render empty around a refused button.
   const downloads = assetDownloadTargets(asset);
 
   return (

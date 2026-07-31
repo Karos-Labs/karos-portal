@@ -25,9 +25,10 @@ const UPLOAD_URL_TTL_MS = 15 * 60 * 1000;
 export const READ_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /**
  * TTL for a URL minted per request and handed to one browser for one playback
- * or download (`resolveAssetVideoUrl`, src/lib/asset-media.ts). Nothing stores
- * it, so it only has to outlive the transfer it was minted for — GCS checks
- * expiry when the request starts, not while it streams.
+ * or download (`resolveAssetVideo`, src/lib/asset-media.ts). Nothing stores it,
+ * so it only has to outlive the transfer it was minted for — GCS checks expiry
+ * when the request starts, not while it streams, so a 2 GB clip on a slow line
+ * is not cut off an hour in.
  */
 export const PLAYBACK_URL_TTL_MS = 60 * 60 * 1000;
 
@@ -135,6 +136,50 @@ export async function createReadSignedUrl(gcsPath: string, ttlMs = READ_URL_TTL_
     version: "v4",
     action: "read",
     expires: Date.now() + ttlMs,
+  });
+  return url;
+}
+
+/**
+ * Filename safe to sit inside a quoted `Content-Disposition` parameter. Callers
+ * pass `assetFileStem` output, which is already `[a-z0-9-]`, but this URL is
+ * signed and handed to a third party — nothing that can close the quote or
+ * break the header gets in.
+ */
+function dispositionFilename(filename: string): string {
+  const cleaned = filename.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return cleaned.slice(0, 120) || "download";
+}
+
+/**
+ * A V4 signed READ URL that a browser can be redirected STRAIGHT to for a
+ * download — `response-content-disposition` (and, when we can identify the
+ * object, `response-content-type`) are baked into the signature, so GCS itself
+ * tells the browser to save the file and what to call it.
+ *
+ * This is why the clip download is a redirect rather than a proxy. Proxying a
+ * clip puts browser↔app↔GCS bytes under Cloud Run's request timeout
+ * (`--timeout=300` in cloudbuild.yaml): a 2 GB clip inside 300 s needs about
+ * 55 Mbit/s sustained, and a slower client would have the request killed
+ * mid-stream and land a truncated .mp4 — the same "downloaded but won't open"
+ * symptom, only moved. Redirected, the transfer is browser↔GCS with no ceiling
+ * of ours, and range requests and resume keep working.
+ *
+ * Short TTL by default: the URL is minted for one request and nothing stores it.
+ */
+export async function createDownloadSignedUrl(opts: {
+  gcsPath: string;
+  filename: string;
+  contentType?: string;
+  ttlMs?: number;
+}): Promise<string> {
+  const bucket = getStorageClient().bucket(getBucketName());
+  const [url] = await bucket.file(opts.gcsPath).getSignedUrl({
+    version: "v4",
+    action: "read",
+    expires: Date.now() + (opts.ttlMs ?? PLAYBACK_URL_TTL_MS),
+    responseDisposition: `attachment; filename="${dispositionFilename(opts.filename)}"`,
+    ...(opts.contentType ? { responseType: opts.contentType } : {}),
   });
   return url;
 }

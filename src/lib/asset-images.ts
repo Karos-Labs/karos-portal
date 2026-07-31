@@ -138,8 +138,12 @@ export function assetVideos(asset: Asset): AssetVideo[] {
  * time its day arrives — the client got a player that never loaded. The route
  * re-signs from the durable `meta.gcsPath` on every request, and for assets
  * with no gcsPath (webhook clips re-hosted to Firebase Storage) it redirects to
- * the stored URL unchanged. It also keeps raw signed bucket URLs out of the
- * browser entirely.
+ * the stored URL unchanged.
+ *
+ * The browser still ends up following a signed bucket URL — it is the redirect
+ * target — but it is one minted for that request, so the Download item browsers
+ * put on native `<video controls>` now saves the clip rather than whatever the
+ * long-expired stored URL answers with.
  */
 export function assetVideoSrc(assetId: string, index: number): string {
   return `/api/assets/${assetId}/media?i=${index}`;
@@ -158,22 +162,24 @@ export type AssetDownloadTarget = {
 };
 
 /**
- * Every download an asset can offer, in one place, so the card and the detail
- * modal cannot disagree about whether a deliverable is downloadable.
+ * Every download an asset's payloads can offer, in one place, so the card and
+ * the detail modal cannot disagree about WHAT is downloadable.
  *
  * Both mount sites used to gate the control on `assetImages(asset).length > 0`,
  * which left a video-only asset — every bulk-uploaded clip — with no download
- * anywhere in the product.
+ * anywhere in the product. That gate is what this replaces, and only that.
  *
- * Locked assets return nothing: a future-dated post is withheld from the client
- * until its day, and the download route enforces the same rule server-side.
+ * Deliberately says nothing about WHO may download. This helper answers "which
+ * payloads does this asset have"; it does not carry the locked-asset refusal,
+ * because the two mount sites did not agree about it before and narrowing them
+ * to match is not this change's business. The modal keeps its own
+ * `asset.locked` guard, the card keeps its own, and `authorizeAssetMedia` is
+ * the gate that actually decides — everything here is cosmetic.
  *
  * Clips are offered one per request rather than bundled: a clip can be 2 GB and
  * the zip path buffers whole files in memory.
  */
 export function assetDownloadTargets(asset: Asset): AssetDownloadTarget[] {
-  if (asset.locked) return [];
-
   const targets: AssetDownloadTarget[] = [];
   const images = assetImages(asset);
   if (images.length > 0) {
