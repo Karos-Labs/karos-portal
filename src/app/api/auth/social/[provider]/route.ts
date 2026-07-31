@@ -10,7 +10,7 @@ import {
   getRequestedScopes,
   getAppOrigin,
 } from "@/lib/integrations/oauth";
-import { errorPage } from "@/lib/integrations/oauth-popup";
+import { errorPage, OAUTH_UNSUPPORTED_CHANNEL_MESSAGE } from "@/lib/integrations/oauth-popup";
 
 export async function GET(
   req: NextRequest,
@@ -33,8 +33,7 @@ export async function GET(
     return errorPage(provider, "This account can't connect channels for that workspace.", origin, 403);
 
   const config = OAUTH_CONFIGS[provider];
-  if (!config)
-    return errorPage(provider, "This channel isn't connectable from the portal yet.", origin, 404);
+  if (!config) return errorPage(provider, OAUTH_UNSUPPORTED_CHANNEL_MESSAGE, origin, 404);
 
   const appClientId = process.env[config.envClientId];
   const appClientSecret = process.env[config.envClientSecret];

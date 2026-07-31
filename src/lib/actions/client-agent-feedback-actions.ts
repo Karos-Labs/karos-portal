@@ -128,12 +128,21 @@ export async function addClientAgentFeedbackAction(input: {
     updatedAt: now,
   });
 
+  // The row is on the CLIENT's timeline, and `templateKey` is the join SLUG
+  // ("numbers"), not the name the client picked from ("By The Numbers"). The
+  // registry lookup cannot miss — validateFeedbackScope above already refused a
+  // key that is not one of `umbrella.templates` — and if it somehow did, the row
+  // names the agent without the format rather than printing the slug.
+  const templateName = scope.templateKey
+    ? (umbrella.templates.find((t) => t.key === scope.templateKey)?.name ?? null)
+    : null;
+
   void logActivity({
     clientId: input.clientId,
     timestamp: now,
     type: "CAMPAIGN_CREATED",
-    title: scope.templateKey
-      ? `Feedback on ${umbrella.displayName} · ${scope.templateKey}`
+    title: templateName
+      ? `Feedback on ${umbrella.displayName} · ${templateName}`
       : `Feedback on ${umbrella.displayName}`,
     actor: user.name,
     actorRole: roleOf(user),

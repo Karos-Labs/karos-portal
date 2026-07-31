@@ -55,6 +55,21 @@ const FILES = walk(SRC).filter((f) => !f.includes("__tests__") && f !== HOME);
  * Source with comments removed. The docstrings that explain this rule quote the
  * very labels it forbids elsewhere — run against raw text, the honest way to
  * keep this green would be deleting the explanations.
+ *
+ * STATED HOLE, and this sweep is the one it actually bites, because it walks every
+ * file in src/ rather than a named few. `//` is read as a comment opener wherever
+ * it appears, INCLUDING inside a string, so a template literal holding a URL is
+ * truncated at the `//` and loses its closing backtick — and an unpaired backtick
+ * is the one stray `skipStringLiteral` cannot bound to a line (its docstring has
+ * the reasoning and names `components/li-drafts-review.tsx`, whose LinkedIn share
+ * URL does exactly this). What it costs the two sweeps below is worth naming
+ * rather than leaving to be discovered: from the mis-pairing onward `objectLiterals`
+ * records the swallowed region as one phantom string and enumerates no literal
+ * inside it — a silent skip, the fail-OPEN direction — and `chainUnits` stops
+ * splitting there, merging units, which is the false-positive mode it was
+ * rewritten to stop. Neither is fixable from inside this function: the fix is a
+ * strip that skips string literals, shared by every copy of this line in this
+ * directory, and it has to be verified against every sweep those copies feed.
  */
 function code(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
@@ -120,9 +135,14 @@ function objectLiterals(src: string): Literal[] {
   for (let i = 0; i < src.length; i++) {
     const ch = src[i]!;
 
-    // A STRAY delimiter (the skip returns its own index) is not a literal and is
-    // not recorded as one — it falls through to the plain character append below,
-    // so `<p>Don't</p>` contributes no phantom value and opens no region.
+    // A stray QUOTE (the skip returns its own index) is not a literal and is not
+    // recorded as one — it falls through to the plain character append below, so
+    // `<p>Don't</p>` contributes no phantom value and opens no region. Not a claim
+    // about stray delimiters in general: a stray BACKTICK does not come back as
+    // its own index, it comes back as some later backtick, so it DOES open a region
+    // and the slice does become a phantom value here. See skipStringLiteral's
+    // stated hole for where an unpaired backtick comes from and why bounding it is
+    // the strip's job.
     const closes = isStringDelimiter(ch) ? skipStringLiteral(src, i) : i;
     if (closes > i) {
       const value = src.slice(i + 1, closes);

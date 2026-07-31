@@ -8,6 +8,7 @@ import { AgentMark } from "@/components/agent-identity";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { CLIENT_SAFE_ACTOR, SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
+import { researchReportReadyTitle } from "@/lib/activity-titles";
 import { addActivityNoteAction } from "@/lib/actions";
 import type { ActivityEventType, ClientReport, Job, Role } from "@/lib/types";
 
@@ -181,7 +182,9 @@ function eventsFromReport(report: ClientReport | null, viewerIsClient: boolean):
       id: `report:${report.id}`,
       timestamp: report.createdAt,
       type: "INTEL_GENERATION" as ActivityEventType,
-      title: "Research report ready",
+      // Same words the two WRITERS store, from one home: a client reads either
+      // this derived row or a persisted one, never both (hasIntelLog below).
+      title: researchReportReadyTitle(),
       description: `Full competitive analysis · Score: ${report.overallScore}/100 (${report.overallGrade}) · ${report.reportDate}`,
       actor: viewerIsClient ? CLIENT_SAFE_ACTOR : SYSTEM_AI_ACTOR_NAME,
       actorRole: "system" as const,

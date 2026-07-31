@@ -324,7 +324,10 @@ export async function requestAdjustmentsAction(
   await createTaskComment({
     taskId,
     clientId,
-    content: `[Adjustment Request] ${trimmed}`,
+    // The comment list in task-ticket-modal renders this verbatim, and a CLIENT
+    // reads it: it is their own request, echoed back. "[Adjustment Request]" was
+    // a Title Case machine tag on a client's own words.
+    content: `Adjustment requested: ${trimmed}`,
     authorName: user.name,
     authorRole: user.role,
     createdAt: Date.now(),

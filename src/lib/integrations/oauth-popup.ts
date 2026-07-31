@@ -8,6 +8,20 @@
  * authorize route and the callback route answer with these pages.
  */
 
+/**
+ * "This provider has no OAuth config" — said once, because BOTH routes ask it.
+ *
+ * The authorize route asks before opening the consent screen and the callback
+ * route asks again when one comes back, and the fact is the same at both: there
+ * is no `OAUTH_CONFIGS` entry, so the portal cannot connect this channel. The
+ * callback answered that fact with "Unknown provider." — the URL segment the
+ * client never saw, and nothing they can act on. Giving it the authorize route's
+ * sentence by COPYING it would have left one fact with two spellings, so the
+ * sentence lives here and both routes ask for it; it is true at both sites.
+ */
+export const OAUTH_UNSUPPORTED_CHANNEL_MESSAGE =
+  "This channel isn't connectable from the portal yet.";
+
 const BASE_STYLE = `*{box-sizing:border-box;margin:0;padding:0}body{background:#07090b;color:#e5e7eb;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}.card{text-align:center;padding:2rem;max-width:320px}.icon{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 1.25rem}h2{font-size:1.125rem;font-weight:600;margin-bottom:.5rem;color:#fff}p{color:#6b7280;font-size:.875rem;line-height:1.5}`;
 
 export function htmlPage(body: string, script: string, status = 200): Response {

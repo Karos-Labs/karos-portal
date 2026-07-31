@@ -212,14 +212,21 @@ export function CreditsPanel({
             Credits &amp; usage
           </CardTitle>
           <p className="mt-0.5 text-sm text-muted-2">
-            AI actions (agent runs, copilot messages, task executions, doc corrections) spend credits.
+            AI actions (agent runs, copilot messages, task executions, document corrections) spend credits.
           </p>
           {/* The subtitle named the actions but never their prices, so the
               ledger — a record of what you have ALREADY been charged — was the
               only place in the product that told a client what anything costs.
-              Rendered from the pricing constants, never a hand-typed copy. */}
+              Rendered from the pricing constants, never a hand-typed copy.
+
+              "document correction", not "doc correction", in all three places on
+              this card: the ledger rows THIS PANEL renders below say "Document
+              correction · Brand voice", so the abbreviation put two names for one
+              purchase on one screen — the price of it at the top and the record of
+              it at the bottom. The Documents tab a client clicks to make the
+              correction is not abbreviated either. */}
           <p className="mt-1 text-xs text-muted-2">
-            Copilot message {CREDIT_COSTS.chatMessage} · doc correction{" "}
+            Copilot message {CREDIT_COSTS.chatMessage} · document correction{" "}
             {CREDIT_COSTS.targetedCorrection} · agent run from {CREDIT_COSTS.customAgentRun}.
           </p>
         </div>
@@ -296,7 +303,7 @@ export function CreditsPanel({
                 balance shortfall has no date attached — it lifts on a top-up,
                 not on a Monday — so that sentence has to end differently. */}
             <p className="text-xs text-muted">
-              Agent runs, copilot messages, task executions and doc corrections are paused
+              Agent runs, copilot messages, task executions and document corrections are paused
               {bindingLimit === "insufficient_balance" ? " until credits are added." : " until then."}
             </p>
             {viewer && (

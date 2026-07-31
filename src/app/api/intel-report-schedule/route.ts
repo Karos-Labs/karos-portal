@@ -10,6 +10,10 @@ import { requireCronSecret } from "@/lib/cron-auth";
 import { computeNextIntelScheduleRun } from "@/lib/intel-schedule";
 
 import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
+import {
+  researchReportReadyDescription,
+  researchReportReadyTitle,
+} from "@/lib/activity-titles";
 export const maxDuration = 300;
 
 /**
@@ -64,8 +68,8 @@ export async function GET(req: NextRequest) {
         clientId: client.id,
         timestamp: now,
         type: "INTEL_GENERATION",
-        title: "Intel Report generated (scheduled)",
-        description: "Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical) - recurring schedule",
+        title: researchReportReadyTitle(),
+        description: researchReportReadyDescription({ recurring: true }),
         actor: SYSTEM_AI_ACTOR_NAME,
         actorRole: "system",
       });

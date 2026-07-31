@@ -47,6 +47,19 @@ const src = (rel: string) => readFileSync(join(ROOT, "src", rel), "utf8");
  * this", and the docstrings explaining why quote the exact strings being
  * forbidden — run against raw text, the honest way to keep them green would be
  * deleting the explanations.
+ *
+ * STATED HOLE, and it is this strip's rather than the walks' below: `//` is read
+ * as a comment opener wherever it appears, INCLUDING inside a string, so a
+ * template literal holding a URL loses its closing backtick HERE and reaches a
+ * caller as an unpaired one — which `skipStringLiteral` cannot bound to a line
+ * (its docstring carries the reasoning and a live example). Two exposures follow,
+ * and the shape of each is worth knowing before trusting a green tick: a
+ * brace/range walk over a file that writes `//` inside a template can mis-pair
+ * that file's literals, while the repo-wide reads below only ask `.includes()`,
+ * where a truncated line can hide a match but cannot mis-pair anything. Which
+ * files are affected is a question about their source, not about this line, so it
+ * is not answered here — the fix is a string-aware strip shared by every copy of
+ * this line in this directory, not a local patch.
  */
 function code(s: string): string {
   return s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
@@ -194,17 +207,67 @@ describe("the range walk under an apostrophe", () => {
     expect(matchingBrace(s, 0)).toBe(s.length - 1);
   });
 
-  it("treats a stray apostrophe as one character, not as an opener", () => {
+  it("bounds a stray apostrophe to its own line — the QUOTE half of the contract", () => {
     // JSX text survives comment-stripping, and `<p>Don't</p>` is not a literal. A
-    // quote that does not close on its own line is a stray: bounded to itself, so
-    // the walk keeps its place instead of eating to the next apostrophe in the file.
+    // quote that does not close on its own line is a stray: the walk keeps its
+    // place instead of eating to the next apostrophe in the file.
     const jsx = "<p>Don't</p>\n<span>can't</span>";
     const at = jsx.indexOf("'");
     expect(skipStringLiteral(jsx, at)).toBe(at);
+
+    // …but the bound is the LINE, not one character, and this test's name used to
+    // say otherwise. Two apostrophes on one line ARE read as a literal — from
+    // here that pair is indistinguishable from one — so the words between them
+    // are swallowed. What holds is that the range cannot reach the next line, so
+    // a brace or a leak below it survives.
+    //
+    // The first line pins the contract as it stands, so prose and code cannot
+    // drift apart again — that is the whole of what this round fixed. Tightening
+    // it later (a heuristic reading a letter-hugged apostrophe as never opening)
+    // is a change TO that contract, not a violation of it: update the docstring
+    // in source-scan.ts and this line together. The second line is the guarantee
+    // and holds either way.
+    const twoOnALine = "<p>Don't stop, it's here</p>\n<span>ok</span>";
+    const stray = twoOnALine.indexOf("'");
+    expect(skipStringLiteral(twoOnALine, stray)).toBe(twoOnALine.indexOf("'", stray + 1));
+    expect(skipStringLiteral(twoOnALine, stray)).toBeLessThan(twoOnALine.indexOf("\n"));
+
     // …while a real literal on one line still gets skipped whole.
     const real = "const s = 'it is {';";
     const open = real.indexOf("'");
     expect(skipStringLiteral(real, open)).toBe(real.lastIndexOf("'"));
+  });
+
+  it("gives a BACKTICK no line bound, which is required and is not free", () => {
+    // The asymmetry, asserted rather than only described, because the test above
+    // reads as the whole contract if this one is missing and it is not — the line
+    // bound is the quote rule ONLY. Both halves below are the same branch of
+    // skipStringLiteral seen from its two sides.
+    //
+    // REQUIRED: a real template literal spans lines, and `staffOnlyRanges` ends a
+    // brace-less statement at a newline. Without this, a guard whose one statement
+    // is a multi-line template would be cut off mid-literal.
+    const template = ["const t = `line one", "line two`;"].join("\n");
+    const opens = template.indexOf("`");
+    expect(skipStringLiteral(template, opens)).toBe(template.lastIndexOf("`"));
+    expect(skipStringLiteral(template, opens)).toBeGreaterThan(template.indexOf("\n"));
+
+    // THE COST, inseparable from it: an UNPAIRED backtick does not stop at the
+    // newline either. It takes the next backtick in the text however far below,
+    // so its bogus range is bounded by nothing a caller can see. This is a fact
+    // being pinned, not a property being wanted — a stray backtick is what the
+    // naive comment strip makes of a template holding a URL, and the reasoning is
+    // at skipStringLiteral's STATED HOLE. If a later change contains it, this
+    // expectation and that docstring change together.
+    const stray = ["const u = `https:", "", "const v = `real`;"].join("\n");
+    const at = stray.indexOf("`");
+    expect(skipStringLiteral(stray, at)).toBe(stray.indexOf("`", at + 1));
+    expect(skipStringLiteral(stray, at)).toBeGreaterThan(stray.indexOf("\n"));
+
+    // …and with no later backtick at all it falls back to "one ordinary
+    // character", so the walk still makes forward progress.
+    const lone = "const u = `https:\nconst v = 1;";
+    expect(skipStringLiteral(lone, lone.indexOf("`"))).toBe(lone.indexOf("`"));
   });
 });
 
@@ -675,6 +738,15 @@ describe("the copilot's find_output tool text", () => {
    * (`Asset["status"]` is the accessor's own parameter annotation), and the
    * lookbehind stops the pattern matching the tail of one.
    *
+   * ALL THREE DELIMITERS, matched as a pair through a backreference. This class
+   * used to read `["']`, so `` asset[`status`] `` — a computed member read with a
+   * template literal, ordinary JS — was invisible to it: planted into the live
+   * find_output body with both sanitized register calls left in place, the suite
+   * was GREEN. That is the SAME quotes-only loosening the shared string skip in
+   * `source-scan.ts` was hardened against, surviving inside the function the
+   * hardening was for, and it is the fail-OPEN direction: a leak the scan cannot
+   * see reads as no leak at all.
+   *
    * DESTRUCTURING is the shape that walked straight through the first version of
    * this inverted rule, which is the exact class the inversion existed to close:
    * `const { status } = asset;` then `${status}` was GREEN with both sanitized
@@ -698,7 +770,7 @@ describe("the copilot's find_output tool text", () => {
     const add = (m: RegExpMatchArray) =>
       out.push({ text: m[0], start: m.index!, end: m.index! + m[0].length });
     for (const m of s.matchAll(/\.\w*[Ss]tatus\b/g)) add(m);
-    for (const m of s.matchAll(/(?<![\w$.])[a-z_$][\w$]*\[\s*["']\w*[Ss]tatus["']\s*\]/g)) add(m);
+    for (const m of s.matchAll(/(?<![\w$.])[a-z_$][\w$]*\[\s*(["'`])\w*[Ss]tatus\1\s*\]/g)) add(m);
     for (const decl of s.matchAll(/\b(?:const|let|var)\s+(?=\{)/g)) {
       const open = decl.index! + decl[0].length;
       const close = matchingBrace(s, open);
@@ -742,12 +814,67 @@ describe("the copilot's find_output tool text", () => {
     expect(read("const { id: clientId } = await params;")).toEqual([]);
   });
 
+  it("sees a computed read in any of the three quote forms, and only a real one", () => {
+    // The scan's own teeth for the bracket alternative, which shipped as `["']`
+    // and so could not see `` asset[`status`] `` — valid JS, and GREEN when
+    // planted into the live find_output body with both register calls intact.
+    // Verified in both directions by that plant: red with it, and the whole suite
+    // green with the route restored byte-for-byte.
+    const read = (s: string) => statusReads(s).map((r) => r.text);
+
+    for (const q of ['"', "'", "`"]) {
+      expect(read(`asset[${q}status${q}]`), `the ${q} form is invisible`).toContain(
+        `asset[${q}status${q}]`,
+      );
+    }
+    // Suffixed field names, matched in the bracket form too.
+    expect(read("run[`jobStatus`]")).toContain("run[`jobStatus`]");
+
+    // BOUNDARIES, so this stayed green on legitimate code rather than only
+    // getting stricter. A capitalised receiver is a TYPE, not a read — the
+    // accessor's own `Asset["status"]` annotation is the live example…
+    expect(read('const f = (status: Asset["status"]) => label(status);')).toEqual([]);
+    // …the two delimiters must be the SAME one, which is what the backreference
+    // buys over a second character class…
+    expect(read('asset[`status"]')).toEqual([]);
+    // …and a key ASSEMBLED inside the brackets is not matched, because the pattern
+    // wants `status`-shaped text between the two delimiters and `${prefix}Status`
+    // is not that.
+    //
+    // STATED HOLE, not a boundary, and the difference matters: this is NOT the
+    // claim that a computed key names no stored field. With `prefix = "job"` it
+    // names `jobStatus`, which this codebase really stores — what is true is that
+    // no regex can decide which field a key assembled at runtime names. Same
+    // family as the destructured PARAMETER above, with one thing worse: the sink
+    // sweep is no second net here, because it asks `statusReads` of each
+    // interpolation and so cannot see this shape either. If a computed status key
+    // ever appears in this route, it has to be met by naming the field.
+    expect(read("row[`${prefix}Status`]")).toEqual([]);
+  });
+
   it("found the tool bodies it is asserting about", () => {
     // Without this every negative below would pass vacuously on "" after a
     // rename.
     expect(tools).not.toBe("");
     expect(tools).toContain("status:");
-    expect(tools).toContain("id: ${asset.id}");
+    // The single-match answer, so the slice reaches PAST the disambiguation list
+    // to the branch that composes one asset's own line. A VACUITY ANCHOR: what it
+    // has to buy is "the scan sees this region". As `toContain("id: ${asset.id}")`
+    // it pinned byte-exact bytes, so reformatting the live source to
+    // `${ asset.id }` reddened it while the sweep it vouches for stayed green —
+    // the source-canary trap this campaign keeps removing, sitting inside the
+    // suite doing the removing.
+    //
+    // It is not spelling-free, and cannot be: an anchor has to name something it
+    // expects to find, so this one still pins the receiver `asset` and the key
+    // `id` — what the regex drops is the FORMATTING around them, nothing more.
+    // Worth saying out loud because the sweeps it vouches for deliberately do NOT
+    // name a receiver (see `statusReads`), so this line is the one place in the
+    // describe where renaming `asset` in the live route goes red while every
+    // actual guard stays green. When that happens the anchor is what needs
+    // re-reading — re-point it at the renamed receiver, do not loosen it into
+    // something that would also match an empty region.
+    expect(tools).toMatch(/id:\s*\$\{\s*asset\.id\s*\}/);
     // And it found the accessor, so the negative below is comparing against a
     // real identifier rather than the empty string.
     expect(accessor).not.toBe("");
@@ -1081,10 +1208,16 @@ describe("the copilot system prompt", () => {
     // field" decision behind a laundering call.
     expect(prompt).not.toMatch(/\w*[Ll]abel\w*\(\s*client\.status/);
     // job.status: RELABELLED through the register the run badges already read.
-    expect(prompt).toContain("jobStatusLabel(j.status)");
+    // Whitespace-tolerant, and the receiver is not pinned either: which local the
+    // job is bound to (`j`) is the loop's business, and reformatting the call is
+    // not a behaviour change. What has to hold is that the field goes through that
+    // register.
+    expect(prompt).toMatch(/jobStatusLabel\(\s*\w+\.status\s*\)/);
     expect(prompt).toContain('from "@/lib/job-status-copy"');
-    // asset.type: RELABELLED through the register the deliverable cards read.
-    expect(prompt).toContain("assetTypeLabel(type)");
+    // asset.type: RELABELLED through the register the deliverable cards read. The
+    // argument is a bare local because the type arrives via `Object.entries`, so
+    // the callee is what this pins.
+    expect(prompt).toMatch(/assetTypeLabel\(\s*\w+\s*\)/);
     expect(prompt).toContain('from "@/lib/asset-type-copy"');
   });
 

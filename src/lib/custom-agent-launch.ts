@@ -848,7 +848,7 @@ export function clientSafeRunError(error: string): string {
  * alert. Neither existing notifier fits a client-fired run — one wants a
  * `scheduleId` this path has none of and would email "Scheduled run failed to
  * fire" about a manual press; the other stamps `INTEL_GENERATION` /
- * "Workspace generation stopped early" onto the client's timeline — so the
+ * "Workspace update didn't finish" onto the client's timeline — so the
  * sentence is now one the code can keep, and it hands the client the two
  * things they can actually do. A ContactUsButton already sits in both cards
  * that render this.

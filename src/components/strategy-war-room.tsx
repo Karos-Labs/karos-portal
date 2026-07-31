@@ -344,6 +344,27 @@ export function StrategyWarRoom({
 /**
  * Plain-English reason a finished run created nothing, plus the concrete next
  * step. Falls back to the engine's own note when the counts don't explain it.
+ *
+ * WHOSE LIMIT, and these two sentences had it wrong. `capSkipped` comes from the
+ * cap in task-dedup.ts, which counts KAROS-RUN tasks that are still open and has
+ * no opinion about the ones a client adds by hand — so "your board is already at
+ * the 15-active-task limit" is false for a client looking at a board of twenty of
+ * their own tasks, and "active" is the code's word for the counted set rather
+ * than the client's. Same defect as `queueCapacitySkipNote` had, and the sweep
+ * that keeps that note in one home cannot see these: it looks for a literal
+ * saying "deferred", "dropped" or "not added", and neither of these says any of
+ * the three.
+ *
+ * WHAT THE NEXT STEP POINTS AT is the other thing to get right, and the two-count
+ * branch had it dangling: its subject is the PROPOSALS, so "approve or complete
+ * some of those" pointed at the one thing in the sentence a client can do neither
+ * of. It names the work instead. Whoever rewords these should check the nearest
+ * plural before reaching for "those".
+ *
+ * They state the rule rather than reuse the note, because the shapes differ — the
+ * note is a lowercase fragment for a parenthesised list, these are sentences that
+ * end in the next step. The RULE has one home (task-dedup.ts's capacity policy);
+ * whoever changes what the cap counts has to restate it in both places.
  */
 function zeroOutcomeExplanation(
   outcome: { note: string; duplicatesSkipped: number; capSkipped: number } | null,
@@ -351,10 +372,10 @@ function zeroOutcomeExplanation(
   if (!outcome) return "The debate finished without a saved result. Try running it again.";
   const { duplicatesSkipped, capSkipped } = outcome;
   if (capSkipped > 0 && duplicatesSkipped > 0) {
-    return `Every proposal was either already on your board (${duplicatesSkipped}) or over the ${MAX_ACTIVE_TASKS}-active-task limit (${capSkipped}). Approve or complete some tasks, then run this again.`;
+    return `Every proposal was either already on your board (${duplicatesSkipped}) or over the ${MAX_ACTIVE_TASKS}-task limit on work Karos runs for you (${capSkipped}). Approve or complete some of that work, then run this again.`;
   }
   if (capSkipped > 0) {
-    return `Your board is already at the ${MAX_ACTIVE_TASKS}-active-task limit, so ${capSkipped} proposal${capSkipped === 1 ? "" : "s"} could not be added. Approve or complete some tasks, then run this again.`;
+    return `Karos already has its limit of ${MAX_ACTIVE_TASKS} open tasks for you, so ${capSkipped} proposal${capSkipped === 1 ? "" : "s"} could not be added. Approve or complete some of those, then run this again.`;
   }
   if (duplicatesSkipped > 0) {
     return `All ${duplicatesSkipped} proposal${duplicatesSkipped === 1 ? "" : "s"} already exist on your board — your task map is up to date.`;

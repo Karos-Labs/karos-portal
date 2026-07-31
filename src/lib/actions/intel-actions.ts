@@ -27,6 +27,11 @@ import { stripPipelineMarkers } from "@/lib/doc-render";
 import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
 import {
+  researchReportReadyDescription,
+  researchReportReadyTitle,
+} from "@/lib/activity-titles";
+import { contextDocLabel } from "@/lib/context-doc-copy";
+import {
   computeFirstIntelScheduleRun,
   clampIntervalMonths,
   clampScheduleDayOfMonth,
@@ -279,15 +284,15 @@ export async function generateIntelReportAction(
       const { runIntelReportPipeline } = await import("@/lib/intel");
       await runIntelReportPipeline(clientId, runSpecificContext);
       await updateClient(clientId, { lastIntelReportAt: Date.now() });
-      const ctxNote = runSpecificContext?.trim()
-        ? ` - with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
-        : "";
+      const focus = runSpecificContext?.trim()
+        ? `"${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
+        : undefined;
       await logActivity({
         clientId,
         timestamp: Date.now(),
         type: "INTEL_GENERATION",
-        title: "Intel Report generated",
-        description: `Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical)${ctxNote}`,
+        title: researchReportReadyTitle(),
+        description: researchReportReadyDescription({ recurring: false, focus }),
         actor: SYSTEM_AI_ACTOR_NAME,
         actorRole: "system",
       });
@@ -545,7 +550,9 @@ async function applyTargetedDocCorrection(
     user,
     doc.clientId,
     CREDIT_COSTS.targetedCorrection,
-    `Doc correction · ${doc.docType}`,
+    // The ledger feed is rendered ungated to a CLIENT_USER in CreditsPanel, so
+    // this string is client copy that happens to arrive through Firestore.
+    `Document correction · ${contextDocLabel(doc.docType)}`,
   );
 
   const { applyDocCorrections } = await import("@/lib/intel");
@@ -561,7 +568,7 @@ async function applyTargetedDocCorrection(
         user,
         doc.clientId,
         CREDIT_COSTS.targetedCorrection,
-        `Refund · discarded doc correction · ${doc.docType}`,
+        `Refund · discarded document correction · ${contextDocLabel(doc.docType)}`,
         chargedAt,
       );
     }
@@ -606,7 +613,9 @@ async function applyTargetedDocCorrection(
       clientId: doc.clientId,
       timestamp: now,
       type: "CONTEXT_DOC_UPDATED",
-      title: `${doc.docType} corrected (targeted)`,
+      // `doc.docType` is stored kebab-case, and this row is on the CLIENT's
+      // timeline: it read "branding-guidelines corrected (targeted)".
+      title: `${contextDocLabel(doc.docType)} corrected`,
       description: corrections.length > 160 ? corrections.slice(0, 157) + "…" : corrections,
       actor: user.name,
       actorRole,
@@ -669,7 +678,11 @@ export async function applyDocCorrectionAction(
       clientId,
       timestamp: now,
       type: "CONTEXT_DOC_UPDATED",
-      title: `${docType} corrected via Fix with Review`,
+      // Same row on the same client timeline. "Fix with Review" is the name of
+      // the STAFF surface that applied it, which the client has never seen; what
+      // distinguishes this row from the targeted one, in their terms, is that a
+      // person checked it first.
+      title: `${contextDocLabel(docType)} corrected after review`,
       description: corrections.length > 160 ? corrections.slice(0, 157) + "…" : corrections,
       actor: user.name,
       actorRole: "staff",
@@ -727,7 +740,7 @@ async function applyGlobalDocCorrection(clientId: string, corrections: string): 
     user,
     clientId,
     CREDIT_COSTS.globalCorrection,
-    "Global doc correction",
+    "Global document correction",
   );
 
   const { applyDocCorrections } = await import("@/lib/intel");

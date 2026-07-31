@@ -431,7 +431,8 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
     clientId,
     timestamp: now,
     type: "COMPETITOR_ANALYZED",
-    title: "Competitors discovered & analyzed",
+    // Prose on the client's timeline, so "and" rather than an ampersand.
+    title: "Competitors discovered and analyzed",
     description: `AI identified and profiled ${object.competitors.length} competitors`,
     actor: SYSTEM_AI_ACTOR_NAME,
     actorRole: "system",

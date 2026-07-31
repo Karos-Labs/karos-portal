@@ -3,20 +3,19 @@ import "server-only";
 import type { Asset, Client, ClientCompetitor, ClientContextDoc, ClientReport, Job } from "@/lib/types";
 import { effectiveDominantColors } from "@/lib/branding";
 import { assetTypeLabel } from "@/lib/asset-type-copy";
+import { contextDocLabel } from "@/lib/context-doc-copy";
 import { jobStatusLabel } from "@/lib/job-status-copy";
 
 /* ── Shared helpers ──────────────────────────────────────────────────── */
 
-const DOC_TYPE_LABELS: Record<string, string> = {
-  "brand-voice": "Brand Voice",
-  "market-strategy": "Market Strategy",
-  "competitor-analysis": "Competitor Analysis",
-  "product-information": "Product Information",
-  "branding-guidelines": "Branding Guidelines",
-  "target-audience": "Target Audience",
-  "client-guidelines": "Client Guidelines",
-  "action-plan": "Action Plan",
-};
+/*
+ * The doc-type name map used to be a private copy here, spelled in Title Case.
+ * It now comes from context-doc-copy.ts, because the same map is needed in
+ * PROSE a client reads (activity titles, credit-ledger reasons) and a second
+ * copy is how the two come apart. The names arrive sentence case, which is what
+ * the heading below wanted anyway: this text is read by the model, and the model
+ * paraphrases whatever case it is handed straight back to the client.
+ */
 
 export function buildCopilotSystemPrompt(
   client: Client,
@@ -126,7 +125,7 @@ export function buildCopilotSystemPrompt(
       }
     }
     for (const doc of byDocType.values()) {
-      const label = DOC_TYPE_LABELS[doc.docType] ?? doc.docType;
+      const label = contextDocLabel(doc.docType);
       const tierLabel = doc.tier === "internal" ? "Internal" : "Client-facing";
       parts.push(`### ${label} [${tierLabel} · v${doc.version}]`);
       // Include up to 800 chars of content per doc (strip frontmatter)

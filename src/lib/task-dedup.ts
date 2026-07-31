@@ -165,12 +165,24 @@ export function findDuplicateReason(
  * because it is a sentence ABOUT that policy: whoever changes what the cap
  * counts is the person who has to restate it. Pure, so a test can read it.
  *
+ * WHICH VERB, and the scope fix above did not settle this one. The sentence read
+ * "Karos is already RUNNING its limit of 15 ACTIVE tasks for you", and two of the
+ * three statuses the cap counts are not being run: `ACTIVE_TASK_STATUSES` is
+ * pending / in_progress / review_pending, so a pending task is queued and nobody
+ * has started it, and a review_pending one is finished work waiting on a human.
+ * "Active" is the CODE's word for that set (the constant is named for it) and it
+ * is not the client's — being told fifteen things are running while their board
+ * shows one in progress is the same kind of false as naming the wrong queue.
+ * "Open" is the property all three share and the only one this note can claim:
+ * taken on, not yet closed. Completed and archived tasks are not counted, and
+ * "open" excludes both.
+ *
  * A FRAGMENT, not a sentence: all three callers drop it into a parenthesised
  * `(…; …)` list next to "N duplicates skipped", so it stays lowercase and
  * unpunctuated at the end.
  */
 export function queueCapacitySkipNote(skipped: number): string {
-  return `${skipped} not added — Karos is already running its limit of ${MAX_ACTIVE_TASKS} active tasks for you`;
+  return `${skipped} not added — Karos already has its limit of ${MAX_ACTIVE_TASKS} open tasks for you`;
 }
 
 /**

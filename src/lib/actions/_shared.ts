@@ -122,7 +122,14 @@ export async function logGenerationFailure(clientId: string, failure?: string): 
     clientId,
     timestamp: Date.now(),
     type: "INTEL_GENERATION",
-    title: "Workspace generation stopped early",
+    // Client copy: this row stays on a client's timeline (it is not machinery —
+    // something happened to their account). "Generation" is the pipeline's word
+    // for itself, not theirs. Kept GENERAL on purpose: several callers reach here
+    // (onboarding, client creation, the intel regenerate and its cron, the task
+    // swarm), so naming any one pipeline would be false at the others.
+    // The stored rows still say "Workspace generation stopped early"; nothing
+    // matches on either spelling, so both simply render as written.
+    title: "Workspace update didn't finish",
     // NOT the raw error text, and not in metadata either: the whole activity
     // log crosses into the client's RSC payload (the timeline filters only
     // MANUAL_NOTE for client viewers), and these strings are stack-ish

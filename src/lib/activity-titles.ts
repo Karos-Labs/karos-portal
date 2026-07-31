@@ -1,5 +1,13 @@
 /**
- * Activity-log titles that narrate the MACHINE rather than the work.
+ * The wording of a persisted activity row, where more than one surface needs it.
+ *
+ * Two sections, and the boundary between them is the point of the file:
+ *
+ *  · The MACHINERY titles (most of this file) — rows that narrate the machine
+ *    rather than the work, and are hidden from a client's timeline.
+ *  · The CLIENT-FACING rows at the bottom, which STAY on that timeline and are
+ *    therefore judged as client copy. They live here because several writers
+ *    mint the same event and a client reads exactly one of them.
  *
  * Pure and client-safe (no server-only imports), like activity-actors.ts beside
  * it, so the writers that mint these titles and the projection that hides them
@@ -127,4 +135,56 @@ const RUN_MACHINERY_PATTERNS: readonly RegExp[] = [
 export function isRunMachineryTitle(title: string): boolean {
   const t = title.trim();
   return RUN_MACHINERY_PATTERNS.some((re) => re.test(t));
+}
+
+/* ── the client-facing rows several surfaces mint ─────────────────────────── */
+
+/**
+ * "Your research report is finished."
+ *
+ * THREE surfaces narrate this one event and a client reads exactly ONE of them,
+ * so they have to agree: the admin's Regenerate button writes a row
+ * (generateIntelReportAction), the recurring cron writes a row
+ * (/api/intel-report-schedule), and when neither row exists the timeline DERIVES
+ * one from the stored report (activity-timeline's `eventsFromReport`, suppressed
+ * by `hasIntelLog` the moment any INTEL_GENERATION row is present). They had
+ * three spellings — "Intel Report generated", "Intel Report generated
+ * (scheduled)" and "Research report ready" — so which words a client saw
+ * depended on which writer got there first.
+ *
+ * NOT machinery: this row belongs on a client's timeline (activity-titles.test.ts
+ * pins that in both directions), which is exactly why it is judged as client
+ * copy. "Intel Report" was Title Case and named the internal product.
+ *
+ * RETROACTIVE NOTE: months of rows in Firestore still say "Intel Report
+ * generated". Nothing matches on that string — `hasIntelLog` keys off
+ * `type === "INTEL_GENERATION"`, not the title — so the old rows keep rendering
+ * their old words and no redaction depends on either spelling.
+ */
+export function researchReportReadyTitle(): string {
+  return "Research report ready";
+}
+
+/**
+ * What that row says underneath.
+ *
+ * The old description was the pipeline's own parts list: "Full competitive
+ * intelligence pipeline completed (5 core research agents + SEO/GEO multi-model
+ * vertical) - recurring schedule" — a spaced hyphen, an internal agent count and
+ * two lab words, on the client's own timeline.
+ *
+ * `focus` is the operator's run-specific context, echoed back because the client
+ * asked for it; its old wording opened with a spaced hyphen too.
+ */
+export function researchReportReadyDescription(opts: {
+  /** True for the recurring cron, false for a one-off regeneration. */
+  recurring: boolean;
+  /** Optional free text this run was pointed at. */
+  focus?: string;
+}): string {
+  const lead = opts.recurring
+    ? "Your competitor, brand and search-visibility research was refreshed on its regular schedule."
+    : "Your competitor, brand and search-visibility research has been refreshed.";
+  const focus = opts.focus?.trim();
+  return focus ? `${lead} Focused on: ${focus}` : lead;
 }

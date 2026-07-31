@@ -33,24 +33,67 @@ export function isStringDelimiter(ch: string | undefined): boolean {
 /**
  * The index of the delimiter that CLOSES the string literal opening at `open`.
  *
- * Returns `open` itself when there is no literal there to skip — either the
- * character is not a delimiter at all, or it is a STRAY one (an unpaired
- * apostrophe in JSX text, `<p>Don't</p>`, which is neither a comment nor a
- * literal and so survives comment-stripping). Callers advance past the returned
- * index, so `open` means "treat this as one ordinary character": it both
- * guarantees forward progress and keeps the damage of a stray delimiter to the
- * one character, instead of opening a region that eats source.
+ * Returns `open` itself when there is no literal here to skip — either the
+ * character is not a delimiter at all, or it is a stray one for which no closing
+ * partner is found. Callers advance past the returned index, so `open` means
+ * "treat this as one ordinary character", which is what guarantees forward
+ * progress.
  *
- * `'` and `"` therefore END AT A LINE BREAK. A real single- or double-quoted
- * literal cannot contain a raw newline, so this never truncates a legitimate one
- * (a backslash line-continuation is consumed as an escape, below) — and it is
- * the whole reason a stray apostrophe stays bounded.
+ * WHAT COUNTS AS "NO PARTNER FOUND" DIFFERS BY DELIMITER, so it is stated per
+ * delimiter. Not pedantry: the two rules below pull in OPPOSITE directions, and
+ * both scans sharing this helper depend on which one they are getting.
  *
- * Backticks are the case the copies got wrong, and they cannot be skipped by
- * scanning for the next backtick: a `${…}` interpolation holds CODE, which may
- * contain quotes, braces and further template literals. So the interpolation is
- * brace-matched with this function called back on any literal inside it, and a
- * template literal's own newlines are legal and are not a terminator.
+ * `'` and `"` — BOUNDED BY THE LINE. A raw newline ends the search and yields
+ * `open`. This contract used to claim something stronger — that returning `open`
+ * "keeps the damage of a stray delimiter to the one character". It does not,
+ * whenever a second copy of that delimiter sits later on the SAME line — and a
+ * stray `'` is an everyday thing, because JSX TEXT survives comment-stripping and
+ * `<p>Don't</p>` is neither a comment nor a literal. In
+ * `<p>Don't stop, it's here</p>` the skip runs from the apostrophe in "Don't" to
+ * the one in "it's" and swallows the words between, because from here that pair
+ * is indistinguishable from a literal. What does hold is the line, and it is the
+ * property the callers need: a bogus range that cannot cross a line cannot
+ * swallow anything on a LATER line, so a block's closing brace is only ever at
+ * risk from a stray quote sharing its line. A real single- or double-quoted
+ * literal cannot contain a raw newline, so the line bound never truncates a
+ * legitimate one (a backslash line-continuation is consumed as an escape, below,
+ * and is the one way a `'` range crosses a line).
+ *
+ * `` ` `` — NOT BOUNDED BY THE LINE. A template literal legitimately spans
+ * lines, so its newlines are consumed rather than read as a terminator. That is
+ * required, not incidental: `staffOnlyRanges` in the surfaces suite ends a
+ * brace-less statement at a newline and would cut a multi-line template in half
+ * without it — and this tree writes multi-line templates by the page (open
+ * `lib/ai/prompts/proactive-assistant.ts` for a file that is mostly them). The
+ * cost is the mirror image of the quote rule — A STRAY BACKTICK IS NOT
+ * LINE-LOCAL. The search runs to the next backtick outside any interpolation
+ * ANYWHERE later in the file and returns that index, yielding `open` only when
+ * the rest of the file holds none, so one unpaired backtick can open a bogus
+ * range that spans hundreds of lines and eats every brace, `;` and leak inside
+ * it. NO CALLER MAY TREAT A BACKTICK RANGE AS LINE-BOUNDED, and this is the one
+ * shape whose damage this helper does not contain.
+ *
+ * STATED HOLE, because the stray backtick is reachable in this repo and not only
+ * in theory: a caller that pre-processes source with the naive comment strip
+ * (`.replace(/\/\/.*$/gm, "")`, which nearly every source-text scan in this
+ * directory carries its own copy of) truncates any template literal holding a
+ * `//` — a URL — at the `//`,
+ * DELETING its closing backtick and manufacturing exactly this stray. Live
+ * example to check rather than a count to trust: `components/li-drafts-review.tsx`
+ * returns a `https://www.linkedin.com/feed/...` share link from a template
+ * literal, and in the stripped text of that file the line reads `return ` + one
+ * unpaired backtick + `https:`. That backtick then takes a LATER template's
+ * opening backtick as its closer, which leaves that template's real closer
+ * unpaired in turn — so every pairing below the URL is shifted, and the mis-pairing
+ * is what a walk built on this helper is really exposed to. Containing it belongs
+ * to the strip, not here — a strip that skips string literals cannot produce it —
+ * and that is one change across all of the copies, not a change to one caller.
+ *
+ * Backticks are also the case the four copies got wrong, and they cannot be
+ * skipped by scanning for the next backtick from `open`: a `${…}` interpolation
+ * holds CODE, which may contain quotes, braces and further template literals. So
+ * the interpolation is brace-matched, with this function called back on any
+ * literal inside it.
  */
 export function skipStringLiteral(src: string, open: number): number {
   const quote = src[open];
