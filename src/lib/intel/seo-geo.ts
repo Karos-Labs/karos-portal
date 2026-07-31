@@ -634,7 +634,12 @@ function pct(v: number): string {
 }
 
 function buildSeoBrief(audit: AuditResult, insights: SeoGeoInsights): string {
-  const seoGaps = insights.gaps.filter((g) => g.lever === "SEO").slice(0, 8);
+  // `!== "GEO"` rather than `=== "SEO"`: a gap the dedupe promoted to lever
+  // "BOTH" belongs in BOTH briefs. Strict equality excluded it from each of
+  // them, so four checks vanished from the markdown fed to the client report
+  // entirely — the one place a gap can go missing without any surface looking
+  // broken. Same reasoning inverted in buildGeoBrief.
+  const seoGaps = insights.gaps.filter((g) => g.lever !== "GEO").slice(0, 8);
   return [
     `## SEO Snapshot (measured ${todayISO()})`,
     `- **SEO score: ${insights.seoScore}/100** (data coverage ${insights.seoDataCoveragePct}% — MEASURED checks only)`,
@@ -731,7 +736,8 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
     );
   }
 
-  const geoGaps = insights.gaps.filter((g) => g.lever === "GEO").slice(0, 8);
+  // See buildSeoBrief: "BOTH" must appear here too, so exclude only pure SEO.
+  const geoGaps = insights.gaps.filter((g) => g.lever !== "SEO").slice(0, 8);
   if (geoGaps.length) {
     lines.push(
       "",

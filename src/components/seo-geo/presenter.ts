@@ -32,6 +32,7 @@ import {
   resolveRecCopy,
   type EngineId,
   type Lever,
+  type RecImpact,
   type Recommendation,
   type SeoGeoInsights,
   type SubMetrics,
@@ -955,8 +956,44 @@ export function buildRosterDrift(insights: SeoGeoInsights, tracked?: TrackedComp
  * labels out of the RSC payload entirely. Only title and description are touched —
  * impact, vertical, recId and the approval state are the snapshot's own facts.
  */
+const IMPACT_RANK: Record<RecImpact, number> = { high: 3, medium: 2, low: 1 };
+
 export function healRecommendations(recommendations: Recommendation[]): Recommendation[] {
-  return recommendations.map((r) => ({ ...r, ...resolveRecCopy(r.recId, r) }));
+  // Dedupe BEFORE healing, and by the same rule `dedupeGapsByRecId` applies to
+  // the gaps these rows are built from (src/lib/seo-geo.ts): keep the strongest
+  // member, preserve first-seen order, and promote the vertical to "BOTH" when
+  // the group disagrees.
+  //
+  // Why it is needed here at all: a snapshot captured before that dedupe existed
+  // persisted two rows for one recId. Healing their copy through today's
+  // REC_COPY then made them TEXTUALLY IDENTICAL while they kept contradictory
+  // impact and channel chips — the same action listed twice on a client's plan,
+  // disagreeing with itself. And because both rows carry the same recId (which
+  // is what `approveSeoGeoRecommendation` stores), approving one flipped both.
+  const byId = new Map<string, Recommendation>();
+  const verticals = new Map<string, Set<Lever>>();
+  const order: string[] = [];
+
+  for (const rec of recommendations) {
+    const seen = verticals.get(rec.recId) ?? new Set<Lever>();
+    seen.add(rec.vertical);
+    verticals.set(rec.recId, seen);
+
+    const held = byId.get(rec.recId);
+    if (!held) {
+      byId.set(rec.recId, rec);
+      order.push(rec.recId);
+    } else if (IMPACT_RANK[rec.impact] > IMPACT_RANK[held.impact]) {
+      byId.set(rec.recId, rec);
+    }
+  }
+
+  return order.map((recId) => {
+    const rec = byId.get(recId)!;
+    const seen = verticals.get(recId)!;
+    const merged = seen.size > 1 ? { ...rec, vertical: "BOTH" as Lever } : rec;
+    return { ...merged, ...resolveRecCopy(merged.recId, merged) };
+  });
 }
 
 export interface RosterSanity {
