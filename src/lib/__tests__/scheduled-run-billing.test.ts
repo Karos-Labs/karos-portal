@@ -298,3 +298,33 @@ describe("submitCustomAgentJob — every other caller still keys on the actor", 
     expect(cron).toContain('typeof run.billClientCredits === "boolean"');
   });
 });
+
+describe("every creator records the billing intent", () => {
+  const flat = (t: string) => t.replace(/\s+/g, " ");
+  const actions = flat(
+    readFileSync(join(process.cwd(), "src/lib/actions/planned-run-actions.ts"), "utf8"),
+  );
+
+  it("both create paths write billClientCredits beside createdBy", () => {
+    // The staff-only createPlannedRunAction used to omit the flag entirely, so
+    // its rows landed in the legacy "no recorded intent" bucket and the cron
+    // fell back to inferring billing from createdBy — the ambiguity this whole
+    // fix exists to remove. A new row must never add to that pile.
+    const creates = actions.split("createPlannedScheduledRun({").slice(1);
+    expect(creates).toHaveLength(2);
+    for (const call of creates) {
+      const body = call.slice(0, call.indexOf("});"));
+      expect(body).toContain("billClientCredits:");
+      expect(body).toContain("createdBy:");
+    }
+  });
+
+  it("the edit patch still does not carry the flag", () => {
+    // Only a create may set it; an edit by another party must not move money.
+    const patch = actions.slice(actions.indexOf("const patch = {"));
+    // The ASSIGNMENT must be absent, not the word — the comment explaining why
+    // it is absent is documentation worth keeping, and a test that forbids the
+    // word would push the next reader into deleting the explanation.
+    expect(patch.slice(0, patch.indexOf("};"))).not.toMatch(/billClientCredits\s*[:,]/);
+  });
+});

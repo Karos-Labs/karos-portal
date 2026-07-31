@@ -152,6 +152,13 @@ export async function createPlannedRunAction(
     ...(dayOfMonth != null ? { dayOfMonth } : {}),
     nextRunAt,
     status: "active",
+    // Record the billing intent AT CREATION, beside createdBy, the way the
+    // client-facing pace dialog does. This path is `requireStaff`, so the
+    // answer is always false — but writing it makes the row's intent explicit
+    // rather than leaving the cron to infer it from whoever happens to sit in
+    // createdBy. An absent flag is the legacy shape the cron still tolerates;
+    // a new row should never add to that pile.
+    billClientCredits: isBillableClientActor(auth.user),
     createdBy: auth.user.uid,
     createdAt: now,
     updatedAt: now,
