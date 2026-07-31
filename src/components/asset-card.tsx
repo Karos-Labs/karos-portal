@@ -7,6 +7,7 @@ import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
+import { isPublishHold, PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
 import {
   assetDownloadTargets,
   assetImages,
@@ -955,12 +956,30 @@ export function AssetCard({
             </div>
           )}
 
-          {/* Last publish failure (manual push or auto cron) */}
+          {/* Last publish state (manual push or auto cron).
+              `publishError` carries TWO different facts — a real failure, and the
+              cron's benign ordering hold — so this asks the ONE shared predicate
+              rather than assuming the field means failure. It was the fourth
+              reader of that field and the only one still assuming, so a staff
+              operator read "Publish failed: This post is waiting for …", a
+              heading contradicting its own paragraph. Staff-only surface, so the
+              client half of ledger row 48 was already closed; this closes the
+              staff half. No staff word is reworded — "Publish failed" is simply
+              no longer applied to a fact that is not a failure. */}
           {publishError && asset.status !== "published" && (
-            <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5">
-              <Icon name="CircleAlert" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
-              <p className="text-xs text-danger">Publish failed: {publishError}</p>
-            </div>
+            isPublishHold(publishError) ? (
+              <div className="mt-2 flex items-start gap-2 rounded-md border border-muted-2/30 bg-foreground/[0.03] px-2.5 py-1.5">
+                <Icon name="Clock" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-2" />
+                <p className="text-xs text-muted-2">
+                  {PUBLISH_HOLD_HEADING}: {publishError}
+                </p>
+              </div>
+            ) : (
+              <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5">
+                <Icon name="CircleAlert" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
+                <p className="text-xs text-danger">Publish failed: {publishError}</p>
+              </div>
+            )
           )}
 
           {/* Approve / save / unschedule failure */}

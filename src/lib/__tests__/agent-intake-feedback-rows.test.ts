@@ -50,6 +50,14 @@ const BOOKKEEPING = "(seat 1, handle pending)";
 const ACCOUNT_HEADING = `Albert Kattan ${BOOKKEEPING}`;
 
 /**
+ * Spellings the ordinal SHAPE can produce, forbidden on every surface. Absent
+ * from the first version of this file, which is why Reddit's leak passed: the
+ * sweep looked for the headline lab word ("Draft 1") while the client was
+ * reading the lowercase tail of it, plus an internal program-mode enum.
+ */
+const NEVER_IN_A_CLIENT_PAYLOAD = ["draft 1", "warming", "Warming", "established"];
+
+/**
  * One ref per surface, in each agent's own lane vocabulary, with the humanised
  * answer beside it. Spelled out rather than derived: an expectation computed by
  * calling the helper under test would pass whatever the helper does.
@@ -73,7 +81,12 @@ const CASES = [
   },
   {
     surface: "reddit",
-    ref: "Karos Labs — company account · Draft 1 · Thorough value answer",
+    // The REAL shape, per docs/reddit-agent-portal.md:135 —
+    // `## Account 1 · <name> (u/<handle>) · <warming|established>`. The first
+    // version of this fixture omitted the mandatory `(u/handle) · <mode>`, so the
+    // account head was one segment like X's and the test passed while a client
+    // actually read "Warming · draft 1 · thorough value answer".
+    ref: "Karos Labs — company account (u/karos-al) · warming · Draft 1 · Thorough value answer",
     label: "Thorough value answer",
     labWord: "Draft 1",
     build: () => buildRedditAgentIntakeView("c1", { isStaff: false }),
@@ -120,6 +133,13 @@ describe.each(CASES)("the $surface intake's recent feedback", (testCase) => {
     expect(payload).not.toContain(testCase.ref);
     expect(payload).not.toContain(BOOKKEEPING);
     expect(payload).not.toContain(testCase.labWord);
+    // Applied to ALL THREE surfaces, not just the one that leaked. Reddit's leak
+    // was neither the ref nor its headline lab word: its account head is
+    // multi-segment, so dropping one segment by position left an ordinal AND a
+    // program-mode enum behind. No surface may print either.
+    for (const word of NEVER_IN_A_CLIENT_PAYLOAD) {
+      expect(payload, `${testCase.surface}: ${word}`).not.toContain(word);
+    }
     // The raw key is gone from the shape too, not merely emptied: a component
     // cannot print what it was never handed.
     expect("draftRef" in props.feedback[0]).toBe(false);

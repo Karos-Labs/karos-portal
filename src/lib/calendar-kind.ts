@@ -5,7 +5,7 @@
  * status filter, dashboard failure banners).
  */
 
-import { isPublishHold } from "@/lib/asset-status-copy";
+import { assetStatusLabel, isPublishHold, PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
 
 /**
  * The chip vocabulary. Every consumer keys a `Record` over this union rather
@@ -63,3 +63,33 @@ export function postKind(a: CalendarKindInput): CalendarAssetKind | null {
   if (a.status === "draft" && a.scheduledAt != null) return "draft";
   return null;
 }
+
+/**
+ * VIEWER-AWARE for `published`, literal for everything else.
+ *
+ * `published` is the one kind that is also an asset STATUS, so it has a register
+ * (a client reads "Posted", because on most channels the client is the one who
+ * posts). The rest — placeholder, failed, held, and the calendar's own wording
+ * for draft/scheduled — are calendar vocabulary with no register to ask.
+ *
+ * Without this the chip said "Published" and the modal it opens said "Posted":
+ * a client clicking a chip read a second name for the state they just clicked,
+ * which is the exact thing PUBLISH_HOLD_HEADING is shared to prevent one screen
+ * over. Worse, sharing the register with the modal is what CREATED the mismatch —
+ * before that the modal printed the lowercase enum, a case variant of the chip.
+ */
+export function postKindLabel(kind: CalendarAssetKind, viewerIsClient: boolean): string {
+  if (kind === "published") return assetStatusLabel("published", viewerIsClient);
+  return POST_KIND_LABEL[kind];
+}
+
+const POST_KIND_LABEL: Record<CalendarAssetKind, string> = {
+  published: "Published",
+  scheduled: "Scheduled post",
+  placeholder: "Placeholder",
+  failed: "Failed to publish",
+  // The same string the detail modal heads the explanation with — a client who
+  // clicks this chip must not land on a second name for the state.
+  held: PUBLISH_HOLD_HEADING,
+  draft: "Draft",
+};

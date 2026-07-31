@@ -21,7 +21,11 @@ import {
  * these assertions is that none of it survives, so a fixture that read the
  * module's own tables back would pass whatever the tables happen to say.
  */
-const LAB_WORDS = ["Avenue", "avenue", "Account", "seat", "Seat", "handle pending"];
+// "draft"/"warming" were absent, which is why the sweep could not see the Reddit
+// leak: the ordinal SHAPE is what SLOT_PREFIX forbids, so the words it can
+// produce belong here too.
+const LAB_WORDS = ["Avenue", "avenue", "Account", "seat", "Seat", "handle pending",
+  "Draft 1", "draft 1", "warming", "Warming", "established"];
 
 describe("laneLabel", () => {
   it("strips the lab's slot prefix and maps known lanes", () => {

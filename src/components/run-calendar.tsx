@@ -13,10 +13,10 @@ import { MarkPostedRow } from "@/components/mark-posted-row";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
 import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
 import { pastRunHasNoDeliverables, showsPastRunReviewControl } from "@/lib/calendar-past-runs";
-import { PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
+import { assetStatusLabel, PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
 import { cn, relativeTime } from "@/lib/utils";
 import type { AssetImage } from "@/lib/asset-images";
-import type { CalendarAssetKind } from "@/lib/calendar-kind";
+import { postKindLabel, type CalendarAssetKind } from "@/lib/calendar-kind";
 import type { Asset, AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
 
 /* ── Serializable shapes built by the calendar page ──────────────────── */
@@ -228,16 +228,6 @@ const POST_CHIP_CLASS: Record<CalendarPost["kind"], string> = {
   draft: "border border-dashed border-muted-2/40 bg-foreground/[0.02] text-muted-2",
 };
 
-const POST_KIND_LABEL: Record<CalendarPost["kind"], string> = {
-  published: "Published",
-  scheduled: "Scheduled post",
-  placeholder: "Placeholder",
-  failed: "Failed to publish",
-  // The same string the detail modal heads the explanation with — a client who
-  // clicks this chip must not land on a second name for the state.
-  held: PUBLISH_HOLD_HEADING,
-  draft: "Draft",
-};
 
 /**
  * The day card's badge tone, per kind.
@@ -259,9 +249,11 @@ const POST_KIND_TONE: Record<CalendarPost["kind"], "success" | "info" | "neutral
 
 function PostChip({
   post,
+  viewerIsClient = false,
   onOpen,
   size = "cell",
 }: {
+  viewerIsClient?: boolean;
   post: CalendarPost;
   onOpen: (assetId: string) => void;
   size?: ChipSize;
@@ -282,7 +274,7 @@ function PostChip({
          projection (calendar-body) — so this prints whatever arrived rather than
          re-deciding which kinds are allowed one, which is how the held post's
          sentence would have been dropped on the way to the tooltip. */
-      title={`${POST_KIND_LABEL[post.kind]}${post.publishError ? ` — ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
+      title={`${postKindLabel(post.kind, viewerIsClient)}${post.publishError ? ` — ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{post.title}</span>
@@ -641,10 +633,12 @@ function PastRunCard({
 
 function PostCard({
   post,
+  viewerIsClient = false,
   asset,
   onOpenLightbox,
   onOpenDetails,
 }: {
+  viewerIsClient?: boolean;
   post: CalendarPost;
   /** The underlying asset, when the viewer has it — drives Mark as posted. */
   asset?: Asset;
@@ -654,7 +648,7 @@ function PostCard({
   // Read off the shared maps, not a ternary chain that fell through to
   // "Placeholder" for every kind it hadn't been told about.
   const tone = POST_KIND_TONE[post.kind];
-  const label = POST_KIND_LABEL[post.kind];
+  const label = postKindLabel(post.kind, viewerIsClient);
   return (
     <div
       onClick={() => onOpenDetails(post.assetId)}
@@ -961,7 +955,7 @@ export function RunCalendar({
                       dayPosts
                         .slice(0, 3 - dayRuns.length)
                         .map((p) => (
-                          <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} />
+                          <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} viewerIsClient={viewerIsClient} />
                         ))}
                     {chipCount > 3 && <p className="pl-1 text-[11px] text-muted-2">+{chipCount - 3} more</p>}
                   </div>
@@ -1000,7 +994,7 @@ export function RunCalendar({
                   <div className="space-y-1.5">
                     {dayRuns.map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
                     {dayPosts.map((p) => (
-                      <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} size="row" />
+                      <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} size="row" viewerIsClient={viewerIsClient} />
                     ))}
                   </div>
                 </li>
@@ -1018,7 +1012,7 @@ export function RunCalendar({
               <FilterChip
                 key={key}
                 className={chip.className}
-                label={chip.label}
+                label={key === "published" ? assetStatusLabel("published", viewerIsClient) : chip.label}
                 hidden={hiddenStatuses.has(key)}
                 onClick={() => toggleStatus(key)}
               />
@@ -1071,6 +1065,7 @@ export function RunCalendar({
                 <Section title="Posts">
                   {selectedPosts.sort((a, b) => a.at - b.at).map((p) => (
                     <PostCard
+                      viewerIsClient={viewerIsClient}
                       key={p.assetId}
                       post={p}
                       asset={assetById.get(p.assetId)}
@@ -1146,6 +1141,8 @@ function LegendDot({ className, label }: { className: string; label: string }) {
 const STATUS_FILTER_CHIPS: Record<StatusFilterKey, { label: string; className: string }> = {
   draft: { label: "Draft", className: POST_CHIP_CLASS.draft },
   scheduled: { label: "Scheduled", className: POST_CHIP_CLASS.scheduled },
+  // Label overridden per viewer at the render site below, for the same reason
+  // postKindLabel is: a client filters by the word their own posts carry.
   published: { label: "Published", className: POST_CHIP_CLASS.published },
   // Short form, like "Failed" beside POST_KIND_LABEL's "Failed to publish": a
   // filter's own tooltip reads "Show <label> items", and "Show waiting its turn

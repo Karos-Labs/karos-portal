@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { postKindLabel } from "@/lib/calendar-kind";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 
@@ -9,6 +10,8 @@ import {
   CLIENT_ASSET_STATUS_LABEL,
   PUBLISH_HOLD_HEADING,
   STAFF_ASSET_STATUS_LABEL,
+  assetStatusLabel,
+  clientAssetStatusLabel,
   publishHoldMessage,
 } from "@/lib/asset-status-copy";
 import type { Asset } from "@/lib/types";
@@ -343,8 +346,16 @@ describe("the calendar's chip vocabulary", () => {
     // The ternary chain this replaced ended `: "Placeholder"`, so the day card
     // called a failed post, a draft and a held post "Placeholder" — while the
     // chip one cell above read "Failed to publish" off the map.
-    expect(flat(cal)).toContain("POST_KIND_LABEL[post.kind]");
+    //
+    // Asked as the guarantee, not as a spelling. The first version pinned the
+    // literal `POST_KIND_LABEL[post.kind]`, and then failed when the label was
+    // made viewer-aware — an improvement it should not have blocked. What matters
+    // is that the card derives BOTH label and tone from the shared source and
+    // ends in no fallthrough default.
+    expect(flat(cal)).toMatch(/const label = postKindLabel\(post\.kind, viewerIsClient\)/);
     expect(flat(cal)).toContain("POST_KIND_TONE[post.kind]");
+    // No resurrected fallthrough: the card must not end a chain on a literal.
+    expect(flat(cal)).not.toMatch(/:\s*"Placeholder"\s*;/);
   });
 
   it("draws a held chip neutrally, and keeps the red one for a real failure", () => {
@@ -365,8 +376,60 @@ describe("the calendar's chip vocabulary", () => {
   it("names the held post the same way in the chip and the panel", () => {
     // Two names for one state is the defect one indirection out: the client
     // clicks a chip and lands on a different word for what they clicked.
-    expect(flat(cal)).toContain("held: PUBLISH_HOLD_HEADING");
+    //
+    // Behavioural now, not a source match. The first version asserted the source
+    // contained `held: PUBLISH_HOLD_HEADING`, which broke when the label moved to
+    // the pure module that owns the kind union — a move that made THIS assertion
+    // possible, so the canary was blocking its own improvement.
+    for (const viewerIsClient of [true, false]) {
+      expect(postKindLabel("held", viewerIsClient)).toBe(PUBLISH_HOLD_HEADING);
+    }
     expect(PUBLISH_HOLD_HEADING).not.toMatch(/fail/i);
+
+    // The published kind IS an asset status, so it takes the viewer's register —
+    // the chip and the modal it opens must not say two different words. This is
+    // the pair that broke when the modal started asking the register: the chip
+    // said "Published" and the panel said "Posted".
+    expect(postKindLabel("published", true)).toBe(clientAssetStatusLabel("published"));
+    expect(postKindLabel("published", false)).toBe(assetStatusLabel("published", false));
+    expect(postKindLabel("published", true)).not.toBe(postKindLabel("published", false));
+
+    // Non-status kinds have no register to ask and must stay literal for both.
+    for (const kind of ["placeholder", "failed", "held"] as const) {
+      expect(postKindLabel(kind, true)).toBe(postKindLabel(kind, false));
+    }
+  });
+
+  it("lets no surface call a held post a failure, however many readers there are", () => {
+    // THE SHAPE, swept repo-wide, because the defect was a COUNT: `publishError`
+    // carries two different facts, and every reader that forgets the second one
+    // re-creates a heading contradicting its own paragraph. Three readers asked
+    // the shared predicate and a FOURTH (asset-card) did not, which no
+    // per-surface test could have found — asset-card was not in any of their
+    // scopes. Any file that renders the failure wording must also ask.
+    // READERS of the stored field, not PRODUCERS of the wording. The first shape
+    // of this sweep matched "Publish failed" alone and flagged
+    // integrations/publishers.ts, which THROWS that text as an upstream error and
+    // never reads `publishError` — a false positive that would have taught the
+    // next person to widen the allowlist instead of trusting the guard. A reader
+    // is a file that renders the wording AND touches the field.
+    const readers = walk(join(ROOT, "src"))
+      .filter((f) => !f.includes("__tests__"))
+      .filter((f) => {
+        const src = code(readFileSync(f, "utf8"));
+        return src.includes("Publish failed") && src.includes("publishError");
+      });
+    const offenders = readers
+      .filter((f) => !code(readFileSync(f, "utf8")).includes("isPublishHold"))
+      .map((f) => f.slice(join(ROOT, "src").length + 1));
+    expect(
+      offenders,
+      "these say 'Publish failed' without asking whether it is a hold",
+    ).toEqual([]);
+
+    // Non-vacuity: the sweep found the readers at all, rather than reporting an
+    // empty offender list because the walk or the pattern is broken.
+    expect(readers.length).toBeGreaterThan(0);
   });
 
   it("offers every kind in the legend, by shape and not by a list", () => {

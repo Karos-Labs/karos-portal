@@ -111,7 +111,29 @@ export function refLaneLabel(ref: string): string | null {
     .map((part) => part.trim())
     .filter(Boolean);
   if (parts.length < 2) return null;
-  return laneLabelOrNull(parts.slice(1).join(" · "));
+  // ANCHOR ON THE ORDINAL SHAPE, NOT ON POSITION.
+  //
+  // The first version dropped segment 0 and assumed the rest was the lane, i.e.
+  // that a ref is exactly `account · lane`. That holds for X and LinkedIn, whose
+  // account head is one segment. It does NOT hold for Reddit: its account title
+  // itself contains " · " — the contract mandates
+  // `## Account 1 · <name> (u/<handle>) · <warming|established>` — so dropping
+  // one segment left `warming · Draft 1 · <lane>`, and the client's feedback line
+  // read "Warming · draft 1 · thorough value answer". That is a lab ordinal and an
+  // internal program-mode enum reaching a paying client, plus an A3 batch tell,
+  // because a numbered draft implies a numbered set.
+  //
+  // The lane always begins at the LAST segment carrying an ordinal, whatever
+  // index that is. `slice(1)` survives only as the fallback for a ref with no
+  // ordinal anywhere, which is the shape the old code assumed was universal.
+  let lane = parts.slice(1);
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    if (SLOT_PREFIX.test(parts[i]!)) {
+      lane = parts.slice(i);
+      break;
+    }
+  }
+  return laneLabelOrNull(lane.join(" · "));
 }
 
 /**
@@ -143,6 +165,11 @@ export function accountLabel(title: string): string | null {
   const cleaned = raw
     .replace(/\([^)]*\)/g, " ")
     .replace(/\([^)]*$/, " ")
+    // Bare brackets left over from a NESTED parenthetical. /\([^)]*\)/ permits "("
+    // inside [^)], so "((@getkaros))" is consumed as "((@getkaros)" and the outer
+    // ")" survives — which put "Company page ) @getkaros" on the option picker.
+    // Square brackets go too: bookkeeping wears them as readily as parentheses.
+    .replace(/[()[\]]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/[·:,;–—-]+$/, "")
