@@ -142,15 +142,23 @@ describe("every shell tells the bell which shell it is", () => {
   });
 });
 
-describe("a bell inside the mobile Company sheet closes the sheet", () => {
-  it("closes the sheet from every mount that sits in one", () => {
-    // Both sheets own their open state via useCompanySheet; the bell is handed
-    // that setter rather than reaching for it.
+describe("a bell inside a dismissible container closes it", () => {
+  it("closes its own container from every mount that sits in one", () => {
+    // The rule is "a bell inside something that covers the page dismisses it",
+    // not a count: the staff shell has TWO such containers — the Company sheet
+    // (useCompanySheet) and the `fixed inset-0` mobile drawer, which closes
+    // only from explicit handlers and so strands every navigation, not just a
+    // same-route tap. Each mount is handed its own setter rather than reaching
+    // for global state.
+    const closers = /onNavigate=\{\(\) => set(CompanyOpen|Open)\(false\)\}/;
     for (const source of [rail, sidebar]) {
-      const inSheet = bellMounts(source).filter((m) => m.includes("onNavigate"));
-      expect(inSheet).toHaveLength(1);
-      expect(inSheet[0]).toContain("onNavigate={() => setCompanyOpen(false)}");
+      const inContainer = bellMounts(source).filter((m) => m.includes("onNavigate"));
+      expect(inContainer.length).toBeGreaterThan(0);
+      for (const mount of inContainer) expect(mount).toMatch(closers);
     }
+    // The client shell has exactly one such container; the staff shell has two.
+    expect(bellMounts(rail).filter((m) => m.includes("onNavigate"))).toHaveLength(1);
+    expect(bellMounts(sidebar).filter((m) => m.includes("onNavigate"))).toHaveLength(2);
     expect(rail).toContain("useCompanySheet");
     expect(sidebar).toContain("useCompanySheet");
   });

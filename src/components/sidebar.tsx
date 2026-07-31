@@ -645,6 +645,11 @@ export function Sidebar({
               panelPlacement="up"
               panelClassName="w-full max-h-[45vh]"
               allowJobDeepLinks={allowJobDeepLinks}
+              /* The drawer is `fixed inset-0` and closes only from explicit
+                 handlers, so without this a bell row routes underneath it and
+                 leaves the drawer covering the page it just opened — on every
+                 navigation, not just a same-route tap. */
+              onNavigate={() => setOpen(false)}
             />
             <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
             <ThemeSwitch />
