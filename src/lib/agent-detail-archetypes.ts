@@ -1,6 +1,7 @@
 import "server-only";
 
-import { dateKeyInZone, shiftDateKey } from "@/lib/client-agents";
+import { dateKeyInZone, jobDeliveredWork, shiftDateKey } from "@/lib/client-agents";
+import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { projectRunOccurrences } from "@/lib/scheduled-runs";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import { resolveContentIdentity } from "@/lib/agent-identity-map";
@@ -32,6 +33,13 @@ import type {
  * clientAgentId, so "who made this" is a real resolution with four rungs, and
  * three subtly different copies of it is how one surface starts crediting a
  * post to an agent that did not write it (F147).
+ *
+ * The ROSTER reads the same rungs, through `agentsWithDeliveredWork`. It used to
+ * answer "has this agent delivered?" from a job join of its own, which is a
+ * different question with the same name: lab imports carry `jobId: null`, so an
+ * agent whose whole history is imported was absent from the join — and because
+ * that set also gates whether a card is listed at all, the agent was missing
+ * from the client's roster entirely while its posts sat in their Workspace.
  */
 
 /* ────────────────────────── shared attribution ────────────────────────── */
@@ -70,18 +78,88 @@ function agentFolderOf(asset: Asset): string | null {
 }
 
 /**
- * Everything this agent has produced that THIS viewer may see.
+ * What this VIEWER may be told exists at all — asked before whose it is.
  *
  * DELIVERED WORK ONLY for a client (A3/A4): `getClientArchiveAssets` drops
  * drafts, future-dated posts and launch deliverables rather than mapping them
  * through a placeholder — the placeholder keeps `createdAt` and a template
  * name, which under a "what it has made for you" heading renders a whole
  * generated batch as seven posts all made in the same minute. Staff keep
- * everything, including drafts, because reviewing drafts is their job. That
- * filter runs FIRST and nothing below can reach past it.
+ * everything, including drafts, because reviewing drafts is their job. This
+ * filter runs FIRST and no rung below can reach past it.
  *
- * THE RUNGS, in descending confidence — all of them JOINS, none of them a
- * comparison of rendered human labels:
+ * One home, and one call per page: every consumer in this module funnels its
+ * asset list through here, so no surface can arrive at "which assets exist for
+ * this viewer" by a slightly different route.
+ */
+function viewerVisibleAssets(args: {
+  assets: Asset[];
+  viewerIsClient: boolean;
+  now: number;
+}): Asset[] {
+  return args.viewerIsClient
+    ? getClientArchiveAssets(args.assets, { now: args.now })
+    : args.assets;
+}
+
+/** The umbrella bound to an agent, by the field the bind writes. */
+export function umbrellaForAgent<T extends { customAgentId: string }>(
+  umbrellas: readonly T[],
+  customAgentId: string,
+): T | null {
+  return umbrellas.find((umbrella) => umbrella.customAgentId === customAgentId) ?? null;
+}
+
+/** One agent's identity, resolved into the spellings the rungs compare. */
+interface AgentAttribution {
+  id: string;
+  /** The job-name rung's target: trimmed and lowercased. */
+  name: string;
+  /**
+   * Both normalised spellings of this agent's identity. A set, not a fallback
+   * chain: key and name are two spellings of the same thing, and an asset
+   * folder that equals either is this agent's.
+   *
+   * A COLLISION CREDITS BOTH AGENTS, and it is constructible: `customAgents.name`
+   * carries no uniqueness constraint, so an agent named "Instagram Agent" with
+   * key `karos-alpha-thing` and an agent named "Something Else" with key
+   * `karos-instagram-agent` both hold the slug `instagram-agent`, and one asset
+   * whose folder is `instagram-agent` is claimed by both. Pre-existing in
+   * `agentProducedAssets`, where the cost is a list containing a post another
+   * agent wrote; it now also decides whether a card is LISTED on a client's
+   * roster, so the cost is a whole agent appearing. Dropping the name-slug would
+   * close it — and would also drop every import whose folder matches the agent's
+   * NAME but not its key, which is why it is not done here: that is a behaviour
+   * change and needs its own decision, not a quiet edit inside a doc fix.
+   */
+  slugs: Set<string>;
+  umbrella: ClientAgent | null;
+  umbrellas: ClientAgentIdentity[];
+}
+
+function agentAttribution(args: {
+  agent: { id: string; name: string; key?: string };
+  umbrella: ClientAgent | null;
+  umbrellas: ClientAgentIdentity[];
+}): AgentAttribution {
+  return {
+    id: args.agent.id,
+    name: args.agent.name.trim().toLowerCase(),
+    slugs: new Set(
+      [attributionSlug(args.agent.key), attributionSlug(args.agent.name)].filter(
+        (slug): slug is string => slug !== null,
+      ),
+    ),
+    umbrella: args.umbrella,
+    umbrellas: args.umbrellas,
+  };
+}
+
+/**
+ * Whether this asset is this agent's — THE rungs, and the only copy of them.
+ *
+ * In descending confidence, all of them JOINS, none of them a comparison of
+ * rendered human labels:
  *
  *  1. the job's own binding (`customAgentId`, or the umbrella's `clientAgentId`);
  *  2. an umbrella, when this agent has one: `resolveContentIdentity` decides,
@@ -92,9 +170,9 @@ function agentFolderOf(asset: Asset): string | null {
  *  4. for an asset with no job we can see, the normalised `meta.agentFolder`
  *     against the normalised key AND name of the agent.
  *
- * Rungs 3 and 4 replaced a single rung that compared `identity.label` to
- * `args.agent.name`, and it could not match anything in production. The label
- * is SENTENCE case from `agentLabelForAsset` ("Instagram agent"); the name is
+ * Rungs 3 and 4 replaced a single rung that compared `identity.label` to the
+ * agent's name, and it could not match anything in production. The label is
+ * SENTENCE case from `agentLabelForAsset` ("Instagram agent"); the name is
  * TITLE case from the importer ("Instagram Agent"). Those are never equal for a
  * multi-word name, the `clientAgents` backfill has not run so no client reached
  * the umbrella rung, and lab-imported assets are written with `jobId: null` so
@@ -103,6 +181,50 @@ function agentFolderOf(asset: Asset): string | null {
  * in their Workspace. The fix is to stop comparing display strings, not to
  * change what either helper renders.
  */
+function assetBelongsToAgent(
+  asset: Asset,
+  jobById: Map<string, Job>,
+  agent: AgentAttribution,
+): boolean {
+  const job = asset.jobId ? (jobById.get(asset.jobId) ?? null) : null;
+  if (
+    job &&
+    (job.customAgentId === agent.id ||
+      (agent.umbrella && job.clientAgentId === agent.umbrella.id))
+  ) {
+    return true;
+  }
+
+  // WITH an umbrella the umbrella decides, exactly as before. That path is
+  // correct and starts carrying real traffic the moment the backfill runs, so
+  // the name/folder rungs below must not get a second vote on top of it.
+  if (agent.umbrella) {
+    const identity = resolveContentIdentity({ asset, job }, agent.umbrellas);
+    return identity.clientAgentId === agent.umbrella.id;
+  }
+
+  if (job) {
+    // A job we can see has already been asked the exact question and answered
+    // no, so its own recorded name is the last word on it. Deliberately NOT
+    // falling through to the folder rung: letting a string in the asset's meta
+    // outrank a job that names a different agent is precisely how one agent's
+    // run lands under another's heading.
+    //
+    // Read defensively even though `Job.agentName` is typed as required: this
+    // runs over whatever Firestore actually holds, and an older job written
+    // without the field would otherwise throw and take the page down.
+    const jobName = typeof job.agentName === "string" ? job.agentName.trim().toLowerCase() : "";
+    return jobName !== "" && jobName === agent.name;
+  }
+
+  // No job — the lab-import shape (`jobId: null`), and equally an asset whose
+  // job is not in this page's `jobs`. Attribution has nothing but the folder
+  // the run was imported from.
+  const folder = attributionSlug(agentFolderOf(asset));
+  return folder !== null && agent.slugs.has(folder);
+}
+
+/** Everything this agent has produced that THIS viewer may see. */
 export function agentProducedAssets(args: {
   assets: Asset[];
   jobs: Job[];
@@ -114,58 +236,118 @@ export function agentProducedAssets(args: {
   now: number;
 }): Asset[] {
   const jobById = new Map(args.jobs.map((job) => [job.id, job]));
-  const visible = args.viewerIsClient
-    ? getClientArchiveAssets(args.assets, { now: args.now })
-    : args.assets;
-
-  const agentName = args.agent.name.trim().toLowerCase();
-  // Both spellings of this agent's identity, normalised once. A set, not a
-  // fallback chain: key and name are two spellings of the same thing, and an
-  // asset folder that equals either is this agent's.
-  const agentSlugs = new Set(
-    [attributionSlug(args.agent.key), attributionSlug(args.agent.name)].filter(
-      (slug): slug is string => slug !== null,
-    ),
+  const attribution = agentAttribution(args);
+  return viewerVisibleAssets(args).filter((asset) =>
+    assetBelongsToAgent(asset, jobById, attribution),
   );
+}
 
-  return visible.filter((asset) => {
-    const job = asset.jobId ? (jobById.get(asset.jobId) ?? null) : null;
-    if (
-      job &&
-      (job.customAgentId === args.agent.id ||
-        (args.umbrella && job.clientAgentId === args.umbrella.id))
-    ) {
-      return true;
+/**
+ * Which of these agents have landed work for this client, by customAgentId.
+ *
+ * SCOPE, as of writing: the roster (both branches of
+ * clients/[id]/agents/page.tsx) and the agent detail page (its client gate and
+ * its status strip). Those two agreeing is the point of the function, and the
+ * tripwire in agent-detail-archetypes.test.ts holds them to reading it — it does
+ * not enumerate future callers, so read the imports for today's list. Anything
+ * else that needs the answer belongs here rather than in a copy.
+ *
+ * WHY IT IS NOT A JOB JOIN. It is a job join PLUS the asset rungs above, and it
+ * has to be both:
+ *
+ *  - `jobDeliveredWork` alone cannot see a lab import, which is written with
+ *    `jobId: null` and produces no job at all. That was the bug: on the roster
+ *    the same set decides whether a card is listed, so an agent whose only
+ *    delivered work was imported did not merely read "Not set up yet" — unless
+ *    separately granted it was absent from the client's roster, with its posts
+ *    visible in their Workspace and no agent anywhere to own them.
+ *
+ *    SCOPE OF THAT RESCUE, which is narrower than "lab imports now count".
+ *    `assetBelongsToAgent` hands an agent that HAS an umbrella to
+ *    `resolveContentIdentity` and returns its verdict, so the folder rung is only
+ *    reached for an agent with no umbrella. A jobless imported asset therefore
+ *    puts an agent on the roster when the agent has no umbrella, or when its
+ *    umbrella is `live` AND owns that asset's chain family — the resolver's
+ *    family rung requires both. An agent mid-bind, umbrella written but not yet
+ *    live, is NOT rescued by this. Widening the umbrella rung to make the shorter
+ *    sentence true would give the folder rung a second vote on top of an
+ *    umbrella's, which is the over-matching the rung order exists to prevent.
+ *  - the asset rungs alone cannot see a job whose deliverables have aged out of
+ *    a client's 30-day archive, or one sitting in `review` with nothing visible
+ *    yet. Dropping the job half would trade "Runs on request" for "Not set up
+ *    yet" on any agent that last delivered two months ago.
+ *
+ * A CLIENT'S ANSWER STAYS A CLIENT'S — both halves, which took two passes to
+ * get right. The asset half runs through `viewerVisibleAssets`. The JOB half
+ * needed its own gate: `DELIVERED_JOB_STATUSES` includes `review`, and a review
+ * job's assets are dropped by `getClientArchiveAssets`, so before
+ * `excludeInReview` a run staff were still holding listed the agent on the
+ * client's roster with an empty page under it. An earlier version of this
+ * comment claimed the whole function was safe while scoping the reason to the
+ * asset half alone; a review pass constructed the counterexample.
+ *
+ * What the roster then shows is one status word, never a count or a date, so an
+ * inherited agent still says nothing about how its work was generated (A3).
+ *
+ * THE BINDING WINS, here as everywhere: a per-client instance is dropped before
+ * either half runs, so no amount of delivered work can move an instance off the
+ * client its key names. Callers filter on the same predicate for visibility;
+ * this is the second gate, so a future caller that forgets cannot widen it.
+ *
+ * ONE AGENT AT A TIME, so a list read is exactly N single reads. No agent's
+ * answer depends on which OTHERS were asked about alongside it: the job half
+ * returns the jobs' own facts and every rung is then evaluated per agent. It used
+ * to build a name→id map over the whole list, and a map keyed on a display name
+ * holds one entry per name — so of two agents sharing one, only the last was
+ * attributable by the name rung, and this function answered differently for the
+ * same agent depending on the company it was asked in. The roster asks about its
+ * whole candidate list and the detail page about a single agent, which made that
+ * the very disagreement between the two surfaces this function exists to remove.
+ */
+export function agentsWithDeliveredWork(args: {
+  assets: Asset[];
+  jobs: Job[];
+  agents: readonly { id: string; name: string; key: string }[];
+  umbrellas: ClientAgent[];
+  /** `Client.agentsRepoSlug` — the binding rung. */
+  clientSlug: string | null | undefined;
+  viewerIsClient: boolean;
+  now: number;
+}): Set<string> {
+  const bound = args.agents.filter((agent) =>
+    agentKeyMatchesClientSlug(agent.key, args.clientSlug),
+  );
+  // A client's half excludes `review`: those assets are dropped by
+  // `getClientArchiveAssets`, so counting them would list an agent on the
+  // strength of work the client cannot see — the exact shape this rule removes.
+  const byJob = jobDeliveredWork(args.jobs, { excludeInReview: args.viewerIsClient });
+
+  // One archive filter and one job index for the whole roster, then the rungs
+  // per agent. The rungs are the same function the detail page's own list runs
+  // on, which is what makes the two answers one answer.
+  const jobById = new Map(args.jobs.map((job) => [job.id, job]));
+  const visible = viewerVisibleAssets(args);
+
+  const delivered = new Set<string>();
+  for (const agent of bound) {
+    // The job half, asked about THIS agent only: its own binding, then the
+    // pre-`customAgentId` name fallback. Both are lookups into facts about the
+    // jobs, so the answer is the same whether this agent was asked about alone
+    // or in a list.
+    if (byJob.ids.has(agent.id) || byJob.names.has(agent.name)) {
+      delivered.add(agent.id);
+      continue;
     }
-
-    // WITH an umbrella the umbrella decides, exactly as before. That path is
-    // correct and starts carrying real traffic the moment the backfill runs, so
-    // the name/folder rungs below must not get a second vote on top of it.
-    if (args.umbrella) {
-      const identity = resolveContentIdentity({ asset, job }, args.umbrellas);
-      return identity.clientAgentId === args.umbrella.id;
+    const attribution = agentAttribution({
+      agent,
+      umbrella: umbrellaForAgent(args.umbrellas, agent.id),
+      umbrellas: args.umbrellas,
+    });
+    if (visible.some((asset) => assetBelongsToAgent(asset, jobById, attribution))) {
+      delivered.add(agent.id);
     }
-
-    if (job) {
-      // A job we can see has already been asked the exact question and answered
-      // no, so its own recorded name is the last word on it. Deliberately NOT
-      // falling through to the folder rung: letting a string in the asset's meta
-      // outrank a job that names a different agent is precisely how one agent's
-      // run lands under another's heading.
-      //
-      // Read defensively even though `Job.agentName` is typed as required: this
-      // runs over whatever Firestore actually holds, and an older job written
-      // without the field would otherwise throw and take the page down.
-      const jobName = typeof job.agentName === "string" ? job.agentName.trim().toLowerCase() : "";
-      return jobName !== "" && jobName === agentName;
-    }
-
-    // No job — the lab-import shape (`jobId: null`), and equally an asset whose
-    // job is not in this page's `jobs`. Attribution has nothing but the folder
-    // the run was imported from.
-    const folder = attributionSlug(agentFolderOf(asset));
-    return folder !== null && agentSlugs.has(folder);
-  });
+  }
+  return delivered;
 }
 
 /**

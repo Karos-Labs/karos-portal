@@ -416,36 +416,90 @@ export const OPTIONS_TEMPLATE_KEY = "daily-post";
 const DELIVERED_JOB_STATUSES = new Set(["review", "approved", "delivered"]);
 
 /**
- * Which agents have already delivered work for this client, by customAgentId.
+ * What the JOBS say about delivered work — the two identities a delivered custom
+ * job can be attributed by, and nothing about any particular agent.
  *
- * ONE answer for every surface. The roster card, the detail page's status strip
- * and `rosterStatus` itself all need "has this agent ever produced", and three
- * spellings of it is how a card ends up disagreeing with the page it opens.
+ * HALF AN ANSWER, and named so. "Has this agent delivered?" is asked by the
+ * roster and by the agent detail page, and neither may ask it here: a lab
+ * import is written with `jobId: null`, so it produces no job and is invisible
+ * to this join. Under the old name (`deliveredAgentIds`) both surfaces read it
+ * as the whole answer, and an agent whose entire history was imported went
+ * missing from its client's roster while its posts sat in their Workspace.
  *
- * `agentIdByName` keeps runs fired before `customAgentId` existed attributable —
- * the same job-name fallback `agentProducedAssets` uses, except that this map is
- * keyed on the name VERBATIM while that one compares case-insensitively and
- * trimmed. A job whose recorded name differs only in case therefore counts as
- * delivered work on the agent's page and not in this set. Worth closing, but not
- * here: this map is the caller's, so the normalisation belongs at the callers
- * that build it rather than inside a helper that only reads it.
+ * The whole answer is `agentsWithDeliveredWork` in agent-detail-archetypes.ts —
+ * this join plus the asset attribution rungs — and it is the ONLY caller of this
+ * function. Anything else calling it is re-opening that gap.
+ *
+ * FACTS, NOT A RESOLVED SET, and that is the whole change of shape. This used to
+ * take an `agentIdByName` map and return resolved agent ids, which made one
+ * agent's answer depend on the OTHER agents the caller asked about: a map keyed
+ * on a display name holds one entry per name, so of two agents sharing a name
+ * only the last was attributable by the name rung. The roster asks about its
+ * whole candidate list (shadowing applies) and the detail page about one agent (a
+ * single-entry map, so it cannot), and the two therefore returned different
+ * answers for the SAME agent — the exact disagreement the shared function exists
+ * to remove. Returning the jobs' own facts leaves the per-agent read independent,
+ * so a list read is N single reads.
+ *
+ * `names` is the pre-`customAgentId` fallback and holds the recorded name
+ * VERBATIM, where `agentProducedAssets` compares case-insensitively and trimmed.
+ * A job whose recorded name differs only in case therefore counts as delivered
+ * work through the asset rungs and not through this one. Worth closing, but not
+ * by normalising on one side only: the caller compares `agent.name` against this
+ * set, and a fold applied here and not there would simply move which spellings
+ * miss.
+ *
+ * Only a job with NO `customAgentId` feeds `names`, which reproduces the
+ * `customAgentId ?? name` fallback chain exactly. Feeding every job's name in
+ * would credit an agent for a run whose own binding names a DIFFERENT agent that
+ * happens to share its display name — a mis-credit, and a widening of what both
+ * surfaces answered before.
  */
-export function deliveredAgentIds(
+export interface JobDeliveredWork {
+  /** `customAgentId` of every agent with a delivered custom job. */
+  ids: Set<string>;
+  /** Verbatim `agentName` of delivered custom jobs that carry no `customAgentId`. */
+  names: Set<string>;
+}
+
+export function jobDeliveredWork(
   jobs: Pick<Job, "status" | "external" | "customAgentId" | "agentName">[],
-  agentIdByName: Map<string, string>,
-): Set<string> {
-  return new Set(
-    jobs
-      .filter((job) => job.external?.taskType === "custom" && DELIVERED_JOB_STATUSES.has(job.status))
-      .map((job) => job.customAgentId ?? agentIdByName.get(job.agentName))
-      .filter((agentId): agentId is string => Boolean(agentId)),
-  );
+  opts: {
+    /**
+     * Leave out `review` — jobs staff are still holding, whose every asset
+     * `getClientArchiveAssets` drops.
+     *
+     * Pass this for a CLIENT viewer. Without it a run in review lists the agent
+     * on the client's roster while the page under it is empty, which is the
+     * defect the roster fix exists to remove rather than a milder version of it.
+     * Staff keep `review`, because a run awaiting their own review is precisely
+     * the thing they need to see.
+     */
+    excludeInReview?: boolean;
+  } = {},
+): JobDeliveredWork {
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  for (const job of jobs) {
+    if (job.external?.taskType !== "custom") continue;
+    if (!DELIVERED_JOB_STATUSES.has(job.status)) continue;
+    if (opts.excludeInReview && job.status === "review") continue;
+    if (job.customAgentId) {
+      ids.add(job.customAgentId);
+      continue;
+    }
+    // A job with neither a binding nor a recorded name is dropped rather than
+    // guessed at. Read defensively even though `agentName` is typed as required:
+    // this runs over whatever Firestore actually holds.
+    if (typeof job.agentName === "string" && job.agentName !== "") names.add(job.agentName);
+  }
+  return { ids, names };
 }
 
 /**
  * Which agents' MOST RECENT finished run failed, by customAgentId.
  *
- * The sibling of `deliveredAgentIds`, over the same job population and the same
+ * The sibling of `jobDeliveredWork`, over the same job population and the same
  * name fallback, because it answers the other half of the same question. The
  * roster's status word was built from four inputs — launch state, schedule
  * refusal, schedule active, delivered — and NONE of them can see a run that
@@ -475,6 +529,16 @@ export function deliveredAgentIds(
  * Ties (two verdicts on the same millisecond, which submission timestamps make
  * all but impossible) resolve to the failure, so the answer never depends on
  * the order the jobs happened to arrive in.
+ *
+ * SCOPE OF "EVERY SURFACE AGREES": the ORDERING RULE above is shared, and that is
+ * what the callers were disagreeing about. `agentIdByName` is still the caller's
+ * map, and a map keyed on a display name holds one entry per name — so for two
+ * agents sharing one, a roster (which builds the map over its whole list) and a
+ * detail page (which builds it for one agent) can still differ on a run fired
+ * before `customAgentId` existed. `jobDeliveredWork` had the same hole and no
+ * longer does; this one is knowingly left, because closing it means deciding how
+ * a latest-verdict comparison merges two attribution keys, which is its own
+ * change with its own tests rather than a rename.
  */
 export function lastRunFailedAgentIds(
   jobs: Pick<Job, "status" | "external" | "customAgentId" | "agentName" | "createdAt" | "runType">[],
@@ -575,7 +639,7 @@ function refusalIsCurrent(input: {
  * service is invisible to it, which is how the pilot client's Instagram Agent
  * came to show a green "Live" badge two days after its only run failed. The
  * verdict comes from `lastRunFailedAgentIds`, which every call site shares so
- * the card and the page it opens cannot hold two opinions.
+ * the card and the page it opens cannot hold two opinions of the ordering rule.
  *
  * Both rungs say "Needs attention" — one phrase, deliberately. The roster
  * answers "is this working for me right now", and "no" is one answer however it
@@ -610,15 +674,17 @@ export function rosterStatus(input: {
   scheduleActive?: boolean;
   /**
    * True when this agent has already landed work for this client — i.e. it has
-   * plainly been set up, whatever it has bound. Resolved by the callers from
-   * the job history through `deliveredAgentIds`, so every surface answers it
-   * the same way.
+   * plainly been set up, whatever it has bound. Resolved by the callers through
+   * `agentsWithDeliveredWork` (jobs AND the asset attribution rungs), so the
+   * roster card and the page it opens answer it the same way. A job-only read
+   * here is the defect that hid every lab-import-only agent.
    */
   hasDelivered?: boolean;
   /**
    * True when this agent's most recent run WITH A VERDICT failed. Resolved by
-   * the callers through `lastRunFailedAgentIds` — the ordering rule lives
-   * there, not here, so all three surfaces answer it identically.
+   * the callers through `lastRunFailedAgentIds` — the ordering rule lives there,
+   * not here, so no surface holds an opinion of its own about what "failed last"
+   * means. That helper's doc states where the shared answer stops.
    */
   lastRunFailed?: boolean;
   /** Clock, for the refusal's freshness window. Defaults to now. */

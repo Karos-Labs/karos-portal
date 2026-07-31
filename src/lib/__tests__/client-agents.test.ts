@@ -17,7 +17,7 @@ import {
   shiftDateKey,
   weekdayOfDateKey,
   activeTemplates,
-  deliveredAgentIds,
+  jobDeliveredWork,
   lastRunFailedAgentIds,
   rosterStatus,
   SCHEDULE_REFUSAL_FRESH_MS,
@@ -573,7 +573,7 @@ describe("lastRunFailedAgentIds", () => {
     ).toBe(1);
   });
 
-  it("counts review and approved as landings, like deliveredAgentIds does", () => {
+  it("counts review and approved as landings, like jobDeliveredWork does", () => {
     for (const status of ["review", "approved", "delivered"]) {
       expect(
         lastRunFailedAgentIds(
@@ -637,12 +637,21 @@ describe("lastRunFailedAgentIds", () => {
 });
 
 /**
- * The one join every surface asks "has this agent ever produced for us" with.
- * Three spellings of it is how a roster card ends up disagreeing with the page
- * it opens — which is exactly what "Not set up yet · Last delivered 7d ago" was.
+ * The JOB half of "has this agent ever produced for us".
+ *
+ * Scope is the point of the name: this join sees jobs and nothing else, so a
+ * lab import (`jobId: null`) is invisible to it. The surfaces ask
+ * `agentsWithDeliveredWork`, which is this plus the asset attribution rungs —
+ * see agent-detail-archetypes.test.ts for the tests that pin that, including
+ * the tripwire that keeps this function's caller count at one and the agreement
+ * test that pins two same-named agents to one answer each.
+ *
+ * It returns FACTS ABOUT THE JOBS — two sets of attribution keys — and takes no
+ * agent list at all. That is what makes the caller's per-agent read independent
+ * of the other agents it asked about; the tests below are about the two sets'
+ * contents, not about any agent.
  */
-describe("deliveredAgentIds", () => {
-  const byName = new Map([["Instagram Agent", "ca-ig"]]);
+describe("jobDeliveredWork", () => {
   const job = (over: Record<string, unknown>) =>
     ({
       id: "j1",
@@ -656,28 +665,45 @@ describe("deliveredAgentIds", () => {
 
   it("counts review, approved and delivered — the work exists in all three", () => {
     for (const status of ["review", "approved", "delivered"]) {
-      expect([...deliveredAgentIds([job({ status, customAgentId: "ca-ig" })], byName)]).toEqual([
-        "ca-ig",
-      ]);
+      const work = jobDeliveredWork([job({ status, customAgentId: "ca-ig" })]);
+      expect([...work.ids], status).toEqual(["ca-ig"]);
     }
   });
 
   it("ignores runs that never landed, and non-custom jobs", () => {
-    expect(
-      deliveredAgentIds(
-        [
-          job({ status: "failed", customAgentId: "ca-ig" }),
-          job({ status: "queued", customAgentId: "ca-ig" }),
-          job({ status: "delivered", customAgentId: "ca-ig", external: { taskType: "social_post" } }),
-        ],
-        byName,
-      ).size,
-    ).toBe(0);
+    const work = jobDeliveredWork([
+      job({ status: "failed", customAgentId: "ca-ig" }),
+      job({ status: "queued", customAgentId: "ca-ig" }),
+      job({ status: "delivered", customAgentId: "ca-ig", external: { taskType: "social_post" } }),
+    ]);
+    expect(work.ids.size).toBe(0);
+    // Nor may a job the status/scope filter dropped leak in through the name set.
+    expect(work.names.size).toBe(0);
   });
 
-  it("falls back to the agent NAME for runs fired before customAgentId existed", () => {
-    expect([...deliveredAgentIds([job({})], byName)]).toEqual(["ca-ig"]);
-    // And drops what it cannot attribute rather than guessing.
-    expect(deliveredAgentIds([job({ agentName: "Someone Else" })], byName).size).toBe(0);
+  it("keeps the agent NAME of runs fired before customAgentId existed, verbatim", () => {
+    const work = jobDeliveredWork([job({})]);
+    expect(work.ids.size).toBe(0);
+    expect([...work.names]).toEqual(["Instagram Agent"]);
+  });
+
+  it("drops a job it can attribute by neither key rather than guessing", () => {
+    // `agentName` is typed as required, but this runs over whatever Firestore
+    // holds, and a nameless unbound job must not become an empty-string key that
+    // some agent could match.
+    const work = jobDeliveredWork([job({ agentName: "" }), job({ agentName: undefined })]);
+    expect(work.ids.size).toBe(0);
+    expect(work.names.size).toBe(0);
+  });
+
+  it("does NOT put a bound job's name in the name set", () => {
+    // The name set is the fallback for a job with no binding, exactly as the old
+    // `customAgentId ?? agentIdByName.get(name)` chain was. If a bound job's name
+    // went in too, an agent that merely SHARES a display name with the agent the
+    // job names would be credited with that run — a mis-credit, and wider than
+    // what either surface answered before. Red if the `else` becomes unconditional.
+    const work = jobDeliveredWork([job({ customAgentId: "ca-ig" })]);
+    expect([...work.ids]).toEqual(["ca-ig"]);
+    expect(work.names.size).toBe(0);
   });
 });

@@ -19,12 +19,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgents } from "@/lib/data-client-agents";
-import {
-  deliveredAgentIds,
-  isLaunchInFlight,
-  lastRunFailedAgentIds,
-  rosterStatus,
-} from "@/lib/client-agents";
+import { isLaunchInFlight, lastRunFailedAgentIds, rosterStatus } from "@/lib/client-agents";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
@@ -42,10 +37,12 @@ import { evaluateLegacyRunGate } from "@/lib/client-agent-runs";
 import { agentArchetype } from "@/lib/agent-archetype";
 import {
   agentProducedAssets,
+  agentsWithDeliveredWork,
   buildClipMakerView,
   buildDailyFinderView,
   deliverableStamp,
   templateDetails,
+  umbrellaForAgent,
 } from "@/lib/agent-detail-archetypes";
 import {
   agentInputsView,
@@ -191,24 +188,35 @@ export default async function ClientAgentDetailPage({
     listContextItems({ clientId: id }),
   ]);
 
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const now = Date.now();
+  const umbrella = umbrellaForAgent(umbrellas, agent.id);
+  // Has this agent landed work here? Asked ONCE, through the function the roster
+  // lists by, and used for both the gate below and the status strip further
+  // down. It was two reads: an inline job scan here and `produced.length > 0 ||
+  // hasDeliveredByJob` there. The inline scan was job-only, so a client whose
+  // Workspace was full of an agent's lab-imported posts got a 404 from the
+  // agent's own page — and the roster, reading the same job-only rule, did not
+  // list the agent either.
+  const hasDelivered = agentsWithDeliveredWork({
+    assets,
+    jobs,
+    agents: [agent],
+    umbrellas,
+    clientSlug: client.agentsRepoSlug,
+    viewerIsClient,
+    now,
+  }).has(agent.id);
+
   // A client may only open an agent they were granted — or one that has already
   // delivered for them, the same rule the roster uses to decide what to list.
   // Same answer for "not granted" and "does not exist": a client probing ids
   // must not learn which agents the lab has.
-  if (viewerIsClient) {
-    const successful = new Set(["review", "approved", "delivered"]);
-    const earned = jobs.some(
-      (job) =>
-        job.external?.taskType === "custom" &&
-        successful.has(job.status) &&
-        (job.customAgentId === agent.id || job.agentName === agent.name),
-    );
-    if (!(client.customAgentIds ?? []).includes(agent.id) && !earned) notFound();
+  if (viewerIsClient && !(client.customAgentIds ?? []).includes(agent.id) && !hasDelivered) {
+    notFound();
   }
 
   const summary = toSummary(agent);
-  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
-  const now = Date.now();
   const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
   const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
   const creditBlockReasons: Record<string, string> =
@@ -237,7 +245,6 @@ export default async function ClientAgentDetailPage({
   ]);
   const agentSetup = await buildAgentSetup(id, [summary], panes);
   const scheduleRows = toScheduleRows(scheduledRuns, viewerIsClient);
-  const umbrella = umbrellas.find((u) => u.customAgentId === agent.id) ?? null;
   const rows = umbrella
     ? await toClientAgentRows({
         umbrellas: [umbrella],
@@ -259,15 +266,10 @@ export default async function ClientAgentDetailPage({
   const row = rows[0] ?? null;
 
   const schedule = scheduleRows.find((s) => s.agentId === agent.id) ?? null;
-  // Whether this agent has ever landed work here, read from the SAME job join
-  // the roster reads (deliveredAgentIds) rather than from `produced` below: a
-  // client's `produced` is the 30-day archive set, so an agent whose only
-  // delivery was two months ago would be "Not set up yet" on this page and
-  // "Runs on request" on the card that opened it.
+  // The name fallback `lastRunFailedAgentIds` attributes pre-customAgentId runs
+  // by. "Has it delivered?" is NOT re-derived here — it was answered above,
+  // before the gate, through the same function the roster lists by.
   const agentIdByName = new Map([[agent.name, agent.id]]);
-  // Deliberately narrower than the reconciliation below: a job-only join cannot
-  // see a lab-imported asset, which has no job at all.
-  const hasDeliveredByJob = deliveredAgentIds(jobs, agentIdByName).has(agent.id);
   // ── What this agent has already delivered (§7.3 identity) ──
   // The attribution join, the client's delivered-work-only filter and the
   // delivery stamp all moved to agent-detail-archetypes.ts when the second and
@@ -287,21 +289,28 @@ export default async function ClientAgentDetailPage({
     now,
   });
 
-  // The strip and the list below it must answer "has this agent produced?" the
-  // same way. `deliveredAgentIds` is a job-only join, so a lab-imported asset —
-  // which has no job at all — is invisible to it: before this, an agent whose
-  // whole history was lab imports listed months of work under a strip reading
-  // "Not set up yet". `produced` is the richer answer and has already been
-  // through the client's visibility filter, so a client is never told work
-  // exists that they cannot see.
-  const hasDelivered = produced.length > 0 || hasDeliveredByJob;
+  // `produced` is this page's LIST; `hasDelivered` above is the strip's VERDICT,
+  // and it is also what the roster card that opened this page reads, so the two
+  // pages cannot disagree.
+  //
+  // The `|| produced.length > 0` is not redundant, and removing it reopens a
+  // real contradiction. `agentsWithDeliveredWork` filters its candidates by
+  // `agentKeyMatchesClientSlug` — a binding rung `agentProducedAssets` does not
+  // apply — so for an agent whose key does not match this client's slug the
+  // verdict can be false while the list is non-empty, which is a strip reading
+  // "Not set up yet" directly above a shelf of work. That contradiction was
+  // impossible before this rule was shared and a review pass constructed it
+  // twice; this keeps the invariant the page actually needs, which is that the
+  // strip never contradicts the list under it, rather than trusting the two
+  // computations to agree.
+  const stripHasDelivered = hasDelivered || produced.length > 0;
 
   const status = rosterStatus({
     launchState: umbrella?.launchState ?? null,
     scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
     scheduleRefusalAt: schedule?.lastErrorAt ?? null,
     scheduleActive: schedule?.status === "active",
-    hasDelivered,
+    hasDelivered: stripHasDelivered,
     // Read through the SAME helper the roster uses (lastRunFailedAgentIds), not
     // re-derived from `agentRuns` below: that list is staff-only and capped at
     // eight rows, so a client's page would answer this differently — or not at

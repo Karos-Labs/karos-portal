@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import {
   getClient,
   getClientCredits,
+  listAssets,
   listCustomAgents,
   listJobs,
   listPlannedScheduledRuns,
@@ -20,12 +21,8 @@ import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { listClientAgents } from "@/lib/data-client-agents";
-import {
-  deliveredAgentIds,
-  isLaunchInFlight,
-  lastRunFailedAgentIds,
-  rosterStatus,
-} from "@/lib/client-agents";
+import { isLaunchInFlight, lastRunFailedAgentIds, rosterStatus } from "@/lib/client-agents";
+import { agentsWithDeliveredWork } from "@/lib/agent-detail-archetypes";
 import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { BindAgentControl } from "@/components/client-agents/client-agents-section";
 import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
@@ -72,40 +69,68 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // attachment picker, and a client's run gesture has moved to the detail
     // page (CD-G1). The roster reads nothing from it, so the roster no longer
     // pays for it.
-    const [allAgents, jobs, credits, scheduledRuns, umbrellas] = await Promise.all([
+    const [allAgents, jobs, credits, scheduledRuns, umbrellas, assets] = await Promise.all([
       listCustomAgents(),
       listJobs({ clientId: id }),
       getClientCredits(id),
       listPlannedScheduledRuns({ clientId: id }),
       listClientAgents({ clientId: id }),
+      // The delivered-work read needs assets, not only jobs: a lab-imported
+      // deliverable has no job at all (see agentsWithDeliveredWork).
+      //
+      // WHAT IT COSTS, stated where the call is. `listAssets` is an unbounded
+      // `where clientId ==` collection read with an in-process sort (data.ts), so
+      // this pulls the client's whole asset history to answer one boolean per
+      // agent — and the roster renders nothing from the documents themselves.
+      // One query rather than one per agent, and fine at pilot volume, but it
+      // grows with the client's history rather than with the roster. The cheaper
+      // shapes, when it stops being fine: a projected read (`.select(...)`) of
+      // only the fields attribution and the archive filter touch — id, jobId,
+      // status, scheduledAt, publishedAt, updatedAt, templateKey and the folder
+      // key in `meta` — or a date-bounded query, since a client's archive window
+      // is 30 days anyway. Either is a change to the data layer, not to this page.
+      listAssets({ clientId: id }),
     ]);
     const agentIdByName = new Map(allAgents.map((agent) => [agent.name, agent.id]));
+    // `now` rolls the spend windows on read (a schedule doc read after a week
+    // rollover would otherwise still count last week's spend and mis-name the
+    // limit) and it is also the clock the delivered-work read and every card's
+    // refusal window age against — resolved once so the whole page agrees.
+    // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+    const now = Date.now();
+    // Every agent that could ever appear on this roster: enabled, and bound to
+    // this client. The binding wins over both routes in below — a grant and an
+    // inherited delivered run are equally unable to move an instance off its
+    // client — so it is applied before anything else can widen the list.
+    const candidateAgents = allAgents.filter(
+      (agent) => agent.enabled && agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
+    );
     // The same set answers two questions on this page: which agents a client
     // inherits by having been delivered to, and — through rosterStatus — which
-    // of them are plainly set up already. It used to be spelled out inline here
-    // and nowhere else, which is why the status word could not read it.
-    const completedAgentIds = deliveredAgentIds(jobs, agentIdByName);
+    // of them are plainly set up already. It reads JOBS AND ASSETS through the
+    // one shared answer the agent's own page reads, because it was a job-only
+    // join here: an agent whose only delivered work was a lab import (jobId:
+    // null) was missing from this roster altogether while its posts sat in the
+    // client's Workspace.
+    const completedAgentIds = agentsWithDeliveredWork({
+      assets,
+      jobs,
+      agents: candidateAgents,
+      umbrellas,
+      clientSlug: client.agentsRepoSlug,
+      viewerIsClient: true,
+      now,
+    });
     // The other half of the same read: which agents' most recent finished run
     // FAILED. A schedule refusal cannot see that — it only records a fire the
     // scheduler turned away before a job existed — so without this a green
     // "Live" badge sits above a run history whose last row says Failed.
     const failedAgentIds = lastRunFailedAgentIds(jobs, agentIdByName, { staff: false });
-    const agents = allAgents
-      .filter(
-        (agent) =>
-          agent.enabled &&
-          (allowedIds.has(agent.id) || completedAgentIds.has(agent.id)) &&
-          // The binding wins over both routes in: a grant and an inherited
-          // delivered run are equally unable to move an instance off its client.
-          agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
-      )
+    const agents = candidateAgents
+      .filter((agent) => allowedIds.has(agent.id) || completedAgentIds.has(agent.id))
       .map(toSummary);
     // Impersonating admins see the client view but never spend real credits —
-    // show the gate only to billable client actors. `now` rolls the spend
-    // windows on read: a schedule doc read after a week rollover would otherwise
-    // still count last week's spend and mis-name the limit.
-    // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
-    const now = Date.now();
+    // show the gate only to billable client actors.
     const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
     // Which limit clips that number — computed PER AGENT, because the binding
     // limit depends on the agent's price (F130 gives agents distinct costs): a
@@ -252,11 +277,16 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     );
   }
 
-  const [jobs, customAgents, scheduledRuns, umbrellas] = await Promise.all([
+  const [jobs, customAgents, scheduledRuns, umbrellas, assets] = await Promise.all([
     listJobs({ clientId: id }),
     listCustomAgents(),
     listPlannedScheduledRuns({ clientId: id }),
     listClientAgents({ clientId: id }),
+    // Same reason as the client branch, and the same cost — see the note on that
+    // call for what this read is and the cheaper shapes when it stops being fine.
+    // Staff additionally keep every asset (no archive window), so this branch
+    // scans the client's full history by construction.
+    listAssets({ clientId: id }),
   ]);
   // The staff list, and the only one. It carries the SAME binding filter as the
   // client branch above: a per-client instance runs an entry skill baked under
@@ -304,17 +334,28 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // page it opens is where it gets set up.
   const staffUmbrellaByAgentId = new Map(umbrellas.map((u) => [u.customAgentId, u]));
   const staffScheduleByAgentId = new Map(staffScheduleRows.map((row) => [row.agentId, row]));
-  // Same delivered-work read the client branch makes, so the two rosters cannot
-  // call one agent "Not set up yet" and the other "Runs on request".
-  const staffAgentIdByName = new Map(customAgents.map((a) => [a.name, a.id]));
-  const staffDeliveredAgentIds = deliveredAgentIds(jobs, staffAgentIdByName);
-  // Same failed-last-run read the client branch makes, for the same reason: the
-  // two rosters must not disagree about whether an agent needs someone.
-  const staffFailedAgentIds = lastRunFailedAgentIds(jobs, staffAgentIdByName, { staff: true });
   // The clock the refusal window is measured against — resolved once for the
   // whole roster so every card ages a refusal from the same instant.
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const staffNow = Date.now();
+  // Same delivered-work read the client branch makes, through the same function,
+  // so the two rosters cannot call one agent "Not set up yet" and the other
+  // "Runs on request". `viewerIsClient: false` keeps every asset in scope —
+  // staff lose nothing to the client archive window, and the lab imports the
+  // job-only join could not see are now in scope for them too.
+  const staffAgentIdByName = new Map(customAgents.map((a) => [a.name, a.id]));
+  const staffDeliveredAgentIds = agentsWithDeliveredWork({
+    assets,
+    jobs,
+    agents: enabledAgents,
+    umbrellas,
+    clientSlug: client.agentsRepoSlug,
+    viewerIsClient: false,
+    now: staffNow,
+  });
+  // Same failed-last-run read the client branch makes, for the same reason: the
+  // two rosters must not disagree about whether an agent needs someone.
+  const staffFailedAgentIds = lastRunFailedAgentIds(jobs, staffAgentIdByName, { staff: true });
   // Drafts waiting on staff, per agent — the queue the retired card surfaced
   // as its "N ready" chip. Counted from the jobs already loaded.
   const reviewCountByAgentName = new Map<string, number>();
