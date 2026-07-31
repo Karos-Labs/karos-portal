@@ -75,15 +75,19 @@ describe("account settings is the last entry of the settings row", () => {
   it("renders a row entry with an href as a link, never as a tab", () => {
     const tabs = source(TABS);
     expect(tabs).toContain("href?: string");
-    // The link branch is a <Link>, and role="tab" belongs to the button branch
-    // only — an anchor that leaves the page must not claim a tab's semantics.
-    const branch = tabs.indexOf("tab.href ? (");
-    expect(branch).toBeGreaterThan(-1);
-    const linkBranch = tabs.slice(branch, tabs.indexOf(") : (", branch));
-    expect(linkBranch).toContain("<Link");
-    expect(linkBranch).toContain("href={tab.href}");
-    expect(linkBranch).not.toContain('role="tab"');
-    expect(linkBranch).not.toContain("aria-selected");
+    // An anchor that leaves the page must not claim a tab's semantics, and a
+    // tablist's owned children must all be tabs — so the link renders OUTSIDE
+    // the role="tablist" element. Asserted on the rendered structure rather
+    // than on one spelling of the branch, so a refactor of the JSX that keeps
+    // both guarantees does not fail here.
+    const tablist = tabs.slice(tabs.indexOf('role="tablist"'), tabs.indexOf("</div>", tabs.indexOf('role="tablist"')));
+    expect(tablist).not.toContain("<Link");
+    expect(tablist).toContain('role="tab"');
+
+    const linkEntry = tabs.slice(tabs.indexOf("<Link"), tabs.indexOf("</Link>"));
+    expect(linkEntry).toContain("href={tab.href");
+    expect(linkEntry).not.toContain('role="tab"');
+    expect(linkEntry).not.toContain("aria-selected");
   });
 
   it("keeps selection, the default tab and ?tab= over panels only", () => {

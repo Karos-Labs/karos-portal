@@ -61,7 +61,8 @@ export function SettingsTabs({ tabs, initialTab }: { tabs: SettingsTab[]; initia
     window.history.replaceState(null, "", url);
   }
 
-  if (panels.length === 0) return null;
+  const links = tabs.filter((t) => t.href);
+  if (panels.length === 0 && links.length === 0) return null;
   const current = panels.find((t) => t.id === active) ?? panels[0];
 
   return (
@@ -69,30 +70,20 @@ export function SettingsTabs({ tabs, initialTab }: { tabs: SettingsTab[]; initia
       {/* Scrolls rather than wrapping or squeezing: the tab count varies by role
           (a client sees fewer than an admin) and this sits above a mobile view. */}
       <div className="-mx-1 mb-6 max-w-full overflow-x-auto px-1">
-        <div
-          role="tablist"
-          aria-label="Settings sections"
-          className="inline-flex w-max items-center gap-1 rounded-lg border border-border bg-surface-2 p-1"
-        >
-          {tabs.map((tab) =>
-            tab.href ? (
-              <Link
-                key={tab.id}
-                href={tab.href}
-                className={cn(ENTRY, "text-muted hover:text-foreground")}
-              >
-                <Icon name={tab.icon} className="h-3.5 w-3.5" />
-                {tab.label}
-              </Link>
-            ) : (
+        <div className="inline-flex w-max items-center gap-1 rounded-lg border border-border bg-surface-2 p-1">
+          {/* role="tablist" wraps ONLY the real tabs: a tablist's owned children
+              must all be tabs, so the account link sits beside it as a sibling
+              rather than inside it. Visually one row either way. */}
+          <div role="tablist" aria-label="Settings sections" className="flex items-center gap-1">
+            {panels.map((tab) => (
               <button
                 key={tab.id}
                 role="tab"
-                aria-selected={current.id === tab.id}
+                aria-selected={current?.id === tab.id}
                 onClick={() => select(tab.id)}
                 className={cn(
                   ENTRY,
-                  current.id === tab.id
+                  current?.id === tab.id
                     ? "bg-surface text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.3)]"
                     : "text-muted hover:text-foreground",
                 )}
@@ -100,12 +91,22 @@ export function SettingsTabs({ tabs, initialTab }: { tabs: SettingsTab[]; initia
                 <Icon name={tab.icon} className="h-3.5 w-3.5" />
                 {tab.label}
               </button>
-            ),
-          )}
+            ))}
+          </div>
+          {links.map((tab) => (
+            <Link
+              key={tab.id}
+              href={tab.href as string}
+              className={cn(ENTRY, "text-muted hover:text-foreground")}
+            >
+              <Icon name={tab.icon} className="h-3.5 w-3.5" />
+              {tab.label}
+            </Link>
+          ))}
         </div>
       </div>
 
-      <div role="tabpanel">{current.content}</div>
+      {current ? <div role="tabpanel">{current.content}</div> : null}
     </>
   );
 }
