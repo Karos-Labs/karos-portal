@@ -182,7 +182,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // indistinguishable from an unconnected workspace: `hasGmailIntegration` below
   // goes false as well, so the prompt's Scenario-D block is withheld and its
   // silence rule ("never mention email integration, Gmail, or inbox
-  // connectivity") applies. A non-grantor's session cannot tell a token exists.
+  // connectivity") applies. So WITHIN THIS SESSION a non-grantor sees exactly
+  // what an unconnected workspace looks like.
+  //
+  // Two honest limits on that, because an overstated guarantee is worse than a
+  // stated one:
+  //  - it is identity, not role. A staff member is normally not the grantor and
+  //    so loses the scan — but a staff member who granted it themselves keeps
+  //    it, correctly, because the mailbox is theirs.
+  //  - it covers this route. The Integrations settings payload still carries
+  //    `accountName` for every row (sanitizeIntegrations strips credentials, not
+  //    that field), so the grantor's address is in that page's RSC payload even
+  //    though no surface renders it. Narrowing that is a separate change.
   const googleIntegration = integrations.find(
     (i) =>
       i.platform === "google" &&
