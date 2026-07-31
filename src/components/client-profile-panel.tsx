@@ -180,10 +180,17 @@ function BrandProfileModal({ client, onClose }: { client: Client; onClose: () =>
 }
 
 /**
- * `compact` is the desktop rail, which is a no-scroll fixed layout (CD-E3):
- * tighter spacing and the description clamped to two lines, so a long brief
- * cannot push Competitor Track and Brand Colors off the viewport. The mobile
- * Company sheet scrolls and keeps the full panel.
+ * `compact` is the height-constrained mount — the desktop client rail and the
+ * staff sidebar's client-context panel, both no-scroll fixed layouts (CD-E3).
+ * It tightens spacing and clamps the description to two lines, so a long
+ * "about" cannot push Competitor Track and Brand Colors off the viewport. The
+ * mobile Company sheet scrolls, so it mounts WITHOUT compact and keeps the
+ * full text.
+ *
+ * It was previously never passed at any mount, so every surface rendered the
+ * unbounded text and the desktop rail's no-scroll contract was decorative —
+ * which is the wall of text the product owner hit in the client lens on the
+ * 30 July call.
  */
 export function ClientProfilePanel({ client, compact = false }: { client: Client; compact?: boolean }) {
   const router = useRouter();
@@ -303,13 +310,19 @@ export function ClientProfilePanel({ client, compact = false }: { client: Client
             })}
           </div>
 
-          {/* The description is deliberately absent from the compact rail: it
-              is free text of unbounded length, and the rail must have a
-              DETERMINISTIC height to honour the no-scroll contract (CD-E3).
-              It stays in the mobile Company sheet and the brand-profile
-              modal, neither of which is height-constrained. */}
-          {!compact && (client.description || client.brief) && (
-            <p className="text-xs leading-relaxed text-muted-2">
+          {/* Free text of unbounded length, in a rail that must keep a
+              DETERMINISTIC height (the no-scroll contract, CD-E3). Two lines
+              and an ellipsis give both: the client still sees what their
+              profile says, and a long "about" cannot push Competitor Track and
+              Brand Colors off the viewport. The mobile Company sheet scrolls,
+              so it keeps the full text. */}
+          {(client.description || client.brief) && (
+            <p
+              className={cn(
+                "text-xs leading-relaxed text-muted-2",
+                compact && "line-clamp-2",
+              )}
+            >
               {client.description || client.brief}
             </p>
           )}

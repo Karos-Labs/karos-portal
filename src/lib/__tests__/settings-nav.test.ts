@@ -154,3 +154,35 @@ describe("the lab repo slug link points at a field that exists", () => {
     expect(source(SETTINGS_PAGE)).not.toContain("Lab repo slug");
   });
 });
+
+/* ── A-5: the client "about" wall of text ────────────────────────────────── */
+
+describe("a long client description cannot break the no-scroll rail", () => {
+  /** Whitespace-normalised so a prettier rewrap cannot fail these. */
+  const flat = (t: string) => t.replace(/\s+/g, " ");
+  const panel = source("src/components/client-profile-panel.tsx");
+  const railSrc = source(RAIL);
+  const sidebarSrc = source("src/components/sidebar.tsx");
+
+  it("clamps the description when the mount is height-constrained", () => {
+    // `compact` existed and was documented, but was never passed — so every
+    // surface rendered unbounded free text and the CD-E3 no-scroll contract
+    // was decorative. Two lines keeps the information and the fixed height.
+    expect(flat(panel)).toContain('compact && "line-clamp-2"');
+  });
+
+  it("passes compact at both no-scroll mounts and not at the scrolling one", () => {
+    const mounts = [...railSrc.matchAll(/<ClientProfilePanel[^/]*\/>/g)].map((m) => m[0]);
+    expect(mounts).toHaveLength(2);
+    // The desktop aside is height-constrained; the mobile Company sheet scrolls.
+    expect(mounts.filter((m) => m.includes("compact"))).toHaveLength(1);
+    expect(sidebarSrc).toContain("<ClientProfilePanel client={clientCtx.client} compact />");
+  });
+
+  it("still renders the description — clamped, not removed", () => {
+    // An earlier comment claimed compact dropped it entirely. Hiding a client's
+    // own profile text is not a fix for it being long.
+    expect(flat(panel)).toContain("{client.description || client.brief}");
+    expect(flat(panel)).not.toContain("!compact && (client.description");
+  });
+});

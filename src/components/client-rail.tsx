@@ -153,7 +153,7 @@ export function ClientRail({
             </nav>
 
             <div className="mt-4 border-t border-border pt-4">
-              <ClientProfilePanel client={client} />
+              <ClientProfilePanel client={client} compact />
             </div>
 
             <div className="mt-4 border-t border-border pt-4">

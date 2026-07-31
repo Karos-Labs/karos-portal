@@ -681,7 +681,7 @@ export function Sidebar({
           />
 
           <MobileCompanySheet open={companyOpen} onClose={() => setCompanyOpen(false)}>
-            <ClientProfilePanel client={clientCtx.client} />
+            <ClientProfilePanel client={clientCtx.client} compact />
 
             <div className="border-t border-border pt-4">
               <ClientDocuments
