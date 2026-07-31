@@ -87,6 +87,38 @@ async function registerClip(opts: {
 }
 
 /**
+ * Every GCS object this client already has an asset registered for, mapped to
+ * that asset's id.
+ *
+ * One read serves both write paths, which is the point: "import-bucket" used
+ * this idea inline to skip objects it had already imported, while "complete"
+ * registered unconditionally — so a replayed completion (flaky network, a
+ * double click, a resumed upload) minted a SECOND asset for the same object,
+ * same `meta.gcsPath`, different id. Those documents are still in production
+ * and are what the calendar renders twice.
+ *
+ * `listAssets` is a full per-client scan and there is no narrower lookup in
+ * lib/data.ts — no query by `meta.gcsPath` exists, and adding one needs a
+ * Firestore composite index. At bulk-upload volumes (a staff dropzone, tens of
+ * clips) correctness is worth the scan; this is the same read import-bucket
+ * has always done.
+ *
+ * `listAssets` returns newest-first, so keeping the first id seen would hand
+ * back the newest copy. It keeps the OLDEST instead — the original — matching
+ * the survivor rule in lib/calendar-dedupe so the id a replay is told about is
+ * the same copy the calendar shows.
+ */
+async function registeredClipIds(clientId: string): Promise<Map<string, string>> {
+  const existing = await listAssets({ clientId });
+  const byPath = new Map<string, string>();
+  for (const a of [...existing].sort((x, y) => (x.createdAt ?? 0) - (y.createdAt ?? 0))) {
+    const path = a.meta?.gcsPath;
+    if (typeof path === "string" && path && !byPath.has(path)) byPath.set(path, a.id);
+  }
+  return byPath;
+}
+
+/**
  * Two-step direct-to-GCS bulk media upload for staff (see the "Bulk Upload
  * Assets" dropzone, src/components/bulk-upload-clips.tsx):
  *   step "sign"     — returns a V4 signed PUT URL; the browser then uploads
@@ -94,6 +126,8 @@ async function registerClip(opts: {
  *                     server (keeps large video out of Node's memory).
  *   step "complete" — called once the browser's direct PUT succeeds; mints a
  *                     signed READ url and registers the clip as a draft Asset.
+ *                     Idempotent on the object path: replaying it returns the
+ *                     asset already registered for that path.
  */
 export async function POST(req: Request) {
   const user = await getCurrentUser();
@@ -141,6 +175,12 @@ export async function POST(req: Request) {
     if (!gcsPath.startsWith(`clients/${body.clientId}/podcast-clips/`)) {
       return NextResponse.json({ error: "gcsPath does not match this client" }, { status: 400 });
     }
+    // Idempotent on the object path: a replay of this step returns the asset
+    // that already exists for it rather than minting a second one. The caller
+    // cannot tell a replay from the original success — same shape, same id.
+    const already = (await registeredClipIds(body.clientId)).get(gcsPath);
+    if (already) return NextResponse.json({ id: already });
+
     const id = await registerClip({
       clientId: body.clientId,
       gcsPath,
@@ -157,10 +197,7 @@ export async function POST(req: Request) {
   // into the bucket (gcloud storage cp, Cloud Console, rclone, …) without
   // going through this route's "sign"/"complete" steps at all.
   const objects = await listClientMediaObjects(body.clientId);
-  const existing = await listAssets({ clientId: body.clientId });
-  const registeredPaths = new Set(
-    existing.map((a) => (typeof a.meta?.gcsPath === "string" ? a.meta.gcsPath : null)).filter(Boolean),
-  );
+  const registeredPaths = await registeredClipIds(body.clientId);
   const unregistered = objects.filter((o) => !registeredPaths.has(o.gcsPath));
 
   const imported: string[] = [];
