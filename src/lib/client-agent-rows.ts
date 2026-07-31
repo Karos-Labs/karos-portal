@@ -18,8 +18,8 @@ import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-a
 import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
 import { canNoteSlot } from "@/lib/slot-notes";
 import { parseXDrafts } from "@/lib/x-drafts";
-import { resolveOptions } from "@/lib/x-options";
-import { laneLabel } from "@/lib/draft-lane-label";
+import { resolveOptions, toClientXOption } from "@/lib/x-options";
+import { refLaneLabel } from "@/lib/draft-lane-label";
 import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { ComponentProps } from "react";
@@ -363,24 +363,34 @@ export async function toClientAgentRows(args: {
       const todaySlot = slots.find((slot) => slot.dateKey === todayKey);
       if (todaySlot && (todaySlot.optionRefs?.length ?? 0) > 0) {
         if (todaySlot.optionPick) {
-          // F70: the ref's tail is the LAB's lane vocabulary ("News-reaction
-          // (live)", "Avenue 2"), which no client surface may render raw. The
-          // direction stored at pick time is already humanised; the fallback
-          // runs the tail through the same laneLabel every other path uses, so
-          // a pick made before the field existed still reads properly.
+          // F70: a ref is `account · lane`, and its tail is the LAB's lane
+          // vocabulary ("Avenue 2 · News-reaction (live)"), which no client
+          // surface may render raw. The direction stored at pick time is already
+          // humanised; the fallback runs the ref through the shared helper — the
+          // one home for that rule — so a pick made before the field existed
+          // still reads properly. NULL rather than "Draft" when the ref names no
+          // lane: the receipt puts this word in a client's sentence, and an
+          // internal status word does not belong there (#155).
           const pick = todaySlot.optionPick;
           today = {
             slotId: todaySlot.id,
             options: [],
-            pickedDirection:
-              pick.direction ?? laneLabel(pick.optionRef.split(" · ").slice(1).join(" · ")),
+            pickedDirection: pick.direction?.trim() || refLaneLabel(pick.optionRef),
           };
         } else if (todaySlot.assetId) {
           const batchAsset = await getAsset(todaySlot.assetId);
           const batch = batchAsset ? parseXDrafts(batchAsset.content ?? "") : null;
           const options = batch ? resolveOptions(batch, todaySlot.optionRefs ?? []) : [];
           if (options.length > 0) {
-            today = { slotId: todaySlot.id, options, pickedDirection: null };
+            // The account heading is humanised HERE, not at render: the option
+            // objects are serialized into the RSC payload, so "Albert Kattan
+            // (seat 1, handle pending)" that a component declines to paint is
+            // still readable in view-source.
+            today = {
+              slotId: todaySlot.id,
+              options: options.map(toClientXOption),
+              pickedDirection: null,
+            };
           }
         }
       }

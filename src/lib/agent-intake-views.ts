@@ -46,6 +46,7 @@ import type {
   XSeatView,
 } from "@/components/x-agent-intake";
 import { collapseRunsPerDay } from "@/lib/client-run-rows";
+import { refLaneLabel } from "@/lib/draft-lane-label";
 import type { AgentIntake, Job } from "@/lib/types";
 
 export type XAgentIntakeProps = ComponentProps<typeof XAgentIntake>;
@@ -81,6 +82,26 @@ function toRunRowViews(
     createdAt: j.createdAt,
     ...(isStaff ? { href: `/jobs/${j.id}` } : {}),
   }));
+}
+
+/**
+ * Which draft a feedback row was written against, as its reader may see it.
+ *
+ * `draftRef` is stored raw on purpose — it is the feedback log's join key, and
+ * the agent reads those rows back verbatim — but raw it is the lab's own
+ * vocabulary: "Albert Kattan (seat 1, handle pending) · Avenue 3 ·
+ * News-reaction (live)". Two of the three surfaces printed it as-is, so a
+ * client's recent-feedback list read "Company page · feedback · Avenue 3 ·
+ * News-reaction (live) · 2 days ago" (#87).
+ *
+ * Humanised HERE, once, for all three surfaces rather than in three components:
+ * one rule needs one home, and this one is on the server, so the raw ref is
+ * ABSENT from the payload instead of merely unpainted. The row carries the label
+ * only when there is a lane to name — the segment is optional in the copy.
+ */
+function draftLabelOf(row: { draftRef?: string }): { draftLabel?: string } {
+  const label = row.draftRef ? refLaneLabel(row.draftRef) : null;
+  return label ? { draftLabel: label } : {};
 }
 
 /** Strip an intake doc to the client-safe X view. */
@@ -161,7 +182,7 @@ export async function buildXAgentIntakeView(
       id: f.id,
       account: f.account,
       action: f.action,
-      ...(f.draftRef ? { draftRef: f.draftRef } : {}),
+      ...draftLabelOf(f),
       createdAt: f.createdAt,
     })),
     runs,
@@ -218,7 +239,7 @@ export async function buildLinkedInAgentIntakeView(
       id: f.id,
       account: f.account,
       action: f.action,
-      ...(f.draftRef ? { draftRef: f.draftRef } : {}),
+      ...draftLabelOf(f),
       createdAt: f.createdAt,
     })),
     runs,
@@ -273,7 +294,7 @@ export async function buildRedditAgentIntakeView(
       id: f.id,
       account: f.account,
       action: f.action,
-      ...(f.draftRef ? { draftRef: f.draftRef } : {}),
+      ...draftLabelOf(f),
       ...(f.subreddit ? { subreddit: f.subreddit } : {}),
       ...(f.reasonCode ? { reasonCode: f.reasonCode } : {}),
       createdAt: f.createdAt,

@@ -310,7 +310,12 @@ export function ArchiveView({
         })
       )}
 
-      <AssetDetailModal asset={openAsset} open={openAsset != null} onClose={() => setOpenAssetId(null)} />
+      <AssetDetailModal
+        asset={openAsset}
+        open={openAsset != null}
+        onClose={() => setOpenAssetId(null)}
+        viewerIsClient={viewerIsClient}
+      />
     </div>
   );
 }

@@ -13,8 +13,10 @@ import { MarkPostedRow } from "@/components/mark-posted-row";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
 import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
 import { pastRunHasNoDeliverables, showsPastRunReviewControl } from "@/lib/calendar-past-runs";
+import { PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
 import { cn, relativeTime } from "@/lib/utils";
 import type { AssetImage } from "@/lib/asset-images";
+import type { CalendarAssetKind } from "@/lib/calendar-kind";
 import type { Asset, AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
 
 /* ── Serializable shapes built by the calendar page ──────────────────── */
@@ -109,10 +111,20 @@ export interface CalendarPost {
   clientName?: string;
   title: string;
   at: number;
-  kind: "scheduled" | "published" | "placeholder" | "failed" | "draft";
+  /**
+   * The shared union, NOT a copy of its members. It was spelled out again here,
+   * which meant the maps below could quietly fall short of it: they are keyed
+   * over this type, so one union in one home is what makes a new kind a compile
+   * error at every chip, label, tone and filter instead of a silent default.
+   */
+  kind: CalendarAssetKind;
   images: AssetImage[];
   textPreview: string;
-  /** Set when kind is "failed" — the last publish attempt's error, shown in the chip tooltip and detail modal. */
+  /**
+   * Set when the kind carries a publish explanation — a "failed" post's last
+   * attempt error, or a "held" post's ordering-hold sentence. Shown in the chip
+   * tooltip; the detail modal reads it off the asset itself.
+   */
   publishError?: string;
 }
 
@@ -210,6 +222,9 @@ const POST_CHIP_CLASS: Record<CalendarPost["kind"], string> = {
   scheduled: "border border-dashed border-info/50 bg-info/10 text-info",
   placeholder: "border border-dashed border-muted-2/50 bg-foreground/[0.04] text-muted",
   failed: "bg-danger/15 text-danger",
+  // Solid border against placeholder's dashed one, and no danger tint: a held
+  // post is real, dated work that is simply next in line.
+  held: "border border-muted-2/60 bg-foreground/[0.06] text-foreground/70",
   draft: "border border-dashed border-muted-2/40 bg-foreground/[0.02] text-muted-2",
 };
 
@@ -218,7 +233,28 @@ const POST_KIND_LABEL: Record<CalendarPost["kind"], string> = {
   scheduled: "Scheduled post",
   placeholder: "Placeholder",
   failed: "Failed to publish",
+  // The same string the detail modal heads the explanation with — a client who
+  // clicks this chip must not land on a second name for the state.
+  held: PUBLISH_HOLD_HEADING,
   draft: "Draft",
+};
+
+/**
+ * The day card's badge tone, per kind.
+ *
+ * A Record because the ternary chain this replaces ended `: "Placeholder"` — so
+ * the day card called a FAILED post, a DRAFT and (once "held" existed) a held
+ * post "Placeholder", three states it has no business naming after a fourth.
+ * The chip one cell above already read "Failed to publish" off the map below,
+ * which is how a card and its own chip disagreed about the same post.
+ */
+const POST_KIND_TONE: Record<CalendarPost["kind"], "success" | "info" | "neutral" | "danger"> = {
+  published: "success",
+  scheduled: "info",
+  placeholder: "neutral",
+  failed: "danger",
+  held: "neutral",
+  draft: "neutral",
 };
 
 function PostChip({
@@ -242,7 +278,11 @@ function PostChip({
         CHIP_SIZE[size],
         POST_CHIP_CLASS[post.kind],
       )}
-      title={`${POST_KIND_LABEL[post.kind]}${post.kind === "failed" && post.publishError ? ` — ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
+      /* Whether an explanation travels at all is decided once, at the server
+         projection (calendar-body) — so this prints whatever arrived rather than
+         re-deciding which kinds are allowed one, which is how the held post's
+         sentence would have been dropped on the way to the tooltip. */
+      title={`${POST_KIND_LABEL[post.kind]}${post.publishError ? ` — ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{post.title}</span>
@@ -611,8 +651,10 @@ function PostCard({
   onOpenLightbox: (images: AssetImage[], index: number) => void;
   onOpenDetails: (assetId: string) => void;
 }) {
-  const tone = post.kind === "published" ? "success" : post.kind === "scheduled" ? "info" : "neutral";
-  const label = post.kind === "published" ? "Published" : post.kind === "scheduled" ? "Scheduled" : "Placeholder";
+  // Read off the shared maps, not a ternary chain that fell through to
+  // "Placeholder" for every kind it hadn't been told about.
+  const tone = POST_KIND_TONE[post.kind];
+  const label = POST_KIND_LABEL[post.kind];
   return (
     <div
       onClick={() => onOpenDetails(post.assetId)}
@@ -664,6 +706,7 @@ export function RunCalendar({
   runs,
   posts,
   assets,
+  viewerIsClient = false,
   canSchedule = false,
   canManageRuns = false,
   clients = [],
@@ -674,6 +717,14 @@ export function RunCalendar({
   runs: CalendarRun[];
   posts: CalendarPost[];
   assets: Asset[];
+  /**
+   * Whose words the detail modal uses for an asset's status — the client
+   * register ("Posted") or the staff one ("Published"). Deliberately NOT
+   * `!canSchedule`: that answers "may this viewer schedule a run", and staff in
+   * View as Client are true for it while a client is false, so reusing it would
+   * be a second, differently-shaped answer to "who is reading this".
+   */
+  viewerIsClient?: boolean;
   /** Staff on their own clients — shows the "Schedule a run" button + staff-only controls. */
   canSchedule?: boolean;
   /**
@@ -962,15 +1013,17 @@ export function RunCalendar({
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
           <LegendDot className="border border-dashed border-foreground/40 bg-foreground/[0.03]" label="Scheduled run" />
           <LegendDot className="bg-foreground/25" label="Completed run" />
-          {STATUS_FILTER_CHIPS.map((chip) => (
-            <FilterChip
-              key={chip.key}
-              className={chip.className}
-              label={chip.label}
-              hidden={hiddenStatuses.has(chip.key)}
-              onClick={() => toggleStatus(chip.key)}
-            />
-          ))}
+          {(Object.entries(STATUS_FILTER_CHIPS) as Array<[StatusFilterKey, { label: string; className: string }]>).map(
+            ([key, chip]) => (
+              <FilterChip
+                key={key}
+                className={chip.className}
+                label={chip.label}
+                hidden={hiddenStatuses.has(key)}
+                onClick={() => toggleStatus(key)}
+              />
+            ),
+          )}
         </div>
       </div>
 
@@ -1045,6 +1098,7 @@ export function RunCalendar({
         asset={openAsset}
         open={openAsset != null}
         onClose={() => setOpenAssetId(null)}
+        viewerIsClient={viewerIsClient}
         canPublish={canSchedule}
         connectedPlatforms={openAsset ? connectedPlatformsByClient?.[openAsset.clientId] ?? [] : []}
       />
@@ -1074,14 +1128,33 @@ function LegendDot({ className, label }: { className: string; label: string }) {
   );
 }
 
-const STATUS_FILTER_CHIPS: Array<{ key: StatusFilterKey; label: string; className: string }> = [
-  { key: "draft", label: "Draft", className: POST_CHIP_CLASS.draft },
-  { key: "scheduled", label: "Scheduled", className: POST_CHIP_CLASS.scheduled },
-  { key: "published", label: "Published", className: POST_CHIP_CLASS.published },
-  { key: "placeholder", label: "Placeholder", className: POST_CHIP_CLASS.placeholder },
-  { key: "failed", label: "Failed", className: POST_CHIP_CLASS.failed },
-  { key: "review", label: "Pending review", className: "bg-warning/25" },
-];
+/**
+ * The legend, which is also the filter. A RECORD rather than the array it was:
+ * an array satisfies its element type however short it is, so a new
+ * `CalendarAssetKind` would have drawn chips on the grid that the legend never
+ * named and the filter could never hide. Keyed over the union, a missing member
+ * is a compile error. Rendered in insertion order.
+ *
+ * Every member is offered to every viewer, and that is checked rather than
+ * assumed: a client's calendar can hold each of these. "held" in particular is
+ * reachable — the publish cron writes the hold onto an approved, dated,
+ * past-due post, and nothing in the client projection removes it. (The one
+ * member a client can never match is "draft": calendar-body filters drafts out
+ * of a client's assets entirely. That chip is still offered to them, which is a
+ * separate defect from this one and is not fixed here.)
+ */
+const STATUS_FILTER_CHIPS: Record<StatusFilterKey, { label: string; className: string }> = {
+  draft: { label: "Draft", className: POST_CHIP_CLASS.draft },
+  scheduled: { label: "Scheduled", className: POST_CHIP_CLASS.scheduled },
+  published: { label: "Published", className: POST_CHIP_CLASS.published },
+  // Short form, like "Failed" beside POST_KIND_LABEL's "Failed to publish": a
+  // filter's own tooltip reads "Show <label> items", and "Show waiting its turn
+  // items" is not a sentence. The chip and the panel keep the full heading.
+  held: { label: "Waiting", className: POST_CHIP_CLASS.held },
+  placeholder: { label: "Placeholder", className: POST_CHIP_CLASS.placeholder },
+  failed: { label: "Failed", className: POST_CHIP_CLASS.failed },
+  review: { label: "Pending review", className: "bg-warning/25" },
+};
 
 /** A legend dot that also toggles that status's visibility on the grid — dimmed while hidden. */
 function FilterChip({

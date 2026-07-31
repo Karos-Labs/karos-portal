@@ -76,6 +76,7 @@ export function ClipGallery({
         asset={open}
         open={open !== null}
         onClose={() => setOpen(null)}
+        viewerIsClient={viewerIsClient}
         canPublish={canApprove}
         {...(connectedPlatforms ? { connectedPlatforms } : {})}
       />

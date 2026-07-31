@@ -51,7 +51,12 @@ export interface LiFeedbackRowView {
   id: string;
   account: string;
   action: string;
-  draftRef?: string;
+  /**
+   * The lane this row was written against, humanised server-side
+   * (agent-intake-views' draftLabelOf). Absent when the stored ref names no
+   * lane; the raw ref never crosses — it is the log's join key, not copy.
+   */
+  draftLabel?: string;
   createdAt: number;
 }
 
@@ -714,7 +719,7 @@ function FeedbackBox({
             <li key={f.id} className="text-xs text-muted">
               <span className="text-foreground">{accountName(f.account)}</span> ·{" "}
               {f.action === "note" ? "feedback" : f.action.replace(/_/g, " ")}
-              {f.draftRef ? ` · ${f.draftRef}` : ""} · {relativeTime(f.createdAt)}
+              {f.draftLabel ? ` · ${f.draftLabel}` : ""} · {relativeTime(f.createdAt)}
             </li>
           ))}
         </ul>

@@ -437,7 +437,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         // branch here would have left the exception in the same payload. Staff
         // read the asset un-projected and keep the raw error. One rule, one
         // place (lib/custom-agent-launch clientSafePublishError).
-        ...(kind === "failed" && a.publishError ? { publishError: a.publishError } : {}),
+        //
+        // "held" travels too, and it is the one whose text a client is MEANT to
+        // read: it is the ordering-hold sentence, written as client copy and the
+        // only publishError the sanitizer passes through verbatim. Both kinds are
+        // exactly the ones postKind derives FROM this field, so the condition is
+        // the field's own, not a second list of kinds to keep in step.
+        ...(a.publishError && (kind === "failed" || kind === "held")
+          ? { publishError: a.publishError }
+          : {}),
       };
     })
     .filter((p): p is CalendarPost => p != null);
@@ -512,6 +520,11 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         runs={runs}
         posts={posts}
         assets={assets}
+        // Whose vocabulary the detail modal uses. `isClient` and not
+        // `!canSchedule`: staff in View as Client keep the staff register, which
+        // is the split every other viewer-worded surface on this page already
+        // makes (the stuck label, the cadence label, the refusal text).
+        viewerIsClient={isClient}
         canSchedule={canSchedule}
         // Pausing is not a staff privilege — a client owns their own schedules
         // and the server action already authorizes them. Deleting stays behind

@@ -1610,7 +1610,12 @@ export interface XDraftFeedback {
   account: string;
   jobId?: string;
   assetId?: string;
-  /** Which draft in the batch, e.g. "Avenue 3 · News-reaction". */
+  /**
+   * Which draft in the batch: `${accountTitle} · ${laneHeading}`, minted by the
+   * review pane and byte-identical wherever it is written (see x-options.ts's
+   * header — the learning log joins on it). Raw lab vocabulary by design;
+   * `refLaneLabel` is what a client reads.
+   */
   draftRef?: string;
   /** "note" = free-form client feedback, not tied to one draft. */
   action: "posted" | "posted_with_edits" | "not_posted" | "note";
@@ -1634,7 +1639,12 @@ export interface LiDraftFeedback {
   account: string;
   jobId?: string;
   assetId?: string;
-  /** Which draft in the batch, e.g. "Account 1 · Karos Labs — Company page". */
+  /**
+   * Which draft in the batch: `${accountTitle} · ${laneHeading}`, minted by the
+   * review pane and byte-identical wherever it is written (see x-options.ts's
+   * header — the learning log joins on it). Raw lab vocabulary by design;
+   * `refLaneLabel` is what a client reads.
+   */
   draftRef?: string;
   /**
    * "note" = free-form client feedback, not tied to one draft.
@@ -1951,7 +1961,12 @@ export interface RedditDraftFeedback {
   account: string;
   jobId?: string;
   assetId?: string;
-  /** Which draft, e.g. "Karos Labs — company account · Draft 1 · Thorough value answer". */
+  /**
+   * Which draft in the batch: `${accountTitle} · ${laneHeading}`, minted by the
+   * review pane and byte-identical wherever it is written (see x-options.ts's
+   * header — the learning log joins on it). Raw lab vocabulary by design;
+   * `refLaneLabel` is what a client reads.
+   */
   draftRef?: string;
   /**
    * "note" = free-form client feedback, not tied to one draft.

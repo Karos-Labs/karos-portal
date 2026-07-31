@@ -35,19 +35,25 @@
  * cannot verify, so this one does not make it.
  *
  * What this module owns: the asset-status label MAPS, and the tripwire enforces
- * that it owns all of them.
+ * that it owns all of them. It also owns the copy for a stored `publishError` —
+ * the hold sentence, the prefix that identifies it, and the heading a reader
+ * sees over it.
  *
- * What is out of scope: any surface that renders `Asset["status"]` directly
- * rather than looking a label up — including the raw-enum renders at
- * client-home-overview.tsx (`<Badge className="capitalize">{a.status}</Badge>`)
- * and asset-detail-modal.tsx (`{asset.status}`, no capitalize, so a client
- * reads the lowercase enum), run-calendar.tsx's status-word literals, and
- * run-calendar.tsx's POST_KIND_LABEL, which is keyed by `CalendarPost["kind"]`
- * — a different key domain (`placeholder` and `failed` are not statuses) and so
- * a different vocabulary rather than a drifted copy.
+ * What is out of scope: a surface that renders `Asset["status"]` directly
+ * instead of looking a label up. Two client-reachable ones did, and now ask the
+ * accessor (client-home-overview's Recent activity badge, asset-detail-modal's
+ * status badge). The ones still rendering the raw enum are STAFF-ONLY routes —
+ * asset-card.tsx, outputs-hub.tsx and clip-gallery.tsx's `!viewerIsClient`
+ * branch — and they are left alone deliberately: the staff register says
+ * "Awaiting review" where CSS `capitalize` renders "Draft", so converting them
+ * changes a staff word, which is a copy decision and not a duplicate to delete.
  *
- * Those are tracked on the campaign ledger, not here. Do not read this list as
- * exhaustive: it is scope, not an inventory.
+ * Also out of scope: run-calendar.tsx's POST_KIND_LABEL, keyed by
+ * `CalendarAssetKind` — a different key domain (`placeholder`, `failed` and
+ * `held` are not statuses) and so a different vocabulary rather than a drifted
+ * copy of this one.
+ *
+ * Do not read either list as exhaustive: they are scope, not an inventory.
  */
 
 import type { Asset } from "@/lib/types";
@@ -117,8 +123,49 @@ export function clientAssetStatusLabel(status: string): string {
  * generic opener ("Waiting for") could be the first two words of an upstream
  * SDK exception, and allowlisting one of those would ship the leak the
  * sanitizer exists to stop. Both branches below open with it.
+ *
+ * NOT exported. It was, and `clientSafePublishError` spelled the startsWith out
+ * for itself — which is fine while there is one such caller and a bug the moment
+ * there are three. Private, the only way to ask is `isPublishHold`, so a second
+ * spelling would have to retype the literal (which asset-status-surfaces.test.ts
+ * forbids repo-wide).
  */
-export const PUBLISH_HOLD_PREFIX = "This post is waiting for";
+const PUBLISH_HOLD_PREFIX = "This post is waiting for";
+
+/**
+ * Whether a stored `publishError` is the ordering hold above rather than a real
+ * failure — THE test for that, asked by everything that has to tell the two
+ * apart:
+ *
+ *  • clientSafePublishError, which passes the hold to a client verbatim and
+ *    collapses everything else to the generic failure line;
+ *  • postKind (lib/calendar-kind), which classifies a held post as "held" so
+ *    the calendar draws a neutral chip instead of a red "Failed to publish" one;
+ *  • asset-detail-modal, which heads the notice panel with PUBLISH_HOLD_HEADING
+ *    instead of "Publish failed".
+ *
+ * One test, in one place, because the failure mode is a DISAGREEMENT: a second
+ * spelling that drifted would leave one surface calling the same stored string
+ * benign while another calls it a failure — which is the bug this replaced,
+ * where the body said the post was waiting its turn under a heading that said
+ * it had failed.
+ */
+export function isPublishHold(publishError: string): boolean {
+  return publishError.startsWith(PUBLISH_HOLD_PREFIX);
+}
+
+/**
+ * The heading over a held post's explanation, and the calendar's label for its
+ * chip — ONE string for both, so a client who clicks a chip does not read a
+ * second name for the state they just clicked.
+ *
+ * Neutral on purpose. The hold is benign, self-clearing and needs nothing from
+ * the reader (the cron releases it on the next tick once the predecessor is
+ * posted), so it gets neither the danger tone nor the word "failed". "Publish
+ * failed" stays inline at asset-detail-modal's other branch: that heading is
+ * unchanged by this and has one reader.
+ */
+export const PUBLISH_HOLD_HEADING = "Waiting its turn";
 
 /** The closing sentence of both branches: what happens next, and what ends the wait. */
 const PUBLISH_HOLD_TAIL = "This post goes out once that one is posted (or removed).";

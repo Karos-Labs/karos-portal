@@ -110,10 +110,14 @@ export function OutputsHub({
           );
         })}
       </ul>
+      {/* Literal `false`, not a threaded prop: this hub is the Control Room's,
+          and the Control Room is mounted behind `isStaff` on the agent detail
+          page — there is no client reader to ask. */}
       <AssetDetailModal
         asset={openAsset}
         open={openAsset != null}
         onClose={() => setOpenAssetId(null)}
+        viewerIsClient={false}
       />
     </>
   );

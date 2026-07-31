@@ -1,7 +1,7 @@
 import type { ClientAgentLaunchState, ClientAgentTemplate, FeedbackCategory } from "@/lib/types";
 import type { LaunchBlockCode } from "@/lib/client-agents";
 import type { TemplateRunBlockCode } from "@/lib/client-agent-runs";
-import type { XOption } from "@/lib/x-options";
+import type { ClientXOption } from "@/lib/x-options";
 import type { ClientAgentScheduleRow, RunnableAgentSummary } from "@/components/custom-agents";
 
 /**
@@ -98,7 +98,16 @@ export interface ClientAgentCardRow {
    */
   today: {
     slotId: string;
-    options: XOption[];
+    /**
+     * Already humanised: the account heading each option carries is the lab's
+     * own batch bookkeeping, and `toClientXOption` strips it on the way in
+     * rather than leaving the picker to decline to paint it.
+     */
+    options: ClientXOption[];
+    /**
+     * The direction the client chose, humanised — null when the stored ref
+     * names no lane, because the receipt reads it inside a sentence.
+     */
     pickedDirection: string | null;
   } | null;
   /** Two-level feedback already on this umbrella (WP-3). */

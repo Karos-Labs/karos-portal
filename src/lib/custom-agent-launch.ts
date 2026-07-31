@@ -8,7 +8,7 @@
  * still receive the outcome-focused fallback at the bottom of this file.
  */
 
-import { PUBLISH_HOLD_PREFIX } from "@/lib/asset-status-copy";
+import { isPublishHold } from "@/lib/asset-status-copy";
 import { isCreditDenialMessage } from "@/lib/credits";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 
@@ -878,9 +878,7 @@ export const CLIENT_RUN_REFUSAL_MESSAGE =
  * surfaces read the asset un-projected and keep the exception.
  */
 export function clientSafePublishError(publishError: string): string {
-  return publishError.startsWith(PUBLISH_HOLD_PREFIX)
-    ? publishError
-    : CLIENT_PUBLISH_FAILURE_MESSAGE;
+  return isPublishHold(publishError) ? publishError : CLIENT_PUBLISH_FAILURE_MESSAGE;
 }
 
 export const CLIENT_PUBLISH_FAILURE_MESSAGE =

@@ -22,7 +22,6 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { SavedFormCard } from "@/components/saved-form-card";
 import { JobStatusBadge } from "@/components/job-status";
-import { laneLabel } from "@/lib/draft-lane-label";
 import { formatDate, relativeTime } from "@/lib/utils";
 import type { JobStatus } from "@/lib/types";
 import {
@@ -46,7 +45,12 @@ export interface RedditFeedbackRowView {
   id: string;
   account: string;
   action: string;
-  draftRef?: string;
+  /**
+   * The lane this row was written against, humanised server-side
+   * (agent-intake-views' draftLabelOf). Absent when the stored ref names no
+   * lane; the raw ref never crosses — it is the log's join key, not copy.
+   */
+  draftLabel?: string;
   subreddit?: string;
   reasonCode?: string;
   createdAt: number;
@@ -372,9 +376,7 @@ function FeedbackBox({
               </span>
               {f.reasonCode ? ` · ${REASON_LABEL[f.reasonCode] ?? f.reasonCode}` : ""}
               {f.subreddit ? ` · ${f.subreddit}` : ""}
-              {/* draftRef is stored raw (it is the feedback log's join key) and
-                  humanized only here, the same way every other reader does it. */}
-              {f.draftRef ? ` · ${laneLabel(f.draftRef)}` : ""} · {relativeTime(f.createdAt)}
+              {f.draftLabel ? ` · ${f.draftLabel}` : ""} · {relativeTime(f.createdAt)}
             </li>
           ))}
         </ul>

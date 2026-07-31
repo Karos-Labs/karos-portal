@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card, CardTitle, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
+import { assetStatusLabel } from "@/lib/asset-status-copy";
 import { clientDeliveryStamp, isInClientArchive } from "@/lib/asset-visibility";
 import { postKind } from "@/lib/calendar-kind";
 import type { Asset, ClientTask } from "@/lib/types";
@@ -53,6 +54,14 @@ export function ClientHomeOverview({
   // forever with only publishError set, and nothing on this page said so.
   // Same "failed" classification the calendar itself renders (calendar-kind.ts)
   // — one predicate, not a second ad hoc copy of it.
+  //
+  // Which is why an ordering-HELD post is no longer counted here, without a
+  // word of it in this file: the cron stores its benign hold in the very same
+  // publishError field, so this row used to announce "1 post failed to publish"
+  // and then quote the hold sentence as the hint — a red attention row over a
+  // paragraph explaining that nothing is wrong. postKind tells the two apart
+  // now, and a hold asks nothing of the client, so it belongs on no attention
+  // list; the calendar shows it as waiting, which is where it is.
   const failedPublishes = assets.filter((a) => postKind(a) === "failed");
   const attentionCount =
     deliverablesInReview.length + reviewPendingTasks.length + pendingTasks.length + failedPublishes.length;
@@ -219,8 +228,13 @@ export function ClientHomeOverview({
                       {ASSET_TYPE_LABEL[a.type] ?? a.type} · {relativeTime(stampOf(a))}
                     </p>
                   </div>
-                  <Badge tone={ASSET_STATUS_TONE[a.status] ?? "neutral"} className="capitalize">
-                    {a.status}
+                  {/* The register, not the stored enum under CSS `capitalize` —
+                      which rendered "Published" to a client whose archive one
+                      click away said "Posted", and would have printed any new
+                      Firestore status verbatim. The tone map stays: a tone is
+                      presentation, a word is copy. */}
+                  <Badge tone={ASSET_STATUS_TONE[a.status] ?? "neutral"}>
+                    {assetStatusLabel(a.status, viewerIsClient)}
                   </Badge>
                 </>
               );

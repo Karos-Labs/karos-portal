@@ -13,6 +13,11 @@ import { parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
+import {
+  PUBLISH_HOLD_HEADING,
+  assetStatusLabel,
+  isPublishHold,
+} from "@/lib/asset-status-copy";
 import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { publishAssetNowAction } from "@/lib/actions/asset-actions";
@@ -106,12 +111,27 @@ export function AssetDetailModal({
   asset,
   open,
   onClose,
+  viewerIsClient,
   canPublish = false,
   connectedPlatforms,
 }: {
   asset: Asset | null;
   open: boolean;
   onClose: () => void;
+  /**
+   * Which status register this modal reads its words from. REQUIRED, with no
+   * default, and that is the fix: this modal printed `asset.status` raw, so a
+   * paying client opening a tile from their own archive read the lowercase
+   * Firestore enum "published" while the archive behind it said "Posted". It is
+   * reachable by clients from archive-view, clip-gallery and the calendar, so a
+   * defaulted flag would have let the next mount silently pick a register — the
+   * missing prop is a compile error instead.
+   *
+   * Separate from `canPublish` below on purpose. That one is a capability
+   * ("may this viewer push a post live"); this one is an audience ("whose
+   * vocabulary is this"). Staff in View as Client differ on the two.
+   */
+  viewerIsClient: boolean;
   /**
    * Staff viewer. `publishAssetNowAction` is `requireStaff()`, so a client-facing
    * Publish Now here could only ever error — the client's path is Mark as posted.
@@ -240,7 +260,11 @@ export function AssetDetailModal({
       <div className="space-y-4">
         {/* Status + template + type row */}
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={statusTone(asset.status)}>{asset.status}</Badge>
+          {/* Never the raw enum. The tone stays local (presentation is this
+              component's business); the WORD comes from the register the viewer
+              belongs to (lib/asset-status-copy), which is the same lookup the
+              archive one screen away already uses. */}
+          <Badge tone={statusTone(asset.status)}>{assetStatusLabel(asset.status, viewerIsClient)}</Badge>
           {template && <Badge tone="neutral">{template.name}</Badge>}
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-2">
             <Icon name={TYPE_ICON[asset.type] ?? "FileText"} className="h-3.5 w-3.5" />
@@ -396,10 +420,7 @@ export function AssetDetailModal({
             who most needs to see WHY a scheduled post never went out; the
             retry control below stays gated, the fact of the failure does not. */}
         {asset.publishError && asset.status !== "published" && (
-          <div className="rounded-[var(--radius)] border border-danger/30 bg-danger/10 px-3 py-2.5">
-            <p className="text-xs font-medium text-danger">Publish failed</p>
-            <p className="mt-0.5 text-xs text-danger/90">{asset.publishError}</p>
-          </div>
+          <PublishStateNotice publishError={asset.publishError} />
         )}
         <PublishNowRow
           asset={asset}
@@ -410,6 +431,45 @@ export function AssetDetailModal({
       </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * The panel over a stored `publishError` — and the heading has to match the body.
+ *
+ * `publishError` carries two different facts. Usually it is the platform SDK's
+ * exception (collapsed to one client-safe sentence at the server boundary,
+ * lib/asset-visibility). But the publish cron writes its benign ORDERING HOLD
+ * into the same field, and this panel headed that "Publish failed" in danger red
+ * over a body reading "This post is waiting for an earlier post in this
+ * format…" — a heading contradicting its own paragraph, on the client's screen.
+ *
+ * Which of the two it is comes from `isPublishHold`, the single test for that
+ * (lib/asset-status-copy), so this panel, the calendar's chip and the sanitizer
+ * cannot disagree about the same stored string. The hold's heading is the same
+ * string the chip is labelled with, for the same reason.
+ *
+ * A hold needs nothing from the reader — the cron releases it by itself on the
+ * next tick once the predecessor is posted — so it gets the neutral treatment,
+ * not a red one.
+ */
+function PublishStateNotice({ publishError }: { publishError: string }) {
+  if (isPublishHold(publishError)) {
+    return (
+      <div className="rounded-[var(--radius)] border border-border bg-surface-2 px-3 py-2.5">
+        <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+          <Icon name="CalendarClock" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+          {PUBLISH_HOLD_HEADING}
+        </p>
+        <p className="mt-0.5 text-xs text-muted">{publishError}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-[var(--radius)] border border-danger/30 bg-danger/10 px-3 py-2.5">
+      <p className="text-xs font-medium text-danger">Publish failed</p>
+      <p className="mt-0.5 text-xs text-danger/90">{publishError}</p>
+    </div>
   );
 }
 
