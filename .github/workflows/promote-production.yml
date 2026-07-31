@@ -28,6 +28,22 @@ jobs:
         with:
           ref: ${{ inputs.sha }}
 
+      - name: Validate required repo variables
+        run: |
+          missing=()
+          for v in PROD_PROJECT_ID PROD_REGION PROD_APP_URL PREP_PROJECT_ID; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing required repo variable(s): ${missing[*]} — refusing to deploy to production with an incomplete config."
+            exit 1
+          fi
+        env:
+          PROD_PROJECT_ID: ${{ vars.PROD_PROJECT_ID }}
+          PROD_REGION: ${{ vars.PROD_REGION }}
+          PROD_APP_URL: ${{ vars.PROD_APP_URL }}
+          PREP_PROJECT_ID: ${{ vars.PREP_PROJECT_ID }}
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -45,4 +61,4 @@ jobs:
             --project="${{ vars.PROD_PROJECT_ID }}" \
             --config=cloudbuild.promote.yaml \
             --no-source \
-            --substitutions=_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ inputs.sha }}",_APP_URL="${{ vars.PROD_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PROD_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PROD_ADMIN_EMAIL }}"
+            --substitutions=_REGION="${{ vars.PROD_REGION }}",_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ inputs.sha }}",_APP_URL="${{ vars.PROD_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PROD_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PROD_ADMIN_EMAIL }}"
