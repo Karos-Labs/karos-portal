@@ -423,7 +423,12 @@ const DELIVERED_JOB_STATUSES = new Set(["review", "approved", "delivered"]);
  * spellings of it is how a card ends up disagreeing with the page it opens.
  *
  * `agentIdByName` keeps runs fired before `customAgentId` existed attributable —
- * the same fallback join `agentProducedAssets` uses.
+ * the same job-name fallback `agentProducedAssets` uses, except that this map is
+ * keyed on the name VERBATIM while that one compares case-insensitively and
+ * trimmed. A job whose recorded name differs only in case therefore counts as
+ * delivered work on the agent's page and not in this set. Worth closing, but not
+ * here: this map is the caller's, so the normalisation belongs at the callers
+ * that build it rather than inside a helper that only reads it.
  */
 export function deliveredAgentIds(
   jobs: Pick<Job, "status" | "external" | "customAgentId" | "agentName">[],

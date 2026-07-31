@@ -37,6 +37,39 @@ import type {
 /* ────────────────────────── shared attribution ────────────────────────── */
 
 /**
+ * The ONE spelling attribution compares identities in.
+ *
+ * lowercase → collapse every `-`, `_` and run of whitespace to a single `-` →
+ * drop a leading `karos-` → trim stray separators. So `instagram-agent`,
+ * `Instagram Agent`, `instagram_agent` and `karos-instagram-agent` are one
+ * string, which is the entire point: the same agent is spelled all four ways
+ * across the lab repo folder, the imported key and the rendered name.
+ *
+ * NORMALISATION, NEVER FUZZ. Two slugs are equal or they are not — no substring
+ * containment, no prefix match, no edit distance. That restraint is F147's
+ * subject, not a style preference: the combined `karos-instagram-tiktok-content-agent`
+ * lives on the same clients as plain instagram agents, and anything looser than
+ * equality unifies them and files months of one agent's posts under the other,
+ * where a client has no way to tell it is wrong. An empty list is a visible
+ * bug; a wrong list is an invisible one.
+ */
+function attributionSlug(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const slug = value
+    .toLowerCase()
+    .replace(/[-_\s]+/g, "-")
+    .replace(/^karos-/, "")
+    .replace(/^-+|-+$/g, "");
+  return slug || null;
+}
+
+/** `meta.agentFolder` if the asset carries one — lab imports are the only writer. */
+function agentFolderOf(asset: Asset): string | null {
+  const folder = asset.meta?.["agentFolder"];
+  return typeof folder === "string" ? folder : null;
+}
+
+/**
  * Everything this agent has produced that THIS viewer may see.
  *
  * DELIVERED WORK ONLY for a client (A3/A4): `getClientArchiveAssets` drops
@@ -44,17 +77,37 @@ import type {
  * through a placeholder — the placeholder keeps `createdAt` and a template
  * name, which under a "what it has made for you" heading renders a whole
  * generated batch as seven posts all made in the same minute. Staff keep
- * everything, including drafts, because reviewing drafts is their job.
+ * everything, including drafts, because reviewing drafts is their job. That
+ * filter runs FIRST and nothing below can reach past it.
  *
- * Attribution runs through `resolveContentIdentity`, the one helper that knows
- * how an asset, its job and an umbrella relate. The two direct rungs are
- * checked first because they are cheaper and exact; the fourth rung (the agent
- * NAME) is what keeps the pre-umbrella flagship agents attributed at all.
+ * THE RUNGS, in descending confidence — all of them JOINS, none of them a
+ * comparison of rendered human labels:
+ *
+ *  1. the job's own binding (`customAgentId`, or the umbrella's `clientAgentId`);
+ *  2. an umbrella, when this agent has one: `resolveContentIdentity` decides,
+ *     unchanged, because that helper is the only thing that knows how an asset,
+ *     its job and an umbrella relate;
+ *  3. the job's recorded `agentName`, compared case-insensitively and trimmed —
+ *     jobs carry the name even when they predate `customAgentId`;
+ *  4. for an asset with no job we can see, the normalised `meta.agentFolder`
+ *     against the normalised key AND name of the agent.
+ *
+ * Rungs 3 and 4 replaced a single rung that compared `identity.label` to
+ * `args.agent.name`, and it could not match anything in production. The label
+ * is SENTENCE case from `agentLabelForAsset` ("Instagram agent"); the name is
+ * TITLE case from the importer ("Instagram Agent"). Those are never equal for a
+ * multi-word name, the `clientAgents` backfill has not run so no client reached
+ * the umbrella rung, and lab-imported assets are written with `jobId: null` so
+ * they never reached rung 1 either — every rung missed and a client opened a
+ * "Live" agent above an empty delivered-work section with months of its posts
+ * in their Workspace. The fix is to stop comparing display strings, not to
+ * change what either helper renders.
  */
 export function agentProducedAssets(args: {
   assets: Asset[];
   jobs: Job[];
-  agent: { id: string; name: string };
+  /** `key` is the lab skill slug; absent only for an agent that has none. */
+  agent: { id: string; name: string; key?: string };
   umbrella: ClientAgent | null;
   umbrellas: ClientAgentIdentity[];
   viewerIsClient: boolean;
@@ -64,6 +117,17 @@ export function agentProducedAssets(args: {
   const visible = args.viewerIsClient
     ? getClientArchiveAssets(args.assets, { now: args.now })
     : args.assets;
+
+  const agentName = args.agent.name.trim().toLowerCase();
+  // Both spellings of this agent's identity, normalised once. A set, not a
+  // fallback chain: key and name are two spellings of the same thing, and an
+  // asset folder that equals either is this agent's.
+  const agentSlugs = new Set(
+    [attributionSlug(args.agent.key), attributionSlug(args.agent.name)].filter(
+      (slug): slug is string => slug !== null,
+    ),
+  );
+
   return visible.filter((asset) => {
     const job = asset.jobId ? (jobById.get(asset.jobId) ?? null) : null;
     if (
@@ -73,9 +137,34 @@ export function agentProducedAssets(args: {
     ) {
       return true;
     }
-    const identity = resolveContentIdentity({ asset, job }, args.umbrellas);
-    if (args.umbrella) return identity.clientAgentId === args.umbrella.id;
-    return identity.label === args.agent.name;
+
+    // WITH an umbrella the umbrella decides, exactly as before. That path is
+    // correct and starts carrying real traffic the moment the backfill runs, so
+    // the name/folder rungs below must not get a second vote on top of it.
+    if (args.umbrella) {
+      const identity = resolveContentIdentity({ asset, job }, args.umbrellas);
+      return identity.clientAgentId === args.umbrella.id;
+    }
+
+    if (job) {
+      // A job we can see has already been asked the exact question and answered
+      // no, so its own recorded name is the last word on it. Deliberately NOT
+      // falling through to the folder rung: letting a string in the asset's meta
+      // outrank a job that names a different agent is precisely how one agent's
+      // run lands under another's heading.
+      //
+      // Read defensively even though `Job.agentName` is typed as required: this
+      // runs over whatever Firestore actually holds, and an older job written
+      // without the field would otherwise throw and take the page down.
+      const jobName = typeof job.agentName === "string" ? job.agentName.trim().toLowerCase() : "";
+      return jobName !== "" && jobName === agentName;
+    }
+
+    // No job — the lab-import shape (`jobId: null`), and equally an asset whose
+    // job is not in this page's `jobs`. Attribution has nothing but the folder
+    // the run was imported from.
+    const folder = attributionSlug(agentFolderOf(asset));
+    return folder !== null && agentSlugs.has(folder);
   });
 }
 

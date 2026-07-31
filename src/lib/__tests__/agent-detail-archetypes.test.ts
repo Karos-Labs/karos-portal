@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { Asset, ClientAgentTemplate, Job, PlannedScheduledRun } from "@/lib/types";
+import type {
+  Asset,
+  ClientAgent,
+  ClientAgentTemplate,
+  Job,
+  PlannedScheduledRun,
+} from "@/lib/types";
 
 vi.mock("server-only", () => ({}));
 
@@ -118,7 +124,7 @@ describe("agentProducedAssets", () => {
 
   it("keeps the pre-umbrella name rung, so a legacy agent is not shown as having made nothing", () => {
     // The flagship shape (CD-H8): a job carrying no customAgentId at all,
-    // attributed by the ONE NAME resolveContentIdentity resolves.
+    // attributed by the name the RUN recorded.
     // `type: "note"` so no asset-derived label outranks the job's own name —
     // that fourth rung is what the flagship pre-umbrella agents rely on.
     const asset = makeAsset({ id: "legacy", jobId: "j-legacy", type: "note" });
@@ -135,6 +141,228 @@ describe("agentProducedAssets", () => {
       now: NOW,
     });
     expect(out.map((a) => a.id)).toEqual(["legacy"]);
+  });
+
+  it("matches a job's recorded name whatever case it was written in", () => {
+    // The importer title-cases ("Instagram Agent"); a job fired before that
+    // carries whatever the service sent ("karos-instagram-agent",
+    // "instagram agent"). Comparing the strings verbatim is how a whole
+    // pre-customAgentId run history disappears from a page.
+    const asset = makeAsset({ id: "cased", jobId: "j-cased", type: "note" });
+    const job = makeJob({ id: "j-cased", agentName: "  clip AGENT " });
+    delete (job as Partial<Job>).customAgentId;
+
+    const out = agentProducedAssets({
+      assets: [asset],
+      jobs: [job],
+      agent,
+      umbrella: null,
+      umbrellas: [],
+      viewerIsClient: false,
+      now: NOW,
+    });
+    expect(out.map((a) => a.id)).toEqual(["cased"]);
+  });
+
+  /* ── the shape production is actually in ── */
+
+  describe("the umbrella-less, jobless lab-import shape", () => {
+    // EVERY client, today. `clientAgents` is empty (the backfill has never run)
+    // so no client reaches the umbrella rung; lab imports are written with
+    // `jobId: null` so they reach no job rung either; and the rung that was
+    // left compared `agentLabelForAsset`'s SENTENCE case ("Instagram agent")
+    // to the importer's TITLE case ("Instagram Agent"), which is false for
+    // every multi-word agent name there is. All four rungs missed, so a client
+    // opened a "Live" agent above an empty delivered-work section with months
+    // of its posts sitting in their Workspace.
+    const instagram = {
+      id: "ca-ig",
+      key: "karos-instagram-agent",
+      name: "Instagram Agent",
+    };
+
+    const labAsset = (overrides: Partial<Asset> = {}, folder = "instagram-agent"): Asset =>
+      makeAsset({
+        jobId: null,
+        agentId: null,
+        meta: { source: "lab-import", labRun: `${folder}/run-1#post-1`, agentFolder: folder },
+        ...overrides,
+      });
+
+    it("attributes a lab-imported asset to the agent whose folder it came from", () => {
+      const out = agentProducedAssets({
+        assets: [labAsset({ id: "lab-post" })],
+        jobs: [],
+        agent: instagram,
+        umbrella: null,
+        umbrellas: [],
+        viewerIsClient: true,
+        now: NOW,
+      });
+      expect(out.map((a) => a.id)).toEqual(["lab-post"]);
+    });
+
+    it("agrees across all three spellings of one agent, and only those", () => {
+      // The normalisation's whole job: folder slug, title-cased name and
+      // karos-prefixed key are one identity. Asserted through the function
+      // rather than against the helper, because the helper is private on
+      // purpose — there must be no second normaliser to drift from.
+      for (const folder of [
+        "instagram-agent",
+        "Instagram Agent",
+        "instagram_agent",
+        "karos-instagram-agent",
+      ]) {
+        const out = agentProducedAssets({
+          assets: [labAsset({ id: "lab-post" }, folder)],
+          jobs: [],
+          agent: instagram,
+          umbrella: null,
+          umbrellas: [],
+          viewerIsClient: true,
+          now: NOW,
+        });
+        expect(out.map((a) => a.id), folder).toEqual(["lab-post"]);
+      }
+    });
+
+    it("still gives a CLIENT delivered work only — the folder rung does not bypass the archive", () => {
+      // The visibility filter runs before attribution and nothing below it can
+      // reach past it. A lab import lands as `status: "draft"`, so this is the
+      // ordinary case rather than a contrived one: if the rung ran first, every
+      // client would see the entire imported batch at generation time (A3/A4).
+      const draft = labAsset({ id: "lab-draft", status: "draft" });
+      const approved = labAsset({ id: "lab-approved", status: "approved" });
+      const future = labAsset({
+        id: "lab-future",
+        status: "approved",
+        scheduledAt: NOW + 3 * DAY,
+      });
+
+      const forClient = agentProducedAssets({
+        assets: [draft, approved, future],
+        jobs: [],
+        agent: instagram,
+        umbrella: null,
+        umbrellas: [],
+        viewerIsClient: true,
+        now: NOW,
+      });
+      expect(forClient.map((a) => a.id)).toEqual(["lab-approved"]);
+
+      const forStaff = agentProducedAssets({
+        assets: [draft, approved, future],
+        jobs: [],
+        agent: instagram,
+        umbrella: null,
+        umbrellas: [],
+        viewerIsClient: false,
+        now: NOW,
+      });
+      expect(forStaff.map((a) => a.id).sort()).toEqual([
+        "lab-approved",
+        "lab-draft",
+        "lab-future",
+      ]);
+    });
+
+    it("does NOT credit one agent with another's lab runs — the instagram near-miss", () => {
+      // F147's subject, and the reason the match is equality on a normalised
+      // slug and nothing looser. This repo really does run
+      // `karos-instagram-tiktok-content-agent` (the flagship feed engine) on the
+      // same clients as plain instagram agents. Substring containment, prefix
+      // matching or any edit-distance test unifies that pair and files one
+      // agent's whole history under the other, where a client cannot tell it is
+      // wrong. An empty list is a visible bug; a wrong list is an invisible one.
+      const combined = {
+        id: "ca-combined",
+        key: "karos-instagram-tiktok-content-agent",
+        name: "Instagram Tiktok Content Agent",
+      };
+      const assets = [
+        labAsset({ id: "ig-post" }, "instagram-agent"),
+        labAsset({ id: "combined-post" }, "karos-instagram-tiktok-content-agent"),
+        labAsset({ id: "linkedin-post" }, "linkedin-agent"),
+      ];
+      const call = (agentArg: { id: string; key: string; name: string }) =>
+        agentProducedAssets({
+          assets,
+          jobs: [],
+          agent: agentArg,
+          umbrella: null,
+          umbrellas: [],
+          viewerIsClient: false,
+          now: NOW,
+        }).map((a) => a.id);
+
+      expect(call(instagram)).toEqual(["ig-post"]);
+      expect(call(combined)).toEqual(["combined-post"]);
+      // And neither of them collects the third agent's work either.
+      expect(call(instagram)).not.toContain("linkedin-post");
+      expect(call(combined)).not.toContain("linkedin-post");
+    });
+
+    it("does not let an asset's folder outrank a job that names another agent", () => {
+      // The mirror of the rung order: a job we can hold has already been asked
+      // the exact question. Letting a string in the asset's meta overrule it is
+      // the same mis-credit arriving through the back door.
+      const asset = makeAsset({
+        id: "theirs",
+        jobId: "j-other",
+        meta: { agentFolder: "instagram-agent" },
+      });
+      const job = makeJob({ id: "j-other", customAgentId: "ca-other", agentName: "Someone Else" });
+
+      const out = agentProducedAssets({
+        assets: [asset],
+        jobs: [job],
+        agent: instagram,
+        umbrella: null,
+        umbrellas: [],
+        viewerIsClient: false,
+        now: NOW,
+      });
+      expect(out).toEqual([]);
+    });
+
+    it("lets the UMBRELLA decide once one exists", () => {
+      // The path the backfill turns on. It stays exactly as it was: with an
+      // umbrella the identity resolver is the only vote, so a folder slug can
+      // neither add to nor subtract from what the umbrella owns.
+      const umbrella = {
+        id: "u-ig",
+        clientId: "c1",
+        customAgentId: "ca-ig",
+        agentKey: "karos-instagram-agent",
+        displayName: "Instagram",
+        chainFamily: "social",
+        launchState: "live",
+      } as unknown as ClientAgent;
+
+      const out = agentProducedAssets({
+        // Same folder that matches on the umbrella-less path above.
+        assets: [labAsset({ id: "lab-post", type: "note" })],
+        jobs: [],
+        agent: instagram,
+        umbrella,
+        umbrellas: [umbrella],
+        viewerIsClient: false,
+        now: NOW,
+      });
+      expect(out).toEqual([]);
+
+      // And the umbrella's own link still attributes: same asset, linked job.
+      const linked = agentProducedAssets({
+        assets: [makeAsset({ id: "linked", jobId: "j-u" })],
+        jobs: [makeJob({ id: "j-u", clientAgentId: "u-ig", agentName: "Someone Else" })],
+        agent: instagram,
+        umbrella,
+        umbrellas: [umbrella],
+        viewerIsClient: false,
+        now: NOW,
+      });
+      expect(linked.map((a) => a.id)).toEqual(["linked"]);
+    });
   });
 });
 

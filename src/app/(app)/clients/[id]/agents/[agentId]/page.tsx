@@ -294,7 +294,10 @@ export default async function ClientAgentDetailPage({
   const produced = agentProducedAssets({
     assets,
     jobs,
-    agent: { id: agent.id, name: agent.name },
+    // The KEY rides along with the name: a lab-imported asset carries the repo
+    // folder it came from ("instagram-agent") and nothing else, and the key is
+    // the spelling of this agent closest to it.
+    agent: { id: agent.id, name: agent.name, key: agent.key },
     umbrella,
     umbrellas,
     viewerIsClient,
