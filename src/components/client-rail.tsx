@@ -9,6 +9,7 @@ import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { ClientDocuments } from "@/components/client-documents";
 import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { AccountMenu } from "@/components/account-menu";
+import { LogoutButton } from "@/components/logout-button";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { NotificationBell } from "@/components/notification-bell";
 import { ContactUsButton } from "@/components/contact-us-modal";
@@ -188,7 +189,10 @@ export function ClientRail({
             <div className="mb-2 flex items-center gap-2">
               {spendableCredits != null && (
                 <Link
-                  href={settingsItem.href}
+                  /* Deep-links the Credits section: settings opens on whichever
+                     tab is first for this role otherwise, so a pill that says
+                     "credits" landed people on Profile. */
+                  href={`${settingsItem.href}?tab=credits`}
                   className="flex min-w-0 flex-1 items-center justify-between rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground"
                 >
                   <span className="flex items-center gap-1.5">
@@ -232,8 +236,8 @@ export function ClientRail({
         <div className="flex items-center gap-2">
           {spendableCredits != null && (
             <Link
-              href={settingsItem.href}
-              aria-label={`${spendableCredits} credits remaining, open settings`}
+              href={`${settingsItem.href}?tab=credits`}
+              aria-label={`${spendableCredits} credits remaining, open credits settings`}
               className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted"
             >
               <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
@@ -317,6 +321,11 @@ export function ClientRail({
             <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
           </div>
           <ThemeSwitch />
+          {/* Sign out lives ONLY in the desktop rail's account menu, and that
+              rail is display:none below md — so a client on a phone had no way
+              out of their session at all. Same tail placement the staff sheet
+              already uses. */}
+          <LogoutButton compact />
         </div>
       </MobileCompanySheet>
     </>

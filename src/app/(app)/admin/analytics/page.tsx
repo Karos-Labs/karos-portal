@@ -325,7 +325,7 @@ function renderPage(p: {
             {lowCredits.map((c) => (
               <li key={c.id} className="flex items-center justify-between gap-3 py-2">
                 <Link
-                  href={`/clients/${c.id}/settings`}
+                  href={`/clients/${c.id}/settings?tab=credits`}
                   className="min-w-0 flex-1 truncate text-sm text-foreground transition-colors hover:text-neon"
                 >
                   {c.name}

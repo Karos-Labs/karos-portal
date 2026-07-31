@@ -353,7 +353,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             <BulkUploadClips clientId={id} bucketName={process.env.GCS_MEDIA_BUCKET} />
             <ReplanCalendarButton clientId={id} />
             <a
-              href={`/clients/${id}/settings`}
+              href={`/clients/${id}/settings?tab=channels`}
               className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
             >
               Manage integrations →
@@ -392,19 +392,16 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           description={
             client.agentsRepoSlug
               ? "No custom agent in the library is enabled, so there is nothing to run here. Import or enable one on the Agents page."
-              : "No custom agent in the library is enabled, so there is nothing to run here. Import or enable one on the Agents page — and set this client's lab-repo slug in Settings, or runs go out without their client context."
+              : // The slug field is NOT on this client's settings page — it only
+                // exists in the Edit dialog on the Clients page, which no link can
+                // open. So the sentence says where it is and there is no button
+                // promising to take you there.
+                "No custom agent in the library is enabled, so there is nothing to run here. Import or enable one on the Agents page — and set this client's lab repo slug in its Edit dialog on the Clients page, or runs go out without their client context."
           }
           action={
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <a href="/agents" className="text-xs text-neon hover:underline">
-                Import or enable an agent →
-              </a>
-              {!client.agentsRepoSlug && (
-                <a href={`/clients/${id}/settings`} className="text-xs text-muted hover:text-foreground">
-                  Set the lab-repo slug →
-                </a>
-              )}
-            </div>
+            <a href="/agents" className="text-xs text-neon hover:underline">
+              Import or enable an agent →
+            </a>
           }
         />
       ) : (

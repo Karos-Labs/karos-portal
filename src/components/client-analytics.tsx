@@ -149,7 +149,7 @@ export function ClientAnalytics({
                 </p>
               )}
             </div>
-            <Link href={`/clients/${clientId}/settings`} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline">
+            <Link href={`/clients/${clientId}/settings?tab=channels`} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline">
               Manage
             </Link>
           </div>
@@ -174,7 +174,7 @@ export function ClientAnalytics({
                     // Same treatment Settings already gives a dead token, plus the
                     // route to fix it — the health truth existed, the dashboard
                     // just refused to show it.
-                    <Link href={`/clients/${clientId}/settings`} className="shrink-0">
+                    <Link href={`/clients/${clientId}/settings?tab=channels`} className="shrink-0">
                       <Badge tone="warning" className="hover:border-warning/60">
                         <Icon name="TriangleAlert" className="h-3 w-3" />
                         Reconnect needed →

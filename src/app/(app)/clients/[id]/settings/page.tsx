@@ -221,7 +221,7 @@ export default async function ClientSettingsPage({
       </Card>
     ) : null;
 
-  const tabs: SettingsTab[] = [
+  const sections: SettingsTab[] = [
     { id: "profile", label: "Profile", icon: "Building2", content: profileSection },
     { id: "channels", label: "Channels", icon: "Share2", content: channelsSection },
     { id: "credits", label: "Credits", icon: "Coins", content: creditsSection },
@@ -230,20 +230,20 @@ export default async function ClientSettingsPage({
     { id: "team", label: "Team", icon: "Users", content: teamSection },
   ].filter((t) => t.content !== null);
 
+  // Account settings is the last entry of the same row, not a header link
+  // stranded beside it: someone scanning "everything settings related" should
+  // find it where the other settings are. It is the one entry that navigates —
+  // /settings is its own route — so SettingsTabs renders it as a link.
+  const tabs: SettingsTab[] = [
+    ...sections,
+    { id: "account", label: "Account settings", icon: "User", href: "/settings" },
+  ];
+
   return (
     <>
       <PageHeader
         title="Settings"
         description="Credits and usage, connected channels, automation, meetings, and teammates."
-        action={
-          <Link
-            href="/settings"
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-          >
-            <Icon name="User" className="h-3.5 w-3.5" />
-            Account settings
-          </Link>
-        }
       />
 
       {/* CLIENT_USER already sees this via the (app) shell's own wrapper — only

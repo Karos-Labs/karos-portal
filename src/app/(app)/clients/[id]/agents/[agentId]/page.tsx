@@ -921,7 +921,7 @@ export default async function ClientAgentDetailPage({
               </ul>
             )}
             <Link
-              href={`/clients/${id}/settings`}
+              href={`/clients/${id}/settings?tab=channels`}
               className="mt-2 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground"
             >
               Manage connections <Icon name="ArrowRight" className="h-3 w-3" />
