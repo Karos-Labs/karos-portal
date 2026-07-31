@@ -59,6 +59,7 @@ export function OnboardingWizard({
   notice,
   integrations,
   oauthEnabledPlatforms,
+  googleBusinessProfileRequested,
   linkedinSeats,
   seatLimit,
   seatCost,
@@ -68,6 +69,8 @@ export function OnboardingWizard({
   notice?: string | null;
   integrations: IntegrationView[];
   oauthEnabledPlatforms: string[];
+  /** Passed straight through to the socials step — see oauth.ts. */
+  googleBusinessProfileRequested: boolean;
   linkedinSeats?: SeatView[];
   seatLimit?: number;
   seatCost?: number;
@@ -281,6 +284,7 @@ export function OnboardingWizard({
               clientId={client.id}
               integrations={integrations}
               oauthEnabledPlatforms={oauthEnabledPlatforms}
+          googleBusinessProfileRequested={googleBusinessProfileRequested}
               currentUserRole={user.role}
               linkedinSeats={linkedinSeats}
               seatLimit={seatLimit}

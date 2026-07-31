@@ -12,7 +12,7 @@ import {
   listTranscripts,
   getClientSettings,
 } from "@/lib/data";
-import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
+import { getOAuthEnabledPlatforms, googleBusinessProfileRequested } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import { summarizeClientSpend } from "@/lib/credit-reporting";
@@ -133,6 +133,7 @@ export default async function ClientSettingsPage({
       clientId={client.id}
       integrations={sanitizedIntegrations}
       oauthEnabledPlatforms={oauthEnabledPlatforms}
+      googleBusinessProfileRequested={googleBusinessProfileRequested()}
       currentUserRole={user.role}
       linkedinSeats={sanitizedLinkedinSeats}
       seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}

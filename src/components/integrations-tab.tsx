@@ -31,6 +31,8 @@ interface Props {
   clientId: string;
   integrations: IntegrationView[];
   oauthEnabledPlatforms: string[];
+  /** False until Google approves Business Profile access — see oauth.ts. */
+  googleBusinessProfileRequested: boolean;
   currentUserRole: Role;
   /** Sanitized LinkedIn employee seats (no tokens) for the multi-seat workspace. */
   linkedinSeats?: SeatView[];
@@ -681,6 +683,7 @@ function GoogleUnifiedCard({
   isOAuthEnabled,
   isConnecting,
   isAdmin,
+  businessProfileRequested,
   onOAuthConnect,
   onDisconnected,
 }: {
@@ -692,6 +695,13 @@ function GoogleUnifiedCard({
   isOAuthEnabled: boolean;
   isConnecting: boolean;
   isAdmin: boolean;
+  /**
+   * Whether the consent request actually asks for Business Profile. Google
+   * gates that scope behind a manual approval, and until it lands the portal
+   * deliberately leaves it out — so the card must not count it as a service
+   * the client failed to connect.
+   */
+  businessProfileRequested: boolean;
   onOAuthConnect: () => void;
   onDisconnected: () => void;
 }) {
@@ -701,10 +711,16 @@ function GoogleUnifiedCard({
   const [subError, setSubError] = useState<string | null>(null);
 
   const byId = new Map(integrations.map((i) => [i.platform, i]));
-  const connectedCount = GOOGLE_SUB_SERVICES.filter((s) => byId.has(s.id)).length;
-  const allConnected = connectedCount === GOOGLE_SUB_SERVICES.length;
+  // A service the consent screen never asked for is not one the client failed
+  // to connect. Without this the gated Business Profile scope makes a perfect
+  // connect read "2 / 3 connected" and never reach the healthy badge.
+  const offered = GOOGLE_SUB_SERVICES.filter(
+    (s) => s.id !== "google_business_profile" || businessProfileRequested,
+  );
+  const connectedCount = offered.filter((s) => byId.has(s.id)).length;
+  const allConnected = connectedCount === offered.length;
   const anyConnected = connectedCount > 0;
-  const anyNeedsReconnect = GOOGLE_SUB_SERVICES.some((s) => {
+  const anyNeedsReconnect = offered.some((s) => {
     const i = byId.get(s.id);
     return i && integrationNeedsReconnect(i);
   });
@@ -765,7 +781,7 @@ function GoogleUnifiedCard({
               )
             ) : anyConnected ? (
               <Badge tone="warning">
-                {connectedCount} / {GOOGLE_SUB_SERVICES.length} connected
+                {connectedCount} / {offered.length} connected
               </Badge>
             ) : (
               <Badge tone="neutral">Not connected</Badge>
@@ -779,7 +795,7 @@ function GoogleUnifiedCard({
               here (it keeps its own standalone card + OAuth below, since it's
               also a publish target), so this pill isn't part of GOOGLE_SUB_SERVICES. */}
           <div className="flex flex-wrap gap-1.5 pt-1.5">
-            {[...GOOGLE_SUB_SERVICES, { id: "youtube", label: "YouTube" }].map((s) => {
+            {[...offered, { id: "youtube", label: "YouTube" }].map((s) => {
               const connected = s.id === "youtube" ? youtubeConnected : byId.has(s.id);
               return (
                 <span
@@ -913,6 +929,7 @@ export function IntegrationsTab({
   clientId,
   integrations,
   oauthEnabledPlatforms,
+  googleBusinessProfileRequested,
   currentUserRole,
   linkedinSeats = [],
   seatLimit = 2,
@@ -1116,6 +1133,7 @@ export function IntegrationsTab({
             youtubeConnected={integrations.some((i) => i.platform === "youtube")}
             clientId={clientId}
             isOAuthEnabled={oauthEnabledPlatforms.includes("google_unified")}
+            businessProfileRequested={googleBusinessProfileRequested}
             isConnecting={connectingPlatform === "google_unified"}
             isAdmin={isAdmin}
             onOAuthConnect={() => openOAuthPopup("google_unified")}

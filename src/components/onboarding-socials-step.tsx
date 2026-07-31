@@ -9,6 +9,8 @@ interface Props {
   clientId: string;
   integrations: IntegrationView[];
   oauthEnabledPlatforms: string[];
+  /** Passed straight through to IntegrationsTab — see oauth.ts. */
+  googleBusinessProfileRequested: boolean;
   currentUserRole: Role;
   /** Sanitized LinkedIn employee seats — same data Settings shows, so an
    * existing workspace's roster never appears empty here by mistake. */
@@ -27,6 +29,7 @@ export function OnboardingSocialsStep({
   clientId,
   integrations,
   oauthEnabledPlatforms,
+  googleBusinessProfileRequested,
   currentUserRole,
   linkedinSeats,
   seatLimit,
@@ -46,6 +49,7 @@ export function OnboardingSocialsStep({
         clientId={clientId}
         integrations={integrations}
         oauthEnabledPlatforms={oauthEnabledPlatforms}
+      googleBusinessProfileRequested={googleBusinessProfileRequested}
         currentUserRole={currentUserRole}
         linkedinSeats={linkedinSeats}
         seatLimit={seatLimit}

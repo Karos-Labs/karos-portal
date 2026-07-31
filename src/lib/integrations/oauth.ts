@@ -367,6 +367,21 @@ export const OAUTH_CONFIGS: Record<string, OAuthPlatformConfig> = {
   },
 };
 
+/**
+ * Whether the unified Google consent actually asks for Business Profile.
+ *
+ * It does not until Google approves this project's Business Profile access
+ * request and `GOOGLE_BUSINESS_PROFILE_APPROVED=1` is set. The UI needs to know
+ * so it can stop counting a service nobody requested as "not connected" — a
+ * successful connect reporting "2 / 3 connected" is the card lying about work
+ * that went perfectly.
+ */
+export function googleBusinessProfileRequested(): boolean {
+  return getRequestedScopes("google_unified").includes(
+    "https://www.googleapis.com/auth/business.manage",
+  );
+}
+
 /** Returns platform IDs that have their OAuth env vars configured. */
 export function getOAuthEnabledPlatforms(): string[] {
   return Object.keys(OAUTH_CONFIGS).filter((id) => {

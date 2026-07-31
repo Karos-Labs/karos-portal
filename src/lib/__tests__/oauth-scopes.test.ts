@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { getRequestedScopes } from "@/lib/integrations/oauth";
+import { getRequestedScopes, googleBusinessProfileRequested } from "@/lib/integrations/oauth";
 
 const BUSINESS_MANAGE = "https://www.googleapis.com/auth/business.manage";
 
@@ -145,5 +147,50 @@ describe("no collateral scope drift on other providers", () => {
 
   it("returns an empty list for an unknown provider", () => {
     expect(getRequestedScopes("not_a_platform")).toEqual([]);
+  });
+});
+
+/* ── added on review: the card must not count what was never requested ───── */
+
+describe("the Google suite card counts only the services the consent asked for", () => {
+  const tab = readFileSync(
+    join(process.cwd(), "src/components/integrations-tab.tsx"),
+    "utf8",
+  ).replace(/\s+/g, " ");
+
+  it("derives its service list from what was offered, not the full set", () => {
+    // Business Profile is gated behind Google's approval, so a perfect connect
+    // would otherwise read "2 / 3 connected" and never reach the healthy badge
+    // — the card calling a success a partial failure.
+    expect(tab).toContain('s.id !== "google_business_profile" || businessProfileRequested');
+    expect(tab).toContain("const connectedCount = offered.filter");
+    expect(tab).toContain("const allConnected = connectedCount === offered.length");
+    expect(tab).toContain("{connectedCount} / {offered.length} connected");
+  });
+
+  it("takes the answer from the server rather than guessing in the browser", () => {
+    // The flag is a server env var; the card cannot read it, so it must arrive
+    // as a prop through every mount path (settings and onboarding both).
+    expect(tab).toContain("businessProfileRequested: boolean");
+    for (const file of [
+      "src/app/(app)/clients/[id]/settings/page.tsx",
+      "src/app/(onboarding)/onboarding/page.tsx",
+      "src/components/onboarding-wizard.tsx",
+      "src/components/onboarding-socials-step.tsx",
+    ]) {
+      expect(readFileSync(join(process.cwd(), file), "utf8")).toContain(
+        "googleBusinessProfileRequested",
+      );
+    }
+  });
+
+  it("reports availability from the same resolver the authorize URL uses", () => {
+    expect(googleBusinessProfileRequested()).toBe(false);
+    process.env.GOOGLE_BUSINESS_PROFILE_APPROVED = "1";
+    try {
+      expect(googleBusinessProfileRequested()).toBe(true);
+    } finally {
+      delete process.env.GOOGLE_BUSINESS_PROFILE_APPROVED;
+    }
   });
 });
