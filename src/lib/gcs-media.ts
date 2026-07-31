@@ -23,6 +23,13 @@ import { Storage } from "@google-cloud/storage";
 const UPLOAD_URL_TTL_MS = 15 * 60 * 1000;
 /** Matches the agent-service's own convention (agent-service/src/storage/gcs.ts). */
 export const READ_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * TTL for a URL minted per request and handed to one browser for one playback
+ * or download (`resolveAssetVideoUrl`, src/lib/asset-media.ts). Nothing stores
+ * it, so it only has to outlive the transfer it was minted for — GCS checks
+ * expiry when the request starts, not while it streams.
+ */
+export const PLAYBACK_URL_TTL_MS = 60 * 60 * 1000;
 
 export const ALLOWED_VIDEO_MIME_TYPES = ["video/mp4", "video/quicktime"];
 export const ALLOWED_VIDEO_EXTENSIONS = [".mp4", ".mov"];

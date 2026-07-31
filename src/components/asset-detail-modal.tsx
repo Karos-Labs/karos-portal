@@ -17,7 +17,13 @@ import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { publishAssetNowAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
-import { assetImages, assetLiMedia, assetVideos } from "@/lib/asset-images";
+import {
+  assetDownloadTargets,
+  assetImages,
+  assetLiMedia,
+  assetVideoSrc,
+  assetVideos,
+} from "@/lib/asset-images";
 import { templateForAsset } from "@/lib/post-chain";
 import type { Asset } from "@/lib/types";
 
@@ -52,23 +58,28 @@ function fmt(t: number): string {
   });
 }
 
-/** Native download action for an asset's photos — anchors to the shared download route
- *  (single image, or a zip when the asset carries a carousel). */
+/** Native download action for an asset's deliverables — anchors to the shared download
+ *  route (a photo, a zip when the asset carries a carousel, or a clip). Every target
+ *  comes from `assetDownloadTargets`, which also holds the locked-asset refusal, so a
+ *  video-only asset gets a control and the card cannot disagree with this modal. */
 export function AssetDownloadButtons({ asset, className }: { asset: Asset; className?: string }) {
-  if (asset.locked) return null;
-  const images = assetImages(asset);
-  if (images.length === 0) return null;
+  const targets = assetDownloadTargets(asset);
+  if (targets.length === 0) return null;
   return (
     <div className={className ?? "flex flex-wrap gap-1.5"}>
-      <a
-        href={`/api/assets/${asset.id}/download`}
-        download
-        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
-      >
-        <Icon name="Camera" className="h-3.5 w-3.5" />
-        <Icon name="Download" className="h-3 w-3" />
-        {images.length > 1 ? `Download all (${images.length})` : "Download"}
-      </a>
+      {targets.map((t) => (
+        <a
+          key={t.href}
+          href={t.href}
+          download
+          title={t.title}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+        >
+          <Icon name={t.icon} className="h-3.5 w-3.5" />
+          <Icon name="Download" className="h-3 w-3" />
+          {t.label}
+        </a>
+      ))}
     </div>
   );
 }
@@ -195,6 +206,9 @@ export function AssetDetailModal({
   // reachable via Download all below.
   const coverImageUrl = images.length > 0 ? images[0].url : null;
   const videos = assetVideos(asset);
+  // Whether this asset offers anything to download at all — same helper the
+  // buttons use, so the section and its contents cannot disagree.
+  const downloads = assetDownloadTargets(asset);
 
   return (
     <Modal
@@ -266,11 +280,14 @@ export function AssetDetailModal({
 
         {/* Video deliverables — podcast cuts, branded shorts, TikTok. Until
             this existed the clips were emailed by hand (QA F150); the caption
-            copy button below is the other half of "post it yourself". */}
-        {videos.map((v) => (
+            copy button below is the other half of "post it yourself". The src
+            is our own route, never the stored URL: a bulk-uploaded clip's
+            stored URL is a 7-day signed link that has usually expired by the
+            day the clip is shown. */}
+        {videos.map((v, i) => (
           <video
             key={v.url}
-            src={v.url}
+            src={assetVideoSrc(asset.id, i)}
             controls
             preload="metadata"
             {...(coverImageUrl ? { poster: coverImageUrl } : {})}
@@ -357,8 +374,10 @@ export function AssetDetailModal({
           </div>
         )}
 
-        {/* Downloads */}
-        {images.length > 0 && (
+        {/* Downloads — photos AND clips. Gating the section on photos was the
+            third place a video-only asset lost its download control, after the
+            button itself and the card's inline link. */}
+        {downloads.length > 0 && (
           <div className="border-t border-border pt-3">
             <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Download</p>
             <AssetDownloadButtons asset={asset} />

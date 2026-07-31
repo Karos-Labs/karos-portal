@@ -127,6 +127,79 @@ export function assetVideos(asset: Asset): AssetVideo[] {
   return out;
 }
 
+/**
+ * Playback source for a clip — ALWAYS our own route, never the URL that came
+ * out of the database.
+ *
+ * `asset.videoUrl` for a bulk-uploaded clip is a V4 signed GCS URL with a
+ * 7-day TTL, minted once at upload time and never re-signed (see
+ * api/assets/bulk-upload). `bulkScheduleClipsAction` then spreads a batch one
+ * clip per day across weeks, so most of a 30-clip batch is a dead link by the
+ * time its day arrives — the client got a player that never loaded. The route
+ * re-signs from the durable `meta.gcsPath` on every request, and for assets
+ * with no gcsPath (webhook clips re-hosted to Firebase Storage) it redirects to
+ * the stored URL unchanged. It also keeps raw signed bucket URLs out of the
+ * browser entirely.
+ */
+export function assetVideoSrc(assetId: string, index: number): string {
+  return `/api/assets/${assetId}/media?i=${index}`;
+}
+
+/** A download control to render for an asset: one per downloadable payload. */
+export type AssetDownloadTarget = {
+  kind: "image" | "video";
+  href: string;
+  /** Button text. */
+  label: string;
+  /** Tooltip — says what lands on disk. */
+  title: string;
+  /** Icon name for the media kind (src/components/icon.tsx). */
+  icon: "Camera" | "Video";
+};
+
+/**
+ * Every download an asset can offer, in one place, so the card and the detail
+ * modal cannot disagree about whether a deliverable is downloadable.
+ *
+ * Both mount sites used to gate the control on `assetImages(asset).length > 0`,
+ * which left a video-only asset — every bulk-uploaded clip — with no download
+ * anywhere in the product.
+ *
+ * Locked assets return nothing: a future-dated post is withheld from the client
+ * until its day, and the download route enforces the same rule server-side.
+ *
+ * Clips are offered one per request rather than bundled: a clip can be 2 GB and
+ * the zip path buffers whole files in memory.
+ */
+export function assetDownloadTargets(asset: Asset): AssetDownloadTarget[] {
+  if (asset.locked) return [];
+
+  const targets: AssetDownloadTarget[] = [];
+  const images = assetImages(asset);
+  if (images.length > 0) {
+    targets.push({
+      kind: "image",
+      href: `/api/assets/${asset.id}/download`,
+      label: images.length > 1 ? `Download all (${images.length})` : "Download",
+      title: images.length > 1 ? `Download all ${images.length} photos as a zip` : "Download photo",
+      icon: "Camera",
+    });
+  }
+
+  const videos = assetVideos(asset);
+  videos.forEach((_v, i) => {
+    targets.push({
+      kind: "video",
+      href: `/api/assets/${asset.id}/download?kind=video&i=${i}`,
+      label: videos.length > 1 ? `Download clip ${i + 1}` : "Download video",
+      title: videos.length > 1 ? `Download clip ${i + 1} of ${videos.length}` : "Download the video",
+      icon: "Video",
+    });
+  });
+
+  return targets;
+}
+
 /* ── LinkedIn reader media ───────────────────────────────────────────── */
 
 /** A media file offered to the LinkedIn per-draft reader. */
@@ -176,4 +249,10 @@ export function assetFileStem(title: string): string {
 export function imageExtFromUrl(url: string): string {
   const m = url.split("?")[0].match(/\.(png|jpe?g|webp|gif|avif)$/i);
   return m ? m[1].toLowerCase().replace("jpeg", "jpg") : "jpg";
+}
+
+/** Best-guess video extension from a URL, defaulting to mp4. */
+export function videoExtFromUrl(url: string): string {
+  const m = url.split("?")[0].match(/\.(mp4|webm|mov|m4v)$/i);
+  return m ? m[1].toLowerCase() : "mp4";
 }

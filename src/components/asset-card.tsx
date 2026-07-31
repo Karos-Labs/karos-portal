@@ -7,7 +7,13 @@ import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
-import { assetImages, assetLiMedia, assetVideos } from "@/lib/asset-images";
+import {
+  assetDownloadTargets,
+  assetImages,
+  assetLiMedia,
+  assetVideoSrc,
+  assetVideos,
+} from "@/lib/asset-images";
 import {
   updateAssetAction,
   approveAssetAction,
@@ -511,6 +517,9 @@ export function AssetCard({
   // clips carry ONLY this, no caption or photo, so it must count toward
   // hasPreview below or the card renders the empty "no preview" state).
   const videos = assetVideos(asset);
+  // Photos and clips are both downloadable; the shared helper also carries the
+  // locked-asset refusal, so this row cannot drift from the detail modal's.
+  const downloads = assetDownloadTargets(asset);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // When the webhook didn't write structured meta.slides, treat the recovered
@@ -805,10 +814,13 @@ export function AssetCard({
             </button>
           ) : videos.length > 0 ? (
             <div className="mt-2 space-y-2">
-              {videos.map((v) => (
+              {/* Played through our own route so the URL is signed per
+                  request — the one stored on the asset expires after 7 days
+                  and nothing re-signs it. */}
+              {videos.map((v, i) => (
                 <video
                   key={v.url}
-                  src={v.url}
+                  src={assetVideoSrc(asset.id, i)}
                   controls
                   preload="metadata"
                   className="max-h-96 w-full max-w-sm rounded-lg border border-border bg-black object-contain"
@@ -969,21 +981,21 @@ export function AssetCard({
               {open ? "Collapse" : "Expand"}
             </button>
             <span className="text-xs text-muted-2">· {relativeTime(asset.createdAt)}</span>
-            {galleryImages.length > 0 && (
+            {/* One control per downloadable payload — photos and clips both.
+                Gating this on photos alone left every bulk-uploaded clip with
+                no download button anywhere in the product. */}
+            {downloads.map((d) => (
               <a
-                href={`/api/assets/${asset.id}/download`}
+                key={d.href}
+                href={d.href}
                 download
                 className="inline-flex items-center gap-1 text-xs text-muted transition-colors hover:text-foreground"
-                title={
-                  galleryImages.length > 1
-                    ? `Download all ${galleryImages.length} photos as a zip`
-                    : "Download photo"
-                }
+                title={d.title}
               >
                 <Icon name="Download" className="h-3.5 w-3.5" />
-                {galleryImages.length > 1 ? `Download all (${galleryImages.length})` : "Download"}
+                {d.label}
               </a>
-            )}
+            ))}
             {asset.status === "draft" && asset.recommendedAt && (
               <span
                 className="inline-flex items-center gap-1 text-xs text-muted-2"

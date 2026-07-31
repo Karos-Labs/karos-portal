@@ -1,64 +1,101 @@
 import { NextResponse } from "next/server";
 import JSZip from "jszip";
-import { getCurrentUser, isStaff } from "@/lib/auth";
-import { getAsset } from "@/lib/data";
-import { assetImages, assetFileStem, imageExtFromUrl } from "@/lib/asset-images";
+import {
+  assetImages,
+  assetVideos,
+  assetFileStem,
+  imageExtFromUrl,
+  videoExtFromUrl,
+} from "@/lib/asset-images";
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
-import { isAssetUnlockedForClient } from "@/lib/post-chain";
+import { authorizeAssetMedia, resolveAssetVideoUrl } from "@/lib/asset-media";
+import { isMediaContentType } from "@/lib/media-type";
 
 export const runtime = "nodejs";
+/** A clip can be 2 GB. The body is streamed, but the transfer still needs time. */
+export const maxDuration = 300;
 
 /**
- * Download every image in an asset as a single file — a zip for a multi-photo
- * carousel, or the raw image for a single-photo post. The fetch happens
- * server-side, so it works regardless of the storage host's CORS policy (the
- * browser can't fetch firebasestorage URLs cross-origin, which is why the old
- * client-side download silently produced nothing).
+ * Download an asset's deliverable as a file — a zip for a multi-photo carousel,
+ * the raw image for a single-photo post, or the clip for a video deliverable
+ * (`?kind=video&i=N`). The fetch happens server-side, so it works regardless of
+ * the storage host's CORS policy (the browser can't fetch firebasestorage URLs
+ * cross-origin, which is why the old client-side download silently produced
+ * nothing).
+ *
+ * Video used to be missing entirely: this route read only `assetImages`, so a
+ * bulk-uploaded clip — which has no photo at all — answered "this asset has no
+ * images", and both download controls in the UI were gated on the same check,
+ * so a clip had no download button anywhere in the product.
+ *
+ * Nothing here writes an attachment it cannot vouch for. A dead storage link
+ * answers with an error document, not the media (GCS returns 403 and an XML
+ * `<Error>` body for an expired V4 signature), and a file like that saved under
+ * a .mp4 name is the "I downloaded it and it didn't open" report. Both the
+ * status and the content type are checked before any `Content-Disposition:
+ * attachment` is set.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await params;
-  const asset = await getAsset(id);
-  if (!asset) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // Staff see everything, a client only its own client's assets, and a locked
+  // (future-dated) post refuses for clients — shared with the playback route so
+  // the two cannot drift.
+  const access = await authorizeAssetMedia(id);
+  if (!access.ok) return access.response;
+  const asset = access.asset;
 
-  // Staff see everything; a client may only download its own client's assets.
-  if (!isStaff(user) && user.clientId !== asset.clientId) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  // Future-dated chain posts are withheld from clients until their day arrives
-  // (server-local midnight) — same gate as the library's redaction layer.
-  if (!isStaff(user) && !isAssetUnlockedForClient(asset, Date.now())) {
-    return NextResponse.json(
-      // Creation language (§4.1 item 1): "unlocks" tells the caller the file
-      // exists and is being withheld. This body reaches a client.
-      { error: "This post is created on its scheduled day. It'll be available here that morning." },
-      { status: 403 },
-    );
-  }
-
+  const query = new URL(req.url).searchParams;
   const images = assetImages(asset);
-  if (images.length === 0) {
-    return NextResponse.json({ error: "This asset has no images" }, { status: 404 });
-  }
-
+  const videos = assetVideos(asset);
   const stem = assetFileStem(asset.title || "post");
-  const fetchImage = (url: string) => {
+
+  const fetchMedia = (url: string) => {
     const headers = agentServiceFetchHeaders(url);
     return fetch(url, headers ? { headers } : undefined);
   };
 
+  // The clip controls ask for `kind=video`. A bare /download still serves
+  // photos when the asset has them, and falls through to the clip when it has
+  // none — which is every bulk-uploaded clip.
+  if (query.get("kind") === "video" || images.length === 0) {
+    if (videos.length === 0) {
+      return NextResponse.json({ error: "This asset has nothing to download" }, { status: 404 });
+    }
+
+    const asked = Number.parseInt(query.get("i") ?? "0", 10);
+    const index = Number.isInteger(asked) && asked > 0 ? asked : 0;
+    // Re-signed from meta.gcsPath per request: the URL stored on the asset is
+    // usually expired by the day the clip is shown.
+    const src = await resolveAssetVideoUrl(asset, index);
+    if (!src) {
+      return NextResponse.json({ error: "This asset has no video" }, { status: 404 });
+    }
+
+    const res = await fetchMedia(src);
+    if (!res.ok || !res.body || !isMediaContentType(res.headers.get("content-type"), "video")) {
+      return NextResponse.json({ error: "Could not fetch video" }, { status: 502 });
+    }
+
+    const length = res.headers.get("content-length");
+    const name = videos.length > 1 ? `${stem}-${index + 1}` : stem;
+    // Streamed, not buffered: a clip is far too large to hold in memory.
+    return new NextResponse(res.body, {
+      headers: {
+        "Content-Type": res.headers.get("content-type") ?? "video/mp4",
+        "Content-Disposition": `attachment; filename="${name}.${videoExtFromUrl(videos[index].url)}"`,
+        ...(length ? { "Content-Length": length } : {}),
+        "Cache-Control": "private, no-store",
+      },
+    });
+  }
+
   // Single photo → stream the raw image.
   if (images.length === 1) {
-    const res = await fetchImage(images[0].url);
-    if (!res.ok) {
+    const res = await fetchMedia(images[0].url);
+    if (!res.ok || !isMediaContentType(res.headers.get("content-type"), "image")) {
       return NextResponse.json({ error: "Could not fetch image" }, { status: 502 });
     }
     const bytes = new Uint8Array(await res.arrayBuffer());
@@ -76,8 +113,8 @@ export async function GET(
   const added = await Promise.all(
     images.map(async (img, i) => {
       try {
-        const res = await fetchImage(img.url);
-        if (!res.ok) return false;
+        const res = await fetchMedia(img.url);
+        if (!res.ok || !isMediaContentType(res.headers.get("content-type"), "image")) return false;
         zip.file(`${stem}-${i + 1}.${imageExtFromUrl(img.url)}`, await res.arrayBuffer());
         return true;
       } catch {
