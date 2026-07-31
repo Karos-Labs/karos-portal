@@ -93,10 +93,14 @@ describe("the tasks timeline hides failed runs from clients only", () => {
   });
 
   it("reads as the same decision the calendar already made", () => {
-    const calendar = source("src/app/(app)/calendar/calendar-body.tsx");
-    expect(calendar).toContain('.filter((j) => !(isClient && j.status === "failed"))');
-    expect(calendar).toContain("hide internal failures from clients");
-    expect(timelineJobs).toContain("hide internal failures from clients");
+    // Behaviour only, whitespace-normalised, and no assertion on the other
+    // file's COMMENTS: a comment is not behaviour, and this test is named for
+    // the tasks timeline — it must not fail because the calendar reworded a
+    // sentence or prettier rewrapped a filter it does not own.
+    const flat = (s: string) => s.replace(/\s+/g, " ");
+    const calendar = flat(source("src/app/(app)/calendar/calendar-body.tsx"));
+    expect(calendar).toContain('isClient && j.status === "failed"');
+    expect(flat(timelineJobs)).toContain('isClientViewer && job.status === "failed"');
   });
 });
 

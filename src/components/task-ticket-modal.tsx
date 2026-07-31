@@ -360,12 +360,21 @@ function AiPlanSection({
   function generate() {
     setPlanError(null);
     startTransition(async () => {
-      const result = await generateTaskPlanAction(taskId, clientId);
-      if (result.plan) {
-        setPlan(result.plan);
-        setExpanded(true);
-      } else {
-        setPlanError(result.error ?? "Could not generate the execution guide");
+      // The try/catch is the other half of the same defect: refusals come back
+      // as `{ plan: "", error }`, but a model or provider failure REJECTS
+      // (task-actions.ts logs and rethrows). An un-caught rejection here escapes
+      // the transition to an error boundary and leaves exactly the dead button
+      // this fix exists to remove.
+      try {
+        const result = await generateTaskPlanAction(taskId, clientId);
+        if (result.plan) {
+          setPlan(result.plan);
+          setExpanded(true);
+        } else {
+          setPlanError(result.error ?? "Could not generate the execution guide.");
+        }
+      } catch {
+        setPlanError("Could not generate the execution guide right now. Try again in a moment.");
       }
     });
   }

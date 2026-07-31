@@ -43,18 +43,23 @@ export async function requireTaskAccess(
   taskId: string,
   clientId: string,
 ): Promise<{ ok: true; user: AppUser; task: ClientTask } | { ok: false; error: string }> {
+  // These strings are RETURNED, not thrown, so several client surfaces render
+  // them verbatim in an error banner — they are client copy and are written as
+  // sentences, not as HTTP words. The status vocabulary stays in the logs.
   const user = await getCurrentUser();
-  if (!user || user.disabled) return { ok: false, error: "Unauthorized" };
+  if (!user || user.disabled) {
+    return { ok: false, error: "Your session has expired. Sign in again to continue." };
+  }
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   if (!isStaff && (user.role !== "CLIENT_USER" || user.clientId !== clientId)) {
-    return { ok: false, error: "Forbidden" };
+    return { ok: false, error: "You do not have access to this task." };
   }
 
   const task = await getClientTask(taskId);
   // Same response for "missing" and "belongs to another client" — don't leak
   // which foreign task ids exist.
-  if (!task || task.clientId !== clientId) return { ok: false, error: "Task not found" };
+  if (!task || task.clientId !== clientId) return { ok: false, error: "This task no longer exists." };
 
   return { ok: true, user, task };
 }
