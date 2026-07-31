@@ -17,6 +17,7 @@ import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { publishAssetNowAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { isAssetPublishable } from "@/lib/asset-visibility";
 import {
   assetDownloadTargets,
   assetImages,
@@ -461,17 +462,15 @@ function PublishNowRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(asset.publishError ?? null);
 
-  // Same gate as the asset card: a connected platform must be able to carry this
-  // asset type. Placeholders are excluded — a roadmap entry was never meant to
-  // go out, and "Karos never posts it" is the tier's own promise.
+  // Literally the same gate as the asset card now: a connected platform must be
+  // able to carry this asset type, and isAssetPublishable — the one shared rule,
+  // also enforced by publishAssetNowAction — must accept the asset. This row
+  // excluded placeholders by hand but still offered the button on an unapproved
+  // draft, which is how "correct here, wrong on the card" hid the real hole.
   const compatibleConnected = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).filter((p) =>
     connectedPlatforms.includes(p),
   );
-  const eligible =
-    canPublish &&
-    compatibleConnected.length > 0 &&
-    asset.status !== "published" &&
-    asset.publishMode !== "placeholder";
+  const eligible = canPublish && compatibleConnected.length > 0 && isAssetPublishable(asset);
   if (!eligible) return null;
 
   const target = asset.scheduledPlatform ?? compatibleConnected[0];

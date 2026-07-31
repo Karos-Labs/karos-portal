@@ -23,6 +23,7 @@ import {
   markAssetPostedAction,
 } from "@/lib/actions";
 import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS, PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
+import { isAssetPublishable } from "@/lib/asset-visibility";
 import { AgentMark, SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { parseXDrafts } from "@/lib/x-drafts";
@@ -480,12 +481,18 @@ export function AssetCard({
   // Surfaces failures from approve / save / unschedule so those actions don't fail silently.
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // Manual push available when a connected platform can carry this asset type.
+  // Manual push available when a connected platform can carry this asset type
+  // AND the asset itself may go out at all. That second half is
+  // isAssetPublishable — the shared rule the modal and publishAssetNowAction ask
+  // too. This gate used to be "not already published" and nothing else, so the
+  // one control that really posts to a live account was offered on unapproved
+  // drafts and on calendar-only placeholders, both of which canMarkPosted just
+  // below has always refused for the weaker by-hand attestation.
   const compatibleConnected = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).filter((p) =>
     (connectedPlatforms ?? []).includes(p),
   );
   const canPublishNow =
-    canApprove && compatibleConnected.length > 0 && asset.status !== "published";
+    canApprove && compatibleConnected.length > 0 && isAssetPublishable(asset);
 
   // Marking a by-hand post live needs no integration and no staff role — it's a
   // statement about what the user already did, and for a client posting from

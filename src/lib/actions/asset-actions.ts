@@ -28,7 +28,12 @@ import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity, sameLocalDay } from "@/lib/scheduling";
 import { chainFamilyFor, isAssetUnlockedForClient } from "@/lib/post-chain";
-import { isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
+import {
+  type AssetPublishBlock,
+  assetPublishBlock,
+  isLaunchDeliverable,
+  isTestRunAsset,
+} from "@/lib/asset-visibility";
 import { syncSlotPostedForAsset } from "@/lib/client-agent-slots";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
 import type { Asset, PublishMode } from "@/lib/types";
@@ -463,9 +468,29 @@ export async function unscheduleAssetAction(id: string): Promise<void> {
 }
 
 /**
+ * What we tell the user when the shared publish rule refuses. Rendered verbatim
+ * next to the button, so: sentence case, no internal vocabulary, and each one
+ * names the way out. Keyed by reason so the message can't drift from the rule.
+ */
+const PUBLISH_REFUSAL: Record<AssetPublishBlock, string> = {
+  published: "Already published",
+  placeholder: "This is a calendar-only placeholder — Karos never posts it.",
+  unapproved: "Only an approved, scheduled, or delivered post can be published — approve it first.",
+};
+
+/**
  * Manual push (tier "manual"): publish an asset to a platform right now through
  * our API integration, regardless of the auto-publish toggle or any schedule.
  * Returns a result object instead of throwing so the card can render the error inline.
+ *
+ * THE gate. This is the only control in the portal that posts to a client's live
+ * social account, and it used to refuse nothing but an already-published asset —
+ * so a placeholder ("Karos never posts it") and an unapproved draft both went
+ * out for real if anything called it, and two of the three surfaces offering the
+ * button did exactly that. Eligibility is now `assetPublishBlock`, the same rule
+ * the card and the detail modal ask, because a hidden button is not a guard: a
+ * server action is a public endpoint (see markAssetPostedAction, which learned
+ * this for the far cheaper by-hand attestation).
  */
 export async function publishAssetNowAction(
   id: string,
@@ -474,7 +499,8 @@ export async function publishAssetNowAction(
   await requireStaff();
   const asset = await getAsset(id);
   if (!asset) throw new Error("Asset not found");
-  if (asset.status === "published") return { ok: false, error: "Already published" };
+  const block = assetPublishBlock(asset);
+  if (block) return { ok: false, error: PUBLISH_REFUSAL[block] };
 
   const integrations = await listClientIntegrations(asset.clientId);
   const valid = integrations.filter((i) => integrationIsUsable(i));
@@ -484,18 +510,18 @@ export async function publishAssetNowAction(
     inferPlatform(asset.type, valid.map((i) => i.platform));
 
   if (!target) {
-    return { ok: false, error: "No compatible platform connected - connect one in the Integrations tab" };
+    return { ok: false, error: "No compatible platform connected — connect one in the Integrations tab" };
   }
   const integration = valid.find((i) => i.platform === target);
   if (!integration) {
-    return { ok: false, error: `No active ${target} integration - connect or re-connect it first` };
+    return { ok: false, error: `No active ${target} integration — connect or re-connect it first` };
   }
 
   // Atomically claim so a concurrent auto-cron tick (or a double-clicked button)
   // can't push this same asset in parallel and post it twice.
   const claimed = await claimAssetForPublish(id);
   if (!claimed) {
-    return { ok: false, error: "This asset is already being published - give it a moment." };
+    return { ok: false, error: "This asset is already being published — give it a moment." };
   }
 
   let publishResult: { postId: string | null };

@@ -130,6 +130,56 @@ export function isInClientArchive(
 }
 
 /**
+ * Why an asset may NOT be pushed live, or null when it may.
+ *
+ * "Publish Now" is the one control that actually posts to a client's live
+ * account through our integration, and it had grown three hand-written gates
+ * that gave three different answers: the asset card required nothing but
+ * "not already published" (so it offered the button on unapproved drafts AND on
+ * calendar-only placeholders), the detail modal excluded placeholders but still
+ * offered drafts, and the server action refused only the already-published case
+ * — and the server is the only gate that counts, so anything reaching it went
+ * out. This is that rule, once:
+ *
+ * 1. **Already published** — nothing to push, and pushing again duplicates the post.
+ * 2. **Placeholder** — a calendar-only roadmap entry. "Karos never posts it" is
+ *    the tier's own promise to the client; there is nothing to post.
+ * 3. **Not approved** — only approved / scheduled / delivered work has been
+ *    signed off. Publishing a draft posts unreviewed copy to a real account,
+ *    which is strictly worse than the same hole in `markAssetPostedAction`
+ *    (where a client merely mis-attests) or in `canMarkPosted` — both of which
+ *    already refuse exactly this set.
+ *
+ * The per-surface conditions stay with their surfaces: a compatible connected
+ * platform and the staff capability check are facts about the VIEWER and the
+ * environment, not about the asset.
+ */
+export type AssetPublishBlock = "published" | "placeholder" | "unapproved";
+
+export function assetPublishBlock(
+  a: Pick<Asset, "status" | "publishMode">,
+): AssetPublishBlock | null {
+  if (a.status === "published") return "published";
+  if (a.publishMode === "placeholder") return "placeholder";
+  if (a.status !== "approved" && a.status !== "scheduled" && a.status !== "delivered") {
+    return "unapproved";
+  }
+  return null;
+}
+
+/**
+ * Can this asset be pushed live at all? THE predicate behind "Publish Now" —
+ * asked by the asset card, the detail modal's PublishNowRow and
+ * `publishAssetNowAction`, so the three cannot drift again. Says nothing about
+ * WHERE it would go: platform compatibility and integration health are the
+ * caller's business (see PUBLISHABLE_PLATFORMS, which deliberately has no
+ * Reddit entry at all — Reddit is draft-only by contract).
+ */
+export function isAssetPublishable(a: Pick<Asset, "status" | "publishMode">): boolean {
+  return assetPublishBlock(a) === null;
+}
+
+/**
  * Whitelist-redacted placeholder for a future-dated asset. Built by
  * CONSTRUCTION (never spread-and-delete) so any field added to Asset later is
  * excluded by default. Deliberately excluded: the original title/content/meta,
