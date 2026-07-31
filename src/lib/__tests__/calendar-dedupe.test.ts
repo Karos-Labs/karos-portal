@@ -6,11 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   assetGcsPath,
   calendarDayKey,
+  calendarPlacedAt,
   compareSurvivors,
   dedupeCalendarAssets,
   findDuplicateGroups,
   normalizeDedupeTitle,
   pickSurvivor,
+  showsOnCalendar,
   type CalendarDedupeAsset,
 } from "@/lib/calendar-dedupe";
 
@@ -29,10 +31,15 @@ import {
  *      production, so the calendar collapses duplicate cells itself. That rule
  *      is a pure function, so it is CALLED, not asserted from source.
  *
+ * The second half is deliberately NARROW, and most of the cases below exist to
+ * keep it that way: hiding a client's real post is a worse defect than showing
+ * a duplicate of it. So a shared object path only collapses when the copies
+ * agree about where they sit, a published copy can never lose its square to an
+ * undated stray, and the title/day guess never reaches the render path at all.
+ *
  * Firestore is not writable by this campaign (the credentials in .env.local
- * point at production), so the cleanup script ships unrun — only its two
- * safety properties, dry-run-by-default and the require.main guard, are pinned
- * from source.
+ * point at production), so the cleanup script ships unrun — only its safety
+ * properties are pinned from source.
  */
 
 const REPO = path.resolve(__dirname, "../..", "..");
@@ -175,15 +182,27 @@ describe("dedupeCalendarAssets collapses duplicate documents", () => {
     expect(out.map((a) => a.id)).toEqual(["a"]);
   });
 
-  it("collapses a shared gcsPath even when title, day and status all differ", () => {
-    // The gcsPath IS the identity: the same object in the bucket cannot be two
-    // different posts, however the two documents were subsequently edited.
+  it("collapses a shared gcsPath on one day even when the titles differ", () => {
+    // Within one day the gcsPath IS the identity: the same object cannot be two
+    // posts on the same square, however the two documents were later edited.
     const out = dedupeCalendarAssets([
       asset({ id: "a", title: "Cut 3", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING }),
-      asset({ id: "b", title: "Renamed by hand", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING + 3 * DAY }),
+      asset({ id: "b", title: "Renamed by hand", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_EVENING }),
     ]);
 
-    expect(out).toHaveLength(1);
+    expect(out.map((a) => a.id)).toEqual(["a"]);
+  });
+
+  it("collapses a dated copy with its undated strays", () => {
+    // The replay shape the bulk-upload hole actually produced: the original was
+    // scheduled, the replayed documents never were.
+    const out = dedupeCalendarAssets([
+      asset({ id: "scheduled", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING, createdAt: 5_000 }),
+      asset({ id: "stray-1", meta: { gcsPath: GCS_PATH }, createdAt: 6_000 }),
+      asset({ id: "stray-2", meta: { gcsPath: GCS_PATH }, createdAt: 7_000 }),
+    ]);
+
+    expect(out.map((a) => a.id)).toEqual(["scheduled"]);
   });
 
   it("never merges across clients, even on an identical path", () => {
@@ -195,13 +214,53 @@ describe("dedupeCalendarAssets collapses duplicate documents", () => {
     expect(out.map((a) => a.id)).toEqual(["a", "b"]);
   });
 
-  it("collapses same client + same day + same title when neither has a gcsPath", () => {
+  it("does NOT collapse one clip deliberately scheduled for two different days", () => {
+    // The bounce that sent this rule back. Reusing a podcast cut is ordinary
+    // work here: two dated copies on two days are two real posts, and hiding
+    // one of them is worse than the duplicate this module exists to remove.
+    const out = dedupeCalendarAssets([
+      asset({ id: "mon", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING }),
+      asset({ id: "thu", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING + 3 * DAY, createdAt: 2_000 }),
+    ]);
+
+    expect(out.map((a) => a.id)).toEqual(["mon", "thu"]);
+  });
+
+  it("still collapses the replays WITHIN each day when a clip is reused", () => {
+    // Three documents, two days: the pair sharing Thursday is a replay of one
+    // post, the Monday copy is a different post. One cell each, not one cell.
+    const out = dedupeCalendarAssets([
+      asset({ id: "mon", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING }),
+      asset({ id: "thu", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING + 3 * DAY, createdAt: 2_000 }),
+      asset({ id: "thu-replay", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING + 3 * DAY, createdAt: 9_000 }),
+    ]);
+
+    expect(out.map((a) => a.id)).toEqual(["mon", "thu"]);
+  });
+
+  it("leaves an undated stray alone when the dated copies disagree about the day", () => {
+    // There is no honest way to say which of the two days the stray duplicates,
+    // so it is not attributed to either. It has no scheduledAt or publishedAt,
+    // so it draws no cell anyway — this only keeps it out of a wrong merge.
+    const out = dedupeCalendarAssets([
+      asset({ id: "mon", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING }),
+      asset({ id: "thu", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING + 3 * DAY }),
+      asset({ id: "stray", meta: { gcsPath: GCS_PATH }, createdAt: 9_000 }),
+    ]);
+
+    expect(out.map((a) => a.id)).toEqual(["mon", "thu", "stray"]);
+  });
+
+  it("does NOT collapse two posts that share a day and a title on the render path", () => {
+    // The title/day guess is reporting-only. A templated content plan routinely
+    // produces two posts on one day whose titles normalise alike, and a guess
+    // may not take one of them off a client's screen.
     const out = dedupeCalendarAssets([
       asset({ id: "a", title: "Founder story", scheduledAt: JUL30_MORNING }),
       asset({ id: "b", title: "Founder story", scheduledAt: JUL30_EVENING, createdAt: 5_000 }),
     ]);
 
-    expect(out.map((a) => a.id)).toEqual(["a"]);
+    expect(out.map((a) => a.id)).toEqual(["a", "b"]);
   });
 
   it("does NOT collapse two posts that merely share a day", () => {
@@ -223,8 +282,8 @@ describe("dedupeCalendarAssets collapses duplicate documents", () => {
   });
 
   it("does not pool undated or untitled assets with each other", () => {
-    // Two blanks are not a duplicate pair — an asset the heuristic cannot
-    // identify passes straight through, which is the safe direction.
+    // Two blanks are not a duplicate pair — an asset with no shared object path
+    // passes straight through, which is the safe direction.
     const out = dedupeCalendarAssets([
       asset({ id: "a", title: "", scheduledAt: JUL30_MORNING }),
       asset({ id: "b", title: "", scheduledAt: JUL30_MORNING }),
@@ -253,13 +312,14 @@ describe("dedupeCalendarAssets collapses duplicate documents", () => {
   it("keeps the input's order and does not shuffle survivors", () => {
     const out = dedupeCalendarAssets([
       asset({ id: "first", title: "A", scheduledAt: JUL30_MORNING }),
-      asset({ id: "dupe-of-third", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING, createdAt: 9_000 }),
+      asset({ id: "loser", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING, createdAt: 9_000 }),
       asset({ id: "third", title: "C", scheduledAt: JUL30_MORNING }),
       asset({ id: "keeper", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING, createdAt: 1 }),
     ]);
 
-    // The group takes the position of its FIRST member, whichever copy wins.
-    expect(out.map((a) => a.id)).toEqual(["first", "keeper", "third"]);
+    // Dropping a copy is a filter, not a reshuffle: every survivor holds the
+    // position it came in at, so the rest of the list cannot move under it.
+    expect(out.map((a) => a.id)).toEqual(["first", "third", "keeper"]);
   });
 
   it("returns the same answer however the duplicates are ordered", () => {
@@ -278,6 +338,67 @@ describe("the survivor rule is deterministic", () => {
 
     expect(pickSurvivor([undated, dated]).id).toBe("dated");
     expect(compareSurvivors(dated, undated)).toBeLessThan(0);
+  });
+
+  it("keeps a PUBLISHED copy over an undated stray", () => {
+    // The other bounce. A published post carries publishedAt and usually no
+    // scheduledAt, so a rule that read scheduledAt alone ranked it BELOW a
+    // stray and took already-published client work off the calendar. Placement
+    // is read the way the calendar reads it, and eligibility outranks it.
+    const published = asset({
+      id: "published",
+      status: "published",
+      publishedAt: JUL30_MORNING,
+      createdAt: 9_000,
+    });
+    const stray = asset({ id: "stray", status: "draft", createdAt: 1 });
+
+    expect(pickSurvivor([stray, published]).id).toBe("published");
+    expect(compareSurvivors(published, stray)).toBeLessThan(0);
+    expect(calendarPlacedAt(published)).toBe(JUL30_MORNING);
+    expect(calendarPlacedAt(stray)).toBeNull();
+  });
+
+  it("keeps the published copy when the two are grouped for real", () => {
+    // End to end through the render path, not just the comparator: the stray is
+    // undated, so the pair agrees about placement and does collapse — onto the
+    // copy the client has already been shown.
+    const out = dedupeCalendarAssets([
+      asset({ id: "stray", status: "draft", meta: { gcsPath: GCS_PATH }, createdAt: 1 }),
+      asset({
+        id: "published",
+        status: "published",
+        publishedAt: JUL30_MORNING,
+        meta: { gcsPath: GCS_PATH },
+        createdAt: 9_000,
+      }),
+    ]);
+
+    expect(out.map((a) => a.id)).toEqual(["published"]);
+  });
+
+  it("never lets a copy the calendar would not draw suppress one it would", () => {
+    // Rung 0. Both are placed and the stray is older, so every later rung would
+    // hand it the square — but a draft with a date the calendar declines to
+    // draw must not be the reason a scheduled post disappears.
+    const invisible = asset({
+      id: "invisible",
+      status: "delivered",
+      publishError: undefined,
+      scheduledAt: undefined,
+      publishedAt: undefined,
+      createdAt: 1,
+    });
+    const shown = asset({
+      id: "shown",
+      status: "scheduled",
+      scheduledAt: JUL30_MORNING,
+      createdAt: 9_000,
+    });
+
+    expect(showsOnCalendar(invisible)).toBe(false);
+    expect(showsOnCalendar(shown)).toBe(true);
+    expect(pickSurvivor([invisible, shown]).id).toBe("shown");
   });
 
   it("then prefers the oldest createdAt", () => {
@@ -304,19 +425,50 @@ describe("the survivor rule is deterministic", () => {
 });
 
 describe("findDuplicateGroups separates the two confidence levels", () => {
-  it("labels a shared-path group and a title/day group differently", () => {
-    const groups = findDuplicateGroups([
-      asset({ id: "a", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING }),
-      asset({ id: "b", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING }),
-      asset({ id: "c", title: "Founder story", scheduledAt: JUL30_MORNING }),
-      asset({ id: "d", title: "Founder story", scheduledAt: JUL30_EVENING }),
-    ]);
+  const mixed = () => [
+    asset({ id: "a", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING }),
+    asset({ id: "b", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING }),
+    asset({ id: "c", title: "Founder story", scheduledAt: JUL30_MORNING }),
+    asset({ id: "d", title: "Founder story", scheduledAt: JUL30_EVENING }),
+  ];
 
-    expect(groups.map((g) => g.kind).sort()).toEqual(["gcsPath", "titleDay"]);
+  it("labels a shared-path group and a title/day group differently", () => {
+    const groups = findDuplicateGroups(mixed());
+
     const exact = groups.find((g) => g.kind === "gcsPath")!;
     expect(exact.label).toBe(GCS_PATH);
     expect(exact.members.map((m) => m.id)).toEqual(["a", "b"]);
     expect(exact.survivor.id).toBe("a");
+  });
+
+  it("returns the high-confidence groups first, as the docstring promises", () => {
+    expect(findDuplicateGroups(mixed()).map((g) => g.kind)).toEqual(["gcsPath", "titleDay"]);
+  });
+
+  it("still reports the title/day guess the render path refuses to act on", () => {
+    // The one place the heuristic is allowed to exist: a line printed for a
+    // member of staff to read. `dedupeCalendarAssets` ignores the same pair.
+    const rows = mixed();
+    const guess = findDuplicateGroups(rows).find((g) => g.kind === "titleDay")!;
+
+    expect(guess.members.map((m) => m.id)).toEqual(["c", "d"]);
+    expect(dedupeCalendarAssets(rows).map((a) => a.id)).toContain("c");
+    expect(dedupeCalendarAssets(rows).map((a) => a.id)).toContain("d");
+  });
+
+  it("names the day when one clip's copies are split across two of them", () => {
+    const groups = findDuplicateGroups([
+      asset({ id: "mon-1", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING }),
+      asset({ id: "mon-2", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_EVENING }),
+      asset({ id: "thu", meta: { gcsPath: GCS_PATH }, scheduledAt: JUL30_MORNING + 3 * DAY }),
+    ]);
+
+    // Only the same-day pair is a group at all, and its label says which day,
+    // so the operator reading the plan can see the clip is reused on purpose.
+    expect(groups).toHaveLength(1);
+    expect(groups[0].members.map((m) => m.id)).toEqual(["mon-1", "mon-2"]);
+    expect(groups[0].label).toContain(GCS_PATH);
+    expect(groups[0].label).toContain("2026-07-30");
   });
 
   it("reports nothing when there are no duplicates", () => {
@@ -354,19 +506,51 @@ describe("the grouping keys themselves", () => {
 
 /* ══ 3. wiring and script safety ═══════════════════════════════════════ */
 
-describe("the calendar payload is deduped server-side", () => {
-  const body = source(CALENDAR_BODY);
+/**
+ * Source assertions below are whitespace-normalised and about BEHAVIOUR only —
+ * never a comment, never a line break. A wiring test that fails because
+ * prettier rewrapped an argument list is noise, and noise is how a real failure
+ * gets waved through.
+ */
+const flat = (s: string) => s.replace(/\s+/g, " ");
 
-  it("collapses duplicates where the posts payload is assembled, not at render", () => {
+describe("the dedupe module stays reviewable", () => {
+  it("holds no NUL bytes, so git diffs it as text and plain grep can find it", () => {
+    // It shipped with `\0` key separators, which made git call the whole file
+    // "Binary files differ" — unreviewable in a diff, invisible to grep. The
+    // repo already carries one file like that (src/lib/seo-geo.ts) and the
+    // handover has a section about the false "zero matches" it causes.
+    const raw = source("src/lib/calendar-dedupe.ts");
+
+    expect(raw).not.toContain("\0");
+    expect(raw).toContain("bucketBy");
+  });
+});
+
+describe("the calendar payload is deduped server-side", () => {
+  const src = source(CALENDAR_BODY);
+  const body = flat(src);
+
+  it("collapses duplicates where the payload is assembled, not at render", () => {
     expect(body).toContain('import { dedupeCalendarAssets } from "@/lib/calendar-dedupe"');
-    expect(body).toMatch(/const postSurvivorIds = new Set\(\s*dedupeCalendarAssets\(/);
-    expect(body).toMatch(/const posts: CalendarPost\[\] = assets\s*\.filter\(\(a\) => postSurvivorIds\.has\(a\.id\)\)/);
+    expect(src.match(/dedupeCalendarAssets\(/g)).toHaveLength(1);
   });
 
-  it("groups on the pre-redaction assets, so redacted placeholders cannot collapse into each other", () => {
-    // redactLockedAsset rewrites a locked post's title to the template name and
-    // strips meta to {locked}. Keyed off those, several genuinely different
-    // upcoming posts on one day would share a title and merge.
+  it("hands the deduped list to every downstream reader, not just the posts map", () => {
+    // The run cards ("drafted 8 posts") and the runway badge read the same
+    // assets. On the un-deduped list a past-run card printed a deliverable
+    // twice and the badge over-counted the days the calendar is filled through.
+    // Pinned as an invariant rather than three call sites: nothing may read the
+    // pre-dedupe list after the deduped one is derived from it.
+    expect(body).toContain("const assets = visibleAssets.filter((a) => survivorIds.has(a.id))");
+    expect(src.lastIndexOf("visibleAssets")).toBeLessThan(src.indexOf("const assetsByJob"));
+    expect(body).toContain("computeRunway(assets,");
+    expect(body).toContain("const posts: CalendarPost[] = assets .map(");
+  });
+
+  it("groups on the pre-redaction assets, so a locked placeholder keeps its real path", () => {
+    // redactLockedAsset strips a locked post's meta to {locked}, taking the
+    // gcsPath the whole decision rests on with it.
     expect(body).toContain("const rawById = new Map(scopedAssets.map((a) => [a.id, a]))");
     expect(body).toContain("rawById.get(a.id) ?? a");
   });
@@ -379,9 +563,10 @@ describe("the calendar payload is deduped server-side", () => {
 
 describe("the cleanup script ships safe and unrun", () => {
   const script = source(CLEANUP_SCRIPT);
+  const flatScript = flat(script);
 
   it("is dry-run by default and only writes behind --apply", () => {
-    expect(script).toContain('const apply = process.argv.includes("--apply")');
+    expect(flatScript).toContain('const apply = process.argv.includes("--apply")');
     expect(script).toMatch(/DRY RUN — nothing is written/);
     // Every Firestore mutation in the file is behind the apply gate: the only
     // delete call sits after the `if (!apply) { … return; }` early exit.
@@ -391,8 +576,29 @@ describe("the cleanup script ships safe and unrun", () => {
     expect(script.match(/batch\.delete\(/g)).toHaveLength(1);
   });
 
+  it("refuses --apply without --client, before it even opens a connection", () => {
+    // A fleet-wide unattended delete is not a thing this script can be asked to
+    // do — one client per invocation, the fence refresh-apply.ts already holds.
+    const refusal = script.indexOf("if (apply && !clientArg)");
+    expect(refusal).toBeGreaterThan(-1);
+    expect(refusal).toBeLessThan(script.indexOf("getFirestore()"));
+    expect(script.indexOf("batch.delete(")).toBeGreaterThan(refusal);
+    expect(flatScript).toContain("REFUSING TO RUN");
+  });
+
+  it("cross-checks the plan against the named client before deleting", () => {
+    expect(flatScript).toContain("const foreign = losers.filter((l) => l.clientId !== clientArg)");
+    expect(script.indexOf("const foreign")).toBeLessThan(script.indexOf("batch.delete("));
+  });
+
+  it("skips assets with no clientId instead of pooling them under one blank id", () => {
+    expect(flatScript).toContain("const orphans = rows.filter((r) => !r.clientId.trim())");
+    expect(flatScript).toContain("findDuplicateGroups(scannable)");
+    expect(flatScript).toContain("Skipped ${orphans.length} asset(s) with no clientId");
+  });
+
   it("never deletes anything from the lower-confidence heuristic group", () => {
-    expect(script).toMatch(/losers = exact\.flatMap/);
+    expect(flatScript).toContain("losers = exact.flatMap");
     expect(script).toContain("report only");
   });
 

@@ -191,9 +191,36 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // calendar cannot expose their content, images, or download controls before
   // the scheduled day. Staff continue to receive the full assets for review.
   const scopedAssets = inScope(assetsRaw).filter((a) => !isClient || a.status !== "draft");
-  const assets = isClient
+  const visibleAssets = isClient
     ? getClientLibraryAssets(scopedAssets, { forClient: true })
     : scopedAssets;
+
+  // Duplicate DOCUMENTS become duplicate CELLS, because the posts map below is
+  // 1:1 and run-calendar just buckets what it gets by day. The bulk-upload
+  // replay hole that minted them is closed on the write side now, but the
+  // documents it already wrote are still in Firestore and no cleanup has run —
+  // so the calendar defends itself here (lib/calendar-dedupe). Nothing is
+  // deleted and nothing is counted: the client simply sees one cell per post,
+  // with no hint that a second copy existed.
+  //
+  // Deduped ONCE, here, and every reader downstream takes the result. The run
+  // cards ("drafted 8 posts") and the runway badge read the same assets, so a
+  // list still holding both copies would print a deliverable twice on a past-run
+  // card and over-count the days the calendar is filled through.
+  //
+  // Grouped on the UNREDACTED assets, then rendered from the visible copies. A
+  // client's future-dated posts reach `visibleAssets` as placeholders whose meta
+  // is stripped to `{locked}`, so keying off those would compare two blanks —
+  // the gcsPath the whole decision rests on would be gone. Mapping each visible
+  // asset back to its own pre-redaction twin keys the decision on the real path
+  // and the real dates. Only the survivors' ids come back out; no redacted field
+  // is bypassed. For staff `visibleAssets` IS `scopedAssets`, so this is a
+  // straight pass.
+  const rawById = new Map(scopedAssets.map((a) => [a.id, a]));
+  const survivorIds = new Set(
+    dedupeCalendarAssets(visibleAssets.map((a) => rawById.get(a.id) ?? a)).map((a) => a.id),
+  );
+  const assets = visibleAssets.filter((a) => survivorIds.has(a.id));
 
   // Agent lookups: by id for scheduled runs, by name for past jobs (jobs store
   // the agent's name, not its id). These stay JOIN keys — what a card PRINTS
@@ -396,31 +423,8 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // through the RUN cards above, which is where the resolver belongs. Give a
   // post an agent line later and it takes the same call.
   //
-  // Duplicate DOCUMENTS become duplicate CELLS, because this map is 1:1 and
-  // run-calendar just buckets what it gets by day. The bulk-upload replay hole
-  // that minted them is closed on the write side now, but the documents it
-  // already wrote are still in Firestore and no cleanup has run — so the
-  // calendar defends itself here (lib/calendar-dedupe). Nothing is deleted and
-  // nothing is counted: the client simply sees one cell per post, with no hint
-  // that a second copy existed.
-  //
-  // Grouped on the UNREDACTED assets, then rendered from the visible copies.
-  // A client's future-dated posts reach `assets` as placeholders whose title is
-  // rewritten to the template name and whose meta is stripped to `{locked}`, so
-  // keying off those would compare two blanks: the gcsPath would be gone and
-  // several genuinely different posts on one day would share the title
-  // "Upcoming post" and collapse into each other. Mapping each visible asset
-  // back to its own pre-redaction twin keys the decision on the real gcsPath
-  // and the real title. Only the survivors' ids come back out — no redacted
-  // field is bypassed. For staff `assets` IS `scopedAssets`, so this is a
-  // straight pass.
-  const rawById = new Map(scopedAssets.map((a) => [a.id, a]));
-  const postSurvivorIds = new Set(
-    dedupeCalendarAssets(assets.map((a) => rawById.get(a.id) ?? a)).map((a) => a.id),
-  );
-
+  // `assets` is already one document per post — see the dedupe above.
   const posts: CalendarPost[] = assets
-    .filter((a) => postSurvivorIds.has(a.id))
     .map((a): CalendarPost | null => {
       const kind = postKind(a);
       if (!kind) return null;

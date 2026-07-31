@@ -178,6 +178,17 @@ export async function POST(req: Request) {
     // Idempotent on the object path: a replay of this step returns the asset
     // that already exists for it rather than minting a second one. The caller
     // cannot tell a replay from the original success — same shape, same id.
+    //
+    // RESIDUAL RACE, stated rather than implied away: this is a read then a
+    // write, not a transaction, so two completions genuinely in flight at the
+    // same instant can both read "nothing registered" and both create. Closing
+    // it needs either a transaction or a deterministic document id derived from
+    // the object path, and the narrow lookup a transaction would want does not
+    // exist — a query by `meta.gcsPath` needs a Firestore composite index, which
+    // this branch cannot add. What this DOES close is the sequential replay: the
+    // double click, the retry after a timeout, the resumed upload — which is the
+    // shape that actually wrote the duplicate documents now sitting in
+    // production.
     const already = (await registeredClipIds(body.clientId)).get(gcsPath);
     if (already) return NextResponse.json({ id: already });
 

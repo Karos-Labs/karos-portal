@@ -4,29 +4,33 @@
  *
  * Two signals, deliberately kept apart:
  *
- *   HIGH CONFIDENCE — assets of one client sharing a `meta.gcsPath`. Two
- *     documents pointing at the same object in the bucket ARE the same clip.
- *     These were minted by the bulk-upload "complete" step, which registered a
- *     clip unconditionally, so a replayed call (flaky network, double click,
- *     resumed upload) wrote a second document. That step is idempotent now;
- *     this cleans up what it already wrote.
+ *   HIGH CONFIDENCE — assets of one client sharing a `meta.gcsPath` WHOSE
+ *     PLACEMENT AGREES: every copy on one day, or undated. These were minted by
+ *     the bulk-upload "complete" step, which registered a clip unconditionally,
+ *     so a replayed call (flaky network, double click, resumed upload) wrote a
+ *     second document. That step is idempotent now; this cleans up what it
+ *     already wrote. A clip deliberately reused on two different days is NOT a
+ *     duplicate and is never grouped — see lib/calendar-dedupe.
  *
  *   HEURISTIC — assets of one client sharing a day and a title, with no
  *     gcsPath at all: the older duplicates, from before bulk upload existed.
  *     A title collision is a guess, not a fact, so this section is REPORT
- *     ONLY. `--apply` never touches it. Read it and delete by hand.
+ *     ONLY. `--apply` never touches it, and the calendar never acts on it
+ *     either. Read it and delete by hand.
  *
  * The keep/drop rule is imported from src/lib/calendar-dedupe — the same
  * function the calendar itself uses to collapse duplicate cells — so this tool
  * and the screen can never disagree about which copy is the real one.
  *
- *   npx tsx scripts/find-duplicate-assets.ts            # dry run — prints the plan
- *   npx tsx scripts/find-duplicate-assets.ts --apply    # deletes the gcsPath losers
- *   npx tsx scripts/find-duplicate-assets.ts --client=<id>   # scope to one client
+ *   npx tsx scripts/find-duplicate-assets.ts                          # dry run, every client
+ *   npx tsx scripts/find-duplicate-assets.ts --client=<id>            # dry run, one client
+ *   npx tsx scripts/find-duplicate-assets.ts --client=<id> --apply    # delete that client's losers
  *
- * DRY RUN IS THE DEFAULT ON PURPOSE. The credentials in .env.local point at
- * production Firestore, and this is the only code path in the portal that
- * deletes an asset. Read the printed plan first, then re-run with --apply.
+ * DRY RUN IS THE DEFAULT ON PURPOSE, and `--apply` REQUIRES `--client`. The
+ * credentials in .env.local point at production Firestore and this is the only
+ * code path in the portal that deletes an asset, so a fleet-wide unattended
+ * delete is not something it can be asked to do — one client per invocation,
+ * the same rule scripts/refresh-apply.ts holds. Read the printed plan first.
  */
 
 import { readFileSync } from "node:fs";
@@ -56,7 +60,6 @@ import { getFirestore } from "firebase-admin/firestore";
 import { findDuplicateGroups, type CalendarDedupeAsset, type DuplicateGroup } from "../src/lib/calendar-dedupe";
 
 type AssetRow = CalendarDedupeAsset & {
-  status?: string;
   _ref: FirebaseFirestore.DocumentReference;
 };
 
@@ -94,7 +97,7 @@ function printGroup(group: DuplicateGroup<AssetRow>, deletable: boolean) {
     const verdict = keep ? "KEEP" : deletable ? "drop" : "dup ";
     console.log(
       `    ${verdict} ${m.id}  created ${stamp(m.createdAt)}  scheduled ${stamp(m.scheduledAt)}  ` +
-        `${m.status ?? "—"}  "${m.title}"`,
+        `published ${stamp(m.publishedAt)}  ${m.status ?? "—"}  "${m.title}"`,
     );
   }
 }
@@ -113,10 +116,26 @@ async function main() {
   const apply = process.argv.includes("--apply");
   const clientArg = process.argv.find((a) => a.startsWith("--client="))?.slice("--client=".length);
 
+  // --client is mandatory for --apply, and single. Deleting documents across
+  // every client in the fleet in one unattended pass is not a capability this
+  // script should have: the operator has to name the client whose plan they
+  // just read. Same fence scripts/refresh-apply.ts holds on its write path.
+  if (apply && !clientArg) {
+    console.error(
+      "REFUSING TO RUN — --apply requires --client=<id>.\n\n" +
+        "  npx tsx scripts/find-duplicate-assets.ts --client=<id>            # read the plan first\n" +
+        "  npx tsx scripts/find-duplicate-assets.ts --client=<id> --apply    # then delete\n\n" +
+        "One client per invocation. Run the dry run with no --client to see which clients " +
+        "have duplicates at all, then apply to them one at a time.",
+    );
+    process.exit(1);
+    return;
+  }
+
   console.log(
     apply
-      ? "APPLYING duplicate-asset cleanup — deletes non-survivors in gcsPath groups only.\n"
-      : "DRY RUN — nothing is written. Pass --apply to delete the gcsPath duplicates.\n",
+      ? `APPLYING duplicate-asset cleanup for client ${clientArg} — deletes non-survivors in gcsPath groups only.\n`
+      : "DRY RUN — nothing is written. Pass --client=<id> --apply to delete that client's gcsPath duplicates.\n",
   );
 
   initAdmin();
@@ -137,23 +156,51 @@ async function main() {
       id: d.id,
       clientId: (data.clientId as string) ?? "",
       title: (data.title as string) ?? "",
+      status: data.status as AssetRow["status"],
       scheduledAt: data.scheduledAt as number | undefined,
       publishedAt: data.publishedAt as number | undefined,
+      publishMode: data.publishMode as string | undefined,
+      publishError: data.publishError as string | undefined,
       createdAt: (data.createdAt as number) ?? 0,
       meta: data.meta as Record<string, unknown> | undefined,
-      status: data.status as string | undefined,
       _ref: d.ref,
     };
   });
 
-  console.log(`Scanned ${rows.length} asset(s)${clientArg ? ` for client ${clientArg}` : " across all clients"}.`);
+  // A document with no clientId belongs to nobody, and defaulting it to "" would
+  // pool every such row into one synthetic client — where two unrelated orphans
+  // sharing a path or a title would be reported as each other's duplicate. Drop
+  // them from the scan and say so, rather than inventing a client for them.
+  const orphans = rows.filter((r) => !r.clientId.trim());
+  const scannable = rows.filter((r) => r.clientId.trim());
 
-  const all = findDuplicateGroups(rows);
+  console.log(
+    `Scanned ${scannable.length} asset(s)${clientArg ? ` for client ${clientArg}` : " across all clients"}.`,
+  );
+  if (orphans.length) {
+    console.log(
+      `Skipped ${orphans.length} asset(s) with no clientId — they cannot be attributed to a client, ` +
+        "so they are never grouped or deleted. Ids: " +
+        orphans
+          .slice(0, 20)
+          .map((o) => o.id)
+          .join(", ") +
+        (orphans.length > 20 ? ", …" : ""),
+    );
+  }
+
+  const all = findDuplicateGroups(scannable);
   const exact = all.filter((g) => g.kind === "gcsPath");
   const heuristic = all.filter((g) => g.kind === "titleDay");
 
   // ── High confidence ──────────────────────────────────────────────────
-  console.log(`\n=== SAME gcsPath — high confidence (${exact.length} group(s)) ===`);
+  console.log(
+    `\n=== SAME gcsPath, agreeing placement — high confidence (${exact.length} group(s)) ===`,
+  );
+  console.log(
+    "  One clip, written more than once. A clip reused on two DIFFERENT days is two real posts " +
+      "and is not grouped here at all.",
+  );
   if (exact.length === 0) console.log("  none");
   for (const [clientId, groups] of byClient(exact)) {
     console.log(`\n[${clientNames.get(clientId) ?? clientId}]`);
@@ -164,7 +211,10 @@ async function main() {
   console.log(
     `\n=== SAME client + day + title, no gcsPath — LOWER CONFIDENCE, report only (${heuristic.length} group(s)) ===`,
   );
-  console.log("  Never deleted by --apply. A title collision is a guess; review these by hand.");
+  console.log(
+    "  Never deleted by --apply, and never hidden from the calendar either — a title collision is " +
+      "a guess, and the ordinary shape of a templated content plan. Review these by hand.",
+  );
   if (heuristic.length === 0) console.log("  none");
   for (const [clientId, groups] of byClient(heuristic)) {
     console.log(`\n[${clientNames.get(clientId) ?? clientId}]`);
@@ -180,11 +230,27 @@ async function main() {
   );
 
   if (!apply) {
-    console.log("Dry run — nothing changed. Re-run with --apply to delete the high-confidence duplicates.");
+    console.log(
+      "Dry run — nothing changed. Re-run with --client=<id> --apply to delete that client's " +
+        "high-confidence duplicates.",
+    );
     return;
   }
   if (losers.length === 0) {
     console.log("Nothing to delete.");
+    return;
+  }
+
+  // Belt and braces on the --client fence above: the query was already scoped,
+  // so a row belonging to anyone else means the scope did not hold. Delete
+  // nothing rather than reason about why.
+  const foreign = losers.filter((l) => l.clientId !== clientArg);
+  if (foreign.length) {
+    console.error(
+      `\nREFUSING TO DELETE — ${foreign.length} document(s) in the plan do not belong to client ` +
+        `${clientArg}: ${foreign.map((f) => `${f.id} (${f.clientId})`).join(", ")}.`,
+    );
+    process.exit(1);
     return;
   }
 
