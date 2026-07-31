@@ -1,17 +1,16 @@
 name: Promote to Production
 
-# Triggers automatically after every successful prep deploy, then pauses for
-# a human approval before touching production. The approval gate lives on the
-# "production" GitHub Environment — configure required reviewers at:
-#   Settings → Environments → production → Deployment protection rules
+# Manual only. Never triggered by a push or by prep succeeding — the only way
+# this runs is a human clicking "Run workflow" in the Actions tab (or
+# `gh workflow run promote-production.yml`). Leave the sha input blank to
+# promote whatever is currently on the tip of main (the same commit that was
+# just auto-deployed to prep); pass a specific sha to promote an older,
+# already-verified prep build instead.
 #
-# For an emergency manual promote, use workflow_dispatch (SHA defaults to
-# the latest commit on main if left blank).
+# Does NOT rebuild from source: copies the exact image already built and
+# deployed to prep into production's own Artifact Registry, then deploys
+# that image. What you approved in prep is byte-for-byte what ships.
 on:
-  workflow_run:
-    workflows: ["Deploy to Prep"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
     inputs:
       sha:
@@ -25,17 +24,14 @@ permissions:
 jobs:
   promote:
     name: Promote prep image → production
-    # For workflow_run: only proceed when prep actually succeeded.
-    # For workflow_dispatch: always proceed (manual caller decides).
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    environment: production   # ← approval gate; add required reviewers in repo settings
+    environment: production
 
     steps:
       - name: Resolve SHA
         id: sha
         run: |
-          SHA="${{ inputs.sha || github.event.workflow_run.head_sha || github.sha }}"
+          SHA="${{ inputs.sha || github.sha }}"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Promoting SHA: $SHA"
 
