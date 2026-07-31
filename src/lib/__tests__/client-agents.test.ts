@@ -519,15 +519,15 @@ describe("lastRunFailedAgentIds", () => {
     }) as never;
 
   it("flags an agent whose most recent run failed", () => {
-    expect([...lastRunFailedAgentIds([job({ customAgentId: "ca-ig" })], byName)]).toEqual(["ca-ig"]);
+    expect([...lastRunFailedAgentIds([job({ customAgentId: "ca-ig" })], byName, { staff: false })]).toEqual(["ca-ig"]);
   });
 
   it("clears the flag when a later run succeeded — order-independently", () => {
     const older = job({ customAgentId: "ca-ig", status: "failed", createdAt: 1_000 });
     const newer = job({ customAgentId: "ca-ig", status: "delivered", createdAt: 2_000 });
     // Both input orders, because listJobs' sort is not this helper's business.
-    expect(lastRunFailedAgentIds([older, newer], byName).size).toBe(0);
-    expect(lastRunFailedAgentIds([newer, older], byName).size).toBe(0);
+    expect(lastRunFailedAgentIds([older, newer], byName, { staff: false }).size).toBe(0);
+    expect(lastRunFailedAgentIds([newer, older], byName, { staff: false }).size).toBe(0);
     // And the reverse: a success followed by a failure IS flagged.
     expect(
       lastRunFailedAgentIds(
@@ -536,6 +536,7 @@ describe("lastRunFailedAgentIds", () => {
           job({ customAgentId: "ca-ig", status: "failed", createdAt: 2_000 }),
         ],
         byName,
+        { staff: false },
       ).size,
     ).toBe(1);
   });
@@ -543,7 +544,7 @@ describe("lastRunFailedAgentIds", () => {
   it("does not treat a run in flight as a failure, or as a fix", () => {
     // No verdict yet: a queued/running job alone flags nothing…
     for (const status of ["queued", "running"]) {
-      expect(lastRunFailedAgentIds([job({ customAgentId: "ca-ig", status })], byName).size).toBe(0);
+      expect(lastRunFailedAgentIds([job({ customAgentId: "ca-ig", status })], byName, { staff: false }).size).toBe(0);
     }
     // …and a retry now in flight does not clear the failure it is retrying.
     expect(
@@ -553,12 +554,13 @@ describe("lastRunFailedAgentIds", () => {
           job({ customAgentId: "ca-ig", status: "running", createdAt: 2_000 }),
         ],
         byName,
+        { staff: false },
       ).size,
     ).toBe(1);
   });
 
   it("ignores a cancelled run — a human stopping a run is not a verdict", () => {
-    expect(lastRunFailedAgentIds([job({ customAgentId: "ca-ig", status: "cancelled" })], byName).size).toBe(0);
+    expect(lastRunFailedAgentIds([job({ customAgentId: "ca-ig", status: "cancelled" })], byName, { staff: false }).size).toBe(0);
     expect(
       lastRunFailedAgentIds(
         [
@@ -566,6 +568,7 @@ describe("lastRunFailedAgentIds", () => {
           job({ customAgentId: "ca-ig", status: "cancelled", createdAt: 2_000 }),
         ],
         byName,
+        { staff: false },
       ).size,
     ).toBe(1);
   });
@@ -579,9 +582,25 @@ describe("lastRunFailedAgentIds", () => {
             job({ customAgentId: "ca-ig", status, createdAt: 2_000 }),
           ],
           byName,
+          { staff: false },
         ).size,
       ).toBe(0);
     }
+  });
+
+  it("does not let a staff-only run move a client's badge", () => {
+    // A staff member testing an agent, or a launch run, is invisible to the
+    // client's run list (client-agent-rows filters both) — so neither may put
+    // "Needs attention" on the client's card, pointing at a failure they can
+    // neither see nor have caused. Staff, who CAN see those runs, still do.
+    for (const runType of ["launch", "test"] as const) {
+      const staffOnly = [job({ customAgentId: "ca-ig", status: "failed", runType })];
+      expect(lastRunFailedAgentIds(staffOnly, byName, { staff: false }).size).toBe(0);
+      expect(lastRunFailedAgentIds(staffOnly, byName, { staff: true }).has("ca-ig")).toBe(true);
+    }
+    // A client's own failed run still counts, for both.
+    const clientRun = [job({ customAgentId: "ca-ig", status: "failed", runType: "scheduled" })];
+    expect(lastRunFailedAgentIds(clientRun, byName, { staff: false }).has("ca-ig")).toBe(true);
   });
 
   it("keeps the same job scope and name fallback as its sibling", () => {
@@ -590,12 +609,13 @@ describe("lastRunFailedAgentIds", () => {
       lastRunFailedAgentIds(
         [job({ customAgentId: "ca-ig", external: { taskType: "social_post" } })],
         byName,
+        { staff: false },
       ).size,
     ).toBe(0);
     // Runs fired before customAgentId existed still attribute by name…
-    expect([...lastRunFailedAgentIds([job({})], byName)]).toEqual(["ca-ig"]);
+    expect([...lastRunFailedAgentIds([job({})], byName, { staff: false })]).toEqual(["ca-ig"]);
     // …and what cannot be attributed is dropped rather than guessed at.
-    expect(lastRunFailedAgentIds([job({ agentName: "Someone Else" })], byName).size).toBe(0);
+    expect(lastRunFailedAgentIds([job({ agentName: "Someone Else" })], byName, { staff: false }).size).toBe(0);
   });
 
   it("answers per agent, not per client", () => {
@@ -610,6 +630,7 @@ describe("lastRunFailedAgentIds", () => {
           job({ customAgentId: "ca-x", agentName: "X Agent", status: "delivered" }),
         ],
         twoAgents,
+        { staff: false },
       ),
     ]).toEqual(["ca-ig"]);
   });

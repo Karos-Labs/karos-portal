@@ -472,12 +472,24 @@ export function deliveredAgentIds(
  * the order the jobs happened to arrive in.
  */
 export function lastRunFailedAgentIds(
-  jobs: Pick<Job, "status" | "external" | "customAgentId" | "agentName" | "createdAt">[],
+  jobs: Pick<Job, "status" | "external" | "customAgentId" | "agentName" | "createdAt" | "runType">[],
   agentIdByName: Map<string, string>,
+  /**
+   * Staff see every run; a client sees neither launch runs nor test runs, so
+   * neither may move a client's badge. Without this a staff member testing an
+   * agent would put "Needs attention" on the client's card, pointing at a run
+   * the client cannot see and did not cause — the badge crying wolf, which is
+   * worse than the silence it replaced. Same predicate as the run list uses
+   * (client-agent-rows.ts, `staff || (runType !== "launch" && !== "test")`);
+   * the two must agree or the card and the list behind it tell different
+   * stories.
+   */
+  opts: { staff: boolean },
 ): Set<string> {
   const latest = new Map<string, { at: number; failed: boolean }>();
   for (const job of jobs) {
     if (job.external?.taskType !== "custom") continue;
+    if (!opts.staff && (job.runType === "launch" || job.runType === "test")) continue;
     const failed = job.status === "failed";
     // Everything that is neither a landing nor a failure — queued, running,
     // cancelled — is not a verdict and does not take part in the comparison.

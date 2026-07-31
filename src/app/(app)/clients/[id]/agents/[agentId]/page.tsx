@@ -276,7 +276,7 @@ export default async function ClientAgentDetailPage({
     // re-derived from `agentRuns` below: that list is staff-only and capped at
     // eight rows, so a client's page would answer this differently — or not at
     // all — from the card that opened it.
-    lastRunFailed: lastRunFailedAgentIds(jobs, agentIdByName).has(agent.id),
+    lastRunFailed: lastRunFailedAgentIds(jobs, agentIdByName, { staff: isStaff }).has(agent.id),
     now,
   });
   const blurb = clientAgentBlurb({

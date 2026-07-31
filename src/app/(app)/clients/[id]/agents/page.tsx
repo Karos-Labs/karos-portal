@@ -89,7 +89,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // FAILED. A schedule refusal cannot see that — it only records a fire the
     // scheduler turned away before a job existed — so without this a green
     // "Live" badge sits above a run history whose last row says Failed.
-    const failedAgentIds = lastRunFailedAgentIds(jobs, agentIdByName);
+    const failedAgentIds = lastRunFailedAgentIds(jobs, agentIdByName, { staff: false });
     const agents = allAgents
       .filter(
         (agent) =>
@@ -310,7 +310,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   const staffDeliveredAgentIds = deliveredAgentIds(jobs, staffAgentIdByName);
   // Same failed-last-run read the client branch makes, for the same reason: the
   // two rosters must not disagree about whether an agent needs someone.
-  const staffFailedAgentIds = lastRunFailedAgentIds(jobs, staffAgentIdByName);
+  const staffFailedAgentIds = lastRunFailedAgentIds(jobs, staffAgentIdByName, { staff: true });
   // The clock the refusal window is measured against — resolved once for the
   // whole roster so every card ages a refusal from the same instant.
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
