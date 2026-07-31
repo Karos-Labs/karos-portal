@@ -265,26 +265,9 @@ export default async function ClientAgentDetailPage({
   // delivery was two months ago would be "Not set up yet" on this page and
   // "Runs on request" on the card that opened it.
   const agentIdByName = new Map([[agent.name, agent.id]]);
-  const hasDelivered = deliveredAgentIds(jobs, agentIdByName).has(agent.id);
-  const status = rosterStatus({
-    launchState: umbrella?.launchState ?? null,
-    scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
-    scheduleRefusalAt: schedule?.lastErrorAt ?? null,
-    scheduleActive: schedule?.status === "active",
-    hasDelivered,
-    // Read through the SAME helper the roster uses (lastRunFailedAgentIds), not
-    // re-derived from `agentRuns` below: that list is staff-only and capped at
-    // eight rows, so a client's page would answer this differently — or not at
-    // all — from the card that opened it.
-    lastRunFailed: lastRunFailedAgentIds(jobs, agentIdByName, { staff: isStaff }).has(agent.id),
-    now,
-  });
-  const blurb = clientAgentBlurb({
-    key: agent.key,
-    name: agent.name,
-    clientBlurb: agent.clientBlurb ?? null,
-  });
-
+  // Deliberately narrower than the reconciliation below: a job-only join cannot
+  // see a lab-imported asset, which has no job at all.
+  const hasDeliveredByJob = deliveredAgentIds(jobs, agentIdByName).has(agent.id);
   // ── What this agent has already delivered (§7.3 identity) ──
   // The attribution join, the client's delivered-work-only filter and the
   // delivery stamp all moved to agent-detail-archetypes.ts when the second and
@@ -302,6 +285,34 @@ export default async function ClientAgentDetailPage({
     umbrellas,
     viewerIsClient,
     now,
+  });
+
+  // The strip and the list below it must answer "has this agent produced?" the
+  // same way. `deliveredAgentIds` is a job-only join, so a lab-imported asset —
+  // which has no job at all — is invisible to it: before this, an agent whose
+  // whole history was lab imports listed months of work under a strip reading
+  // "Not set up yet". `produced` is the richer answer and has already been
+  // through the client's visibility filter, so a client is never told work
+  // exists that they cannot see.
+  const hasDelivered = produced.length > 0 || hasDeliveredByJob;
+
+  const status = rosterStatus({
+    launchState: umbrella?.launchState ?? null,
+    scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
+    scheduleRefusalAt: schedule?.lastErrorAt ?? null,
+    scheduleActive: schedule?.status === "active",
+    hasDelivered,
+    // Read through the SAME helper the roster uses (lastRunFailedAgentIds), not
+    // re-derived from `agentRuns` below: that list is staff-only and capped at
+    // eight rows, so a client's page would answer this differently — or not at
+    // all — from the card that opened it.
+    lastRunFailed: lastRunFailedAgentIds(jobs, agentIdByName, { staff: isStaff }).has(agent.id),
+    now,
+  });
+  const blurb = clientAgentBlurb({
+    key: agent.key,
+    name: agent.name,
+    clientBlurb: agent.clientBlurb ?? null,
   });
 
   // ── WHICH PAGE SHAPE (CD-I1) ──

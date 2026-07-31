@@ -364,6 +364,39 @@ describe("agentProducedAssets", () => {
       expect(linked.map((a) => a.id)).toEqual(["linked"]);
     });
   });
+
+  it("stays exact when one agent's slug is a strict PREFIX of another's", () => {
+    // The instagram / instagram-tiktok pair above is a weak guard: it survives
+    // prefix and containment matching too, so it cannot catch the loosening it
+    // exists to prevent. This pair can: "instagram-agent" is a strict prefix of
+    // "instagram-agent-pro", so `startsWith` or `includes` in either direction
+    // would unify them and file one agent's entire history under the other.
+    // Only equality keeps them apart.
+    const base = { id: "ca-base", name: "Instagram Agent", key: "karos-instagram-agent" };
+    const pro = { id: "ca-pro", name: "Instagram Agent Pro", key: "karos-instagram-agent-pro" };
+    const lab = (id: string, folder: string): Asset =>
+      makeAsset({
+        id,
+        jobId: null,
+        agentId: null,
+        meta: { source: "lab-import", labRun: `${folder}/run-1#post-1`, agentFolder: folder },
+      });
+    const assets = [lab("base-post", "instagram-agent"), lab("pro-post", "instagram-agent-pro")];
+    const run = (agent: { id: string; name: string; key: string }) =>
+      agentProducedAssets({
+        assets,
+        jobs: [],
+        agent,
+        umbrella: null,
+        umbrellas: [],
+        viewerIsClient: false,
+        now: NOW,
+      }).map((a) => a.id);
+
+    expect(run(base)).toEqual(["base-post"]);
+    expect(run(pro)).toEqual(["pro-post"]);
+  });
+
 });
 
 describe("deliverableStamp", () => {
