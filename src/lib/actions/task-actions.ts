@@ -232,6 +232,21 @@ export async function previewTaskRunAction(
   const blocked = await clientTaskRunRefusal({ user, clientId, task });
   if (blocked) return { ok: false, error: blocked };
 
+  // The queue cap too, for the same reason: `updateTaskStatusAction` enforces it
+  // on a completed -> in_progress move (a re-opened Done card is a net new
+  // active slot), so quoting a price the run would then refuse asks the client
+  // to consent to a charge that cannot happen. Same wording as the run's own
+  // refusal so the two cannot read as different problems.
+  if (task.status === "completed") {
+    const capacity = await getTaskBoardCapacity(clientId);
+    if (capacity.activeCount >= MAX_ACTIVE_TASKS) {
+      return {
+        ok: false,
+        error: `The Karos AI queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
+      };
+    }
+  }
+
   return { ok: true, credits: await plannedTaskExecutionCost(task), billable: true };
 }
 

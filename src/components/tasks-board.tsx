@@ -786,15 +786,30 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
         commitStatusChange(task, "in_progress");
         return;
       }
-      setRunPrompt({ taskId: task.id, credits: res.credits ?? 0 });
+      // A billable run whose price did not come back must NOT fall through to a
+      // zero: "Run & charge 0 credits" over a real charge is consent to the
+      // wrong amount, which is worse than refusing to quote.
+      if (typeof res.credits !== "number") {
+        setExecError("Could not check what this run costs — try again in a moment.");
+        return;
+      }
+      setRunPrompt({ taskId: task.id, credits: res.credits });
     });
   }
 
   function confirmTaskRun() {
     if (!runPrompt) return;
     const task = localTasks.find((t) => t.id === runPrompt.taskId);
+    // Clear FIRST, so a second press during the transition cannot commit twice:
+    // the charge sits behind an atomic claim server-side, but a UI that lets a
+    // client press "charge me" twice is not something to leave to that.
     setRunPrompt(null);
-    if (!task) return;
+    if (!task) {
+      // The panel outlived its card (a refresh archived or deleted it). Say so
+      // rather than silently doing nothing — the client pressed a charge button.
+      setExecError("That task is no longer on your board — nothing was charged.");
+      return;
+    }
     commitStatusChange(task, "in_progress");
   }
 

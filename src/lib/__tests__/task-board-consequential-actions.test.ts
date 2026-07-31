@@ -280,9 +280,30 @@ describe("a billable run is price-gated; a free status move is not", () => {
   it("prices the run server-side rather than computing credits in the browser", () => {
     const ask = functionBody(board, "function askToRunTask(");
     expect(ask).toContain("previewTaskRunAction(task.id, task.clientId)");
-    expect(flat(ask)).toContain('setRunPrompt({ taskId: task.id, credits: res.credits ?? 0 });');
+    // The figure shown must be the one the server returned — asserted as the
+    // guarantee rather than one spelling of the assignment, so a refactor that
+    // keeps the guarantee does not fail here.
+    expect(flat(ask)).toMatch(/setRunPrompt\(\{\s*taskId: task\.id,\s*credits: res\.credits[,\s}]/);
     // Nothing is committed on the asking pass except when there is no charge.
     expect(ask).not.toContain("updateTaskStatusAction");
+  });
+
+  it("refuses to quote rather than defaulting a missing price to zero", () => {
+    // "Run & charge 0 credits" over a real charge is consent to the wrong
+    // amount — worse than declining to quote at all.
+    const ask = flat(functionBody(board, "function askToRunTask("));
+    expect(ask).toContain('typeof res.credits !== "number"');
+    expect(ask).not.toContain("res.credits ?? 0");
+  });
+
+  it("cannot be confirmed twice, and says so if the card has gone", () => {
+    const confirm = flat(functionBody(board, "function confirmTaskRun("));
+    // The panel is cleared BEFORE the commit, so a second press during the
+    // transition cannot charge again.
+    expect(confirm.indexOf("setRunPrompt(null)")).toBeLessThan(
+      confirm.indexOf('commitStatusChange(task, "in_progress")'),
+    );
+    expect(confirm).toContain("nothing was charged");
   });
 
   it("only charges from the confirm handler", () => {
