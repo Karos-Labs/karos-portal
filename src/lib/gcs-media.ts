@@ -2,6 +2,8 @@ import "server-only";
 
 import { Storage } from "@google-cloud/storage";
 
+import { dispositionFilename } from "@/lib/media-type";
+
 /**
  * Signed-URL access to a dedicated GCS bucket for large pre-generated media
  * (podcast-clip video, etc.) — deliberately separate from the Firebase
@@ -138,23 +140,6 @@ export async function createReadSignedUrl(gcsPath: string, ttlMs = READ_URL_TTL_
     expires: Date.now() + ttlMs,
   });
   return url;
-}
-
-/**
- * Filename safe to sit inside a quoted `Content-Disposition` parameter. Callers
- * pass `assetFileStem` output, which is already `[a-z0-9-]`, but this URL is
- * signed and handed to a third party — nothing that can close the quote or
- * break the header gets in.
- */
-/**
- * The only escaping between a caller-supplied name and the quoted
- * `response-content-disposition` parameter inside a signed URL. Exported so it
- * is asserted by CALLING it on adversarial input rather than by trusting the
- * shape of a mock.
- */
-export function dispositionFilename(filename: string): string {
-  const cleaned = filename.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return cleaned.slice(0, 120) || "download";
 }
 
 /**
