@@ -198,6 +198,43 @@ export async function updateTaskStatusAction(
   return { ok: true };
 }
 
+/**
+ * Read-only price + billability preview of ONE task run, so the client is told
+ * what pressing Run (or dragging a card into In Progress) costs BEFORE it
+ * charges — the same announce-then-confirm shape
+ * previewPendingTasksBatchAction already gives the batch runner. Nothing is
+ * claimed, charged or run here.
+ *
+ * `billable` is the server's own isBillableClientActor verdict and is the only
+ * honest source for it: an admin in "View as Client" carries role CLIENT_USER
+ * in the browser, so a UI-side role test would put a price confirmation in
+ * front of a session that is never charged. false ⇒ this move costs the client
+ * nothing and needs no confirmation.
+ *
+ * The figure comes from plannedTaskExecutionCost — the exact function
+ * updateTaskStatusAction charges with — so the price quoted is the price taken.
+ */
+export async function previewTaskRunAction(
+  id: string,
+  clientId: string,
+): Promise<{ ok: boolean; credits?: number; billable?: boolean; error?: string }> {
+  const access = await requireTaskAccess(id, clientId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { user, task } = access;
+
+  // Only the karos_managed → In Progress move triggers an agent and a charge.
+  // Moving client-owned work costs nothing, and staff runs are agency overhead.
+  const charges = isBillableClientActor(user) && inferOwnerEngine(task) === "karos_managed";
+  if (!charges) return { ok: true, credits: 0, billable: false };
+
+  // The §2 refusal the run itself would give, surfaced instead of a price:
+  // quoting credits for a run that will be refused is worse than refusing now.
+  const blocked = await clientTaskRunRefusal({ user, clientId, task });
+  if (blocked) return { ok: false, error: blocked };
+
+  return { ok: true, credits: await plannedTaskExecutionCost(task), billable: true };
+}
+
 /** Create a task manually from the Tasks page or client page. */
 export async function createTaskAction(input: {
   clientId: string;

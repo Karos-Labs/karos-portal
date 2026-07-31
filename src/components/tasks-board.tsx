@@ -24,6 +24,7 @@ import { cn, relativeTime } from "@/lib/utils";
 import {
   deleteTaskAction,
   previewPendingTasksBatchAction,
+  previewTaskRunAction,
   runPendingTasksBatchAction,
   updateTaskStatusAction,
 } from "@/lib/actions";
@@ -213,6 +214,10 @@ function TaskCard({
   dragHandle,
   canDelete,
   onDelete,
+  runPrompt,
+  pricing,
+  onConfirmRun,
+  onCancelRun,
 }: {
   task: BoardTask;
   showClientName?: boolean;
@@ -222,6 +227,12 @@ function TaskCard({
   dragHandle?: { attributes: DraggableAttributes; listeners: SyntheticListenerMap | undefined };
   canDelete: boolean;
   onDelete: () => void;
+  /** Set once the server has priced this card's run — the credits to confirm. */
+  runPrompt: { credits: number } | null;
+  /** The price lookup for this card is in flight. */
+  pricing: boolean;
+  onConfirmRun: () => void;
+  onCancelRun: () => void;
 }) {
   const priority = PRIORITY_META[task.priority] ?? PRIORITY_META.low;
   const source = SOURCE_META[task.source] ?? SOURCE_META.manual;
@@ -229,6 +240,11 @@ function TaskCard({
   const isExecuting = task.metadata?.executing === true;
   const hasError = Boolean(task.metadata?.executionError);
   const owner = inferOwner(task);
+  // Two-step confirm for this row's destructive control, the shape
+  // scheduled-runs.tsx uses for a scheduled-run delete: the trash icon arms the
+  // question, the question names the task, and `onDelete` (⇒ deleteTaskAction)
+  // is unreachable until "Yes, delete it".
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   return (
     <article
@@ -326,6 +342,71 @@ function TaskCard({
         <span className="ml-auto shrink-0 whitespace-nowrap">{relativeTime(task.updatedAt || task.createdAt)}</span>
       </div>
 
+      {/* Both confirms render OUTSIDE the hover-only action row below, on
+          purpose: a confirmation that vanishes when the pointer leaves the card
+          is not a confirmation, and the run confirm can also be raised by a drag
+          that ends nowhere near this card. */}
+      {confirmingDelete && (
+        <div
+          className="mt-2 rounded-md border border-danger/35 bg-danger/10 px-2 py-1.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="line-clamp-3 text-[11px] leading-relaxed text-danger">
+            Delete &ldquo;{task.title}&rdquo;? This cannot be undone.
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={() => {
+                setConfirmingDelete(false);
+                onDelete();
+              }}
+              className="rounded-md border border-danger/40 bg-danger/15 px-2 py-1 text-[11px] font-medium text-danger hover:border-danger/60"
+            >
+              Yes, delete it
+            </button>
+            <button
+              onClick={() => setConfirmingDelete(false)}
+              className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+            >
+              Keep it
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* The per-card twin of the batch runner's price panel
+          (RunPendingTasksButton above): state the credits, then charge only on
+          confirm. The figure is the server's own planned cost for this task, not
+          a constant. */}
+      {runPrompt && (
+        <div
+          className="mt-2 rounded-md border border-neon/30 bg-neon/10 px-2 py-1.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-[11px] leading-relaxed text-foreground">
+            {"Runs this task now for "}
+            <span className="font-medium text-neon">
+              {`${runPrompt.credits} credit${runPrompt.credits === 1 ? "" : "s"}`}
+            </span>
+            .
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={onConfirmRun}
+              className="rounded-md border border-neon/30 bg-neon/15 px-2 py-1 text-[11px] font-medium text-neon hover:border-neon/50"
+            >
+              {`Run & charge ${runPrompt.credits} credit${runPrompt.credits === 1 ? "" : "s"}`}
+            </button>
+            <button
+              onClick={onCancelRun}
+              className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Actions only take space while hovered/focused, so the resting card
           height stays compact. flex-wrap: on narrow columns the buttons stack
           instead of spilling past the card border. */}
@@ -341,21 +422,29 @@ function TaskCard({
             <Icon name="ExternalLink" className="h-3 w-3 shrink-0" />
             Open Details
           </button>
-          {task.status !== "in_progress" && (
+          {/* onMove is routed through the board's price gate, so this button
+              (and the retry above) asks before a managed run charges. While the
+              price panel is up the button is gone — the panel is the control. */}
+          {task.status !== "in_progress" && !runPrompt && (
             <button
               onClick={() => onMove("in_progress")}
-              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1.5 text-xs font-medium text-neon hover:border-neon/50"
+              disabled={pricing}
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1.5 text-xs font-medium text-neon hover:border-neon/50 disabled:opacity-50"
             >
-              <Icon name="Play" className="h-3 w-3 shrink-0" />
+              <Icon
+                name={pricing ? "Loader" : "Play"}
+                className={cn("h-3 w-3 shrink-0", pricing && "animate-spin")}
+              />
               {owner === "karos_managed" ? "Run Agent" : "Start"}
             </button>
           )}
         </div>
-        {canDelete && (
+        {canDelete && !confirmingDelete && (
           <button
-            onClick={onDelete}
+            onClick={() => setConfirmingDelete(true)}
             className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted hover:bg-danger/10 hover:text-danger"
             title="Delete task"
+            aria-label="Delete task"
           >
             <Icon name="Trash2" className="h-3.5 w-3.5" />
           </button>
@@ -372,6 +461,10 @@ function SortableTaskCard({
   onMove,
   canDelete,
   onDelete,
+  runPrompt,
+  pricing,
+  onConfirmRun,
+  onCancelRun,
 }: {
   task: BoardTask;
   showClientName?: boolean;
@@ -379,6 +472,10 @@ function SortableTaskCard({
   onMove: (status: BoardStatus) => void;
   canDelete: boolean;
   onDelete: () => void;
+  runPrompt: { credits: number } | null;
+  pricing: boolean;
+  onConfirmRun: () => void;
+  onCancelRun: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
@@ -401,6 +498,10 @@ function SortableTaskCard({
         onMove={onMove}
         canDelete={canDelete}
         onDelete={onDelete}
+        runPrompt={runPrompt}
+        pricing={pricing}
+        onConfirmRun={onConfirmRun}
+        onCancelRun={onCancelRun}
         dragHandle={{ attributes, listeners }}
       />
     </div>
@@ -418,6 +519,10 @@ function BoardColumn({
   onMoveTask,
   onDeleteTask,
   canDelete,
+  runPrompt,
+  pricingTaskId,
+  onConfirmRun,
+  onCancelRun,
 }: {
   status: BoardStatus;
   label: string;
@@ -429,6 +534,11 @@ function BoardColumn({
   onMoveTask: (task: BoardTask, status: BoardStatus) => void;
   onDeleteTask: (task: BoardTask) => void;
   canDelete: boolean;
+  /** The one card, board-wide, currently showing a run price to confirm. */
+  runPrompt: { taskId: string; credits: number } | null;
+  pricingTaskId: string | null;
+  onConfirmRun: () => void;
+  onCancelRun: () => void;
 }) {
   const droppableId = `column:${status}`;
   const { setNodeRef, isOver } = useDroppable({ id: droppableId, data: { kind: "column", status } });
@@ -463,6 +573,10 @@ function BoardColumn({
                 onMove={(next) => onMoveTask(task, next)}
                 canDelete={canDelete}
                 onDelete={() => onDeleteTask(task)}
+                runPrompt={runPrompt?.taskId === task.id ? { credits: runPrompt.credits } : null}
+                pricing={pricingTaskId === task.id}
+                onConfirmRun={onConfirmRun}
+                onCancelRun={onCancelRun}
               />
             ))}
             {tasks.length === 0 && (
@@ -515,12 +629,19 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
   const [execError, setExecError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(linkedTask?.id ?? null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  // The one card, board-wide, whose run has been priced and is awaiting a yes.
+  const [runPrompt, setRunPrompt] = useState<{ taskId: string; credits: number } | null>(null);
+  const [pricingTaskId, setPricingTaskId] = useState<string | null>(null);
   const dragSnapshotRef = useRef<BoardTask[] | null>(null);
   const [, startTransition] = useTransition();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const canDelete = true;
-  void currentUserRole;
+  // The price confirmation exists to protect a CLIENT's credits, so staff never
+  // meet it — not even the round trip that prices the run. An admin in "View as
+  // Client" also reads as CLIENT_USER here and is sorted out by the server's own
+  // `billable` verdict in askToRun, which is the only place that can know.
+  const isClientViewer = currentUserRole === "CLIENT_USER";
 
   // Sync local state when the server re-fetches tasks (e.g., after router.refresh()).
   // Uses the "store previous prop" pattern (react.dev/learn/you-might-not-need-an-effect)
@@ -616,6 +737,67 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
     });
   }
 
+  /**
+   * True when this status move is the one that spends credits: moving a
+   * karos_managed task into In Progress is what updateTaskStatusAction claims,
+   * charges and dispatches. Every other move on this board is free — a "Start"
+   * on client-owned work charges nothing and must not grow a price dialog.
+   */
+  function chargesCredits(task: BoardTask, nextStatus: BoardStatus): boolean {
+    return nextStatus === "in_progress" && inferOwner(task) === "karos_managed";
+  }
+
+  /**
+   * The single door every board path into a status change goes through — card
+   * button, retry link, drag into a column, ticket-modal footer. A billable run
+   * is priced and confirmed first; everything else commits straight away, so the
+   * gate cannot be walked around by picking a different control.
+   */
+  function requestStatusChange(
+    task: BoardTask,
+    nextStatus: BoardStatus,
+    fallbackSnapshot?: BoardTask[],
+  ) {
+    if (isClientViewer && chargesCredits(task, nextStatus)) {
+      // Leave the board exactly as it was while the question is open: a drag
+      // has already moved the card optimistically, and nothing has been charged.
+      if (fallbackSnapshot) setLocalTasks(fallbackSnapshot);
+      askToRunTask(task);
+      return;
+    }
+    commitStatusChange(task, nextStatus, fallbackSnapshot);
+  }
+
+  /** Price the run server-side, then ask. Nothing is claimed or charged yet. */
+  function askToRunTask(task: BoardTask) {
+    setExecError(null);
+    setRunPrompt(null);
+    setPricingTaskId(task.id);
+    startTransition(async () => {
+      const res = await previewTaskRunAction(task.id, task.clientId);
+      setPricingTaskId(null);
+      if (!res.ok) {
+        setExecError(res.error ?? "Could not check what this run costs");
+        return;
+      }
+      // Nothing will be charged (staff, or an admin viewing as this client), so
+      // there is nothing to confirm — run it.
+      if (!res.billable) {
+        commitStatusChange(task, "in_progress");
+        return;
+      }
+      setRunPrompt({ taskId: task.id, credits: res.credits ?? 0 });
+    });
+  }
+
+  function confirmTaskRun() {
+    if (!runPrompt) return;
+    const task = localTasks.find((t) => t.id === runPrompt.taskId);
+    setRunPrompt(null);
+    if (!task) return;
+    commitStatusChange(task, "in_progress");
+  }
+
   function handleDelete(task: BoardTask) {
     const previous = localTasks;
     setLocalTasks((prev) => prev.filter((t) => t.id !== task.id));
@@ -677,7 +859,9 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
       return;
     }
 
-    commitStatusChange(previousTask, targetStatus, snapshot);
+    // Dragging a managed card into In Progress is the run button by another
+    // name — same claim, same charge — so it meets the same price gate.
+    requestStatusChange(previousTask, targetStatus, snapshot);
   }
 
   // Client-owned work never sits in "Review Pending" (that state is for AI drafts
@@ -878,9 +1062,13 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
               showClientName={showClientName}
               draggingTaskId={draggingTaskId}
               onOpenTask={(id) => setSelectedTaskId(id)}
-              onMoveTask={(task, nextStatus) => commitStatusChange(task, nextStatus)}
+              onMoveTask={(task, nextStatus) => requestStatusChange(task, nextStatus)}
               onDeleteTask={handleDelete}
               canDelete={canDelete}
+              runPrompt={runPrompt}
+              pricingTaskId={pricingTaskId}
+              onConfirmRun={confirmTaskRun}
+              onCancelRun={() => setRunPrompt(null)}
             />
           ))}
         </div>
@@ -894,7 +1082,10 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
             if (status === "archived") return;
             const current = localTasks.find((task) => task.id === id);
             if (!current) return;
-            commitStatusChange(current, status as BoardStatus);
+            // The ticket footer's "Move to In Progress" charges exactly like the
+            // card button, and the modal closes on press — so the price panel it
+            // raises lands on the card the client just came from.
+            requestStatusChange(current, status as BoardStatus);
             void cid;
           }}
           onLocalUpdate={(updated) =>
