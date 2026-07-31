@@ -352,8 +352,17 @@ export const OAUTH_CONFIGS: Record<string, OAuthPlatformConfig> = {
       "https://www.googleapis.com/auth/youtube.readonly",
       "https://www.googleapis.com/auth/webmasters.readonly",
       "https://www.googleapis.com/auth/analytics.readonly",
-      "https://www.googleapis.com/auth/business.manage",
     ],
+    // business.manage is NOT a base scope here. It is gated behind Google's
+    // manual "Business Profile API access request" (see google_business_profile
+    // above), and Google rejects the ENTIRE authorize request when an
+    // unapproved sensitive scope is present — "Access blocked: this app's
+    // request is invalid". Because this one consent screen also carries
+    // YouTube, Search Console and Analytics, listing it unconditionally took
+    // all three approved services down with it. Merged back in the moment
+    // GOOGLE_BUSINESS_PROFILE_APPROVED=1, and not a second before.
+    extendedScopes: ["https://www.googleapis.com/auth/business.manage"],
+    envApprovalFlag: "GOOGLE_BUSINESS_PROFILE_APPROVED",
     extraAuthParams: { access_type: "offline", prompt: "consent" },
   },
 };

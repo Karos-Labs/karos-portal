@@ -6,6 +6,7 @@ import {
   isOAuthEnabled,
   signOAuthState,
   buildEmployeeCallbackUrl,
+  getRequestedScopes,
 } from "@/lib/integrations/oauth";
 
 /**
@@ -56,7 +57,12 @@ export async function GET(req: NextRequest) {
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("client_id", process.env[cfg.envClientId] ?? "");
   authUrl.searchParams.set("redirect_uri", buildEmployeeCallbackUrl());
-  authUrl.searchParams.set("scope", cfg.scopes.join(" "));
+  // getRequestedScopes, not cfg.scopes — reading `.scopes` directly bypasses the
+  // extendedScopes approval gate, so this flow would keep requesting an
+  // unapproved scope (and get the whole authorize request rejected) after a
+  // future edit adds one to the linkedin config. No behaviour change today:
+  // linkedin has no extendedScopes, so both resolve to the same four scopes.
+  authUrl.searchParams.set("scope", getRequestedScopes("linkedin").join(" "));
   authUrl.searchParams.set("state", state);
 
   return NextResponse.redirect(authUrl.toString());

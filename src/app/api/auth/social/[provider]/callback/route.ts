@@ -7,6 +7,7 @@ import {
   verifyOAuthState,
   buildCallbackUrl,
   getAppOrigin,
+  getRequestedScopes,
 } from "@/lib/integrations/oauth";
 import { GOOGLE_UNIFIED_SUB_PLATFORM_IDS } from "@/lib/integrations/platforms";
 import { errorPage, successPage } from "@/lib/integrations/oauth-popup";
@@ -340,8 +341,24 @@ export async function GET(
     // google-business-profile.ts) keeps working unchanged, unaware a unified
     // flow was involved. A Google access token is scope-checked per API call,
     // not per issuing flow, so one token pair is valid across all four.
+    //
+    // ...but only for the scopes the consent screen actually asked for. Business
+    // Profile's business.manage is gated behind GOOGLE_BUSINESS_PROFILE_APPROVED
+    // (see oauth.ts), so until Google approves it this token carries no Business
+    // Profile grant. Writing an "active" google_business_profile doc anyway would
+    // show the client a connected channel that 403s on every call — so drop it
+    // from the fan-out unless the scope was genuinely requested. Self-heals the
+    // day the flag flips; the standalone google_business_profile connector is
+    // unaffected and still requests the scope on its own.
+    const unifiedScopes = getRequestedScopes("google_unified");
     const platformsToWrite =
-      provider === "google_unified" ? GOOGLE_UNIFIED_SUB_PLATFORM_IDS : [provider];
+      provider === "google_unified"
+        ? GOOGLE_UNIFIED_SUB_PLATFORM_IDS.filter(
+            (p) =>
+              p !== "google_business_profile" ||
+              unifiedScopes.includes("https://www.googleapis.com/auth/business.manage"),
+          )
+        : [provider];
 
     for (const platform of platformsToWrite) {
       // Each sub-service has its own notion of "account" (e.g. the YouTube channel
