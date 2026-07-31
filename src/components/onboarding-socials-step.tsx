@@ -39,9 +39,16 @@ export function OnboardingSocialsStep({
     <div className="space-y-5">
       <div>
         <h2 className="text-base font-semibold">Social media channels</h2>
+        {/* No count. PLATFORM_REGISTRY carries eleven channels and this line
+            said "all six" — a number the file cannot verify and the registry had
+            already outgrown. The spaced hyphen it also carried was invisible to
+            a per-line scan because JSX wrapped the sentence right after it:
+            the browser collapses that newline to a space, so the client read
+            "all six now - you can always add", and the guard must normalise JSX
+            whitespace before asking the question. */}
         <p className="text-xs text-muted-2">
-          Connect the channels your agents should publish to. Connect one, some, or all six now -
-          you can always add the rest later from Settings.
+          Connect the channels your agents should publish to — one, some, or all of them. You can
+          always add the rest later from Settings.
         </p>
       </div>
 

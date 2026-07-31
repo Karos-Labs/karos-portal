@@ -198,7 +198,12 @@ export async function toggleGroupAdminAction(uid: string, isGroupAdmin: boolean)
   if (user.role === "KAROS_ADMIN") {
     await upsertUser({ ...target, isGroupAdmin });
   } else if (user.role === "CLIENT_USER" && user.isGroupAdmin) {
-    if (target.clientId !== user.clientId) throw new Error("Forbidden - different group");
+    // A client group-admin reaches this, and components render a thrown
+    // message straight into their error banner — so it is a sentence, not the
+    // HTTP word plus a hyphenated note.
+    if (target.clientId !== user.clientId) {
+      throw new Error("That person isn't in your workspace, so you can't change their access.");
+    }
     if (target.uid === user.uid) throw new Error("Cannot change your own group admin status");
     await upsertUser({ ...target, isGroupAdmin });
   } else {

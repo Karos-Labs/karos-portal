@@ -62,7 +62,7 @@ export function emailShell(opts: {
         <div style="background:#131a22;border:1px solid #20303a;border-radius:12px;padding:20px;color:#e8f0ec;font-size:15px;line-height:1.7;">
           ${opts.body}
         </div>
-        <p style="color:#5f7177;font-size:12px;margin:22px 0 0;">Reply to this email to request changes - your Karos team is on it.</p>
+        <p style="color:#5f7177;font-size:12px;margin:22px 0 0;">Reply to this email to request changes &mdash; your Karos team is on it.</p>
       </div>
     </div>
   </div>`;

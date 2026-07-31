@@ -31,6 +31,40 @@ export async function requireClientAccess(clientId: string): Promise<AppUser> {
 }
 
 /**
+ * Two sentences, because there are two different things that happen, and one of
+ * them is a LOST RACE and the other is not.
+ *
+ * `requireTaskAccess` below already states the rule for this whole family —
+ * these strings are RETURNED and rendered verbatim, so they are client copy and
+ * the status vocabulary stays in the logs. Five refusals in execution-actions.ts
+ * broke that in the same way, returning the Firestore enum as prose ("Task is
+ * not in review_pending state") on paths a CLIENT_USER reaches. The rule's home
+ * is the module that states it, so the sentences live here.
+ *
+ * Neither NAMES the state. There is no client register for `TaskStatus` to
+ * launder it through, and inventing a fourth status-copy module for one sentence
+ * would be a second home for a rule that already has one. What the client needs
+ * is what happened and what to do, which these say without the enum.
+ *
+ * WHY TWO. Consolidating first produced one sentence for all five sites, and it
+ * was false at one of them. Three sites are genuine races: an atomic claim
+ * (`claimTaskCompletion` / `claimTaskForExecution`) returned nothing, which can
+ * only mean the task WAS in review and something else took it — "no longer
+ * waiting for review" is exactly right. The fourth,
+ * `publishIntegrationAction`'s `preflight.status !== "review_pending"`, is a
+ * PREFLIGHT: it fires for a task still `pending`, or one finished last week, or
+ * one that never reached review at all. "No longer" asserts a past that may
+ * never have existed. A shared sentence has to be true at every site it serves,
+ * so the site whose condition is different gets its own.
+ */
+export const TASK_LEFT_REVIEW_MESSAGE =
+  "This task is no longer waiting for review — it may have just been approved somewhere else. Refresh to see where it is now.";
+
+/** The preflight sibling: this task is not AT the review step, however it got there. */
+export const TASK_NOT_IN_REVIEW_MESSAGE =
+  "This task isn't at the review step, so there's nothing to send yet. Refresh to see where it is now.";
+
+/**
  * Task-level authorization for the task-board actions. Resolves the task and
  * verifies it actually belongs to the given clientId — the browser supplies
  * both ids, so checking the user against the clientId param alone would let a

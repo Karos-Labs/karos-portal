@@ -195,7 +195,7 @@ export async function clientRescheduleAssetAction(
     return { ok: false, error: "Pick a time in the future." };
   }
   if (asset.publishClaimedAt != null && Date.now() - asset.publishClaimedAt < PUBLISH_CLAIM_TTL_MS) {
-    return { ok: false, error: "This post is being published right now - give it a moment, then try again." };
+    return { ok: false, error: "This post is being published right now — give it a moment, then try again." };
   }
 
   const family = chainFamilyFor(asset.type);
@@ -401,7 +401,7 @@ export async function markAssetPostedAction(
   const asset = await requireAssetAccess(id);
   if (asset.status === "published") return { ok: false, error: "Already marked as posted" };
   if (asset.publishMode === "placeholder") {
-    return { ok: false, error: "This is a placeholder - put it on the calendar before marking it posted" };
+    return { ok: false, error: "This is a placeholder — put it on the calendar before marking it posted" };
   }
   // Only a post that has actually been approved onto the calendar can have been
   // posted. Without this a CLIENT_USER could force one of their own DRAFTS
@@ -430,7 +430,7 @@ export async function markAssetPostedAction(
   // claim right now, and flipping status to published here wouldn't stop it —
   // we'd attest "already posted by hand" AND post again for real.
   if (asset.publishClaimedAt != null && Date.now() - asset.publishClaimedAt < PUBLISH_CLAIM_TTL_MS) {
-    return { ok: false, error: "This post is being published right now - give it a moment." };
+    return { ok: false, error: "This post is being published right now — give it a moment." };
   }
 
   const { changed } = await reconcileAssetPublished(id, Date.now(), null, { force: true });

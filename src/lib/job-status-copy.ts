@@ -46,8 +46,26 @@ export const JOB_STATUS_META: Record<
  * JobStatusBadge already does (Firestore holds strings the union does not, which
  * is why the parameter is `string`).
  *
- * There is ONE fallback, here, so a status missing from the map cannot resolve
- * one way on a badge and another way in a model prompt.
+ * THERE ARE TWO ANSWERS FOR AN UNKNOWN STATUS, and this note used to claim one.
+ * The line that stood here — "there is ONE fallback, here, so a status missing
+ * from the map cannot resolve one way on a badge and another way in a model
+ * prompt" — was declared verified and is false. The map is read with its own `??`
+ * at two other sites:
+ *
+ *  • components/job-status.tsx:18 falls back to `JOB_STATUS_META.queued`, the same
+ *    entry this function does, so it AGREES — a duplicate spelling of the rule
+ *    rather than a disagreement, and it is only agreement that makes the sentence
+ *    look true.
+ *  • components/run-calendar.tsx:509 falls back to
+ *    `{ tone: "neutral", label: "Done" }`. That does NOT agree: a status the union
+ *    has never heard of reads "Done" on the calendar's run chip and "Queued"
+ *    everywhere else — one stored value, two words, which is the exact defect
+ *    class these register modules exist to remove.
+ *
+ * Routing that site through this function is the real fix and it is a change to
+ * run-calendar.tsx, so it is not made here. Until it is, the honest statement is
+ * the one above: this is THE fallback for everything that asks this module, and
+ * the calendar answers separately.
  */
 export function jobStatusLabel(status: string): string {
   return JOB_STATUS_META[status as JobStatus]?.label ?? JOB_STATUS_META.queued.label;

@@ -203,11 +203,15 @@ export function BrandingModal({
     }
   }
 
+  // Sentence case, and the same words as the control that opens it: the client
+  // rail's pencil is aria-labelled "Edit branding guidelines"
+  // (client-context-sections.tsx), so Title Case here made the dialog disagree
+  // with its own trigger.
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={existing ? "Edit Branding Guidelines" : "Set Branding Guidelines"}
+      title={existing ? "Edit branding guidelines" : "Set branding guidelines"}
       description="These guidelines are used by AI agents to produce on-brand content for this client."
       className="max-w-xl"
     >

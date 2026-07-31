@@ -305,7 +305,7 @@ function DraftCard({
               />
               {overCap ? (
                 <p className="text-xs text-red-400">
-                  {finalText.trim().length.toLocaleString()} characters - Reddit comments cap at{" "}
+                  {finalText.trim().length.toLocaleString()} characters — Reddit comments cap at{" "}
                   {REDDIT_COMMENT_CAP.toLocaleString()}. Trim it before posting.
                 </p>
               ) : null}
@@ -432,7 +432,7 @@ function DraftCard({
         </div>
       ) : sent === "edit_request" ? (
         <p className="mt-3 text-[11px] text-muted-2">
-          Change requested - it feeds the agent&apos;s next pass on this account.
+          Change requested — it feeds the agent&apos;s next pass on this account.
         </p>
       ) : (
         <p className="mt-3 text-[11px] text-muted-2">

@@ -8,13 +8,22 @@
  *
  *  • CLIENT_ASSET_STATUS_LABEL — what a paying client is told. "published"
  *    reads as "Posted", because on most channels the client is the one who
- *    posts, by hand. Read by archive-view.tsx (the status filter and every tile
- *    badge), client-analytics.tsx's "Content by status" chart when the viewer is
- *    a client, and publishHoldMessage below.
+ *    posts, by hand. Read off the map by archive-view.tsx's status filter, and
+ *    through the accessors below by its tile badges, client-analytics.tsx's
+ *    "Content by status" chart when the viewer is a client, and
+ *    publishHoldMessage.
  *  • STAFF_ASSET_STATUS_LABEL — what an operator is told. "draft" reads as
  *    "Awaiting review", because for staff the status names the work they owe.
- *    Read by assets-view.tsx (the library filter and the group headings) and the
- *    same analytics chart when the viewer is staff.
+ *    Read off the map by assets-view.tsx (the library filter and the group
+ *    headings), and through the accessors by the same analytics chart when the
+ *    viewer is staff.
+ *
+ * Neither of those is a reader INVENTORY, and this note is not the place to keep
+ * one: a surface that asks `assetStatusLabel(status, viewerIsClient)` reads
+ * whichever register its viewer picks, and there are more of those than when the
+ * lists were written — client-home-overview's activity badge, the detail modal's
+ * badge, the calendar's published chip and filter, the copilot's find_output.
+ * The closed question is which files import this module.
  *
  * There were THREE maps before this module, and the third was the tell:
  * client-analytics.tsx's STATUS_META was read by clients AND staff (one
@@ -49,17 +58,35 @@
  *
  * What is out of scope: a surface that renders `Asset["status"]` directly
  * instead of looking a label up. Two client-reachable ones did, and now ask the
- * accessor (client-home-overview's Recent activity badge, asset-detail-modal's
- * status badge). The ones still rendering the raw enum are STAFF-ONLY routes —
- * asset-card.tsx, outputs-hub.tsx and clip-gallery.tsx's `!viewerIsClient`
- * branch — and they are left alone deliberately: the staff register says
- * "Awaiting review" where CSS `capitalize` renders "Draft", so converting them
- * changes a staff word, which is a copy decision and not a duplicate to delete.
+ * accessor (components/client-home-overview.tsx's Recent activity badge,
+ * components/asset-detail-modal.tsx's status badge). Three still render the raw
+ * enum, and they are left alone deliberately: the staff register says "Awaiting
+ * review" where CSS `capitalize` renders "Draft", so converting them changes a
+ * staff word, which is a copy decision and not a duplicate to delete. What makes
+ * each one staff-only differs, so each is named with its own reason rather than
+ * lumped under one clause:
  *
- * Also out of scope: run-calendar.tsx's POST_KIND_LABEL, keyed by
- * `CalendarAssetKind` — a different key domain (`placeholder`, `failed` and
- * `held` are not statuses) and so a different vocabulary rather than a drifted
- * copy of this one.
+ *  • components/asset-card.tsx — renders it unconditionally, and both mounts sit
+ *    behind a staff route (app/(app)/jobs/[id] requires KAROS_ADMIN/EMPLOYEE;
+ *    assets-view's two pages redirect a CLIENT_USER away).
+ *  • components/client-agents/outputs-hub.tsx — also unconditional. Its gate is
+ *    the Control Room mount, which asset-status-surfaces.test.ts pins as staff-only
+ *    for the sake of its hard-coded `viewerIsClient={false}`.
+ *  • components/client-agents/clip-gallery.tsx — the only one of the three with a
+ *    `!viewerIsClient` branch of its own.
+ *
+ * PATHS, because the previous version of this line named the last two by bare
+ * filename — the same pointer defect asset-type-copy.ts's note declares fixed, and
+ * worse here, since both live under components/client-agents/ rather than
+ * components/. It also attached "the `!viewerIsClient` branch" to all three when
+ * only one has one.
+ *
+ * Also out of scope: `calendar-kind.ts`'s POST_KIND_LABEL (read through
+ * `postKindLabel`), keyed by `CalendarAssetKind` — a different key domain
+ * (`placeholder`, `failed` and `held` are not statuses) and so a different
+ * vocabulary rather than a drifted copy of this one. That line used to name
+ * run-calendar.tsx, which now only mentions the map in a comment: a pointer this
+ * campaign navigates by, pointing at the wrong file.
  *
  * Do not read either list as exhaustive: they are scope, not an inventory.
  */
@@ -108,9 +135,14 @@ export const STAFF_ASSET_STATUS_LABEL: Record<Asset["status"], string> = {
  * the union).
  *
  * A surface that serves BOTH readers asks this with its viewer flag; a
- * client-only surface uses clientAssetStatusLabel. There is one lookup, so a
- * status missing from a register cannot fall back one way here and another way
- * there.
+ * client-only surface uses clientAssetStatusLabel.
+ *
+ * ONE FALLBACK, and unlike the sibling claim in job-status-copy.ts this one was
+ * checked before being written: no other file spells a `??` over these maps.
+ * assets-view.tsx and archive-view.tsx do index them directly, but over key-typed
+ * lists, so a status missing from a register is a compile error at those sites
+ * rather than a second answer. So a status the union has never heard of resolves
+ * here, once, for every reader.
  */
 export function assetStatusLabel(status: string, viewerIsClient: boolean): string {
   const register = viewerIsClient ? CLIENT_ASSET_STATUS_LABEL : STAFF_ASSET_STATUS_LABEL;
@@ -150,7 +182,12 @@ const PUBLISH_HOLD_PREFIX = "This post is waiting for";
  *  • postKind (lib/calendar-kind), which classifies a held post as "held" so
  *    the calendar draws a neutral chip instead of a red "Failed to publish" one;
  *  • asset-detail-modal, which heads the notice panel with PUBLISH_HOLD_HEADING
- *    instead of "Publish failed".
+ *    instead of "Publish failed";
+ *  • asset-card, staff's deliverable card, which draws the same two panels.
+ *    It is the FOURTH reader and it was missing from this list — found by
+ *    sweeping src/ for the failure wording (asset-status-surfaces.test.ts), not
+ *    by reading a list, which is why the sweep is the guarantee and this is
+ *    orientation.
  *
  * One test, in one place, because the failure mode is a DISAGREEMENT: a second
  * spelling that drifted would leave one surface calling the same stored string

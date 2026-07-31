@@ -650,7 +650,10 @@ export async function applyChainAssignments(
             : { publishMode: doc.publishMode !== "manual" && doc.publishMode !== "placeholder" ? "manual" as const : doc.publishMode }),
           ...(preferredPlatform ? { scheduledPlatform: preferredPlatform } : {}),
           recommendedAt: assignment.scheduledAt,
-          recommendedReason: "One post per day - assigned by the content chain",
+          // Client-visible: asset-card renders recommendedReason as text and as a
+          // tooltip, and redactLockedAsset withholds it only for locked future-dated
+          // assets — so an unlocked draft carries it to the client. Em dash, per F71.
+          recommendedReason: "One post per day — assigned by the content chain",
           updatedAt: Date.now(),
         },
         { merge: true },

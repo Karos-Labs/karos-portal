@@ -547,7 +547,7 @@ function PlatformCard({
         {platform.id === "linkedin" && isConnected && (
           <Button size="sm" variant="outline" className="w-full" onClick={() => setSeatsOpen(true)}>
             <Icon name="Users" className="h-3.5 w-3.5" />
-            Manage Employee Seats
+            Manage employee seats
             {linkedinSeats && linkedinSeats.length > 0 && ` (${linkedinSeats.length}/${seatLimit ?? 2})`}
           </Button>
         )}
@@ -640,12 +640,17 @@ function PlatformCard({
       )}
 
       {/* LinkedIn employee-advocacy multi-seat workspace — modal, not inline,
-          so an unbounded roster never resizes the card in the grid. */}
+          so an unbounded roster never resizes the card in the grid.
+
+          Titled "Employee seats" and not "Company Employee Roster": this card is
+          on the client settings page AND inside the onboarding wizard, and the
+          button that opens it says "Manage employee seats" — a dialog must not
+          rename the thing its own trigger just named. */}
       {platform.id === "linkedin" && isConnected && (
         <Modal
           open={seatsOpen}
           onClose={() => setSeatsOpen(false)}
-          title="Company Employee Roster"
+          title="Employee seats"
           description="Add teammates to publish and measure content on their own LinkedIn handle."
           className="max-w-2xl"
         >

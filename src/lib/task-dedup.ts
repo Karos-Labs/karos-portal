@@ -14,9 +14,11 @@
  *
  * Capacity policy: MAX_ACTIVE_TASKS bounds ACTIVE (pending / in_progress /
  * review_pending) KAROS-MANAGED tasks only. client_managed tasks never count
- * and are never blocked.
+ * and are never blocked. `queueCapacitySkipNote` below is this same rule said
+ * to the client, so widening either one without the other makes the portal lie.
  */
 
+import { MAX_ACTIVE_TASKS } from "@/lib/constants";
 import type { ClientTask, TaskOwner, TaskStatus } from "@/lib/types";
 
 /** Statuses that count against the per-client active-task cap. */
@@ -131,6 +133,44 @@ export function findDuplicateReason(
   }
 
   return null;
+}
+
+/**
+ * The ONE wording for "the cap stopped N of these from being created".
+ *
+ * WHICH QUEUE: the work KAROS runs — the cap counts active `karos_managed`
+ * tasks and nothing else (see the capacity policy at the top of this file and
+ * `computeBoardCapacity` below, which is where it is actually applied). Tasks
+ * the client adds by hand are `client_managed`: they never count toward the cap
+ * and are never blocked by it. So the sentence has to name whose queue is full,
+ * and "your task queue is at its 15-task limit" — which is what consolidating
+ * three spellings first produced — is FALSE for a client staring at a board of
+ * twenty of their own tasks that the cap has no opinion about. The system
+ * prompt tells the model the same scoped rule; this is that rule said to a
+ * person, and the two must not disagree.
+ *
+ * Three surfaces composed this note themselves and wrote it three different
+ * ways, all reaching a client: the copilot's `fetch_gmail_context` said
+ * "N deferred - Karos-managed queue capacity reached", its `create_tasks` said
+ * "N karos_managed dropped - AI queue capacity (15 active) reached", and the
+ * swarm's persisted note — rendered verbatim in the war-room console inside the
+ * CLIENT copilot dock — said "N deferred - queue at capacity". So one client
+ * could be told three things about one rule, one of them naming a Firestore
+ * enum, and all three with a spaced hyphen the client copy rules ban. Giving
+ * them one home was right; the surviving sentence still has to be true at all
+ * three sites, and one home makes a scope error worse, not better — it now
+ * misstates the policy everywhere at once.
+ *
+ * It lives beside the cap's policy docstring above rather than in a copy module
+ * because it is a sentence ABOUT that policy: whoever changes what the cap
+ * counts is the person who has to restate it. Pure, so a test can read it.
+ *
+ * A FRAGMENT, not a sentence: all three callers drop it into a parenthesised
+ * `(…; …)` list next to "N duplicates skipped", so it stays lowercase and
+ * unpunctuated at the end.
+ */
+export function queueCapacitySkipNote(skipped: number): string {
+  return `${skipped} not added — Karos is already running its limit of ${MAX_ACTIVE_TASKS} active tasks for you`;
 }
 
 /**

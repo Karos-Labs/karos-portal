@@ -27,7 +27,7 @@ import {
   getTaskBoardCapacity,
   createClientTask,
 } from "@/lib/data";
-import { findDuplicateReason, normalizeTitleForDedup } from "@/lib/task-dedup";
+import { findDuplicateReason, normalizeTitleForDedup, queueCapacitySkipNote } from "@/lib/task-dedup";
 import { getClientCustomAgents, type ClientCustomAgentSummary } from "@/lib/agent-roster";
 import { generateCampaignBundle, type CampaignTrend } from "@/lib/campaign-engine";
 import { integrationIsUsable } from "@/lib/integration-status";
@@ -500,7 +500,10 @@ export async function persistSwarmTasks(
 
   const notes = [
     duplicatesSkipped > 0 ? `${duplicatesSkipped} duplicate${duplicatesSkipped !== 1 ? "s" : ""} skipped` : "",
-    capSkipped > 0 ? `${capSkipped} deferred - queue at capacity` : "",
+    // The war-room console prints this note verbatim inside the CLIENT copilot
+    // dock (strategy-war-room.tsx, ConsoleLine "persisted"), so it is client
+    // copy — see queueCapacitySkipNote for why all three callers share it.
+    capSkipped > 0 ? queueCapacitySkipNote(capSkipped) : "",
   ].filter(Boolean);
   return {
     created: fresh.length,

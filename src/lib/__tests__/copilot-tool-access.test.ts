@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync, statSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 import {
@@ -267,15 +267,45 @@ describe("gmail refusal is indistinguishable from no connection", () => {
     expect(gmailTool.match(/GMAIL_UNAVAILABLE_MESSAGE/g)).toHaveLength(1);
   });
 
-  it("is byte-identical to the original unconnected-case copy", () => {
-    // Pinned as one literal: the refused path must read as the unconnected path,
-    // down to the bytes, so a future edit cannot make one of them leak.
-    expect(GMAIL_UNAVAILABLE_MESSAGE).toBe(
-      "No Google Workspace integration found for this account. " +
-        "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab) - " +
-        "you will be prompted to grant Gmail read access. " +
-        "In the meantime, I can still build a task map from your meetings and context documents.",
-    );
+  it("has no second spelling anywhere in src, so the two reasons cannot drift", () => {
+    // WHAT THIS REPLACED, and why. This assertion used to hold a full second copy
+    // of the prose and demand byte-equality, "so a future edit cannot make one of
+    // them leak". It bought nothing the two tests either side of it do not
+    // already give — one constant, one producer, and no leak wording — and it
+    // cost the thing this campaign keeps paying for: a canary pinning a SPELLING
+    // blocks its own improvement. It did, immediately. The spaced hyphen ledger
+    // F71 bans in client copy was inside the pinned literal, so the sweep that
+    // found the hyphen could not fix it without reding a test whose subject is
+    // disclosure, not punctuation.
+    //
+    // The property the pin was really buying is that there is only ONE spelling
+    // to drift from. That is asked here as a closed question, and DERIVED from
+    // the constant rather than restated: whatever the message says, no other file
+    // may say it too. Improving the copy moves what is swept for.
+    const opener = GMAIL_UNAVAILABLE_MESSAGE.slice(0, 60);
+    expect(opener.length).toBe(60);
+    // Adjacent literals joined before searching, because the message is written
+    // as a `+` chain and no 60 contiguous characters of it exist in any source
+    // file. Asking the raw text found NOTHING — including the constant's own
+    // home — and an offender list that cannot even see the home file would have
+    // read as a passing sweep. The expectation names the home for that reason.
+    const joinedLiterals = (s: string) => s.replace(/"\s*\+\s*"/g, "");
+    const root = path.resolve(__dirname, "../..");
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir)) {
+        const f = path.join(dir, e);
+        if (statSync(f).isDirectory()) walk(f, out);
+        else if (/\.tsx?$/.test(f)) out.push(f);
+      }
+      return out;
+    };
+    const offenders = walk(root)
+      .filter((f) => !f.includes("__tests__"))
+      .filter((f) => joinedLiterals(readFileSync(f, "utf8")).includes(opener))
+      .map((f) => f.slice(root.length + 1));
+    expect(offenders, "import GMAIL_UNAVAILABLE_MESSAGE instead of retyping it").toEqual([
+      "lib/copilot-tool-access.ts",
+    ]);
   });
 
   it("never names the grantor or hints that a token exists", () => {

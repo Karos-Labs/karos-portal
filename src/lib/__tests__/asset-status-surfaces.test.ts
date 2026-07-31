@@ -17,6 +17,7 @@ import {
 import { assetTypeLabel } from "@/lib/asset-type-copy";
 import { jobStatusLabel } from "@/lib/job-status-copy";
 import type { Asset } from "@/lib/types";
+import { isStringDelimiter, skipStringLiteral } from "./source-scan";
 
 /**
  * What the two client-reachable status surfaces print, and what a held post
@@ -53,6 +54,159 @@ function code(s: string): string {
 
 /** JSX props reflow with formatting; a line break is not a behaviour change. */
 const flat = (s: string) => s.replace(/\s+/g, " ");
+
+/**
+ * The index of the `}` that closes the `{` at `open`, or -1.
+ *
+ * The one home for "how far does this block reach", asked by both scans below
+ * that have to know whether a line sits INSIDE something — the try/catch guard
+ * and the staff-only guard. Both had a version of this question and only one had
+ * a right answer; "is there an X before Y" is not the question, "is Y inside an X
+ * that is still open" is.
+ *
+ * EVERY string literal is skipped whole — backticks included — through the one
+ * shared primitive, so a brace inside one cannot unbalance the walk and an
+ * apostrophe inside template TEXT cannot open a bogus region that eats source.
+ * It had to become so: this file's own copy knew `'` and `"` only, and BOTH files
+ * this suite walks with it — the chat route and asset-detail-modal.tsx — carry an
+ * apostrophe inside a template literal, so the try-guard below was already walking
+ * corrupted ranges and reporting green.
+ *
+ * Skipping a template whole hides nothing either caller asks for. Neither
+ * enumerates braces; both ask "is this index still inside that range", and the
+ * interpolations the sweep classifies are found by scanning the file separately.
+ */
+function matchingBrace(src: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i]!;
+    if (isStringDelimiter(ch)) {
+      i = skipStringLiteral(src, i);
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * The character ranges a `if (!viewerIsClient)` guard governs: its braced block,
+ * or — with no braces — the single statement that follows, which ends at the
+ * first `;` or line break outside anything it opened. A string literal counts as
+ * something it opened, via the same shared skip, so the newline inside a
+ * multi-line template literal does not end the statement early.
+ *
+ * One home, two readers: the sweep that asks "is this raw enum guarded" and the
+ * per-field test that asks "is client.status dropped for a client". The second
+ * used to ask by pinning the exact single-line spelling of the guard, which made
+ * turning it into a multi-line block — a legitimate refactor, and the one the
+ * sweep was extended to understand — fail as though it were a leak.
+ */
+function staffOnlyRanges(s: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const g of s.matchAll(/if\s*\(\s*!\s*(?:\w+\.)?viewerIsClient\s*\)/g)) {
+    let from = g.index! + g[0].length;
+    while (from < s.length && /\s/.test(s[from]!)) from++;
+    if (s[from] === "{") {
+      const close = matchingBrace(s, from);
+      if (close > from) out.push([from, close]);
+      continue;
+    }
+    let depth = 0;
+    let to = from;
+    for (; to < s.length; to++) {
+      const ch = s[to]!;
+      if (isStringDelimiter(ch)) {
+        to = skipStringLiteral(s, to);
+        continue;
+      }
+      if (ch === "(" || ch === "{" || ch === "[") depth++;
+      else if (ch === ")" || ch === "}" || ch === "]") depth--;
+      else if (depth === 0 && (ch === ";" || ch === "\n")) break;
+    }
+    out.push([from, to]);
+  }
+  return out;
+}
+
+/** Does `at` sit inside a range one of those guards still has open? */
+const insideStaffOnly = (ranges: Array<[number, number]>, at: number): boolean =>
+  ranges.some(([from, to]) => at > from && at < to);
+
+/**
+ * The range walk's own teeth, checked here rather than trusted, because it is now
+ * load-bearing for two scans (the staff-only sweep and the throw-guard) and its
+ * one wrong answer FAILED OPEN — a green tick over a swallowed leak, which is the
+ * worst thing a guard can do.
+ */
+describe("the range walk under an apostrophe", () => {
+  /**
+   * A staff block whose own prose carries an apostrophe, a leak OUTSIDE it, and a
+   * second apostrophe further down. Written as a joined array because what matters
+   * is the byte layout: to the SHIPPED skip the `'` in "client's" opens a string
+   * that runs to the `'` in "what's", eating the block's closing brace on the way,
+   * so the walk settles on the FUNCTION's brace instead and the staff range
+   * swallows line 5.
+   *
+   * TWO loosenings had to be closed for that, and this fixture is honest about
+   * needing both: the skip did not know a backtick opens anything (so it walked
+   * into template TEXT and read the apostrophe as code), and it let a `'` run past
+   * the end of its line (so the bogus string reached line 6). Re-planting either
+   * one alone is not enough to make THIS case leak again — the sibling test below
+   * pins the line bound on its own, and the chain suite pins backtick-awareness on
+   * its own with a `;` inside a label. Verified by planting all three shapes.
+   */
+  const TRAP = [
+    "function build(parts: string[], client: Client, viewerIsClient: boolean) {",
+    "  if (!viewerIsClient) {",
+    "    parts.push(`- **State:** the client's stored state is ${client.status}`);",
+    "  }",
+    "  parts.push(`- **Account:** ${client.accountStatus}`);",
+    "  parts.push(`what's next`);",
+    "}",
+  ].join("\n");
+
+  it("ends a staff block at its own brace, so a leak below it stays a leak", () => {
+    const ranges = staffOnlyRanges(TRAP);
+    expect(ranges.length, "the guard was not recognised at all").toBe(1);
+
+    const guarded = TRAP.indexOf("${client.status}");
+    const leak = TRAP.indexOf("${client.accountStatus}");
+    expect(guarded).toBeGreaterThan(-1);
+    expect(leak).toBeGreaterThan(guarded);
+
+    // Both directions, which is the only way this reads as coverage: what the
+    // staff branch really owns is inside…
+    expect(insideStaffOnly(ranges, guarded), "the staff block's own line reads as unguarded").toBe(
+      true,
+    );
+    // …and what sits after its closing brace is not. THIS is the assertion the
+    // shipped helper failed while reporting green.
+    expect(insideStaffOnly(ranges, leak), "a leak below the block reads as guarded").toBe(false);
+  });
+
+  it("closes a brace across a template literal, interpolations and all", () => {
+    // The interpolation holds CODE, so a naive backtick skip that scans for the
+    // next backtick breaks the other way — this pins that `${…}` is brace-matched
+    // and that a quote or a nested template inside it cannot unbalance the walk.
+    const s = "{ a(`x ${b({ c: \"}\" })} ${`y ${d}`} it's`); }";
+    expect(matchingBrace(s, 0)).toBe(s.length - 1);
+  });
+
+  it("treats a stray apostrophe as one character, not as an opener", () => {
+    // JSX text survives comment-stripping, and `<p>Don't</p>` is not a literal. A
+    // quote that does not close on its own line is a stray: bounded to itself, so
+    // the walk keeps its place instead of eating to the next apostrophe in the file.
+    const jsx = "<p>Don't</p>\n<span>can't</span>";
+    const at = jsx.indexOf("'");
+    expect(skipStringLiteral(jsx, at)).toBe(at);
+    // …while a real literal on one line still gets skipped whole.
+    const real = "const s = 'it is {';";
+    const open = real.indexOf("'");
+    expect(skipStringLiteral(real, open)).toBe(real.lastIndexOf("'"));
+  });
+});
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -463,6 +617,11 @@ describe("the calendar's chip vocabulary", () => {
  * the tool's `execute` is a closure inside the route handler and is not
  * exported, so the wiring is asserted against the route's SOURCE. That the
  * lookup returns the right word for each viewer is the register suite's job.
+ *
+ * The describe is named for find_output, and the interpolation half below is
+ * scoped to its slice — but the half that matters, "is a status read as a value
+ * anywhere", is asked over the WHOLE route, because a status extracted in one
+ * closure can be interpolated in another.
  */
 describe("the copilot's find_output tool text", () => {
   const route = code(src("app/api/clients/[id]/chat/route.ts"));
@@ -478,6 +637,111 @@ describe("the copilot's find_output tool text", () => {
    */
   const accessor = /const (\w+) = \([^)]*\)[^=]*=>\s*assetStatusLabel\(/.exec(route)?.[1] ?? "";
 
+  /**
+   * The two callees that turn a stored status into a reader's word: the local
+   * accessor above, and the shared register lookup it wraps. Both are legitimate
+   * here — calling the shared one with a hard-coded viewer is what the NEXT test
+   * forbids, so this one does not also try to.
+   */
+  const REGISTER_CALLEES = [accessor, "assetStatusLabel"].filter(Boolean);
+  /**
+   * The read is the accessor's ARGUMENT: the nearest still-open call before it is
+   * a register call. `[^()]*` is what makes "nearest still-open" the question —
+   * it cannot cross another call's parenthesis, so `String(asset.status)` and
+   * `${label(fmt(a.status))}` are both outside it even with a register call
+   * earlier on the line. That strictness is not pedantry: the register falls back
+   * to the STORED value for a word it does not know, so a status laundered through
+   * some other call first comes back out raw.
+   *
+   * The cost is that a receiver containing a call —
+   * `${accessor(matches.find(p)!.status)}` — reads as unconsumed and fails. The
+   * remedy is to bind the record first, which is what the live code already does.
+   */
+  const CONSUMED_BY_REGISTER = new RegExp(`\\b(?:${REGISTER_CALLEES.join("|")})\\(\\s*[^()]*$`);
+  const USED_AS_PREDICATE = /^\s*(?:===|!==|==|!=)/;
+
+  /**
+   * Every READ of a stored status: `.status`, and `.jobStatus` because field names
+   * are SUFFIXED in this codebase, the bracket form `asset["status"]`, and the
+   * DESTRUCTURED form, which has no dot at all.
+   *
+   * The RECEIVER is deliberately not part of the pattern. Anchoring on an
+   * identifier (`a.status`) would have missed `matches[0]!.status` and
+   * `promptAssets.find(…)!.status` — a receiver ending in `]`, `)` or `!` is still
+   * a receiver, and the first draft of this scan walked into exactly that hole
+   * while probing itself.
+   *
+   * The bracket form takes a LOWERCASE receiver only: a capitalised one is a TYPE
+   * (`Asset["status"]` is the accessor's own parameter annotation), and the
+   * lookbehind stops the pattern matching the tail of one.
+   *
+   * DESTRUCTURING is the shape that walked straight through the first version of
+   * this inverted rule, which is the exact class the inversion existed to close:
+   * `const { status } = asset;` then `${status}` was GREEN with both sanitized
+   * register calls left in place, and so was the aliased
+   * `const { status: rawState } = asset;` then `${rawState}`. The read is anchored
+   * on the KEY — the stored field being taken — not on the local it lands in, so
+   * the alias is covered by the same match and the local may be called anything.
+   * Brace-matched rather than `\{[^{}]*\}`, so a nested pattern
+   * (`const { asset: { status } } = row`) is seen too.
+   *
+   * STATED HOLE, with its reason: a destructured PARAMETER (`(({ status }) => …)`)
+   * is not covered, because no regex can tell one from an argument OBJECT LITERAL
+   * in the same position — this route really calls
+   * `listClientAgentFeedback({ clientAgentId, status: "active" })`, and flagging a
+   * query field as a leak is the false positive that gets a guard deleted. A
+   * declaration is decidable; a parameter is not, so only the decidable one is
+   * swept, and the sweep at the SINK below is the second net under it.
+   */
+  function statusReads(s: string): Array<{ text: string; start: number; end: number }> {
+    const out: Array<{ text: string; start: number; end: number }> = [];
+    const add = (m: RegExpMatchArray) =>
+      out.push({ text: m[0], start: m.index!, end: m.index! + m[0].length });
+    for (const m of s.matchAll(/\.\w*[Ss]tatus\b/g)) add(m);
+    for (const m of s.matchAll(/(?<![\w$.])[a-z_$][\w$]*\[\s*["']\w*[Ss]tatus["']\s*\]/g)) add(m);
+    for (const decl of s.matchAll(/\b(?:const|let|var)\s+(?=\{)/g)) {
+      const open = decl.index! + decl[0].length;
+      const close = matchingBrace(s, open);
+      if (close < 0) continue;
+      const pattern = s.slice(open, close + 1);
+      for (const key of pattern.matchAll(/(?:^|[{,])\s*(\w*[Ss]tatus)\s*(?=[,:}=])/g)) {
+        const at = open + key.index! + key[0].indexOf(key[1]!);
+        out.push({ text: `{ ${key[1]!} }`, start: at, end: at + key[1]!.length });
+      }
+    }
+    return out.sort((a, b) => a.start - b.start);
+  }
+
+  it("sees a status taken by destructuring, plain and aliased", () => {
+    // The scan's own teeth for BLOCKING 3, kept here rather than proved by a plant
+    // once and forgotten. A destructured binding has no dot, so the member-read
+    // patterns could not see it — and that is the exact class the rule was inverted
+    // to close: an ADDITIVE leak through a differently-named local, with both
+    // sanitized register calls left untouched. Planted into the live route in both
+    // spellings, it was GREEN.
+    const read = (s: string) => statusReads(s).map((r) => r.text);
+
+    expect(read("const { status } = asset;")).toContain("{ status }");
+    // Aliased: anchored on the KEY, which is the stored field being taken, so the
+    // local may be called anything at all.
+    expect(read("const { status: rawState } = asset;")).toContain("{ status }");
+    // Suffixed field names, the convention this codebase actually uses.
+    expect(read("const { jobStatus, id } = run;")).toContain("{ jobStatus }");
+    // Nested, which `\{[^{}]*\}` could not reach — this is why the pattern is
+    // brace-matched through the shared walk.
+    expect(read("const { job: { status } } = row;")).toContain("{ status }");
+    // A default value is still a read.
+    expect(read('const { status = "draft" } = asset;')).toContain("{ status }");
+
+    // BOUNDARY, so the scan stays green on legitimate code: an argument object
+    // LITERAL with a status field is not a read of a stored status, and the live
+    // route really writes one.
+    expect(read('listClientAgentFeedback({ clientAgentId: u.id, status: "active" })')).toEqual([]);
+    expect(read('return Response.json({ error: "Forbidden" }, { status: 403 });')).toEqual([]);
+    // And a destructuring with nothing status-shaped in it stays silent.
+    expect(read("const { id: clientId } = await params;")).toEqual([]);
+  });
+
   it("found the tool bodies it is asserting about", () => {
     // Without this every negative below would pass vacuously on "" after a
     // rename.
@@ -489,34 +753,79 @@ describe("the copilot's find_output tool text", () => {
     expect(accessor).not.toBe("");
   });
 
-  it("interpolates no raw status enum into what find_output hands the model", () => {
+  it("lets no stored status escape as a value, so none can reach the model as prose", () => {
     // THE loosening, and the exact shape that shipped: `(${a.status})` in the
     // disambiguation list and `status: ${asset.status}` in the single-match
     // answer. Absent from the payload beats unrendered — there is no render here
     // to gate, and no wording the model could be trusted to fix.
     //
-    // ASKED OVER EVERY INTERPOLATION, not against one bad spelling. The earlier
-    // version matched only `${x.status}` and "passes through some call", and a
-    // realistic loosening walked straight through both: `status:
-    // ${String(asset.status)}` satisfies the shape (`String` is an identifier and
-    // `.status` is its argument) while putting the raw enum back in the payload.
-    // So the rule is inverted — every `${…}` that mentions `.status` must be a
-    // call to THIS route's discovered accessor, and any other callee, `String`
-    // and `` `${a.status}` `` alike, is a failure.
-    const interpolations = tools.match(/\$\{[^{}]*\}/g) ?? [];
-    const touchingStatus = interpolations.filter((i) => /\.status\b/.test(i));
-    const throughTheAccessor = new RegExp(
-      `^\\$\\{\\s*${accessor}\\(\\s*[A-Za-z_$][\\w$]*\\.status\\s*\\)\\s*\\}$`,
-    );
-    const offenders = touchingStatus.filter((i) => !throughTheAccessor.test(i));
+    // ASKED AT THE SOURCE, over the whole route. Every earlier version asked at
+    // the SINK, about interpolations SPELLED with `.status`, and an ADDITIVE
+    // loosening walked past all of them with both sanitized calls left in place:
+    //
+    //   const rawState = asset.status;
+    //   … `- "${a.title}" (${rawState}) — id: ${a.id}`
+    //
+    // Recognising a bare local named after the field — the sibling sweep's answer
+    // one describe down — cannot help here, because `rawState` is not named after
+    // anything. So the question is inverted into the closed one: every place a
+    // stored status is READ, is it handed to a register accessor, or used as a
+    // predicate? Those are the only two things that can be done with a status in
+    // this file, and every OTHER use — a binding, `String(…)`, a method call —
+    // yields a value that can be interpolated later under any name at all.
+    //
+    // FAILS CLOSED, and deliberately: a legitimate non-text use that arrives
+    // later (sorting or grouping by status, say) will fail here, and the fix is to
+    // widen this list of safe consumptions with the reason — not to go back to
+    // asking about spellings.
+    const escaped = statusReads(route)
+      .filter((r) => !CONSUMED_BY_REGISTER.test(route.slice(0, r.start)))
+      .filter((r) => !USED_AS_PREDICATE.test(route.slice(r.end)))
+      .map((r) => `${r.text} @ …${flat(route.slice(Math.max(0, r.start - 44), r.start)).trim()}`);
     expect(
-      offenders,
-      `these put a raw status into the model's payload; call ${accessor}() instead`,
+      escaped,
+      `these read a stored status as a value; hand it to ${accessor}() or compare it`,
     ).toEqual([]);
-    // Non-vacuity, twice over: there ARE status interpolations here (so the filter
-    // is not reporting an empty list because the slice or the pattern broke), and
-    // both of the two sites are still present.
-    expect(touchingStatus).toHaveLength(2);
+    // Non-vacuity: the scan finds the real reads rather than reporting an empty
+    // list because the pattern or the file slice broke, and some of them are
+    // being labelled (so "nothing escaped" is not "nothing is read").
+    const labelledReads = statusReads(route).filter((r) =>
+      CONSUMED_BY_REGISTER.test(route.slice(0, r.start)),
+    );
+    expect(labelledReads.length, "no status is handed to a register at all").toBeGreaterThanOrEqual(2);
+    expect(statusReads(route).length).toBeGreaterThan(labelledReads.length);
+
+    // AND AT THE SINK, over EVERY interpolation in the tool bodies rather than
+    // only the ones that mention a status: each is either a register call or an
+    // expression with no status in it. Two halves of one question, because a
+    // status can also arrive already extracted — `${String(asset.status)}` is a
+    // call, which is why the "passes through some call" version accepted it, and a
+    // wholesale record dump carries every field the record has including this one.
+    //
+    // THE SANCTIONED SHAPE: the whole interpolation is one register call. Its
+    // first argument is `[^(),]*` rather than an identifier path — a receiver can
+    // be `matches[0]!.status` or `asset["status"]` — and the optional second is
+    // the viewer flag the SHARED lookup takes, because calling that one inline is
+    // legitimate and the first draft of this pattern flagged it (a guard that
+    // fires on correct code gets deleted). Neither argument may contain a paren,
+    // so no nested call hides inside, and the interpolation must END at the close
+    // paren, so `${label(x) + a.status}` is not one of these.
+    const LABELLED = new RegExp(
+      `^\\$\\{\\s*(?:${REGISTER_CALLEES.join("|")})\\(\\s*[^(),]*(?:,\\s*[^()]*)?\\)\\s*\\}$`,
+    );
+    const interpolations = tools.match(/\$\{[^{}]*\}/g) ?? [];
+    const labelled = interpolations.filter((i) => LABELLED.test(i));
+    const unaccounted = interpolations.filter(
+      (i) => !LABELLED.test(i) && (statusReads(i).length > 0 || i.includes("JSON.stringify(")),
+    );
+    expect(
+      unaccounted,
+      `these hand the model something that can carry a stored status; call ${accessor}() on the field you mean`,
+    ).toEqual([]);
+    // Non-vacuity for the accounting: the slice has interpolations to classify,
+    // and the two answers still tell the model a labelled state.
+    expect(labelled.length, "find_output stopped labelling any status").toBeGreaterThanOrEqual(2);
+    expect(interpolations.length).toBeGreaterThan(labelled.length);
   });
 
   it("asks the register with the actor's viewer, never a constant", () => {
@@ -590,11 +899,36 @@ describe("the copilot system prompt", () => {
     // for them would change an operator's words to fix a client's problem. Every
     // raw enum must therefore sit behind `!viewerIsClient`.
     //
-    // SCOPE, because this scan's granularity is one LINE: it recognises the
-    // single-line `if (!viewerIsClient) parts.push(…)` form the builder uses. A
-    // multi-line staff-only block would read as unguarded here and would need the
-    // scan extended rather than the guard assumed. Stated so the next person does
-    // not discover it by watching a true failure look false.
+    // BLOCK-AWARE, and it had to become so: the scan's granularity used to be one
+    // LINE, so it recognised only the single-line `if (!viewerIsClient)
+    // parts.push(…)` form the builder happens to use, and a multi-line staff-only
+    // block would have read as unguarded — a TRUE failure that looks false, which
+    // is the kind that gets a guard loosened instead of a leak fixed.
+    //
+    // "Which guard is nearest above this line" is NOT the question, for exactly the
+    // reason the throw-guard below had to be rewritten: a guard that has already
+    // closed is not a guard. The question is whether the interpolation sits inside a
+    // range a staff guard still governs, so each guard's range is what gets
+    // computed — its braced block, or the one statement that follows it.
+    //
+    // It FAILS CLOSED on any other guard shape (a `viewerIsClient ? … : …`
+    // ternary, an `else` branch): those read as unguarded and get flagged. That is
+    // the safe direction — a spurious flag with a message saying what to do, not a
+    // leak — and the remedy is to write the recognised shape or extend this scan.
+    //
+    // THAT DIRECTION IS ONLY TRUE WHILE THE RANGE WALK IS, and it was not. The
+    // claim above says an unrecognised guard over-flags; it says nothing about a
+    // recognised guard whose range is computed too WIDE, which is the fail-OPEN
+    // direction and is what shipped. `matchingBrace` skipped `'` and `"` and not
+    // backticks, so an apostrophe in a staff block's own prose ("the client's
+    // stored state") opened a bogus string that ran past the block's closing brace
+    // to the next apostrophe — and an unguarded `${client.accountStatus}` in
+    // between read as INSIDE the staff range. Planted exactly that: the leak was
+    // swallowed and this suite stayed green. So the guarantee is stated in two
+    // halves now, and the second is the one a helper has to earn: an unrecognised
+    // guard shape over-flags, AND a recognised guard's range ends where its brace
+    // does, because every string literal — backticks included — is skipped whole
+    // by the one shared primitive whose own teeth are checked below.
     //
     // SECOND STATED HOLE: this recognises an enum by its field access or by a local
     // named after the field. A value rebound to a differently-named local
@@ -640,34 +974,44 @@ describe("the copilot system prompt", () => {
     const THROUGH_A_CALL = new RegExp(
       `\\b(?:${LABEL_CALLEES.join("|")})\\(\\s*[A-Za-z_$][\\w$.]*\\s*\\)`,
     );
-    const lines = prompt.split("\n");
+    const staffOnly = staffOnlyRanges(prompt);
     const offenders: string[] = [];
-    for (const line of lines) {
-      for (const interp of line.match(/\$\{[^{}]*\}/g) ?? []) {
-        if (!RAW_FIELD.test(interp) && !RAW_LOCAL.test(interp)) continue;
-        // FREE TEXT that merely ends in Type/Status. The pattern above matches a
-        // field-name SHAPE, and shape cannot tell a closed union from prose — so
-        // the default is to flag, and a genuinely free-text field is allowlisted
-        // here WITH its reason. `ClientReport.businessType` is `string`, written
-        // from the report's company profile ("SaaS", "Fintech"): the client's own
-        // description of their own business, with no union behind it and nothing
-        // internal to launder. Adding to this list should feel like a decision.
-        if (FREE_TEXT_FIELDS.some((f) => interp.includes(f))) continue;
-        // Through one of the label accessors discovered above — not any call.
-        if (THROUGH_A_CALL.test(interp)) continue;
-        // Or on a line the staff branch owns.
-        if (line.includes("!viewerIsClient")) continue;
-        offenders.push(interp);
-      }
+    for (const m of prompt.matchAll(/\$\{[^{}]*\}/g)) {
+      const interp = m[0];
+      if (!RAW_FIELD.test(interp) && !RAW_LOCAL.test(interp)) continue;
+      // FREE TEXT that merely ends in Type/Status. The pattern above matches a
+      // field-name SHAPE, and shape cannot tell a closed union from prose — so
+      // the default is to flag, and a genuinely free-text field is allowlisted
+      // here WITH its reason. `ClientReport.businessType` is `string`, written
+      // from the report's company profile ("SaaS", "Fintech"): the client's own
+      // description of their own business, with no union behind it and nothing
+      // internal to launder. Adding to this list should feel like a decision.
+      if (FREE_TEXT_FIELDS.some((f) => interp.includes(f))) continue;
+      // Through one of the label accessors discovered above — not any call.
+      if (THROUGH_A_CALL.test(interp)) continue;
+      // Or inside a range the staff branch owns — block or single statement.
+      if (insideStaffOnly(staffOnly, m.index!)) continue;
+      offenders.push(interp);
     }
+    // Non-vacuity for the guard half: the scan found a staff-only range at all
+    // (an empty list would make "guarded" unreachable and every staff line an
+    // offender), and the one live guard is a single-statement one, so a green run
+    // is not evidence that the block path works — the plants are.
+    expect(staffOnly.length, "found no staff-only guard to recognise").toBeGreaterThan(0);
     expect(
       offenders,
       "these hand a CLIENT's model a stored enum; ask a register, or drop the field for a client",
     ).toEqual([]);
     // Non-vacuity: the scan does see this file's interpolations at all, and it
     // does see the guarded one (so "no offenders" is not "found nothing").
+    //
+    // Whitespace-tolerant, like its sibling below and for the same reason: as
+    // `toContain("${client.status}")` this pinned ONE byte-exact spelling, so
+    // reformatting to `${ client.status }` — still guarded, still correct — failed
+    // here while the sweep it is vouching for passed. A residual source canary is
+    // the defect this round already fixed once, four lines down.
     expect((prompt.match(/\$\{[^{}]*\}/g) ?? []).length).toBeGreaterThan(10);
-    expect(prompt).toContain("${client.status}");
+    expect(prompt).toMatch(/\$\{\s*client\.status\s*\}/);
   });
 
   it("wraps every action a client's tool awaits, so a throw cannot reach their model", () => {
@@ -690,24 +1034,11 @@ describe("the copilot system prompt", () => {
     // branch directly above has its own try/catch, so a SIBLING try that had
     // already closed satisfied it. What has to be true is that the call sits
     // lexically inside a try block that is still OPEN at that point.
-    const enclosedByTry = (at: number): boolean => {
-      for (const t of [...route.matchAll(/try\s*\{/g)]) {
-        const open = t.index! + t[0].length - 1;
-        if (open > at) break;
-        let depth = 0;
-        for (let i = open; i < route.length; i++) {
-          if (route[i] === "{") depth++;
-          else if (route[i] === "}") {
-            depth--;
-            if (depth === 0) {
-              if (i > at) return true; // this try closes after the call
-              break;
-            }
-          }
-        }
-      }
-      return false;
-    };
+    const enclosedByTry = (at: number): boolean =>
+      [...route.matchAll(/try\s*\{/g)]
+        .map((t) => t.index! + t[0].length - 1)
+        .filter((open) => open < at)
+        .some((open) => matchingBrace(route, open) > at);
 
     for (const call of calls) {
       expect(
@@ -724,8 +1055,31 @@ describe("the copilot system prompt", () => {
     //
     // client.status: DROPPED for a client. Account lifecycle
     // ("active"/"paused"/"archived") is not the client's reading, and there is no
-    // register to launder it through.
-    expect(prompt).toMatch(/if \(!viewerIsClient\) parts\.push\(`- \*\*Status:\*\* \$\{client\.status\}`\)/);
+    // register to launder it through — so unlike the other two it must be behind
+    // the staff guard, not behind a label call.
+    //
+    // ASKED AS THE GUARANTEE, not as the spelling. This pinned the exact line
+    // `if (!viewerIsClient) parts.push(`- **Status:** ${client.status}`)` — a source
+    // canary, and it fired on the correct code the moment the guard became a
+    // multi-line staff block, which is the very shape the sweep above was extended
+    // to understand. It was blocking its own improvement; a probe that planted the
+    // block watched the sweep pass and THIS line fail.
+    const clientStatusInterps = [...prompt.matchAll(/\$\{\s*client\.status\s*\}/g)];
+    expect(
+      clientStatusInterps.length,
+      "the prompt no longer gives staff the stored account status at all",
+    ).toBeGreaterThan(0);
+    const promptStaffOnly = staffOnlyRanges(prompt);
+    for (const m of clientStatusInterps) {
+      expect(
+        insideStaffOnly(promptStaffOnly, m.index!),
+        "client.status is composed outside any staff-only guard",
+      ).toBe(true);
+    }
+    // …and it is DROPPED rather than relabelled: no register accessor is reaching
+    // for it, which is what would hide the "there is no client register for this
+    // field" decision behind a laundering call.
+    expect(prompt).not.toMatch(/\w*[Ll]abel\w*\(\s*client\.status/);
     // job.status: RELABELLED through the register the run badges already read.
     expect(prompt).toContain("jobStatusLabel(j.status)");
     expect(prompt).toContain('from "@/lib/job-status-copy"');

@@ -8,7 +8,10 @@ import {
   assetStatusLabel,
   clientAssetStatusLabel,
 } from "@/lib/asset-status-copy";
+import { ALL_CALENDAR_FILTER_KEYS } from "@/lib/calendar-kind";
+import { JOB_STATUS_META } from "@/lib/job-status-copy";
 import type { Asset } from "@/lib/types";
+import { isStringDelimiter, skipStringLiteral } from "./source-scan";
 
 /**
  * Two registers for an asset status, and nowhere else to write a third.
@@ -57,6 +60,18 @@ function code(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 }
 
+/**
+ * The asset-status union, HAND-TYPED — and that is the honest word for it, unlike
+ * the two lists further down.
+ *
+ * `Asset["status"][]` constrains every MEMBER to the union; it does not make the
+ * list TOTAL, so tsc would accept this with a status missing. What closes that is
+ * not the annotation but the assertion in "names every status the type allows":
+ * `Object.keys(CLIENT_ASSET_STATUS_LABEL)` must equal this list, and that register
+ * is a `Record<Asset["status"], string>`, which tsc DOES keep total. So a new
+ * status added to the type fails there — at the register — and this list is held to
+ * it. Transitive, one hop, and worth spelling out rather than calling this derived.
+ */
 const ASSET_STATUSES: Asset["status"][] = [
   "draft",
   "approved",
@@ -94,7 +109,9 @@ interface Literal {
  *
  * Hand-rolled rather than parsed because a tripwire that needs a compiler in the
  * test run is a tripwire someone deletes. Strings and template literals are
- * skipped whole, so braces inside them cannot unbalance the scan.
+ * skipped whole through the one shared primitive, so braces inside them cannot
+ * unbalance the scan — including the braces of a `${…}` interpolation, which its
+ * own copy of the skip could not see past.
  */
 function objectLiterals(src: string): Literal[] {
   const out: Literal[] = [];
@@ -103,13 +120,15 @@ function objectLiterals(src: string): Literal[] {
   for (let i = 0; i < src.length; i++) {
     const ch = src[i]!;
 
-    if (ch === '"' || ch === "'" || ch === "`") {
-      let j = i + 1;
-      while (j < src.length && src[j] !== ch) j += src[j] === "\\" ? 2 : 1;
-      const value = src.slice(i + 1, j);
+    // A STRAY delimiter (the skip returns its own index) is not a literal and is
+    // not recorded as one — it falls through to the plain character append below,
+    // so `<p>Don't</p>` contributes no phantom value and opens no region.
+    const closes = isStringDelimiter(ch) ? skipStringLiteral(src, i) : i;
+    if (closes > i) {
+      const value = src.slice(i + 1, closes);
       for (const frame of stack) frame.strings.push(value);
       if (stack.length > 0) stack[stack.length - 1]!.body += '""';
-      i = j;
+      i = closes;
       continue;
     }
 
@@ -195,56 +214,136 @@ function isStatusLabelMap(lit: Literal): boolean {
  *
  * Found by looking at every ternary that YIELDS a string literal and asking
  * whether the test immediately before it compared something to a status word.
- * Both operand orders count; a chain that wraps onto the next line counts (the
- * window is plain text, and `[^?"']*` cannot cross another `?` or another
- * literal, so `a ?? "Fallback"` is not one of these).
+ * Both operand orders count, `!==` counts, and a chain that wraps onto the next
+ * line counts (the window is plain text, and it cannot cross another `?` or
+ * another literal, so `a ?? "Fallback"` is not one of these).
  *
- * NO DOMAIN EXEMPTION, unlike the object sweep. A literal map can be recognised
- * as belonging to another key domain by its keys (`placeholder`, `failed` ⇒
- * `CalendarAssetKind`); a chain has no keys to read. It needs none either: each
- * domain has one accessor, so a chain over these words is a second answer
- * whichever domain it meant.
+ * ALL THREE QUOTES, on both the yield and the comparison. A chain yielding
+ * BACKTICKED labels — `s === "failed" ? \`Failed\` : …` — used to escape this sweep
+ * entirely, which made the name of the test it backs ("the only asset-status label
+ * CHAINS in src/") promise a syntax it never looked at; planted into
+ * calendar-past-runs.ts, it was green. The residual limit, stated rather than
+ * implied: a yield that is not a LITERAL at all (an identifier, a concatenation, a
+ * multi-line template) is not a shape this sweep reads, which is the same bound the
+ * object sweep carries and the reason the file docstring above disclaims being an
+ * inventory.
  *
- * THREE DOMAINS, not two. The previous note here said "both domains now have one
- * accessor each" and named `assetStatusLabel` and `postKindLabel`. There is a
- * third with its own live accessor — `jobStatusLabel` / `JOB_STATUS_META` over
- * `JobStatus` — and it overlaps the word list, sharing "approved" and
- * "delivered". A planted job-status chain confined to the words this sweep did
- * not scan escaped it entirely.
+ * NO DOMAIN EXEMPTION LIST, unlike the object sweep. A literal map can be
+ * recognised as belonging to another key domain by its keys (`placeholder`,
+ * `failed` ⇒ `CalendarAssetKind`); a chain has no keys to read. It needs no list
+ * either: each domain has one accessor, so a chain over these words is a second
+ * answer whichever domain it meant.
  *
- * SCOPE OF THE WORD LIST, established by running the widening rather than
- * reasoning about it. `queued`, `running` and `review` are in: adding them keeps
- * the whole suite green, so they cost nothing and close most of the gap.
+ * THE WORD LIST IS THE THREE UNIONS. Every word of `Asset["status"]`, of
+ * `JobStatus` and of `CalendarFilterKey` — so a new status in any of the three is
+ * covered here without anyone remembering to widen a string, which is what the
+ * previous version asked for and could not have got, being a literal.
  *
- * `failed` and `cancelled` are deliberately OUT, and this is the honest part —
- * they are generic English UI states, not just job statuses, so scanning for them
- * flags code that is doing nothing wrong. Adding both turned two files red:
+ * TWO of the three are DERIVED and the third is not, which is a distinction this
+ * note used to flatten into "derived and not typed out". `JOB_STATUS_META` is a
+ * `Record<JobStatus, …>` and `ALL_CALENDAR_FILTER_KEYS` a total array, both kept
+ * total by tsc, so reading their keys IS the union. `ASSET_STATUSES` above is
+ * hand-typed and only its MEMBERS are constrained by the type; its totality is
+ * held one hop away, by the register-keys assertion further down (see its own
+ * note). Same coverage, different mechanism, and saying so is the difference
+ * between a guarantee and a slogan.
+ *
+ * `failed` and `cancelled` used to be OUT, with the hole stated: a chain written
+ * entirely in those two words escaped. They are in now. The reason they were out
+ * was that adding them turned two legitimate files red, and the reason they can
+ * be in is that the sweep no longer asks the question that made those files look
+ * guilty. It counted every status-comparing yield in a WHOLE FILE, so two
+ * unrelated one-branch ternaries added up to a "vocabulary":
  *  - components/copy-caption-button.tsx — `state === "copied" ? "Copied" :
- *    state === "failed" ? "Press and hold to copy" : "Copy caption"`, over a
- *    LOCAL `"idle" | "copied" | "failed"` button state with no job in sight;
- *  - app/api/agent-service/webhook/route.ts — `status === "cancelled" ?
- *    "cancelled" : status === "failed" ? "failed" : "success"`, mapping a run
- *    outcome onto the usage-log's own enum, which is a translation between two
- *    machine vocabularies and not a label at all.
- * Both are legitimate. A sweep that cries wolf on them teaches the next person to
- * widen the allowlist, which is how the guard dies.
+ *    state === "failed" ? "Press and hold to copy" : "Copy caption"` on one line
+ *    and the matching icon chain on the next, over a LOCAL
+ *    `"idle" | "copied" | "failed"` button state with no job in sight. Only ONE
+ *    link in each chain even mentions a status word, and it is `failed`.
+ *  - app/api/agent-service/webhook/route.ts — a `"Job cancelled"` event message
+ *    in one statement and `status === "cancelled" ? "cancelled" : status ===
+ *    "failed" ? "failed" : "success"` (a translation between two machine
+ *    vocabularies, no label in it) in another, far apart in the same file.
+ * Neither is a status vocabulary, and a sweep that cries wolf on them teaches the
+ * next person to widen an allowlist, which is how a guard dies.
  *
- * So what this sweep catches is a status-label chain that touches at least one of
- * the words below. A chain written ENTIRELY in `failed`/`cancelled` gets past it.
- * That is a stated hole, not a covered one — if a fourth domain arrives, run the
- * widening before writing the claim.
+ * SCOPE, and it is the price of the two words. The unit is now ONE STATEMENT (or
+ * one `{…}` expression container) rather than a file, which is what the two-link
+ * rule below always claimed to be about — "one binary sentence is not a
+ * vocabulary" is a statement about one chain. So a vocabulary spelled as SEPARATE
+ * statements over the same discriminant no longer accumulates into a flag. If
+ * that shape ever turns up, the fix is to group links by the expression being
+ * compared rather than to go back to counting per file: `state` and `job.status`
+ * are different domains, and the discriminant is what says so.
  */
-const STATUS_WORDS = "draft|approved|scheduled|published|delivered|queued|running|review";
-const TERNARY_YIELDING_LITERAL = /\?\s*(["'])([^"'\n]*)\1/g;
-const COMPARED_TO_STATUS = new RegExp(`(?:===|==)\\s*["'](?:${STATUS_WORDS})["'][^?"']*$`);
-const STATUS_COMPARED_TO = new RegExp(`["'](?:${STATUS_WORDS})["']\\s*(?:===|==)[^?"']*$`);
+const STATUS_WORDS = [
+  ...new Set<string>([
+    ...ASSET_STATUSES,
+    ...Object.keys(JOB_STATUS_META),
+    ...ALL_CALENDAR_FILTER_KEYS,
+  ]),
+].join("|");
+const COMPARISON = "===|==|!==|!=";
+/** Any of the three delimiters, and a window that cannot cross one or a `?`. */
+const QUOTE = "[\"'`]";
+const NOT_PAST_A_LITERAL = "[^?\"'`]*$";
+const TERNARY_YIELDING_LITERAL = /\?\s*(?:(["'])([^"'\n]*)\1|`([^`\n]*)`)/g;
+const COMPARED_TO_STATUS = new RegExp(
+  `(?:${COMPARISON})\\s*${QUOTE}(?:${STATUS_WORDS})${QUOTE}${NOT_PAST_A_LITERAL}`,
+);
+const STATUS_COMPARED_TO = new RegExp(
+  `${QUOTE}(?:${STATUS_WORDS})${QUOTE}\\s*(?:${COMPARISON})${NOT_PAST_A_LITERAL}`,
+);
 
-/** Every label a status-comparing ternary yields in this source. */
-function statusTernaryLabels(src: string): string[] {
+/**
+ * One chain's worth of source: split at `;` and at either brace, which are the
+ * boundaries a ternary chain cannot cross.
+ *
+ * Strings are skipped whole so a `;` or `{` inside one cannot split a chain —
+ * BACKTICKS INCLUDED, through the one shared primitive, which its own copy of the
+ * skip did not do. Wherever a template literal's TEXT holds an apostrophe (which is
+ * ordinary in this repo — see `app/(app)/calendar/calendar-body.tsx`'s "hasn't"
+ * lines), the `'` opened a bogus string that ran to the next apostrophe and ate the
+ * `;`/`{`/`}` in between. Units MERGED, restoring the per-file accumulation this
+ * sweep was rewritten to stop — and with it exactly the false positives that were
+ * the stated reason `failed`/`cancelled` had to be left out of the word list. One
+ * apostrophe-bearing template above copy-caption-button.tsx's two chains was
+ * enough to bring them back; planted, and it did.
+ *
+ * A template literal is skipped whole, so a chain written INSIDE an interpolation
+ * is no longer split out into its own unit at the `${` brace — it now travels with
+ * the statement that contains it, which is the same unit its discriminant lives in
+ * and so still the right granularity for the two-link rule.
+ */
+function chainUnits(src: string): string[] {
   const out: string[] = [];
-  for (const m of src.matchAll(TERNARY_YIELDING_LITERAL)) {
-    const before = src.slice(Math.max(0, m.index - 160), m.index);
-    if (COMPARED_TO_STATUS.test(before) || STATUS_COMPARED_TO.test(before)) out.push(m[2]!);
+  let cur = "";
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]!;
+    const closes = isStringDelimiter(ch) ? skipStringLiteral(src, i) : i;
+    if (closes > i) {
+      cur += src.slice(i, closes + 1);
+      i = closes;
+      continue;
+    }
+    if (ch === ";" || ch === "{" || ch === "}") {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** Every label a status-comparing ternary yields in one chain-sized unit. */
+function statusTernaryLabels(unit: string): string[] {
+  const out: string[] = [];
+  for (const m of unit.matchAll(TERNARY_YIELDING_LITERAL)) {
+    const before = unit.slice(0, m.index);
+    if (COMPARED_TO_STATUS.test(before) || STATUS_COMPARED_TO.test(before)) {
+      out.push((m[2] ?? m[3])!);
+    }
   }
   return out;
 }
@@ -252,15 +351,17 @@ function statusTernaryLabels(src: string): string[] {
 /**
  * Is this source a status→label map written as a ternary chain?
  *
- * TWO links, because one `status === "published" ? "Posted" : "Not posted"` is a
- * binary sentence rather than a vocabulary, and a single yielded word is where
- * legitimate code lives (a class name, a field name, an aria string). And at
- * least one yield has to read as a LABEL: capitalised, and not one of the
- * non-prose tokens the object sweep already knows how to recognise.
+ * TWO links IN ONE CHAIN, because one `status === "published" ? "Posted" : "Not
+ * posted"` is a binary sentence rather than a vocabulary, and a single yielded
+ * word is where legitimate code lives (a class name, a field name, an aria
+ * string). And at least one yield has to read as a LABEL: capitalised, and not
+ * one of the non-prose tokens the object sweep already knows how to recognise.
  */
 function isStatusLabelTernary(src: string): boolean {
-  const labels = statusTernaryLabels(src);
-  return labels.length >= 2 && labels.some((l) => /^[A-Z]/.test(l) && !isNonProse(l));
+  return chainUnits(src).some((unit) => {
+    const labels = statusTernaryLabels(unit);
+    return labels.length >= 2 && labels.some((l) => /^[A-Z]/.test(l) && !isNonProse(l));
+  });
 }
 
 describe("the asset-status registers", () => {
@@ -374,14 +475,35 @@ describe("the asset-status registers", () => {
     ).toBe(false);
   });
 
-  it("catches the THIRD domain's chain too, and still spares its generic words", () => {
+  it("takes every word of all three unions", () => {
+    // The word list's own teeth. A literal list was the hole: it held eight of the
+    // twelve words and nothing made it grow with the unions. Now it is built from
+    // the three unions themselves, so this asserts the build ran rather than
+    // re-typing what it should contain.
+    //
+    // Two of the three sources are total by tsc (`JOB_STATUS_META` is a Record over
+    // `JobStatus`; `ALL_CALENDAR_FILTER_KEYS` over `CalendarFilterKey`), so looping
+    // them here cannot miss a word. `ASSET_STATUSES` is hand-typed, and this loop
+    // over it proves only that the list it holds reached the word list — its
+    // TOTALITY is the register-keys assertion's job, one describe down.
+    const words = new Set(STATUS_WORDS.split("|"));
+    for (const w of Object.keys(JOB_STATUS_META)) expect(words, `JobStatus ${w}`).toContain(w);
+    for (const w of ALL_CALENDAR_FILTER_KEYS) expect(words, `calendar ${w}`).toContain(w);
+    for (const w of ASSET_STATUSES) expect(words, `asset ${w}`).toContain(w);
+    // The two that were deliberately out, named so a silent narrowing shows up
+    // here rather than as a chain nobody scans.
+    expect(words).toContain("failed");
+    expect(words).toContain("cancelled");
+  });
+
+  it("catches the THIRD domain's chain, including the two words that used to be out", () => {
     // The gap the docstring above used to hide behind "both domains". `JobStatus`
     // has its own accessor (`jobStatusLabel`) and shares "approved"/"delivered"
     // with the asset words, so a run-state vocabulary spelled as a chain is the
     // same defect in a domain this sweep was not scanning.
     const chain = (src: string) => isStatusLabelTernary(src);
 
-    // A planted job-status chain, in the words that were added.
+    // A planted job-status chain, in the words that were added first.
     expect(
       chain(`const l = j.status === "review" ? "In review" : j.status === "running" ? "Running" : "Queued";`),
     ).toBe(true);
@@ -389,16 +511,115 @@ describe("the asset-status registers", () => {
       chain(`const l = j.status === "queued" ? "Waiting" : j.status === "approved" ? "Signed off" : "-";`),
     ).toBe(true);
 
-    // And the two REAL files that adding "failed"/"cancelled" would have flagged,
-    // verbatim in shape. They are why those two words are out; if a later change
-    // makes these pass as false, the word list can be widened.
+    // THE HOLE THAT WAS STATED: a chain written ENTIRELY in `failed`/`cancelled`
+    // used to walk past this sweep, because those two words were not in the list.
+    expect(
+      chain(`const l = j.status === "failed" ? "Failed" : j.status === "cancelled" ? "Cancelled" : "Running";`),
+    ).toBe(true);
+    // Including the calendar kind that shares neither list.
+    expect(
+      chain(`const l = k === "held" ? "Waiting its turn" : k === "placeholder" ? "Nothing planned" : "-";`),
+    ).toBe(true);
+
+    // And the two REAL files those two words would have flagged, verbatim in
+    // shape. They are spared for their own reasons now, not by a hole in the word
+    // list: the button chain has ONE link over a status word (`copied` is not a
+    // status in any domain), and the webhook's chain yields machine enum values
+    // with no label among them.
     expect(
       chain(`const label = state === "copied" ? "Copied" : state === "failed" ? "Press and hold to copy" : "Copy caption";`),
+    ).toBe(false);
+    expect(
+      chain(`const icon = state === "copied" ? "Check" : state === "failed" ? "TriangleAlert" : "Copy";`),
     ).toBe(false);
     expect(
       chain(`const usageStatus: "success" | "failed" | "cancelled" =
         status === "cancelled" ? "cancelled" : status === "failed" ? "failed" : "success";`),
     ).toBe(false);
+    expect(
+      chain(`events.push({ at: now, level: "error", message: payload.status === "cancelled" ? "Job cancelled" : \`Job \${payload.status}\` });`),
+    ).toBe(false);
+    // The two of them TOGETHER in one file, which is what the per-file count used
+    // to add up: still no flag, because neither statement is a vocabulary.
+    expect(
+      chain(`const label = state === "copied" ? "Copied" : state === "failed" ? "Press and hold to copy" : "Copy caption";
+        const icon = state === "copied" ? "Check" : state === "failed" ? "TriangleAlert" : "Copy";`),
+    ).toBe(false);
+  });
+
+  it("catches a chain that yields BACKTICKED labels", () => {
+    // The whole quote form that escaped: `TERNARY_YIELDING_LITERAL` read `'` and
+    // `"` only, so this shape was invisible to a test named for catching CHAINS.
+    // Planted into calendar-past-runs.ts and the suite stayed green.
+    const chain = (src: string) => isStatusLabelTernary(src);
+
+    expect(
+      chain("const l = s === \"failed\" ? `Failed` : s === \"cancelled\" ? `Cancelled` : `Running`;"),
+    ).toBe(true);
+    // Mixed delimiters across the links, and the comparison itself backticked.
+    expect(chain("const l = s === `published` ? `Posted` : s === \"draft\" ? 'Draft' : \"-\";")).toBe(
+      true,
+    );
+
+    // And the boundary, so widening the delimiters did not widen the verdict: a
+    // backticked class fragment and a backticked field name are still non-prose.
+    expect(
+      chain("const c = s === \"published\" ? `bg-success/15` : s === \"draft\" ? `bg-warning/15` : ``;"),
+    ).toBe(false);
+    expect(
+      chain(
+        "const at = k === \"published\" ? `publishedAt` : k === \"draft\" ? `createdAt` : `scheduledAt`;",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps one statement one unit when a template literal holds an apostrophe", () => {
+    // The regression the backtick-blind unit splitter caused, which is the reason
+    // `failed`/`cancelled` could be added to the word list at all. A `'` inside
+    // template TEXT opened a bogus string that ran to the next apostrophe, eating
+    // the `;` between two statements — so copy-caption-button's two one-link
+    // ternaries MERGED into a single unit and read as a two-link vocabulary. The
+    // shape is ordinary in this repo, not contrived: calendar-body.tsx writes
+    // "hasn't" inside a template literal today.
+    const chain = (src: string) => isStatusLabelTernary(src);
+
+    const merged = [
+      "const hint = `press and hold if it doesn't copy`;",
+      'const label = state === "copied" ? "Copied" : state === "failed" ? "Press and hold to copy" : "Copy caption";',
+      'const icon = state === "copied" ? "Check" : state === "failed" ? "TriangleAlert" : "Copy";',
+    ].join("\n");
+    expect(chain(merged), "two one-link statements accumulated into a vocabulary").toBe(false);
+
+    // Non-vacuity for that negative: the same file with a REAL two-link chain in it
+    // still flags, so "false" above is the splitter working and not the sweep
+    // having gone blind to everything after the apostrophe.
+    expect(
+      chain(
+        `${merged}\nconst l = j.status === "failed" ? "Failed" : j.status === "cancelled" ? "Cancelled" : "-";`,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not let punctuation inside a backticked label split the chain in half", () => {
+    // The half of the backtick fix that ONLY backtick-awareness closes, isolated:
+    // the `;` here is TEXT inside a label, and to a splitter that walks into
+    // template text it is a statement boundary. Split there, each half holds ONE
+    // link, the two-link rule is not met, and a real vocabulary goes unflagged —
+    // fail OPEN, in the direction a green tick hides. Bounding the quote skip to
+    // its line (the other half of the fix) does nothing for this one.
+    const chain = (src: string) => isStatusLabelTernary(src);
+
+    expect(
+      chain(
+        "const l = j.status === \"failed\" ? `Failed; try again` : j.status === \"cancelled\" ? `Cancelled` : `-`;",
+      ),
+    ).toBe(true);
+    // The brace form of the same thing: prose inside a label, not a block.
+    expect(
+      chain(
+        "const l = j.status === \"failed\" ? `Failed {see logs}` : j.status === \"cancelled\" ? `Cancelled` : `-`;",
+      ),
+    ).toBe(true);
   });
 
   it("catches a lowercase label map, which the capitalisation heuristic missed", () => {
@@ -459,6 +680,13 @@ describe("the client register", () => {
   it("names every status the type allows, in both registers", () => {
     // A register with a hole renders the raw Firestore enum on a client's
     // screen — the defect the hold message had, one layer down.
+    //
+    // AND it is what makes `ASSET_STATUSES` total. Both registers are
+    // `Record<Asset["status"], string>`, which tsc will not let be short a key, so
+    // the key-equality assertions at the end of this test pin the hand-typed list
+    // to the union: add a status to the type and this fails until the list grows.
+    // Every scan keyed on `STATUS_KEYS` — the object sweep, the chain sweep's word
+    // list — inherits its coverage from here rather than from an annotation.
     for (const status of ASSET_STATUSES) {
       for (const viewerIsClient of [true, false]) {
         const label = assetStatusLabel(status, viewerIsClient);

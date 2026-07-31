@@ -218,10 +218,14 @@ export function integrationBelongsToCaller(
  * indistinguishable from the unconnected one, which is why the route gates at
  * the lookup and lets one branch serve both.
  *
- * Text is unchanged from the original unconnected-case copy, on purpose.
+ * Text is otherwise unchanged from the original unconnected-case copy, on
+ * purpose. The one edit is punctuation: the spaced hyphen ledger F71 bans in
+ * client copy sat at the END of one concatenated literal with the word that
+ * follows it in the next, which is how it survived a sweep looking for `" - "` a
+ * literal at a time.
  */
 export const GMAIL_UNAVAILABLE_MESSAGE =
   "No Google Workspace integration found for this account. " +
-  "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab) - " +
+  "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab) — " +
   "you will be prompted to grant Gmail read access. " +
   "In the meantime, I can still build a task map from your meetings and context documents.";

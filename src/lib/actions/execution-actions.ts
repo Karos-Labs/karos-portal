@@ -2,7 +2,11 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { requireTaskAccess } from "./_shared";
+import {
+  TASK_LEFT_REVIEW_MESSAGE,
+  TASK_NOT_IN_REVIEW_MESSAGE,
+  requireTaskAccess,
+} from "./_shared";
 import {
   getClient,
   updateClientTask,
@@ -78,7 +82,9 @@ export async function startTaskExecutionAction(
   if (!access.ok) return { ok: false, error: access.error };
   const { user, task } = access;
   if (inferOwnerEngine(task) !== "karos_managed") {
-    return { ok: false, error: "Task is not karos_managed" };
+    // Not the stored owner value: this is returned to a CLIENT_USER's task card
+    // (see requireTaskAccess), and "karos_managed" is a Firestore word.
+    return { ok: false, error: "Karos agents don't run this task — it's one for your team to complete." };
   }
   if (task.metadata?.executing === true) {
     return { ok: true }; // already running — don't double-trigger
@@ -205,7 +211,7 @@ export async function approveTaskArtifactAction(
   // completed out from under the client.
   const task = await claimTaskCompletion(taskId, clientId);
   if (!task) {
-    return { ok: false, error: "Task is not in review_pending state" };
+    return { ok: false, error: TASK_LEFT_REVIEW_MESSAGE };
   }
 
   let approvedAssetId: string | null = null;
@@ -300,7 +306,7 @@ export async function requestAdjustmentsAction(
   // Atomic claim: verifies ownership + review_pending + not already executing,
   // and flips to in_progress — two concurrent submits can't both charge.
   const claimed = await claimTaskForExecution(taskId, clientId, ["review_pending"]);
-  if (!claimed) return { ok: false, error: "Task is not in review_pending state" };
+  if (!claimed) return { ok: false, error: TASK_LEFT_REVIEW_MESSAGE };
 
   let denied: string | null;
   try {
@@ -354,8 +360,10 @@ export async function publishIntegrationAction(
   const { user, task: preflight } = access;
 
   const client = await getClient(clientId);
+  // NOT the lost-race sentence: this is a preflight, so it also fires for a task
+  // that is still pending or was finished days ago and never left review at all.
   if (preflight.status !== "review_pending") {
-    return { ok: false, error: "Task is not in review_pending state" };
+    return { ok: false, error: TASK_NOT_IN_REVIEW_MESSAGE };
   }
   if (!preflight.metadata?.artifact) {
     return { ok: false, error: "No artifact to publish" };
@@ -367,7 +375,7 @@ export async function publishIntegrationAction(
   if (!recipient) {
     return {
       ok: false,
-      error: "No recipient email - add a contact email to the client profile.",
+      error: "No recipient email — add a contact email to the client profile.",
     };
   }
 
@@ -376,7 +384,7 @@ export async function publishIntegrationAction(
   // reverted so the task stays reviewable.
   const task = await claimTaskCompletion(taskId, clientId);
   if (!task) {
-    return { ok: false, error: "Task is not in review_pending state" };
+    return { ok: false, error: TASK_LEFT_REVIEW_MESSAGE };
   }
 
   const result = await dispatchArtifactEmail(task, client?.name ?? "Your Team", recipient);
