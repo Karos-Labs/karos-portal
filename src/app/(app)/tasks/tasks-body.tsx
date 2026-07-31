@@ -137,6 +137,11 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     const agentLabelByAssetId = contentLabelsByAsset(assets, jobs, umbrellas);
     const timelineJobs: TimelineJob[] = jobs
       .filter((job) => !isClientViewer || (job.runType !== "launch" && job.runType !== "test"))
+      // hide internal failures from clients — same decision the calendar's past
+      // runs already make, and the archive makes server-side in
+      // getClientArchiveAssets. This timeline was the last surface still
+      // narrating a failed run to the client whose work it wasn't.
+      .filter((job) => !(isClientViewer && job.status === "failed"))
       .map((job) => ({
         id: job.id,
         agentName: runRowLabel(job, umbrellas),

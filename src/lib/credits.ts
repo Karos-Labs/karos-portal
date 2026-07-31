@@ -233,14 +233,30 @@ export type CreditDenialCode = "insufficient_balance" | "weekly_limit" | "monthl
  * string straight through to a client card.
  */
 export const CREDIT_DENIAL_PREFIX: Record<CreditDenialCode, string> = {
-  insufficient_balance: "Not enough credits - this action costs",
+  insufficient_balance: "Not enough credits — this action costs",
   weekly_limit: "Weekly credit limit reached (",
   monthly_limit: "Monthly credit limit reached (",
 };
 
+/**
+ * A denial's dashes, flattened to the house em dash. The insufficient-balance
+ * line carried a spaced hyphen until 2026-07-31, and these messages are STORED
+ * as well as returned — the scheduler writes its refusal into the agent row's
+ * lastError — so a message minted before the copy fix has to keep reading as a
+ * credit denial. Otherwise clientSafeRefusal stops recognising it and collapses
+ * the one refusal a client is meant to read into the generic paraphrase.
+ * Normalising both sides beats a hard cutover or a legacy prefix twin.
+ */
+function normalizeDenialDashes(text: string): string {
+  return text.replace(/ [-–—] /g, " — ");
+}
+
 /** True when `message` is one of the three assessCharge denials, verbatim. */
 export function isCreditDenialMessage(message: string): boolean {
-  return Object.values(CREDIT_DENIAL_PREFIX).some((prefix) => message.startsWith(prefix));
+  const normalized = normalizeDenialDashes(message);
+  return Object.values(CREDIT_DENIAL_PREFIX).some((prefix) =>
+    normalized.startsWith(normalizeDenialDashes(prefix)),
+  );
 }
 
 /**
@@ -348,7 +364,7 @@ export function assessCharge(
       code: "weekly_limit",
       message:
         `${CREDIT_DENIAL_PREFIX.weekly_limit}${rolled.weekSpent} of ${rolled.weeklyLimit} used). ` +
-        `It resets on Monday - or ask your Karos team to raise the limit.`,
+        `It resets on Monday — or ask your Karos team to raise the limit.`,
     };
   }
   if (rolled.monthlyLimit != null && rolled.monthSpent + amount > rolled.monthlyLimit) {
@@ -357,7 +373,7 @@ export function assessCharge(
       code: "monthly_limit",
       message:
         `${CREDIT_DENIAL_PREFIX.monthly_limit}${rolled.monthSpent} of ${rolled.monthlyLimit} used). ` +
-        `It resets on the 1st - or ask your Karos team to raise the limit.`,
+        `It resets on the 1st — or ask your Karos team to raise the limit.`,
     };
   }
   return {

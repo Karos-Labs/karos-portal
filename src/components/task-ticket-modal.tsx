@@ -347,17 +347,25 @@ function AiPlanSection({
   initialPlan: string | null;
 }) {
   const [plan, setPlan] = useState<string | null>(initialPlan);
+  const [planError, setPlanError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   // A guide the user just asked for opens; one that was already stored starts
   // folded so it cannot push the comment box below the fold.
   const [expanded, setExpanded] = useState(!initialPlan);
 
+  // The action returns its refusal as `{ plan: "", error }` — a credit denial
+  // among them. Throwing that away made every refusal look like a dead button:
+  // the control vanished while pending, came back, and said nothing. Same
+  // pattern the approve / adjust handlers above use.
   function generate() {
+    setPlanError(null);
     startTransition(async () => {
       const result = await generateTaskPlanAction(taskId, clientId);
       if (result.plan) {
         setPlan(result.plan);
         setExpanded(true);
+      } else {
+        setPlanError(result.error ?? "Could not generate the execution guide");
       }
     });
   }
@@ -394,6 +402,13 @@ function AiPlanSection({
           </button>
         )}
       </div>
+
+      {planError && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
+          <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
+          <p className="text-xs text-danger break-words">{planError}</p>
+        </div>
+      )}
 
       {isPending ? (
         <div className="flex items-center gap-2 py-4 text-xs text-muted">
