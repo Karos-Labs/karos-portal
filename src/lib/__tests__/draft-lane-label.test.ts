@@ -34,6 +34,27 @@ describe("laneLabel", () => {
     expect(laneLabel("Post 1 · knowledge/explainer")).toBe("Explainer");
   });
 
+  it("strips the ordinal when the heading drops its separator, which is the same shape", () => {
+    // The gap: the prefix rule fired on "Avenue 2 · " and on a bare "Avenue 9",
+    // and matched neither in between — so a heading the agent wrote without the
+    // separator sentence-cased whole into "Avenue 2 news reaction" and reached a
+    // client's option card as their angle.
+    expect(laneLabel("Avenue 2 News-reaction")).toBe("Reacting to the news");
+    expect(laneLabelOrNull("Post 3 Playbook")).toBe("Playbook");
+    // The same shape inside a ref, so both direction paths answer alike.
+    expect(refLaneLabel("Company page @getkaros · Avenue 2 News-reaction")).toBe(
+      "Reacting to the news",
+    );
+    for (const word of LAB_WORDS) {
+      expect(laneLabel("Avenue 2 News-reaction"), word).not.toContain(word);
+    }
+    // Neighbouring case: the punctuated form is untouched, so the widening did
+    // not simply start eating the head of every heading.
+    expect(laneLabel("Avenue 2 · News-reaction")).toBe("Reacting to the news");
+    expect(laneLabel("Playbook")).toBe("Playbook");
+    expect(accountLabel("Company page @getkaros")).toBe("Company page @getkaros");
+  });
+
   it("keeps a freshness flag as a readable suffix", () => {
     expect(laneLabel("Avenue 3 · News-reaction (live)")).toBe("Reacting to the news · live");
   });

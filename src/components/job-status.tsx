@@ -1,23 +1,18 @@
 import { Badge } from "@/components/ui";
+import { JOB_STATUS_META } from "@/lib/job-status-copy";
 import type { JobStatus } from "@/lib/types";
 
 /**
- * The one place a raw job status becomes words a client may read. Exported
- * because every surface that shows run state has to go through it — printing
- * `job.status` renders the database enum ("review", "delivered") on screen.
+ * The badge that paints a run's state.
+ *
+ * The WORDS moved to `@/lib/job-status-copy` — a pure module — because this file
+ * cannot be imported by a `server-only` caller without dragging `Badge` and JSX
+ * along, and the copilot's system-prompt builder is exactly that caller. It had
+ * been interpolating `job.status` raw. Re-exported from here so the surfaces
+ * already importing `JOB_STATUS_META` from this path keep working; new server
+ * callers should import the lib module directly.
  */
-export const JOB_STATUS_META: Record<
-  JobStatus,
-  { tone: "neutral" | "neon" | "warning" | "danger" | "info"; label: string }
-> = {
-  queued: { tone: "neutral", label: "Queued" },
-  running: { tone: "info", label: "Running" },
-  review: { tone: "warning", label: "In review" },
-  approved: { tone: "neon", label: "Approved" },
-  delivered: { tone: "neon", label: "Delivered" },
-  failed: { tone: "danger", label: "Failed" },
-  cancelled: { tone: "neutral", label: "Cancelled" },
-};
+export { JOB_STATUS_META, jobStatusLabel } from "@/lib/job-status-copy";
 
 export function JobStatusBadge({ status }: { status: JobStatus }) {
   const c = JOB_STATUS_META[status] ?? JOB_STATUS_META.queued;

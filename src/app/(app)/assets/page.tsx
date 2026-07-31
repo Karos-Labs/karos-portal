@@ -6,19 +6,14 @@ import { Icon } from "@/components/icon";
 import { AssetsView } from "@/components/assets-view";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
-import type { Asset } from "@/lib/types";
 
 export default async function AssetsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ clientId?: string; status?: string }>;
+  searchParams: Promise<{ clientId?: string }>;
 }) {
   const user = await requireUser();
-  const { clientId: viewClientId, status } = await searchParams;
-  const initialStatus: Asset["status"] | undefined =
-    status === "draft" || status === "approved" || status === "scheduled" || status === "delivered" || status === "published"
-      ? status
-      : undefined;
+  const { clientId: viewClientId } = await searchParams;
 
   // The client Library merged into the Workspace's Archive tab (2026-07) —
   // client users land there; this route stays the staff review surface.
@@ -38,7 +33,7 @@ export default async function AssetsPage({
     return (
       <>
         <PageHeader title={`${viewClient.name} · Library`} description="Content library and delivery calendar." />
-        <AssetsView assets={clientAssets} initialStatus={initialStatus} />
+        <AssetsView assets={clientAssets} />
       </>
     );
   }
@@ -58,7 +53,6 @@ export default async function AssetsPage({
         <AssetsView
           assets={assets}
           canApprove
-          initialStatus={initialStatus}
           clientNames={Object.fromEntries(clients.map((client) => [client.id, client.name]))}
           {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
         />

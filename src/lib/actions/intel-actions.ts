@@ -790,16 +790,3 @@ export async function updateContextItemNoteAction(id: string, note: string) {
   await updateContextItem(id, { note: note.trim() });
   revalidatePath(`/clients/${item.clientId}`);
 }
-
-/** Upload a PDF report file to Firebase Storage and return its durable download URL. */
-export async function uploadReportPdfAction(
-  clientId: string,
-  bytes: number[],
-): Promise<string> {
-  await requireStaff();
-  const { uploadBytes } = await import("@/lib/storage");
-  const buffer = Buffer.from(bytes);
-  const path = `clients/${clientId}/reports/${Date.now()}_intel.pdf`;
-  const { url } = await uploadBytes({ bytes: buffer, path, contentType: "application/pdf" });
-  return url;
-}

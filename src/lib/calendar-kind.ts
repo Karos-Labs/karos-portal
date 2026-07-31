@@ -83,6 +83,95 @@ export function postKindLabel(kind: CalendarAssetKind, viewerIsClient: boolean):
   return POST_KIND_LABEL[kind];
 }
 
+/**
+ * The legend/filter key domain: every chip kind, plus the one RUN bucket the
+ * legend also toggles ("review" is a past run whose `jobStatus` is "review", not
+ * an asset kind at all).
+ *
+ * Here rather than in run-calendar because WHO CAN MATCH a key is a fact about
+ * `postKind` above and about calendar-past-runs' visibility table — not about
+ * the component that paints the dots.
+ */
+export type CalendarFilterKey = CalendarAssetKind | "review";
+
+/**
+ * Every filter key. Exhaustive by construction — a new `CalendarAssetKind` is a
+ * compile error here rather than a member the suite quietly stops covering
+ * (the same device as `ALL_RUN_STATES` in lib/calendar-past-runs).
+ */
+const FILTER_KEY_PRESENT: Record<CalendarFilterKey, true> = {
+  published: true,
+  scheduled: true,
+  placeholder: true,
+  failed: true,
+  held: true,
+  draft: true,
+  review: true,
+};
+
+export const ALL_CALENDAR_FILTER_KEYS = Object.keys(FILTER_KEY_PRESENT) as CalendarFilterKey[];
+
+/**
+ * Which assets a CLIENT's calendar is built from at all.
+ *
+ * ONE home for it, because it is now asked twice: calendar-body filters the
+ * fetched assets through it, and the legend rule below derives what a client can
+ * therefore match. Written as the positive question so the two readers cannot
+ * disagree about the polarity.
+ *
+ * Drafts only. A client's calendar has never shown internal drafts (it matches
+ * /assets, which redirects a client away entirely), and the archive excludes them
+ * too — but the SCOPE of this predicate is the calendar's own asset set, which is
+ * the one thing the legend rule may reason from.
+ */
+export function isClientCalendarStatus(status: CalendarKindInput["status"]): boolean {
+  return status !== "draft";
+}
+
+/**
+ * Filter keys a CLIENT's calendar can never hold — so the legend must not offer
+ * them a dot that can never dim anything.
+ *
+ * ENUMERATED, not guessed at, and the enumeration is what the set is for. The
+ * finding named the Draft chip; the sharper question is which of the other six
+ * are in the same position, and the answer is none of them:
+ *
+ *  • published, scheduled — most of a client's calendar. Obviously matchable.
+ *  • placeholder — `publishMode: "placeholder"` is stripped from a LOCKED post
+ *    by redactLockedAsset, but an unlocked one keeps it, and that is an ordinary
+ *    shape rather than a staff-only one.
+ *  • failed — `clientSafePublishError` replaces the WORDS of a stored
+ *    publishError, never the field, so a client's failed post still classifies
+ *    as failed.
+ *  • held — verified live for clients, and the reason the kind exists: the
+ *    publish cron writes its ordering hold onto an approved, dated, past-due
+ *    post and nothing in the client projection removes it.
+ *  • review — calendar-past-runs' table marks the "review" run state
+ *    client-visible, and a client's card needs one unlocked deliverable, which
+ *    is the ordinary case for a run in review.
+ *  • draft — the one that cannot. `isClientCalendarStatus` drops draft-status
+ *    assets before `postKind` ever sees them, and postKind's only "draft" branch
+ *    requires exactly that status.
+ *
+ * The derivation is pinned in calendar-kind.test.ts, which probes `postKind`
+ * over every shape it reads rather than trusting this list. It is an UPPER bound
+ * on what a client can match — it ignores the RSC redaction, which can only
+ * remove shapes — so a key is withheld only when no shape at all could match it.
+ * That is the safe direction: the failure mode of a wrong entry here is a filter
+ * a client needed, not a chip they cannot use.
+ */
+const CLIENT_UNMATCHABLE_FILTER_KEYS: ReadonlySet<CalendarFilterKey> = new Set<CalendarFilterKey>([
+  "draft",
+]);
+
+/** Can this viewer's calendar hold anything this filter key would hide? */
+export function calendarFilterKeyMatchable(
+  key: CalendarFilterKey,
+  viewerIsClient: boolean,
+): boolean {
+  return !viewerIsClient || !CLIENT_UNMATCHABLE_FILTER_KEYS.has(key);
+}
+
 const POST_KIND_LABEL: Record<CalendarAssetKind, string> = {
   published: "Published",
   scheduled: "Scheduled post",

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { AgentIdentity } from "@/components/agent-identity";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { Badge, EmptyState } from "@/components/ui";
@@ -76,8 +75,29 @@ const STATUS_ORDER: Asset["status"][] = ["draft", "approved", "scheduled", "publ
  *
  * The control bar (status / agent / search) mirrors the staff AssetsView strip:
  * the client used to get one uncontrolled wall of every tile ever produced
- * (QA F66). `status` seeds from ?status= so other surfaces can deep link into
- * a slice — composed with F97's ?tab=archive.
+ * (QA F66). All three filters are component-local state.
+ *
+ * `status` used to seed from a `?status=` search param "so other surfaces can
+ * deep link into a slice", with a manual same-route re-read to go with it —
+ * removed 2026-07-31 (QA #138), along with the twin reader on /assets.
+ *
+ * THE CONTRACT ALREADY DECAYED ONCE, which is the argument for deleting it
+ * rather than keeping it warm. A producing link did exist: af1b404 (2026-07-21)
+ * added `href="/assets?view=library&status=draft"` to client-home-overview.tsx
+ * in the same commit that added the /assets reader it fed. 350a1a2 (2026-07-28,
+ * QA F97) re-pointed that dashboard row at the archive and dropped the param,
+ * leaving both readers with no producer — so what was deleted here is a param
+ * whose one caller had already been removed a week earlier, not a path nobody
+ * had got round to using. A reader kept alive past its last producer is the
+ * shape that rots: it type-checks, it renders, and the next person to write a
+ * deep link inherits re-read logic no test has ever exercised.
+ *
+ * Verify with `git log -S'status=draft' -- src/components/client-home-overview.tsx`
+ * before re-adding it; reintroduce it WITH its producer and a test.
+ *
+ * SCOPE: this is about the `?status=` param on these two surfaces. `?tab=`
+ * (F97, progress-view.tsx) is a separate, genuinely-used param and is
+ * unaffected; no claim is made here about search params elsewhere.
  */
 export function ArchiveView({
   assets,
@@ -96,26 +116,12 @@ export function ArchiveView({
   /** Drives the copy only — the posted-only filter is applied on the server. */
   viewerIsClient?: boolean;
 }) {
-  const searchParams = useSearchParams();
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
-  const statusParam = searchParams.get("status");
-  const [status, setStatus] = useState<Asset["status"] | "all">(() =>
-    STATUS_ORDER.includes(statusParam as Asset["status"]) ? (statusParam as Asset["status"]) : "all",
-  );
+  const [status, setStatus] = useState<Asset["status"] | "all">("all");
   const [agent, setAgent] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  // Same-route deep link (?status=) has to be re-read when it changes, since
-  // the component re-renders rather than remounting.
-  const [prevStatusParam, setPrevStatusParam] = useState(statusParam);
-  if (prevStatusParam !== statusParam) {
-    setPrevStatusParam(statusParam);
-    setStatus(
-      STATUS_ORDER.includes(statusParam as Asset["status"]) ? (statusParam as Asset["status"]) : "all",
-    );
-  }
 
   // The resolver already answered for every asset in the payload and never
   // returns an empty label; the local fallbacks stay only so a hand-assembled

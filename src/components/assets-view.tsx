@@ -28,14 +28,12 @@ const STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info"> = {
 export function AssetsView({
   assets,
   canApprove = false,
-  initialStatus,
   clientNames,
   connectedPlatformsByClient,
 }: {
   assets: Asset[];
   /** Staff-only: show approve/schedule controls on each card. Clients never approve. */
   canApprove?: boolean;
-  initialStatus?: Asset["status"];
   /** Present on the staff-wide view so cards retain their client context. */
   clientNames?: Record<string, string>;
   /**
@@ -46,7 +44,7 @@ export function AssetsView({
    */
   connectedPlatformsByClient?: Record<string, string[]>;
 }) {
-  const [status, setStatus] = useState<Asset["status"] | "all">(initialStatus ?? "all");
+  const [status, setStatus] = useState<Asset["status"] | "all">("all");
   const channels = useMemo(
     () => [...new Set(assets.flatMap((asset) => asset.channels ?? []))].sort(),
     [assets],

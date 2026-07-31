@@ -24,8 +24,14 @@
  * archive-view's STATUS_LABEL". Only the WORDS moved here; the chart's colours
  * stayed with the chart, because presentation is that component's business.
  *
- * Enforced, not asserted: asset-status-registers.test.ts fails if any other file
- * in src/ defines an asset-status→label map, and fails if a staff label changes.
+ * Enforced, not asserted — and enforced BY SHAPE, which is the honest way to say
+ * it. asset-status-registers.test.ts sweeps src/ for the two shapes a second
+ * vocabulary is written in (an object literal keyed by asset statuses whose
+ * values carry words, and a ternary chain over status literals that yields
+ * capitalised ones) and fails if a staff label changes. Two shapes, not "any way
+ * of naming a status": a `switch`, a lookup built at runtime, or an i18n table
+ * would all pass, and the second shape is only swept because the first alone
+ * would have let this campaign's own deletion be undone unseen.
  *
  * SCOPE — stated rather than counted, because the two docstrings this replaces
  * both got the count wrong. The first claimed "ONE map, and this is it" while a
@@ -35,9 +41,11 @@
  * cannot verify, so this one does not make it.
  *
  * What this module owns: the asset-status label MAPS, and the tripwire enforces
- * that it owns all of them. It also owns the copy for a stored `publishError` —
- * the hold sentence, the prefix that identifies it, and the heading a reader
- * sees over it.
+ * that no OTHER file in src/ writes one in either shape above. That is narrower
+ * than "it owns all of them" — the claim this line used to make, which the scan
+ * could not back — and it is the claim the scan actually checks. It also owns the
+ * copy for a stored `publishError` — the hold sentence, the prefix that
+ * identifies it, and the heading a reader sees over it.
  *
  * What is out of scope: a surface that renders `Asset["status"]` directly
  * instead of looking a label up. Two client-reachable ones did, and now ask the

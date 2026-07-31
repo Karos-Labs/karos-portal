@@ -21,9 +21,17 @@ import type { Asset } from "@/lib/types";
  *
  * The count is the thing that has to hold. A third map is not a bug that
  * announces itself: it renders perfectly, in the wrong vocabulary, on a surface
- * nobody re-reads. So the closure below scans for the SHAPE (a literal keyed by
- * asset statuses whose values carry words) rather than naming files, and the
- * pin above it makes changing a staff word a deliberate act.
+ * nobody re-reads. So the sweeps below scan for SHAPES rather than naming files,
+ * and the pin between them makes changing a staff word a deliberate act.
+ *
+ * TWO SHAPES, and the second is here because the first was not enough. A
+ * status→label map can be written as an object literal, which `objectLiterals`
+ * finds — or as a ternary chain, which has no literal and no keys and sailed
+ * straight through. That is not hypothetical: a chain ending `: "Placeholder"`
+ * is exactly what this campaign deleted from run-calendar's PostCard, so the fix
+ * could have been undone in a form this file's own suite could not see. Neither
+ * sweep is an inventory of every way to name a status; each one is the shape it
+ * says it is.
  */
 
 const SRC = join(process.cwd(), "src");
@@ -182,6 +190,79 @@ function isStatusLabelMap(lit: Literal): boolean {
   return !lit.strings.every(isNonProse);
 }
 
+/**
+ * The chain form: `s === "published" ? "Live now" : s === "draft" ? "Started" : …`
+ *
+ * Found by looking at every ternary that YIELDS a string literal and asking
+ * whether the test immediately before it compared something to a status word.
+ * Both operand orders count; a chain that wraps onto the next line counts (the
+ * window is plain text, and `[^?"']*` cannot cross another `?` or another
+ * literal, so `a ?? "Fallback"` is not one of these).
+ *
+ * NO DOMAIN EXEMPTION, unlike the object sweep. A literal map can be recognised
+ * as belonging to another key domain by its keys (`placeholder`, `failed` ⇒
+ * `CalendarAssetKind`); a chain has no keys to read. It needs none either: each
+ * domain has one accessor, so a chain over these words is a second answer
+ * whichever domain it meant.
+ *
+ * THREE DOMAINS, not two. The previous note here said "both domains now have one
+ * accessor each" and named `assetStatusLabel` and `postKindLabel`. There is a
+ * third with its own live accessor — `jobStatusLabel` / `JOB_STATUS_META` over
+ * `JobStatus` — and it overlaps the word list, sharing "approved" and
+ * "delivered". A planted job-status chain confined to the words this sweep did
+ * not scan escaped it entirely.
+ *
+ * SCOPE OF THE WORD LIST, established by running the widening rather than
+ * reasoning about it. `queued`, `running` and `review` are in: adding them keeps
+ * the whole suite green, so they cost nothing and close most of the gap.
+ *
+ * `failed` and `cancelled` are deliberately OUT, and this is the honest part —
+ * they are generic English UI states, not just job statuses, so scanning for them
+ * flags code that is doing nothing wrong. Adding both turned two files red:
+ *  - components/copy-caption-button.tsx — `state === "copied" ? "Copied" :
+ *    state === "failed" ? "Press and hold to copy" : "Copy caption"`, over a
+ *    LOCAL `"idle" | "copied" | "failed"` button state with no job in sight;
+ *  - app/api/agent-service/webhook/route.ts — `status === "cancelled" ?
+ *    "cancelled" : status === "failed" ? "failed" : "success"`, mapping a run
+ *    outcome onto the usage-log's own enum, which is a translation between two
+ *    machine vocabularies and not a label at all.
+ * Both are legitimate. A sweep that cries wolf on them teaches the next person to
+ * widen the allowlist, which is how the guard dies.
+ *
+ * So what this sweep catches is a status-label chain that touches at least one of
+ * the words below. A chain written ENTIRELY in `failed`/`cancelled` gets past it.
+ * That is a stated hole, not a covered one — if a fourth domain arrives, run the
+ * widening before writing the claim.
+ */
+const STATUS_WORDS = "draft|approved|scheduled|published|delivered|queued|running|review";
+const TERNARY_YIELDING_LITERAL = /\?\s*(["'])([^"'\n]*)\1/g;
+const COMPARED_TO_STATUS = new RegExp(`(?:===|==)\\s*["'](?:${STATUS_WORDS})["'][^?"']*$`);
+const STATUS_COMPARED_TO = new RegExp(`["'](?:${STATUS_WORDS})["']\\s*(?:===|==)[^?"']*$`);
+
+/** Every label a status-comparing ternary yields in this source. */
+function statusTernaryLabels(src: string): string[] {
+  const out: string[] = [];
+  for (const m of src.matchAll(TERNARY_YIELDING_LITERAL)) {
+    const before = src.slice(Math.max(0, m.index - 160), m.index);
+    if (COMPARED_TO_STATUS.test(before) || STATUS_COMPARED_TO.test(before)) out.push(m[2]!);
+  }
+  return out;
+}
+
+/**
+ * Is this source a status→label map written as a ternary chain?
+ *
+ * TWO links, because one `status === "published" ? "Posted" : "Not posted"` is a
+ * binary sentence rather than a vocabulary, and a single yielded word is where
+ * legitimate code lives (a class name, a field name, an aria string). And at
+ * least one yield has to read as a LABEL: capitalised, and not one of the
+ * non-prose tokens the object sweep already knows how to recognise.
+ */
+function isStatusLabelTernary(src: string): boolean {
+  const labels = statusTernaryLabels(src);
+  return labels.length >= 2 && labels.some((l) => /^[A-Z]/.test(l) && !isNonProse(l));
+}
+
 describe("the asset-status registers", () => {
   it("are the only asset-status label maps in src/", () => {
     const offenders: string[] = [];
@@ -233,6 +314,90 @@ describe("the asset-status registers", () => {
     // words with punctuation.
     expect(
       flagged(`const S = { draft: "bg-warning/15", scheduled: "bg-info/15", published: "bg-success/15" };`),
+    ).toBe(false);
+  });
+
+  it("are also the only asset-status label CHAINS in src/", () => {
+    // The companion sweep. A map and a chain are the same defect in two
+    // syntaxes, and this one is the syntax the campaign actually had to delete.
+    const offenders: string[] = [];
+    for (const file of FILES) {
+      if (isStatusLabelTernary(code(readFileSync(file, "utf8")))) {
+        offenders.push(relative(SRC, file));
+      }
+    }
+
+    expect(
+      offenders,
+      "these spell a status vocabulary as a ternary chain; ask an accessor instead",
+    ).toEqual([]);
+  });
+
+  it("catches the chain shape, and leaves the code that legitimately branches alone", () => {
+    // Teeth, checked rather than trusted — and the boundary checked with them,
+    // because a sweep broad enough to flag real branching would be deleted by the
+    // next person it blocked.
+    const chain = (src: string) => isStatusLabelTernary(src);
+
+    // The shape this campaign deleted from run-calendar's PostCard, ending on a
+    // fallthrough default.
+    expect(
+      chain(`const label =
+        post.kind === "published" ? "Posted"
+        : post.kind === "scheduled" ? "Scheduled post"
+        : "Placeholder";`),
+    ).toBe(true);
+    // One line, and the operands the other way round.
+    expect(
+      chain(`const l = "published" === s ? "Live now" : "draft" === s ? "In progress" : "-";`),
+    ).toBe(true);
+
+    // What must stay legal. A field or key chosen by status — no reader in it.
+    expect(
+      chain(`const at = kind === "published" ? "publishedAt" : kind === "draft" ? "createdAt" : "scheduledAt";`),
+    ).toBe(false);
+    // Tones and classes, the same closed set the object sweep recognises.
+    expect(
+      chain(`const tone = s === "published" ? "success" : s === "draft" ? "warning" : "neutral";`),
+    ).toBe(false);
+    expect(
+      chain(`const c = s === "published" ? "bg-success/15" : s === "draft" ? "bg-warning/15" : "";`),
+    ).toBe(false);
+    // A single branch is a sentence, not a vocabulary.
+    expect(chain(`const l = s === "published" ? "Posted" : label;`)).toBe(false);
+    // A nullish fallback is not a ternary at all, however capital its default.
+    expect(chain(`const a = x ?? "Untitled"; const b = y ?? "Draft";`)).toBe(false);
+    // And the live code that DOES branch on a status: the register lookup itself.
+    expect(
+      chain(`const register = viewerIsClient ? CLIENT_ASSET_STATUS_LABEL : STAFF_ASSET_STATUS_LABEL;
+        if (a.status === "published") return "x";`),
+    ).toBe(false);
+  });
+
+  it("catches the THIRD domain's chain too, and still spares its generic words", () => {
+    // The gap the docstring above used to hide behind "both domains". `JobStatus`
+    // has its own accessor (`jobStatusLabel`) and shares "approved"/"delivered"
+    // with the asset words, so a run-state vocabulary spelled as a chain is the
+    // same defect in a domain this sweep was not scanning.
+    const chain = (src: string) => isStatusLabelTernary(src);
+
+    // A planted job-status chain, in the words that were added.
+    expect(
+      chain(`const l = j.status === "review" ? "In review" : j.status === "running" ? "Running" : "Queued";`),
+    ).toBe(true);
+    expect(
+      chain(`const l = j.status === "queued" ? "Waiting" : j.status === "approved" ? "Signed off" : "-";`),
+    ).toBe(true);
+
+    // And the two REAL files that adding "failed"/"cancelled" would have flagged,
+    // verbatim in shape. They are why those two words are out; if a later change
+    // makes these pass as false, the word list can be widened.
+    expect(
+      chain(`const label = state === "copied" ? "Copied" : state === "failed" ? "Press and hold to copy" : "Copy caption";`),
+    ).toBe(false);
+    expect(
+      chain(`const usageStatus: "success" | "failed" | "cancelled" =
+        status === "cancelled" ? "cancelled" : status === "failed" ? "failed" : "success";`),
     ).toBe(false);
   });
 

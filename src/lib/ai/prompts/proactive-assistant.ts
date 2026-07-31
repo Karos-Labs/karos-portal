@@ -7,6 +7,8 @@
  * and Gmail integration status.
  */
 
+import { assetTypeLabel } from "@/lib/asset-type-copy";
+
 /* ── Proactive context types ─────────────────────────────────────── */
 
 export interface AgentCatalogEntry {
@@ -142,7 +144,7 @@ GAP RULES:
      reasons about (or hallucinates) results it doesn't have. */
   const bm = ctx.historicalBenchmarks;
   const fmtBenchmark = (b: BenchmarkEntry) =>
-    `• [${b.engagementScore.toFixed(1)}] ${b.platform}${b.assetType ? ` · ${b.assetType}` : ""} — "${b.label}" (${b.impressions.toLocaleString()} impressions, ${(b.engagementRate * 100).toFixed(1)}% engagement)`;
+    `• [${b.engagementScore.toFixed(1)}] ${b.platform}${b.assetType ? ` · ${assetTypeLabel(b.assetType)}` : ""} — "${b.label}" (${b.impressions.toLocaleString()} impressions, ${(b.engagementRate * 100).toFixed(1)}% engagement)`;
   const benchmarksBlock =
     bm && bm.sampleSize > 0 && (bm.top.length > 0 || bm.bottom.length > 0)
       ? `### HISTORICAL PERFORMANCE BENCHMARKS — DATA-DRIVEN CONTENT STRATEGY

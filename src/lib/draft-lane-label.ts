@@ -47,11 +47,25 @@ const LANE_COPY: Record<string, string> = {
  * batch numbers its sections with — and forbidding the shape rather than the
  * spellings is what stops the next section word arriving on a client's screen.
  *
- * The separator is optional at the END of the string: a heading that is only an
- * ordinal ("Avenue 9") names no lane, and matching it only when a lane follows
- * would print the word Avenue to a client — the whole defect.
+ * THE SEPARATOR IS NOT PART OF THE SHAPE. It may be punctuation, plain
+ * whitespace, or the end of the string — because the heading is free text the
+ * agent composes, and a run that wrote "## Avenue 2 News-reaction" instead of
+ * "## Avenue 2 · News-reaction" matched neither of the first two alternatives
+ * and sentence-cased whole, putting "Avenue 2 news reaction" on a paying
+ * client's option card as their angle. Punctuation-only was a spelling rule
+ * wearing a shape rule's clothes.
+ *
+ * The end-of-string alternative stays for its own reason: a heading that is only
+ * an ordinal ("Avenue 9") names no lane, and matching it only when a lane
+ * follows would print the word Avenue to a client.
+ *
+ * SCOPE, stated because widening a strip rule can eat real words: a lane or
+ * account heading whose own first words are a section word, a number and then
+ * more text ("Post 5 mistakes founders make") now loses that head. That is the
+ * deliberate trade — the lab's lane vocabulary is a closed set (LANE_COPY) and
+ * none of it opens that way, while the ordinal shape demonstrably does.
  */
-const SLOT_PREFIX = /^\s*(?:avenue|post|draft|account|seat)\s*\d+\s*(?:[·:\-–—]\s*|$)/i;
+const SLOT_PREFIX = /^\s*(?:avenue|post|draft|account|seat)\s*\d+\s*(?:[·:\-–—]\s*|\s+|$)/i;
 
 /** A social handle: the one token inside an account heading a client knows it by. */
 const HANDLE = /@[A-Za-z0-9_.]{1,30}/;

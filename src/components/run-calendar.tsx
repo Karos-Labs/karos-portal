@@ -16,7 +16,12 @@ import { pastRunHasNoDeliverables, showsPastRunReviewControl } from "@/lib/calen
 import { assetStatusLabel, PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
 import { cn, relativeTime } from "@/lib/utils";
 import type { AssetImage } from "@/lib/asset-images";
-import { postKindLabel, type CalendarAssetKind } from "@/lib/calendar-kind";
+import {
+  calendarFilterKeyMatchable,
+  postKindLabel,
+  type CalendarAssetKind,
+  type CalendarFilterKey,
+} from "@/lib/calendar-kind";
 import type { Asset, AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
 
 /* ── Serializable shapes built by the calendar page ──────────────────── */
@@ -133,8 +138,10 @@ export interface CalendarClientOption {
   name: string;
 }
 
-/** The named calendar statuses a viewer can hide. "review" maps to CalendarRun.jobStatus, the rest to CalendarPost.kind. */
-type StatusFilterKey = CalendarPost["kind"] | "review";
+// The named calendar statuses a viewer can hide are `CalendarFilterKey`
+// (lib/calendar-kind): every CalendarPost kind plus "review", which maps to
+// CalendarRun.jobStatus. The union moved there with the rule for which of its
+// members a given viewer can actually match — one home for both.
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
@@ -751,8 +758,8 @@ export function RunCalendar({
   // Status filter: which of the named calendar statuses are currently hidden.
   // "review" is a CalendarRun bucket (jobStatus === "review", i.e. Pending
   // Review) — everything else is a CalendarPost kind.
-  const [hiddenStatuses, setHiddenStatuses] = useState<Set<StatusFilterKey>>(new Set());
-  const toggleStatus = (key: StatusFilterKey) =>
+  const [hiddenStatuses, setHiddenStatuses] = useState<Set<CalendarFilterKey>>(new Set());
+  const toggleStatus = (key: CalendarFilterKey) =>
     setHiddenStatuses((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -1007,8 +1014,12 @@ export function RunCalendar({
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
           <LegendDot className="border border-dashed border-foreground/40 bg-foreground/[0.03]" label="Scheduled run" />
           <LegendDot className="bg-foreground/25" label="Completed run" />
-          {(Object.entries(STATUS_FILTER_CHIPS) as Array<[StatusFilterKey, { label: string; className: string }]>).map(
-            ([key, chip]) => (
+          {(Object.entries(STATUS_FILTER_CHIPS) as Array<[CalendarFilterKey, { label: string; className: string }]>)
+            // A filter this viewer's calendar can never make dim anything is not
+            // offered at all — see calendarFilterKeyMatchable for which those are
+            // and why. The chips a client CAN match are unchanged.
+            .filter(([key]) => calendarFilterKeyMatchable(key, viewerIsClient))
+            .map(([key, chip]) => (
               <FilterChip
                 key={key}
                 className={chip.className}
@@ -1016,8 +1027,7 @@ export function RunCalendar({
                 hidden={hiddenStatuses.has(key)}
                 onClick={() => toggleStatus(key)}
               />
-            ),
-          )}
+            ))}
         </div>
       </div>
 
@@ -1130,15 +1140,14 @@ function LegendDot({ className, label }: { className: string; label: string }) {
  * named and the filter could never hide. Keyed over the union, a missing member
  * is a compile error. Rendered in insertion order.
  *
- * Every member is offered to every viewer, and that is checked rather than
- * assumed: a client's calendar can hold each of these. "held" in particular is
- * reachable — the publish cron writes the hold onto an approved, dated,
- * past-due post, and nothing in the client projection removes it. (The one
- * member a client can never match is "draft": calendar-body filters drafts out
- * of a client's assets entirely. That chip is still offered to them, which is a
- * separate defect from this one and is not fixed here.)
+ * Every member is NAMED here — that is what the Record buys — but not every
+ * member is OFFERED to every viewer: the render site filters through
+ * `calendarFilterKeyMatchable`, which is where the per-viewer answer and its
+ * enumeration live. Today that withholds exactly one chip from a client
+ * ("draft", a status their calendar is never built from); "held" and the rest
+ * stay, because a client's calendar can hold them.
  */
-const STATUS_FILTER_CHIPS: Record<StatusFilterKey, { label: string; className: string }> = {
+const STATUS_FILTER_CHIPS: Record<CalendarFilterKey, { label: string; className: string }> = {
   draft: { label: "Draft", className: POST_CHIP_CLASS.draft },
   scheduled: { label: "Scheduled", className: POST_CHIP_CLASS.scheduled },
   // Label overridden per viewer at the render site below, for the same reason

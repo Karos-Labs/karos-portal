@@ -3,18 +3,15 @@ import { Card, CardTitle, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
+import { ASSET_TYPE_LABEL } from "@/lib/asset-type-copy";
 import { clientDeliveryStamp, isInClientArchive } from "@/lib/asset-visibility";
 import { postKind } from "@/lib/calendar-kind";
 import type { Asset, ClientTask } from "@/lib/types";
 
-const ASSET_TYPE_LABEL: Record<Asset["type"], string> = {
-  instagram_post: "Instagram post",
-  social_post: "Social post",
-  email: "Email",
-  article: "Article",
-  note: "Note",
-};
-
+// ASSET_TYPE_LABEL moved to @/lib/asset-type-copy: the copilot's system prompt
+// needs the same words from a server-only module, and a component-local map is
+// not reachable from there. Tones stay here — presentation is this file's
+// business, the same split asset-status-copy.ts made.
 const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info"> = {
   draft: "warning",
   approved: "success",

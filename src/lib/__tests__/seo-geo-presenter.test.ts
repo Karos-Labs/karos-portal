@@ -260,6 +260,14 @@ describe("leak guard (SCRUM-52 fix 1)", () => {
   });
 });
 
+/**
+ * British/US spelling pairs, word-anchored. Pairs rather than suffixes so the
+ * pattern flags what it claims to and nothing else — see the scope note on the
+ * test that uses it.
+ */
+const BRITISH_SPELLING =
+  /\b(?:licence|licences|programme|programmes|centre|centres|centred|colour|colours|coloured|behaviour|behaviours|favour|favours|favourite|favourites|flavour|flavours|honour|honours|labour|neighbour|neighbours|rumour|humour|odour|armour|vapour|defence|offence|pretence|practise|practised|practising|cheque|cheques|grey|catalogue|catalogues|dialogue|dialogues|analogue|whilst|amongst|fulfil|fulfils|fulfilment|enrol|enrols|enrolment|instalment|instalments|skilful|cancelled|cancelling|travelled|travelling|modelling|labelled|labelling|signalled|organis(?:e|es|ed|ing|ation|ations)|recognis(?:e|es|ed|ing)|analys(?:e|es|ed|ing)|optimis(?:e|es|ed|ing|ation)|customis(?:e|es|ed|ing)|personalis(?:e|es|ed|ing)|prioritis(?:e|es|ed|ing)|summaris(?:e|es|ed|ing)|apologis(?:e|es|ed|ing)|authoris(?:e|es|ed|ing|ation)|categoris(?:e|es|ed|ing)|specialis(?:e|es|ed|ing)|maximis(?:e|es|ed|ing)|minimis(?:e|es|ed|ing)|utilis(?:e|es|ed|ing)|visualis(?:e|es|ed|ing)|monetis(?:e|es|ed|ing)|emphasis(?:e|es|ed|ing)|standardis(?:e|es|ed|ing))\b/i;
+
 describe("client action-plan lever badge (QA F144 / CD-B1)", () => {
   const ACTION_PLAN = readFileSync(
     path.resolve(process.cwd(), "src/components/seo-geo-action-plan.tsx"),
@@ -316,16 +324,80 @@ describe("client action-plan lever badge (QA F144 / CD-B1)", () => {
     }
   });
 
-  it("US spelling on every word a client reads here", () => {
-    const BRITISH =
-      /\b\w*(?:isation|our\b|ise\b|ised\b|ising\b|centre|licence|programme|whilst|amongst)\w*\b/i;
-    for (const label of [...Object.values(LEVER_LABELS), ...ALL_LEVERS.map((l) => l)]) {
-      expect(label).not.toMatch(BRITISH);
+  /**
+   * SCOPE: the three lever labels and the quoted strings in
+   * seo-geo-action-plan.tsx. Nothing wider. This is NOT a portal-wide spelling
+   * guarantee and must not be cited as one.
+   *
+   * That correction matters, because the premise this guard shipped on was
+   * false. Commit 48b5aa0 justified it with "the one genuine client-visible
+   * British spelling in the portal ... add-competitor-modal.tsx's placeholder
+   * read 'Central Bank licence'" — but that component had zero importers and
+   * was rendered nowhere, so no client could ever have read it. It has since
+   * been deleted outright (QA #140). The LIVE competitor-add surface,
+   * client-context-sections.tsx via addCompetitorByNameAction, was then swept
+   * for the same defect class and is clean: "Analyzing competitor profile…",
+   * "Brand Colors", "AI analyzed all tracked competitors" are all correct US
+   * forms. So this guard protects the two surfaces named above and nothing else.
+   *
+   * The detector was also rebuilt. It used to be a SUFFIX sweep — bare
+   * alternatives "ise", "ised", "ising", "our" and "isation" behind a word
+   * boundary — which flags "promise", "advise", "advised", "revised",
+   * "concise", "wise", "your", "hour" and "four": nine correct US words. It
+   * passed only because its two inputs happened to avoid them; the first person
+   * to write "we advise" into the action plan would have been told their US
+   * spelling was British. Word-anchored British/US PAIRS detect the thing the
+   * name promises instead, and the two assertions below prove the detector both
+   * fires and discriminates — without them a typo in the pattern would turn
+   * this whole test into a silent pass.
+   */
+  it("keeps US spelling in the lever labels and the action-plan copy", () => {
+    // Fires on real British forms...
+    for (const british of [
+      "licence",
+      "programme",
+      "centre",
+      "colour",
+      "behaviour",
+      "defence",
+      "organisation",
+      "analysed",
+      "prioritise",
+      "whilst",
+    ]) {
+      expect(british, `${british} is not detected as British`).toMatch(BRITISH_SPELLING);
+    }
+    // ...and NOT on the correct US words the old suffix sweep wrongly caught.
+    for (const us of [
+      "promise",
+      "advise",
+      "advised",
+      "revised",
+      "concise",
+      "wise",
+      "your",
+      "hour",
+      "four",
+      "license",
+      "organization",
+      "color",
+      "center",
+      "analyzed",
+      "defense",
+      "program",
+    ]) {
+      expect(us, `${us} is correct US spelling and must not be flagged`).not.toMatch(
+        BRITISH_SPELLING,
+      );
+    }
+
+    for (const label of Object.values(LEVER_LABELS)) {
+      expect(label).not.toMatch(BRITISH_SPELLING);
     }
     // The plan component's own copy travels with the badge — same rule.
     for (const line of ACTION_PLAN.split("\n")) {
       const strings = line.match(/"[^"]{4,}"/g) ?? [];
-      for (const s of strings) expect(s).not.toMatch(BRITISH);
+      for (const s of strings) expect(s).not.toMatch(BRITISH_SPELLING);
     }
   });
 });

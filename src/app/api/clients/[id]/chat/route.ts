@@ -42,6 +42,8 @@ import {
   integrationBelongsToCaller,
   isStaffCopilotActor,
 } from "@/lib/copilot-tool-access";
+import { assetStatusLabel } from "@/lib/asset-status-copy";
+import { clientSafeRunError, CLIENT_SAVE_REFUSAL_MESSAGE } from "@/lib/custom-agent-launch";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
 import { isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
 import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
@@ -141,6 +143,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     credits = await getClientCredits(clientId);
   }
 
+  // WHOSE VOCABULARY THIS SESSION SPEAKS, asked once, for the whole handler.
+  //
+  // The route admits a CLIENT_USER for their own clientId and serves BOTH docks,
+  // so every string composed below — the system prompt, the §3 tool results, the
+  // deep links, the failure sentences — is client copy whenever this is true.
+  // One binding, read by all of them, because the defect this closes was the
+  // same question answered twice.
+  //
+  // WHAT "VIEW AS CLIENT" GETS, spelled out because the previous note here said
+  // the opposite of what the code does. An impersonating admin arrives as
+  // `role: "CLIENT_USER"` carrying `impersonatedBy` (auth.ts), `isStaffCopilotActor`
+  // denies them on purpose, so `viewerIsClient` is TRUE and they get the CLIENT
+  // register AND the CLIENT deep link — both, not one of each. That is the point
+  // of the mode: they are looking at what the client sees. It is also the only
+  // link that works for them, because `/jobs` guards on `requireUser(["KAROS_ADMIN",
+  // "KAROS_EMPLOYEE"])` against `user.role` — which is CLIENT_USER in that session
+  // — so a "helpfully" staff deep link would redirect them to /dashboard.
+  //
+  // Executed to confirm, not read off: role KAROS_ADMIN → viewerIsClient=false,
+  // "Awaiting review", staff link; CLIENT_USER + impersonatedBy → true, "Draft",
+  // client link; plain CLIENT_USER → true, "Draft", client link.
+  //
+  // The reschedule tool's write path calls `isStaffCopilotActor` again at its own
+  // site. Same predicate, deliberately spelled out there, because it is asking a
+  // different QUESTION of it — "may this session write staff-tier state?" rather
+  // than "whose words do I use?" — and those two are allowed to diverge later.
+  // What must not happen is a second ANSWER to either.
+  const viewerIsClient = !isStaffCopilotActor(user);
+
   // Locked (future-dated) content never reaches a client-facing model prompt —
   // and neither does staff-only working material. Launch deliverables and
   // Control Room Test Run output are both undated (isAssetUnlockedForClient
@@ -167,7 +198,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     jobs,
     promptAssets,
     promptContextDocs,
-    { canUpdateBranding: isStaffCopilotActor(user) },
+    // Two separate questions, passed separately on purpose: which TOOLS to
+    // describe, and whose VOCABULARY to write in. They happen to be the same
+    // predicate today; folding them into one flag would mean a future change to
+    // who may edit branding silently changed what words a client reads.
+    { canUpdateBranding: !viewerIsClient, viewerIsClient },
   );
 
   /* ── Shared Google integration lookup ────────────────────────────── */
@@ -503,7 +538,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           console.error(
             `[copilot] Support email failed for client ${clientId}: ${result.error}`,
           );
-          return "I couldn't send the support email just now - please try again shortly, or email hello@karoslabs.com directly.";
+          return "I couldn't send the support email just now — please try again shortly, or email hello@karoslabs.com directly.";
         }
       } else {
         console.log("[copilot] Support email (ADMIN_EMAIL not set):", { subject, message, clientId });
@@ -864,6 +899,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
    * — so they get the agent detail page they actually have, or the Workspace
    * as a last resort.
    */
+  // `viewerIsClient` is bound once, near the top of this handler, and decides
+  // BOTH the link below and the register the §3 tools speak in — see the note
+  // there for what "View as Client" gets and why.
+
   // Arrow expression, not a function declaration — narrowing `user` to
   // non-null (the route's early `if (!user...) return` above) does not
   // survive into a hoisted `function` declaration's body, only into a
@@ -874,7 +913,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const umbrella = identity.clientAgentId
       ? umbrellas.find((u) => u.id === identity.clientAgentId)
       : undefined;
-    if (isStaffCopilotActor(user)) {
+    if (!viewerIsClient) {
       if (job) return `/jobs/${job.id}`;
       if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}?asset=${asset.id}`;
       return `/assets?clientId=${clientId}`;
@@ -882,6 +921,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}`;
     return "/tasks";
   };
+
+  /**
+   * The publish state of one output, as the ACTOR reading it is told it.
+   *
+   * Tool text is copy. The model paraphrases whatever this returns straight
+   * back into the dock, so an interpolated `asset.status` here reaches a client
+   * as prose in any wording the model likes ("status: scheduled") — the same
+   * defect the rendered badges had, one indirection out, and not one a render
+   * gate can catch. Sanitizing at the boundary means the enum is absent from
+   * what the model is given, rather than present and hopefully rephrased.
+   *
+   * `find_output` is on the client allowlist (copilot-tool-access) and the
+   * route's own gate only checks WHICH client's assets a caller may reach, so
+   * the viewer is the one thing this cannot take as a constant.
+   */
+  const statusLabelForActor = (status: Asset["status"]): string =>
+    assetStatusLabel(status, viewerIsClient);
 
   const findOutputTool = tool({
     description:
@@ -902,14 +958,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const top = matches.slice(0, 5);
         return (
           `Found ${matches.length} matching outputs — which one did you mean?\n` +
-          top.map((a) => `- "${a.title || "Untitled"}" (${a.status}) — id: ${a.id}`).join("\n")
+          top
+            .map((a) => `- "${a.title || "Untitled"}" (${statusLabelForActor(a.status)}) — id: ${a.id}`)
+            .join("\n")
         );
       }
       const asset = matches[0];
       const rawContent = asset.content ?? "";
       const content = rawContent.slice(0, 4000);
       return [
-        `**${asset.title || "Untitled"}** — status: ${asset.status}` +
+        `**${asset.title || "Untitled"}** — status: ${statusLabelForActor(asset.status)}` +
           (asset.scheduledAt ? `, scheduled for ${new Date(asset.scheduledAt).toISOString()}` : ""),
         `id: ${asset.id}`,
         "",
@@ -935,6 +993,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       try {
         await updateAssetAction(assetId, { content: newContent, ...(newTitle ? { title: newTitle } : {}) });
       } catch (e) {
+        // SANITIZED AT THE BOUNDARY, because this string is payload: the model
+        // paraphrases whatever the tool returns back into the client's dock, so
+        // the exception itself is what has to be absent — not merely unrendered.
+        //
+        // What was going out: `updateAssetAction` throws bare internal words
+        // ("Unauthorized", "Forbidden", "Asset not found") and, underneath it,
+        // whatever the Admin SDK throws. Executed with Firebase unconfigured, a
+        // CLIENT read back "Couldn't save that: Firebase Admin is not configured.
+        // Provide FIREBASE_SERVICE_ACCOUNT_KEY, the discrete FIREBASE_* vars, or
+        // Application Default Credentials with FIREBASE_PROJECT_ID set." — env var
+        // names and credential mechanisms, in a chat panel. This is #121's defect
+        // (raw internal failure text to a client) in the one channel #121 did not
+        // look at, and no render gate can catch it.
+        //
+        // STAFF KEEP THE REAL ERROR: they are the ones who fix it, and a staff dock
+        // is the fastest place to see it. A client's copy is one sentence that
+        // promises nothing the code cannot keep.
+        //
+        // The client path LOGS the real cause, so sanitizing does not also destroy
+        // the only trace — otherwise every client-side save failure becomes
+        // invisible, which is a worse outcome than the leak.
+        if (viewerIsClient) {
+          console.error(`[copilot] edit_output failed for client ${clientId}, asset ${assetId}:`, e);
+          return CLIENT_SAVE_REFUSAL_MESSAGE;
+        }
         return `Couldn't save that: ${e instanceof Error ? e.message : "unknown error"}.`;
       }
       return `Saved. [View this output](${deepLinkForAsset(existing)})`;
@@ -962,7 +1045,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         clientId,
         prompt: prompt?.trim() || "Run requested via Copilot chat.",
       });
-      if (result.error) return `Couldn't start that run: ${result.error}`;
+      if (result.error) {
+        // REUSED, not re-answered: `clientSafeRunError` is exactly this shape (a
+        // run that would not start) and already passes setup refusals and credit
+        // denials through verbatim, which are the two things a client here DOES
+        // need to read.
+        //
+        // Applied again at this boundary even though `runCustomAgentAction`
+        // sanitizes internally, because it does so behind `isBillableClientActor`
+        // — which EXCLUDES an impersonating admin, so "View as Client" was shown
+        // the raw config error and did not see what the client sees. Two
+        // predicates, two answers; the boundary asks the one that governs
+        // vocabulary. Idempotent: the generic sentence is not on the allowlist, so
+        // re-sanitizing it returns the same sentence.
+        return viewerIsClient
+          ? clientSafeRunError(result.error)
+          : `Couldn't start that run: ${result.error}`;
+      }
       return `Started a run of **${match.name}** — it takes 10–20 minutes, and your Karos team reviews the result before it reaches your Workspace.`;
     },
   });
@@ -991,12 +1090,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           if (!asset) return "Couldn't find that output.";
           await scheduleAssetAction(assetId, parsed, asset.scheduledPlatform, asset.publishMode);
         } catch (e) {
+          // NOT sanitized, and that is correct rather than an oversight: this
+          // branch is inside `isStaffCopilotActor(user)`, so only a real
+          // (non-impersonated) staff account can reach it. Staff are owed the
+          // exception.
           return `Couldn't reschedule: ${e instanceof Error ? e.message : "unknown error"}.`;
         }
         return `Moved to ${new Date(parsed).toISOString()}.`;
       }
-      const result = await clientRescheduleAssetAction(assetId, parsed);
-      if (!result.ok) return result.error;
+      // The CLIENT path, and it DOES need a sanitizer — an earlier version of the
+      // comment above certified it as safe because every *refusal* the action
+      // composes is client copy. True, and not the whole story: the action opens
+      // with `requireAssetAccess`, which THROWS bare "Unauthorized" / "Asset not
+      // found" / "Forbidden" rather than returning a refusal. Uncaught, the AI SDK
+      // hands the throw straight to a client's model, which paraphrases it.
+      //
+      // Returned refusals still pass through verbatim — those are written for this
+      // reader. Only the throws are collapsed.
+      try {
+        const result = await clientRescheduleAssetAction(assetId, parsed);
+        if (!result.ok) return result.error;
+      } catch (e) {
+        console.error("[copilot] reschedule_output threw for a client", e);
+        return CLIENT_SAVE_REFUSAL_MESSAGE;
+      }
       return `Moved to ${new Date(parsed).toISOString()}.`;
     },
   });

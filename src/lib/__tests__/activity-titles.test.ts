@@ -27,6 +27,18 @@ import {
  * drifts out of the classifier's reach.
  */
 
+/**
+ * The files that mint a MACHINERY title, i.e. one the classifier has to hide
+ * from a client's timeline. Not every file that logs activity.
+ *
+ * competitor-actions.ts left this list on 2026-07-31: its only machinery row was
+ * the retired intel-report import (QA #99), and the titles it still writes
+ * ("Competitor added: …", "Competitor intelligence updated") are account events
+ * that belong on the client's timeline — both are asserted NOT machinery below.
+ * Dropping it narrows nothing, because "has no machinery title minted outside
+ * the builders" walks the whole of src/ and would catch that file re-inlining
+ * one; this list only buys a sharper failure message for the known writers.
+ */
 const WRITERS = [
   "src/lib/jobs/submit-managed.ts",
   "src/lib/jobs/submit-custom.ts",
@@ -35,7 +47,6 @@ const WRITERS = [
   "src/lib/actions/client-agent-run-actions.ts",
   "src/lib/actions/lab-output-actions.ts",
   "src/lib/actions/ops-import-actions.ts",
-  "src/lib/actions/competitor-actions.ts",
 ] as const;
 
 function read(rel: string): string {
@@ -116,7 +127,7 @@ describe("run-machinery activity titles", () => {
 
   it("has no machinery title minted outside the builders", () => {
     // The same guard, asked of the whole tree rather than a list that could go
-    // stale: a sixth writer added tomorrow fails here.
+    // stale: a writer added tomorrow, on or off WRITERS, fails here.
     const offenders: string[] = [];
     for (const file of walk(join(process.cwd(), "src"))) {
       if (file.endsWith("activity-titles.ts")) continue;

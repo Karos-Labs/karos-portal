@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { publishHoldMessage } from "@/lib/asset-status-copy";
-import { postKind, type CalendarKindInput } from "@/lib/calendar-kind";
+import {
+  ALL_CALENDAR_FILTER_KEYS,
+  calendarFilterKeyMatchable,
+  isClientCalendarStatus,
+  postKind,
+  type CalendarAssetKind,
+  type CalendarFilterKey,
+  type CalendarKindInput,
+} from "@/lib/calendar-kind";
+import { pastRunStatuses } from "@/lib/calendar-past-runs";
 
 /**
  * Covers the deterministic "does a generated content plan actually reach the
@@ -115,5 +124,124 @@ describe("postKind and the ordering hold", () => {
     expect(
       postKind({ status: "published", scheduledAt: 1000, publishedAt: 2000, publishError: HOLD }),
     ).toBe("published");
+  });
+});
+
+/**
+ * Which legend chips a viewer is offered — DERIVED here rather than read back.
+ *
+ * The legend is also the filter, so a chip a viewer's calendar can never hold is
+ * a control that can never dim anything. `calendarFilterKeyMatchable` answers
+ * that, and its list of unmatchable keys is a hand-written claim; this is what
+ * makes the claim honest. The grid below runs `postKind` over every field it
+ * reads and collects the kinds a CLIENT-visible asset can produce, so a change
+ * to either the classifier or the client status filter fails HERE instead of
+ * silently withholding a filter a client needed.
+ *
+ * The grid is an UPPER bound, deliberately: it ignores the RSC redaction
+ * (redactLockedAsset drops publishMode and publishError from a locked post),
+ * which can only remove shapes. So a key is withheld only when no shape at all
+ * could match it — the safe direction.
+ */
+describe("the legend's per-viewer chips", () => {
+  const HOLD = publishHoldMessage(
+    { title: "Part 1 of 3", status: "approved" },
+    { clientCanSeeBlocker: true },
+  );
+
+  const STATUSES: CalendarKindInput["status"][] = [
+    "draft",
+    "approved",
+    "scheduled",
+    "published",
+    "delivered",
+  ];
+
+  /**
+   * Every shape `postKind` can distinguish: the five statuses crossed with the
+   * four other fields it reads. Hand-built, so the assertion below checks the
+   * grid's own reach — if a branch is ever keyed on a field this grid does not
+   * vary, the coverage assertion fails rather than this suite quietly narrowing.
+   */
+  function grid(): CalendarKindInput[] {
+    const out: CalendarKindInput[] = [];
+    for (const status of STATUSES) {
+      for (const publishError of [undefined, HOLD, "Rate limited by LinkedIn"]) {
+        for (const publishMode of [undefined, "placeholder"]) {
+          for (const scheduledAt of [undefined, 1000]) {
+            for (const publishedAt of [undefined, 2000]) {
+              out.push({
+                status,
+                ...(publishError ? { publishError } : {}),
+                ...(publishMode ? { publishMode } : {}),
+                ...(scheduledAt ? { scheduledAt } : {}),
+                ...(publishedAt ? { publishedAt } : {}),
+              });
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  const kindsFrom = (assets: CalendarKindInput[]): Set<CalendarAssetKind> => {
+    const out = new Set<CalendarAssetKind>();
+    for (const a of assets) {
+      const kind = postKind(a);
+      if (kind) out.add(kind);
+    }
+    return out;
+  };
+
+  it("probes every kind the calendar has, so the derivation below is not narrow", () => {
+    // Non-vacuity for the whole describe: the grid must reach EVERY chip kind,
+    // or "a client cannot match this one" could be an artefact of a grid that
+    // never built the shape. "review" is the one key that is not an asset kind —
+    // it is a run state — so it is excluded here and asked of its own table
+    // below.
+    const everyKind = kindsFrom(grid());
+    expect([...everyKind].sort()).toEqual(
+      ALL_CALENDAR_FILTER_KEYS.filter((k) => k !== "review").sort(),
+    );
+  });
+
+  it("withholds from a client exactly the chips their calendar cannot hold", () => {
+    const clientKinds = kindsFrom(grid().filter((a) => isClientCalendarStatus(a.status)));
+    // "review" comes off the run-visibility table, not off postKind — one home
+    // each, and read here rather than restated.
+    const clientCanMatch = (key: CalendarFilterKey): boolean =>
+      key === "review"
+        ? pastRunStatuses({ isClient: true }).has("review")
+        : clientKinds.has(key);
+
+    for (const key of ALL_CALENDAR_FILTER_KEYS) {
+      expect(calendarFilterKeyMatchable(key, true), `client chip: ${key}`).toBe(
+        clientCanMatch(key),
+      );
+    }
+
+    // The answer that derivation produces today, pinned so a change to it is a
+    // decision someone takes rather than a diff nobody reads. "draft" is the one
+    // a client's calendar is never built from; "held" in particular stays, and it
+    // was verified live for clients.
+    expect(calendarFilterKeyMatchable("draft", true)).toBe(false);
+    for (const key of ALL_CALENDAR_FILTER_KEYS.filter((k) => k !== "draft")) {
+      expect(calendarFilterKeyMatchable(key, true), `client chip: ${key}`).toBe(true);
+    }
+  });
+
+  it("offers staff every chip, including the one a client is not shown", () => {
+    // The neighbouring case: the gate withholds by VIEWER, so it must not have
+    // been achieved by dropping the chip from the legend for everybody. Staff
+    // see internal drafts on their calendar and filter by them.
+    for (const key of ALL_CALENDAR_FILTER_KEYS) {
+      expect(calendarFilterKeyMatchable(key, false), `staff chip: ${key}`).toBe(true);
+    }
+    expect(isClientCalendarStatus("draft")).toBe(false);
+    // …and the filter it derives from is about drafts alone, not a blanket drop.
+    for (const status of STATUSES.filter((s) => s !== "draft")) {
+      expect(isClientCalendarStatus(status), status).toBe(true);
+    }
   });
 });

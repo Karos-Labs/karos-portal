@@ -75,6 +75,25 @@ const BATCH_MARKDOWN = [
   `> ${TODAY_DRAFT} two`,
 ].join("\n");
 
+/**
+ * An avenue heading with the separator MISSING — the shape both direction paths
+ * fell through on.
+ *
+ * The heading is free text the agent composes, and the prefix rule was written
+ * to fire on `Avenue 2 · ` or on a bare `Avenue 2`; "Avenue 2 News-reaction"
+ * matched neither, so it sentence-cased whole and put "Avenue 2 news reaction"
+ * on the option card as the client's angle. The fixture is the malformed
+ * markdown itself rather than a hand-made option object, because the question is
+ * whether the batch→payload path humanises it.
+ */
+const MALFORMED_AVENUE = "Avenue 2 News-reaction";
+const MALFORMED_REF = `${COMPANY_HEADING} · ${MALFORMED_AVENUE}`;
+const MALFORMED_BATCH_MARKDOWN = [
+  `# Account 2 · ${COMPANY_HEADING}`,
+  `## ${MALFORMED_AVENUE}`,
+  `> ${TODAY_DRAFT} malformed`,
+].join("\n");
+
 /* ───────────────────────────── fixtures ───────────────────────────── */
 
 function agent(): CustomAgent {
@@ -221,6 +240,34 @@ describe("today's options — the account heading at the RSC boundary", () => {
       "Playbook",
       "Reacting to the news · live",
     ]);
+  });
+
+  it("keeps the lab's ordinal out of an option's direction when the heading drops its separator", async () => {
+    // THE OPTIONS PATH's own tripwire. The `not.toContain("Avenue")` sweep
+    // existed only on the picked-receipt path, and it asked the question of a
+    // WELL-FORMED heading — which the prefix rule already stripped, so it could
+    // not have failed. This one asks it of the shape that actually fell through.
+    getAssetMock.mockResolvedValue({ ...batchAsset(), content: MALFORMED_BATCH_MARKDOWN });
+    upcomingSlotsMock.mockResolvedValue([
+      slot({ assetId: "asset_batch", optionRefs: [MALFORMED_REF] }),
+    ]);
+
+    const rows = await toClientAgentRows(cardArgs());
+    const options = rows[0].today?.options ?? [];
+    // Non-vacuity, in the terms this fixture can get wrong: the malformed batch
+    // parsed, its ref resolved, and the draft inside it reached the payload. A
+    // fixture that never reached the options branch would pass every negative
+    // below — which is how a live leak was certified clean earlier.
+    expect(options, "the malformed fixture never reached the options branch").toHaveLength(1);
+    expect(options[0].posts.join(" ")).toContain(TODAY_DRAFT);
+
+    expect(options[0].direction).toBe("Reacting to the news");
+    const payload = payloadWithoutJoinKeys(rows);
+    expect(payload).not.toContain("Avenue");
+    expect(payload).not.toContain("News-reaction");
+    // …and the account label still crossed, so the humaniser did not simply
+    // blank the card.
+    expect(payload).toContain(COMPANY_HEADING);
   });
 });
 

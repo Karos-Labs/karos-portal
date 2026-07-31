@@ -71,7 +71,15 @@ export function opsImportTitle(sourceLabel: string, detail: string): string {
   return `Ops import from ${sourceLabel}: ${detail}`;
 }
 
-/** competitor-actions' staff import of a locally-produced intel report. */
+/**
+ * The staff "Import Intelligence Report" surface, RETIRED 2026-07-31 — the
+ * modal was mounted nowhere and its action went with it (QA #99).
+ *
+ * No writer remains, so this builder names a string that only STORED rows
+ * carry. It is kept for exactly one reason: the pattern below has to keep
+ * redacting those rows from client timelines, and the guard test needs the
+ * literal to assert that against. Do not read it as a live writer.
+ */
 export function intelReportImportedTitle(): string {
   return "Intel Report imported";
 }
@@ -96,9 +104,10 @@ const RUN_MACHINERY_PATTERNS: readonly RegExp[] = [
   // the client as documents and drafts with their own honest rows.
   /^imported lab run: /i,
   /^ops import from /i,
-  // competitor-actions' staff import of a locally-produced intel report. The
-  // derived "Research report ready" row (activity-timeline's hasIntelLog
-  // dedupe) is the honest client-facing telling and renders in its place.
+  // The retired staff intel-report import (QA #99). Retroactive only: nothing
+  // writes this row any more, and the stored ones stay redacted. The derived
+  // "Research report ready" row (activity-timeline's hasIntelLog dedupe) is the
+  // honest client-facing telling and renders in its place.
   /^intel report imported$/i,
   // Retroactive only: the old schedule-change wording decomposed the batch
   // ("3 runs per week (12 drafts)"). New rows mint in pace vocabulary and

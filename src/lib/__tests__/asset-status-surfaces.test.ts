@@ -14,6 +14,8 @@ import {
   clientAssetStatusLabel,
   publishHoldMessage,
 } from "@/lib/asset-status-copy";
+import { assetTypeLabel } from "@/lib/asset-type-copy";
+import { jobStatusLabel } from "@/lib/job-status-copy";
 import type { Asset } from "@/lib/types";
 
 /**
@@ -432,10 +434,319 @@ describe("the calendar's chip vocabulary", () => {
     expect(readers.length).toBeGreaterThan(0);
   });
 
-  it("offers every kind in the legend, by shape and not by a list", () => {
+  it("names every kind in the legend map, by shape and not by a list", () => {
     // An array satisfies its element type however short it is, so the legend
     // could name fewer kinds than the grid draws and the filter could not hide
     // what it did not name. A Record over the key type cannot.
-    expect(flat(cal)).toContain("STATUS_FILTER_CHIPS: Record<StatusFilterKey");
+    //
+    // NAMES, not offers: which of those a given viewer is actually shown is
+    // `calendarFilterKeyMatchable`'s answer, derived and pinned in
+    // calendar-kind.test.ts. This assertion is about the map being total.
+    expect(flat(cal)).toContain("STATUS_FILTER_CHIPS: Record<CalendarFilterKey");
+    // …and the render site asks the per-viewer rule rather than painting the map
+    // whole, which is the half a total map cannot give you.
+    expect(flat(cal)).toContain("calendarFilterKeyMatchable(key, viewerIsClient)");
+  });
+});
+
+/**
+ * The copilot's own status vocabulary.
+ *
+ * The dock is a client-reachable status surface like any other, and the one with
+ * no render to gate: `find_output` composes TOOL TEXT that a model paraphrases
+ * back into the conversation, so an interpolated `asset.status` reaches a client
+ * as prose in whatever wording the model picks. Ledger row 51 closed the two
+ * rendered badges; this is the same question asked of the surface that has no
+ * badge.
+ *
+ * SCOPE, and it is the same one this file already states for the detail modal:
+ * the tool's `execute` is a closure inside the route handler and is not
+ * exported, so the wiring is asserted against the route's SOURCE. That the
+ * lookup returns the right word for each viewer is the register suite's job.
+ */
+describe("the copilot's find_output tool text", () => {
+  const route = code(src("app/api/clients/[id]/chat/route.ts"));
+  const tools = route.slice(route.indexOf("const findOutputTool"), route.indexOf("const runAgentNowTool"));
+
+  /**
+   * The route's local status accessor, DISCOVERED rather than pinned: whatever
+   * local name is bound to a call of the shared `assetStatusLabel`.
+   *
+   * Discovering it is what lets the negative below be strict about the callee
+   * while still allowing the helper to be renamed — the property the previous
+   * shape-only version bought by being too weak to notice `String(asset.status)`.
+   */
+  const accessor = /const (\w+) = \([^)]*\)[^=]*=>\s*assetStatusLabel\(/.exec(route)?.[1] ?? "";
+
+  it("found the tool bodies it is asserting about", () => {
+    // Without this every negative below would pass vacuously on "" after a
+    // rename.
+    expect(tools).not.toBe("");
+    expect(tools).toContain("status:");
+    expect(tools).toContain("id: ${asset.id}");
+    // And it found the accessor, so the negative below is comparing against a
+    // real identifier rather than the empty string.
+    expect(accessor).not.toBe("");
+  });
+
+  it("interpolates no raw status enum into what find_output hands the model", () => {
+    // THE loosening, and the exact shape that shipped: `(${a.status})` in the
+    // disambiguation list and `status: ${asset.status}` in the single-match
+    // answer. Absent from the payload beats unrendered — there is no render here
+    // to gate, and no wording the model could be trusted to fix.
+    //
+    // ASKED OVER EVERY INTERPOLATION, not against one bad spelling. The earlier
+    // version matched only `${x.status}` and "passes through some call", and a
+    // realistic loosening walked straight through both: `status:
+    // ${String(asset.status)}` satisfies the shape (`String` is an identifier and
+    // `.status` is its argument) while putting the raw enum back in the payload.
+    // So the rule is inverted — every `${…}` that mentions `.status` must be a
+    // call to THIS route's discovered accessor, and any other callee, `String`
+    // and `` `${a.status}` `` alike, is a failure.
+    const interpolations = tools.match(/\$\{[^{}]*\}/g) ?? [];
+    const touchingStatus = interpolations.filter((i) => /\.status\b/.test(i));
+    const throughTheAccessor = new RegExp(
+      `^\\$\\{\\s*${accessor}\\(\\s*[A-Za-z_$][\\w$]*\\.status\\s*\\)\\s*\\}$`,
+    );
+    const offenders = touchingStatus.filter((i) => !throughTheAccessor.test(i));
+    expect(
+      offenders,
+      `these put a raw status into the model's payload; call ${accessor}() instead`,
+    ).toEqual([]);
+    // Non-vacuity, twice over: there ARE status interpolations here (so the filter
+    // is not reporting an empty list because the slice or the pattern broke), and
+    // both of the two sites are still present.
+    expect(touchingStatus).toHaveLength(2);
+  });
+
+  it("asks the register with the actor's viewer, never a constant", () => {
+    // A client session composing staff words would be the same defect wearing a
+    // fix: this route serves both docks, so the viewer is the one thing it
+    // cannot hard-code.
+    expect(flat(route)).not.toMatch(/assetStatusLabel\([^)]*\b(?:true|false)\s*\)/);
+    // …and the flag is DERIVED from the predicate the deep links already use
+    // rather than answered a second way, which is what keeps one session from
+    // being staff for one answer and a client for the other. The predicate is
+    // pinned (it is a shared export); the local name it is bound to is not.
+    expect(flat(route)).toMatch(/const \w+ = !isStaffCopilotActor\(user\)/);
+  });
+
+  it("would say a different word to each actor, so the lookup is not decorative", () => {
+    // Non-vacuity for the source guards above: the register actually changes the
+    // words the two answers carry, and neither is the stored enum.
+    for (const status of ["draft", "scheduled"] as const) {
+      expect(assetStatusLabel(status, true)).not.toBe(status);
+      expect(assetStatusLabel(status, false)).not.toBe(status);
+    }
+    expect(assetStatusLabel("draft", true)).not.toBe(assetStatusLabel("draft", false));
+  });
+});
+
+/**
+ * The other half of "what the model is handed": the SYSTEM PROMPT.
+ *
+ * The describe above is named for its region now, because it only ever checked
+ * one — the slice between `findOutputTool` and `runAgentNowTool`. Its old name
+ * ("into what the model is handed") promised the whole payload, and while it
+ * watched `find_output`, `buildCopilotSystemPrompt` was interpolating three raw
+ * enums into the system string itself: `client.status` ("paused"), `job.status`
+ * ("review") and `asset.type` ("instagram_post"). A system prompt is payload in
+ * exactly the same sense a tool result is — the model reads it and paraphrases
+ * it — so "what's my account status?" could be answered with a database word.
+ *
+ * Same doctrine, one indirection further out: sanitize at the boundary, and let
+ * the broad claim be made by the assertion rather than by the test name.
+ */
+describe("the copilot system prompt", () => {
+  // EVERY part the route concatenates, not just the one this test was written
+  // against. The route builds the system string as
+  //   baseSystemPrompt + buildProactiveSystemAppendix(…) + creditsAppendix +
+  //   agentFeedbackAppendix + focusAppendix + nowAppendix
+  // and the first version of this sweep read only copilot-context.ts — while
+  // criticising the test above it for promising the whole payload and checking one
+  // region. It repeated the defect it named, and a live leak was sitting in an
+  // unread part: proactive-assistant.ts interpolated a raw `assetType` into the
+  // benchmarks block. Composed here so a NEW part added to the concatenation is a
+  // visible omission rather than a silent one.
+  const PROMPT_PARTS = [
+    "lib/copilot-context.ts",
+    "lib/ai/prompts/proactive-assistant.ts",
+  ];
+  const prompt = PROMPT_PARTS.map((rel) => code(src(rel))).join("\n");
+
+  it("found the builder it is asserting about", () => {
+    expect(prompt).not.toBe("");
+    expect(prompt).toContain("export function buildCopilotSystemPrompt");
+    expect(prompt).toContain("## CLIENT PROFILE");
+  });
+
+  it("interpolates no raw enum into a CLIENT's system string", () => {
+    // The three that shipped, as the shape rather than the three spellings: any
+    // `${…}` reaching for one of these enum-valued fields is a database word in
+    // prose the model will repeat.
+    //
+    // The rule is about the CLIENT's payload, so a raw enum is allowed on a line
+    // the staff branch owns — staff are owed the stored value, and laundering it
+    // for them would change an operator's words to fix a client's problem. Every
+    // raw enum must therefore sit behind `!viewerIsClient`.
+    //
+    // SCOPE, because this scan's granularity is one LINE: it recognises the
+    // single-line `if (!viewerIsClient) parts.push(…)` form the builder uses. A
+    // multi-line staff-only block would read as unguarded here and would need the
+    // scan extended rather than the guard assumed. Stated so the next person does
+    // not discover it by watching a true failure look false.
+    //
+    // SECOND STATED HOLE: this recognises an enum by its field access or by a local
+    // named after the field. A value rebound to a differently-named local
+    // (`const s = a.status; …${s}`) escapes it, and no regex over source text is
+    // going to fix that. The per-field pins in the next test are the real guard for
+    // the three sites that exist; this sweep is the guard against a NEW one.
+    // TWO shapes, because the field-access shape alone has a hole this probe found
+    // by walking into it. Reverting `assetTypeLabel(type)` to `${type}` left the
+    // sweep GREEN: the asset type arrives via `Object.entries(byType)`, so by the
+    // time it is interpolated it is a BARE LOCAL named `type` and there is no
+    // `.type` for a field pattern to see. A shape test that cannot see a realistic
+    // loosening is decoration, so a bare local named after one of the enum fields
+    // counts as the enum — which is the naming convention this file actually uses.
+    // Field names are SUFFIXED in this codebase — `assetType`, `jobStatus` — so a
+    // pattern anchored on `.status`/`.type` exactly cannot see them. That is not
+    // hypothetical: it is why the live `${b.assetType}` leak in the benchmarks
+    // block survived a sweep written to catch exactly that shape. Matching the
+    // suffix is what makes the question "is any stored status/type field
+    // interpolated raw", rather than "is one of two spellings".
+    const FREE_TEXT_FIELDS = ["businessType"];
+    const RAW_FIELD = /\.\w*(?:[Ss]tatus|[Tt]ype)\b/;
+    const RAW_LOCAL = /^\$\{\s*\w*(?:[Ss]tatus|[Tt]ype)\s*\}$/;
+    // NAMED callees only, discovered from the label modules rather than accepted
+    // as "any call". The first version was /\w+\(…\)/, which accepted ANY callee —
+    // so `${String(first.type)}` put the enum straight back into the text a client's
+    // model reads and the sweep stayed green, while the comment beside it claimed
+    // to verify a register. That is the exact loosening this round was told to
+    // close in find_output, reproduced one test down.
+    const LABEL_CALLEES = [
+      ...new Set(
+        [
+          readFileSync(join(ROOT, "src", "lib", "asset-status-copy.ts"), "utf8"),
+          readFileSync(join(ROOT, "src", "lib", "asset-type-copy.ts"), "utf8"),
+          readFileSync(join(ROOT, "src", "lib", "job-status-copy.ts"), "utf8"),
+        ]
+          .flatMap((src) => [...src.matchAll(/export function (\w*[Ll]abel\w*)/g)])
+          .map((m) => m[1]!),
+      ),
+    ];
+    // Non-vacuity on the allowlist itself: an empty list would make every call
+    // an offender, which reads as a passing sweep only by accident.
+    expect(LABEL_CALLEES.length, "found no label accessors to allow").toBeGreaterThan(2);
+    const THROUGH_A_CALL = new RegExp(
+      `\\b(?:${LABEL_CALLEES.join("|")})\\(\\s*[A-Za-z_$][\\w$.]*\\s*\\)`,
+    );
+    const lines = prompt.split("\n");
+    const offenders: string[] = [];
+    for (const line of lines) {
+      for (const interp of line.match(/\$\{[^{}]*\}/g) ?? []) {
+        if (!RAW_FIELD.test(interp) && !RAW_LOCAL.test(interp)) continue;
+        // FREE TEXT that merely ends in Type/Status. The pattern above matches a
+        // field-name SHAPE, and shape cannot tell a closed union from prose — so
+        // the default is to flag, and a genuinely free-text field is allowlisted
+        // here WITH its reason. `ClientReport.businessType` is `string`, written
+        // from the report's company profile ("SaaS", "Fintech"): the client's own
+        // description of their own business, with no union behind it and nothing
+        // internal to launder. Adding to this list should feel like a decision.
+        if (FREE_TEXT_FIELDS.some((f) => interp.includes(f))) continue;
+        // Through one of the label accessors discovered above — not any call.
+        if (THROUGH_A_CALL.test(interp)) continue;
+        // Or on a line the staff branch owns.
+        if (line.includes("!viewerIsClient")) continue;
+        offenders.push(interp);
+      }
+    }
+    expect(
+      offenders,
+      "these hand a CLIENT's model a stored enum; ask a register, or drop the field for a client",
+    ).toEqual([]);
+    // Non-vacuity: the scan does see this file's interpolations at all, and it
+    // does see the guarded one (so "no offenders" is not "found nothing").
+    expect((prompt.match(/\$\{[^{}]*\}/g) ?? []).length).toBeGreaterThan(10);
+    expect(prompt).toContain("${client.status}");
+  });
+
+  it("wraps every action a client's tool awaits, so a throw cannot reach their model", () => {
+    // A RETURNED refusal is client copy and passes through verbatim — those are
+    // written for this reader. A THROW is not: `requireAssetAccess` opens with
+    // `throw new Error("Unauthorized")` / "Asset not found" / "Forbidden", and the
+    // AI SDK hands an uncaught throw straight to the model, which paraphrases it.
+    //
+    // The comment that shipped here certified the client path as safe on the
+    // grounds that every refusal is composed as client copy. True, and not the
+    // whole story — which is why this asks the SHAPE rather than trusting prose:
+    // any `await client*Action(` inside a tool must sit under a try.
+    const route = code(src("app/api/clients/[id]/chat/route.ts"));
+    const calls = [...route.matchAll(/await\s+(client[A-Z]\w*Action)\s*\(/g)];
+    // Non-vacuity: there is at least one such call to be wrong about.
+    expect(calls.length, "found no client action calls to check").toBeGreaterThan(0);
+
+    // BRACE-AWARE, because "the nearest try before the call" is not the question.
+    // The first version asked that, and it passed with the guard deleted: the staff
+    // branch directly above has its own try/catch, so a SIBLING try that had
+    // already closed satisfied it. What has to be true is that the call sits
+    // lexically inside a try block that is still OPEN at that point.
+    const enclosedByTry = (at: number): boolean => {
+      for (const t of [...route.matchAll(/try\s*\{/g)]) {
+        const open = t.index! + t[0].length - 1;
+        if (open > at) break;
+        let depth = 0;
+        for (let i = open; i < route.length; i++) {
+          if (route[i] === "{") depth++;
+          else if (route[i] === "}") {
+            depth--;
+            if (depth === 0) {
+              if (i > at) return true; // this try closes after the call
+              break;
+            }
+          }
+        }
+      }
+      return false;
+    };
+
+    for (const call of calls) {
+      expect(
+        enclosedByTry(call.index!),
+        `${call[1]} is awaited outside any try — an uncaught throw reaches the client's model`,
+      ).toBe(true);
+    }
+  });
+
+  it("routes each of the three through the answer chosen for it", () => {
+    // Not one blanket fix — each field got the answer its own domain called for,
+    // and this pins which, because "we labelled them all" would hide that
+    // `client.status` has no client-facing register and should not be there.
+    //
+    // client.status: DROPPED for a client. Account lifecycle
+    // ("active"/"paused"/"archived") is not the client's reading, and there is no
+    // register to launder it through.
+    expect(prompt).toMatch(/if \(!viewerIsClient\) parts\.push\(`- \*\*Status:\*\* \$\{client\.status\}`\)/);
+    // job.status: RELABELLED through the register the run badges already read.
+    expect(prompt).toContain("jobStatusLabel(j.status)");
+    expect(prompt).toContain('from "@/lib/job-status-copy"');
+    // asset.type: RELABELLED through the register the deliverable cards read.
+    expect(prompt).toContain("assetTypeLabel(type)");
+    expect(prompt).toContain('from "@/lib/asset-type-copy"');
+  });
+
+  it("defaults to the client's vocabulary when a caller forgets to say", () => {
+    // Fail SAFE. A new caller that omits the flag must withhold internal
+    // vocabulary, not leak it — the opposite default would make the next surface
+    // to build a prompt leak by silence.
+    expect(prompt).toMatch(/const viewerIsClient = opts\.viewerIsClient !== false/);
+  });
+
+  it("would say a different word than the enum, so the lookups are not decorative", () => {
+    // Behavioural non-vacuity for the source guards above: the two registers the
+    // prompt now asks actually change the words.
+    expect(jobStatusLabel("review")).toBe("In review");
+    expect(jobStatusLabel("review")).not.toBe("review");
+    expect(assetTypeLabel("instagram_post")).toBe("Instagram post");
+    expect(assetTypeLabel("instagram_post")).not.toBe("instagram_post");
   });
 });

@@ -857,6 +857,31 @@ export const CLIENT_RUN_REFUSAL_MESSAGE =
   "This run could not be started right now. Try again shortly, or contact your Karos team.";
 
 /**
+ * The one sentence a client gets when a WRITE they asked the copilot for did not
+ * land — today, `edit_output` saving a revised deliverable.
+ *
+ * WHY A FOURTH SENTENCE, since reusing one is normally the right answer. The
+ * three above all name a RUN or a POST: `clientSafeRefusal` says "could not start
+ * on its last scheduled run", `clientSafeRunError` says "this run could not be
+ * started", `clientSafePublishError` says "this post didn't go out as scheduled".
+ * A client who asked the copilot to reword a caption started no run and posted
+ * nothing, so all three would describe an event that did not happen — which is
+ * the "tells the client something false" half of the defect, not a fix for the
+ * "leaks internals" half. The shape is genuinely new; the WORDING deliberately is
+ * not, so the two read as one product voice.
+ *
+ * Same rules as its siblings: no promise the code does not keep (nothing here
+ * notifies anyone — the caller logs the real error for staff instead), and the
+ * two things the client can actually do.
+ *
+ * Kept in this module because this is where the client-safe failure vocabulary
+ * already lives — despite the filename, which is now narrower than the file. All
+ * four sentences being findable in one place is worth more than a tidy name.
+ */
+export const CLIENT_SAVE_REFUSAL_MESSAGE =
+  "That change couldn't be saved right now. Try again shortly, or contact your Karos team.";
+
+/**
  * What a client is allowed to read of a FAILED PUBLISH — the publish twin of
  * clientSafeRefusal above.
  *

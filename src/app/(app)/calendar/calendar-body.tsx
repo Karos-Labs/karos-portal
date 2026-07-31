@@ -16,7 +16,7 @@ import {
   type ClientAgentIdentity,
 } from "@/lib/agent-identity-map";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
-import { postKind } from "@/lib/calendar-kind";
+import { isClientCalendarStatus, postKind } from "@/lib/calendar-kind";
 import { projectPastRuns } from "@/lib/calendar-past-runs";
 import { dedupeCalendarAssets } from "@/lib/calendar-dedupe";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
@@ -172,7 +172,11 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // deliverables also pass through the shared redaction boundary so the
   // calendar cannot expose their content, images, or download controls before
   // the scheduled day. Staff continue to receive the full assets for review.
-  const scopedAssets = inScope(assetsRaw).filter((a) => !isClient || a.status !== "draft");
+  //
+  // The draft rule itself lives with the classifier (isClientCalendarStatus),
+  // because the legend has to know it too: a chip for a status this filter drops
+  // is a filter a client can never make dim anything.
+  const scopedAssets = inScope(assetsRaw).filter((a) => !isClient || isClientCalendarStatus(a.status));
   const visibleAssets = isClient
     ? getClientLibraryAssets(scopedAssets, { forClient: true })
     : scopedAssets;

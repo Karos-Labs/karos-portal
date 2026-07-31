@@ -74,10 +74,33 @@ export function toClientXOption(option: XOption): ClientXOption {
  * surfaces guards its own, and a single option does not ask the client to pick
  * one — there is nothing to pick between.
  *
- * The picker returns null on an empty day, so it never asks this for a lead
- * about nothing; zero is answered honestly anyway rather than guarded here.
+ * ZERO IS GUARDED, not described. The claim here used to be that zero "is
+ * answered honestly anyway" — it was not: the plural branch composed "0
+ * directions to choose from. Pick one…", asking a client to pick one of none.
+ *
+ * WHAT ACTUALLY KEEPS ZERO OFF SCREEN, corrected: exactly ONE thing, and it is
+ * `OptionPicker`'s own `if (options.length === 0) return null;`. The second
+ * reason given here before — "client-agent-rows only builds `today` when there is
+ * at least one option" — is half false, and the false half is the reachable one.
+ * client-agent-rows.ts has two paths to `today`:
+ *  - the UNPICKED path (`todaySlot.assetId`) does gate on `options.length > 0`;
+ *  - the ALREADY-PICKED path builds `today = { slotId, options: [],
+ *    pickedDirection }` — non-null `today`, empty array, on purpose.
+ * That second one normally renders `<OptionPicked>` instead of the picker, but
+ * `pickedDirection` is `pick.direction?.trim() || refLaneLabel(pick.optionRef)`
+ * and `refLaneLabel` returns `string | null` (#155 chose null over printing an
+ * internal word), so a pick whose ref names no recognisable lane yields
+ * `pickedDirection: null` and the panel mounts the picker with an EMPTY array.
+ *
+ * So the empty case is live, it does reach this function's caller, and the early
+ * return is a real guard rather than a theoretical one. Zero being unrendered is
+ * one `if` deep — which is the whole reason the branch below says something true
+ * instead of leaning on that `if`.
  */
 export function optionsLead(count: number): string {
+  if (count < 1) {
+    return "No directions for today yet — when they arrive, choosing between them costs nothing.";
+  }
   if (count === 1) {
     return "One direction for today. Use it as it is or edit it first, then post it — either way costs nothing.";
   }
