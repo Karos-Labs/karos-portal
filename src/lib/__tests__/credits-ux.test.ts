@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { ALL_RUN_STATES, pastRunStatuses } from "@/lib/calendar-past-runs";
 import {
   CREDIT_DENIAL_PREFIX,
   CREDIT_BLOCK_REASON,
@@ -66,41 +67,50 @@ describe("Generate Plan surfaces the refusal it is handed", () => {
   });
 });
 
-describe("the tasks timeline hides failed runs from clients only", () => {
+describe("the tasks timeline withholds run states from clients by the calendar's table", () => {
   const body = source(TASKS_BODY);
   const timelineJobs = body.slice(
-    body.indexOf("const timelineJobs: TimelineJob[] = jobs"),
+    body.indexOf("const timelineStatuses = pastRunStatuses("),
     body.indexOf(".map((job) => ({"),
   );
 
-  it("filters failed jobs on the client-viewer branch", () => {
-    expect(timelineJobs).toContain('.filter((job) => !(isClientViewer && job.status === "failed"))');
+  it("withholds a failed and a cancelled run from a client, and withholds nothing from staff", () => {
+    // The decision itself, called rather than grepped. Both surfaces read this
+    // one table now (F80), so this is the calendar's answer and the timeline's
+    // in one assertion — and it names both withheld states, which is what the
+    // old version of this block checked only half of.
+    const client = pastRunStatuses({ isClient: true });
+    expect(client.has("failed")).toBe(false);
+    expect(client.has("cancelled")).toBe(false);
+
+    const staff = pastRunStatuses({ isClient: false });
+    expect(ALL_RUN_STATES.filter((s) => !staff.has(s))).toEqual([]);
   });
 
-  it("leaves the staff branch untouched — the guard is on isClientViewer", () => {
-    // Every status filter in this projection must be conditional. An
-    // unconditional one would take failures off the staff timeline too.
-    const statusFilters = timelineJobs.match(/\.filter\(\(job\) => [^\n]*status[^\n]*\)/g) ?? [];
-    expect(statusFilters).toHaveLength(1);
-    expect(statusFilters[0]).toContain("isClientViewer &&");
+  it("has exactly one status rule in the projection, and it is that table", () => {
+    // What the old inline `isClientViewer &&` spelling gave for free: an
+    // UNCONDITIONAL status filter here would take failures off the staff
+    // timeline too. The viewer split lives in pastRunStatuses now, so what is
+    // left to check is that this projection has not grown a second status rule
+    // beside it. Behaviour only, whitespace-normalised, no assertion on comments.
+    // Counts EVERY filter leg rather than matching a status-rule shape. The
+    // first version of this test matched /\.filter\(\(job\) => ...status...\)\)/,
+    // which needs a trailing `))` — so `job.status !== "cancelled"` added right
+    // beneath the table filter ends in a single paren, was never counted, and
+    // the suite stayed green while an unconditional status rule took cancelled
+    // runs off the STAFF timeline. That is the one thing this test exists for.
+    const flat = (s: string) => s.replace(/\s+/g, " ");
+    const legs = flat(timelineJobs).match(/\.filter\(/g) ?? [];
+    expect(legs, "a third filter leg is a second rule — put it in pastRunStatuses").toHaveLength(2);
+    expect(flat(timelineJobs)).toContain("timelineStatuses.has(job.status)");
+    expect(flat(timelineJobs)).toContain("pastRunStatuses({ isClient: isClientViewer })");
   });
 
   it("is applied at the server boundary, not at render", () => {
-    // tasks-body is the RSC that assembles the payload; a failed run must not
+    // tasks-body is the RSC that assembles the payload; a withheld run must not
     // cross into it at all. If this file ever becomes a client component the
     // filter has moved to the wrong side of the boundary.
     expect(body).not.toContain('"use client"');
-  });
-
-  it("reads as the same decision the calendar already made", () => {
-    // Behaviour only, whitespace-normalised, and no assertion on the other
-    // file's COMMENTS: a comment is not behaviour, and this test is named for
-    // the tasks timeline — it must not fail because the calendar reworded a
-    // sentence or prettier rewrapped a filter it does not own.
-    const flat = (s: string) => s.replace(/\s+/g, " ");
-    const calendar = flat(source("src/app/(app)/calendar/calendar-body.tsx"));
-    expect(calendar).toContain('isClient && j.status === "failed"');
-    expect(flat(timelineJobs)).toContain('isClientViewer && job.status === "failed"');
   });
 });
 

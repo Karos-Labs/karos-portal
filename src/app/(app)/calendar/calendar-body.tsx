@@ -17,6 +17,7 @@ import {
 } from "@/lib/agent-identity-map";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
 import { postKind } from "@/lib/calendar-kind";
+import { projectPastRuns } from "@/lib/calendar-past-runs";
 import { dedupeCalendarAssets } from "@/lib/calendar-dedupe";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
@@ -41,25 +42,6 @@ import {
 } from "@/components/run-calendar";
 import type { ReactNode } from "react";
 import type { Asset, AppUser, AssetType } from "@/lib/types";
-
-// Jobs the calendar renders as a run card. "cancelled" is a terminal outcome
-// of its own since F30 — without it here a stopped run would simply vanish
-// from the calendar instead of showing what happened that day. "queued" and
-// "running" are included so an IN-FLIGHT run stays visible the whole time it
-// executes: the schedule projection below only projects FUTURE fires (a fired
-// occurrence falls out of `projectRunOccurrences(from: now)` the instant it's
-// claimed), so without these two statuses a run vanishes from the calendar
-// entirely from the moment it's claimed until it reaches a terminal status —
-// exactly the "no visibility into why it failed" gap this exists to close.
-const PAST_JOB_STATUSES = new Set([
-  "queued",
-  "running",
-  "review",
-  "approved",
-  "delivered",
-  "failed",
-  "cancelled",
-]);
 
 /** Plain-English noun for what a run actually produced. */
 const OUTPUT_NOUN: Record<AssetType, [string, string]> = {
@@ -366,54 +348,63 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     });
 
   // ── Past (completed) runs ───────────────────────────────────────────
-  const pastEntries: CalendarRun[] = jobs
-    .filter((j) => j.agentId === "agent-service" && PAST_JOB_STATUSES.has(j.status))
-    .filter((j) => !(isClient && j.status === "failed")) // hide internal failures from clients
-    .map((j) => {
-      const agent = agentByName.get(j.agentName);
+  // WHICH runs reach this viewer, and which of each run's deliverables it may
+  // be told about, is one rule with one home: lib/calendar-past-runs. Read that
+  // module before changing what a client sees here — the run card asks it again
+  // at render for the review control, so an answer changed only on this side
+  // splits back into the two that contradicted each other (F80).
+  //
+  // The agent filter stays here: it says which jobs the calendar draws runs
+  // from at all, which is a fact about this page's source, not about the viewer.
+  const pastEntries: CalendarRun[] = projectPastRuns(
+    jobs.filter((j) => j.agentId === "agent-service"),
+    assetsByJob,
+    {
+      isClient,
+      // The card's view of one deliverable, built INSIDE the projection so the
+      // list it guarantees non-empty for a client is literally the list this row
+      // ships as `assets` — no parallel array here to keep in step with it.
+      //
       // Sanitized here, at the server boundary, not at render: slicing raw
       // content shipped the run record's own bookkeeping — markdown syntax, the
       // internal status word, the lab product code and the job hash — into the
       // payload of the panel a client opens to see what ran.
-      // A3/A4. `assets` carries a client's future-dated posts as redacted
-      // placeholders, and they were being counted into this card's summary: a
-      // run that produced a week of slots printed "7 posts · Ran 3:14 PM",
-      // which states outright that the whole week came out of one fire at one
-      // minute — the batch tell in its purest form. A past run card may only
-      // speak of what the client has actually been given; the rest of that run
-      // is upcoming work, and upcoming work lives on the calendar as slots.
-      // Staff keep the full run (invariant A10.6).
-      const runAssets = assetsByJob.get(j.id) ?? [];
-      const deliveredAssets = isClient ? runAssets.filter((a) => !a.locked) : runAssets;
-      const views: RunAssetView[] = deliveredAssets.map((a) => ({
+      project: (a): RunAssetView => ({
         id: a.id,
         type: a.type,
         title: cleanTitle(a.title),
         textPreview: toPlainSummary(a.content, 240),
         images: assetImages(a),
-      }));
-      return {
-        id: j.id,
-        kind: "past" as const,
-        clientId: j.clientId,
-        clientName: single ? undefined : nameOf(j.clientId),
-        at: j.createdAt,
-        // The job alone, deliberately — not its assets. This card IS the run,
-        // so its fallback rung must stay the run's own recorded name; feeding
-        // the deliverables in would let an asset-derived label outrank it.
-        // The family rule still fires from the job's own `external.taskType`,
-        // which is what a managed "Social posts (IG/TikTok)" run carries.
-        productName: runRowLabel(j, umbrellasFor(j.clientId)),
-        productColor: agent?.color ?? "#FF6B2C",
-        productIcon: agent?.icon ?? "Bot",
-        jobStatus: j.status,
-        ...(describeRunOutput(views) ? { outputSummary: describeRunOutput(views) } : {}),
-        // Job id is staff bookkeeping: a tooltip for them, absent for clients.
-        ...(isClient ? {} : { staffRef: `Job ${j.id}${agent ? ` · agent ${agent.id}` : ""}` }),
-        assets: views,
-        images: views.flatMap((v) => v.images),
-      };
-    });
+      }),
+    },
+  ).map(({ job: j, deliveredAssets: views }) => {
+    const agent = agentByName.get(j.agentName);
+    return {
+      id: j.id,
+      kind: "past" as const,
+      clientId: j.clientId,
+      clientName: single ? undefined : nameOf(j.clientId),
+      at: j.createdAt,
+      // The job alone, deliberately — not its assets. This card IS the run,
+      // so its fallback rung must stay the run's own recorded name; feeding
+      // the deliverables in would let an asset-derived label outrank it.
+      // The family rule still fires from the job's own `external.taskType`,
+      // which is what a managed "Social posts (IG/TikTok)" run carries.
+      productName: runRowLabel(j, umbrellasFor(j.clientId)),
+      productColor: agent?.color ?? "#FF6B2C",
+      productIcon: agent?.icon ?? "Bot",
+      jobStatus: j.status,
+      // Counts the views above, so for a client it counts what they have been
+      // given at this moment and not their locked upcoming slots. Read rule 2 in
+      // lib/calendar-past-runs for how far that goes — it suppresses a batch's
+      // count while the batch is future-dated and does not survive the week.
+      ...(describeRunOutput(views) ? { outputSummary: describeRunOutput(views) } : {}),
+      // Job id is staff bookkeeping: a tooltip for them, absent for clients.
+      ...(isClient ? {} : { staffRef: `Job ${j.id}${agent ? ` · agent ${agent.id}` : ""}` }),
+      assets: views,
+      images: views.flatMap((v) => v.images),
+    };
+  });
 
   const runs = [...scheduledEntries, ...pastEntries];
 

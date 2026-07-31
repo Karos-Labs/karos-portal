@@ -40,6 +40,8 @@ vi.mock("@/lib/task-sync", () => ({
   syncTaskForJobOutcome: vi.fn().mockResolvedValue(undefined),
 }));
 
+const realData = await vi.importActual<typeof import("@/lib/data")>("@/lib/data");
+
 const DRAFTS_MD = [
   "# Account 1 · Company page @getkaros",
   "",
@@ -135,6 +137,12 @@ beforeEach(() => {
       text: async () => DRAFTS_MD,
     }),
   );
+
+  // Pure, and read by the route's pre-claim status filter. Automocked it returns
+  // undefined, which reads as "terminal" and turns every delivery away. Restored
+  // from the real module rather than re-implemented, so this file cannot drift
+  // from the one definition of "still in flight" in `src/lib/data.ts`.
+  (data.isJobInFlight as any).mockImplementation(realData.isJobInFlight);
 
   (data.getJobByExternalServiceId as any).mockResolvedValue({
     id: "job-1",

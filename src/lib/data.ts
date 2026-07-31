@@ -421,7 +421,7 @@ export async function listStuckManagedJobs(staleBefore: number, limit = 25): Pro
   const snap = await col
     .jobs()
     .where("agentId", "==", "agent-service")
-    .where("status", "in", ["queued", "running"])
+    .where("status", "in", IN_FLIGHT_JOB_STATUSES)
     .get();
   return snap.docs
     .map((d) => withId<Job>(d))
@@ -438,6 +438,31 @@ export async function getJobByExternalServiceId(serviceJobId: string): Promise<J
 }
 
 /**
+ * The non-terminal job statuses — the single home for this set.
+ *
+ * It answers one question in two shapes: the array feeds Firestore
+ * `where("status", "in", ...)` queries, `isJobInFlight` answers the same
+ * question about a job already in memory.
+ *
+ * SCOPE, stated rather than claimed as a universal. Four call sites read this:
+ * `claimExternalJobCompletion` below, `listStuckManagedJobs`,
+ * `listStuckLocalJobs` / `reconcileStuckJob` in credit-reconcile, and the
+ * runway in-flight filter. It is NOT every in-flight comparison in the repo —
+ * roughly a dozen others still hand-roll `status !== "queued" && !== "running"`
+ * (external-job-actions, agent-health, client-agent-rows, jobs-list and
+ * others). Converting one of those is welcome; asserting here that none exist
+ * would be a claim this file cannot verify, and an earlier draft of this
+ * comment made exactly that claim while a counterexample sat inside the very
+ * sweep it named.
+ */
+export const IN_FLIGHT_JOB_STATUSES: readonly JobStatus[] = ["queued", "running"];
+
+/** True while a job has not reached a terminal status (IN_FLIGHT_JOB_STATUSES). */
+export function isJobInFlight(status: JobStatus): boolean {
+  return IN_FLIGHT_JOB_STATUSES.includes(status);
+}
+
+/**
  * Atomically claims a webhook completion for an external job: flips the job
  * out of queued/running exactly once. Returns false when another delivery
  * already claimed it — the caller must then skip all side effects.
@@ -448,7 +473,7 @@ export async function claimExternalJobCompletion(jobId: string, status: JobStatu
     const snap = await tx.get(ref);
     if (!snap.exists) return false;
     const job = snap.data() as Job;
-    if (job.status !== "queued" && job.status !== "running") return false;
+    if (!isJobInFlight(job.status)) return false;
     tx.update(ref, { status, updatedAt: Date.now() });
     return true;
   });

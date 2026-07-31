@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { requireCronSecret } from "@/lib/cron-auth";
-import { listClients, listClientIntegrations, listAssets, listJobs } from "@/lib/data";
+import { isJobInFlight, listClients, listClientIntegrations, listAssets, listJobs } from "@/lib/data";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
@@ -62,8 +62,6 @@ export const maxDuration = 300;
  * so its deficit is reported but never auto-fired.
  */
 const AUTOGEN_FAMILIES: ChainFamily[] = ["social", "email"];
-
-const IN_FLIGHT: ReadonlySet<string> = new Set(["queued", "running"]);
 
 // System actor: makes every dispatch free agency overhead, like a staff run.
 // The name is a STAFF-facing codename — submitManagedJob logs it as the
@@ -146,7 +144,7 @@ export async function GET(req: NextRequest) {
       // Which short families we may actually top up, minus those already generating.
       const inFlightProducts = new Set(
         (await listJobs({ clientId: client.id }))
-          .filter((j) => j.agentId === "agent-service" && IN_FLIGHT.has(j.status) && j.external?.taskType)
+          .filter((j) => j.agentId === "agent-service" && isJobInFlight(j.status) && j.external?.taskType)
           .map((j) => j.external!.taskType),
       );
       const candidates = runway.shortFamilies

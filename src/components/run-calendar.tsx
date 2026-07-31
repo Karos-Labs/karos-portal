@@ -12,6 +12,7 @@ import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
 import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
+import { pastRunHasNoDeliverables, showsPastRunReviewControl } from "@/lib/calendar-past-runs";
 import { cn, relativeTime } from "@/lib/utils";
 import type { AssetImage } from "@/lib/asset-images";
 import type { Asset, AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
@@ -473,11 +474,21 @@ function PastRunCard({
   // Where "review this" actually goes. Staff get the run detail page the
   // notification bell already links to; a client gets the deliverable itself,
   // in the same detail panel the post cards below open. Telling someone
-  // something is ready to review and giving them nothing to click is the gap.
+  // something is ready to review and giving them nothing to click is the gap —
+  // so the badge's claim and the existence of a target are asked as one
+  // question (lib/calendar-past-runs), which is also what the server projection
+  // that builds these rows guarantees for a client viewer.
   const firstAssetId = run.assets?.[0]?.id;
-  const reviewable = run.jobStatus === "review";
   const href = canOpenJob ? `/jobs/${run.id}` : null;
   const openAsset = !canOpenJob && firstAssetId ? () => onOpenAsset(firstAssetId) : null;
+  // Derived from the RESOLVED target, not from a proxy for it. The module's
+  // predicate asks `assets.length > 0` while `openAsset` needs a truthy id — the
+  // same rule in two spellings, and an empty-string id would have rendered a
+  // dead "Review deliverable" behind a non-null assertion. Not reachable from
+  // the one caller (ids are Firestore doc ids), but it re-opened the exact gap
+  // this module exists to close. `showsPastRunReviewControl` still guards the
+  // server-side guarantee; here the button asks whether it has somewhere to go.
+  const showReviewControl = showsPastRunReviewControl(run, { canOpenJob }) && Boolean(href || openAsset);
 
   const heading = (
     <>
@@ -520,7 +531,7 @@ function PastRunCard({
             {inFlight ? "Started" : "Ran"} {timeStr(run.at)}
           </p>
 
-          {reviewable && (href || openAsset) && (
+          {showReviewControl && (
             <div className="mt-2">
               {href ? (
                 <Link href={href} className={REVIEW_BUTTON_CLASS}>
@@ -528,7 +539,7 @@ function PastRunCard({
                   <Icon name="ArrowRight" className="h-3.5 w-3.5" />
                 </Link>
               ) : (
-                <Button size="sm" variant="outline" onClick={openAsset!}>
+                <Button size="sm" variant="outline" onClick={openAsset ?? undefined}>
                   Review deliverable
                   <Icon name="ArrowRight" className="h-3.5 w-3.5" />
                 </Button>
@@ -540,8 +551,18 @@ function PastRunCard({
             <p className="mt-2 text-xs text-muted-2">In progress…</p>
           ) : run.jobStatus === "failed" ? (
             <p className="mt-2 text-xs text-danger">The run failed and produced no assets.</p>
-          ) : images.length === 0 && textAssets.length === 0 ? (
-            <p className="mt-2 text-xs text-muted-2">No client-facing assets from this run.</p>
+          ) : pastRunHasNoDeliverables(run) ? (
+            // Asked of the run's DELIVERABLES, not of what this card happens to
+            // paint below. The old condition was `no images && no text
+            // previews`, so a run that delivered a clip with no caption — one
+            // asset, nothing either gallery can render inline — was announced as
+            // having produced nothing, one line under its own "1 post" summary.
+            //
+            // What reaches a client here is decided on the server: a client's
+            // card is only built when the run has actually delivered them
+            // something (projectPastRuns in lib/calendar-past-runs), so this
+            // line speaks about a run that produced nothing at all.
+            <p className="mt-2 text-xs text-muted-2">This run produced no assets.</p>
           ) : null}
 
           {/* Image gallery — click any to slide through the whole run */}

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminDb } from "@/lib/firebase/admin";
+import { IN_FLIGHT_JOB_STATUSES, isJobInFlight } from "@/lib/data";
 import { applyCredit, defaultClientCredits } from "@/lib/credits";
 import { newestUnrefundedCharge, refundEntryIdFor } from "@/lib/credit-reconcile-shared";
 import type { ClientCredits, ClientTask, CreditLedgerEntry, Job } from "@/lib/types";
@@ -96,7 +97,7 @@ export const UNSUBMITTED_AGENT_JOB_EXTRA_MS = 90 * 60 * 1000;
  * would otherwise be stranded (charge happens between createJob and submit).
  */
 export async function listStuckLocalJobs(staleBefore: number, limit = 25): Promise<Job[]> {
-  const snap = await jobsCol().where("status", "in", ["queued", "running"]).get();
+  const snap = await jobsCol().where("status", "in", IN_FLIGHT_JOB_STATUSES).get();
   return snap.docs
     .map((d) => ({ ...(d.data() as Job), id: d.id }))
     .filter((j) => {
@@ -276,7 +277,9 @@ export async function reconcileStuckJob(jobId: string, staleBefore: number): Pro
     const jobSnap = await tx.get(jobRef);
     if (!jobSnap.exists) return { action: "skipped", detail: "job deleted", refunded: false };
     const job = jobSnap.data() as Job;
-    if (job.status !== "queued" && job.status !== "running") {
+    // Same predicate as the sweep's own filter above, so the transactional half
+    // cannot disagree with the half that selected this job.
+    if (!isJobInFlight(job.status)) {
       return { action: "skipped", detail: `already ${job.status}`, refunded: false };
     }
     if (job.external?.serviceJobId) {
