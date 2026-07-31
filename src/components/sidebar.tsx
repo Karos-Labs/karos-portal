@@ -231,6 +231,7 @@ function UserMenu({
   realAdmin,
   feeds,
   showChrome = true,
+  allowJobDeepLinks = true,
 }: {
   user: AppUser;
   realAdmin?: AppUser;
@@ -241,6 +242,8 @@ function UserMenu({
    * support and the bell three taps from a page.
    */
   showChrome?: boolean;
+  /** Passed straight to the bell — see the Sidebar's own binding. */
+  allowJobDeepLinks?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -331,6 +334,7 @@ function UserMenu({
                      ran off the TOP of the viewport at 1280x800 — measured
                      -21px. 45vh keeps it clear down to ~600px of viewport. */
                   panelClassName="max-h-[45vh]"
+                  allowJobDeepLinks={allowJobDeepLinks}
                 />
               )}
               <Link
@@ -431,6 +435,14 @@ export function Sidebar({
   // keep the drawer — the full admin nav is more tabs than a bar can hold
   // (flagged, not ruled). Bound once so TS narrows it inside the JSX below.
   const clientCtx = isStaff && activeClient ? activeClient : null;
+
+  // The bell has to agree with the nav it sits inside. `clientViewNav` above
+  // deliberately drops the Jobs tab, so a review row that deep-linked to
+  // /jobs/[id] threw a staff member in Client View onto the one admin page
+  // this very shell had just taken away — reported live as "I don't know why
+  // it brought me here in Jobs… I'm on the View as client app". Derived from
+  // the same condition that picks `items`, so the two cannot drift apart.
+  const allowJobDeepLinks = clientCtx === null;
 
   // QA F113 (staff stranded in client view) is answered by the ClientContextPicker
   // at the foot of the rail: its ✕ clears the context AND routes to /clients, and
@@ -632,6 +644,7 @@ export function Sidebar({
               variant="row"
               panelPlacement="up"
               panelClassName="w-full max-h-[45vh]"
+              allowJobDeepLinks={allowJobDeepLinks}
             />
             <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
             <ThemeSwitch />
@@ -642,6 +655,7 @@ export function Sidebar({
           realAdmin={realAdmin}
           feeds={feeds}
           showChrome={!inDrawer}
+          allowJobDeepLinks={allowJobDeepLinks}
         />
       </div>
     </div>
@@ -708,6 +722,9 @@ export function Sidebar({
                 <Icon name="Settings" className="h-4 w-4 text-muted-2" />
                 Settings
               </Link>
+              {/* onNavigate: same explicit close as the Settings row above —
+                  a bell row pointing at the route already open navigates
+                  nowhere, so the sheet's on-navigation effect never fires. */}
               <NotificationBell
                 actionItems={actionItems}
                 reviewJobs={reviewJobs}
@@ -715,6 +732,8 @@ export function Sidebar({
                 variant="row"
                 panelPlacement="up"
                 panelClassName="max-h-[45vh]"
+                allowJobDeepLinks={allowJobDeepLinks}
+                onNavigate={() => setCompanyOpen(false)}
               />
               <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
               <ThemeSwitch />

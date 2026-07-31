@@ -307,7 +307,11 @@ export function ClientRail({
               bar no longer carries it (CD-H5). panelPlacement="up" opens it
               over the sheet body and the max-height keeps it inside the
               sheet's own scroll container instead of running off the bottom —
-              the constraint the staff mount already uses. */}
+              the constraint the staff mount already uses.
+              onNavigate is the same explicit close the Settings row above
+              carries: a bell row whose destination is the route already open
+              navigates nowhere, so the hook's on-navigation effect never fires
+              and the sheet sits over the page looking frozen. */}
           <NotificationBell
             actionItems={actionItems}
             reviewJobs={reviewJobs}
@@ -316,6 +320,7 @@ export function ClientRail({
             panelPlacement="up"
             panelClassName="max-h-[45vh]"
             viewerIsClient
+            onNavigate={() => setCompanyOpen(false)}
           />
           <div className="px-0">
             <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />

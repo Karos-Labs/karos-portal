@@ -45,9 +45,31 @@ interface Props {
    * True when the bell is rendered in the client shell. Review rows then become
    * non-navigable status lines: /jobs/[id] is staff-only and bounces a client
    * back to their dashboard (QA F51), and the archive — the destination that
-   * replaced it — provably excludes the drafts these rows count.
+   * replaced it — provably excludes the drafts these rows count. It ALSO
+   * rewrites the row's status line to client-facing copy, which is why the
+   * link behaviour has its own prop below.
    */
   viewerIsClient?: boolean;
+  /**
+   * Whether a review row may deep-link to /jobs/[id]. False in a shell whose
+   * own nav has removed that route — staff in Client View get clientViewNav,
+   * which has no Jobs tab, so a row that deep-linked there dropped them on a
+   * page the surrounding nav had just taken away.
+   *
+   * Deliberately NOT `viewerIsClient`: that flag also swaps "Waiting for your
+   * review" for "Your Karos team is reviewing it", and a staff member IS the
+   * Karos team — the review really is theirs, and telling them otherwise would
+   * hide work they own. This prop turns off the link and nothing else.
+   */
+  allowJobDeepLinks?: boolean;
+  /**
+   * Called whenever a row or footer link navigates, alongside closing the
+   * panel. Mounts inside the mobile Company sheet pass the sheet's own close:
+   * a link to the route already open navigates nowhere, so the sheet's
+   * on-navigation effect never fires and it sits over the page it reached
+   * (the same-route trap the sheet's other rows already close by hand).
+   */
+  onNavigate?: () => void;
 }
 
 export function NotificationBell({
@@ -58,6 +80,8 @@ export function NotificationBell({
   panelClassName,
   variant = "icon",
   viewerIsClient = false,
+  allowJobDeepLinks = true,
+  onNavigate,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -79,6 +103,11 @@ export function NotificationBell({
 
   const total = visibleActions.length + visibleJobs.length + taskAlerts.length;
 
+  // A client never gets the job link back, whatever a caller passes: /jobs is
+  // staff-only, so the flag that describes the viewer wins over the flag that
+  // describes the shell.
+  const jobDeepLinks = allowJobDeepLinks && !viewerIsClient;
+
   // CD-H7b: one number, one noun. The badge clamped at "9+" while the panel
   // header read "32 active" — the same set, described two ways, so opening the
   // panel looked like it had found 23 more. The clamp now only bites in the
@@ -91,6 +120,13 @@ export function NotificationBell({
   // STALE_MS; recomputed on every open.
   // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
+
+  /** Every row/footer link runs this: close the panel, then let the shell that
+   *  mounted us close itself too (the sheet mounts pass their own close). */
+  function closeAfterNavigate() {
+    setOpen(false);
+    onNavigate?.();
+  }
 
   function dismissTranscriptItem(transcriptId: string, itemIndex: number) {
     const key = `action-${transcriptId}-${itemIndex}`;
@@ -206,7 +242,7 @@ export function NotificationBell({
                         </p>
                       </div>
                       {reviewPendingTasks.map((t) => (
-                        <TaskAlertRow key={t.id} task={t} now={now} onClose={() => setOpen(false)} />
+                        <TaskAlertRow key={t.id} task={t} now={now} onClose={closeAfterNavigate} />
                       ))}
                     </>
                   )}
@@ -220,70 +256,22 @@ export function NotificationBell({
                         </p>
                       </div>
                       {pendingTasks.map((t) => (
-                        <TaskAlertRow key={t.id} task={t} now={now} onClose={() => setOpen(false)} />
+                        <TaskAlertRow key={t.id} task={t} now={now} onClose={closeAfterNavigate} />
                       ))}
                     </>
                   )}
 
                   {/* ── Agent review jobs ── */}
-                  {visibleJobs.map((j) => {
-                    /* A review job's output is a DRAFT, and no surface a client
-                       can reach lists a draft — the archive excludes drafts by
-                       design (asset-visibility.ts isInClientArchive), the
-                       calendar filters them out, /jobs is staff-only. So for a
-                       client this row is a status line, not a destination: the
-                       same ruling client-home-overview.tsx already applies to
-                       the identical fact ("N deliverables in review"), and the
-                       same treatment. The copy follows: approval is staff-only
-                       (approveAssetAction calls requireStaff), so "Waiting for
-                       your review" was asking the client for a sign-off the
-                       server would refuse. Staff keep the row as it was — for
-                       them the job page exists and the review IS theirs. */
-                    const body = (
-                      <>
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
-                          <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium text-foreground">
-                            {j.agentName} finished a draft
-                          </p>
-                          <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted">
-                            {j.title}
-                          </p>
-                          <p className="mt-0.5 text-[11px] text-muted-2">
-                            {j.clientName ? `${j.clientName} · ` : ""}
-                            {viewerIsClient
-                              ? "Your Karos team is reviewing it"
-                              : "Waiting for your review"}{" "}
-                            · {relativeTime(j.updatedAt)}
-                          </p>
-                        </div>
-                      </>
-                    );
-                    return (
-                      <div
-                        key={j.jobId}
-                        className={cn(
-                          "flex items-start gap-1",
-                          !viewerIsClient && "transition-colors hover:bg-surface-2",
-                          now - j.updatedAt > STALE_MS && "opacity-60",
-                        )}
-                      >
-                        {viewerIsClient ? (
-                          <div className="flex min-w-0 flex-1 gap-3 px-4 py-3">{body}</div>
-                        ) : (
-                          <Link
-                            href={`/jobs/${j.jobId}`}
-                            onClick={() => setOpen(false)}
-                            className="flex min-w-0 flex-1 gap-3 px-4 py-3"
-                          >
-                            {body}
-                          </Link>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {visibleJobs.map((j) => (
+                    <ReviewJobRow
+                      key={j.jobId}
+                      job={j}
+                      now={now}
+                      viewerIsClient={viewerIsClient}
+                      deepLink={jobDeepLinks}
+                      onNavigate={closeAfterNavigate}
+                    />
+                  ))}
 
                   {/* ── Transcript action items ── */}
                   {visibleActions.map((n) => (
@@ -306,7 +294,7 @@ export function NotificationBell({
                         </p>
                         <Link
                           href={`/transcripts/${n.transcriptId}`}
-                          onClick={() => setOpen(false)}
+                          onClick={closeAfterNavigate}
                           className="mt-0.5 inline-block text-[11px] text-muted-2 hover:text-foreground"
                         >
                           {n.transcriptTitle}
@@ -338,7 +326,7 @@ export function NotificationBell({
                 {(taskAlerts.length > 0 || visibleJobs.length > 0) && (
                   <Link
                     href="/tasks"
-                    onClick={() => setOpen(false)}
+                    onClick={closeAfterNavigate}
                     className="text-[11px] text-muted-2 transition-colors hover:text-foreground"
                   >
                     View workspace →
@@ -347,7 +335,7 @@ export function NotificationBell({
                 {visibleActions.length > 0 && (
                   <Link
                     href="/transcripts"
-                    onClick={() => setOpen(false)}
+                    onClick={closeAfterNavigate}
                     className="text-[11px] text-muted-2 transition-colors hover:text-foreground"
                   >
                     View all meetings →
@@ -357,6 +345,81 @@ export function NotificationBell({
             )}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/* ── Agent review row ────────────────────────────────────────────── */
+
+/**
+ * A review job's output is a DRAFT, and no surface a client can reach lists a
+ * draft — the archive excludes drafts by design (asset-visibility.ts
+ * isInClientArchive), the calendar filters them out, /jobs is staff-only. So
+ * for a client this row is a status line, not a destination: the same ruling
+ * client-home-overview.tsx already applies to the identical fact ("N
+ * deliverables in review"), and the same treatment. The copy follows: approval
+ * is staff-only (approveAssetAction calls requireStaff), so "Waiting for your
+ * review" was asking the client for a sign-off the server would refuse.
+ *
+ * `deepLink` is a separate question from `viewerIsClient`, because a shell can
+ * withdraw the destination without changing who is looking: staff in Client
+ * View are served clientViewNav, which has no Jobs tab, so the row must not
+ * lead there — but the review is still theirs and the copy must keep saying so.
+ *
+ * Exported for test: these rows only mount after a click on the trigger, which
+ * a node test run cannot perform.
+ */
+export function ReviewJobRow({
+  job,
+  now,
+  viewerIsClient,
+  deepLink,
+  onNavigate,
+}: {
+  job: AgentReviewNotification;
+  now: number;
+  viewerIsClient: boolean;
+  deepLink: boolean;
+  onNavigate: () => void;
+}) {
+  const body = (
+    <>
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
+        <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-foreground">{job.agentName} finished a draft</p>
+        <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted">{job.title}</p>
+        <p className="mt-0.5 text-[11px] text-muted-2">
+          {job.clientName ? `${job.clientName} · ` : ""}
+          {viewerIsClient ? "Your Karos team is reviewing it" : "Waiting for your review"} ·{" "}
+          {relativeTime(job.updatedAt)}
+        </p>
+      </div>
+    </>
+  );
+
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-1",
+        // Hover follows the link, not the viewer: an unclickable row that
+        // lights up on hover is a promise the row cannot keep.
+        deepLink && "transition-colors hover:bg-surface-2",
+        now - job.updatedAt > STALE_MS && "opacity-60",
+      )}
+    >
+      {deepLink ? (
+        <Link
+          href={`/jobs/${job.jobId}`}
+          onClick={onNavigate}
+          className="flex min-w-0 flex-1 gap-3 px-4 py-3"
+        >
+          {body}
+        </Link>
+      ) : (
+        <div className="flex min-w-0 flex-1 gap-3 px-4 py-3">{body}</div>
       )}
     </div>
   );

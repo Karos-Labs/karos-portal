@@ -1,0 +1,181 @@
+import { readFileSync } from "fs";
+import path from "path";
+import { describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
+import { ReviewJobRow } from "@/components/notification-bell";
+import type { AgentReviewNotification } from "@/lib/types";
+
+/**
+ * The bell must agree with the nav it is mounted in.
+ *
+ * On the 30 Jul call the product owner, in View as Client, clicked a review row
+ * and landed on /jobs — an admin page that the very shell he was in had
+ * deliberately removed (`clientViewNav` has no Jobs tab). The row's link was
+ * gated on `viewerIsClient`, which the staff shell never passes, so Client View
+ * kept the admin link while the nav around it hid the destination.
+ *
+ * `viewerIsClient` could not simply be reused: it ALSO rewrites the row's
+ * status line to "Your Karos team is reviewing it", and a staff member IS the
+ * Karos team — that copy would hide work they own. The link behaviour therefore
+ * has its own prop, `allowJobDeepLinks`, and the two are pinned apart below.
+ */
+
+const src = (rel: string) => readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
+/** Source read for wiring assertions is whitespace-normalised — JSX props
+ *  reflow with formatting, and a line break is not a behaviour change. */
+const flat = (s: string) => s.replace(/\s+/g, " ");
+
+const bell = src("components/notification-bell.tsx");
+const sidebar = src("components/sidebar.tsx");
+const rail = src("components/client-rail.tsx");
+
+/** Every `<NotificationBell …/>` element in a file, whitespace-normalised.
+ *  Lazy to the closing `/>` rather than "not a `>`" — prop values are arrow
+ *  functions, and `=>` would end the match on the first callback. */
+function bellMounts(source: string): string[] {
+  return [...flat(source).matchAll(/<NotificationBell\b[\s\S]*?\/>/g)].map((m) => m[0]);
+}
+
+const JOB: AgentReviewNotification = {
+  jobId: "job-77",
+  title: "Three posts for the launch week",
+  agentName: "X agent",
+  updatedAt: Date.UTC(2026, 6, 30),
+  clientId: "client-1",
+};
+
+function renderRow(props: { viewerIsClient: boolean; deepLink: boolean }): string {
+  return renderToStaticMarkup(
+    createElement(ReviewJobRow, {
+      job: JOB,
+      now: JOB.updatedAt,
+      onNavigate: () => {},
+      ...props,
+    }),
+  );
+}
+
+describe("a review row never leads where the surrounding nav does not go", () => {
+  it("drops the /jobs link in Client View, for staff as well as clients", () => {
+    // Staff in Client View: the shell withdrew the destination.
+    expect(renderRow({ viewerIsClient: false, deepLink: false })).not.toContain("/jobs/");
+    // A real client: unchanged, and unchanged for the original reason.
+    expect(renderRow({ viewerIsClient: true, deepLink: false })).not.toContain("/jobs/");
+  });
+
+  it("keeps the /jobs link for staff outside Client View", () => {
+    // The thing the fix must not break: on the admin nav, /jobs is a tab and
+    // the job page is where a reviewer actually works.
+    expect(renderRow({ viewerIsClient: false, deepLink: true })).toContain('href="/jobs/job-77"');
+  });
+
+  it("hands a client no link even if a caller passes allowJobDeepLinks", () => {
+    // /jobs is staff-only (requireUser(["KAROS_ADMIN","KAROS_EMPLOYEE"])), so
+    // the flag describing the VIEWER outranks the flag describing the shell —
+    // and the row is wired to that combined answer, not to either flag alone.
+    const b = flat(bell);
+    expect(b).toContain("const jobDeepLinks = allowJobDeepLinks && !viewerIsClient");
+    expect(b).toContain("deepLink={jobDeepLinks}");
+  });
+
+  it("still tells a staff member in Client View that the review is theirs", () => {
+    // The over-apply this prop split exists to prevent: withdrawing the link
+    // must not also swap in the client's reassurance copy.
+    const staffInClientView = renderRow({ viewerIsClient: false, deepLink: false });
+    expect(staffInClientView).toContain("Waiting for your review");
+    expect(staffInClientView).not.toContain("Your Karos team is reviewing it");
+
+    // And the client's line is untouched.
+    expect(renderRow({ viewerIsClient: true, deepLink: false })).toContain(
+      "Your Karos team is reviewing it",
+    );
+  });
+
+  it("only offers a hover affordance when the row is actually clickable", () => {
+    expect(renderRow({ viewerIsClient: false, deepLink: true })).toContain("hover:bg-surface-2");
+    expect(renderRow({ viewerIsClient: false, deepLink: false })).not.toContain(
+      "hover:bg-surface-2",
+    );
+  });
+});
+
+/**
+ * Wiring assertions read source text on purpose: both shells are "use client"
+ * modules whose import graph reaches the Admin SDK, so they cannot be imported
+ * into a node test run (same constraint as shell-chrome.test.ts).
+ */
+describe("every shell tells the bell which shell it is", () => {
+  it("passes allowJobDeepLinks at all three staff mounts", () => {
+    const mounts = bellMounts(sidebar);
+    expect(mounts).toHaveLength(3);
+    for (const mount of mounts) {
+      expect(mount).toContain("allowJobDeepLinks={allowJobDeepLinks}");
+    }
+    // The menu mount is one component deep, so the prop has to be threaded.
+    expect(flat(sidebar)).toContain("allowJobDeepLinks={allowJobDeepLinks} />");
+  });
+
+  it("binds that flag to the same condition that picks the nav", () => {
+    const s = flat(sidebar);
+    // Client View is chosen once, for both the nav and the bell.
+    expect(s).toContain("const clientCtx = isStaff && activeClient ? activeClient : null");
+    expect(s).toContain("const allowJobDeepLinks = clientCtx === null");
+    // …and the nav it must agree with genuinely has no Jobs tab.
+    const clientNav = /function clientViewNav\([\s\S]*?\n\}/.exec(sidebar)?.[0] ?? "";
+    expect(clientNav).not.toBe("");
+    expect(clientNav).not.toContain("/jobs");
+    // The route itself stays staff-gated — this fix changes the offer, not the gate.
+    expect(src("app/(app)/jobs/page.tsx")).toContain(
+      'requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"])',
+    );
+  });
+
+  it("keeps viewerIsClient on both client-rail mounts", () => {
+    const mounts = bellMounts(rail);
+    expect(mounts).toHaveLength(2);
+    for (const mount of mounts) {
+      expect(mount).toMatch(/\bviewerIsClient\b/);
+      // The client shell has no business claiming a staff-only destination.
+      expect(mount).not.toContain("allowJobDeepLinks");
+    }
+  });
+});
+
+describe("a bell inside the mobile Company sheet closes the sheet", () => {
+  it("closes the sheet from every mount that sits in one", () => {
+    // Both sheets own their open state via useCompanySheet; the bell is handed
+    // that setter rather than reaching for it.
+    for (const source of [rail, sidebar]) {
+      const inSheet = bellMounts(source).filter((m) => m.includes("onNavigate"));
+      expect(inSheet).toHaveLength(1);
+      expect(inSheet[0]).toContain("onNavigate={() => setCompanyOpen(false)}");
+    }
+    expect(rail).toContain("useCompanySheet");
+    expect(sidebar).toContain("useCompanySheet");
+  });
+
+  it("runs that callback on navigation, not on dismissing the panel", () => {
+    const b = flat(bell);
+    // One helper, used by every row and footer link that navigates.
+    expect(b).toContain("function closeAfterNavigate() { setOpen(false); onNavigate?.(); }");
+    // A same-route link performs no navigation, so nothing but this callback
+    // can close the sheet — every navigable element must run it.
+    expect(b.match(/onClose=\{closeAfterNavigate\}/g) ?? []).toHaveLength(2); // task rows
+    expect(b.match(/onClick=\{closeAfterNavigate\}/g) ?? []).toHaveLength(3); // transcript + 2 footer
+    expect(b).toContain("onNavigate={closeAfterNavigate}"); // review rows
+    // Closed loop: every Link in the file runs one of those three handlers, and
+    // both row components are handed closeAfterNavigate (asserted above). So no
+    // navigable element can close the panel and leave the sheet standing.
+    expect(b.match(/<Link\b/g) ?? []).toHaveLength(5); // 3 in the panel + 2 row components
+    expect(b.match(/onClick=\{(closeAfterNavigate|onClose|onNavigate)\}/g) ?? []).toHaveLength(5);
+
+    // Dismissal is NOT navigation: the backdrop closes the panel and leaves the
+    // sheet where it was, or a stray tap would tear down the whole sheet.
+    expect(b).toContain('<div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />');
+  });
+});
+
+// The bell reaches the actions barrel for the dismiss write; nothing under test
+// calls it, and the barrel is server-only.
+vi.mock("@/lib/actions", () => ({ dismissAssignedActionItemAction: async () => {} }));
