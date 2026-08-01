@@ -104,9 +104,21 @@ jobs:
           fi
           echo "ip=$PROXY_IP" >> "$GITHUB_OUTPUT"
 
+      # --gcs-source-staging-dir points at a dedicated bucket instead of the
+      # implicit <PROJECT_ID>_cloudbuild default. That legacy bucket predates
+      # this pipeline (created years ago under Cloud Run's native CD) and
+      # keeps rejecting uploads from the deployer SA ("forbidden from
+      # accessing the bucket") despite correct project- and bucket-level IAM
+      # — likely a leftover ACL/config quirk. A fresh bucket sidesteps it.
+      # One-time setup (already done):
+      #   gsutil mb -p karoscmo -l europe-west1 -b on gs://karoscmo-agent-service-build-staging
+      #   gcloud storage buckets add-iam-policy-binding gs://karoscmo-agent-service-build-staging \
+      #     --member="serviceAccount:github-actions-deployer@karoscmo-prep.iam.gserviceaccount.com" \
+      #     --role="roles/storage.objectAdmin"
       - name: Build & deploy via Cloud Build
         run: |
           gcloud builds submit \
             --project="${{ vars.PROD_PROJECT_ID }}" \
             --config=agent-service/cloudbuild.yaml \
+            --gcs-source-staging-dir=gs://karoscmo-agent-service-build-staging/source \
             --substitutions=_REGION="${{ vars.PROD_REGION }}",_INTERNAL_API_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_JOB_HTTP_PROXY="http://${{ steps.proxy.outputs.ip }}:8888",_AGENTS_REF="${{ inputs.agents_ref || 'main' }}"
