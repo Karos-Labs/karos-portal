@@ -1,0 +1,112 @@
+name: Deploy Agent Service
+
+# Manual only — click "Run workflow" in the Actions tab. There is no prep
+# counterpart: prep intentionally has no agent-service deployment (see
+# DEPLOY_ENVIRONMENTS.md — PREP_AGENT_SERVICE_URL is left empty so prep can
+# never submit real, billable agent jobs). This deploys straight to
+# production from whichever branch/ref you pick in the "Run workflow" UI
+# (default: main).
+#
+# Rebuilds from source via agent-service/cloudbuild.yaml — unlike the
+# platform's promote pipeline, there's no pre-built image to copy since
+# agent-service never runs through prep. Builds the service + runner images,
+# deploys agent-service-api and agent-service-worker (Cloud Run services),
+# and updates the agent-runner Cloud Run Job — all three in one Cloud Build
+# run, same as agent-service/deploy/bootstrap-gcp.sh describes.
+on:
+  workflow_dispatch:
+    inputs:
+      agents_ref:
+        description: "karos-agents git ref to bake into the runner image (blank = main)"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  quality:
+    name: Agent service · Type-check · Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-service
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: agent-service/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type-check
+        run: npm run typecheck
+
+      - name: Run test suite
+        run: npm test
+
+  deploy:
+    name: Build & deploy agent-service (production)
+    needs: quality
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required repo variables
+        run: |
+          missing=()
+          for v in PROD_PROJECT_ID PROD_REGION PROD_AGENT_SERVICE_URL; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing required repo variable(s): ${missing[*]} — refusing to deploy agent-service with an incomplete config."
+            exit 1
+          fi
+        env:
+          PROD_PROJECT_ID: ${{ vars.PROD_PROJECT_ID }}
+          PROD_REGION: ${{ vars.PROD_REGION }}
+          PROD_AGENT_SERVICE_URL: ${{ vars.PROD_AGENT_SERVICE_URL }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # The runner job's only route out is this egress proxy VM (see
+      # agent-service/deploy/bootstrap-gcp.sh + proxy-startup.sh) — its
+      # internal IP is looked up live rather than pinned in a repo variable,
+      # since gcloud run deploy --set-env-vars replaces the full env-var set
+      # on every deploy and a stale cached IP would silently misroute egress.
+      - name: Resolve egress proxy internal IP
+        id: proxy
+        run: |
+          PROXY_IP=$(gcloud compute instances list \
+            --project="${{ vars.PROD_PROJECT_ID }}" \
+            --filter="name=agent-egress-proxy" \
+            --format="value(networkInterfaces[0].networkIP)")
+          if [ -z "$PROXY_IP" ]; then
+            echo "::error::Could not find the agent-egress-proxy VM in ${{ vars.PROD_PROJECT_ID }} — has agent-service/deploy/bootstrap-gcp.sh been run?"
+            exit 1
+          fi
+          echo "ip=$PROXY_IP" >> "$GITHUB_OUTPUT"
+
+      - name: Build & deploy via Cloud Build
+        run: |
+          gcloud builds submit \
+            --project="${{ vars.PROD_PROJECT_ID }}" \
+            --config=agent-service/cloudbuild.yaml \
+            --substitutions=_REGION="${{ vars.PROD_REGION }}",_INTERNAL_API_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_JOB_HTTP_PROXY="http://${{ steps.proxy.outputs.ip }}:8888",_AGENTS_REF="${{ inputs.agents_ref || 'main' }}"
