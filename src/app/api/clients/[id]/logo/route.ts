@@ -2,12 +2,24 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth";
 import { getClient, updateClient } from "@/lib/data";
+import { canViewClient } from "@/lib/client-visibility";
 import { uploadBytes, deleteObject } from "@/lib/storage";
 
 export const maxDuration = 60;
 
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/svg+xml"]);
 const MAX_BYTES = 4 * 1024 * 1024;
+
+/**
+ * STAFF SCOPE, on BOTH handlers. `requireStaff`-equivalent role tests only ever
+ * asked "not a client user", so an employee 404'd on /clients/[id] could replace
+ * or delete any client's logo — and DELETE also unlinks the previous file from
+ * Storage, so the damage outlived the request. Both now ask the predicate the
+ * pages ask, unconditionally, and refuse with the "Client not found" shape both
+ * already return for a missing client. Repeated per handler rather than lifted
+ * into a local helper — see the note in ../context/route.ts for why the tripwire
+ * needs it that way.
+ */
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -16,7 +28,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const { id: clientId } = await params;
   const client = await getClient(clientId);
-  if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  if (!client || !canViewClient(user, client)) {
+    return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
 
   const form = await req.formData();
   const file = form.get("file");
@@ -52,7 +66,9 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
   const { id: clientId } = await params;
   const client = await getClient(clientId);
-  if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  if (!client || !canViewClient(user, client)) {
+    return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
 
   if (!client.logoUrl) return NextResponse.json({ ok: true });
 

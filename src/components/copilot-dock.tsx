@@ -54,6 +54,13 @@ interface Props {
   /** Signed-in viewer — scopes the persisted copilot transcript. */
   viewerUid: string;
   clientName: string;
+  /**
+   * `isBillableClientActor()` for this session, resolved on the server and
+   * passed straight through to the widget, whose Refresh Task Map chip quotes a
+   * price off it. Required at both mount sites (the client shell's layout and
+   * StaffCopilotDock) rather than defaulted — see the widget's own note.
+   */
+  viewerIsBilled: boolean;
   userName?: string;
   hasGoogleIntegration?: boolean;
   client?: Pick<Client, "name" | "website" | "industry" | "isAiProcessing">;
@@ -68,7 +75,7 @@ interface Props {
  * it, so nothing jumps or resizes. The chat stays mounted (state preserved) and
  * is simply clipped when collapsed. Desktop (lg+) only.
  */
-export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, client, report, shell = "client" }: Props) {
+export function CopilotDock({ clientId, viewerUid, clientName, viewerIsBilled, userName, hasGoogleIntegration, client, report, shell = "client" }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   /** Blocks the write-back below until the restore pass has run. */
@@ -150,6 +157,7 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
     clientId,
     viewerUid,
     clientName,
+    viewerIsBilled,
     userName,
     hasGoogleIntegration,
     client,

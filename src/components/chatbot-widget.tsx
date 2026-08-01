@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
+// Quoted from the pricing home, off the same constant the swarm route charges.
+import { taskMapRefreshPrice } from "@/lib/credits";
 import { renderSectionBody } from "@/lib/doc-render";
 import { StrategyWarRoom } from "@/components/strategy-war-room";
 import type { Client, ClientReport } from "@/lib/types";
@@ -68,6 +70,13 @@ interface ProactiveAction {
   icon: string;
   label: string;
   sublabel: string;
+  /**
+   * What one press of THIS chip costs the reader, when it costs them anything.
+   * Only Refresh Task Map charges per press; the other three send an ordinary
+   * chat turn, which is priced by the input bar's own message charge and not by
+   * the chip. Null for a reader who is not billed (staff, View as Client).
+   */
+  price?: string | null;
   /** Chat message this chip sends. Omitted for chips handled by a dedicated UI. */
   trigger?: string;
   color: string;
@@ -80,7 +89,7 @@ interface ProactiveAction {
   deep?: boolean;
 }
 
-function buildProactiveActions(): ProactiveAction[] {
+function buildProactiveActions(viewerIsBilled: boolean): ProactiveAction[] {
   return [
     {
       // Handled by the Strategy War Room, not the chat path — so no trigger.
@@ -91,6 +100,12 @@ function buildProactiveActions(): ProactiveAction[] {
       icon: "ListTodo",
       label: "Refresh Task Map",
       sublabel: "Rebuild your task map from calendar gaps and past performance",
+      // THE ANNOUNCE. Pressing this chip does not open a confirmation — the War
+      // Room mounts and the debate (six model calls) starts immediately, so the
+      // charge is committed by the press itself. The price therefore belongs on
+      // the chip, quoted from the constant /api/tasks/generate-swarm charges
+      // from, in the same voice Audience Simulation uses.
+      price: taskMapRefreshPrice(viewerIsBilled),
       color: "#FF6B2C",
     },
     {
@@ -477,22 +492,29 @@ function TypingDots() {
 /**
  * The four AI actions. Extracted from the welcome column so the same list can
  * render in the strip above the input bar once a transcript exists (QA F88).
+ *
+ * Exported so the price on the Refresh Task Map chip can be asserted as RENDERED
+ * MARKUP rather than as a string a component might or might not paint. It takes
+ * no hooks and no router, so it renders standalone.
  */
-function ActionChips({
+export function ActionChips({
   onRun,
   onRefreshTaskMap,
   isAiProcessing,
+  viewerIsBilled,
 }: {
   /** Sends the action's chat trigger; `display` is what the transcript shows (QA F15). */
   onRun: (trigger: string, display: string, deep?: boolean) => void;
   onRefreshTaskMap: () => void;
   isAiProcessing?: boolean;
+  /** `isBillableClientActor()` for this session — decides whether a price is quoted. */
+  viewerIsBilled: boolean;
 }) {
   return (
     // Two-by-two below lg so all four land above the fold in the mobile sheet;
     // one column in the desktop rail, which is only 380px wide (QA F94).
     <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-col">
-      {buildProactiveActions().map((action) => {
+      {buildProactiveActions(viewerIsBilled).map((action) => {
         const locked = action.id === "scan_inbox" && isAiProcessing;
         return (
           <button
@@ -519,6 +541,11 @@ function ActionChips({
               <p className="line-clamp-2 text-[11px] text-muted">
                 {locked ? "Locked — a workspace build is already running" : action.sublabel}
               </p>
+              {/* Its own line rather than appended to the sublabel above, which
+                  is `line-clamp-2` and would drop the price on a narrow chip. */}
+              {action.price && !locked && (
+                <p className="mt-0.5 text-[10px] text-muted-2">Costs {action.price} a press</p>
+              )}
             </div>
             <Icon
               name="ArrowRight"
@@ -540,6 +567,7 @@ function ProactiveWelcome({
   send,
   onRefreshTaskMap,
   isAiProcessing,
+  viewerIsBilled,
 }: {
   clientName: string;
   userName?: string;
@@ -549,6 +577,8 @@ function ProactiveWelcome({
   onRefreshTaskMap: () => void;
   /** True while a background AI generation cycle is running — locks the Refresh Task Map chip. */
   isAiProcessing?: boolean;
+  /** `isBillableClientActor()` for this session — decides whether a price is quoted. */
+  viewerIsBilled: boolean;
 }) {
   // Kept on the prop chain (layout → dock → widget) but no longer decorates the
   // Refresh Task Map chip: a Google connection changed the icon to a globe while
@@ -597,6 +627,7 @@ function ProactiveWelcome({
         onRun={send}
         onRefreshTaskMap={onRefreshTaskMap}
         isAiProcessing={isAiProcessing}
+        viewerIsBilled={viewerIsBilled}
       />
 
       {/* Quick text suggestions */}
@@ -672,6 +703,15 @@ interface Props {
    *  hand one user's conversation to the next (staff→client leaks internal text). */
   viewerUid: string;
   clientName: string;
+  /**
+   * `isBillableClientActor()` for this session, resolved on the server.
+   *
+   * REQUIRED, with no default: the Refresh Task Map chip commits a charge the
+   * moment it is pressed, and a mount site that forgot to answer would go back
+   * to charging in silence — the exact defect this prop exists to close. So the
+   * compiler asks every site rather than a default answering for it.
+   */
+  viewerIsBilled: boolean;
   /** When true the chat panel opens automatically on mount (CLIENT_USER login). */
   defaultOpen?: boolean;
   /** Display name of the currently logged-in user (for personalised greeting). */
@@ -694,6 +734,7 @@ export function ChatbotWidget({
   clientId,
   viewerUid,
   clientName,
+  viewerIsBilled,
   defaultOpen = false,
   userName,
   hasGoogleIntegration = false,
@@ -945,6 +986,7 @@ export function ChatbotWidget({
                 send={send}
                 onRefreshTaskMap={openWarRoom}
                 isAiProcessing={client?.isAiProcessing}
+                viewerIsBilled={viewerIsBilled}
               />
             ) : (
               <ChatEmptyState clientName={clientName} send={send} />
@@ -1017,6 +1059,7 @@ export function ChatbotWidget({
                     onRun={send}
                     onRefreshTaskMap={openWarRoom}
                     isAiProcessing={client?.isAiProcessing}
+                    viewerIsBilled={viewerIsBilled}
                   />
                 </div>
               )}

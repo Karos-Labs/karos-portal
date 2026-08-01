@@ -76,6 +76,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const [client, asset] = await Promise.all([getClient(clientId), getAsset(body.assetId)]);
   if (!client) return Response.json({ error: "Client not found" }, { status: 404 });
+
+  // STAFF SCOPE, the same hole one surface over: the only role test above is the
+  // CLIENT_USER branch, so an employee 404'd on /clients/[id] pages could still
+  // read any client's asset through this API. Same predicate the pages use.
+  //
+  // Asked UNCONDITIONALLY, not under `role === "KAROS_EMPLOYEE"` as it first
+  // was. An exemption keyed to a whole role is the wrong shape here: the two
+  // roles it excused pass the predicate on their own (admins always, a
+  // CLIENT_USER because the 403 above has already pinned them to their own
+  // client), so the role test bought nothing — while any role that is none of
+  // the three, now or later, walked straight past a fence that only looked at
+  // employees. The predicate itself is the fail-closed answer: its default is
+  // `false`. All six sibling routes ask it the same way.
+  //
+  // ABOVE THE ASSET TEST, not below it. Sitting underneath, the two refusals
+  // differed by which one fired: an unassigned employee got "Asset not found"
+  // when the asset belonged to some OTHER client and "Client not found" when it
+  // belonged to this one — one membership bit, handed to an actor being refused.
+  // Nothing about the asset may be read before the actor's scope is settled.
+  if (!canViewClient(user, client)) {
+    return Response.json({ error: "Client not found" }, { status: 404 });
+  }
+
   if (!asset || asset.clientId !== clientId) {
     return Response.json({ error: "Asset not found" }, { status: 404 });
   }
@@ -94,13 +117,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // not confirm that a hidden asset exists.
   if (user.role === "CLIENT_USER" && !isAssetContentVisibleToClient(asset, Date.now())) {
     return Response.json({ error: "Asset not found" }, { status: 404 });
-  }
-
-  // STAFF SCOPE, the same hole one surface over: the only role test above is the
-  // CLIENT_USER branch, so an employee 404'd on /clients/[id] pages could still
-  // read any client's asset through this API. Same predicate the pages use.
-  if (user.role === "KAROS_EMPLOYEE" && !canViewClient(user, client)) {
-    return Response.json({ error: "Client not found" }, { status: 404 });
   }
 
   if (!asset.content?.trim()) {

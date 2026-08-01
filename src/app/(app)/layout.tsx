@@ -198,6 +198,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               clientId={client.id}
               viewerUid={user.uid}
               clientName={client.name}
+              // Same predicate the correction price above uses, for the same
+              // reason: the copilot's Refresh Task Map chip charges on press, and
+              // an admin in "View as Client" reads CLIENT_USER here while paying
+              // nothing — so a role test would quote them a price they never pay.
+              viewerIsBilled={isBillableClientActor(user)}
               userName={user.name}
               hasGoogleIntegration={integrations.some(
                 (i) => i.platform === "google" && integrationIsUsable(i),

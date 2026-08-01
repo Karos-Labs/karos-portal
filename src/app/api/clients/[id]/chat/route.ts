@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { ModelMessage } from "ai";
 
 import { getCurrentUser } from "@/lib/auth";
+import { canViewClient } from "@/lib/client-visibility";
 import {
   getClient,
   getClientReport,
@@ -110,6 +111,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const liveUmbrellas = umbrellas.filter((u) => u.launchState === "live");
 
   if (!client) {
+    return Response.json({ error: "Client not found" }, { status: 404 });
+  }
+
+  // STAFF SCOPE. The only role test at the top of this handler was the
+  // CLIENT_USER branch, so an employee 404'd on /clients/[id] could open a
+  // copilot on any client — and this is the richest read in the app: the
+  // Promise.all above has already loaded that client's report, competitors,
+  // context documents, jobs, assets, integrations and benchmarks, and the tools
+  // registered below write to their tasks and assets. Same predicate the pages
+  // ask, asked unconditionally rather than under `role === "KAROS_EMPLOYEE"`:
+  // admins pass it, a client on their own account passes it (including an admin
+  // in a "View as Client" session, whose `clientId` is the client they are
+  // viewing), and an unknown role does not. Refusal reuses the shape one line up.
+  //
+  // ABOVE THE CHARGE, deliberately, and that is a fact about POSITION rather
+  // than about this line's text: the `chargeClientModelCall` immediately below
+  // is a Firestore transaction against the client's balance, and a refused actor
+  // must not reach a write of any kind. Nothing sits between the two statements,
+  // so the only way to the charge is through here — and the test that holds this
+  // spies on the charge and asserts the refused actor never reached it, rather
+  // than asking whether a fence appears somewhere before a charge in the source.
+  if (!canViewClient(user, client)) {
     return Response.json({ error: "Client not found" }, { status: 404 });
   }
 

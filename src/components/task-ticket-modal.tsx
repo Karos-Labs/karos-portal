@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect, useTransition, useRef } from "react";
+import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { renderAssetBody } from "@/lib/doc-render";
+import { ranWithoutDeliverable } from "@/lib/task-outcome-copy";
 import {
   getTaskCommentsAction,
   addTaskCommentAction,
@@ -99,12 +101,19 @@ function ArtifactSection({
   taskType,
   agentName,
   mediaUrl,
+  libraryHref,
 }: {
   artifact: string;
   taskType: string;
   agentName?: string;
   /** Visual deliverable (image or video URL) produced by the agent run. */
   mediaUrl?: string | null;
+  /**
+   * Set when the run's only deliverable is a library file — a PDF, say, with no
+   * caption text and nothing previewable inline. Without it the section has
+   * nothing to draw and the client is asked to approve a blank card.
+   */
+  libraryHref?: string | null;
 }) {
   const isEmailArtifact = taskType === "integration_action";
   const isVideo = mediaUrl ? VIDEO_EXT.test(mediaUrl) : false;
@@ -138,11 +147,28 @@ function ArtifactSection({
         </div>
       )}
 
-      <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
-        <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
-          {artifact}
-        </pre>
-      </div>
+      {/* No text, nothing previewable — say where the file is rather than
+          drawing an empty frame above a live Approve button. */}
+      {artifact.trim() === "" && !mediaUrl && libraryHref && (
+        <div className="rounded-md border border-border bg-surface-2 p-3">
+          <p className="text-xs leading-relaxed text-muted">
+            This deliverable is a file with no preview.{" "}
+            <Link href={libraryHref} className="text-neon underline underline-offset-2">
+              Open it in Assets
+            </Link>{" "}
+            to read it before approving.
+          </p>
+        </div>
+      )}
+
+      {/* An image-only run has no text body; an empty frame reads as a failure. */}
+      {artifact.trim() !== "" && (
+        <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
+          <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
+            {artifact}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }
@@ -598,8 +624,27 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   const taskType = (task.metadata?.type as string | undefined) ?? "content_generation";
   const executingAgentName = (task.metadata?.agentName as string | undefined) ?? undefined;
   const artifactMediaUrl = (task.metadata?.artifactImageUrl as string | undefined) ?? null;
+  /**
+   * The three shapes a deliverable comes in — text, an inline image or video,
+   * or a library file with no preview. `deliveredNothing` in task-sync counts
+   * all three as "something came back", so the ticket has to be able to show
+   * all three; gating on the text alone is what left a live Approve button over
+   * an empty card.
+   */
+  const artifactLibraryHref =
+    ((task.metadata?.artifactAssetIds as string[] | undefined) ?? []).length > 0
+      ? `/clients/${task.clientId}/assets`
+      : null;
   const isReviewPending = task.status === "review_pending";
   const isExecuting = task.metadata?.executing === true;
+  /**
+   * The run reported success and handed the ticket nothing (task-sync's
+   * `deliveredNothing`), and the task is still sitting where that left it.
+   * Without this the ticket just went quiet: it dropped back to pending with no
+   * explanation, having previously shown an "artifact" that was only the task's
+   * own title.
+   */
+  const noDeliverable = ranWithoutDeliverable(task);
   const failedUpload = task.metadata?.failedUpload as boolean | undefined;
   const failedUploadError = task.metadata?.failedUploadError as string | undefined;
   const nextStatus = nextStatusFor(task);
@@ -732,13 +777,41 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
             </div>
           )}
 
+          {/* A run that finished with nothing to review. Sits where the
+              deliverable would have been, so the answer to "where is it?" is in
+              the place the client looked. The money is stated in the credit
+              history, which carries the refund row — not restated here, because
+              task-sync cannot tell an already-refunded charge from one that was
+              never made. */}
+          {noDeliverable && (
+            <div className="rounded-md border border-warning/30 bg-warning/10 px-4 py-3">
+              <p className="text-sm font-medium text-warning">
+                This run finished without producing anything
+              </p>
+              <p className="mt-0.5 text-xs text-muted">
+                There is nothing to review, so the task is back on your board. Move it to In
+                Progress to run it again.
+              </p>
+            </div>
+          )}
+
           {/* Generated artifact (review_pending only) */}
-          {isReviewPending && artifact && !isExecuting && (
+          {/*
+            EITHER HALF of the deliverable opens this section, not the text
+            alone. An image-only or asset-only run writes `artifact: ""` — a
+            value no writer produced before task-sync dropped its `|| task.title`
+            fallback — and this section is the only place `artifactImageUrl` is
+            ever painted. Gating it on the text meant such a run rendered as
+            literally nothing above a live Approve button: the client was asked
+            to approve a deliverable they had never been shown.
+          */}
+          {isReviewPending && (artifact || artifactMediaUrl || artifactLibraryHref) && !isExecuting && (
             <ArtifactSection
-              artifact={artifact}
+              artifact={artifact ?? ""}
               taskType={taskType}
               agentName={executingAgentName}
               mediaUrl={artifactMediaUrl}
+              libraryHref={artifactLibraryHref}
             />
           )}
 

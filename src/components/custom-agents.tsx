@@ -38,7 +38,7 @@ import {
   refreshJobStatusAction,
   retryJobAction,
 } from "@/lib/actions/external-job-actions";
-import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
+import { CREDIT_COSTS, creditsLabel, scheduledAgentWeeklyCost } from "@/lib/credits";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
@@ -568,7 +568,7 @@ export function CustomAgentsHub({
               </div>
               <div className="mt-auto flex items-center justify-between gap-2 pt-4">
                 <p className="text-xs text-muted-2">
-                  {agentRunCost(agent)} credits per client run
+                  {creditsLabel(agentRunCost(agent))} per client run
                 </p>
                 <div className="flex gap-1.5">
                   {isAdmin && (
@@ -1470,7 +1470,7 @@ export function AgentScheduleModal({
         <div className="rounded-md border border-neon/20 bg-neon-soft/40 px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-foreground">Estimated weekly cost</span>
-            <span className="font-mono text-sm text-neon">{weeklyCost} credits</span>
+            <span className="font-mono text-sm text-neon">{creditsLabel(weeklyCost)}</span>
           </div>
           {paceOnly ? (
             /* The weekly total above is computed from the STORED multiplier, so
@@ -1478,18 +1478,32 @@ export function AgentScheduleModal({
                "runs", no "outputs per run", no weekly draft total — each of
                those describes the batch rather than the pace. When one post per
                fire is stored there is no batch to hide and the friendlier
-               sentence is also the true one. */
+               sentence is also the true one.
+
+               WHEN THE MONEY ACTUALLY MOVES (#32). This said "Credits are
+               charged as each post is made", which is a lying state on a screen
+               about money — nothing charges at the moment a post is produced,
+               and nothing charges at publish. The scheduler's fire path
+               (/api/run-scheduled → submitCustomAgentJob) charges UPFRONT, once,
+               before the agent has written anything, and it charges for the
+               whole fire: `chargeMultiplier = outputsPerRun`, so the amount is
+               the per-output price times the outputs that fire will produce.
+               A fire that delivers nothing is refunded in full (the webhook's
+               zero-deliverable and failure refunds); a fire that delivers SOME
+               of its batch is not, which is why only the one-post-per-fire
+               branch below may promise the credits back for a missing post. */
             <p className="mt-1 text-[11px] text-muted-2">
               {outputsPerRun === 1
-                ? `${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} a week at ${costPerOutput} credits each. Credits are charged as each post is made.`
-                : `${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week. Credits are charged as each post is made.`}
+                ? `${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} a week at ${creditsLabel(costPerOutput)} each. A post's credits are charged when the agent starts drafting it, not when it goes out; if the post never arrives, they are handed back.`
+                : `${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week. A day's credits are charged in full when the agent starts drafting for it, not as posts go out.`}
             </p>
           ) : (
             <>
               <p className="mt-1 text-[11px] text-muted-2">
                 {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
-                {outputsPerRun === 1 ? "" : "s"} × {costPerOutput} credits.
-                Credits are charged when each scheduled run starts.
+                {outputsPerRun === 1 ? "" : "s"} × {creditsLabel(costPerOutput)}.
+                Credits are charged in full when each scheduled run starts, and refunded
+                if it delivers nothing.
               </p>
               <p className="mt-1 text-[11px] text-foreground">
                 {postsPerWeek * outputsPerRun} new draft
@@ -1499,7 +1513,7 @@ export function AgentScheduleModal({
           )}
           {availableCredits !== undefined && (
             <p className={cn("mt-1 text-[11px]", insufficient ? "text-danger" : "text-muted-2")}>
-              {availableCredits} credits currently available.
+              {creditsLabel(availableCredits)} currently available.
             </p>
           )}
         </div>
@@ -1787,7 +1801,9 @@ export function RunCustomAgentModal({
                 <p className="text-xs text-muted-2">
                   <Icon name="Clock" className="mr-1 inline h-3 w-3" />
                   {profile.estimate}. You can leave this page; the run continues.
-                  {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
+                  {viewerIsClient && (
+                    <span className="ml-1">Costs {creditsLabel(agentRunCost(agent))}.</span>
+                  )}
                 </p>
                 <Button variant="accent" onClick={submit} loading={pending}>
                   {pending ? "Starting…" : "Start run"}

@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
 import { buildSwarmContext, runSwarm, type SwarmEvent } from "@/lib/agent-swarm";
-import { tryAcquireAiProcessingLock, releaseAiProcessingLock } from "@/lib/data";
+import { canViewClient } from "@/lib/client-visibility";
+import { getClient, tryAcquireAiProcessingLock, releaseAiProcessingLock } from "@/lib/data";
 import { logGenerationFailure } from "@/lib/actions/_shared";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { chargeClientModelCall, refundClientModelCall } from "@/lib/client-model-charge";
@@ -14,8 +15,10 @@ export const maxDuration = 120;
  * agents arguing in real time. The final frames report the locked consensus and
  * how many tasks were persisted.
  *
- * GET with `?clientId=` so it works over EventSource semantics; auth-scoped like
- * the copilot chat route.
+ * GET with `?clientId=` so it works over EventSource semantics, and fenced by
+ * `canViewClient` exactly as the `/api/clients/[id]/*` routes are — this one
+ * lives under a different path but takes the same argument, and it is the only
+ * member of that set that takes a lock, charges, and WRITES.
  */
 export async function GET(req: Request) {
   const user = await getCurrentUser();
@@ -32,6 +35,18 @@ export async function GET(req: Request) {
   }
   if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // ── Fence ──
+  // The role check above says WHICH KIND of actor this is, not WHICH CLIENTS
+  // they may touch — so before this, any employee could name any client id and
+  // take that client's processing lock, spend 5 of their credits, and persist
+  // swarm-generated tasks onto their board. Unconditional and above the lock,
+  // so a refused actor takes nothing and writes nothing; 404 rather than 403
+  // so a refusal does not confirm the client exists.
+  const client = await getClient(clientId);
+  if (!client || !canViewClient(user, client)) {
+    return Response.json({ error: "Client not found" }, { status: 404 });
   }
 
   // Guards against overlapping the post-onboarding / manual Regenerate background

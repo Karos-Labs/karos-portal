@@ -29,6 +29,7 @@ import {
   updateTaskStatusAction,
 } from "@/lib/actions";
 import { TaskTicketModal } from "@/components/task-ticket-modal";
+import { ranWithoutDeliverable } from "@/lib/task-outcome-copy";
 import type { ClientTask, Role, TaskOwner, TaskSource, TaskStatus } from "@/lib/types";
 
 type BoardStatus = Exclude<TaskStatus, "archived">;
@@ -239,6 +240,14 @@ function TaskCard({
   const status = STATUS_META[task.status as BoardStatus];
   const isExecuting = task.metadata?.executing === true;
   const hasError = Boolean(task.metadata?.executionError);
+  /**
+   * Released BECAUSE the run came back with nothing, and still sitting there —
+   * the whole conjunction is in `ranWithoutDeliverable`, because "was there a
+   * nothing-run" is not the question a card can answer with. Mutually exclusive
+   * with `hasError` by construction (it requires no stored error), so the two
+   * blocks below can never both paint.
+   */
+  const noDeliverable = ranWithoutDeliverable(task);
   const owner = inferOwner(task);
   // Two-step confirm for this row's destructive control, the shape
   // scheduled-runs.tsx uses for a scheduled-run delete: the trash icon arms the
@@ -298,6 +307,25 @@ function TaskCard({
           )}
         </div>
       </div>
+
+      {/* A run that reported success and delivered nothing. Warning, not danger:
+          it did not break, and the client has already had the credits back —
+          what they need is the fact and the way to try again. */}
+      {noDeliverable && (
+        <div
+          className="mb-2 rounded-md border border-warning/35 bg-warning/10 px-2 py-1.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-[11px] font-medium text-warning">Nothing came back from this run.</p>
+          <button
+            onClick={() => onMove("in_progress")}
+            className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-warning underline underline-offset-2"
+          >
+            <Icon name="RotateCcw" className="h-3 w-3" />
+            Run it again
+          </button>
+        </div>
+      )}
 
       {hasError && !isExecuting && (
         <div

@@ -54,6 +54,7 @@ import {
   defaultClientCredits,
   rollCreditWindows,
 } from "@/lib/credits";
+import { canViewClient } from "@/lib/client-visibility";
 import { resolveContentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { engagementScore, rankByEngagement } from "@/lib/analytics";
@@ -189,19 +190,82 @@ export async function countUsers(): Promise<number> {
 
 /* ----------------------------- clients ----------------------------- */
 
+const byNewestFirst = (a: Client, b: Client) => (b.createdAt ?? 0) - (a.createdAt ?? 0);
+
+/**
+ * The clients a staff surface lists. `employeeId` scopes it to what that
+ * EMPLOYEE may see — the same rule `canViewClient` states, asked as a query.
+ *
+ * TWO FIELDS EXPRESS ONE RELATIONSHIP and this reads BOTH, because reading one
+ * hid every assignment an admin has actually made. `Client.assignedEmployeeIds`
+ * holds the client's side; `AppUser.assignedClientIds` holds the user's, and
+ * both of the admin's assignment UIs (`createTeamMemberAction`,
+ * `approveRegistrationAction`) write only the user's. This query read the client
+ * side alone, so an employee assigned the normal way could OPEN a client by URL
+ * — `canViewClient` accepts either field — and saw NO clients in any of the
+ * eight staff lists that feed off this call. Reachable but unlisted is worse
+ * than fenced out: nothing tells them where to go.
+ *
+ * The shape is awkward and worth stating: `assignedClientIds` lives on the USER
+ * document, so a clients-collection query cannot `array-contains` it. Hence a
+ * UNION of two sources rather than one query — the array-contains, plus a
+ * batched fetch of the ids the user document names. Deduplicated by document id
+ * (an employee recorded on both sides appears once), and an id whose client has
+ * since been deleted is dropped rather than surfaced as a hole (`d.exists`).
+ *
+ * READ COST, since this replaced one query: 1 collection query (billed per
+ * matching document, minimum one) + 1 user document + one batched `getAll` of
+ * however many ids the user document names that the query did not already
+ * return. Single-digit reads per call at pilot volume, and unchanged for the
+ * unscoped (admin) path, which still reads the collection once.
+ *
+ * ONE HOME, and exactly how far that goes. `canViewClient` is the single
+ * authority on "may this actor see this client" and is applied here as the
+ * FINAL gate, so this query can never be WIDER than the predicate — a predicate
+ * that grows a restriction narrows this list with it, for free. What the gate
+ * cannot do is make the union COMPLETE: a predicate that grows a new WAY to be
+ * assigned would need a third source here, and would silently under-list until
+ * it got one. That is the residual, it is pinned by a test that derives its
+ * expectation from `canViewClient` itself over an assignment matrix
+ * (`client-list-visibility.test.ts`), and the thing that actually retires it is the
+ * data migration onto one field — which is Daniel's call, not this file's.
+ */
 export async function listClients(opts?: { employeeId?: string }): Promise<Client[]> {
-  let snap;
-  if (opts?.employeeId) {
-    snap = await col
-      .clients()
-      .where("assignedEmployeeIds", "array-contains", opts.employeeId)
-      .get();
-  } else {
-    snap = await col.clients().get();
+  const employeeId = opts?.employeeId;
+  if (!employeeId) {
+    const snap = await col.clients().get();
+    return snap.docs.map((d) => withId<Client>(d)).sort(byNewestFirst);
   }
-  return snap.docs
-    .map((d) => withId<Client>(d))
-    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+
+  const [namedOnClient, user] = await Promise.all([
+    col.clients().where("assignedEmployeeIds", "array-contains", employeeId).get(),
+    // A missing user document contributes nothing rather than voiding the query
+    // above: the client side of the relationship is a legitimate signal on its
+    // own, and losing it would be a second lockout.
+    getUser(employeeId),
+  ]);
+
+  const byId = new Map<string, Client>();
+  for (const d of namedOnClient.docs) byId.set(d.id, withId<Client>(d));
+
+  const assignedClientIds = user?.assignedClientIds ?? [];
+  const missing = [...new Set(assignedClientIds.filter((id) => !!id && !byId.has(id)))];
+  if (missing.length > 0) {
+    const docs = await adminDb().getAll(...missing.map((id) => col.clients().doc(id)));
+    for (const d of docs) if (d.exists) byId.set(d.id, withId<Client>(d));
+  }
+
+  // The predicate has the last word — see ONE HOME above. Built as an employee
+  // viewer because that is what the option means; `assignedClientIds` comes from
+  // the user document just read, so the answer here matches the one the
+  // `/clients/[id]` guard gives for the same person.
+  const viewer: Pick<AppUser, "role" | "uid" | "clientId" | "assignedClientIds"> = {
+    role: "KAROS_EMPLOYEE",
+    uid: employeeId,
+    clientId: null,
+    assignedClientIds,
+  };
+  return [...byId.values()].filter((c) => canViewClient(viewer, c)).sort(byNewestFirst);
 }
 
 export const getClient = cache(async (id: string): Promise<Client | null> => {

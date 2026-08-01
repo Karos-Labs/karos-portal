@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
+  CREDIT_COSTS,
   CREDIT_OPERATION_LABEL,
   creditBucketFor,
 } from "@/lib/credits";
@@ -18,7 +19,9 @@ import {
   creditBlockReason,
   creditMonthKey,
   creditWeekKey,
+  creditsLabel,
   defaultClientCredits,
+  insightsRefreshPrice,
   isBillableClientActor,
   rollCreditWindows,
   scheduledAgentWeeklyCost,
@@ -245,6 +248,44 @@ describe("availableCredits", () => {
     expect(
       availableCredits(credits({ balance: 500, weeklyLimit: null, monthlyLimit: null }), NOW),
     ).toBe(500);
+  });
+});
+
+/**
+ * THE PLURAL, asked of the helper rather than of a price.
+ *
+ * A price quote's number is a CONSTANT, and a test that compares the quote with
+ * a string built from that same constant stays green through the exact bug it
+ * should catch: `${CREDIT_COSTS.taskExecution} credits` matched
+ * "5 credits" AND would have matched "1 credits" after a reprice. So the rule is
+ * exercised at the numbers themselves, where a literal oracle is possible.
+ */
+describe("creditsLabel", () => {
+  it("pluralises off the number, including the singular a reprice would expose", () => {
+    expect(creditsLabel(1)).toBe("1 credit");
+    expect(creditsLabel(2)).toBe("2 credits");
+    expect(creditsLabel(5)).toBe("5 credits");
+    expect(creditsLabel(0)).toBe("0 credits");
+  });
+
+  it("never says token — that word belongs to PATs and LLM counts", () => {
+    expect(creditsLabel(1)).not.toMatch(/token/i);
+  });
+});
+
+/**
+ * The free case is NULL, not "0 credits" and not "": every control renders its
+ * price only when truthy, so anything else would put a number on a surface that
+ * is never charged. Asked of one quote here; the other two assert the same in
+ * client-model-metering.test.ts, beside the charge each of them mirrors.
+ */
+describe("a press price for a reader who is not billed", () => {
+  it("is null rather than a zero or an empty string", () => {
+    expect(insightsRefreshPrice(false)).toBeNull();
+  });
+
+  it("is the quote itself for a reader who is", () => {
+    expect(insightsRefreshPrice(true)).toBe(creditsLabel(CREDIT_COSTS.chatMessage));
   });
 });
 

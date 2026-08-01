@@ -82,6 +82,90 @@ export function scheduledAgentWeeklyCost(
   return Math.max(0, Math.round(costPerOutput)) * posts * outputs;
 }
 
+/* ── Client-facing price copy ────────────────────────────────────── */
+
+/**
+ * "1 credit" / "5 credits" — a credit price, pluralised off its own number.
+ *
+ * PLURALISED BECAUSE THE NUMBER MOVES. `audience-simulation.tsx` built
+ * "N credits" unconditionally, so a reprice of `taskExecution` to 1 would have
+ * shown every client "Each run costs 1 credits." — and its test asserted
+ * equality with the same constant, so it would have stayed green through the
+ * bug. The webhook's refund events already pluralise this way
+ * (`credit${amount === 1 ? "" : "s"}`); this is that shape, in one place, so the
+ * surfaces below cannot each get it right or wrong separately.
+ *
+ * SCOPE, so this is not read as more than it is: it is the spelling used by the
+ * callers that call it. Other surfaces still assemble the phrase inline — the
+ * webhook's two event strings among them — and this function does not reach
+ * them. `grep -rn "} credits" src` is the sweep.
+ *
+ * Never "tokens": that word is already claimed by PATs and LLM token counts.
+ */
+export function creditsLabel(amount: number): string {
+  return `${amount} credit${amount === 1 ? "" : "s"}`;
+}
+
+/**
+ * What ONE PRESS of a metered control costs the reader looking at it, or null
+ * when it costs them nothing.
+ *
+ * `viewerIsBilled` is meant to be `isBillableClientActor()` for the session that
+ * will do the pressing, so that a viewer who is never charged is quoted NO price
+ * rather than a wrong one — the same gate the agent run dialog's own "Costs N
+ * credits." line uses. It has to be resolved on the server and passed down: a
+ * client component cannot ask who is signed in.
+ *
+ * TWO OF THREE CALLERS PASS THAT; `simulationPrice` DOES NOT, and the docstring
+ * used to claim otherwise. `taskMapRefreshPrice` and `insightsRefreshPrice` are
+ * handed `isBillableClientActor(user)` from a server component.
+ * `simulationPrice`'s one caller (audience-simulation.tsx) is four prop-hops
+ * below its server pages — AssetDetailModal ← run-calendar / archive-view /
+ * clip-gallery / outputs-hub — and receives only `viewerIsClient`, which every
+ * mount derives from a ROLE test. Both are booleans, so nothing catches the
+ * swap.
+ *
+ * WHAT THAT COSTS TODAY: an admin in "View as Client" reads "Each run costs 5
+ * credits." for a press that charges them nothing. It is stated here rather than
+ * papered over, and it has no client-facing direction — no billed actor is ever
+ * left un-quoted, and no client is shown a price they will not pay. Whether
+ * View-as-Client SHOULD quote the client's price (it is a preview of the
+ * client's screen, so arguably yes) or nothing (matching the other two) is a
+ * product call, not one to settle inside a helper — so the prop stays honestly
+ * named and the divergence is written down.
+ *
+ * Module-private: the three named quotes below are the surface, and exporting a
+ * fourth, un-called way to spell a price would be a shared rule nothing asks.
+ */
+function pressPrice(amount: number, viewerIsBilled: boolean): string | null {
+  return viewerIsBilled ? creditsLabel(amount) : null;
+}
+
+/**
+ * The three previously-free surfaces a client presses that now charge on press,
+ * each quoted from THE SAME CONSTANT ITS SERVER ROUTE CHARGES FROM. That
+ * pairing is the whole point of these living here rather than at the controls:
+ * a reprice moves the constant, and the quote moves with it.
+ *
+ * An unannounced charge is worse than an unmetered one — the client learns the
+ * price from their balance — so each of the three announces at its control.
+ */
+
+/** One Audience Simulation press · POST /api/clients/[id]/simulate. */
+export function simulationPrice(viewerIsBilled: boolean): string | null {
+  return pressPrice(CREDIT_COSTS.taskExecution, viewerIsBilled);
+}
+
+/** One copilot "Refresh Task Map" press · GET /api/tasks/generate-swarm. */
+export function taskMapRefreshPrice(viewerIsBilled: boolean): string | null {
+  return pressPrice(CREDIT_COSTS.taskExecution, viewerIsBilled);
+}
+
+/** One AI Insights "Refresh" press · GET /api/clients/[id]/insights?force=1. */
+export function insightsRefreshPrice(viewerIsBilled: boolean): string | null {
+  return pressPrice(CREDIT_COSTS.chatMessage, viewerIsBilled);
+}
+
 /* ── LinkedIn employee-advocacy seats ────────────────────────────── */
 
 /** Seats included free in the base plan when a client has no explicit limit set. */
@@ -354,7 +438,7 @@ export function assessCharge(
       ok: false,
       code: "insufficient_balance",
       message:
-        `${CREDIT_DENIAL_PREFIX.insufficient_balance} ${amount} credit${amount === 1 ? "" : "s"} and ` +
+        `${CREDIT_DENIAL_PREFIX.insufficient_balance} ${creditsLabel(amount)} and ` +
         `${rolled.balance} ${rolled.balance === 1 ? "is" : "are"} left. Ask your Karos team for a top-up.`,
     };
   }

@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getCurrentUser } from "@/lib/auth";
+import { canViewClient } from "@/lib/client-visibility";
+import { getClient } from "@/lib/data";
 import {
   OAUTH_CONFIGS,
   signOAuthState,
@@ -29,7 +31,14 @@ export async function GET(
     return errorPage(provider, "Your session expired — sign in again and retry.", origin, 401);
   if (!clientId)
     return errorPage(provider, "We couldn't tell which workspace to connect. Reload and retry.", origin, 400);
-  if (user.role === "CLIENT_USER" && user.clientId !== clientId)
+  // Pins a client user to their own workspace, and every other actor to the
+  // ones they are assigned. Without the second half any employee could name any
+  // workspace here: `signOAuthState` binds `clientId` into the state the
+  // callback trusts, so the connection would land as a real integration on a
+  // client they have no business touching. Same message for "not yours" and
+  // "no such workspace" — the popup must not become an existence oracle.
+  const client = clientId ? await getClient(clientId) : null;
+  if (!client || !canViewClient(user, client))
     return errorPage(provider, "This account can't connect channels for that workspace.", origin, 403);
 
   const config = OAUTH_CONFIGS[provider];

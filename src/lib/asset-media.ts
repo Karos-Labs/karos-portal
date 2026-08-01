@@ -3,7 +3,8 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { getCurrentUser, isStaff } from "@/lib/auth";
-import { getAsset } from "@/lib/data";
+import { canViewClient } from "@/lib/client-visibility";
+import { getAsset, getClient } from "@/lib/data";
 import { resolveAssetVideoSource, type AssetVideoSource } from "@/lib/asset-video-source";
 import {
   PLAYBACK_URL_TTL_MS,
@@ -21,11 +22,12 @@ import type { Asset } from "@/lib/types";
 export type AssetMediaAccess = { ok: true; asset: Asset } | { ok: false; response: NextResponse };
 
 /**
- * One definition of "may this caller have this asset's media": staff see
- * everything, a client only its own client's assets, and a future-dated post is
- * withheld from the client until its day arrives. Both media routes call this
- * so the playback path and the download path cannot drift apart on the rule
- * that decides what a client can see.
+ * One definition of "may this caller have this asset's media": a client reaches
+ * only its own client's assets, a staff member only the clients `canViewClient`
+ * assigns them, and a future-dated post is withheld from the client until its
+ * day arrives. Both media routes call this so the playback path and the
+ * download path cannot drift apart on the rule that decides what a client can
+ * see.
  */
 export async function authorizeAssetMedia(id: string): Promise<AssetMediaAccess> {
   const user = await getCurrentUser();
@@ -38,9 +40,18 @@ export async function authorizeAssetMedia(id: string): Promise<AssetMediaAccess>
     return { ok: false, response: NextResponse.json({ error: "Not found" }, { status: 404 }) };
   }
 
-  // Staff see everything; a client may only reach its own client's assets.
-  if (!isStaff(user) && user.clientId !== asset.clientId) {
-    return { ok: false, response: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+  // A client may only reach its own client's assets; a staff member only the
+  // clients they are assigned. "Staff see everything" was the seventh instance
+  // of one shape in this campaign — a check that establishes WHICH KIND of actor
+  // this is and then treats that as the answer to WHICH CLIENTS they may touch.
+  // 404, not 403: the pages already refuse an out-of-scope client that way, and
+  // a distinguishable refusal here would confirm the asset exists.
+  const client = await getClient(asset.clientId);
+  const permitted = isStaff(user)
+    ? !!client && canViewClient(user, client)
+    : user.clientId === asset.clientId;
+  if (!permitted) {
+    return { ok: false, response: NextResponse.json({ error: "Not found" }, { status: 404 }) };
   }
 
   // Future-dated chain posts are withheld from clients until their day arrives

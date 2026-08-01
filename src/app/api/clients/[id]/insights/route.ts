@@ -11,6 +11,7 @@ import {
   getClientInsightsCache,
   upsertClientInsightsCache,
 } from "@/lib/data";
+import { canViewClient } from "@/lib/client-visibility";
 import { engagementIsMockOrStale, rankByEngagement } from "@/lib/analytics";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { logger } from "@/services/logger";
@@ -101,6 +102,27 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     force ? Promise.resolve(null) : getClientInsightsCache(clientId),
   ]);
   if (!client) return Response.json({ error: "Client not found" }, { status: 404 });
+
+  // STAFF SCOPE. The only role test at the top of this handler was the
+  // CLIENT_USER branch, so an employee 404'd on /clients/[id] could read that
+  // client's briefing — their engagement figures, their winners and losers, and
+  // the report prose built from them — through this route. Same predicate the
+  // pages ask, asked unconditionally rather than under `role ===
+  // "KAROS_EMPLOYEE"`: admins and a client on their own account already pass it,
+  // an unknown role must not. Refusal reuses the shape one line up.
+  //
+  // ABOVE THE CHARGE, and that is a fact about POSITION, not about this line's
+  // text. `chargeForcedRerun()` — declared above, called at BOTH streaming paths
+  // below — is the only place this handler spends the client's credits, and both
+  // of its call sites are further down the same straight-line flow as this
+  // statement: nothing between here and them can be entered without passing
+  // here. A refused actor therefore cannot reach a charge. The test that holds
+  // this asks it that way round — it spies on the charge and asserts the refused
+  // actor never reached it — rather than asking whether a fence appears
+  // somewhere before a charge in the source.
+  if (!canViewClient(user, client)) {
+    return Response.json({ error: "Client not found" }, { status: 404 });
+  }
 
   // QA F125 (second half): metrics rows are written per published asset, so they can name a
   // platform the client never connected (an Instagram row on a Google/LinkedIn/YouTube

@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { listCustomAgents } from "@/lib/data";
+import { getClient, listCustomAgents } from "@/lib/data";
+import { canViewClient } from "@/lib/client-visibility";
 import { getClientCustomAgents } from "@/lib/agent-roster";
 
 export const maxDuration = 10;
@@ -37,6 +38,22 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id: clientId } = await params;
   if (user.role === "CLIENT_USER" && user.clientId !== clientId) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // STAFF SCOPE. The only role test above was the CLIENT_USER branch, so an
+  // employee 404'd on /clients/[id] read any client's agent roster from here —
+  // the page fence without the API fence. Same predicate the pages ask, asked
+  // UNCONDITIONALLY rather than under `role === "KAROS_EMPLOYEE"`: admins and a
+  // client on their own account already pass it, and an unknown role must not.
+  //
+  // This route had no "client not found" shape of its own — a missing client
+  // returned an empty roster — so the refusal takes the shape its six siblings
+  // use, and a client that does not exist gets the SAME answer as one this actor
+  // may not see. Otherwise the difference between 404 and an empty 200 tells an
+  // unassigned employee which client ids are real.
+  const client = await getClient(clientId);
+  if (!client || !canViewClient(user, client)) {
+    return Response.json({ error: "Client not found" }, { status: 404 });
   }
 
   const [umbrellas, customAgents, catalogAgents] = await Promise.all([

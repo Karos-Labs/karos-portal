@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth";
+import { canViewClient } from "@/lib/client-visibility";
 import { getClient, createAsset, listAssets } from "@/lib/data";
 import {
   ALLOWED_VIDEO_MIME_TYPES,
@@ -141,8 +142,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
+  // The role check above says this actor is staff, not WHICH clients they may
+  // write to — and every branch below writes into the client named in the body
+  // (a signed upload URL into their media bucket, or an asset on their library).
+  // Refuses in the shape a missing client already used, so an out-of-scope
+  // client is indistinguishable from one that does not exist.
   const client = await getClient(body.clientId);
-  if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  if (!client || !canViewClient(user, client)) {
+    return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
 
   if (body.step === "sign") {
     const { filename, contentType, sizeBytes } = body;

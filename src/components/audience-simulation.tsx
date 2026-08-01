@@ -5,7 +5,9 @@ import { Button, Badge, Skeleton, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 // The SAME constant the route charges from (lib/credits.ts is client-safe), so
 // the quote next to the button cannot drift away from the price at the till.
-import { CREDIT_COSTS } from "@/lib/credits";
+// It is quoted from lib/credits.ts rather than assembled here: three surfaces
+// now announce a press price, and they say it in one voice.
+import { simulationPrice } from "@/lib/credits";
 // Type-only import — erased at compile time, so the server-only engine never
 // reaches the client bundle.
 import type { PersonaSimulationResult } from "@/lib/simulation-engine";
@@ -27,21 +29,6 @@ const SENTIMENT_META: Record<Sentiment, { tone: "success" | "warning" | "danger"
   neutral: { tone: "warning", icon: "Minus" },
   negative: { tone: "danger", icon: "TrendingDown" },
 };
-
-/**
- * What one press costs the reader looking at the button, or null when it costs
- * them nothing. One press runs a persona planner plus one call per persona and
- * now charges for it, and the button said nothing about that — a client learned
- * the price by watching the rail drop, or by a refusal after committing.
- *
- * Two facts, in one place so the two surfaces below cannot disagree: the NUMBER
- * comes from the constant the route charges from, and it is quoted only to a
- * client reader (staff runs are free — the same gate the agent run dialog's own
- * "Costs N credits." line uses).
- */
-export function simulationPrice(viewerIsClient: boolean): string | null {
-  return viewerIsClient ? `${CREDIT_COSTS.taskExecution} credits` : null;
-}
 
 /**
  * Audience Simulation panel — runs the asset's artifact past the synthetic
@@ -90,6 +77,11 @@ export function AudienceSimulation({
     }
   }, [clientId, assetId]);
 
+  // `viewerIsClient`, NOT `viewerIsBilled` — and the difference is money. Every
+  // mount derives this from a role test, so an admin in "View as Client" is
+  // quoted a price they will not be charged. This component sits four prop-hops
+  // below the server pages that know the difference; the residual is written out
+  // at simulationPrice in lib/credits.ts rather than implied away here.
   const price = simulationPrice(viewerIsClient);
 
   // Intro state — nothing run yet.

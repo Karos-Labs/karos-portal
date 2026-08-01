@@ -40,12 +40,23 @@ import type { Asset } from "@/lib/types";
 
 vi.mock("server-only", () => ({}));
 
+// The app's real role strings, not shorthand: `authorizeAssetMedia` now asks the
+// real `canViewClient`, which reads `KAROS_ADMIN` / `KAROS_EMPLOYEE` and the two
+// assignment fields. A fixture spelling the role "admin" would have been refused
+// by the fence and passed by the fake `isStaff` beside it — two answers to one
+// question, inside the test file for the rule that exists to stop exactly that.
 vi.mock("@/lib/auth", () => ({
-  getCurrentUser: vi.fn(async () => ({ id: "u1", email: "staff@karoslabs.com", role: "admin", disabled: false })),
-  isStaff: (u: any) => u?.role === "admin" || u?.role === "employee",
+  getCurrentUser: vi.fn(async () => ({
+    id: "u1",
+    uid: "u1",
+    email: "staff@karoslabs.com",
+    role: "KAROS_ADMIN",
+    disabled: false,
+  })),
+  isStaff: (u: any) => u?.role === "KAROS_ADMIN" || u?.role === "KAROS_EMPLOYEE",
 }));
 
-vi.mock("@/lib/data", () => ({ getAsset: vi.fn() }));
+vi.mock("@/lib/data", () => ({ getAsset: vi.fn(), getClient: vi.fn() }));
 
 vi.mock("@/lib/gcs-media", () => ({
   PLAYBACK_URL_TTL_MS: 60 * 60 * 1000,
@@ -292,6 +303,15 @@ describe("the download route", () => {
   beforeEach(() => {
     vi.mocked(gcs.createDownloadSignedUrl).mockClear();
     vi.mocked(gcs.createReadSignedUrl).mockClear();
+    // The client the fixture assets belong to. `authorizeAssetMedia` loads it to
+    // ask `canViewClient`; the default admin above passes on role alone.
+    vi.mocked(data.getClient).mockResolvedValue({
+      id: "c1",
+      name: "Acme",
+      status: "active",
+      createdAt: 0,
+      assignedEmployeeIds: [],
+    } as any);
   });
 
   afterEach(() => {
@@ -488,16 +508,53 @@ describe("authorization is identical on both media routes", () => {
     expect((await call(mediaGET, "http://t/api/assets/a1/media")).status).toBe(401);
   });
 
-  it("403s a client reaching another client's asset", async () => {
+  /**
+   * Was a 403. Now 404, and deliberately: the scope refusal shares its shape
+   * with "no such asset", so it cannot be used to learn that someone else's
+   * asset exists. The future-dated withhold below is the one refusal that STAYS
+   * a 403 with its own sentence — that one is about the client's OWN asset, and
+   * telling them when it arrives is the point.
+   */
+  it("404s a client reaching another client's asset", async () => {
     const auth = await import("@/lib/auth");
     vi.mocked(data.getAsset).mockResolvedValue(makeClip({ clientId: "other" }) as any);
 
     for (const handler of [downloadGET, mediaGET]) {
       vi.mocked(auth.getCurrentUser).mockResolvedValueOnce({
-        id: "u2", role: "client", clientId: "c1", disabled: false,
+        id: "u2", uid: "u2", role: "CLIENT_USER", clientId: "c1", disabled: false,
       } as any);
-      expect((await call(handler, "http://t/api/assets/a1/download")).status).toBe(403);
+      expect((await call(handler, "http://t/api/assets/a1/download")).status).toBe(404);
     }
+  });
+
+  /**
+   * The other half of the same fence, and the reason it was rewritten: the rule
+   * used to be `!isStaff(user) && …`, so ANY staff member reached ANY client's
+   * clips and downloads. An employee assigned to nobody is the actor it exists
+   * for, and they now get the same 404 as a missing asset.
+   */
+  it("404s an employee reaching a client they are not assigned", async () => {
+    const auth = await import("@/lib/auth");
+    vi.mocked(data.getAsset).mockResolvedValue(makeClip() as any);
+
+    for (const handler of [downloadGET, mediaGET]) {
+      vi.mocked(auth.getCurrentUser).mockResolvedValueOnce({
+        id: "u3", uid: "u3", role: "KAROS_EMPLOYEE", clientId: null, disabled: false,
+      } as any);
+      expect((await call(handler, "http://t/api/assets/a1/download")).status).toBe(404);
+    }
+  });
+
+  it("still serves an employee the clients they ARE assigned", async () => {
+    const auth = await import("@/lib/auth");
+    vi.mocked(data.getAsset).mockResolvedValue(makeClip() as any);
+    vi.mocked(data.getClient).mockResolvedValue({
+      id: "c1", name: "Acme", status: "active", createdAt: 0, assignedEmployeeIds: ["u3"],
+    } as any);
+    vi.mocked(auth.getCurrentUser).mockResolvedValueOnce({
+      id: "u3", uid: "u3", role: "KAROS_EMPLOYEE", clientId: null, disabled: false,
+    } as any);
+    expect((await call(mediaGET, "http://t/api/assets/a1/media")).status).toBe(302);
   });
 
   it("withholds a future-dated post from a client, on both routes", async () => {
@@ -507,7 +564,7 @@ describe("authorization is identical on both media routes", () => {
 
     for (const handler of [downloadGET, mediaGET]) {
       vi.mocked(auth.getCurrentUser).mockResolvedValueOnce({
-        id: "u2", role: "client", clientId: "c1", disabled: false,
+        id: "u2", uid: "u2", role: "CLIENT_USER", clientId: "c1", disabled: false,
       } as any);
       const res = await call(handler, "http://t/api/assets/a1/download");
       expect(res.status).toBe(403);

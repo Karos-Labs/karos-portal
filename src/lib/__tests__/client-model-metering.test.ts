@@ -1,7 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CREDIT_COSTS, CreditError } from "@/lib/credits";
+import {
+  CREDIT_COSTS,
+  CreditError,
+  creditsLabel,
+  insightsRefreshPrice,
+  simulationPrice,
+  taskMapRefreshPrice,
+} from "@/lib/credits";
 
 /**
  * FIVE WAYS A CLIENT SPENT KAROS MONEY UNMETERED OR UNREFUNDED, asked one site
@@ -32,7 +39,7 @@ vi.mock("@/lib/simulation-engine", () => ({
   runSimulation: vi.fn(),
 }));
 vi.mock("@/lib/agent-swarm", () => ({ buildSwarmContext: vi.fn(), runSwarm: vi.fn() }));
-vi.mock("ai", () => ({ generateText: vi.fn(), generateObject: vi.fn() }));
+vi.mock("ai", () => ({ generateText: vi.fn(), generateObject: vi.fn(), streamText: vi.fn() }));
 vi.mock("@ai-sdk/anthropic", () => ({
   anthropic: Object.assign((id: string) => ({ id }), {
     tools: { webSearch_20250305: () => ({}) },
@@ -42,7 +49,7 @@ vi.mock("@/services/logger", () => ({
   logger: { logUsage: vi.fn(), logGenerationFailure: vi.fn() },
 }));
 
-import { generateText } from "ai";
+import { generateText, streamText } from "ai";
 import * as data from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { applyDocCorrections } from "@/lib/intel";
@@ -231,6 +238,25 @@ describe("#29 — the copilot's Refresh Task Map chip", () => {
     await refreshTaskMap();
     expect(refunds()).toEqual([]);
   });
+
+  /**
+   * THE ANNOUNCE. The chip has no confirmation step — pressing it mounts the War
+   * Room and the debate starts — so the press IS the commitment, and it said
+   * nothing about the price. A client with credits therefore learned the cost
+   * from their balance, which is worse than the 402 the broke case already got.
+   *
+   * The oracle is THE AMOUNT THIS VERY CALL CHARGED, not a constant and not a
+   * literal: repricing the debate cannot leave the chip quoting the old number,
+   * and a reprice to 1 fails on the plural rather than passing as "1 credits".
+   */
+  it("quotes the price it charges, to the reader who pays", async () => {
+    asClient();
+    await refreshTaskMap();
+    const charged = charges()[0]!.amount;
+    expect(taskMapRefreshPrice(true)).toBe(creditsLabel(charged));
+    expect(taskMapRefreshPrice(false)).toBeNull();
+    expect(taskMapRefreshPrice(true)).not.toMatch(/token/i);
+  });
 });
 
 /* ───────────────────────── #30 · Audience Simulation ────────────────────── */
@@ -321,12 +347,94 @@ describe("#30 — Audience Simulation", () => {
    * button lying.
    */
   it("quotes the price it charges, to the reader who pays", async () => {
-    const { simulationPrice } = await import("@/components/audience-simulation");
-    expect(simulationPrice(true)).toBe(`${CREDIT_COSTS.taskExecution} credits`);
+    asClient();
+    await simulate();
+    // The oracle is what THIS call charged. `${CREDIT_COSTS.taskExecution}
+    // credits` was the old assertion, and it would have stayed green through the
+    // bug it was meant to guard: reprice the constant to 1 and both sides read
+    // "1 credits". Pluralising off the charged amount fails instead.
+    const charged = charges()[0]!.amount;
+    expect(simulationPrice(true)).toBe(creditsLabel(charged));
     // Staff runs are free (asserted above), so no price is quoted at them.
     expect(simulationPrice(false)).toBeNull();
     // Credits are never "tokens" — that word is claimed by PATs and LLM counts.
     expect(simulationPrice(true)).not.toMatch(/token/i);
+  });
+});
+
+/* ─────────────── AI Insights · the forced "Refresh" ─────────────────────── */
+
+/**
+ * The insights route's CACHE-MISS rerun is deliberately free — it is triggered
+ * by new analytics data, not by a client, and a client cannot manufacture
+ * analytics rows by clicking. `?force=1` is the other path: it skips the cache
+ * read outright, so the panel's own Refresh button was an unmetered model call a
+ * client could press as often as they liked.
+ *
+ * Driven through the PIPELINE branch (no measured engagement yet, but assets
+ * exist), which is the shortest route to a model call: `records: []` keeps the
+ * mock-data gate open, and one asset keeps the truly-empty short-circuit shut.
+ */
+describe("AI Insights · the forced Refresh", () => {
+  async function refresh(force: boolean) {
+    const { GET } = await import("@/app/api/clients/[id]/insights/route");
+    const url = `https://portal.test/api/clients/c1/insights${force ? "?force=1" : ""}`;
+    return GET(new Request(url), { params: Promise.resolve({ id: "c1" }) });
+  }
+
+  beforeEach(() => {
+    vi.mocked(data.listClientMarketingAnalytics).mockResolvedValue([]);
+    vi.mocked(data.listAssets).mockResolvedValue([
+      { id: "a1", clientId: "c1", title: "Launch post", type: "social_post", status: "draft", createdAt: Date.now() },
+    ] as any);
+    vi.mocked(data.listClientIntegrations).mockResolvedValue([]);
+    vi.mocked(data.getClientInsightsCache).mockResolvedValue(null as any);
+    vi.mocked(streamText).mockReturnValue({
+      toTextStreamResponse: () => new Response("**Pipeline**\n- One draft ready\n"),
+    } as any);
+  });
+
+  it("charges a client user one model call for a forced refresh", async () => {
+    asClient();
+    await refresh(true);
+    expect(charges()).toEqual([
+      expect.objectContaining({ amount: CREDIT_COSTS.chatMessage, operation: "ai_tool" }),
+    ]);
+  });
+
+  it("charges nothing for the unforced rerun a page load makes", async () => {
+    asClient();
+    await refresh(false);
+    expect(streamText).toHaveBeenCalled();
+    expect(charges()).toEqual([]);
+  });
+
+  it("charges staff nothing", async () => {
+    asStaff();
+    await refresh(true);
+    expect(charges()).toEqual([]);
+  });
+
+  it("refuses with 402 before the briefing streams when credits are denied", async () => {
+    asClient();
+    vi.mocked(data.chargeClientCredits).mockRejectedValueOnce(DENIAL);
+    const res = await refresh(true);
+    expect(res.status).toBe(402);
+    expect(streamText).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE ANNOUNCE, with the same oracle as the other two: the amount this call
+   * actually charged. A price the control does not state is one the client reads
+   * off their balance afterwards.
+   */
+  it("quotes the price it charges, to the reader who pays", async () => {
+    asClient();
+    await refresh(true);
+    const charged = charges()[0]!.amount;
+    expect(insightsRefreshPrice(true)).toBe(creditsLabel(charged));
+    expect(insightsRefreshPrice(false)).toBeNull();
+    expect(insightsRefreshPrice(true)).not.toMatch(/token/i);
   });
 });
 

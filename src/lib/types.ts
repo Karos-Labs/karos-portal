@@ -1324,7 +1324,11 @@ export interface ClientTask {
    * `externalJobId` — platform Job id of the agent-service run dispatched for this task;
    * `agentName`, `executing`, `type`, `artifact`, `artifactImageUrl`, `artifactAssetIds`,
    * `approvedAssetId`, `adjustmentFeedback`, `executionError`, `aiPlan`, `recipient`,
-   * `failedUpload*`, `published*`, `autoCompletedReason`.
+   * `failedUpload*`, `published*`, `autoCompletedReason`;
+   * `noDeliverable` — the run this task dispatched reported success and produced
+   * nothing. Never read on its own: `ranWithoutDeliverable` (task-outcome-copy.ts)
+   * asks whether the task is still sitting in that state, because only task-sync
+   * clears the flag while eight other writers move the state.
    */
   metadata?: Record<string, unknown>;
   /**

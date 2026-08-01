@@ -42,12 +42,16 @@ import type { AppUser, BrandingGuidelines, Client } from "@/lib/types";
  * something to paper over here. Until then the OR is the honest reading: the
  * relationship exists if either document records it.
  *
- * WHAT THIS DOES NOT FIX, stated rather than implied: `listClients({
- * employeeId })` still queries `assignedEmployeeIds` alone (an array-contains
- * against the clients collection — it cannot see the user document), so an
- * employee assigned ONLY through the team page can open their client's pages
- * from a link but will not see it in the client list or the picker. That is the
- * same split, on the discoverability half, and the migration is what closes it.
+ * THE DISCOVERABILITY HALF is now the same answer, not a second one.
+ * `listClients({ employeeId })` used to query `assignedEmployeeIds` alone, so an
+ * employee assigned through the team page could open their client's pages from a
+ * link and saw nothing in any list. It now unions both sources and applies THIS
+ * predicate as its final gate, so the list can never be wider than the fence.
+ * What the gate cannot do is guarantee the union is COMPLETE — a new way to be
+ * assigned added here needs a matching source there, or the list silently
+ * under-shows. `listClients`' own note states that residual, and a test in
+ * `client-list-visibility.test.ts` derives the expected list from this function so
+ * the two are compared rather than trusted.
  *
  * Absent `assignedEmployeeIds` (legacy docs) reads as "assigned to nobody", and
  * so does an absent `assignedClientIds` — the OR FAILS CLOSED when neither

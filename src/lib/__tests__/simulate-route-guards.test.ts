@@ -73,10 +73,18 @@ describe("the audience-simulation route asks the rules the rest of the app asks"
     // A 403 or a bespoke message on the visibility branch would confirm that a
     // hidden asset exists, which is half of what the churn rule withholds. The
     // branch must answer the way "no such asset" already answers.
-    const branch = route.slice(
-      route.search(/isAssetContentVisibleToClient\s*\(/),
-      route.search(/canViewClient\s*\(/),
-    );
+    //
+    // Sliced from the predicate to the END OF ITS OWN `return`, not to wherever
+    // the next guard happens to sit. Keying it to `canViewClient` assumed an
+    // order, so moving that fence ABOVE this one — which closed a separate leak —
+    // left the slice empty and the assertion vacuously reading "". A guard that
+    // measures a distance between two unrelated things breaks when either moves.
+    const start = route.search(/isAssetContentVisibleToClient\s*\(/);
+    expect(start, "visibility predicate missing").toBeGreaterThan(-1);
+    const rest = route.slice(start);
+    const end = rest.indexOf(";", rest.indexOf("return"));
+    expect(end, "the visibility branch returns nothing").toBeGreaterThan(-1);
+    const branch = rest.slice(0, end);
     expect(branch).toContain("404");
     expect(branch).not.toContain("403");
   });
