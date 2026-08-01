@@ -1822,10 +1822,26 @@ export async function listReviewJobs(
     // Newest first and bounded, exactly like the staff feed below — this half
     // was neither. Firestore hands back document order, so the bell's rows sat
     // in whatever sequence the collection happened to be in, and every review
-    // in the queue crossed into the payload. A runway sweep tops a client up
-    // with up to fourteen jobs in one minute (A3/A4), so an uncapped feed turns
-    // one fire into fourteen bell rows carrying the same stamp — the batch tell
-    // on the shell of every page. The cap is the same 15 the staff feed uses.
+    // in the queue crossed into the payload. The cap is the same 15 the staff
+    // feed uses, and it is a PAYLOAD BOUND: it keeps an unbounded review queue
+    // out of the RSC payload, and nothing more.
+    //
+    // IT IS NOT THE A3/A4 REMEDY, and this comment used to say it was. A runway
+    // sweep tops a client up with up to RUNWAY_MAX_JOBS_PER_CLIENT jobs in one
+    // minute (default 14, runway.ts) — fourteen is under fifteen, so the cap
+    // never bites on the very scenario it was written for, and a cap that did
+    // bite would still hand the bell several rows carrying one stamp. What
+    // closes it is the GRAIN the rows are told at: reviewFeedRows in
+    // notification-rows.ts collapses a client's whole review queue to one
+    // stampless row, whatever length this array is. Guarded by
+    // src/lib/__tests__/client-review-feed-grain.test.ts.
+    //
+    // STATED RESIDUAL: what the client SEES is one row, but this array still
+    // crosses the RSC boundary intact, so a client's browser holds up to 15 job
+    // titles and their same-minute stamps for a feed that prints none of them.
+    // Narrowing it to what the summary row needs means changing
+    // AgentReviewNotification, which the staff feed below shares — out of scope
+    // here, and named rather than half-done.
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, opts?.limit ?? 15)
     .map((j) => ({

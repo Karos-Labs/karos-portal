@@ -327,5 +327,11 @@ export async function dismissAssignedActionItemAction(
       });
     }
   } catch { /* Non-fatal */ }
+  // The transcript page lists this item too, and it was the one surface this
+  // write left stale — the reassign action above already revalidates it. The
+  // bell that fired this call is chrome on EVERY page, so no path list can
+  // cover where the viewer is standing; its shell refreshes itself instead
+  // (useNotificationDismissals in components/notification-bell.tsx).
+  revalidatePath(`/transcripts/${transcriptId}`);
   revalidatePath("/dashboard");
 }

@@ -2,10 +2,19 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { dismissAssignedActionItemAction } from "@/lib/actions";
-import type { ActionItemNotification, AgentReviewNotification, ClientTask, TaskOwner } from "@/lib/types";
+import {
+  actionItemKey,
+  reviewFeedRows,
+  unreadNotificationCount,
+  visibleActionItems,
+  type NotificationFeeds,
+  type TaskAlert,
+} from "@/lib/notification-rows";
+import type { AgentReviewNotification, TaskOwner } from "@/lib/types";
 
 /* ── Priority colours for task alerts ───────────────────────────── */
 
@@ -22,14 +31,70 @@ const PRIORITY_COLOR: Record<string, string> = {
  */
 const STALE_MS = 7 * 24 * 60 * 60 * 1000;
 
-interface Props {
-  actionItems: ActionItemNotification[];
-  reviewJobs: AgentReviewNotification[];
-  /**
-   * Pending + review_pending tasks — server-fetched, refreshed via
-   * router.refresh(). Staff feeds are cross-client and carry `_clientName`.
-   */
-  taskAlerts: (ClientTask & { _clientName?: string })[];
+/**
+ * The dismissal set a shell owns on behalf of every bell it mounts, plus the
+ * write that persists it.
+ *
+ * OWNED BY THE SHELL, not by the bell, and that is the whole of QA #105. The
+ * set used to be `useState` inside this component, so the bell's own badge
+ * shrank on dismissal while the two badges one level up — the client rail's
+ * mobile tab dot and the staff sidebar's avatar + hamburger dots — kept
+ * counting the row the viewer had just cleared. Lifting it puts one set behind
+ * one derivation (`unreadNotificationCount`), so the panel and every dot beside
+ * it move together.
+ */
+export interface NotificationDismissals {
+  dismissed: ReadonlySet<string>;
+  dismiss: (transcriptId: string, itemIndex: number) => void;
+}
+
+/**
+ * That set, wired to the server write. One hook, called once per shell — the
+ * body used to sit in this component and would otherwise have to be copied into
+ * both shells.
+ *
+ * OPTIMISTIC, AND REVERSIBLE. The row disappears on click; if the write throws
+ * (the action refuses anyone but the assignee) the key comes back out of the
+ * set and the row returns, rather than leaving a viewer looking at a feed that
+ * quietly disagrees with the server. On success `router.refresh()` re-fetches
+ * the shell, so the item leaves the server feed too and the local set stops
+ * being load-bearing — the action's own `revalidatePath` covers the transcript
+ * page, not the page the viewer is standing on.
+ */
+export function useNotificationDismissals(): NotificationDismissals {
+  const router = useRouter();
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  const [, startTransition] = useTransition();
+
+  return {
+    dismissed,
+    dismiss(transcriptId: string, itemIndex: number) {
+      const key = actionItemKey({ transcriptId, itemIndex });
+      setDismissed((prev) => new Set([...prev, key]));
+      startTransition(async () => {
+        try {
+          await dismissAssignedActionItemAction(transcriptId, itemIndex);
+          router.refresh();
+        } catch {
+          setDismissed((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
+        }
+      });
+    },
+  };
+}
+
+/**
+ * `actionItems` / `reviewJobs` / `taskAlerts` come in through NotificationFeeds
+ * — the same shape the shells hand to `unreadNotificationCount`, so the panel
+ * and the badge beside it cannot be built from two different sets. Task alerts
+ * are the pending + review_pending tasks; staff feeds are cross-client and
+ * carry `_clientName`.
+ */
+interface Props extends NotificationFeeds {
   /** Where the panel opens relative to the trigger. */
   panelPlacement?: "down" | "up" | "right";
   /**
@@ -42,12 +107,19 @@ interface Props {
   /** Render trigger as an icon button (default) or a full-width labeled row (account menu). */
   variant?: "icon" | "row";
   /**
-   * True when the bell is rendered in the client shell. Review rows then become
-   * non-navigable status lines: /jobs/[id] is staff-only and bounces a client
-   * back to their dashboard (QA F51), and the archive — the destination that
-   * replaced it — provably excludes the drafts these rows count. It ALSO
-   * rewrites the row's status line to client-facing copy, which is why the
-   * link behaviour has its own prop below.
+   * True when the viewer is a client, whichever shell mounted this bell.
+   *
+   * TWO things hang off it, and both are about the same viewer:
+   *
+   *  · GRAIN. The whole review queue collapses to one stampless summary row
+   *    instead of one row per job (#118, A3/A4 — reviewFeedRows). It is also
+   *    what makes the badge count that queue as one, which matters more than
+   *    the panel does: the badge is on screen before anything is opened.
+   *  · DESTINATION and WORDS. /jobs/[id] is staff-only and bounces a client
+   *    back to their dashboard (QA F51), and the archive — the destination that
+   *    replaced it — provably excludes the drafts these rows count. Where a
+   *    per-job row IS still rendered it also takes the client's copy, which is
+   *    why the link behaviour has its own prop below.
    */
   viewerIsClient?: boolean;
   /**
@@ -70,6 +142,8 @@ interface Props {
    * (the same-route trap the sheet's other rows already close by hand).
    */
   onNavigate?: () => void;
+  /** The shell's dismissal set — see NotificationDismissals above (#105). */
+  dismissals: NotificationDismissals;
 }
 
 export function NotificationBell({
@@ -82,31 +156,45 @@ export function NotificationBell({
   viewerIsClient = false,
   allowJobDeepLinks = true,
   onNavigate,
+  dismissals,
 }: Props) {
   const [open, setOpen] = useState(false);
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const [, startTransition] = useTransition();
 
-  const visibleActions = actionItems.filter(
-    (n) => !dismissed.has(`action-${n.transcriptId}-${n.itemIndex}`),
-  );
+  const visibleActions = visibleActionItems(actionItems, dismissals.dismissed);
   // Review rows have no dismiss control: the X used to write nothing but local
   // state, so the row (and the count) came back on the next page load — a badge
   // that lies (QA F121). listReviewJobs queries status == "review", so the row
   // clears by itself the moment the job is approved, exactly like the task rows.
-  const visibleJobs = reviewJobs;
+  //
+  // ONE row for a client, one per job for staff (A3/A4 — see notification-rows.ts).
+  const reviewRows = reviewFeedRows(reviewJobs, { viewerIsClient });
 
   // Task alerts: review_pending tasks are surfaced first (need immediate attention),
   // then pending tasks. No local dismissal — they disappear when status changes.
   const reviewPendingTasks = taskAlerts.filter((t) => t.status === "review_pending");
   const pendingTasks = taskAlerts.filter((t) => t.status === "pending");
 
-  const total = visibleActions.length + visibleJobs.length + taskAlerts.length;
+  // The product's only "how many unread" — the shells' dots read the very same
+  // function off the very same feeds and dismissal set (#105).
+  const total = unreadNotificationCount(
+    { actionItems, reviewJobs, taskAlerts },
+    { viewerIsClient, dismissed: dismissals.dismissed },
+  );
 
   // A client never gets the job link back, whatever a caller passes: /jobs is
   // staff-only, so the flag that describes the viewer wins over the flag that
   // describes the shell.
   const jobDeepLinks = allowJobDeepLinks && !viewerIsClient;
+
+  // The Workspace board holds TASKS. For staff a review is workspace work and
+  // the link is fair; for a CLIENT the drafts these review rows stand for are
+  // provably not on any screen they can open — the archive excludes drafts by
+  // design, the calendar filters them out, /assets redirects a client away — so
+  // the footer must not offer a destination for them. The dashboard's identical
+  // row is non-navigable for exactly this reason (F97 × F149); a client's own
+  // tasks still earn the link.
+  const showWorkspaceLink = taskAlerts.length > 0 || (reviewRows.length > 0 && !viewerIsClient);
+  const showMeetingsLink = visibleActions.length > 0;
 
   // CD-H7b: one number, one noun. The badge clamped at "9+" while the panel
   // header read "32 active" — the same set, described two ways, so opening the
@@ -127,19 +215,6 @@ export function NotificationBell({
     setOpen(false);
     onNavigate?.();
   }
-
-  function dismissTranscriptItem(transcriptId: string, itemIndex: number) {
-    const key = `action-${transcriptId}-${itemIndex}`;
-    setDismissed((prev) => new Set([...prev, key]));
-    startTransition(async () => {
-      try {
-        await dismissAssignedActionItemAction(transcriptId, itemIndex);
-      } catch {
-        // Non-fatal
-      }
-    });
-  }
-
 
   return (
     <div className="relative">
@@ -261,17 +336,23 @@ export function NotificationBell({
                     </>
                   )}
 
-                  {/* ── Agent review jobs ── */}
-                  {visibleJobs.map((j) => (
-                    <ReviewJobRow
-                      key={j.jobId}
-                      job={j}
-                      now={now}
-                      viewerIsClient={viewerIsClient}
-                      deepLink={jobDeepLinks}
-                      onNavigate={closeAfterNavigate}
-                    />
-                  ))}
+                  {/* ── Agent review jobs ──
+                      One summary row for a client, one row per job for staff —
+                      the grain is decided in notification-rows.ts, not here. */}
+                  {reviewRows.map((row) =>
+                    row.kind === "summary" ? (
+                      <ReviewSummaryRow key="review-summary" />
+                    ) : (
+                      <ReviewJobRow
+                        key={row.job.jobId}
+                        job={row.job}
+                        now={now}
+                        viewerIsClient={viewerIsClient}
+                        deepLink={jobDeepLinks}
+                        onNavigate={closeAfterNavigate}
+                      />
+                    ),
+                  )}
 
                   {/* ── Transcript action items ── */}
                   {visibleActions.map((n) => (
@@ -302,7 +383,7 @@ export function NotificationBell({
                         </Link>
                       </div>
                       <button
-                        onClick={() => dismissTranscriptItem(n.transcriptId, n.itemIndex)}
+                        onClick={() => dismissals.dismiss(n.transcriptId, n.itemIndex)}
                         className={cn(
                           "mt-0.5 shrink-0 rounded-[6px] p-1 text-muted-2",
                           "transition-colors hover:bg-surface-3 hover:text-foreground",
@@ -321,9 +402,9 @@ export function NotificationBell({
             {/* Footer — one link per KIND of row actually in the feed. A panel
                 of meeting action items used to be footed "View workspace →"
                 and vice versa (QA F143). */}
-            {total > 0 && (
+            {(showWorkspaceLink || showMeetingsLink) && (
               <div className="flex shrink-0 items-center gap-4 border-t border-border px-4 py-2.5">
-                {(taskAlerts.length > 0 || visibleJobs.length > 0) && (
+                {showWorkspaceLink && (
                   <Link
                     href="/tasks"
                     onClick={closeAfterNavigate}
@@ -332,7 +413,7 @@ export function NotificationBell({
                     View workspace →
                   </Link>
                 )}
-                {visibleActions.length > 0 && (
+                {showMeetingsLink && (
                   <Link
                     href="/transcripts"
                     onClick={closeAfterNavigate}
@@ -350,6 +431,50 @@ export function NotificationBell({
   );
 }
 
+/* ── Agent review summary row (clients) ──────────────────────────── */
+
+/**
+ * The whole review queue, told to a client as one status line (#118, A3/A4).
+ *
+ * Deliberately holds NO job, NO count and NO timestamp, and takes no props that
+ * could supply one:
+ *
+ *  · No per-item rows, because a runway sweep mints up to fourteen jobs in one
+ *    minute and fourteen identically-stamped rows on the chrome of every page
+ *    announce that a fortnight of content came out of a single fire.
+ *  · No count, because the dashboard one screen over already prints one ("N
+ *    deliverables in review") and it counts a DIFFERENT set — deliverables in
+ *    `draft`, against this feed's jobs in `review`. Two numbers answering one
+ *    question is the defect; the honest fix is one number, on the card that
+ *    counts the thing the client is waiting for.
+ *  · No destination, for the reason the dashboard row has none either: nothing
+ *    a client can open lists a draft.
+ *
+ * Copy is the dashboard's, near enough to read as the same fact twice rather
+ * than two facts (client-home-overview.tsx, "Your Karos team is reviewing
+ * these — they'll appear in your archive when ready").
+ *
+ * Exported for test: the panel only mounts after a click on the trigger, which
+ * a node test run cannot perform.
+ */
+export function ReviewSummaryRow() {
+  return (
+    <div className="flex gap-3 px-4 py-3">
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
+        <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-foreground">
+          Your Karos team is reviewing new work
+        </p>
+        <p className="mt-0.5 text-[11px] text-muted">
+          It&apos;ll appear in your archive when it&apos;s ready.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /* ── Agent review row ────────────────────────────────────────────── */
 
 /**
@@ -358,9 +483,17 @@ export function NotificationBell({
  * isInClientArchive), the calendar filters them out, /jobs is staff-only. So
  * for a client this row is a status line, not a destination: the same ruling
  * client-home-overview.tsx already applies to the identical fact ("N
- * deliverables in review"), and the same treatment. The copy follows: approval
- * is staff-only (approveAssetAction calls requireStaff), so "Waiting for your
- * review" was asking the client for a sign-off the server would refuse.
+ * deliverables in review"). The copy follows: approval is staff-only
+ * (approveAssetAction calls requireStaff), so "Waiting for your review" was
+ * asking the client for a sign-off the server would refuse.
+ *
+ * A REAL CLIENT NO LONGER REACHES THIS ROW AT ALL: `reviewFeedRows` collapses
+ * their whole queue to one ReviewSummaryRow above (#118), because a per-job
+ * list of any length publishes the generation batch. The `viewerIsClient`
+ * branch below stays anyway, and stays fail-closed rather than dead: the prop
+ * is still threaded from every mount, and a caller that ever hands this row a
+ * client again must get the client's words, not a request for a sign-off the
+ * server refuses.
  *
  * `deepLink` is a separate question from `viewerIsClient`, because a shell can
  * withdraw the destination without changing who is looking: staff in Client
@@ -432,7 +565,7 @@ function TaskAlertRow({
   now,
   onClose,
 }: {
-  task: ClientTask & { _clientName?: string };
+  task: TaskAlert;
   now: number;
   onClose: () => void;
 }) {

@@ -560,6 +560,17 @@ export async function publishAssetNowAction(
     publishResult = await publishAssetToPlatform(target, integration, asset);
   } catch (e) {
     await releaseAssetPublishClaim(id).catch(() => {});
+    // STORED RAW, ON PURPOSE, and this is the note that stops the next reader
+    // sanitizing it here. `publishError` is the platform SDK's own exception and
+    // it is the only thing that says which integration broke — staff read the
+    // asset un-projected and need it. A client never does: both client asset
+    // projections run it through `clientSafePublishError` (lib/asset-visibility)
+    // before it can cross the RSC boundary, so the collapse happens where the
+    // reader is known rather than where the string is written. Sanitizing at the
+    // write would destroy the diagnostic for everyone and fix nothing.
+    //
+    // The returned copy is raw for the same reason and is safe for a different
+    // one: this action is `requireStaff()`, so only an operator ever reads it.
     const message = e instanceof Error ? e.message : "Unknown error";
     if (e instanceof TokenExpiredError) {
       await markIntegrationExpired(asset.clientId, target).catch(() => {});

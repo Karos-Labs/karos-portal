@@ -30,6 +30,7 @@ import {
 } from "@/lib/actions";
 import { TaskTicketModal } from "@/components/task-ticket-modal";
 import { ranWithoutDeliverable } from "@/lib/task-outcome-copy";
+import { TASK_RUNNING_LABEL, taskIsExecuting, taskStatusLabel } from "@/lib/task-status-copy";
 import type { ClientTask, Role, TaskOwner, TaskSource, TaskStatus } from "@/lib/types";
 
 type BoardStatus = Exclude<TaskStatus, "archived">;
@@ -37,11 +38,17 @@ type OwnerTab = "karos" | "client";
 type StatusFilter = "all" | BoardStatus;
 type BoardTask = ClientTask & { _clientName?: string };
 
-const BOARD_COLUMNS: { status: BoardStatus; label: string; icon: string }[] = [
-  { status: "pending", label: "Pending", icon: "Circle" },
-  { status: "in_progress", label: "In Progress", icon: "CirclePlay" },
-  { status: "review_pending", label: "Review Pending", icon: "Eye" },
-  { status: "completed", label: "Done", icon: "CircleCheck" },
+/**
+ * The board's columns: which states get a column, in which order, under which
+ * glyph. NO `label` any more — the word for a state comes from the register
+ * (lib/task-status-copy) at every one of the three places this board printed its
+ * own copy of it (the heading, the card badge, the filter option).
+ */
+const BOARD_COLUMNS: { status: BoardStatus; icon: string }[] = [
+  { status: "pending", icon: "Circle" },
+  { status: "in_progress", icon: "CirclePlay" },
+  { status: "review_pending", icon: "Eye" },
+  { status: "completed", icon: "CircleCheck" },
 ];
 
 const SOURCE_META: Record<TaskSource, { label: string; icon: string }> = {
@@ -60,11 +67,21 @@ const PRIORITY_META: Record<string, { tone: "danger" | "warning" | "neutral"; la
   low: { tone: "neutral", label: "Low" },
 };
 
-const STATUS_META: Record<BoardStatus, { label: string; dot: string }> = {
-  pending: { label: "Pending", dot: "bg-muted-2" },
-  in_progress: { label: "Running Agent", dot: "bg-neon" },
-  review_pending: { label: "Review Pending", dot: "bg-warning" },
-  completed: { label: "Done", dot: "bg-success" },
+/**
+ * The dot beside a state's name — presentation, and this board's own business,
+ * which is why it stayed here when the WORDS moved to the register.
+ *
+ * It used to carry a `label` too, and `in_progress`'s read "Running Agent" — on a
+ * badge painted from `task.status` alone, so it fired on the "Depending on you"
+ * tab where every row is a person's own work and no agent will ever run
+ * anything. The claim now hangs off `taskIsExecuting`, which is the only fact
+ * that can support it, and the badge just names the state.
+ */
+const STATUS_DOT: Record<BoardStatus, string> = {
+  pending: "bg-muted-2",
+  in_progress: "bg-neon",
+  review_pending: "bg-warning",
+  completed: "bg-success",
 };
 
 const PRIORITY_RANK: Record<string, number> = { high: 80, medium: 50, low: 25 };
@@ -247,8 +264,8 @@ function TaskCard({
 }) {
   const priority = PRIORITY_META[task.priority] ?? PRIORITY_META.low;
   const source = SOURCE_META[task.source] ?? SOURCE_META.manual;
-  const status = STATUS_META[task.status as BoardStatus];
-  const isExecuting = task.metadata?.executing === true;
+  const statusDot = STATUS_DOT[task.status as BoardStatus];
+  const isExecuting = taskIsExecuting(task);
   const hasError = Boolean(task.metadata?.executionError);
   /**
    * Released BECAUSE the run came back with nothing, and still sitting there —
@@ -296,10 +313,12 @@ function TaskCard({
 
       <div className="mb-2 flex items-center justify-between gap-2 pr-6 text-xs">
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dot)} />
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDot)} />
           {/* truncate, not nowrap-overflow: on narrow columns an overflowing label
               renders under the translucent priority badge and garbles it */}
-          <span className="min-w-0 truncate text-[11px] font-medium text-muted">{status.label}</span>
+          <span className="min-w-0 truncate text-[11px] font-medium text-muted">
+            {taskStatusLabel(task.status)}
+          </span>
           <Badge tone={priority.tone} className="shrink-0 px-1.5 py-0 text-[9px]">
             {priority.label}
           </Badge>
@@ -362,7 +381,7 @@ function TaskCard({
       {isExecuting && (
         <div className="mb-2 flex items-center gap-1.5 rounded-md border border-neon/30 bg-neon/10 px-2 py-1">
           <Icon name="Loader" className="h-3 w-3 animate-spin text-neon" />
-          <span className="text-[11px] font-medium text-neon">Agent running</span>
+          <span className="text-[11px] font-medium text-neon">{TASK_RUNNING_LABEL}</span>
         </div>
       )}
 
@@ -537,7 +556,7 @@ function SortableTaskCard({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: { kind: "task-card", status: task.status },
-    disabled: task.metadata?.executing === true,
+    disabled: taskIsExecuting(task),
   });
 
   const style = {
@@ -567,7 +586,6 @@ function SortableTaskCard({
 
 function BoardColumn({
   status,
-  label,
   icon,
   tasks,
   showClientName,
@@ -582,7 +600,6 @@ function BoardColumn({
   onCancelRun,
 }: {
   status: BoardStatus;
-  label: string;
   icon: string;
   tasks: BoardTask[];
   showClientName?: boolean;
@@ -599,15 +616,17 @@ function BoardColumn({
 }) {
   const droppableId = `column:${status}`;
   const { setNodeRef, isOver } = useDroppable({ id: droppableId, data: { kind: "column", status } });
-  const columnStatus = STATUS_META[status];
   const isTarget = Boolean(draggingTaskId) && isOver;
 
   return (
     <section className="flex min-w-0 flex-col">
       <div className="mb-2 flex items-center gap-2 px-1">
         <Icon name={icon} className="h-4 w-4 text-muted" />
-        <h3 className="text-sm font-semibold text-foreground">{label}</h3>
-        <span className={cn("h-2 w-2 rounded-full", columnStatus.dot)} />
+        {/* The heading asks the register with THIS column's own status, rather
+            than printing a word the mount handed down — so the heading and the
+            badges under it cannot be given two different names for one state. */}
+        <h3 className="text-sm font-semibold text-foreground">{taskStatusLabel(status)}</h3>
+        <span className={cn("h-2 w-2 rounded-full", STATUS_DOT[status])} />
         <span className="ml-auto rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] text-muted">
           {tasks.length}
         </span>
@@ -643,7 +662,11 @@ function BoardColumn({
                   isTarget ? "border-neon/50 bg-neon/10" : "border-border/90",
                 )}
               >
-                <p className="px-4 text-xs text-muted-2">{isTarget ? "Drop task here" : `No ${label.toLowerCase()} tasks`}</p>
+                {/* The register's word again, lower-cased into the sentence —
+                    the fourth place this column had a name for its own state. */}
+                <p className="px-4 text-xs text-muted-2">
+                  {isTarget ? "Drop task here" : `No ${taskStatusLabel(status).toLowerCase()} tasks`}
+                </p>
               </div>
             )}
           </div>
@@ -760,7 +783,7 @@ export function TasksBoard({
     }
   }
 
-  const hasExecuting = localTasks.some((t) => t.metadata?.executing === true);
+  const hasExecuting = localTasks.some(taskIsExecuting);
   const refreshBoard = useCallback(() => router.refresh(), [router]);
   useEffect(() => {
     if (!hasExecuting) return;
@@ -1098,10 +1121,19 @@ export function TasksBoard({
                 className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground @3xl:flex-none @3xl:shrink-0"
               >
                 <option value="all">All statuses</option>
-                <option value="pending">Pending</option>
-                <option value="in_progress">In Progress</option>
-                <option value="review_pending">Review Pending</option>
-                <option value="completed">Done</option>
+                {/* Generated from the column list, worded by the register. These
+                    four options were the board's THIRD hand-typed copy of the
+                    state names, sitting inches under the headings and the badges
+                    that spelled them twice more. Off BOARD_COLUMNS rather than
+                    `visibleColumns`: which states the filter can NAME is not the
+                    same question as which get a column on this tab, and a client
+                    task stuck in review_pending is shown in Pending rather than
+                    dropped, so the option still selects something. */}
+                {BOARD_COLUMNS.map((column) => (
+                  <option key={column.status} value={column.status}>
+                    {taskStatusLabel(column.status)}
+                  </option>
+                ))}
               </select>
               {showClientName && (
                 <select
@@ -1166,7 +1198,6 @@ export function TasksBoard({
             <BoardColumn
               key={column.status}
               status={column.status}
-              label={column.label}
               icon={column.icon}
               tasks={tasksByColumn[column.status]}
               showClientName={showClientName}

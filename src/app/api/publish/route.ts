@@ -172,6 +172,16 @@ export async function GET(req: NextRequest) {
         }
         // Transient error — leave as "scheduled" so the next cron tick retries,
         // but record the failure so the asset card can surface it.
+        //
+        // STORED RAW, ON PURPOSE — the same decision `publishAssetNowAction`
+        // records at its own catch, and the reason is worth having at both
+        // writers rather than at neither. This is the platform SDK's exception
+        // and the only thing that names which integration broke; staff read the
+        // asset un-projected. A client never reads this string: both client
+        // asset projections collapse it through `clientSafePublishError`
+        // (lib/asset-visibility) before it can cross the RSC boundary. The hold
+        // above is the one publishError composed AS client copy, which is why
+        // that branch builds a sentence and this one does not.
         const message = e instanceof Error ? e.message : "Unknown error";
         await updateAsset(asset.id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
         return {

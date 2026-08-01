@@ -7,6 +7,7 @@ import { ASSET_TYPE_LABEL } from "@/lib/asset-type-copy";
 import { clientDeliveryStamp, isInClientArchive } from "@/lib/asset-visibility";
 import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { postKind } from "@/lib/calendar-kind";
+import { clientSafePublishError } from "@/lib/custom-agent-launch";
 import type { Asset, ClientTask } from "@/lib/types";
 
 // ASSET_TYPE_LABEL moved to @/lib/asset-type-copy: the copilot's system prompt
@@ -30,6 +31,22 @@ const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info">
  * posts surface here only as whitelist placeholders (template name as title,
  * type, status — no content/image/meta). Titles are rendered verbatim below, so
  * an un-redacted future title would leak; the redaction stays at the page.
+ *
+ * THAT SENTENCE IS A CONTRACT, AND ONE FIELD NO LONGER RELIES ON IT.
+ * `publishError` holds the platform SDK's own exception, and the attention row
+ * below quotes the stored field as its hint. Everything else in this component is a
+ * title, a type or a count — a mount that forgot the projection would ship a
+ * future title, which is bad; this one would ship a stack-adjacent provider
+ * error, and it is the one field with a named client-safe answer. So the row
+ * asks `clientSafePublishError` for a client viewer, keyed to this component's
+ * own `viewerIsClient` argument.
+ *
+ * NOT A SECOND RULE — the same function the server boundary calls
+ * (lib/asset-visibility applies it to both client asset projections, and that is
+ * still what keeps the exception out of the RSC PAYLOAD, which a render can
+ * never do). This keeps it off the SCREEN, and the two agree because there is
+ * one function rather than two spellings. It is idempotent on an already-safe
+ * string, so the doubled call changes nothing on the path that works.
  */
 export function ClientHomeOverview({
   clientId,
@@ -154,12 +171,28 @@ export function ClientHomeOverview({
             {failedPublishes.length > 0 && (
               <AttentionRow
                 tone="danger"
-                href="/calendar"
+                // The calendar this reader can actually use. A bare `/calendar`
+                // is the CROSS-CLIENT overview for staff, so a staff reader on
+                // this client's dashboard clicking "3 posts failed to publish"
+                // landed on every client's grid and had to find them again —
+                // the same wrong-surface defect `clientArchiveLink` above fixes
+                // for the archive, and `taskBoardHref` below for the board. A
+                // client has no client-scoped route (the staff one redirects
+                // them straight back), so theirs stays flat.
+                href={viewerIsClient ? "/calendar" : `/clients/${clientId}/calendar`}
                 icon="TriangleAlert"
                 label={`${failedPublishes.length} post${failedPublishes.length === 1 ? "" : "s"} failed to publish`}
+                // ONE failure quotes the stored reason; several cannot, so they
+                // get the destination instead. For a client the stored reason is
+                // the one client-safe sentence (it already names the way out:
+                // Karos can get it posted), and the row lands them on the
+                // calendar chip whose panel repeats it beside the only publish
+                // control a client has — "Mark as posted", for the case they
+                // posted it themselves. Staff keep the exception: it is the
+                // whole diagnostic value of the row.
                 hint={
                   failedPublishes.length === 1
-                    ? (failedPublishes[0]!.publishError ?? "Review it on the calendar.")
+                    ? failedPublishText(failedPublishes[0]!, viewerIsClient)
                     : "Review them on the calendar."
                 }
               />
@@ -278,6 +311,33 @@ export function ClientHomeOverview({
 
 const ATTENTION_ROW_BASE =
   "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5";
+
+/**
+ * What this reader is told about ONE post that did not go out.
+ *
+ * Exported for test: the rule is that a client reads no raw provider exception
+ * off this row while staff still do, and that is a fact about the returned
+ * string rather than about anything rendered around it.
+ *
+ * The client branch is not a new sentence — it is `clientSafePublishError`, the
+ * one that composes the client's answer for every publish surface. On the path
+ * that works it is already applied at the server boundary and returns its input
+ * unchanged; this is the mechanical version of the docstring at the top of this
+ * file, so a mount that hands over un-projected assets loses a title rather than
+ * a provider secret.
+ *
+ * The absent-field branch returns BEFORE the sanitizer rather than falling
+ * through it: an in-house fallback line is not a stored publish error, and
+ * feeding it to a function whose job is to collapse anything unrecognised would
+ * silently replace our own sentence with the generic one. `postKind` makes the
+ * branch unreachable for a "failed" post today — it derives that kind FROM the
+ * field — and it is kept because "unreachable" is a claim about another module.
+ */
+export function failedPublishText(asset: Asset, viewerIsClient: boolean): string {
+  const stored = asset.publishError;
+  if (stored == null) return "Review it on the calendar.";
+  return viewerIsClient ? clientSafePublishError(stored) : stored;
+}
 
 /**
  * The Workspace board, opened on a tab that actually holds this row's work (#101).

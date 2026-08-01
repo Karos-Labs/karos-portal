@@ -22,6 +22,7 @@ import {
   updateIntelScheduleAction,
 } from "@/lib/actions";
 import { CorrectInfoModal } from "@/components/correct-info-modal";
+import { docListEmptyLine, docsPipelineState, unavailableDocCopy } from "@/lib/doc-rail-copy";
 import {
   computeFirstIntelScheduleRun,
   describeIntelSchedule,
@@ -48,10 +49,22 @@ function countSections(content: string): number {
   return (content.match(/^## /gm) ?? []).length;
 }
 
-/** What the nav should show for one doc type: a readable doc, or a placeholder row. */
+/**
+ * What the nav should show for one doc type: a readable doc, a placeholder row,
+ * or nothing at all.
+ *
+ * `unavailable` states a FACT and makes no claim about activity: this doc type
+ * exists internally and has no client-readable copy. It was called `rebuilding`,
+ * and that was the defect — the name was the row's copy, so a row whose only
+ * possible cause was a condensation that had already finished (or already
+ * failed) told the client work was in progress and to "check back shortly".
+ * Nothing on this path had ever asked whether anything was running. What the row
+ * SAYS is decided at the render, from `isAiProcessing` / `aiProcessingFailed`,
+ * which are the only two inputs that can answer it.
+ */
 type DocPick =
   | { kind: "doc"; doc: ClientContextDoc }
-  | { kind: "rebuilding" }
+  | { kind: "unavailable" }
   | { kind: "none" };
 
 /**
@@ -61,7 +74,7 @@ type DocPick =
  * tier is analyst-grade copy (methodology notes, sourcing workflow, competitor
  * labels) that types.ts restricts to admin/employee. Only the staff sidebar may
  * pass it. For a client viewer a missing or degraded client-tier copy resolves
- * to a "being rebuilt" row — never to the internal document. Internal-only tier
+ * to an `unavailable` row — never to the internal document. Internal-only tier
  * is never surfaced on either path.
  */
 /**
@@ -88,7 +101,13 @@ function pickDoc(
     if (clientTier) return { kind: "doc", doc: clientTier };
     // An internal twin with no client-facing copy means condensation has not
     // produced (or has lost) the client version — say so instead of leaking it.
-    return internalTier ? { kind: "rebuilding" } : { kind: "none" };
+    //
+    // "Has lost" covers the `hasBody` case too: a client-tier row under 40
+    // characters is a blank document rather than a short one, and it reaches
+    // this branch exactly like a missing one. Both are the same fact — there is
+    // nothing here a client can read — and neither is evidence that anything is
+    // being rebuilt right now.
+    return internalTier ? { kind: "unavailable" } : { kind: "none" };
   }
 
   if (!clientTier) return internalTier ? { kind: "doc", doc: internalTier } : { kind: "none" };
@@ -1043,6 +1062,12 @@ export function ClientDocuments({
     pick: pickDoc(contextDocs, t.docType, allowInternalFallback),
   })).filter((i) => i.pick.kind !== "none");
 
+  // Asked ONCE, here, and read by both the empty state and every unavailable
+  // row — so the list and the rows in it cannot disagree about whether anything
+  // is happening.
+  const pipeline = docsPipelineState({ isAiProcessing, aiProcessingFailed });
+  const unavailable = unavailableDocCopy(pipeline);
+
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between gap-1">
@@ -1079,14 +1104,10 @@ export function ClientDocuments({
       {available.length === 0 ? (
         // One line used to cover three different situations, so a client who
         // finished onboarding half an hour ago was told to finish onboarding —
-        // and a failed run said the same thing (QA F69).
-        <p className="px-1 py-1.5 text-xs text-muted-2">
-          {isAiProcessing
-            ? "Karos Agents are writing your documents now — this takes a few minutes."
-            : aiProcessingFailed
-              ? "Generation stopped early. Your Karos team is on it."
-              : "Your brand and strategy documents will appear here once onboarding completes."}
-        </p>
+        // and a failed run said the same thing (QA F69). Both this line and the
+        // row below read `pipeline`, the ONE answer to whether anything is
+        // running, so the list cannot contradict a row inside it.
+        <p className="px-1 py-1.5 text-xs text-muted-2">{docListEmptyLine(pipeline)}</p>
       ) : (
         <ul>
           {available.map((item) =>
@@ -1110,14 +1131,25 @@ export function ClientDocuments({
                 </button>
               </li>
             ) : (
+              /* The row a client gets when this doc type exists internally and
+                 has no copy they can read. It is not a control and cannot be
+                 made one — only Regenerate clears it, and that is `isAdmin &&
+                 clientId`. So the sentence carries the end instead, and it is
+                 RENDERED rather than hidden in a `title`: a tooltip is not an
+                 affordance on touch, which is where most of this rail is read. */
               <li key={item.docType}>
                 <div
-                  className="flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left"
-                  title="This document is being rebuilt — check back shortly."
+                  className="flex w-full flex-col gap-0.5 rounded-md px-2 py-1 text-left"
+                  title={unavailable.hint}
                 >
-                  <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2/60" />
-                  <span className="flex-1 truncate text-[13px] leading-5 text-muted-2">{item.label}</span>
-                  <span className="shrink-0 text-[11px] text-muted-2">Rebuilding</span>
+                  <div className="flex w-full items-center gap-2.5">
+                    <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2/60" />
+                    <span className="flex-1 truncate text-[13px] leading-5 text-muted-2">{item.label}</span>
+                    <span className="shrink-0 text-[11px] text-muted-2">{unavailable.state}</span>
+                  </div>
+                  <p className="pl-[26px] text-[11px] leading-snug text-muted-2/80">
+                    {unavailable.hint}
+                  </p>
                 </div>
               </li>
             ),

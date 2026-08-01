@@ -6,6 +6,7 @@ import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { renderAssetBody } from "@/lib/doc-render";
 import { ranWithoutDeliverable } from "@/lib/task-outcome-copy";
+import { TASK_RUNNING_LABEL, taskIsExecuting, taskStatusLabel } from "@/lib/task-status-copy";
 import {
   getTaskCommentsAction,
   addTaskCommentAction,
@@ -60,14 +61,15 @@ function nextStatusFor(task: ClientTask): TaskStatus {
   return next;
 }
 
-const STATUS_LABEL: Record<TaskStatus, string> = {
-  pending:        "Pending",
-  in_progress:    "In Progress",
-  review_pending: "Review Pending",
-  completed:      "Done",
-  archived:       "Archived",
-};
-
+/**
+ * The GLYPH for a state — this ticket's own, and deliberately not shared with the
+ * board's column icons: the two disagree for `in_progress` (this header draws a
+ * clock, the column a play button) and folding them together would change a
+ * rendered icon to satisfy a consolidation. The WORDS come from the register
+ * (lib/task-status-copy), which is where the ticket's `STATUS_LABEL` went — it
+ * was a byte-for-byte copy of the board's column labels, and the board's card
+ * badge disagreed with both.
+ */
 const STATUS_ICON: Record<TaskStatus, string> = {
   pending:        "Circle",
   in_progress:    "Clock",
@@ -645,7 +647,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, 
       ? `/clients/${task.clientId}/assets`
       : null;
   const isReviewPending = task.status === "review_pending";
-  const isExecuting = task.metadata?.executing === true;
+  const isExecuting = taskIsExecuting(task);
   /**
    * The run reported success and handed the ticket nothing (task-sync's
    * `deliveredNothing`), and the task is still sitting where that left it.
@@ -754,7 +756,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, 
                 ) : (
                   <Icon name={STATUS_ICON[task.status]} className="h-3 w-3" />
                 )}
-                {isExecuting ? "AI Working…" : STATUS_LABEL[task.status]}
+                {isExecuting ? TASK_RUNNING_LABEL : taskStatusLabel(task.status)}
               </span>
             </div>
             {/* Title */}
@@ -939,7 +941,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, 
                       }
                       className="h-3 w-3"
                     />
-                    Move to {STATUS_LABEL[nextStatus]}
+                    Move to {taskStatusLabel(nextStatus)}
                   </button>
                 )}
               </div>

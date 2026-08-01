@@ -11,7 +11,8 @@ import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { AccountMenu } from "@/components/account-menu";
 import { LogoutButton } from "@/components/logout-button";
 import { ThemeSwitch } from "@/components/theme-switch";
-import { NotificationBell } from "@/components/notification-bell";
+import { NotificationBell, useNotificationDismissals } from "@/components/notification-bell";
+import { unreadNotificationCount } from "@/lib/notification-rows";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { isAiProcessingLockActive } from "@/lib/constants";
@@ -93,9 +94,21 @@ export function ClientRail({
   // navigation.
   const [companyOpen, setCompanyOpen] = useCompanySheet();
 
-  // The same three feeds the bell counts, so the Company tab's dot and the
-  // badge inside the sheet can never disagree (CD-H5).
-  const unread = actionItems.length + reviewJobs.length + taskAlerts.length;
+  // The dismissal set the bells below share with this count (#105). It used to
+  // live inside each bell, so clearing a meeting action item shrank the panel
+  // and left this tab's dot counting the row that had just gone.
+  const dismissals = useNotificationDismissals();
+
+  // The same three feeds the bell counts, THROUGH THE SAME FUNCTION, so the
+  // Company tab's dot and the badge inside the sheet can never disagree
+  // (CD-H5, #105). `viewerIsClient` is not a flag this shell chooses: the app
+  // layout mounts ClientRail only for a CLIENT_USER, which is also why both
+  // bells below are hard-wired to it — so the count and the panel collapse the
+  // review queue at the same grain (#118).
+  const unread = unreadNotificationCount(
+    { actionItems, reviewJobs, taskAlerts },
+    { viewerIsClient: true, dismissed: dismissals.dismissed },
+  );
 
   return (
     <>
@@ -208,6 +221,7 @@ export function ClientRail({
                 taskAlerts={taskAlerts}
                 panelPlacement="up"
                 viewerIsClient
+                dismissals={dismissals}
               />
             </div>
             <AccountMenu user={user} client={client} settingsHref={settingsItem.href} />
@@ -320,6 +334,7 @@ export function ClientRail({
             panelPlacement="up"
             panelClassName="max-h-[45vh]"
             viewerIsClient
+            dismissals={dismissals}
             onNavigate={() => setCompanyOpen(false)}
           />
           <div className="px-0">

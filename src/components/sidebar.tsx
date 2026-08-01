@@ -14,7 +14,15 @@ import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
-import { NotificationBell } from "@/components/notification-bell";
+import {
+  NotificationBell,
+  useNotificationDismissals,
+  type NotificationDismissals,
+} from "@/components/notification-bell";
+import {
+  unreadNotificationCount,
+  type NotificationFeeds,
+} from "@/lib/notification-rows";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { LogoutButton } from "@/components/logout-button";
@@ -29,16 +37,11 @@ import type {
   Role,
 } from "@/lib/types";
 
-/** The three feeds the bell renders — threaded down from the app layout. */
-interface NotificationFeeds {
-  actionItems: ActionItemNotification[];
-  reviewJobs: AgentReviewNotification[];
-  taskAlerts: (ClientTask & { _clientName?: string })[];
-}
-
-function unreadTotal({ actionItems, reviewJobs, taskAlerts }: NotificationFeeds): number {
-  return actionItems.length + reviewJobs.length + taskAlerts.length;
-}
+/* The three feeds the bell renders — threaded down from the app layout — and
+   the count derived from them both live in @/lib/notification-rows. This file
+   used to declare the shape and add the three lengths up itself, which is how
+   the avatar dot and the hamburger dot came to disagree with the panel they
+   open: only the panel subtracted the viewer's dismissals (#105). */
 
 interface NavItem {
   href: string;
@@ -235,12 +238,25 @@ function UserMenu({
   user,
   realAdmin,
   feeds,
+  dismissals,
+  viewerIsClient,
+  unreadWithChrome,
   showChrome = true,
   allowJobDeepLinks = true,
 }: {
   user: AppUser;
   realAdmin?: AppUser;
   feeds: NotificationFeeds;
+  /** The shell's dismissal set — threaded so this bell and the dots agree (#105). */
+  dismissals: NotificationDismissals;
+  /** Passed straight to the bell — see the Sidebar's own binding. */
+  viewerIsClient: boolean;
+  /**
+   * The Sidebar's own `unread`, handed down rather than recomputed here: this
+   * dot and the hamburger dot are the same number, and adding a second call
+   * site for the sum is how they drifted apart in the first place (#105).
+   */
+  unreadWithChrome: number;
   /**
    * False inside the mobile drawer, which already surfaces the three rows one
    * level up — the menu is itself a tap deep there, so nesting them would put
@@ -253,7 +269,8 @@ function UserMenu({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const unread = showChrome ? unreadTotal(feeds) : 0;
+  // No bell in this menu inside the drawer, so no dot on its trigger either.
+  const unread = showChrome ? unreadWithChrome : 0;
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -340,6 +357,8 @@ function UserMenu({
                      -21px. 45vh keeps it clear down to ~600px of viewport. */
                   panelClassName="max-h-[45vh]"
                   allowJobDeepLinks={allowJobDeepLinks}
+                  viewerIsClient={viewerIsClient}
+                  dismissals={dismissals}
                 />
               )}
               <Link
@@ -404,7 +423,18 @@ export function Sidebar({
   const [companyOpen, setCompanyOpen] = useCompanySheet();
 
   const feeds: NotificationFeeds = { actionItems, reviewJobs, taskAlerts };
-  const unread = unreadTotal(feeds);
+  // Asked of the ROLE, not of the shell. This shell is the staff workspace, but
+  // it is also what a CLIENT_USER with no clientId falls through to (see the app
+  // layout), and that viewer must get the client's feed grain and the client's
+  // words — not "Waiting for your review" and a /jobs link they cannot open.
+  const viewerIsClient = user.role === "CLIENT_USER";
+  // The dismissal set every bell in this shell shares with both dots below,
+  // and the ONE derivation of "how many unread" (#105, #118).
+  const dismissals = useNotificationDismissals();
+  const unread = unreadNotificationCount(feeds, {
+    viewerIsClient,
+    dismissed: dismissals.dismissed,
+  });
 
   const clientHomePath =
     user.role === "CLIENT_USER" && user.clientId ? `/clients/${user.clientId}` : null;
@@ -650,6 +680,8 @@ export function Sidebar({
               panelPlacement="up"
               panelClassName="w-full max-h-[45vh]"
               allowJobDeepLinks={allowJobDeepLinks}
+              viewerIsClient={viewerIsClient}
+              dismissals={dismissals}
               /* The drawer is `fixed inset-0` and closes only from explicit
                  handlers, so without this a bell row routes underneath it and
                  leaves the drawer covering the page it just opened — on every
@@ -664,6 +696,9 @@ export function Sidebar({
           user={user}
           realAdmin={realAdmin}
           feeds={feeds}
+          dismissals={dismissals}
+          viewerIsClient={viewerIsClient}
+          unreadWithChrome={unread}
           showChrome={!inDrawer}
           allowJobDeepLinks={allowJobDeepLinks}
         />
@@ -743,6 +778,8 @@ export function Sidebar({
                 panelPlacement="up"
                 panelClassName="max-h-[45vh]"
                 allowJobDeepLinks={allowJobDeepLinks}
+                viewerIsClient={viewerIsClient}
+                dismissals={dismissals}
                 onNavigate={() => setCompanyOpen(false)}
               />
               <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
