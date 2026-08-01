@@ -48,4 +48,4 @@ jobs:
           gcloud builds submit \
             --project="${{ vars.PREP_PROJECT_ID }}" \
             --config=cloudbuild.yaml \
-            --substitutions=COMMIT_SHA="${{ github.sha }}",_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_APP_URL="${{ vars.PREP_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PREP_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PREP_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PREP_ADMIN_EMAIL }}"
+            --substitutions=COMMIT_SHA="${{ github.sha }}",_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_APP_URL="${{ vars.PREP_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PREP_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PREP_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PREP_ADMIN_EMAIL }}",_ADMIN_EMAILS="${{ vars.PREP_ADMIN_EMAILS }}"

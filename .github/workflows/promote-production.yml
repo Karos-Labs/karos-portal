@@ -73,4 +73,4 @@ jobs:
             --project="${{ vars.PROD_PROJECT_ID }}" \
             --config=cloudbuild.promote.yaml \
             --no-source \
-            --substitutions=_REGION="${{ vars.PROD_REGION }}",_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ steps.sha.outputs.sha }}",_APP_URL="${{ vars.PROD_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PROD_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PROD_ADMIN_EMAIL }}"
+            --substitutions=_REGION="${{ vars.PROD_REGION }}",_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ steps.sha.outputs.sha }}",_APP_URL="${{ vars.PROD_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PROD_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PROD_ADMIN_EMAIL }}",_ADMIN_EMAILS="${{ vars.PROD_ADMIN_EMAILS }}"
