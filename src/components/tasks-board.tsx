@@ -74,6 +74,16 @@ function inferOwner(task: ClientTask): TaskOwner {
   return task.source === "manual" ? "client_managed" : "karos_managed";
 }
 
+/**
+ * The tab an owner's work lives on — the board's ONE owner→tab mapping, asked by
+ * the deep link, by the owner filter, and by the reveal that follows a routed
+ * add. `TaskOwner` has two members, so this is total; it was three separate
+ * inline ternaries before, and the third one is what a routed add needed.
+ */
+function ownerTab(owner: TaskOwner): OwnerTab {
+  return owner === "client_managed" ? "client" : "karos";
+}
+
 function statusAfterDrop(status: BoardStatus): { status: BoardStatus; completedAt: number | null } {
   return { status, completedAt: status === "completed" ? Date.now() : null };
 }
@@ -265,7 +275,13 @@ function TaskCard({
       )}
     >
       <button
-        className="absolute right-1 top-1 z-10 inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-2 opacity-0 transition-opacity hover:bg-surface-2 hover:text-muted group-hover:opacity-100"
+        // `focus-visible:opacity-100` because this is the ONE focusable control in a
+        // resting card — the finding that opened the touch-reach work said so — and
+        // at opacity 0 a keyboard user tabbing onto it saw nothing at all, focus ring
+        // included. No `[@media(hover:none)]` reveal: dragging on touch is served by
+        // the dnd sensors on the card itself, so a permanently visible handle on every
+        // mobile card would be a design change, not a fix.
+        className="absolute right-1 top-1 z-10 inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-2 opacity-0 transition-opacity hover:bg-surface-2 hover:text-muted group-hover:opacity-100 focus-visible:opacity-100"
         {...(dragHandle?.attributes ?? {})}
         {...(dragHandle?.listeners ?? {})}
         onClick={(e) => {
@@ -370,10 +386,11 @@ function TaskCard({
         <span className="ml-auto shrink-0 whitespace-nowrap">{relativeTime(task.updatedAt || task.createdAt)}</span>
       </div>
 
-      {/* Both confirms render OUTSIDE the hover-only action row below, on
-          purpose: a confirmation that vanishes when the pointer leaves the card
-          is not a confirmation, and the run confirm can also be raised by a drag
-          that ends nowhere near this card. */}
+      {/* Both confirms render OUTSIDE the action row below, on purpose: that row
+          is still hover-revealed wherever a pointer exists, and a confirmation
+          that vanishes when the pointer leaves the card is not a confirmation.
+          The run confirm can also be raised by a drag that ends nowhere near
+          this card. */}
       {confirmingDelete && (
         <div
           className="mt-2 rounded-md border border-danger/35 bg-danger/10 px-2 py-1.5"
@@ -435,11 +452,23 @@ function TaskCard({
         </div>
       )}
 
-      {/* Actions only take space while hovered/focused, so the resting card
-          height stays compact. flex-wrap: on narrow columns the buttons stack
-          instead of spilling past the card border. */}
+      {/* REACHABLE WITHOUT A POINTER. This row used to be `hidden … group-hover:flex`
+          — display:none until hover — so on a touch device every per-card action
+          was unreachable, and `group-focus-within` could not rescue it from the
+          inside because a `hidden` child is not focusable.
+
+          The resting state is now `flex`; the HIDE is what carries a condition,
+          `@media (hover: hover)`, which is the very media query Tailwind v4 wraps
+          `group-hover:` in (compile `group-hover:flex` and read it). So the hide
+          and the reveal are co-extensive BY CONSTRUCTION: no device can be told to
+          hide this row without also being able to hover it back, and a device with
+          no hover keeps the row. Where a pointer exists the resting card height is
+          exactly what it was.
+
+          flex-wrap: on narrow columns the buttons stack instead of spilling past
+          the card border. */}
       <div
-        className="mt-2 hidden flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 group-hover:flex group-focus-within:flex"
+        className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 [@media(hover:hover)]:hidden group-hover:flex group-focus-within:flex"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -629,9 +658,30 @@ interface Props {
   currentUserRole: Role;
   showClientName?: boolean;
   clientId?: string;
+  /**
+   * The owner the router just sent a newly added task to, with a `nonce` that
+   * changes on every add.
+   *
+   * `ingestCustomUserTaskAction` puts the typed text through a model that picks
+   * the owner — the client never chooses it — and its success line names the
+   * card ("Added …"). Without this the board stayed on whatever tab it was on,
+   * so a task routed to Automated while the client sat on "Depending on you"
+   * was announced by name and rendered nowhere.
+   *
+   * The nonce is what makes a SECOND add to the same tab register: the owner
+   * alone does not change between two adds, so an owner-only comparison fires
+   * once and then goes quiet.
+   */
+  revealOwner?: { owner: TaskOwner; nonce: number } | null;
 }
 
-export function TasksBoard({ tasks, currentUserRole, showClientName = false, clientId }: Props) {
+export function TasksBoard({
+  tasks,
+  currentUserRole,
+  showClientName = false,
+  clientId,
+  revealOwner = null,
+}: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Deep link from the notification bell: ?owner= picks the tab, ?task= opens
@@ -642,9 +692,7 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
   const taskParam = searchParams.get("task");
   const linkedTask = taskParam ? tasks.find((t) => t.id === taskParam) : undefined;
   const initialTab: OwnerTab = linkedTask
-    ? inferOwner(linkedTask) === "client_managed"
-      ? "client"
-      : "karos"
+    ? ownerTab(inferOwner(linkedTask))
     : ownerParam === "client"
       ? "client"
       : "karos";
@@ -691,6 +739,27 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
     if (taskParam) setSelectedTaskId(linkedTask?.id ?? null);
   }
 
+  // FOLLOW THE ROUTER'S VERDICT (same store-previous-prop pattern as the two
+  // blocks above). The quick-add bar hands the routed owner up on every
+  // successful add; the board goes to that owner's tab.
+  //
+  // The tab is not the only thing that can hide a brand-new card, and a reveal
+  // that fixes one of three is a promise half kept: a `statusFilter` on anything
+  // but Pending hides a just-created task just as completely, and so does a
+  // stale search query the routed title does not match (the model rewrites what
+  // the client typed). Both are cleared, so the card the success line names is
+  // on screen.
+  const revealNonce = revealOwner?.nonce ?? null;
+  const [prevRevealNonce, setPrevRevealNonce] = useState(revealNonce);
+  if (prevRevealNonce !== revealNonce) {
+    setPrevRevealNonce(revealNonce);
+    if (revealOwner) {
+      setActiveTab(ownerTab(revealOwner.owner));
+      setStatusFilter("all");
+      setSearch("");
+    }
+  }
+
   const hasExecuting = localTasks.some((t) => t.metadata?.executing === true);
   const refreshBoard = useCallback(() => router.refresh(), [router]);
   useEffect(() => {
@@ -721,9 +790,7 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
   );
 
   const visibleTasks = useMemo(() => {
-    const ownerFiltered = localTasks.filter((task) =>
-      activeTab === "karos" ? inferOwner(task) === "karos_managed" : inferOwner(task) === "client_managed",
-    );
+    const ownerFiltered = localTasks.filter((task) => ownerTab(inferOwner(task)) === activeTab);
     const query = search.trim().toLowerCase();
 
     return ownerFiltered.filter((task) => {
@@ -1134,6 +1201,10 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
           onLocalUpdate={(updated) =>
             setLocalTasks((prev) => prev.map((task) => (task.id === updated.id ? { ...updated } : task)))
           }
+          // The ticket footer's delete is the SAME handler the card's trash icon
+          // reaches — one delete path, one authorization, one optimistic removal
+          // and one rollback. It is the only one a touch device can get to.
+          onDelete={() => handleDelete(selectedTask)}
         />
       )}
     </>

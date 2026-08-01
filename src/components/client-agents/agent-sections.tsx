@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { formatDate, relativeTime } from "@/lib/utils";
+import { intakeRowHref } from "@/lib/agent-intake-links";
 import type { AgentInputsView, AgentSetupFact } from "@/lib/agent-detail-sections";
 import type { RosterStatus } from "@/lib/client-agents";
 
@@ -157,25 +158,39 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
           ? "This agent writes from what you saved here. Open any of them to change what it knows."
           : "This agent needs these before it can write for you."}
       </p>
+      {/* EVERY ROW IS A LINK, to its own card on the intake page (#85).
+          The copy above tells the reader to open them; they used to be plain
+          `<li>`s with no Link and no onClick, wearing a `hover:border-neon/40`
+          that made them look clickable, and the one real link went to the top
+          of the intake page with nothing identifying the row. Worst exactly
+          when the state was worst: a client with four empty seats clicked the
+          empty seat and got nothing.
+
+          The target is derived from the row's own id through `intakeRowHref`,
+          the same function the intake surfaces render their anchors with — so a
+          row cannot be added here with nowhere to land, and neither side can
+          rename the anchor without the other. */}
       <ul className="space-y-1.5">
         {view.rows.map((row) => (
-          <li
-            key={row.id}
-            className="flex items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2 transition-colors hover:border-neon/40"
-          >
-            <Icon name={row.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-xs text-foreground">{row.label}</span>
-              <span className="block truncate text-[11px] text-muted-2">{row.detail}</span>
-            </span>
-            {/* A date on every row, which is the whole point of the band —
-                "who has never filled theirs in" is not a question a list of
-                names can answer. An empty document reads as empty rather than
-                as a dash, because the two are different facts. */}
-            <span className="shrink-0 text-[11px] text-muted-2">
-              {row.updatedAt === null ? "Never saved" : relativeTime(row.updatedAt)}
-            </span>
-            {!row.filled && <Badge tone="warning">Empty</Badge>}
+          <li key={row.id}>
+            <Link
+              href={intakeRowHref(view.href, row.id)}
+              className="flex items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2 transition-colors hover:border-neon/40"
+            >
+              <Icon name={row.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs text-foreground">{row.label}</span>
+                <span className="block truncate text-[11px] text-muted-2">{row.detail}</span>
+              </span>
+              {/* A date on every row, which is the whole point of the band —
+                  "who has never filled theirs in" is not a question a list of
+                  names can answer. An empty document reads as empty rather than
+                  as a dash, because the two are different facts. */}
+              <span className="shrink-0 text-[11px] text-muted-2">
+                {row.updatedAt === null ? "Never saved" : relativeTime(row.updatedAt)}
+              </span>
+              {!row.filled && <Badge tone="warning">Empty</Badge>}
+            </Link>
           </li>
         ))}
       </ul>

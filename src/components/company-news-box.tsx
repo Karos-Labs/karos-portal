@@ -12,6 +12,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, CardTitle, Input, Select, Textarea } from "@/components/ui";
+import { intakeSave } from "@/lib/intake-save";
 import { addXNewsUpdateAction } from "@/lib/actions/x-agent-actions";
 
 export interface CompanyNewsRowView {
@@ -55,7 +56,12 @@ export function CompanyNewsBox({ clientId, rows }: { clientId: string; rows: Com
   function add() {
     setError(null);
     start(async () => {
-      const result = await addXNewsUpdateAction({ clientId, title, date, type, url, detail, sourceUrl, consent });
+      // Through the intake funnel like every other write on these two pages:
+      // this box is mounted INSIDE the X and LinkedIn intake surfaces, so a
+      // lapsed session drops a click here exactly as it did there (#86).
+      const result = await intakeSave(() =>
+        addXNewsUpdateAction({ clientId, title, date, type, url, detail, sourceUrl, consent }),
+      );
       if (result.error) {
         setError(result.error);
         return;

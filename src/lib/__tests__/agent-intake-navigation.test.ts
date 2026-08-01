@@ -1,0 +1,432 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  clientArchiveLink,
+  intakeAnchorId,
+  intakePageAction,
+  intakeRowHref,
+  intakeSeatAnchorId,
+} from "@/lib/agent-intake-links";
+import {
+  isStringDelimiter,
+  matchingBrace,
+  matchingParen,
+  skipStringLiteral,
+  stripComments,
+} from "./source-scan";
+import type { AgentIntake, ClientSeat } from "@/lib/types";
+
+vi.mock("server-only", () => ({}));
+
+const { toAgentInputRows } = await import("@/lib/agent-detail-sections");
+
+/**
+ * The three navigation defects on the intake cluster, and the pairing that keeps
+ * the first one fixed.
+ *
+ *  #85 THE BAND TOLD THE READER TO OPEN ROWS THAT WERE NOT LINKS. "Open any of
+ *      them to change what it knows" sat above plain `<li>`s with a
+ *      `hover:border-neon/40` and nothing to click; the one real link went to the
+ *      top of the intake page with nothing identifying the row. Every row is now
+ *      a Link to its own card — and the interesting half is not that the Link
+ *      exists but that its target EXISTS: a hash matching no element scrolls
+ *      nowhere and raises nothing, which is a dead end that looks like a fix. So
+ *      the anchor is derived on both sides from the row's own id, and this file
+ *      walks the real row set of every family and asserts the matching card
+ *      renders that anchor.
+ *
+ *  #90 STAFF WERE SENT TO A CLIENT-SHAPED URL. `?tab=` is read only by
+ *      ProgressView, and TasksBody mounts ProgressView only with a client in
+ *      scope — so the hard-coded `/tasks?tab=archive` on all three staff-reachable
+ *      intake pages dropped a staff viewer onto the cross-client board with no
+ *      archive at all.
+ *
+ *  #82 "RUN THE AGENT →" LANDED A CLIENT ON THE ONE PAGE BUILT TO HAVE NO RUN
+ *      BUTTON. Fixed per role, which is why the decision is a pure function
+ *      asked here rather than a ternary in three page bodies.
+ */
+
+const REPO = path.resolve(__dirname, "../..", "..");
+const read = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
+/** The component that owns one family's intake surface — named by the family. */
+const surfaceOf = (family: AgentIntake["agent"]) => `src/components/${family}-agent-intake.tsx`;
+
+const NOW = Date.UTC(2026, 7, 1, 12, 0, 0);
+
+function makeSeat(overrides: Partial<ClientSeat> = {}): ClientSeat {
+  return {
+    id: "seat-1",
+    clientId: "c1",
+    name: "Maya Cohen",
+    slug: "maya-cohen",
+    createdBy: "uid-staff",
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  };
+}
+
+function makeIntake(overrides: Partial<AgentIntake> = {}): AgentIntake {
+  return {
+    id: "intake-1",
+    clientId: "c1",
+    agent: "x",
+    seatId: null,
+    handle: "@karoslabs",
+    offLimits: "No politics",
+    roster: [],
+    createdBy: "uid-staff",
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  };
+}
+
+/* ───────────── keying an assertion to an ELEMENT, not to a file ─────────── */
+
+/**
+ * WHY THIS SECTION EXISTS. Every defect in this file is "the control goes
+ * somewhere the copy does not promise", and every one of them is invisible to
+ * `expect(wholeFile).toContain(x)` — two of those on one file say the two
+ * strings are both SOMEWHERE in it, never that they are on the same element.
+ * That is not a hypothetical: with `intakePageAction(...)` still called and
+ * `{action.label}` still rendered, putting `/clients/${id}/agents` back on the
+ * anchor left this whole file green, which is #82 shipping again behind a
+ * resolver. So the assertions below are keyed to the element's own delimiters.
+ */
+
+/**
+ * The index of the `>` that ends the opening tag starting at `at`, or -1.
+ *
+ * Braces and string literals are skipped whole, so a `>` inside an expression
+ * (`{a > b}`) or inside a className cannot end the tag early and hand the caller
+ * a truncated attribute list to assert over.
+ */
+function openingTagEnd(code: string, at: number): number {
+  for (let i = at; i < code.length; i++) {
+    const ch = code[i]!;
+    if (isStringDelimiter(ch)) {
+      i = skipStringLiteral(code, i);
+      continue;
+    }
+    if (ch === "{") {
+      const brace = matchingBrace(code, i);
+      if (brace < 0) return -1;
+      i = brace;
+      continue;
+    }
+    if (ch === ">") return i;
+  }
+  return -1;
+}
+
+/** The element `<name …>` opening at `at`: its opening tag, and its children. */
+function elementAt(code: string, name: string, at: number): { tag: string; body: string } | null {
+  const gt = openingTagEnd(code, at);
+  if (gt < 0) return null;
+  const end = code.indexOf(`</${name}>`, gt);
+  if (end < 0) return null;
+  return { tag: code.slice(at, gt + 1), body: code.slice(gt + 1, end) };
+}
+
+/** Where `<name` opens, on or after `from` — the tag itself, not a longer one starting with it. */
+function elementOpensAt(code: string, name: string, from = 0): number {
+  const re = new RegExp(`<${name}(?=[\\s/>])`, "g");
+  re.lastIndex = from;
+  return re.exec(code)?.index ?? -1;
+}
+
+/**
+ * The anchor ENCLOSING each occurrence of a rendered expression — found from the
+ * thing it renders rather than from a class string (owned by the design tokens,
+ * and worn by other anchors on these pages) or a character distance.
+ *
+ * ONE ENTRY PER OCCURRENCE, and `null` for an occurrence that sits inside no
+ * anchor at all. Taking the first occurrence only would be a guard that a SECOND
+ * copy of the label, pasted onto a hard-coded link, walks straight past.
+ */
+function anchorsRendering(code: string, child: string): Array<{ tag: string; body: string } | null> {
+  const out: Array<{ tag: string; body: string } | null> = [];
+  const opens = [...code.matchAll(/<a(?=[\s/>])/g)].map((m) => m.index);
+  for (let at = code.indexOf(child); at >= 0; at = code.indexOf(child, at + child.length)) {
+    const open = opens.filter((i) => i < at).at(-1);
+    const el = open === undefined ? null : elementAt(code, "a", open);
+    out.push(el && el.body.includes(child) ? el : null);
+  }
+  return out;
+}
+
+/**
+ * Every `href=` value on one opening tag, delimiter-matched rather than
+ * regex-terminated so a template literal's `${…}` cannot truncate the value and
+ * make a hard-coded URL read as something else.
+ *
+ * Returned as a LIST so the assertion can say "exactly this one href" — a second
+ * href attribute is a different list, and an absent one is the empty list.
+ */
+function hrefValues(tag: string): string[] {
+  const out: string[] = [];
+  for (const m of tag.matchAll(/\bhref\s*=\s*/g)) {
+    const at = m.index + m[0].length;
+    if (tag[at] === "{") {
+      const close = matchingBrace(tag, at);
+      out.push(close > at ? tag.slice(at, close + 1) : tag.slice(at));
+      continue;
+    }
+    if (isStringDelimiter(tag[at])) {
+      const close = skipStringLiteral(tag, at);
+      out.push(close > at ? tag.slice(at, close + 1) : tag.slice(at));
+      continue;
+    }
+    out.push(tag.slice(at));
+  }
+  return out;
+}
+
+/* ───────────────────────── #85: the anchors pair up ─────────────────────── */
+
+describe("intake row anchors", () => {
+  it("composes a seat's anchor exactly as the band composes its row id", () => {
+    // toAgentInputRows mints `seat-${seat.id}`. If the two spellings ever come
+    // apart the band links to `#intake-abc` while the card renders
+    // `#intake-seat-abc`, and the browser scrolls nowhere without erroring —
+    // the silent failure this pairing exists to make loud.
+    expect(intakeSeatAnchorId("abc")).toBe(intakeAnchorId("seat-abc"));
+    const rows = toAgentInputRows({
+      agent: "x",
+      company: null,
+      seats: [makeSeat({ id: "abc" })],
+      intake: [],
+      news: [],
+      takes: [],
+    });
+    const seatRow = rows.find((r) => r.id.startsWith("seat-"));
+    expect(seatRow?.id).toBe("seat-abc");
+    expect(intakeAnchorId(seatRow!.id)).toBe(intakeSeatAnchorId("abc"));
+  });
+
+  it("prefixes the anchor, so an ordinary word cannot be claimed twice", () => {
+    expect(intakeAnchorId("company")).toBe("intake-company");
+    expect(intakeRowHref("/clients/c1/x-agent", "news")).toBe(
+      "/clients/c1/x-agent#intake-news",
+    );
+  });
+});
+
+/**
+ * Does the surface render an ELEMENT whose `id` is the anchor for this row?
+ *
+ * IT MUST BE AN `id=`, and that is the whole correction. This asked only whether
+ * the composing CALL appeared anywhere in RAW source — so both anchors could be
+ * changed from `id={intakeAnchorId("news")}` to `data-anchor={…}`, or deleted
+ * outright with the references left alive in a JSX comment, and the suite stayed
+ * 16/16 green. A hash matching no element scrolls nowhere and raises nothing,
+ * which is the dead end this file's own header says it exists to catch.
+ *
+ * Comments are stripped for the same reason: x-agent-intake.tsx carries a comment
+ * naming `intakeAnchorId` eleven lines above the real anchors, so a scan over raw
+ * text is satisfied by prose describing the thing it is looking for.
+ */
+function anchorRendered(raw: string, rowId: string): boolean {
+  const src = stripComments(raw);
+  // A seat's id is a Firestore id, so the anchor can only be matched as the CALL
+  // that composes it — but it must still be the value of an `id` attribute.
+  const expr = rowId.startsWith("seat-")
+    ? String.raw`intakeSeatAnchorId\(\s*seat\.id\s*\)`
+    : String.raw`intakeAnchorId\(\s*"${rowId}"\s*\)`;
+  return new RegExp(String.raw`\bid=\{\s*${expr}\s*\}`).test(src);
+}
+
+describe("#85 — every row the band paints has somewhere to land", () => {
+  /** The fullest row set each family can produce. */
+  const cases: Array<{ family: AgentIntake["agent"]; rows: string[] }> = (
+    ["x", "linkedin", "reddit"] as const
+  ).map((family) => ({
+    family,
+    rows: toAgentInputRows({
+      agent: family,
+      company: makeIntake({ agent: family }),
+      seats: [makeSeat()],
+      intake: [makeIntake({ id: "i2", agent: family, seatId: "seat-1" })],
+      news: [
+        { id: "n1", clientId: "c1", title: "Series A", date: "2026-07-20", createdBy: "u", createdAt: NOW },
+      ],
+      takes: [
+        { id: "t1", clientId: "c1", seatId: "seat-1", take: "Agents are the new SaaS", date: "2026-07-25", createdBy: "u", createdAt: NOW },
+      ],
+    }).map((row) => row.id),
+  }));
+
+  it("reads a non-empty row set for each family", () => {
+    // Non-vacuity: an empty row list would make the sweep below assert nothing.
+    expect(cases.map((c) => c.rows.length)).toEqual([4, 3, 1]);
+  });
+
+  for (const { family, rows } of cases) {
+    it(`renders the anchor for every ${family} row on ${surfaceOf(family)}`, () => {
+      const src = read(surfaceOf(family));
+      const missing = rows.filter((rowId) => !anchorRendered(src, rowId));
+      expect(missing, `${surfaceOf(family)} paints no anchor for these rows`).toEqual([]);
+    });
+  }
+
+  it("builds each row's link from the row id, in the band itself", () => {
+    const code = stripComments(read("src/components/client-agents/agent-sections.tsx"));
+    const at = code.indexOf("view.rows.map(");
+    expect(at).toBeGreaterThan(-1);
+    const end = matchingParen(code, code.indexOf("(", at));
+    const block = code.slice(at, end);
+    // A Link per row — and the assertions are keyed to that Link's own opening
+    // tag, not to the map body. Three `toContain`s on the block would pass with
+    // the href on one element and the hover border on another, which is the
+    // exact state #85 was: a `hover:border-neon/40` on something that was not
+    // the link.
+    const linkAt = elementOpensAt(block, "Link");
+    expect(linkAt, "the band paints no <Link> per row").toBeGreaterThan(-1);
+    const link = elementAt(block, "Link", linkAt);
+    expect(link, "the row's <Link> never closes").not.toBeNull();
+    // Derived through the shared function — not a hand-built hash, and not the
+    // bare page href every row used to share.
+    expect(hrefValues(link!.tag)).toEqual(["{intakeRowHref(view.href, row.id)}"]);
+    // The hover border that made the old `<li>`s look clickable is on the thing
+    // that IS clickable.
+    expect(link!.tag, "the hover border is not on the link").toContain("hover:border-neon/40");
+  });
+});
+
+/* ─────────────────────── #90: the archive a reader reaches ──────────────── */
+
+describe("#90 — the archive link resolves for the viewer who is reading it", () => {
+  it("sends a client to their own workspace and staff to this client's", () => {
+    expect(clientArchiveLink({ clientId: "c1", isStaff: false })).toEqual({
+      href: "/tasks?tab=archive",
+      label: "your archive",
+    });
+    expect(clientArchiveLink({ clientId: "c1", isStaff: true })).toEqual({
+      href: "/clients/c1/tasks?tab=archive",
+      label: "this client's archive",
+    });
+  });
+
+  it("moves the label with the destination", () => {
+    // "your archive" pointed at one client's workspace would be telling a staff
+    // member that this client's archive is theirs.
+    const staff = clientArchiveLink({ clientId: "c1", isStaff: true });
+    expect(staff.label).not.toContain("your");
+  });
+
+  it("leaves no hard-coded client-shaped archive URL on the three surfaces", () => {
+    for (const family of ["x", "linkedin", "reddit"] as const) {
+      const code = stripComments(read(surfaceOf(family)));
+      expect(code, surfaceOf(family)).not.toContain('"/tasks?tab=archive"');
+      expect(code, surfaceOf(family)).toContain("clientArchiveLink({ clientId, isStaff })");
+    }
+  });
+
+  it("carries the resolved label on the same anchor as the resolved href", () => {
+    // The pure function moves the two together; this is the half that says the
+    // SURFACE does. Asking the file for `href={archive.href}` alone would pass
+    // with the sentence hard-coded back to "your archive" on that anchor — a
+    // staff member told this client's archive is theirs, which is half of #90
+    // returning with the URL left correct.
+    for (const family of ["x", "linkedin", "reddit"] as const) {
+      const rel = surfaceOf(family);
+      const links = anchorsRendering(stripComments(read(rel)), "{archive.label}");
+      expect(links.length, `${rel}: nothing renders {archive.label}`).toBeGreaterThan(0);
+      for (const link of links) {
+        expect(link, `${rel}: {archive.label} is rendered outside any <a>`).not.toBeNull();
+        expect(hrefValues(link!.tag), rel).toEqual(["{archive.href}"]);
+      }
+    }
+  });
+});
+
+/* ──────────────── #82: the header control, resolved per role ────────────── */
+
+describe("#82 — the intake page's one control per role", () => {
+  /**
+   * THIS TEST USED TO PIN A FALSE CLAIM. Its name was "keeps the run promise for
+   * staff, whose destination carries run controls" — and the staff branch of
+   * `/clients/<id>/agents` carries none: CD-I1 moved every staff run gesture onto
+   * the agent's own detail page, and that page's own comments say so. So staff
+   * read a verb their destination could not honour, exactly like the client, and
+   * the fix that closed the client half wrote the other half's error down as
+   * intended behaviour. A test is the worst place for a wrong premise to live.
+   */
+  it("promises staff no run on a page that has none either", () => {
+    const withAgent = intakePageAction({ clientId: "c1", isStaff: true, agentId: "ag1" });
+    expect(withAgent.href).toBe("/clients/c1/agents/ag1");
+    expect(withAgent.label).not.toMatch(/run/i);
+
+    // No resolvable instance: name the roster, drop the verb — same rule as the
+    // client's fallback, which is the point.
+    const noAgent = intakePageAction({ clientId: "c1", isStaff: true, agentId: null });
+    expect(noAgent.href).toBe("/clients/c1/agents");
+    expect(noAgent.label).not.toMatch(/run/i);
+  });
+
+  it("promises a run to nobody, because no destination it can reach offers one", () => {
+    // The closed question, over every combination rather than the two above.
+    for (const isStaff of [true, false]) {
+      for (const agentId of ["ag1", null]) {
+        expect(
+          intakePageAction({ clientId: "c1", isStaff, agentId }).label,
+          `isStaff=${isStaff} agentId=${agentId}`,
+        ).not.toMatch(/\brun\b/i);
+      }
+    }
+  });
+
+  it("sends a client to the agent's own page, where their run gesture lives", () => {
+    const action = intakePageAction({ clientId: "c1", isStaff: false, agentId: "ag1" });
+    expect(action.href).toBe("/clients/c1/agents/ag1");
+    expect(action.label).not.toMatch(/run/i);
+  });
+
+  it("drops the promise rather than keeping it over a roster that refuses it", () => {
+    // The client branch of the roster renders a header and a roster and states
+    // in its own comment that it carries no Run button. A control that still
+    // said "Run the agent" there would be the original defect with a fallback
+    // in front of it.
+    const action = intakePageAction({ clientId: "c1", isStaff: false, agentId: null });
+    expect(action.href).toBe("/clients/c1/agents");
+    expect(action.label).not.toMatch(/run/i);
+  });
+
+  it("is asked by all three pages, and hard-coded by none of them", () => {
+    for (const family of ["x", "linkedin", "reddit"] as const) {
+      const rel = `src/app/(app)/clients/[id]/${family}-agent/page.tsx`;
+      const code = stripComments(read(rel));
+      expect(code, rel).toContain("intakePageAction({ clientId: id, isStaff, agentId })");
+      expect(code, rel).toContain("{action.label}");
+      // The old shape: one href and one label for everybody.
+      expect(code, rel).not.toContain("Run the agent");
+    }
+  });
+
+  it("puts the resolved href on the control, not just the resolved label", () => {
+    // THE HALF THAT SHIPS. Asking the resolver and rendering `{action.label}`
+    // says nothing about where the control GOES: with both of those left
+    // untouched, putting `/clients/${id}/agents` back on the anchor was green
+    // everywhere, which is a client reading "Back to the agent →" and landing on
+    // the one page whose own comment says it has no Run button — #82 with a
+    // resolver bolted on the front. So the href is asserted on the anchor
+    // ELEMENT that renders the label, and asserted as its whole value.
+    for (const family of ["x", "linkedin", "reddit"] as const) {
+      const rel = `src/app/(app)/clients/[id]/${family}-agent/page.tsx`;
+      const controls = anchorsRendering(stripComments(read(rel)), "{action.label}");
+      expect(controls.length, `${rel}: nothing renders {action.label}`).toBeGreaterThan(0);
+      for (const control of controls) {
+        expect(control, `${rel}: {action.label} is rendered outside any <a>`).not.toBeNull();
+        // Exactly one href, and it is the resolved one — a second href attribute
+        // or a re-derived URL is a different list.
+        expect(hrefValues(control!.tag), rel).toEqual(["{action.href}"]);
+        // And the anchor carries the resolved label and nothing else, so the
+        // pair cannot come apart into a right destination under a wrong promise.
+        expect(control!.body.trim(), rel).toBe("{action.label}");
+      }
+    }
+  });
+});

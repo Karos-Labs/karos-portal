@@ -73,6 +73,10 @@ const RESERVED_METADATA = new Set([
   "karos_run_type",
   "karos_client_agent_id",
   "karos_template_key",
+  // The producing agent's key. The delivery handler fences a draft-only agent's
+  // asset type on it (agent-service/deliverable-asset-type.ts), so a caller that
+  // could set it could unfence its own run.
+  "karos_agent_key",
 ]);
 
 export interface SubmitCustomAgentInput {
@@ -394,6 +398,11 @@ export async function submitCustomAgentJob(
           Object.entries(input.extraMetadata ?? {}).filter(([key]) => !RESERVED_METADATA.has(key)),
         ),
         platform_job_id: jobId,
+        // Echoed back on the completion so the webhook can identify the agent
+        // that produced the deliverable without a second read — the identity the
+        // draft-only asset-type fence trusts first (the agent's display name,
+        // which travels on the job doc, is its rename-fragile fallback).
+        karos_agent_key: agent.key.slice(0, MAX_KEY_CHARS),
         ...(input.taskId ? { karos_task_id: input.taskId } : {}),
         ...(jobToken ? { karos_job_token: jobToken, karos_mcp_url: `${origin}/api/mcp` } : {}),
         // Launch-vs-runs routing. Echoed back by the service (the

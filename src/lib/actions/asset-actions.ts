@@ -64,7 +64,32 @@ export async function updateAssetAction(id: string, patch: { content?: string; t
     // path (e.g. a chat tool) ever hands them the id.
     if (isLaunchDeliverable(asset) || isTestRunAsset(asset)) throw new Error("Forbidden");
   }
-  await updateAsset(id, { ...patch, updatedAt: Date.now() });
+  // BUILT FIELD BY FIELD, NEVER SPREAD — and `type` is why.
+  //
+  // A server action's parameter list is a COMPILE-TIME claim about this repo's
+  // own callers, not a check on the wire: the arguments arrive as a POST body
+  // and nothing validates them at runtime. So `updateAsset(id, { ...patch })`
+  // wrote whatever the caller sent — data.ts merges the object as given — and
+  // the `{ content?, title?, status? }` signature stopped none of it. The field
+  // that mattered is `type`: PUBLISHABLE_PLATFORMS is keyed by it, so re-typing
+  // a Reddit reply `social_post` AFTER creation puts it on every publish surface
+  // and inside the auto-publish cron's reach, which is the hard product rule
+  // (Reddit is draft-only) broken from the one direction its fence cannot see —
+  // `deliverableAssetType` decides the type once, at creation, and nothing
+  // re-asks the question on a write. Nor is there an un-fencing to undo it with:
+  // no asset-type edit exists anywhere in the product.
+  //
+  // Picking each named field one at a time is what makes "an asset's type never
+  // changes after creation" TRUE rather than asserted, and widening the
+  // signature the only way to widen what can be written. The scan in
+  // platforms-publishable.test.ts fails on any patch reaching `updateAsset`
+  // whose keys it cannot read at the call — a spread of this parameter included.
+  await updateAsset(id, {
+    ...(patch.content !== undefined ? { content: patch.content } : {}),
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.status !== undefined ? { status: patch.status } : {}),
+    updatedAt: Date.now(),
+  });
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
 }
@@ -276,7 +301,13 @@ export async function approveAssetAction(
   if (isTestRunAsset(asset)) {
     throw new Error("This is a Test Run draft — use Promote (Control Room → Outputs) instead of Approve.");
   }
-  const patch: Partial<Asset> = { status: "approved", updatedAt: Date.now() };
+  // `Omit<…, "type">`, and named for this one action, because this object is
+  // handed to `updateAsset` as a whole: the compiler is what refuses a `type` on
+  // it (see updateAssetAction's note — re-typing an asset defeats the
+  // creation-time draft-only fence), and the distinctive name is what stops the
+  // pin that exempts THIS payload in platforms-publishable.test.ts from
+  // exempting some other function's `patch` as well.
+  const approvalPatch: Omit<Partial<Asset>, "type"> = { status: "approved", updatedAt: Date.now() };
 
   if (opts?.scheduledAt != null) {
     const publishMode: PublishMode = opts.publishMode ?? (opts.platform ? "auto" : "placeholder");
@@ -300,9 +331,9 @@ export async function approveAssetAction(
         );
       }
     }
-    patch.scheduledAt = opts.scheduledAt;
-    patch.publishMode = publishMode;
-    if (opts.platform) patch.scheduledPlatform = opts.platform;
+    approvalPatch.scheduledAt = opts.scheduledAt;
+    approvalPatch.publishMode = publishMode;
+    if (opts.platform) approvalPatch.scheduledPlatform = opts.platform;
   } else {
     // No explicit opts scheduledAt supplied — attempt to preserve any candidate
     // scheduling (imported scheduledAt or agent recommendedAt) and, if an
@@ -319,16 +350,16 @@ export async function approveAssetAction(
           ? integrations.find((i) => i.platform === platform && integrationIsUsable(i))
           : undefined;
 
-      patch.scheduledAt = candidateAt;
+      approvalPatch.scheduledAt = candidateAt;
       if (active) {
-        patch.publishMode = "auto";
-        if (platform) patch.scheduledPlatform = platform;
+        approvalPatch.publishMode = "auto";
+        if (platform) approvalPatch.scheduledPlatform = platform;
       } else {
         // No usable integration or client opted out — keep safety: land on the
         // calendar but require an explicit Publish Now (manual) so nothing posts
         // without a connection or an opt-in.
-        patch.publishMode = "manual";
-        if (platform) patch.scheduledPlatform = platform;
+        approvalPatch.publishMode = "manual";
+        if (platform) approvalPatch.scheduledPlatform = platform;
       }
     } else if (
       asset.scheduledAt != null &&
@@ -337,11 +368,11 @@ export async function approveAssetAction(
     ) {
       // Cron-safety: approving a chain-dated draft without any candidate slot
       // must never leave it cron-eligible — force manual.
-      patch.publishMode = "manual";
+      approvalPatch.publishMode = "manual";
     }
   }
 
-  await updateAsset(id, patch);
+  await updateAsset(id, approvalPatch);
   await closeProducingJobIfReviewed(asset);
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);

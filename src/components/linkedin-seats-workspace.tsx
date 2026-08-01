@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { Button, Badge, Input } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
+import { INTAKE_ACTION_FAILED, intakeSave } from "@/lib/intake-save";
 import {
   addEmployeeSeatAction,
   updateEmployeeSeatAction,
   removeEmployeeSeatAction,
+  type SeatActionResult,
 } from "@/lib/actions/seat-actions";
 
 /** Client-safe seat view — never carries tokens, only whether one is present. */
@@ -27,10 +29,46 @@ function initials(name: string): string {
 }
 
 /**
- * LinkedIn Employee Advocacy workspace — a "Company Employee Roster" for the
- * connected LinkedIn integration. Staff/clients add seats (gated by the plan +
- * credit monetization guard), pause/resume, and remove them. Each seat is an
- * employee handle the analytics sync measures independently.
+ * The two ways one of these writes can fail, read as one shape.
+ *
+ * The action REFUSES with `{ ok: false, error }` and the funnel reports a THROW
+ * with `{ error }`; every caller below wants the same thing from both, and
+ * asking each of them to narrow a four-armed union at three call sites is how
+ * one of them ends up reading `error` off the success arm. Returns null when
+ * nothing failed.
+ */
+function seatFailure(
+  res: SeatActionResult | { error: string },
+): { error: string; gated: boolean } | null {
+  if (!("ok" in res)) return { error: res.error, gated: false };
+  if (res.ok) return null;
+  return { error: res.error, gated: res.gated === true };
+}
+
+/** The seat's state as a word a reader uses, never the stored one shouted. */
+const SEAT_STATUS_LABEL: Record<SeatView["status"], string> = {
+  active: "Active",
+  paused: "Paused",
+};
+
+/**
+ * The LinkedIn employee-seat roster for the connected LinkedIn integration:
+ * teammates who have signed in with LinkedIn so we can publish and measure on
+ * their own handle. Staff/clients add seats (gated by the plan + credit
+ * monetization guard), pause/resume, and remove them.
+ *
+ * NOT the seats an agent drafts for (#83). Those are `clientSeats`, created on
+ * each agent's own intake page, uncapped and free, and neither roster can see
+ * the other's rows. Merging the two collections is a migration and Daniel's
+ * call; until then each surface has to SAY which one it is showing, because the
+ * difference between them is money — this one charges credits past
+ * `linkedinSeatLimit` and the agent pages do not. Hence the header's own line
+ * below, and the matching line on the LinkedIn intake page.
+ *
+ * Named "employee seats" throughout, matching the button that opens it and the
+ * dialog it opens in. It used to head itself "Company Employee Roster" — a third
+ * name for the thing, in Title Case, inside a dialog whose own comment says a
+ * dialog must not rename what its trigger just named.
  */
 export function LinkedInSeatsWorkspace({
   clientId,
@@ -53,6 +91,12 @@ export function LinkedInSeatsWorkspace({
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   /** Failure text for the remove path, shown inside the confirming row. */
   const [removeError, setRemoveError] = useState<string | null>(null);
+  /**
+   * Failure text for pause/resume, which used to discard its result entirely.
+   * Carries the seat it belongs to so the message lands on the row the reader
+   * just clicked rather than at the top of a roster of ten.
+   */
+  const [statusError, setStatusError] = useState<{ seatId: string; message: string } | null>(null);
   const [pending, startTransition] = useTransition();
 
   const atLimit = seats.length >= seatLimit;
@@ -74,25 +118,46 @@ export function LinkedInSeatsWorkspace({
       return;
     }
     startTransition(async () => {
-      const res = await addEmployeeSeatAction(clientId, { employeeName: name, employeeEmail: email });
-      if (res.ok) {
+      // Same funnel as the remove below and as every intake write. The add and
+      // the pause were the two paths left unwrapped when the remove learned
+      // this lesson, and requireSeatAccess THROWS for all three alike (#86).
+      const fail = seatFailure(
+        await intakeSave(() =>
+          addEmployeeSeatAction(clientId, { employeeName: name, employeeEmail: email }),
+        ),
+      );
+      if (!fail) {
         setName("");
         setEmail("");
         setAdding(false);
         router.refresh();
-      } else if (res.gated) {
-        setGate(res.error);
-      } else {
-        setError(res.error);
+        return;
       }
+      if (fail.gated) setGate(fail.error);
+      else setError(fail.error);
     });
   }
 
   function toggleStatus(seat: SeatView) {
+    setStatusError(null);
     startTransition(async () => {
-      await updateEmployeeSeatAction(clientId, seat.id, {
-        status: seat.status === "active" ? "paused" : "active",
-      });
+      const fail = seatFailure(
+        await intakeSave(
+          () =>
+            updateEmployeeSeatAction(clientId, seat.id, {
+              status: seat.status === "active" ? "paused" : "active",
+            }),
+          // Not a save — there is no form and no answers on screen.
+          INTAKE_ACTION_FAILED,
+        ),
+      );
+      // The result used to be discarded outright, so a refused pause looked
+      // exactly like a successful one: the row refreshed back to the state it
+      // was already in and said nothing at all.
+      if (fail) {
+        setStatusError({ seatId: seat.id, message: fail.error });
+        return;
+      }
       router.refresh();
     });
   }
@@ -101,22 +166,26 @@ export function LinkedInSeatsWorkspace({
    * Second step of the remove. Previously this fired on the first click of a
    * 16px trash icon two pixels from Pause, and ignored the result entirely: an
    * authorization failure (requireSeatAccess THROWS) refreshed the row back
-   * into place with no message at all.
+   * into place with no message at all. The try/catch that fixed that is now the
+   * shared funnel, so this control and the two above cannot drift apart again.
    */
   function remove(seat: SeatView) {
     setRemoveError(null);
     startTransition(async () => {
-      try {
-        const res = await removeEmployeeSeatAction(clientId, seat.id);
-        if (!res.ok) {
-          setRemoveError(res.error);
-          return;
-        }
-        setConfirmingId(null);
-        router.refresh();
-      } catch {
-        setRemoveError("Couldn't remove this seat. Please try again.");
+      const fail = seatFailure(
+        // This read "Couldn't remove this seat. Please try again." before the
+        // funnel; the save sentence that replaced it was false here.
+        await intakeSave(
+          () => removeEmployeeSeatAction(clientId, seat.id),
+          "We couldn't remove this seat. Refresh the page to check you're still signed in, then try again.",
+        ),
+      );
+      if (fail) {
+        setRemoveError(fail.error);
+        return;
       }
+      setConfirmingId(null);
+      router.refresh();
     });
   }
 
@@ -126,7 +195,7 @@ export function LinkedInSeatsWorkspace({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Icon name="Users" className="h-4 w-4 shrink-0 text-neon" />
-          <p className="text-sm font-medium text-foreground">Company Employee Roster</p>
+          <p className="text-sm font-medium text-foreground">Employee seats</p>
           <Badge tone={atLimit ? "warning" : "neutral"}>
             {seats.length}/{seatLimit} seats
           </Badge>
@@ -139,9 +208,19 @@ export function LinkedInSeatsWorkspace({
           className="shrink-0 whitespace-nowrap"
         >
           <Icon name="Plus" className="h-3.5 w-3.5" />
-          Add Employee Seat
+          Add employee seat
         </Button>
       </div>
+
+      {/* #83: the agent pages ask for "a seat" too, read a different
+          collection, and count nobody here — so the pill above is only honest
+          if this says what it is counting. It is also where the money is: this
+          roster charges credits past the plan limit and the agent pages do not. */}
+      <p className="mb-3 text-[11px] text-muted-2">
+        Teammates who have signed in with LinkedIn, so we can publish and measure on their own
+        handle. The people your agents write for are set up on each agent&rsquo;s own page instead,
+        and are not counted here.
+      </p>
 
       {/* Add form */}
       {adding && (
@@ -224,8 +303,10 @@ export function LinkedInSeatsWorkspace({
               <div className="flex items-center justify-between gap-3">
                 <p className="truncate text-xs text-muted-2">{seat.employeeEmail}</p>
                 <div className="flex shrink-0 items-center gap-2">
+                  {/* The stored word, through a label table. `.toUpperCase()`
+                      shouted the enum itself at the client. */}
                   <Badge tone={seat.status === "active" ? "success" : "neutral"}>
-                    {seat.status.toUpperCase()}
+                    {SEAT_STATUS_LABEL[seat.status]}
                   </Badge>
                   <button
                     type="button"
@@ -253,6 +334,10 @@ export function LinkedInSeatsWorkspace({
                   </button>
                 </div>
               </div>
+
+              {statusError?.seatId === seat.id && (
+                <p className="mt-2 text-xs text-danger">{statusError.message}</p>
+              )}
 
               {/* Row 3: two-step remove confirm — same warning-strip shape as
                   the monetization gate above. Removal is not refunded and the

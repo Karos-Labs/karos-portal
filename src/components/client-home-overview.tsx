@@ -5,6 +5,7 @@ import { relativeTime } from "@/lib/utils";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
 import { ASSET_TYPE_LABEL } from "@/lib/asset-type-copy";
 import { clientDeliveryStamp, isInClientArchive } from "@/lib/asset-visibility";
+import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { postKind } from "@/lib/calendar-kind";
 import type { Asset, ClientTask } from "@/lib/types";
 
@@ -31,15 +32,29 @@ const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info">
  * an un-redacted future title would leak; the redaction stays at the page.
  */
 export function ClientHomeOverview({
+  clientId,
   tasks,
   assets,
   viewerIsClient = false,
 }: {
+  /**
+   * Whose account this page is. Needed only so the archive links resolve for a
+   * STAFF reader: `?tab=archive` is read by ProgressView alone, and TasksBody
+   * mounts ProgressView only with a client in scope, so the flat
+   * `/tasks?tab=archive` these two links used to carry dropped a staff viewer
+   * onto the cross-client board with no archive at all — the same defect as #90
+   * on the three agent intake pages, found by grepping its shape rather than
+   * its symptom. The plain `/tasks` links below are NOT that shape: the
+   * cross-client board does hold this client's tasks, so they land somewhere
+   * real (unfiltered, which is a different complaint).
+   */
+  clientId: string;
   tasks: ClientTask[];
   assets: Asset[];
   /** Whose "Recent activity" this is — see the list below (A3/A4). */
   viewerIsClient?: boolean;
 }) {
+  const archive = clientArchiveLink({ clientId, isStaff: !viewerIsClient });
   // Counted off the deliverables themselves, not off agent runs in `review` —
   // the row links into the deliverable archive, so the number has to describe
   // the same data the client is about to see.
@@ -188,7 +203,7 @@ export function ClientHomeOverview({
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Recent activity</CardTitle>
           <Link
-            href="/tasks?tab=archive"
+            href={archive.href}
             className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
           >
             Open archive
@@ -240,7 +255,7 @@ export function ClientHomeOverview({
               return (
                 <li key={a.id}>
                   {inArchive ? (
-                    <Link href="/tasks?tab=archive" className={`${base} transition-colors hover:border-border-strong`}>
+                    <Link href={archive.href} className={`${base} transition-colors hover:border-border-strong`}>
                       {body}
                     </Link>
                   ) : (

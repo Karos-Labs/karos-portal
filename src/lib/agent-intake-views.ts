@@ -21,6 +21,7 @@ import {
   getCustomAgentByKey,
   listAgentIntake,
   listClientSeats,
+  listCustomAgents,
   listJobs,
   listLiDraftFeedback,
   listRedditDraftFeedback,
@@ -28,6 +29,12 @@ import {
   listXNewsUpdates,
   listXTakes,
 } from "@/lib/data";
+import {
+  agentKeyMatchesClientSlug,
+  isLinkedInAgentIdentity,
+  isRedditAgentIdentity,
+  isXAgentIdentity,
+} from "@/lib/custom-agent-launch";
 import type {
   LinkedInAgentIntake,
   LiIntakeView,
@@ -52,6 +59,55 @@ import type { AgentIntake, Job } from "@/lib/types";
 export type XAgentIntakeProps = ComponentProps<typeof XAgentIntake>;
 export type LinkedInAgentIntakeProps = ComponentProps<typeof LinkedInAgentIntake>;
 export type RedditAgentIntakeProps = ComponentProps<typeof RedditAgentIntake>;
+
+/**
+ * Which key predicate answers for which intake family.
+ *
+ * A RECORD keyed by the union rather than an if-chain, so widening
+ * `AgentIntake["agent"]` is a type error here instead of a fourth family
+ * silently inheriting whichever branch happened to be last.
+ */
+const IDENTITY_BY_FAMILY: Record<AgentIntake["agent"], (key: string) => boolean> = {
+  x: isXAgentIdentity,
+  linkedin: isLinkedInAgentIdentity,
+  reddit: isRedditAgentIdentity,
+};
+
+/**
+ * This client's own agent page for an intake family, or null.
+ *
+ * For #82: an intake page's header control sends a CLIENT to the agent's own
+ * page (the only surface where their run gesture lives), and needs that page's
+ * `customAgents` doc id to do it. Resolved from the GRANT rather than from the
+ * key alone, because the detail route's client guard is
+ * `client.customAgentIds.includes(agent.id) || hasDelivered` — this asks the
+ * cheaper half of that condition, which is strictly NARROWER, so an id it
+ * returns is one the route will open and an id it withholds may still have been
+ * openable. That is the fail-closed direction: the caller's fallback is an
+ * honestly-labelled link to the roster, not a 404.
+ *
+ * The instance filter is the same predicate the agents page and the submit core
+ * use (`agentKeyMatchesClientSlug`), so this can never point a client at
+ * another client's per-client instance.
+ */
+export async function intakeAgentPageId(args: {
+  family: AgentIntake["agent"];
+  clientSlug: string | null | undefined;
+  grantedAgentIds: readonly string[] | null | undefined;
+}): Promise<string | null> {
+  const granted = new Set(args.grantedAgentIds ?? []);
+  if (granted.size === 0) return null;
+  const matchesFamily = IDENTITY_BY_FAMILY[args.family];
+  const agents = await listCustomAgents();
+  const hit = agents.find(
+    (agent) =>
+      agent.enabled &&
+      granted.has(agent.id) &&
+      matchesFamily(agent.key) &&
+      agentKeyMatchesClientSlug(agent.key, args.clientSlug),
+  );
+  return hit?.id ?? null;
+}
 
 /**
  * The run rows a viewer may see — the same treatment on all three surfaces.
@@ -82,6 +138,38 @@ function toRunRowViews(
     createdAt: j.createdAt,
     ...(isStaff ? { href: `/jobs/${j.id}` } : {}),
   }));
+}
+
+/**
+ * The statuses that mean the agent service is holding a run of this agent right
+ * now — it already has its own copy of the payload and the portal has no recall
+ * channel.
+ */
+const IN_FLIGHT_STATUSES: ReadonlySet<Job["status"]> = new Set<Job["status"]>([
+  "queued",
+  "running",
+]);
+
+/**
+ * Is one of this agent's runs queued or working?
+ *
+ * ASKED OF THE JOBS, never of the rows `toRunRowViews` returns, and that is the
+ * whole point of it living here. A client's rows are collapsed to ONE per
+ * calendar day (newest kept, failures exempt), so a run queued at 09:00
+ * disappears from that list the moment a later run the same day lands in any
+ * non-failed state — and a fire producing a week of drafts is exactly why the
+ * collapse exists. Derived in the browser from the collapsed list, "a run is in
+ * flight" therefore answered TRUE for staff, whose rows are not collapsed, and
+ * FALSE for the client — who is the only viewer the seat-removal confirm is
+ * written for (#84): they are the one who presses Remove and the one who has to
+ * be told a run already has that person's details.
+ *
+ * So it is answered once, on the server, from the unfiltered scan, and travels
+ * as its own prop. The collapse is a display decision; this is not, and it must
+ * not be re-derived from a display list.
+ */
+function anyRunInFlight(jobs: readonly Job[]): boolean {
+  return jobs.some((j) => IN_FLIGHT_STATUSES.has(j.status));
 }
 
 /**
@@ -186,6 +274,7 @@ export async function buildXAgentIntakeView(
       createdAt: f.createdAt,
     })),
     runs,
+    runInFlight: anyRunInFlight(xJobs),
     isStaff: opts.isStaff,
   };
 }
@@ -243,6 +332,7 @@ export async function buildLinkedInAgentIntakeView(
       createdAt: f.createdAt,
     })),
     runs,
+    runInFlight: anyRunInFlight(liJobs),
     isStaff: opts.isStaff,
   };
 }

@@ -19,7 +19,8 @@ import {
 } from "@/lib/agent-service/verify";
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
-import type { AssetType, ExternalJobArtifact, JobStatus } from "@/lib/types";
+import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
+import type { ExternalJobArtifact, JobStatus } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -59,20 +60,10 @@ const STATUS_MAP: Record<AgentServiceWebhookPayload["status"], JobStatus> = {
   cancelled: "cancelled",
 };
 
-const ASSET_TYPE_MAP = {
-  social_post: "social_post",
-  newsletter_issue: "email",
-  blog_article: "article",
-  landing_page: "note",
-  custom: "note",
-} as const satisfies Record<
-  "social_post" | "newsletter_issue" | "blog_article" | "landing_page" | "custom",
-  AssetType
->;
-
-// Asset types a custom job may request via metadata.asset_type (whitelist — a
-// hint is only honored if it's one of these, otherwise we fall back to "note").
-const VALID_HINT_TYPES = new Set<AssetType>(["social_post", "instagram_post", "email", "article", "note"]);
+// The task-type map, the metadata.asset_type whitelist and the draft-only fence
+// over both now live in one module (agent-service/deliverable-asset-type.ts),
+// because the type decides whether the product will offer to PUBLISH the
+// deliverable — see `deliverableAssetType` at the asset write below.
 
 const TEXT_EXTENSIONS = [".md", ".html", ".txt"];
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
@@ -128,6 +119,38 @@ const webhookPayloadSchema = z.object({
 function extension(name: string): string {
   const i = name.lastIndexOf(".");
   return i >= 0 ? name.slice(i).toLowerCase() : "";
+}
+
+const MB = 1024 * 1024;
+
+/**
+ * Bytes as whole megabytes for the run log — and the rounding DIRECTION is part
+ * of the sentence, not a detail.
+ *
+ * `Math.round` on both halves of a comparison made the reason contradict itself:
+ * a 25.4 MB artifact against a 25 MB cap logged "it is 25 MB, over the 25 MB
+ * per-file limit", which is the message a staff member reads to decide whether to
+ * raise the cap. Every file between 25.0 and 25.5 MB said that, and the run-total
+ * message had the same property near 150 MB.
+ *
+ * So a size that BROKE a limit rounds up and a size already CONSUMED rounds down.
+ * Both err away from the claim being made, so neither can read as equal to the
+ * limit it is being compared against. The cost is that a 25.4 MB file is logged
+ * as 26 MB — an overstatement under 1 MB, which cannot change the decision this
+ * sentence exists to inform (whether to raise the cap) and cannot contradict it.
+ */
+function mbAtLeast(bytes: number): number {
+  return Math.ceil(bytes / MB);
+}
+
+/** A size already consumed — rounded down, so it never claims more than it used. */
+function mbAtMost(bytes: number): number {
+  return Math.floor(bytes / MB);
+}
+
+/** An exact limit. The constants are whole megabytes, so this is lossless. */
+function mbExact(bytes: number): number {
+  return bytes / MB;
 }
 
 /**
@@ -307,6 +330,34 @@ export async function POST(req: NextRequest) {
   // delivery that loses the race leaves no trace.
   const events = [...job.events];
   const artifacts: ExternalJobArtifact[] = [];
+  // ── The two lists the asset is built from (findings #47, #50, #51) ──
+  // `artifacts` is the JOB's record: every entry the manifest declared, in
+  // manifest order, client-facing or not, and for an entry we could not copy it
+  // keeps the service's own URL so staff can still fetch the file from the job
+  // page while that link lives.
+  //
+  // `rehosted` is the CLIENT's record: only the entries whose bytes are now in
+  // our storage. The asset is built from this list and nothing else, which is
+  // the invariant that closes #47 — an agent-service artifact URL is a V4 signed
+  // GCS link with a 7-day TTL, so a client-facing asset carrying one plays for a
+  // week and then 403s forever, with nothing anywhere saying why.
+  //
+  // WHAT A CLIENT SEES for an artifact we could not copy, decided rather than
+  // defaulted: nothing. Not a link that works today and dies next week. The file
+  // stays on the run record for staff (the jobs page links every artifact), the
+  // reason is one loud error event per file, and if NOTHING was copied the run is
+  // treated as the zero-deliverable run it is — refunded, and the ticket released
+  // as retryable. The residual we accept: a 30 MB video the client could have
+  // watched this week is not offered at all, and the remedy is a human (raise the
+  // per-file limit, or hand the file over). A silent expiry is worse than an
+  // absence somebody is told about.
+  const rehosted: ExternalJobArtifact[] = [];
+  // One entry per client-facing artifact we could NOT copy: the file, and why.
+  const notRehosted: { name: string; reason: string }[] = [];
+  // The image files among them, kept separately for the carousel report below:
+  // slides and the cover are derived from the images we HAVE, so a missing
+  // slide-1 silently promotes slide-2 to the cover (#50).
+  const missingImages: string[] = [];
   let rehostedTotal = 0;
   let launchTemplatesJson: string | null = null;
   let primaryText: { artifact: AgentServiceArtifact; content: string } | null = null;
@@ -342,32 +393,65 @@ export async function POST(req: NextRequest) {
         ...(artifact.content_type ? { contentType: artifact.content_type } : {}),
         url: artifact.url,
       };
-      const withinBudget =
-        artifact.bytes <= REHOST_FILE_LIMIT_BYTES &&
-        rehostedTotal + artifact.bytes <= REHOST_TOTAL_LIMIT_BYTES;
-      if (artifact.client_facing && artifact.url && withinBudget) {
+      // ONE reporting path for every way a client-facing artifact fails to
+      // arrive, so no reason can be quieter than another. The size-capped path
+      // used to fall straight through to `artifacts.push(entry)` logging NOTHING
+      // while the HTTP-error path logged — same outcome for the client, one of
+      // them invisible (#47).
+      let copiedIntoOurStorage = false;
+      const cannotRehost = (reason: string) => {
+        // The two lists stay mutually exclusive. Everything after the upload is
+        // pure, but a throw there would otherwise report a file that IS attached
+        // to the deliverable as missing from it — a log that contradicts the asset
+        // beside it is worse than one line fewer.
+        if (copiedIntoOurStorage) return;
+        notRehosted.push({ name: artifact.name, reason });
+        if (IMAGE_EXTENSIONS.includes(extension(artifact.name))) missingImages.push(artifact.name);
+        events.push({
+          at: Date.now(),
+          level: "error",
+          message:
+            `Could not re-host ${artifact.name} - ${reason}. ` +
+            `It stays on the run record for staff and is NOT attached to the client's deliverable.`,
+        });
+      };
+
+      if (!artifact.client_facing) {
+        // Internal working file: never re-hosted, never on the asset, not a
+        // failure. Its service URL on the job record is the intended state.
+      } else if (!artifact.url) {
+        cannotRehost("the service sent no download URL");
+      } else if (artifact.bytes > REHOST_FILE_LIMIT_BYTES) {
+        cannotRehost(
+          `it is ${mbAtLeast(artifact.bytes)} MB, past the ${mbExact(REHOST_FILE_LIMIT_BYTES)} MB per-file limit`,
+        );
+      } else if (rehostedTotal + artifact.bytes > REHOST_TOTAL_LIMIT_BYTES) {
+        // Says why THIS file was refused, not just how full the run is. "already
+        // copied 149 MB of its 150 MB limit" reads as though there was room.
+        cannotRehost(
+          `this run has already copied ${mbAtMost(rehostedTotal)} MB and this file would take it past its ${mbExact(REHOST_TOTAL_LIMIT_BYTES)} MB limit`,
+        );
+      } else {
         try {
           const res = await fetch(artifact.url, {
             headers: agentServiceFetchHeaders(artifact.url),
             signal: AbortSignal.timeout(fetchBudgetMs),
           });
           if (!res.ok) {
-            events.push({
-              at: Date.now(),
-              level: "error",
-              message: `Could not re-host ${artifact.name} (HTTP ${res.status}) - keeping service URL`,
-            });
-          }
-          if (res.ok) {
+            cannotRehost(`the service answered HTTP ${res.status}`);
+          } else {
             const bytes = Buffer.from(await res.arrayBuffer());
             // Measured HERE, immediately before the upload, rather than before
             // the body read above — reading the body spends phase budget too,
             // and a budget measured before it would let a slow read push the
             // upload past the deadline. Non-positive means don't start the
-            // upload: this artifact keeps its service URL and the top of the
-            // loop ends the phase.
+            // upload: this artifact keeps its service URL on the job record, is
+            // reported as un-attachable below, and the top of the loop ends the
+            // phase.
             const uploadBudgetMs = Math.min(ARTIFACT_UPLOAD_TIMEOUT_MS, remainingRehostMs());
-            if (uploadBudgetMs > 0) {
+            if (uploadBudgetMs <= 0) {
+              cannotRehost("the run ran out of time before the file could be copied");
+            } else {
               rehostedTotal += bytes.length;
               const hosted = await uploadBytes({
                 bytes,
@@ -376,6 +460,7 @@ export async function POST(req: NextRequest) {
                 timeoutMs: uploadBudgetMs,
               });
               entry.url = hosted.url;
+              copiedIntoOurStorage = true;
               // The setup run's structured output (seam T1). Captured here off
               // the bytes we already fetched — no second round-trip — and only
               // for launch runs, so a client agent that happens to ship a
@@ -407,21 +492,51 @@ export async function POST(req: NextRequest) {
             }
           }
         } catch {
-          events.push({ at: Date.now(), level: "error", message: `Could not re-host ${artifact.name}` });
+          // The fetch timed out, the body read died, or the upload threw. This
+          // catch cannot tell the three apart, so the reason does not pretend to.
+          cannotRehost("the transfer failed");
         }
       }
       artifacts.push(entry);
+      if (copiedIntoOurStorage) rehosted.push(entry);
     }
   }
 
   // Natural-sort by filename so slide-2 precedes slide-10, then expose each
   // image as a carousel slide the asset card can page through.
-  const orderedImageUrls = imageEntries
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-    .map((e) => e.url);
+  const orderedImages = imageEntries.sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true }),
+  );
+  const orderedImageUrls = orderedImages.map((e) => e.url);
+  // #50 — the carousel that arrives short. `slides` and the cover below are
+  // derived from the images that re-hosted, so a failed slide leaves a carousel
+  // one photo shorter and, when it is the FIRST one, hands the cover to the next
+  // slide along. Both were silent. Nothing here can recover the missing photo;
+  // what it can do is stop the run reading as complete, and name the file that is
+  // now the cover so the two facts are in one place.
+  if (missingImages.length > 0 && orderedImages.length > 0) {
+    events.push({
+      at: Date.now(),
+      level: "error",
+      message:
+        `Carousel is short ${missingImages.length} photo(s) (${missingImages.join(", ")}) - ` +
+        `the deliverable carries ${orderedImages.length}, and the cover is now ${orderedImages[0]!.name}.`,
+    });
+  }
   const slides =
     orderedImageUrls.length > 1 ? orderedImageUrls.map((url) => ({ imageUrl: url })) : undefined;
-  const clientFacingCount = artifacts.filter((a) => a.clientFacing).length;
+  // THE count of what the client is actually getting, and the reason it is not
+  // `artifacts.filter(clientFacing).length` any more (#51): that number counted
+  // what the manifest DECLARED. A 60s timeout or a non-200 on DRAFTS.md left it
+  // at 1 and created a titled asset with an empty body, an orderKey, a chain date
+  // and a place on the calendar — a deliverable, as far as every surface could
+  // tell, with nothing in it.
+  //
+  // "Copied" and not "has text": an image-only run is a real delivery whose
+  // primary text is legitimately empty (task-sync.ts, on `artifact: ""` being a
+  // real renderable state), and so is a PDF-only run. What is not a delivery is a
+  // run where nothing at all reached our storage.
+  const deliveredCount = rehosted.length;
   // For the Task Map sync below: the run may have been dispatched by a board
   // task, whose ticket gets the deliverable for client preview.
   const taskArtifactContent = primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "";
@@ -478,16 +593,28 @@ export async function POST(req: NextRequest) {
   let createdAssetId: string | null = null;
 
   if (payload.status === "done") {
-    if (clientFacingCount > 0) {
+    if (deliveredCount > 0) {
       // Custom agents (e.g. the LinkedIn generators) produce any asset shape, so
-      // "note" is the safe default — but the submitter can hint the real type +
-      // platform through metadata, which lands the draft as a schedulable post
-      // with the right recommended window instead of a slot-less library note.
-      const hintedType = payload.metadata?.asset_type as AssetType | undefined;
-      const assetType =
-        payload.task_type === "custom" && hintedType && VALID_HINT_TYPES.has(hintedType)
-          ? hintedType
-          : (ASSET_TYPE_MAP[payload.task_type] ?? "note");
+      // the slot-less library note is the safe default — but the submitter can
+      // hint the real type + platform through metadata, which lands the draft as
+      // a schedulable post with the right recommended window.
+      //
+      // The hint is whitelisted AND fenced: the type is what decides whether the
+      // product offers to publish this deliverable, and a Reddit reply must never
+      // become publishable (#49 — the fence, the whitelist and the task-type map
+      // are all in agent-service/deliverable-asset-type.ts). The deliverable's own
+      // text is the primary signal, the run's identity strings the fallback.
+      const assetType = deliverableAssetType({
+        taskType: payload.task_type,
+        hint: payload.metadata?.asset_type,
+        content: primaryText?.content,
+        identity: [
+          job.agentName,
+          job.title,
+          payload.metadata?.karos_agent_key,
+          payload.metadata?.platform,
+        ],
+      });
       const platform = payload.metadata?.platform || undefined;
       // Strip the appended " - <client>" the submit paths add, so a client's
       // own workspace doesn't put their company name in half of every title.
@@ -515,7 +642,13 @@ export async function POST(req: NextRequest) {
           meta: {
             taskType: payload.task_type,
             agentsRepoSha: payload.agents_repo_sha,
-            artifacts: artifacts.filter((a) => a.clientFacing),
+            // ONLY the artifacts now in our own storage — see the `rehosted`
+            // note above. This was `artifacts.filter(clientFacing)`, which put
+            // every un-re-hosted 7-day service URL onto the client's asset:
+            // assetVideos/assetImages read this list, so a 30 MB clip over the
+            // per-file cap played for a week and then 403'd forever (#47), and a
+            // carousel's failed slide left its dying URL in the record (#50).
+            artifacts: rehosted,
             ...(slides ? { slides } : {}),
             // Staff-only working material, excluded from every client library
             // surface by getClientLibraryAssets. Flagged on the asset itself
@@ -620,6 +753,13 @@ export async function POST(req: NextRequest) {
       // attempted. The client paid for a deliverable and received none, which is
       // the same outcome as a failed run and is refunded the same way.
       //
+      // REACHED TWO WAYS since #51: a manifest with no client-facing artifact at
+      // all, and a manifest whose client-facing artifacts all failed to reach our
+      // storage. The second used to create an empty titled asset instead, so it
+      // never refunded and never released the ticket. `notRehosted` below is what
+      // keeps the two apart in the log — "produced no deliverables" would be a
+      // lie about a run that produced a file we could not copy.
+      //
       // BOTH LEDGER KEYS, because the charge is not always filed under the job.
       // A run fired at the agent directly is charged under the JOB id; a run
       // dispatched by a board task was charged under the TASK id before this job
@@ -657,11 +797,28 @@ export async function POST(req: NextRequest) {
           message: `Refunded ${zeroDeliverableRefund.amount} credit${zeroDeliverableRefund.amount === 1 ? "" : "s"} — the run produced no client-facing deliverables`,
         });
       }
+      if (notRehosted.length > 0) {
+        events.push({
+          at: now,
+          level: "error",
+          message:
+            `No deliverable was created: the run produced ${notRehosted.length} client-facing file(s) ` +
+            `and none of them could be copied into platform storage. They are listed above with a reason each.`,
+        });
+      }
     }
+    // Counts what was ATTACHED, not what the manifest declared, and names the
+    // shortfall rather than letting the run read as clean (#47/#50/#51). The
+    // per-file reasons are each on their own line above, so this one carries the
+    // names only: it is the line a reader sees first, not the record.
     events.push({
       at: now,
-      level: "success",
-      message: `Agent run complete - ${clientFacingCount} client-facing deliverable(s), attempt ${payload.attempt}`,
+      level: notRehosted.length > 0 ? "error" : "success",
+      message:
+        `Agent run complete - ${deliveredCount} client-facing deliverable(s) attached, attempt ${payload.attempt}` +
+        (notRehosted.length > 0
+          ? `. ${notRehosted.length} could not be re-hosted and are NOT on the deliverable: ${notRehosted.map((a) => a.name).join(", ")}`
+          : ""),
     });
   } else {
     events.push({

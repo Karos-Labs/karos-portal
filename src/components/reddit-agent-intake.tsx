@@ -24,6 +24,8 @@ import { SavedFormCard } from "@/components/saved-form-card";
 import { JobStatusBadge } from "@/components/job-status";
 import { formatDate, relativeTime } from "@/lib/utils";
 import type { JobStatus } from "@/lib/types";
+import { clientArchiveLink, intakeAnchorId } from "@/lib/agent-intake-links";
+import { intakeSave } from "@/lib/intake-save";
 import {
   addRedditDraftFeedbackAction,
   saveRedditCompanyIntakeAction,
@@ -93,16 +95,18 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
   function save() {
     setError(null);
     start(async () => {
-      const result = await saveRedditCompanyIntakeAction({
-        clientId,
-        username,
-        accountHistory,
-        subreddits,
-        offLimitsSubreddits,
-        disclosurePosture,
-        offLimits,
-        mode,
-      });
+      const result = await intakeSave(() =>
+        saveRedditCompanyIntakeAction({
+          clientId,
+          username,
+          accountHistory,
+          subreddits,
+          offLimitsSubreddits,
+          disclosurePosture,
+          offLimits,
+          mode,
+        }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -281,17 +285,22 @@ function FeedbackBox({
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [note, setNote] = useState("");
+  // #90: `?tab=archive` is read only by ProgressView, and a staff viewer at the
+  // flat /tasks never gets one. The destination and its label move together.
+  const archive = clientArchiveLink({ clientId, isStaff });
 
   function submit() {
     setError(null);
     setSent(false);
     start(async () => {
-      const result = await addRedditDraftFeedbackAction({
-        clientId,
-        account: "program",
-        action: "note",
-        reason: note,
-      });
+      const result = await intakeSave(() =>
+        addRedditDraftFeedbackAction({
+          clientId,
+          account: "program",
+          action: "note",
+          reason: note,
+        }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -313,8 +322,8 @@ function FeedbackBox({
         Tell us what is working and what is not, in your own words. It goes straight into the
         agent&apos;s next run. Once your Karos team has approved the replies, saying whether you posted a
         reply happens on the reply itself, in{" "}
-        <a href="/tasks?tab=archive" className="underline hover:text-foreground">
-          your archive
+        <a href={archive.href} className="underline hover:text-foreground">
+          {archive.label}
         </a>
         {" "}— and that is the signal that sharpens the voice fastest.
       </p>
@@ -403,7 +412,13 @@ export function RedditAgentIntake({
 }) {
   return (
     <div className="space-y-6">
-      <AccountForm clientId={clientId} intake={company} />
+      {/* The anchor the agent page's inputs band links its one row to (#85).
+          Reddit has no seats and no news drop, so "company" is the whole set —
+          and it is derived from the same row id the band mints, not spelled
+          twice. */}
+      <div id={intakeAnchorId("company")} className="scroll-mt-24">
+        <AccountForm clientId={clientId} intake={company} />
+      </div>
       <FeedbackBox clientId={clientId} runs={runs} recent={feedback} isStaff={isStaff} />
     </div>
   );

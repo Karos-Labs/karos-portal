@@ -10,6 +10,7 @@ import { AssetCard } from "@/components/asset-card";
 // analytics chart was printing a third, drifted set of them to the same reader
 // (see asset-status-copy.ts).
 import { STAFF_ASSET_STATUS_LABEL } from "@/lib/asset-status-copy";
+import { platformLabel } from "@/lib/integrations/platforms";
 import type { Asset } from "@/lib/types";
 
 const STATUS_ORDER: Asset["status"][] = ["draft", "approved", "scheduled", "delivered", "published"];
@@ -86,10 +87,22 @@ export function AssetsView({
             aria-label="Filter assets by channel"
             value={channel}
             onChange={(event) => setChannel(event.target.value)}
-            className="h-8 rounded-md border border-border bg-surface px-2 text-xs capitalize text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
+            className="h-8 rounded-md border border-border bg-surface px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
           >
             <option value="all">All channels</option>
-            {channels.map((option) => <option key={option} value={option}>{option}</option>)}
+            {/*
+              `platformLabel`, not the bare id under CSS `capitalize` — which
+              title-cases the first letter of each word and so printed "Linkedin"
+              and "Tiktok", misspelling both brands. That is QA F122, recorded
+              against the connected-channels card and fixed there; this filter was
+              the copy that was missed. The class went with the id: it cannot stay
+              once the text is a real label, or "X (Twitter)" would be re-cased too.
+            */}
+            {channels.map((option) => (
+              <option key={option} value={option}>
+                {platformLabel(option)}
+              </option>
+            ))}
           </select>
         )}
         <span className="ml-auto px-1 text-[11px] text-muted-2">Newest first</span>

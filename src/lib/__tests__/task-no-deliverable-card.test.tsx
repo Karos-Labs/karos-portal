@@ -61,6 +61,7 @@ function ticketMarkup(status: string, metadata: Record<string, unknown>): string
       onClose={() => {}}
       onStatusChange={() => {}}
       onLocalUpdate={() => {}}
+      onDelete={() => {}}
     />,
   );
 }

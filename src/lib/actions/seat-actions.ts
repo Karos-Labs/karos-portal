@@ -20,7 +20,12 @@ import {
 } from "@/lib/credits";
 import type { AppUser } from "@/lib/types";
 
-type SeatActionResult =
+/**
+ * Exported so the workspace can read the refusal and a THROWN failure through
+ * one narrowing (`seatFailure` there) instead of three ad-hoc ones. A type-only
+ * export; nothing about the action contract changes.
+ */
+export type SeatActionResult =
   | { ok: true; seatId?: string; charged?: number }
   | { ok: false; error: string; gated?: boolean };
 

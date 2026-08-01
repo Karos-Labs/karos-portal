@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
-import { buildLinkedInAgentIntakeView } from "@/lib/agent-intake-views";
+import { buildLinkedInAgentIntakeView, intakeAgentPageId } from "@/lib/agent-intake-views";
+import { intakePageAction } from "@/lib/agent-intake-links";
 import { PageHeader } from "@/components/ui";
 import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
 
@@ -23,10 +24,24 @@ export default async function LinkedInAgentPage({ params }: { params: Promise<{ 
 
   const client = await requireVisibleClient(user, id);
 
-  const view = await buildLinkedInAgentIntakeView(id, {
-    isStaff,
-    ...(client.socialLinks?.linkedin ? { pageUrlSuggestion: client.socialLinks.linkedin } : {}),
-  });
+  const [view, agentId] = await Promise.all([
+    buildLinkedInAgentIntakeView(id, {
+      isStaff,
+      ...(client.socialLinks?.linkedin ? { pageUrlSuggestion: client.socialLinks.linkedin } : {}),
+    }),
+    // Resolved for BOTH roles. It used to be skipped for staff "whose destination is
+    // the roster either way" — but the roster carries no run control for staff
+    // either (CD-I1 moved every staff run gesture to the agent's own page), so
+    // staff need the same destination a client gets.
+    intakeAgentPageId({
+        family: "linkedin",
+        clientSlug: client.agentsRepoSlug,
+        grantedAgentIds: client.customAgentIds,
+      }),
+  ]);
+  // Per role: the roster carries run controls for staff and none for a client,
+  // whose run gesture lives on the agent's own page (#82).
+  const action = intakePageAction({ clientId: id, isStaff, agentId });
 
   return (
     <>
@@ -35,10 +50,10 @@ export default async function LinkedInAgentPage({ params }: { params: Promise<{ 
         description="What we collect to run LinkedIn for you: the company page, a seat per person, and your ongoing drops. Drafts only — a person always posts."
         action={
           <a
-            href={`/clients/${id}/agents`}
+            href={action.href}
             className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
           >
-            Run the agent →
+            {action.label}
           </a>
         }
       />

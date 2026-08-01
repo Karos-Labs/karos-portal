@@ -56,30 +56,39 @@
  * copy for a stored `publishError` — the hold sentence, the prefix that
  * identifies it, and the heading a reader sees over it.
  *
- * What is out of scope: a surface that renders `Asset["status"]` directly
- * instead of looking a label up. Two client-reachable ones did, and now ask the
- * accessor (components/client-home-overview.tsx's Recent activity badge,
- * components/asset-detail-modal.tsx's status badge). Three still render the raw
- * enum, and they are left alone deliberately: the staff register says "Awaiting
- * review" where CSS `capitalize` renders "Draft", so converting them changes a
- * staff word, which is a copy decision and not a duplicate to delete. What makes
- * each one staff-only differs, so each is named with its own reason rather than
- * lumped under one clause:
+ * NO LONGER OUT OF SCOPE: a surface that renders `Asset["status"]` directly
+ * instead of looking a label up. There were five. Four now ask an accessor —
+ * components/client-home-overview.tsx's Recent activity badge,
+ * components/asset-detail-modal.tsx's status badge, components/asset-card.tsx and
+ * components/client-agents/outputs-hub.tsx — and the fifth,
+ * components/client-agents/clip-gallery.tsx, renders it inside its own
+ * `!viewerIsClient &&` branch, which no client evaluates.
  *
- *  • components/asset-card.tsx — renders it unconditionally, and both mounts sit
- *    behind a staff route (app/(app)/jobs/[id] requires KAROS_ADMIN/EMPLOYEE;
- *    assets-view's two pages redirect a CLIENT_USER away).
- *  • components/client-agents/outputs-hub.tsx — also unconditional. Its gate is
- *    the Control Room mount, which asset-status-surfaces.test.ts pins as staff-only
- *    for the sake of its hard-coded `viewerIsClient={false}`.
- *  • components/client-agents/clip-gallery.tsx — the only one of the three with a
- *    `!viewerIsClient` branch of its own.
+ * The last two were left alone by an earlier pass, on the argument that converting
+ * them changes a staff word (this register's "Awaiting review" where the raw enum
+ * rendered "draft", or "Draft" under CSS `capitalize`) and so is a copy decision
+ * rather than a duplicate to delete. That argument was ANSWERED rather than
+ * overruled: assets-view prints "Awaiting review" as the group HEADING directly
+ * above the very cards whose badge said "Draft", so the staff word was already
+ * divergent on one screen, and the change removes a second name rather than
+ * inventing one. Both are staff-only, each by its own mechanism — asset-card's two
+ * mounts sit behind staff routes (app/(app)/jobs/[id] requires
+ * KAROS_ADMIN/EMPLOYEE; assets-view's pages redirect a CLIENT_USER away), while
+ * outputs-hub's only mount is the Control Room, which the agent page wraps in
+ * `isStaff &&`.
  *
- * PATHS, because the previous version of this line named the last two by bare
- * filename — the same pointer defect asset-type-copy.ts's note declares fixed, and
- * worse here, since both live under components/client-agents/ rather than
- * components/. It also attached "the `!viewerIsClient` branch" to all three when
- * only one has one.
+ * That is not a claim that NO raw status render exists in src/. It is
+ * status-render-sweep.test.ts that makes a claim of that shape, and it makes it
+ * for the shapes it can read and the two key domains it can decide. Other
+ * `.status` fields do still render raw on staff screens — a Client's in
+ * components/clients-grid.tsx, a lab-import candidate's in
+ * components/custom-agents.tsx — and they are different key domains with no
+ * register here, which that sweep records rather than covering silently.
+ *
+ * PATHS, because an earlier version of this note named files by bare filename —
+ * the same pointer defect asset-type-copy.ts's note declares fixed, and worse
+ * here, since two of the five live under components/client-agents/ rather than
+ * components/.
  *
  * Also out of scope: `calendar-kind.ts`'s POST_KIND_LABEL (read through
  * `postKindLabel`), keyed by `CalendarAssetKind` — a different key domain

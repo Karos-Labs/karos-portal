@@ -205,8 +205,13 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               assets={analyticsAssets}
               jobs={jobs}
               integrations={integrations}
+              // A3: the "Agent runs · Last run …" tile is the generation batch,
+              // so a client gets four tiles about their own content and none
+              // about our machinery. See the component's note.
+              viewerIsClient={isClientViewer}
             />
             <ClientHomeOverview
+              clientId={client.id}
               tasks={tasks}
               assets={overviewAssets}
               viewerIsClient={isClientViewer}

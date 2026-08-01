@@ -21,6 +21,22 @@ function fileKey(f: MetaFile): string {
 }
 
 /**
+ * ── WHOSE JOB THE URL'S LIFETIME IS ──────────────────────────────────────────
+ * These readers hand out whatever URL the ingest path stored, and that is
+ * deliberate: they cannot tell a durable link from an expiring one (a
+ * bulk-uploaded clip's signed GCS URL and a lab import's hosted URL look alike,
+ * and only the writer knows which is re-signable). The DURABILITY rule therefore
+ * lives at the writers — the agent-service webhook now attaches an artifact to an
+ * asset only once its bytes are in platform storage (`rehosted` there), so a
+ * client-facing `meta.artifacts` entry is a Firebase Storage URL with no TTL.
+ *
+ * STATED RESIDUAL: documents written BEFORE that fix can still hold an
+ * agent-service URL in `meta.artifacts` — a V4 signed GCS link that expires 7 days
+ * after its run — and nothing here can recognise one, because no host or shape
+ * distinguishes it from a legitimate hosted link. Those assets play and download
+ * until their link dies. A backfill over `meta.artifacts` is the fix for them and
+ * has not been written.
+ *
  * Every photo in an asset, in slide order. Handles every ingest shape:
  *   • meta.slides   — content-engine & agent-service carousels (photo + copy)
  *   • meta.images   — lab-imported posts (a flat, ordered list of hosted URLs)

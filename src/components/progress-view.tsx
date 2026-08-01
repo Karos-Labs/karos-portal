@@ -12,7 +12,7 @@ import {
 } from "@/components/activity-timeline";
 import { ArchiveView } from "@/components/archive-view";
 import { QuickAddTaskBar } from "@/components/quick-add-task-bar";
-import type { Asset, ClientReport, ClientTask, Role } from "@/lib/types";
+import type { Asset, ClientReport, ClientTask, Role, TaskOwner } from "@/lib/types";
 
 const VIEWS = ["board", "activity", "archive"] as const;
 type View = (typeof VIEWS)[number];
@@ -71,6 +71,18 @@ export function ProgressView({
   // router.replace) so switching tabs doesn't re-run this force-dynamic route's
   // server data fetches on every click.
   const [view, setView] = useState<View>(() => parseView(searchParams.get("tab")));
+  /**
+   * The owner the router sent the last added task to, and a nonce that changes
+   * on every add. The quick-add bar and the board are siblings here, so this is
+   * the join between them: without it the board never learned the verdict, the
+   * bar's `onAdded` had no caller in any render, and a task routed to Automated
+   * while the client sat on "Depending on you" was announced by name and
+   * rendered nowhere.
+   *
+   * A COUNTER, not the owner alone: two adds that route the same way must both
+   * reveal, and `{ owner }` on its own is a value that does not change.
+   */
+  const [revealOwner, setRevealOwner] = useState<{ owner: TaskOwner; nonce: number } | null>(null);
 
   // Same-route navigation (the client rail's "Workspace" link, or a bell row
   // pointing at ?tab=archive, clicked while already on /tasks) re-renders this
@@ -122,9 +134,19 @@ export function ProgressView({
       {view === "board" ? (
         <>
           <div className="mb-4">
-            <QuickAddTaskBar clientId={clientId} />
+            <QuickAddTaskBar
+              clientId={clientId}
+              onAdded={(owner) =>
+                setRevealOwner((prev) => ({ owner, nonce: (prev?.nonce ?? 0) + 1 }))
+              }
+            />
           </div>
-          <TasksBoard tasks={tasks} currentUserRole={currentUserRole} clientId={clientId} />
+          <TasksBoard
+            tasks={tasks}
+            currentUserRole={currentUserRole}
+            clientId={clientId}
+            revealOwner={revealOwner}
+          />
         </>
       ) : view === "activity" ? (
         <ActivityTimeline

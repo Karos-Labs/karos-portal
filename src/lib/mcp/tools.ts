@@ -19,6 +19,7 @@ import {
 } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
 import { contextKind } from "@/lib/context";
+import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import type { AssetType, Client } from "@/lib/types";
 import { canStaffAccessClient, type McpActor } from "./auth";
@@ -414,6 +415,76 @@ export const MCP_TOOLS: McpTool[] = [
       const id = resolveClientId(actor, clientId);
       await requireClient(actor, id);
 
+      // THE SECOND PATH THAT TYPES A DELIVERABLE FROM RUNTIME DATA, and it is
+      // the running agent's own choice: `type` is a tool argument, so a Reddit
+      // run holding a job token could ask for `social_post` and have its reply
+      // offered to twitter/linkedin/facebook/tiktok. The delivery webhook's fence
+      // is the same one, asked of the same two signals — the deliverable's text
+      // and the run's identity (agent-service/deliverable-asset-type.ts).
+      //
+      // IDENTITY IS THE RUN'S, NEVER THE CALLER'S OWN FREE TEXT. `title` used to
+      // lead this list, which built the widest identity surface in the tree out of
+      // a field the caller writes: the fence matches /reddit/i, so uploading
+      // "Reddit AMA recap - 5 takeaways" as a social_post silently produced a
+      // slot-less library note — no publish targets, no recommendedScheduleFields
+      // slot — for a post that merely MENTIONED the word. The webhook keys this
+      // same fence to run identity (agent name, job title, echoed agent key,
+      // platform hint), and that is the narrow ask honoured here too.
+      //
+      // It costs more to get wrong than it used to: nothing re-types an asset
+      // after creation (updateAssetAction builds its patch field by field, pinned
+      // in platforms-publishable.test.ts), so a wrongly-fenced asset has no
+      // recovery path at all.
+      //
+      // RESIDUAL, written down rather than claimed away: a STAFF caller has no
+      // job, so this supplies no identity and only the deliverable's own text
+      // answers. A Reddit reply pasted in by hand WITHOUT the batch heading
+      // `parseRedditDrafts` recognises is typed as asked — a person choosing a
+      // type for their own paste, which is the trust the Assets library already
+      // extends to staff, not an agent steering its own fence.
+      // FAIL CLOSED ON A LOST READ, for a service caller. `.catch(() => null)`
+      // made a job-document read failure indistinguishable from "staff caller,
+      // no job": `identity` became `[undefined, undefined]` and only the
+      // deliverable's own text answered — for the RUNNING AGENT, which is the
+      // exact actor this fence exists to constrain. A fence with no undo may not
+      // lose its identity half to a transient read.
+      //
+      // Refused rather than typed as `note`: a wrongly-fenced asset cannot be
+      // re-typed or deleted (see deliverable-asset-type.ts), so silently fencing
+      // it would be permanent, while a refusal the agent can RETRY loses nothing.
+      // A MISSING job is the same fail-open as an unreadable one — `getJob`
+      // resolves `null` for a document that is not there — so both are refused
+      // together rather than only the throwing half.
+      let producingJob = null;
+      let agentKey: string | undefined;
+      if (actor.kind === "service") {
+        producingJob = await getJob(actor.jobId).catch(() => null);
+        if (!producingJob) {
+          throw new Error(
+            "Could not read this run's record, so the deliverable's type cannot be decided safely. Retry the upload.",
+          );
+        }
+        // THE STRONGEST SIGNAL, and the one the webhook already asks. The webhook
+        // reads `karos_agent_key` off a signed payload; that value IS
+        // `agent.key.slice(0, MAX_KEY_CHARS)` (run-custom-agent.ts:231), so here
+        // it is one read off the job's own `customAgentId` — a field no caller
+        // supplies. A missing custom agent is not a refusal: a catalog run
+        // legitimately has none, and it simply adds no signal.
+        if (producingJob.customAgentId) {
+          const agent = await getCustomAgent(producingJob.customAgentId).catch(() => null);
+          agentKey = agent?.key || undefined;
+        }
+      }
+      const assetType = deliverableAssetType({
+        // "custom" because this is not a catalog product run: the requested type
+        // arrives as the `hint`, and the task type only names the default the fence
+        // would fall back to.
+        taskType: "custom",
+        hint: type,
+        content,
+        identity: [agentKey, producingJob?.agentName, producingJob?.title],
+      });
+
       let finalImageUrl: string | null = imageUrl ?? null;
       if (imageBase64) {
         const mime = imageMimeType ?? "image/png";
@@ -429,7 +500,7 @@ export const MCP_TOOLS: McpTool[] = [
         clientId: id,
         jobId: actor.kind === "service" ? actor.jobId : null,
         agentId: actor.kind === "service" ? "agent-service" : null,
-        type,
+        type: assetType,
         title,
         content,
         ...(meta ? { meta } : {}),

@@ -139,3 +139,181 @@ function skipInterpolation(src: string, open: number): number {
   }
   return src.length - 1;
 }
+
+/**
+ * Source with its comments removed, WITHOUT walking into string literals.
+ *
+ * The naive strip (`.replace(/\/\/.*$/gm, "")`) that nearly every scan in this
+ * directory carries its own copy of is the exact hazard named at the top of this
+ * file: it truncates any template literal holding a `//` — a URL — at the `//`,
+ * DELETING its closing backtick and manufacturing the one stray-backtick shape
+ * this module cannot contain. Written here, once, so a caller that needs
+ * comment-free text does not have to choose between reading comments as code and
+ * corrupting the ranges it then walks.
+ *
+ * WHAT IT DOES NOT HANDLE, stated because a scan that silently swallows a region
+ * and reports green is worse than no scan: a REGEX LITERAL containing a quote
+ * (`/['"]/`) is indistinguishable from a string open to this function, and one
+ * would open a bogus range that eats to the next matching quote. Callers must
+ * therefore keep their own non-vacuity check — plant the shape you are looking
+ * for into the very text you scanned and assert it is reported (see
+ * intake-save-funnel.test.ts, which does that per file). Line comments become a
+ * newline so line numbers and statement boundaries survive; block comments are
+ * dropped whole.
+ */
+export function stripComments(src: string): string {
+  let out = "";
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]!;
+    if (isStringDelimiter(ch)) {
+      const end = skipStringLiteral(src, i);
+      out += src.slice(i, end + 1);
+      i = end;
+      continue;
+    }
+    if (ch === "/" && src[i + 1] === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      out += "\n";
+      continue;
+    }
+    if (ch === "/" && src[i + 1] === "*") {
+      const close = src.indexOf("*/", i + 2);
+      i = close === -1 ? src.length : close + 1;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * The index of the `}` that closes the `{` at `open`, or -1.
+ *
+ * The one home for "how far does this block reach", asked by every sweep in this
+ * directory that has to know whether a line sits INSIDE something. "Is there an X
+ * before Y" is not the question; "is Y inside an X that is still open" is.
+ *
+ * EVERY string literal is skipped whole — backticks included — through the shared
+ * primitive above, so a brace inside one cannot unbalance the walk and an
+ * apostrophe inside template TEXT cannot open a bogus region that eats source. It
+ * had to become so: the copy this replaces knew `'` and `"` only, and both files
+ * the surfaces suite walks with it carry an apostrophe inside a template literal,
+ * so its try-guard was already walking corrupted ranges and reporting green.
+ *
+ * Skipping a template whole hides nothing its callers ask for. None of them
+ * enumerates braces; they all ask "is this index still inside that range", and
+ * anything they classify inside an interpolation is found by scanning separately.
+ */
+export function matchingBrace(src: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i]!;
+    if (isStringDelimiter(ch)) {
+      i = skipStringLiteral(src, i);
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * The index of the `)` that closes the `(` at `open`, or -1.
+ *
+ * The parenthesis sibling of `matchingBrace`, for the scans that need to know how
+ * far a CALL reaches rather than how far a block does — "is this expression
+ * inside that call's arguments" is the same question as "is this line inside that
+ * block", asked of a different delimiter. Shares the one string-literal skip, so
+ * a parenthesis inside a literal cannot unbalance it and the stray-delimiter
+ * contract above applies here unchanged.
+ */
+export function matchingParen(src: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i]!;
+    if (isStringDelimiter(ch)) {
+      i = skipStringLiteral(src, i);
+      continue;
+    }
+    if (ch === "(") depth++;
+    else if (ch === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * The character ranges an `if (!viewerIsClient)` guard governs: its braced block,
+ * or — with no braces — the single statement that follows, which ends at the first
+ * `;` or line break outside anything it opened. A string literal counts as
+ * something it opened, via the shared skip, so the newline inside a multi-line
+ * template literal does not end the statement early.
+ *
+ * THE STATEMENT FORM ONLY. A JSX `{!viewerIsClient && …}` conditional is a
+ * different shape and gets its own function below, deliberately not folded in
+ * here: widening what counts as a guard WIDENS every exempted range at every
+ * caller, and a range that grows makes a leak read as guarded — failing OPEN,
+ * which is the direction a green tick hides. Each caller asks for exactly the
+ * shapes it means to honour.
+ */
+export function staffOnlyIfRanges(s: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const g of s.matchAll(/if\s*\(\s*!\s*(?:\w+\.)?viewerIsClient\s*\)/g)) {
+    let from = g.index! + g[0].length;
+    while (from < s.length && /\s/.test(s[from]!)) from++;
+    if (s[from] === "{") {
+      const close = matchingBrace(s, from);
+      if (close > from) out.push([from, close]);
+      continue;
+    }
+    let depth = 0;
+    let to = from;
+    for (; to < s.length; to++) {
+      const ch = s[to]!;
+      if (isStringDelimiter(ch)) {
+        to = skipStringLiteral(s, to);
+        continue;
+      }
+      if (ch === "(" || ch === "{" || ch === "[") depth++;
+      else if (ch === ")" || ch === "}" || ch === "]") depth--;
+      else if (depth === 0 && (ch === ";" || ch === "\n")) break;
+    }
+    out.push([from, to]);
+  }
+  return out;
+}
+
+/**
+ * The ranges a JSX short-circuit gate governs — `{!viewerIsClient && <X/>}` and
+ * `{isStaff && <X/>}` — from the opening `{` to the brace that closes it.
+ *
+ * THE SHAPE, NOT A LOCATION, which is what makes this usable as an exemption: it
+ * says the guarded thing is inside THIS gate's own braces, so moving the JSX,
+ * renaming the component or adding siblings cannot loosen it. Move the render out
+ * from between the braces and it stops being exempt, immediately.
+ *
+ * TWO SPELLINGS, and they are not synonyms — `!viewerIsClient` is a per-render
+ * viewer test and `isStaff` a per-page role test. Both are honoured because both
+ * are used as this repo's staff gate in JSX (clip-gallery's status badge uses the
+ * first; the agent page's Control Room mount uses the second), and both are
+ * MECHANICAL: a boolean in a brace with the render inside it, rather than a
+ * sentence in a comment claiming a route is staff-only.
+ *
+ * What this does NOT read is a gate spelled any other way — a ternary, a variable
+ * holding the negation, a guard clause returning early. Those are not exempt and
+ * will be reported, which is the fail-CLOSED direction.
+ */
+export function staffOnlyJsxRanges(s: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const g of s.matchAll(/\{\s*(?:!\s*(?:\w+\.)?viewerIsClient|(?:\w+\.)?isStaff)\s*&&/g)) {
+    const open = g.index!;
+    const close = matchingBrace(s, open);
+    if (close > open) out.push([open, close]);
+  }
+  return out;
+}
+
+/** Does `at` sit inside a range one of those guards still has open? */
+export function insideAnyRange(ranges: Array<[number, number]>, at: number): boolean {
+  return ranges.some(([from, to]) => at > from && at < to);
+}

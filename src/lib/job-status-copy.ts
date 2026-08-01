@@ -42,31 +42,33 @@ export const JOB_STATUS_META: Record<
 };
 
 /**
- * The rendered label for one run state, defensively falling back the way
- * JobStatusBadge already does (Firestore holds strings the union does not, which
- * is why the parameter is `string`).
+ * The tone/label PAIR for one run state — the one read of the map above, and
+ * therefore the one fallback for a status the union has never heard of
+ * (Firestore holds strings it does not, which is why the parameter is `string`).
  *
- * THERE ARE TWO ANSWERS FOR AN UNKNOWN STATUS, and this note used to claim one.
- * The line that stood here — "there is ONE fallback, here, so a status missing
- * from the map cannot resolve one way on a badge and another way in a model
- * prompt" — was declared verified and is false. The map is read with its own `??`
- * at two other sites:
+ * WHY IT EXISTS. The note here used to say there were TWO answers for an unknown
+ * status, and it was right: the map was read with its own `??` at three sites.
+ * Two agreed (this module and `JobStatusBadge`, both landing on
+ * `JOB_STATUS_META.queued`) and one did not — run-calendar's past-run card fell
+ * back to `{ tone: "neutral", label: "Done" }`, so one stored value read "Done"
+ * on a calendar chip and "Queued" everywhere else. Agreement is what made the
+ * duplicate look harmless; the disagreement is what it actually cost.
  *
- *  • components/job-status.tsx:18 falls back to `JOB_STATUS_META.queued`, the same
- *    entry this function does, so it AGREES — a duplicate spelling of the rule
- *    rather than a disagreement, and it is only agreement that makes the sentence
- *    look true.
- *  • components/run-calendar.tsx:509 falls back to
- *    `{ tone: "neutral", label: "Done" }`. That does NOT agree: a status the union
- *    has never heard of reads "Done" on the calendar's run chip and "Queued"
- *    everywhere else — one stored value, two words, which is the exact defect
- *    class these register modules exist to remove.
- *
- * Routing that site through this function is the real fix and it is a change to
- * run-calendar.tsx, so it is not made here. Until it is, the honest statement is
- * the one above: this is THE fallback for everything that asks this module, and
- * the calendar answers separately.
+ * All three now ask this function, so the `??` is written once. What that buys is
+ * narrow and worth stating exactly: every caller that has a status VALUE resolves
+ * it here. It says nothing about a caller with NO status at all — run-calendar's
+ * card takes an optional `jobStatus`, and the absence of a run state is a
+ * different question from an unrecognised one, answered in that file with its own
+ * named constant rather than folded in here (a past run is not "Queued").
+ */
+export function jobStatusMeta(status: string): (typeof JOB_STATUS_META)[JobStatus] {
+  return JOB_STATUS_META[status as JobStatus] ?? JOB_STATUS_META.queued;
+}
+
+/**
+ * The rendered label for one run state. Shorthand for a caller that paints its
+ * own tone (the copilot's prompt builder has no tone at all).
  */
 export function jobStatusLabel(status: string): string {
-  return JOB_STATUS_META[status as JobStatus]?.label ?? JOB_STATUS_META.queued.label;
+  return jobStatusMeta(status).label;
 }

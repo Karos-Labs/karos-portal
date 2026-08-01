@@ -211,7 +211,25 @@ export async function submitCustomAgentRun(args: {
       },
       callback_url: `${appUrl.replace(/\/$/, "")}/api/agent-service/webhook`,
       ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),
-      metadata: { platform_job_id: jobId, ...(args.extraMetadata ?? {}) },
+      metadata: {
+        // Caller keys FIRST so this core's own keys cannot be shadowed by an
+        // extraMetadata entry — platform_job_id is how the webhook finds the job
+        // when the serviceJobId write loses the race, and karos_agent_key is what
+        // the delivery handler fences a draft-only agent's asset type on. The
+        // twin core states the same rule as a reserved-key list
+        // (lib/jobs/submit-custom.ts); here the ordering is the whole rule, so
+        // there is no second list to keep in step.
+        ...(args.extraMetadata ?? {}),
+        platform_job_id: jobId,
+        // WHICH AGENT PRODUCED THE RUN, echoed back by the service so the webhook
+        // can ask it without a second Firestore read. It matters most on this core:
+        // its one caller, the recurring-run cron, is also the only place in the tree
+        // today that sends an `asset_type` hint (the schedule row's own type), and
+        // that hint is exactly what could type a Reddit reply as a publishable post.
+        // The agent's display NAME travels on the job doc and is the fence's
+        // fallback; a rename would silence it, a key would not.
+        karos_agent_key: agent.key.slice(0, MAX_KEY_CHARS),
+      },
     });
     submittedServiceJobId = submitted.job_id;
     await updateJob(jobId, {

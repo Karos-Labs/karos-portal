@@ -122,8 +122,10 @@ export type JobOutcome =
 /**
  * A run the service called DONE that handed this task nothing a client can
  * open: no text, no image, no library asset. It is not the same question the
- * webhook's zero-deliverable refund asks (`clientFacingCount === 0`, over the
- * artifact manifest) and it must not be collapsed into it:
+ * webhook's zero-deliverable refund asks (`deliveredCount === 0` — over the
+ * artifacts whose bytes actually reached platform storage, which since #51 is a
+ * narrower set than the manifest's client-facing entries) and it must not be
+ * collapsed into it:
  *
  *  - a client-facing artifact that is neither text nor an image (a PDF, say)
  *    still creates an asset, so `assetId` is set and the client DID receive

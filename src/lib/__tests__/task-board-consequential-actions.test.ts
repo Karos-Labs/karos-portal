@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { matchingBrace } from "./source-scan";
 import * as data from "@/lib/data";
 import * as dataClientAgents from "@/lib/data-client-agents";
 import * as auth from "@/lib/auth";
@@ -351,30 +352,64 @@ describe("staff gain no friction from a client's price confirmation", () => {
   });
 });
 
+/**
+ * The run-price panel, bounded by the two things around it: its own `{runPrompt`
+ * gate, and the start of the action row that follows.
+ *
+ * BOTH ENDS ARE CHECKED. This used to slice to `indexOf("{/* Actions only take
+ * space")` — a prose comment — and when that comment was rewritten (the row is no
+ * longer hover-only on a touch device) `indexOf` returned -1, so `slice(from, -1)`
+ * quietly took the whole rest of the FILE as "the panel" and the
+ * hardcodes-no-figure check started reading unrelated copy. A marker that has
+ * moved must fail loudly, not widen the range.
+ */
+function runPricePanel(): string {
+  const from = board.indexOf("{runPrompt && (");
+  expect(from, "no run-price panel in the board").toBeGreaterThan(-1);
+  // BOUNDED BY THE PANEL'S OWN JSX EXPRESSION, not by a marker belonging to
+  // whatever renders next. The end used to be `indexOf("[@media(hover:hover)]:hidden")`
+  // — the action row's class, owned by a DIFFERENT concern — so a reasonable
+  // refinement of that class (`any-hover`, say) moved a boundary this file depends
+  // on. Brace-matching the panel's own `{runPrompt && (…)}` asks the argument
+  // rather than a location, so nothing outside this panel can move its end.
+  const close = matchingBrace(board, from);
+  expect(close, "the run-price panel's JSX expression does not close").toBeGreaterThan(from);
+  return board.slice(from, close + 1);
+}
+
 describe("the confirm copy states a real credit figure", () => {
-  const panel = board.slice(board.indexOf("{runPrompt && ("), board.indexOf("{/* Actions only take space"));
+  /**
+   * RESOLVED PER TEST, NEVER IN THE DESCRIBE BODY — and that is the whole point.
+   * `const panel = runPricePanel()` ran at COLLECTION time, so the moment its
+   * boundary marker moved the `expect` inside it threw before any test existed
+   * and vitest reported `(0 test)`: all 32 assertions here — the ones that keep a
+   * client's credit figure on the control that spends it — silently stopped
+   * running, and the failure named this file rather than the component that
+   * changed. A guard that reports success by disappearing is worse than no guard.
+   */
+  const panel = () => runPricePanel();
 
   it("states the number it was handed, not a vague warning", () => {
-    expect(panel).toContain("Runs this task now for ");
-    expect(panel).toContain("${runPrompt.credits} credit${runPrompt.credits === 1 ? \"\" : \"s\"}");
-    expect(flat(panel)).not.toMatch(/costs? credits/i);
-    expect(flat(panel)).not.toMatch(/some credits/i);
+    expect(panel()).toContain("Runs this task now for ");
+    expect(panel()).toContain("${runPrompt.credits} credit${runPrompt.credits === 1 ? \"\" : \"s\"}");
+    expect(flat(panel())).not.toMatch(/costs? credits/i);
+    expect(flat(panel())).not.toMatch(/some credits/i);
   });
 
   it("hardcodes no figure of its own", () => {
-    // Every digit in the panel belongs to a class name; none belongs to a price.
-    expect(panel).not.toMatch(/\d+\s+credits?\b/);
+    // Every digit in the panel() belongs to a class name; none belongs to a price.
+    expect(panel()).not.toMatch(/\d+\s+credits?\b/);
   });
 
-  it("puts the price on the button that spends, matching the batch panel", () => {
-    expect(panel).toContain("Run & charge ${runPrompt.credits}");
+  it("puts the price on the button that spends, matching the batch panel()", () => {
+    expect(panel()).toContain("Run & charge ${runPrompt.credits}");
     // The batch runner's confirm, verbatim, is the pattern being copied.
     expect(board).toContain("`Run & charge ${preview.credits} credits`");
   });
 
   it("never calls credits tokens, and offers a cancel", () => {
-    expect(panel.toLowerCase()).not.toContain("token");
-    expect(panel).toContain("Cancel");
+    expect(panel().toLowerCase()).not.toContain("token");
+    expect(panel()).toContain("Cancel");
     expect(flat(board)).toContain("onCancelRun={() => setRunPrompt(null)}");
   });
 });

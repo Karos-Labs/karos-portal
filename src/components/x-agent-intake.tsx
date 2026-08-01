@@ -17,6 +17,13 @@ import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "
 import { Icon } from "@/components/icon";
 import { CompanyNewsBox, type CompanyNewsRowView } from "@/components/company-news-box";
 import { SavedFormCard } from "@/components/saved-form-card";
+import { ClientSeatRemove } from "@/components/client-seat-remove";
+import {
+  clientArchiveLink,
+  intakeAnchorId,
+  intakeSeatAnchorId,
+} from "@/lib/agent-intake-links";
+import { intakeSave } from "@/lib/intake-save";
 import {
   addXDraftFeedbackAction,
   addXSeatAction,
@@ -170,13 +177,22 @@ function RosterInput({
   function propose() {
     setError(null);
     startProposing(async () => {
-      const result = await proposeXRosterAction({ clientId, ...(seatName ? { seatName } : {}) });
-      if (result.error || !result.handles) {
+      const result = await intakeSave(
+        () => proposeXRosterAction({ clientId, ...(seatName ? { seatName } : {}) }),
+        // Not a save: this builds a proposal. The funnel's save sentence would
+        // also have WON over this call site's own "Could not build a proposal."
+        // below, because `result.error ?? …` prefers whatever the funnel put there.
+        "We couldn't build a proposal. Refresh the page to check you're still signed in, then try again.",
+      );
+      // `handles` exists only on the action's own result, never on the funnel's
+      // failure — so it is read through the narrowing rather than asserted.
+      const handles = "handles" in result ? result.handles : undefined;
+      if (result.error || !handles) {
         setError(result.error ?? "Could not build a proposal.");
         return;
       }
-      onChange(result.handles.map((h) => h.handle).join(", "));
-      setWhy(result.handles);
+      onChange(handles.map((h) => h.handle).join(", "));
+      setWhy(handles);
     });
   }
 
@@ -228,7 +244,9 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
   function save() {
     setError(null);
     start(async () => {
-      const result = await saveXCompanyIntakeAction({ clientId, handle, comeAcross, offLimits, roster, premium, announcements });
+      const result = await intakeSave(() =>
+        saveXCompanyIntakeAction({ clientId, handle, comeAcross, offLimits, roster, premium, announcements }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -359,14 +377,16 @@ function SeatTakes({ clientId, seat }: { clientId: string; seat: XSeatView }) {
   function submitTake() {
     setTakeError(null);
     start(async () => {
-      const result = await addXTakeAction({
-        clientId,
-        seatId: seat.id,
-        take,
-        date: today(),
-        topic,
-        url: takeUrl,
-      });
+      const result = await intakeSave(() =>
+        addXTakeAction({
+          clientId,
+          seatId: seat.id,
+          take,
+          date: today(),
+          topic,
+          url: takeUrl,
+        }),
+      );
       if (result.error) {
         setTakeError(result.error);
         return;
@@ -422,7 +442,16 @@ function SeatTakes({ clientId, seat }: { clientId: string; seat: XSeatView }) {
   );
 }
 
-function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
+function SeatCard({
+  clientId,
+  seat,
+  runInFlight,
+}: {
+  clientId: string;
+  seat: XSeatView;
+  /** Passed through to the remove confirm — see ClientSeatRemove. */
+  runInFlight: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -435,7 +464,9 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
   function saveSeat() {
     setError(null);
     start(async () => {
-      const result = await saveXSeatIntakeAction({ clientId, seatId: seat.id, handle, offLimits, roster, premium });
+      const result = await intakeSave(() =>
+        saveXSeatIntakeAction({ clientId, seatId: seat.id, handle, offLimits, roster, premium }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -473,7 +504,20 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
       ]}
       open={editing}
       onEdit={() => setEditing(true)}
-      footer={<SeatTakes clientId={clientId} seat={seat} />}
+      footer={
+        <>
+          <SeatTakes clientId={clientId} seat={seat} />
+          {/* In the footer so it renders in BOTH states: a seat added by
+              mistake is one nobody has opened, and hiding the way back behind
+              "Edit" is how it became permanent. */}
+          <ClientSeatRemove
+            clientId={clientId}
+            seatId={seat.id}
+            seatName={seat.name}
+            runInFlight={runInFlight}
+          />
+        </>
+      }
     >
       <div className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -549,7 +593,9 @@ function AddSeatForm({ clientId }: { clientId: string }) {
   function add() {
     setError(null);
     start(async () => {
-      const result = await addXSeatAction({ clientId, name, handle, offLimits, roster, premium, firstTakes });
+      const result = await intakeSave(() =>
+        addXSeatAction({ clientId, name, handle, offLimits, roster, premium, firstTakes }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -668,12 +714,17 @@ function FeedbackBox({
 
   const accountName = (id: string) =>
     id === "company" ? "Company page" : id === "program" ? "Everything" : (seats.find((s) => s.id === id)?.name ?? "Seat");
+  // #90: `?tab=archive` is read only by ProgressView, and a staff viewer at the
+  // flat /tasks never gets one. The destination and its label move together.
+  const archive = clientArchiveLink({ clientId, isStaff });
 
   function submit() {
     setError(null);
     setSent(false);
     start(async () => {
-      const result = await addXDraftFeedbackAction({ clientId, account, action: "note", reason: note });
+      const result = await intakeSave(() =>
+        addXDraftFeedbackAction({ clientId, account, action: "note", reason: note }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -691,8 +742,8 @@ function FeedbackBox({
         Tell us what is working and what is not — in your own words, as much detail as you like.
         It goes straight into the agent&apos;s next run. Once your Karos team has approved the drafts,
         picking, editing and skipping happens on the drafts themselves, in{" "}
-        <a href="/tasks?tab=archive" className="underline hover:text-foreground">
-          your archive
+        <a href={archive.href} className="underline hover:text-foreground">
+          {archive.label}
         </a>
         — and each of those choices reaches the agent too.
       </p>
@@ -779,6 +830,7 @@ export function XAgentIntake({
   news,
   feedback,
   runs,
+  runInFlight,
   isStaff,
 }: {
   clientId: string;
@@ -787,19 +839,43 @@ export function XAgentIntake({
   news: XNewsRowView[];
   feedback: XFeedbackRowView[];
   runs: XRunRowView[];
+  /**
+   * A run this agent has in flight already holds its payload, so the remove
+   * confirm says a removed seat may still come back with drafts (#84).
+   *
+   * A PROP, not `runs.some(…)`. `runs` is the DISPLAY list, and for a client it
+   * is collapsed to one row per calendar day — so a run queued at 09:00 is not
+   * in it once a later run the same day lands, and the warning went to staff
+   * and not to the client who pressed Remove. The server answers this from the
+   * unfiltered scan (see `anyRunInFlight` in lib/agent-intake-views.ts).
+   */
+  runInFlight: boolean;
   /** Whose vocabulary the run rows are written in — see FeedbackBox. */
   isStaff: boolean;
 }) {
   return (
     <div className="space-y-6">
-      <CompanyForm clientId={clientId} intake={company} />
-      <div className="space-y-4">
+      {/* The anchors the agent page's inputs band links each of its rows to
+          (#85). Both sides derive them from the SAME row id through
+          intakeAnchorId, so a row cannot end up pointing at a hash that
+          matches nothing — which scrolls nowhere and raises nothing. */}
+      <div id={intakeAnchorId("company")} className="scroll-mt-24">
+        <CompanyForm clientId={clientId} intake={company} />
+      </div>
+      {/* The takes row is client-wide (its count is every seat's takes) and the
+          take boxes live one per seat card, so the seat LIST is where that row
+          lands — there is no single takes surface to point at. */}
+      <div id={intakeAnchorId("takes")} className="space-y-4 scroll-mt-24">
         {seats.map((seat) => (
-          <SeatCard key={seat.id} clientId={clientId} seat={seat} />
+          <div key={seat.id} id={intakeSeatAnchorId(seat.id)} className="scroll-mt-24">
+            <SeatCard clientId={clientId} seat={seat} runInFlight={runInFlight} />
+          </div>
         ))}
         <AddSeatForm clientId={clientId} />
       </div>
-      <CompanyNewsBox clientId={clientId} rows={news} />
+      <div id={intakeAnchorId("news")} className="scroll-mt-24">
+        <CompanyNewsBox clientId={clientId} rows={news} />
+      </div>
       <FeedbackBox
         clientId={clientId}
         seats={seats}

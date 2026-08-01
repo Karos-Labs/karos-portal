@@ -6,18 +6,18 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { AgentMark } from "@/components/agent-identity";
 import { Badge, Button } from "@/components/ui";
-import { JOB_STATUS_META } from "@/components/job-status";
+import { jobStatusMeta } from "@/components/job-status";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
 import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
 import { pastRunHasNoDeliverables, showsPastRunReviewControl } from "@/lib/calendar-past-runs";
-import { assetStatusLabel, PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
 import { cn, relativeTime } from "@/lib/utils";
 import type { AssetImage } from "@/lib/asset-images";
 import {
   calendarFilterKeyMatchable,
+  calendarFilterLabel,
   postKindLabel,
   type CalendarAssetKind,
   type CalendarFilterKey,
@@ -78,6 +78,12 @@ export interface CalendarRun {
    * firing: when it last ran, whether that fire produced a job to inspect,
    * and whether the fire itself was refused before a job ever existed
    * (PlannedScheduledRun.lastError — a submission refusal, not a job failure).
+   *
+   * SENT TO BOTH VIEWERS on purpose, unlike `lastJobId` below. The card renders
+   * it two ways — the instant for staff, a date-free sentence for a client — so
+   * withholding the field would delete a client's only signal that the schedule
+   * has ever fired. See the "Last fire" panel in ScheduledRunCard, and rule 3 of
+   * lib/calendar-past-runs for what depends on that signal.
    */
   lastRunAt?: number;
   /** Staff-only: the job the schedule's most recent fire produced, if any — links to /jobs/[id]. */
@@ -296,6 +302,7 @@ function ScheduledRunCard({
   canManage,
   canDelete,
   canOpenJob,
+  viewerIsClient,
 }: {
   run: CalendarRun;
   /** Pause this schedule. Clients may manage their own (requireClientAccess). */
@@ -304,6 +311,18 @@ function ScheduledRunCard({
   canDelete: boolean;
   /** Staff. /jobs/[id] is staff-guarded and silently redirects a client to /dashboard. */
   canOpenJob: boolean;
+  /**
+   * Whether this card is being read by the client whose schedule it is — asked
+   * for the two "Last fire" lines below (A3: staff get the instant, a client
+   * gets the date-free fact), and NOT derived from `canOpenJob`.
+   *
+   * The three booleans above are capability questions ("may this viewer open a
+   * job / pause / delete") and this is a disclosure one. They agree today, which
+   * is exactly why keying the churn rule to one of them would be the wrong shape:
+   * a capability flag is free to change for capability reasons and would move a
+   * directive with it.
+   */
+  viewerIsClient: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<null | "pause" | "delete">(null);
@@ -393,16 +412,61 @@ function ScheduledRunCard({
               lastError means the fire was REFUSED before a job ever existed
               (credit cap, missing intake, agent service unreachable) — there
               is nothing to link to for that outcome, only the reason. */}
-          {(run.lastRunAt || run.lastError) && (
+          {/* A3 TAKES THE INSTANT, NOT THE FACT. "Ran 6 hours ago" under a
+              heading reading "Last fire", beside this card's own cadence label
+              and a grid of upcoming days, is the batch timestamp — the same tell
+              the dashboard's "Agent runs · Last run …" tile was carrying, on a
+              surface a client reaches from their own calendar. So a client is
+              never told WHEN the schedule last fired.
+
+              WHAT ELSE WAS FLOWING THROUGH THIS PANEL, enumerated, because the
+              first cut of this gate was `!viewerIsClient` over the whole panel
+              and that took a remedy with it (rule: a fix that closes a hole must
+              not take the remedy with it — so name everything the hole carried,
+              not just the line you were looking at):
+
+                · THE REFUSAL (`lastError`). Kept for a client. It is the only
+                  thing that can explain a fire refused before any job existed,
+                  calendar-body already paraphrases it through clientSafeRefusal
+                  for exactly this reader, and gating it would re-open the
+                  silent-refusal gap that treatment was added to close.
+
+                · THAT THE SCHEDULE HAS FIRED AT ALL (`lastRunAt`). Also kept for
+                  a client, as a DATE-FREE sentence. This panel is the substitute
+                  lib/calendar-past-runs rule 3 names, and that module really
+                  depends on it: `projectPastRuns` drops every past-run card whose
+                  visible deliverables are empty for a client — which is every
+                  `queued`/`running` run and every batch whose posts are all still
+                  locked — so with this line gated to staff, a client whose
+                  schedule fired and is STILL WORKING, or delivered only locked
+                  posts, had no surface anywhere saying the agent ran. The
+                  "Delayed" case was the worst of it: a stuck label and nothing
+                  else.
+
+              The two are not the same disclosure. "Ran 4 hours ago" dates the
+              batch; "This schedule has run before" cannot, however many times a
+              client reloads the page. */}
+          {(run.lastError || run.lastRunAt) && (
             <div className="mt-2.5 border-t border-border pt-2">
               <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-2">
                 Last fire
               </p>
-              {run.lastError ? (
+              {/* THREE SIBLING GATES, not the ternary this was. An error still
+                  wins over a success, now by the explicit `!run.lastError` on
+                  both success branches rather than by branch order — and the
+                  shape is the point: `{!viewerIsClient && …}` is a gate a source
+                  guard can bound to its own braces, so
+                  status-render-sweep.test.ts can assert from the filesystem that
+                  the dated line IS inside a staff gate and that the refusal and
+                  the date-free line are NOT. Written as a ternary, none of it was
+                  mechanically checkable and the test that claimed to check it
+                  passed on the broken code. */}
+              {run.lastError && (
                 <p className="text-xs text-danger">
                   Failed to fire {run.lastErrorAt ? relativeTime(run.lastErrorAt) : ""} — {run.lastError}
                 </p>
-              ) : run.lastRunAt ? (
+              )}
+              {!viewerIsClient && !run.lastError && run.lastRunAt && (
                 <p className="text-xs text-muted-2">
                   Ran {relativeTime(run.lastRunAt)}
                   {canOpenJob && run.lastJobId && (
@@ -414,7 +478,15 @@ function ScheduledRunCard({
                     </>
                   )}
                 </p>
-              ) : null}
+              )}
+              {/* The client's half of the same fact, with no instant in it and
+                  nothing to link to (/jobs/[id] is staff-guarded). Pinned by
+                  VALUE in status-render-sweep.test.ts — gate and sentence
+                  together, as one string — so it cannot drift into naming a time
+                  and cannot quietly disappear. */}
+              {viewerIsClient && !run.lastError && run.lastRunAt && (
+                <p className="text-xs text-muted-2">This schedule has run before.</p>
+              )}
             </div>
           )}
           {paused ? (
@@ -487,6 +559,16 @@ function ScheduledRunCard({
   );
 }
 
+/**
+ * What a fired run with NO recorded state is called — the absence of a
+ * `JobStatus`, not an unrecognised one, which is why it is not in
+ * `JOB_STATUS_META` and does not go through `jobStatusMeta`.
+ *
+ * Deliberately NOT a second name for any state the register already names: it is
+ * only ever reached when there is nothing to look up.
+ */
+const NO_RUN_STATUS = { tone: "neutral" as const, label: "Done" };
+
 /** `Button` renders a <button>; an anchor can't nest one, so it borrows the look. */
 const REVIEW_BUTTON_CLASS =
   "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-xs text-foreground transition-all duration-200 hover:border-foreground/30 hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25";
@@ -494,20 +576,37 @@ const REVIEW_BUTTON_CLASS =
 function PastRunCard({
   run,
   canOpenJob,
+  viewerIsClient,
   onOpenLightbox,
   onOpenAsset,
 }: {
   run: CalendarRun;
   /** Staff. /jobs/[id] is staff-guarded and silently redirects a client to /dashboard. */
   canOpenJob: boolean;
+  /**
+   * THE DISCLOSURE QUESTION, not `canOpenJob` reused. The two agree today, and
+   * that is exactly the trap this campaign has already fallen into: a capability
+   * flag is free to move for capability reasons, and what this decides is whether
+   * a client is shown the moment their content was generated (A3).
+   */
+  viewerIsClient: boolean;
   onOpenLightbox: (images: AssetImage[], index: number) => void;
   onOpenAsset: (assetId: string) => void;
 }) {
   const images = run.images ?? [];
   const textAssets = (run.assets ?? []).filter((a) => a.images.length === 0 && a.textPreview);
-  const status = run.jobStatus
-    ? JOB_STATUS_META[run.jobStatus] ?? { tone: "neutral" as const, label: "Done" }
-    : { tone: "neutral" as const, label: "Done" };
+  // TWO questions, and the version this replaced answered both with "Done".
+  //
+  // An UNRECOGNISED status now resolves through `jobStatusMeta` like every other
+  // reader of the map, so a stored value the union has never heard of no longer
+  // reads "Done" here and "Queued" on the badge one screen over. The ABSENCE of a
+  // status is the other question and it keeps its own answer: this card only ever
+  // renders a run that has already fired, so "Queued" would be a worse lie than a
+  // neutral word. Not reachable from the one producer today — calendar-body sets
+  // `jobStatus: j.status` from a required field — but `CalendarRun` is shared with
+  // the scheduled-run card, where the field genuinely is absent, so the branch
+  // stays and says why.
+  const status = run.jobStatus ? jobStatusMeta(run.jobStatus) : NO_RUN_STATUS;
   const inFlight = run.jobStatus === "queued" || run.jobStatus === "running";
 
   // Where "review this" actually goes. Staff get the run detail page the
@@ -565,10 +664,30 @@ function PastRunCard({
           ) : (
             <div className="flex flex-wrap items-center gap-2">{heading}</div>
           )}
-          <p className="mt-0.5 text-xs text-muted-2">
-            {run.outputSummary ? `${run.outputSummary} · ` : ""}
-            {inFlight ? "Started" : "Ran"} {timeStr(run.at)}
-          </p>
+          {/*
+            A3, THE CHURN RULE, on the card the scheduled-run panel's own "Last
+            fire" gate was fixed for — this was the copy that was missed. A client
+            reading "Ran 6 hours ago" on three cards under the same day learns
+            those posts were produced together, which is the one fact the slot
+            model exists to keep indistinguishable. `projectPastRuns` only drops a
+            past-run card that has NO visible deliverables, so a client with a
+            partly-unlocked weekly batch sees several of these.
+
+            The run's own summary stays — it describes what they received, not
+            when it was made — and the day this card sits under already dates it.
+            Staff keep the instant; it is what the run record is for.
+          */}
+          {(!viewerIsClient || run.outputSummary) && (
+            <p className="mt-0.5 text-xs text-muted-2">
+              {run.outputSummary ?? ""}
+              {!viewerIsClient && (
+                <>
+                  {run.outputSummary ? " · " : ""}
+                  {inFlight ? "Started" : "Ran"} {timeStr(run.at)}
+                </>
+              )}
+            </p>
+          )}
 
           {showReviewControl && (
             <div className="mt-2">
@@ -1014,16 +1133,18 @@ export function RunCalendar({
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
           <LegendDot className="border border-dashed border-foreground/40 bg-foreground/[0.03]" label="Scheduled run" />
           <LegendDot className="bg-foreground/25" label="Completed run" />
-          {(Object.entries(STATUS_FILTER_CHIPS) as Array<[CalendarFilterKey, { label: string; className: string }]>)
+          {(Object.keys(STATUS_FILTER_CHIP_CLASS) as CalendarFilterKey[])
             // A filter this viewer's calendar can never make dim anything is not
             // offered at all — see calendarFilterKeyMatchable for which those are
             // and why. The chips a client CAN match are unchanged.
-            .filter(([key]) => calendarFilterKeyMatchable(key, viewerIsClient))
-            .map(([key, chip]) => (
+            .filter((key) => calendarFilterKeyMatchable(key, viewerIsClient))
+            .map((key) => (
               <FilterChip
                 key={key}
-                className={chip.className}
-                label={key === "published" ? assetStatusLabel("published", viewerIsClient) : chip.label}
+                className={STATUS_FILTER_CHIP_CLASS[key]}
+                // No `key === "published" ? …` here any more. That ternary was the
+                // second spelling of an override the label module already owned.
+                label={calendarFilterLabel(key, viewerIsClient)}
                 hidden={hiddenStatuses.has(key)}
                 onClick={() => toggleStatus(key)}
               />
@@ -1054,6 +1175,9 @@ export function RunCalendar({
                       canManage={canManageRuns || canSchedule}
                       canDelete={canSchedule}
                       canOpenJob={canSchedule}
+                      // The disclosure question, threaded from this component's own
+                      // viewer rather than reusing one of the capability flags above.
+                      viewerIsClient={viewerIsClient}
                     />
                   ))}
                 </Section>
@@ -1065,6 +1189,7 @@ export function RunCalendar({
                       key={r.id}
                       run={r}
                       canOpenJob={canSchedule}
+                      viewerIsClient={viewerIsClient}
                       onOpenLightbox={openLightbox}
                       onOpenAsset={setOpenAssetId}
                     />
@@ -1134,8 +1259,8 @@ function LegendDot({ className, label }: { className: string; label: string }) {
 }
 
 /**
- * The legend, which is also the filter. A RECORD rather than the array it was:
- * an array satisfies its element type however short it is, so a new
+ * The legend, which is also the filter — its SWATCHES. A RECORD rather than the
+ * array it was: an array satisfies its element type however short it is, so a new
  * `CalendarAssetKind` would have drawn chips on the grid that the legend never
  * named and the filter could never hide. Keyed over the union, a missing member
  * is a compile error. Rendered in insertion order.
@@ -1146,20 +1271,23 @@ function LegendDot({ className, label }: { className: string; label: string }) {
  * enumeration live. Today that withholds exactly one chip from a client
  * ("draft", a status their calendar is never built from); "held" and the rest
  * stay, because a client's calendar can hold them.
+ *
+ * THE LABELS ARE NO LONGER HERE. They moved to `calendarFilterLabel`
+ * (lib/calendar-kind) because two of them were wrong in a way a component-local
+ * map hides: `review` invented "Pending review" for a `JobStatus` the run card
+ * below this legend already calls "In review", and `published` had its viewer
+ * override written both here and at the render site. Only the classes stayed —
+ * presentation is this component's business, the same split asset-status-copy.ts
+ * made.
  */
-const STATUS_FILTER_CHIPS: Record<CalendarFilterKey, { label: string; className: string }> = {
-  draft: { label: "Draft", className: POST_CHIP_CLASS.draft },
-  scheduled: { label: "Scheduled", className: POST_CHIP_CLASS.scheduled },
-  // Label overridden per viewer at the render site below, for the same reason
-  // postKindLabel is: a client filters by the word their own posts carry.
-  published: { label: "Published", className: POST_CHIP_CLASS.published },
-  // Short form, like "Failed" beside POST_KIND_LABEL's "Failed to publish": a
-  // filter's own tooltip reads "Show <label> items", and "Show waiting its turn
-  // items" is not a sentence. The chip and the panel keep the full heading.
-  held: { label: "Waiting", className: POST_CHIP_CLASS.held },
-  placeholder: { label: "Placeholder", className: POST_CHIP_CLASS.placeholder },
-  failed: { label: "Failed", className: POST_CHIP_CLASS.failed },
-  review: { label: "Pending review", className: "bg-warning/25" },
+const STATUS_FILTER_CHIP_CLASS: Record<CalendarFilterKey, string> = {
+  draft: POST_CHIP_CLASS.draft,
+  scheduled: POST_CHIP_CLASS.scheduled,
+  published: POST_CHIP_CLASS.published,
+  held: POST_CHIP_CLASS.held,
+  placeholder: POST_CHIP_CLASS.placeholder,
+  failed: POST_CHIP_CLASS.failed,
+  review: "bg-warning/25",
 };
 
 /** A legend dot that also toggles that status's visibility on the grid — dimmed while hidden. */
@@ -1179,7 +1307,14 @@ function FilterChip({
       type="button"
       onClick={onClick}
       aria-pressed={!hidden}
-      title={hidden ? `Show ${label.toLowerCase()} items` : `Hide ${label.toLowerCase()} items`}
+      // THE TEMPLATE CARRIES THE GRAMMAR, NOT THE LABEL. `Show ${label} items`
+      // forces every legend word to be a bare adjective, which is what pushed this
+      // register into inventing short names — and #97 was the bill for one of them
+      // ("Pending review" for a state the sanctioned register calls "In review",
+      // three lines of scroll apart on the same screen). Lower-casing made it
+      // worse: the client-visible chip read "Show in review items". Quoting the
+      // label instead lets a register keep its real words.
+      title={hidden ? `Show "${label}" items` : `Hide "${label}" items`}
       className={cn(
         "flex items-center gap-1.5 rounded text-[11px] transition-opacity hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-neon/50",
         hidden ? "opacity-40" : "opacity-100",

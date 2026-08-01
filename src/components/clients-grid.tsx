@@ -468,8 +468,16 @@ export function ClientsGrid({
                 </Card>
               </Link>
 
-              {/* Action buttons — revealed on card hover */}
-              <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+              {/*
+                Edit and Delete, and they must be REACHABLE, not merely present.
+                `opacity-0 group-hover:opacity-100` alone leaves both invisible on
+                a touch device (no hover exists) and gives a keyboard user no
+                visible focus ring — on a DESTRUCTIVE control. Same defect the task
+                board's action row carried (#89); the two extra conditions reveal
+                the row on focus and on any device that cannot hover, and change
+                nothing about the pointer experience.
+              */}
+              <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                 <button
                   onClick={() => setEditTarget(c)}
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-surface text-muted-2 shadow-sm transition-colors hover:border-foreground/30 hover:text-foreground"

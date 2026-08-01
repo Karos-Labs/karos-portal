@@ -6,6 +6,7 @@
  */
 
 import { assetStatusLabel, isPublishHold, PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
+import { jobStatusLabel } from "@/lib/job-status-copy";
 
 /**
  * The chip vocabulary. Every consumer keys a `Record` over this union rather
@@ -182,3 +183,69 @@ const POST_KIND_LABEL: Record<CalendarAssetKind, string> = {
   held: PUBLISH_HOLD_HEADING,
   draft: "Draft",
 };
+
+/**
+ * The legend/filter register: the SHORT name of each filter key.
+ *
+ * A second register over the same key domain, not a drifted copy of
+ * POST_KIND_LABEL, and the difference is the reason it exists: a filter's own
+ * tooltip reads "Show <label> items", so a legend word is shorter than the chip
+ * word it filters to. Over the six kinds the two registers share, THREE diverge
+ * and each divergence is deliberate:
+ *
+ *   scheduled    "Scheduled"  vs  "Scheduled post"
+ *   failed       "Failed"     vs  "Failed to publish"
+ *   held         "Waiting"    vs  PUBLISH_HOLD_HEADING ("Waiting its turn")
+ *
+ * Named rather than counted. The count here previously read "four of the six
+ * agree and three deliberately do not" — which is both wrong (three agree) and
+ * impossible over six, and it listed only two of the three divergences, omitting
+ * `scheduled`, the one a reader would not predict. A number in a comment is a
+ * claim the file cannot verify, so the set is pinned by name in
+ * calendar-register-divergence.test.ts instead: adding a fourth divergence, or
+ * silently closing one of these three, is a failure there.
+ *
+ * WHY IT MOVED HERE from run-calendar.tsx's `STATUS_FILTER_CHIPS`. That map paired
+ * each label with a Tailwind class, so the words sat in a component and could not
+ * be asked for by anything else — including a test. Two consequences, and the
+ * second is the finding:
+ *
+ *  • `published` had its viewer override written TWICE — once in `postKindLabel`
+ *    below and again at the render site as
+ *    `key === "published" ? assetStatusLabel("published", viewerIsClient) : chip.label`.
+ *    One rule, two spellings, both live.
+ *  • `review` read "Pending review" while `JOB_STATUS_META.review` — the
+ *    sanctioned name, printed by the run card three lines of scroll below on the
+ *    SAME screen — reads "In review". `review` is not a chip kind at all: the
+ *    filter matches `r.jobStatus === "review"`, so this entry names a `JobStatus`
+ *    and had no business inventing a word for one.
+ *
+ * The classes stayed with the component. Presentation is its business — the same
+ * split asset-status-copy.ts made when it took the words and left the colours.
+ */
+const CALENDAR_FILTER_LABEL: Record<CalendarFilterKey, string> = {
+  draft: "Draft",
+  scheduled: "Scheduled",
+  // Overridden per viewer by the accessor below, which is now the only place that
+  // override is written.
+  published: POST_KIND_LABEL.published,
+  held: "Waiting",
+  placeholder: "Placeholder",
+  failed: "Failed",
+  // Not a word of our own: `review` is a `JobStatus`, so it takes that domain's
+  // register. `jobStatusLabel` rather than the map so the ONE fallback applies
+  // here too, and so this line cannot outlive a rename of the entry.
+  review: jobStatusLabel("review"),
+};
+
+/**
+ * The legend chip's label for one filter key.
+ *
+ * VIEWER-AWARE for `published` for the reason `postKindLabel` is — and asked
+ * here rather than at the render site, so the two cannot drift into different
+ * answers for one client.
+ */
+export function calendarFilterLabel(key: CalendarFilterKey, viewerIsClient: boolean): string {
+  if (key === "published") return assetStatusLabel("published", viewerIsClient);
+  return CALENDAR_FILTER_LABEL[key];
+}

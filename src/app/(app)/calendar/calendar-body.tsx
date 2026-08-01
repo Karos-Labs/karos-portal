@@ -340,6 +340,16 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         // Same redaction `toScheduleRows` already applies to this same field
         // on the AI Agents page: staff get the raw refusal, a client gets the
         // safe paraphrase (never the internal provider/credit/service detail).
+        //
+        // `lastRunAt` GOES TO BOTH VIEWERS, and must: the card prints it as "Ran
+        // <n> ago" for staff and as a date-free "This schedule has run before"
+        // for a client, which is the substitute rule 3 of lib/calendar-past-runs
+        // depends on (a client's in-flight and all-locked runs have no past-run
+        // card at all). A3 objects to the batch INSTANT reaching a client, and
+        // that is the render gate's job in ScheduledRunCard — gating the field
+        // here instead would blank the client's line and take the substitute with
+        // it. `lastJobId` is the one that is genuinely staff-only, because
+        // /jobs/[id] is staff-guarded and would just redirect a client away.
         ...(r.lastRunAt ? { lastRunAt: r.lastRunAt } : {}),
         ...(isClient ? {} : r.lastJobId ? { lastJobId: r.lastJobId } : {}),
         ...(r.lastError

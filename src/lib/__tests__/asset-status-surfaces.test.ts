@@ -17,7 +17,12 @@ import {
 import { assetTypeLabel } from "@/lib/asset-type-copy";
 import { jobStatusLabel } from "@/lib/job-status-copy";
 import type { Asset } from "@/lib/types";
-import { isStringDelimiter, skipStringLiteral } from "./source-scan";
+import {
+  insideAnyRange,
+  matchingBrace,
+  skipStringLiteral,
+  staffOnlyIfRanges,
+} from "./source-scan";
 
 /**
  * What the two client-reachable status surfaces print, and what a held post
@@ -69,83 +74,22 @@ function code(s: string): string {
 const flat = (s: string) => s.replace(/\s+/g, " ");
 
 /**
- * The index of the `}` that closes the `{` at `open`, or -1.
+ * `matchingBrace` and `staffOnlyIfRanges` USED TO LIVE HERE, and they moved to
+ * ./source-scan for the reason that module exists: a second sweep
+ * (status-render-sweep.test.ts) needs the same two questions, and this suite's
+ * history is the argument against letting it have its own copy. The `'`/`"`-only
+ * string skip that made this file's brace walk mis-pair ranges and report green
+ * was one of FOUR copies of one rule. Nothing about the implementations changed in
+ * the move; the teeth below now exercise the shared ones, which is the point.
  *
- * The one home for "how far does this block reach", asked by both scans below
- * that have to know whether a line sits INSIDE something — the try/catch guard
- * and the staff-only guard. Both had a version of this question and only one had
- * a right answer; "is there an X before Y" is not the question, "is Y inside an X
- * that is still open" is.
- *
- * EVERY string literal is skipped whole — backticks included — through the one
- * shared primitive, so a brace inside one cannot unbalance the walk and an
- * apostrophe inside template TEXT cannot open a bogus region that eats source.
- * It had to become so: this file's own copy knew `'` and `"` only, and BOTH files
- * this suite walks with it — the chat route and asset-detail-modal.tsx — carry an
- * apostrophe inside a template literal, so the try-guard below was already walking
- * corrupted ranges and reporting green.
- *
- * Skipping a template whole hides nothing either caller asks for. Neither
- * enumerates braces; both ask "is this index still inside that range", and the
- * interpolations the sweep classifies are found by scanning the file separately.
+ * `staffOnlyIfRanges` is deliberately the `if (…)` form ONLY. The JSX
+ * `{!viewerIsClient && …}` gate is a separate function there, not folded into this
+ * one, because widening what counts as a guard would widen every exempted range
+ * at every caller — including this file's throw-guard, which must not start
+ * reading a JSX conditional as a try block.
  */
-function matchingBrace(src: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < src.length; i++) {
-    const ch = src[i]!;
-    if (isStringDelimiter(ch)) {
-      i = skipStringLiteral(src, i);
-      continue;
-    }
-    if (ch === "{") depth++;
-    else if (ch === "}" && --depth === 0) return i;
-  }
-  return -1;
-}
-
-/**
- * The character ranges a `if (!viewerIsClient)` guard governs: its braced block,
- * or — with no braces — the single statement that follows, which ends at the
- * first `;` or line break outside anything it opened. A string literal counts as
- * something it opened, via the same shared skip, so the newline inside a
- * multi-line template literal does not end the statement early.
- *
- * One home, two readers: the sweep that asks "is this raw enum guarded" and the
- * per-field test that asks "is client.status dropped for a client". The second
- * used to ask by pinning the exact single-line spelling of the guard, which made
- * turning it into a multi-line block — a legitimate refactor, and the one the
- * sweep was extended to understand — fail as though it were a leak.
- */
-function staffOnlyRanges(s: string): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (const g of s.matchAll(/if\s*\(\s*!\s*(?:\w+\.)?viewerIsClient\s*\)/g)) {
-    let from = g.index! + g[0].length;
-    while (from < s.length && /\s/.test(s[from]!)) from++;
-    if (s[from] === "{") {
-      const close = matchingBrace(s, from);
-      if (close > from) out.push([from, close]);
-      continue;
-    }
-    let depth = 0;
-    let to = from;
-    for (; to < s.length; to++) {
-      const ch = s[to]!;
-      if (isStringDelimiter(ch)) {
-        to = skipStringLiteral(s, to);
-        continue;
-      }
-      if (ch === "(" || ch === "{" || ch === "[") depth++;
-      else if (ch === ")" || ch === "}" || ch === "]") depth--;
-      else if (depth === 0 && (ch === ";" || ch === "\n")) break;
-    }
-    out.push([from, to]);
-  }
-  return out;
-}
-
-/** Does `at` sit inside a range one of those guards still has open? */
-const insideStaffOnly = (ranges: Array<[number, number]>, at: number): boolean =>
-  ranges.some(([from, to]) => at > from && at < to);
+const staffOnlyRanges = staffOnlyIfRanges;
+const insideStaffOnly = insideAnyRange;
 
 /**
  * The range walk's own teeth, checked here rather than trusted, because it is now
@@ -313,7 +257,9 @@ function asset(overrides: Partial<Asset> = {}): Asset {
 
 function overview(assets: Asset[], viewerIsClient: boolean): string {
   return renderToStaticMarkup(
-    createElement(ClientHomeOverview, { tasks: [], assets, viewerIsClient }),
+    // `clientId` only steers the archive links (a staff reader needs this
+    // client's workspace, not the flat one) — nothing this file asserts.
+    createElement(ClientHomeOverview, { clientId: "c1", tasks: [], assets, viewerIsClient }),
   );
 }
 
@@ -659,7 +605,14 @@ describe("the calendar's chip vocabulary", () => {
     // NAMES, not offers: which of those a given viewer is actually shown is
     // `calendarFilterKeyMatchable`'s answer, derived and pinned in
     // calendar-kind.test.ts. This assertion is about the map being total.
-    expect(flat(cal)).toContain("STATUS_FILTER_CHIPS: Record<CalendarFilterKey");
+    // `STATUS_FILTER_CHIP_CLASS`, formerly `STATUS_FILTER_CHIPS`: the map kept its
+    // Record-over-the-union shape and lost its `label` half, which moved to
+    // `calendarFilterLabel` (lib/calendar-kind) after `review` was found inventing
+    // "Pending review" for a JobStatus the run card below the legend calls "In
+    // review". The words' own totality is asserted where they now live —
+    // status-render-sweep.test.ts asks the accessor for every key — so this line is
+    // only about the swatches still being total.
+    expect(flat(cal)).toContain("STATUS_FILTER_CHIP_CLASS: Record<CalendarFilterKey");
     // …and the render site asks the per-viewer rule rather than painting the map
     // whole, which is the half a total map cannot give you.
     expect(flat(cal)).toContain("calendarFilterKeyMatchable(key, viewerIsClient)");

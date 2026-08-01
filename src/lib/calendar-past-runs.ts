@@ -141,11 +141,20 @@ export interface PastRunEntry<J, V> {
  *    card. What it does cost is the in-flight card — a queued or running run has
  *    delivered nothing, so a client no longer watches one execute. For a run
  *    fired by an ACTIVE schedule, that the agent ran is still on the schedule's
- *    own card as "Last fire" (`lastRunAt`); the scope of that substitute is the
+ *    own card under "Last fire" (`lastRunAt`) — and the SUBSTITUTE'S OWN SHAPE
+ *    matters, because A3 came for that panel next: staff read "Ran 4 hours ago",
+ *    a client reads a date-free "This schedule has run before" (the batch instant
+ *    beside a grid of upcoming days is the disclosure A3 forbids). So a client is
+ *    told THAT the agent ran, never when. The scope of the substitute is the
  *    schedule row it lives on, so a manually dispatched run, or one whose
  *    schedule is not active, has no card carrying it. Staff keep every run,
  *    including the ones that produced nothing — that is the operational history
  *    the calendar exists to show them.
+ *
+ *    Both halves are pinned in lib/__tests__/status-render-sweep.test.ts against
+ *    run-calendar.tsx's source, so this paragraph cannot go on pointing at
+ *    something that is no longer there. It did, for exactly as long as that panel
+ *    was gated to staff outright.
  *
  * @param jobs the runs already narrowed to the calendar's run source; this
  *   function judges the VIEWER, not which agent system a job came from.

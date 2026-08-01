@@ -2377,6 +2377,20 @@ export async function listClientSeats(clientId: string): Promise<ClientSeat[]> {
   return snap.docs.map((d) => withId<ClientSeat>(d)).sort((a, b) => a.createdAt - b.createdAt);
 }
 
+/**
+ * Drop the seat row itself. A HARD delete, not a flag: `addXSeatAction` and
+ * `addLinkedInSeatAction` both reuse an existing seat by matching on `slug`, so
+ * a hidden-but-stored seat would be found by the re-add of the same name and
+ * silently resurrect the removed person's answers — while a second seat with
+ * that slug would break the per-seat agent file keys the slug exists to be.
+ *
+ * The documents that hang off a seat are NOT removed here (see
+ * removeClientSeatAction, which owns that order); this is the last step of it.
+ */
+export async function deleteClientSeat(id: string): Promise<void> {
+  await col.clientSeats().doc(id).delete();
+}
+
 /** One intake doc per (clientId, agent, seatId); seatId null = the company page. */
 export async function getAgentIntake(
   clientId: string,
@@ -2442,6 +2456,18 @@ export async function clearAgentIntakeFields(
   await col.agentIntake().doc(id).update({ ...deletions, updatedAt: Date.now() });
 }
 
+/**
+ * Drop one intake document whole — the seat-removal path only.
+ *
+ * The form paths never call this: they upsert, because an empty answer is a
+ * saved answer. What this is for is a seat that no longer exists, whose intake
+ * doc would otherwise be unreachable from every surface (all of them list by
+ * seat) while `listAgentIntake` kept returning it.
+ */
+export async function deleteAgentIntake(id: string): Promise<void> {
+  await col.agentIntake().doc(id).delete();
+}
+
 export async function addXNewsUpdate(data: Omit<XNewsUpdate, "id">): Promise<string> {
   const ref = await col.xNewsUpdates().add(data);
   return ref.id;
@@ -2462,6 +2488,33 @@ export async function listXTakes(clientId: string, seatId?: string): Promise<XTa
   if (seatId) q = q.where("seatId", "==", seatId);
   const snap = await q.get();
   return snap.docs.map((d) => withId<XTake>(d)).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * Delete every take belonging to one seat, and report how many went.
+ *
+ * A take is that person's own one-liner and the input a run drafts their posts
+ * from, so it goes with the seat. Leaving them behind is not neutral: nothing
+ * lists a removed seat's takes, so they become unreachable text that still
+ * counts — the agent page's "Takes & topics" row reads `listXTakes(clientId)`
+ * with no seat filter, and would keep telling the client "4 takes on file"
+ * about a person they had just removed.
+ *
+ * Returns how many went. NO CALLER READS IT TODAY — removeClientSeatAction
+ * discards it — so this is a convenience for a future caller and not a fact any
+ * surface currently reports.
+ */
+export async function deleteXTakesForSeat(clientId: string, seatId: string): Promise<number> {
+  const takes = await listXTakes(clientId, seatId);
+  // Chunked at 400 like deleteClientCascade above: a write batch caps at 500,
+  // and the take box has no ceiling — one seat dropping a take a day for two
+  // years would exceed it and throw mid-removal.
+  for (let i = 0; i < takes.length; i += 400) {
+    const batch = adminDb().batch();
+    for (const take of takes.slice(i, i + 400)) batch.delete(col.xTakes().doc(take.id));
+    await batch.commit();
+  }
+  return takes.length;
 }
 
 export async function addXDraftFeedback(data: Omit<XDraftFeedback, "id">): Promise<string> {

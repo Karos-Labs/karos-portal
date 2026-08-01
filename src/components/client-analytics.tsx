@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Card, CardTitle, StatCard, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { relativeTime } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
@@ -33,8 +33,8 @@ const STATUS_COLOR: Record<Asset["status"], string> = {
 const UNKNOWN_STATUS_COLOR = "#9c9ca3";
 
 /**
- * The five counter tiles, on their own so a caller can place them somewhere the
- * rest of the analytics stack does not go.
+ * The counter tiles, on their own so a caller can place them somewhere the rest
+ * of the analytics stack does not go.
  *
  * CD-H1: for a client viewer they are the FIRST thing under the Overview header
  * — the counters are what the dashboard opens with, and F99's tab arrangement
@@ -42,40 +42,84 @@ const UNKNOWN_STATUS_COLOR = "#9c9ca3";
  * The client page renders this directly and passes `hideStats` to
  * <ClientAnalytics/> so the row is never printed twice; staff keep the plain
  * single stack with the tiles in place.
+ *
+ * FOUR TILES FOR A CLIENT, FIVE FOR STAFF — directive A3, the churn rule, and
+ * the fifth tile was the tell. "Agent runs 47 · Last run 6 hours ago" reports
+ * neither of the two things a client's dashboard is allowed to report about our
+ * machinery:
+ *
+ *  • the COUNT is every job document ever written for them — scheduled fires,
+ *    manual runs, launch/setup runs, Control Room test runs, failures — so it is
+ *    a measure of our activity, not of their content, and the number they can see
+ *    beside it (Deliverables) does not match it.
+ *  • "Last run 6 hours ago" is the batch timestamp. The morning after a weekly
+ *    batch fires, a client reading it beside a calendar showing seven upcoming
+ *    days can conclude the whole week already exists — which is the one fact the
+ *    slot model is built to keep indistinguishable.
+ *
+ * THE SAME RULE WAS ALREADY WRITTEN ELSEWHERE, and this paragraph used to claim
+ * more than was true: it said "the calendar and the Recent activity list were
+ * both scrubbed of the generation instant (they stamp a client's rows with
+ * `clientDeliveryStamp` instead), and this tile is the copy that was missed."
+ * The Recent activity half is right. THE CALENDAR HALF WAS NOT — the calendar
+ * reads `clientDeliveryStamp` nowhere, and it carried two live instants of its
+ * own: the scheduled-run card's "Last fire · Ran 6 hours ago" and PastRunCard's
+ * "Ran 6 hours ago". Both are gated for clients now, in run-calendar.tsx.
+ *
+ * Which is the point worth keeping: "this is the last copy" is a claim about the
+ * whole repo, and the tile it excused was one of four. The four tiles a client
+ * keeps all count THEIR content.
+ *
+ * `viewerIsClient` is REQUIRED with no default, the same device the detail modal
+ * uses: a defaulted flag would let the next mount pick silently, and the failure
+ * mode here is not a wrong word but a directive breach. A test sweeps src/ for
+ * every mount and requires the prop.
  */
 export function ClientAnalyticsStats({
   assets,
   jobs,
   integrations,
+  viewerIsClient,
 }: {
   assets: Asset[];
   jobs: Job[];
   integrations: ClientIntegration[];
+  /** Whose counter row this is — see the note above (A3). */
+  viewerIsClient: boolean;
 }) {
   const published = assets.filter((a) => a.status === "published").length;
   const scheduled = assets.filter((a) => a.status === "scheduled").length;
   const activeChannels = integrations.filter((i) => integrationIsUsable(i));
-  const lastRun = [...jobs].sort((a, b) => b.createdAt - a.createdAt)[0];
+  // Read inside the staff branch below rather than here: nothing derived from a
+  // job may be in scope on the client path, so that the tile cannot be
+  // reintroduced by a later edit that only copies a JSX line.
+  const lastRun = viewerIsClient ? null : [...jobs].sort((a, b) => b.createdAt - a.createdAt)[0];
 
   return (
     /* F124 collapsed these four tiles into one thin SummaryStat row on the
        duplication argument; Albert reviewed it on 2026-07-28 and struck the
        finding (CD-G6) — the row read as messy, and the counters are the first
        view. The baseline tiles are the shipped design; do not collapse them
-       again. */
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+       again.
+
+       The track count follows the tile count so a client's four tiles fill the
+       row instead of leaving a fifth column empty. */
+    <div className={cn("grid grid-cols-2 gap-4", viewerIsClient ? "lg:grid-cols-4" : "lg:grid-cols-5")}>
       <StatCard label="Published" value={published} />
       <StatCard label="Scheduled" value={scheduled} />
       <StatCard label="Channels" value={activeChannels.length} />
       <StatCard label="Deliverables" value={assets.length} />
       {/* QA F99: a whole bordered panel was spent on one sentence about agent
           runs. It's a counter — it belongs in the counter row. QA F123: the
-          sentence also read "20 agent runs · last 9h ago", which isn't one. */}
-      <StatCard
-        label="Agent runs"
-        value={jobs.length}
-        hint={lastRun ? `Last run ${relativeTime(lastRun.createdAt)}` : "No runs yet"}
-      />
+          sentence also read "20 agent runs · last 9h ago", which isn't one.
+          Staff only since A3 — see the component's note. */}
+      {!viewerIsClient && (
+        <StatCard
+          label="Agent runs"
+          value={jobs.length}
+          hint={lastRun ? `Last run ${relativeTime(lastRun.createdAt)}` : "No runs yet"}
+        />
+      )}
     </div>
   );
 }
@@ -115,7 +159,16 @@ export function ClientAnalytics({
   return (
     <div className="space-y-6">
       {!hideStats && (
-        <ClientAnalyticsStats assets={assets} jobs={jobs} integrations={integrations} />
+        <ClientAnalyticsStats
+          assets={assets}
+          jobs={jobs}
+          integrations={integrations}
+          // The same viewer this component already takes for the chart's words.
+          // In practice a client never reaches this branch (their page lifts the
+          // row and passes hideStats), but threading the real flag is what makes
+          // that a fact about the caller rather than something this line assumes.
+          viewerIsClient={viewerIsClient}
+        />
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">

@@ -614,9 +614,18 @@ interface Props {
   onClose: () => void;
   onStatusChange: (id: string, status: TaskStatus, clientId: string) => void;
   onLocalUpdate: (updated: ClientTask & { _clientName?: string }) => void;
+  /**
+   * Dismiss this task — the board's one delete path, which is what reaches
+   * `deleteTaskAction` (and its authorization). REQUIRED, not optional: the
+   * board card's own trash icon lives in a pointer-revealed row, so this footer
+   * is the only delete a phone can reach, and a prop that a mount may silently
+   * omit is the shape that left `onAdded` dead for every render. tsc is the
+   * guard — every mount must hand this over.
+   */
+  onDelete: () => void;
 }
 
-export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }: Props) {
+export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, onDelete }: Props) {
   const src = SOURCE_LABEL[task.source] ?? SOURCE_LABEL.manual;
   const prio = PRIORITY_COLOR[task.priority] ?? PRIORITY_COLOR.low;
   const initialPlan = (task.metadata?.aiPlan as string | undefined) ?? null;
@@ -651,6 +660,10 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   // The AI plan is a guide for the client to execute the task themselves —
   // not useful for karos_managed tasks our own agents already run.
   const isClientManaged = inferOwner(task) === "client_managed";
+  // Two-step confirm for the footer's destructive control, the same shape the
+  // card's trash icon uses: the button arms the question, and `onDelete`
+  // (⇒ deleteTaskAction, which authorizes) is unreachable until "Yes, delete it".
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Close on Escape
   useEffect(() => {
@@ -848,36 +861,89 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
           <CommentsSection taskId={task.id} clientId={task.clientId} />
         </div>
 
-        {/* Footer */}
-        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border bg-surface-2 px-5 py-3">
-          <p className="text-xs text-muted-2">
-            Created {relativeTime(task.createdAt)}
-          </p>
-          {/* For review_pending, the footer CTA is handled inside ReviewPanel.
-              For other states, show the standard "Move to" button. */}
-          {!isReviewPending && (
-            <button
-              onClick={() => {
-                onStatusChange(task.id, nextStatus, task.clientId);
-                onClose();
-              }}
-              disabled={isExecuting}
-              className="flex items-center gap-1.5 rounded-md border border-border bg-surface-3 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-neon/40 hover:text-neon disabled:opacity-40"
-            >
-              <Icon
-                name={
-                  nextStatus === "completed"
-                    ? "Check"
-                    : nextStatus === "in_progress"
-                      ? "Play"
-                      : nextStatus === "review_pending"
-                        ? "Eye"
-                        : "RotateCcw"
-                }
-                className="h-3 w-3"
-              />
-              Move to {STATUS_LABEL[nextStatus]}
-            </button>
+        {/* Footer — and the one delete control that exists at EVERY width.
+            The card's own trash icon lives in a row that is revealed by hover
+            wherever a pointer exists, and a tap on the card opens THIS panel over
+            the board, so without a delete here a client on a phone could add
+            tasks from the always-visible quick-add bar and never remove one.
+            "Open Details" is the tap itself and "Run Agent"/"Start" is the Move
+            button beside this; delete was the action with no second home. */}
+        <div className="shrink-0 border-t border-border bg-surface-2 px-5 py-3">
+          {confirmingDelete ? (
+            <div className="rounded-md border border-danger/35 bg-danger/10 px-3 py-2">
+              {/* The task is named by the heading directly above this panel, so
+                  the question does not repeat the title. */}
+              <p className="text-xs leading-relaxed text-danger">
+                Delete this task? This cannot be undone.
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => {
+                    setConfirmingDelete(false);
+                    onDelete();
+                    onClose();
+                  }}
+                  className="rounded-md border border-danger/40 bg-danger/15 px-2.5 py-1.5 text-xs font-medium text-danger transition-colors hover:border-danger/60"
+                >
+                  Yes, delete it
+                </button>
+                <button
+                  onClick={() => setConfirmingDelete(false)}
+                  className="rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:text-foreground"
+                >
+                  Keep it
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-muted-2">Created {relativeTime(task.createdAt)}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Off mid-run for the reason deleteTaskAction refuses it: the run
+                    would keep burning compute with no task left for its webhook to
+                    land on, and the upfront charge could never be refunded. Said
+                    here rather than left to a refusal after the press. */}
+                <button
+                  onClick={() => setConfirmingDelete(true)}
+                  disabled={isExecuting}
+                  title={
+                    isExecuting
+                      ? "Wait for the run to finish before dismissing this task"
+                      : "Delete task"
+                  }
+                  className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-40"
+                >
+                  <Icon name="Trash2" className="h-3 w-3" />
+                  Delete
+                </button>
+                {/* For review_pending, the primary CTA is handled inside
+                    ReviewPanel. For other states, show the "Move to" button. */}
+                {!isReviewPending && (
+                  <button
+                    onClick={() => {
+                      onStatusChange(task.id, nextStatus, task.clientId);
+                      onClose();
+                    }}
+                    disabled={isExecuting}
+                    className="flex items-center gap-1.5 rounded-md border border-border bg-surface-3 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-neon/40 hover:text-neon disabled:opacity-40"
+                  >
+                    <Icon
+                      name={
+                        nextStatus === "completed"
+                          ? "Check"
+                          : nextStatus === "in_progress"
+                            ? "Play"
+                            : nextStatus === "review_pending"
+                              ? "Eye"
+                              : "RotateCcw"
+                      }
+                      className="h-3 w-3"
+                    />
+                    Move to {STATUS_LABEL[nextStatus]}
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
-import { buildRedditAgentIntakeView } from "@/lib/agent-intake-views";
+import { buildRedditAgentIntakeView, intakeAgentPageId } from "@/lib/agent-intake-views";
+import { intakePageAction } from "@/lib/agent-intake-links";
 import { PageHeader } from "@/components/ui";
 import { RedditAgentIntake } from "@/components/reddit-agent-intake";
 
@@ -22,11 +23,25 @@ export default async function RedditAgentPage({ params }: { params: Promise<{ id
   }
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
-  // Called for the refusal, not the document: this page reads nothing off
-  // the client record, but it is still one of the client's pages.
-  await requireVisibleClient(user, id);
+  // Called for the refusal AND for the record: the header's control needs this
+  // client's grant list and lab slug to resolve the agent's own page (#82).
+  const client = await requireVisibleClient(user, id);
 
-  const view = await buildRedditAgentIntakeView(id, { isStaff });
+  const [view, agentId] = await Promise.all([
+    buildRedditAgentIntakeView(id, { isStaff }),
+    // Resolved for BOTH roles. It used to be skipped for staff "whose destination is
+    // the roster either way" — but the roster carries no run control for staff
+    // either (CD-I1 moved every staff run gesture to the agent's own page), so
+    // staff need the same destination a client gets.
+    intakeAgentPageId({
+        family: "reddit",
+        clientSlug: client.agentsRepoSlug,
+        grantedAgentIds: client.customAgentIds,
+      }),
+  ]);
+  // Both roles go to the agent's own page: it is the only place a run gesture
+  // lives for either of them. The label differs, not the destination.
+  const action = intakePageAction({ clientId: id, isStaff, agentId });
 
   return (
     <>
@@ -35,10 +50,10 @@ export default async function RedditAgentPage({ params }: { params: Promise<{ id
         description="What we collect to run Reddit for you: the account we draft as, how much history it has, and how you want mentions handled. We work out the subreddits and the questions worth answering. Drafts only — we never post to Reddit, you post the reply yourself."
         action={
           <a
-            href={`/clients/${id}/agents`}
+            href={action.href}
             className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
           >
-            Run the agent →
+            {action.label}
           </a>
         }
       />

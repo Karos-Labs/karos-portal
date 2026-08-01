@@ -357,7 +357,27 @@ export interface ExternalJobArtifact {
   contentType?: string;
   /** Per the lab contract, only files under an outputs client/ folder are client-visible. */
   clientFacing: boolean;
-  /** Platform-hosted URL (client-facing, re-hosted) or service URL (internal). */
+  /**
+   * Platform-hosted URL once the file has been copied into our storage, else the
+   * agent service's own URL.
+   *
+   * WHICH ONE YOU GET DEPENDS ON THE LIST YOU READ IT FROM, and the difference
+   * matters because a service URL is a V4 signed link that expires 7 days after
+   * the run. `Job.external.artifacts` is the run record and keeps the service URL
+   * for anything that could not be copied, so staff can still fetch it; an
+   * asset's `meta.artifacts` is written only from files whose bytes reached
+   * platform storage (the webhook's `rehosted` list). This comment used to claim
+   * client-facing implied re-hosted, which is what finding #47 was.
+   *
+   * SCOPED TO ASSETS WRITTEN SINCE THAT FIX, because the unscoped version of this
+   * sentence — "a client is never given a link that will expire" — was flatly
+   * contradicted by `asset-images.ts`, which states the residual at the readers:
+   * documents written BEFORE the fix can still hold an agent-service URL in
+   * `meta.artifacts`, nothing can recognise one (no host or shape distinguishes it
+   * from a legitimate hosted link), and those assets play until their link dies.
+   * A backfill is the fix and has not been written. Two comments from one change
+   * disagreeing about the same field is worse than either gap.
+   */
   url?: string;
 }
 

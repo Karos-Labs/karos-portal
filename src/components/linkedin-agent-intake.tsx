@@ -19,6 +19,13 @@ import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "
 import { Icon } from "@/components/icon";
 import { CompanyNewsBox, type CompanyNewsRowView } from "@/components/company-news-box";
 import { SavedFormCard } from "@/components/saved-form-card";
+import { ClientSeatRemove } from "@/components/client-seat-remove";
+import {
+  clientArchiveLink,
+  intakeAnchorId,
+  intakeSeatAnchorId,
+} from "@/lib/agent-intake-links";
+import { INTAKE_UPLOAD_FAILED, intakeSave } from "@/lib/intake-save";
 import {
   addLiDraftFeedbackAction,
   addLinkedInSeatAction,
@@ -112,7 +119,9 @@ function CompanyForm({
   function save() {
     setError(null);
     start(async () => {
-      const result = await saveLinkedInCompanyIntakeAction({ clientId, pageUrl, comeAcross, offLimits });
+      const result = await intakeSave(() =>
+        saveLinkedInCompanyIntakeAction({ clientId, pageUrl, comeAcross, offLimits }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -264,16 +273,22 @@ function SeatCv({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
   function upload(file: File) {
     setError(null);
     start(async () => {
-      const body = new FormData();
-      body.append("clientId", clientId);
-      body.append("seatId", seat.id);
-      body.append("file", file);
-      const result = await uploadLinkedInSeatCvAction(body);
+      const result = await intakeSave(() => {
+        const body = new FormData();
+        body.append("clientId", clientId);
+        body.append("seatId", seat.id);
+        body.append("file", file);
+        return uploadLinkedInSeatCvAction(body);
+      }, INTAKE_UPLOAD_FAILED);
+      // Cleared on FAILURE too, not only on success. A file input keeps the
+      // file it already holds, and re-choosing the same file fires no second
+      // change event — so without this the retry the failure copy asks for was
+      // impossible, and the upload that threw looked like a dead control.
+      if (inputRef.current) inputRef.current.value = "";
       if (result.error) {
         setError(result.error);
         return;
       }
-      if (inputRef.current) inputRef.current.value = "";
       router.refresh();
     });
   }
@@ -314,7 +329,16 @@ function SeatCv({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
 
 /* ────────────────────────── seat cards ─────────────────────────── */
 
-function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
+function SeatCard({
+  clientId,
+  seat,
+  runInFlight,
+}: {
+  clientId: string;
+  seat: LiSeatView;
+  /** Passed through to the remove confirm — see ClientSeatRemove. */
+  runInFlight: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -329,16 +353,18 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
   function saveSeat() {
     setError(null);
     start(async () => {
-      const result = await saveLinkedInSeatIntakeAction({
-        clientId,
-        seatId: seat.id,
-        role,
-        profileUrl,
-        focus,
-        offLimits,
-        fallbackKind,
-        fallbackText,
-      });
+      const result = await intakeSave(() =>
+        saveLinkedInSeatIntakeAction({
+          clientId,
+          seatId: seat.id,
+          role,
+          profileUrl,
+          focus,
+          offLimits,
+          fallbackKind,
+          fallbackText,
+        }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -397,7 +423,20 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
       ]}
       open={editing}
       onEdit={() => setEditing(true)}
-      footer={<SeatCv clientId={clientId} seat={seat} />}
+      footer={
+        <>
+          <SeatCv clientId={clientId} seat={seat} />
+          {/* In the footer so it renders in BOTH states: a seat added by
+              mistake is one nobody has opened, and hiding the way back behind
+              "Edit" is how it became permanent. */}
+          <ClientSeatRemove
+            clientId={clientId}
+            seatId={seat.id}
+            seatName={seat.name}
+            runInFlight={runInFlight}
+          />
+        </>
+      }
     >
       <div className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -493,16 +532,18 @@ function AddSeatForm({ clientId }: { clientId: string }) {
   function add() {
     setError(null);
     start(async () => {
-      const result = await addLinkedInSeatAction({
-        clientId,
-        name,
-        role,
-        profileUrl,
-        focus,
-        offLimits,
-        fallbackKind,
-        fallbackText,
-      });
+      const result = await intakeSave(() =>
+        addLinkedInSeatAction({
+          clientId,
+          name,
+          role,
+          profileUrl,
+          focus,
+          offLimits,
+          fallbackKind,
+          fallbackText,
+        }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -626,12 +667,17 @@ function FeedbackBox({
 
   const accountName = (id: string) =>
     id === "company" ? "Company page" : id === "program" ? "Everything" : (seats.find((s) => s.id === id)?.name ?? "Seat");
+  // #90: `?tab=archive` is read only by ProgressView, and a staff viewer at the
+  // flat /tasks never gets one. The destination and its label move together.
+  const archive = clientArchiveLink({ clientId, isStaff });
 
   function submit() {
     setError(null);
     setSent(false);
     start(async () => {
-      const result = await addLiDraftFeedbackAction({ clientId, account, action: "note", reason: note });
+      const result = await intakeSave(() =>
+        addLiDraftFeedbackAction({ clientId, account, action: "note", reason: note }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -649,8 +695,8 @@ function FeedbackBox({
         Tell us what is working and what is not — in your own words, as much detail as you like.
         It goes straight into the agent&apos;s next run. Once your Karos team has approved the drafts,
         picking, editing and skipping happens on the drafts themselves, in{" "}
-        <a href="/tasks?tab=archive" className="underline hover:text-foreground">
-          your archive
+        <a href={archive.href} className="underline hover:text-foreground">
+          {archive.label}
         </a>
         — and each of those choices reaches the agent too.
       </p>
@@ -737,6 +783,7 @@ export function LinkedInAgentIntake({
   news,
   feedback,
   runs,
+  runInFlight,
   pageUrlSuggestion,
   isStaff,
 }: {
@@ -746,24 +793,55 @@ export function LinkedInAgentIntake({
   news: CompanyNewsRowView[];
   feedback: LiFeedbackRowView[];
   runs: LiRunRowView[];
+  /**
+   * A run this agent has in flight already holds its payload, so the remove
+   * confirm says a removed seat may still come back with drafts (#84).
+   *
+   * A PROP, not `runs.some(…)`. `runs` is the DISPLAY list, and for a client it
+   * is collapsed to one row per calendar day — so a run queued at 09:00 is not
+   * in it once a later run the same day lands, and the warning went to staff
+   * and not to the client who pressed Remove. The server answers this from the
+   * unfiltered scan (see `anyRunInFlight` in lib/agent-intake-views.ts).
+   */
+  runInFlight: boolean;
   pageUrlSuggestion?: string;
   /** Whose vocabulary the run rows are written in — see FeedbackBox. */
   isStaff: boolean;
 }) {
   return (
     <div className="space-y-6">
-      <CompanyForm
-        clientId={clientId}
-        intake={company}
-        {...(pageUrlSuggestion ? { pageUrlSuggestion } : {})}
-      />
+      {/* The anchors the agent page's inputs band links each of its rows to
+          (#85). Both sides derive them from the SAME row id through
+          intakeAnchorId, so a row cannot end up pointing at a hash that
+          matches nothing — which scrolls nowhere and raises nothing. */}
+      <div id={intakeAnchorId("company")} className="scroll-mt-24">
+        <CompanyForm
+          clientId={clientId}
+          intake={company}
+          {...(pageUrlSuggestion ? { pageUrlSuggestion } : {})}
+        />
+      </div>
       <div className="space-y-4">
         {seats.map((seat) => (
-          <SeatCard key={seat.id} clientId={clientId} seat={seat} />
+          <div key={seat.id} id={intakeSeatAnchorId(seat.id)} className="scroll-mt-24">
+            <SeatCard clientId={clientId} seat={seat} runInFlight={runInFlight} />
+          </div>
         ))}
         <AddSeatForm clientId={clientId} />
+        {/* #83: this page and the settings dialog both ask for "a LinkedIn
+            seat", read different collections, and neither can see the other's
+            rows — so each has to say which one it is showing. This is the
+            drafting roster; the settings one holds the sign-ins we publish and
+            measure with, and it is the one with a plan limit and a price. */}
+        <p className="text-xs text-muted-2">
+          These seats are who the agent writes for. Signing someone in so we can publish and measure
+          on their own LinkedIn is separate — that is the employee seats list in your settings, and
+          only it has a plan limit.
+        </p>
       </div>
-      <CompanyNewsBox clientId={clientId} rows={news} />
+      <div id={intakeAnchorId("news")} className="scroll-mt-24">
+        <CompanyNewsBox clientId={clientId} rows={news} />
+      </div>
       <FeedbackBox
         clientId={clientId}
         seats={seats}

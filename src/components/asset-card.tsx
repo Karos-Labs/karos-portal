@@ -7,7 +7,7 @@ import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
-import { isPublishHold, PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
+import { assetStatusLabel, isPublishHold, PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
 import {
   assetDownloadTargets,
   assetImages,
@@ -711,7 +711,14 @@ export function AssetCard({
               )}
             </div>
             <Badge tone={statusTone(asset.status)} className="shrink-0">
-              {asset.status}
+              {/* The staff register, not the stored enum. This card is staff-only
+                  (both mounts are: app/(app)/jobs/[id] requires KAROS_ADMIN or
+                  KAROS_EMPLOYEE, and assets-view's pages redirect a CLIENT_USER
+                  away), so the word changes from a lowercase "draft" to
+                  "Awaiting review" — which is what the group heading directly
+                  above this card in assets-view already says. One state, one
+                  word, on one screen. */}
+              {assetStatusLabel(asset.status, false)}
             </Badge>
           </div>
           {liBatch ? (

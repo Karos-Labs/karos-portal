@@ -27,12 +27,10 @@ export function OptionPicker({
   clientId,
   slotId,
   options,
-  onPicked,
 }: {
   clientId: string;
   slotId: string;
   options: ClientXOption[];
-  onPicked?: () => void;
 }) {
   const router = useRouter();
   const [editingRef, setEditingRef] = useState<string | null>(null);
@@ -59,7 +57,11 @@ export function OptionPicker({
         return;
       }
       setEditingRef(null);
-      onPicked?.();
+      // `router.refresh()` IS the notification: the panel above is server-rendered
+      // and re-reads the picked slot. There used to be an `onPicked?.()` here as
+      // well, declared and never passed by the one mount
+      // (client-agents/agent-detail-panel.tsx) — a second channel for the same
+      // fact that was dead in every render.
       router.refresh();
     });
   }
