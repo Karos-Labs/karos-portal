@@ -189,6 +189,24 @@ function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
 }
 
 /**
+ * The one-off SETUP price, or null when nobody has set one (§6.3).
+ *
+ * STAFF ONLY — it is deliberately absent from RunnableAgentSummary, so this
+ * takes the full document and no client payload can carry it.
+ *
+ * "Is the field filled in" is the whole test here, and it is complete for
+ * anything this app stored: every write of launchCreditCost goes through
+ * `validateAgentInput` (lib/actions/custom-agent-actions.ts), which refuses
+ * anything that is not a whole number greater than zero, and the repo import
+ * never sets it at all. `evaluateLaunchGate` additionally rejects zero,
+ * negatives and non-integers — that is its defence against rows this app did
+ * not write, not a second rule this card has to keep in step with.
+ */
+function agentLaunchCost(agent: Pick<CustomAgent, "launchCreditCost">): number | null {
+  return agent.launchCreditCost ?? null;
+}
+
+/**
  * An agent's blurb wherever a client reads it. Clamped to three lines so the
  * cut always lands on a line boundary — never mid-word — with a "More" control
  * that expands it in place. Whether the text overflows is MEASURED rather than
@@ -520,6 +538,9 @@ export function CustomAgentsHub({
             // belongs to. Until now the only way to learn it was to write a
             // brief and read the refusal.
             const boundTo = perClientAgentSlug(agent.key);
+            // #111. Resolved once so the badge and the price line can never
+            // disagree about whether this agent has a setup price.
+            const launchCost = agentLaunchCost(agent);
             return (
             <div
               key={agent.id}
@@ -551,9 +572,21 @@ export function CustomAgentsHub({
                       baked under one client's lab folder, so this is a property
                       of the agent, not of whoever is looking at it. */}
                   {boundTo && <Badge tone="neutral">{boundTo} only</Badge>}
-                  {/* No client blurb ⇒ the client's card is still falling back to
-                      the lab manifest below. Flagged here, fixed in the editor. */}
+                  {/* No client blurb ⇒ every client surface for this agent is
+                      reading the keyed fallback rather than a line somebody
+                      wrote for it. NOT the manifest below — `agentBlurb` took
+                      the manifest out of the chain (F127/CD-G2). Flagged here,
+                      fixed in the editor. */}
                   {!agent.clientBlurb?.trim() && <Badge tone="warning">No client blurb</Badge>}
+                  {/* #111. The library flagged an unwritten blurb and said
+                      nothing about an unset SETUP price, which is the stronger
+                      gate: it is the rung `evaluateLaunchGate` refuses on, so a
+                      client's self-serve Launch stays disabled until an admin
+                      types a number in the editor. Makes the UNSET STATE
+                      visible and nothing more — what the number should be is
+                      Daniel's call (#167), and inventing one here would be the
+                      F130 placeholder-pricing failure at the priciest SKU. */}
+                  {launchCost === null && <Badge tone="warning">Setup not priced</Badge>}
                   {!agent.enabled && <Badge tone="warning">Disabled</Badge>}
                   {/* Repo-catalog flag — informational until an admin reviews and enables. */}
                   {!agent.enabled && agent.source?.status === "blocked" && (
@@ -567,10 +600,25 @@ export function CustomAgentsHub({
               <div className="mt-3">
                 <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
               </div>
-              <div className="mt-auto flex items-center justify-between gap-2 pt-4">
-                <p className="text-xs text-muted-2">
-                  {creditsLabel(agentRunCost(agent))} per client run
-                </p>
+              <div className="mt-auto flex items-end justify-between gap-2 pt-4">
+                {/* BOTH prices, because only one of them gates anything. The
+                    per-run line read as "this agent is priced" while the setup
+                    price — the one the client's Launch button waits on — was
+                    invisible whether it was set or not. */}
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-2">
+                    {creditsLabel(agentRunCost(agent))} per client run
+                  </p>
+                  {launchCost === null ? (
+                    <p className="mt-0.5 text-xs text-warning">
+                      Setup not priced — clients cannot launch it themselves
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-xs text-muted-2">
+                      {creditsLabel(launchCost)} one-time setup
+                    </p>
+                  )}
+                </div>
                 <div className="flex gap-1.5">
                   {isAdmin && (
                     <Button size="sm" variant="ghost" onClick={() => setEditAgent(agent)}>
@@ -2194,7 +2242,8 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           />
           <p className="mt-1 text-xs text-muted-2">
             What the client reads on the agent card and in the run dialog: 1–2 sentences, sentence
-            case, no product codes. Leave empty and the card falls back to the internal description.
+            case, no product codes. Leave it empty and every client surface reads a generic keyed
+            line instead — the internal description above never reaches them.
           </p>
         </div>
         <div>

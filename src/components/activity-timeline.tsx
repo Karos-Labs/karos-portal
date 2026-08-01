@@ -10,6 +10,10 @@ import { cn } from "@/lib/utils";
 import { CLIENT_SAFE_ACTOR, SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
 import { researchReportReadyTitle } from "@/lib/activity-titles";
 import { intakePageAction } from "@/lib/agent-intake-links";
+// The run-state register, from the pure module rather than components/job-status
+// — that file re-exports these words but drags `Badge` and JSX along, and this
+// row wants the label without the badge.
+import { jobStatusLabel } from "@/lib/job-status-copy";
 import { addActivityNoteAction } from "@/lib/actions";
 import type { ActivityEventType, ClientReport, Job, Role } from "@/lib/types";
 
@@ -87,16 +91,50 @@ function eventsFromLogs(logs: TimelineActivity[]): TimelineEvent[] {
   }));
 }
 
-function eventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
+/**
+ * The staff face of the jobs stream: one row per run, titled with that run's
+ * OWN state.
+ *
+ * Every row used to be titled `<agent> delivered a draft`, with no reference to
+ * `j.status` — a field the projection does carry (TimelineJob above,
+ * populated in tasks-body.tsx). A queued run, a running one, a cancelled one
+ * and a failed one all announced a delivery, so this timeline could not be read
+ * for run state at all. The status reached the row in exactly one place, the
+ * DESCRIPTION, which printed `Failed: …` underneath — so a failed run rendered
+ * a single row that claimed the delivery and reported the failure in the same
+ * breath.
+ *
+ * The words come from the run-state register (`job-status-copy.ts`), not from a
+ * map spelled here. That register exists because "what do we call this run
+ * state" had been answered in more than one place and the copies disagreed —
+ * its own docstring names which, and no count is repeated here, because a count
+ * in a comment is a claim this file cannot check. Another local answer is the
+ * defect, not the fix. The `Failed:` prefix went with the change — the title carries
+ * the state now, and printing it twice was how the row contradicted itself in
+ * the first place. The error text itself stays, unprefixed, and is still the
+ * raw operator-facing message: this branch is staff-only (the client branch
+ * below takes its copy from `clientSafeRefusal` at the server boundary).
+ *
+ * RESIDUAL, stated because the row cannot fix it: the STAMP is `j.createdAt`,
+ * the instant the run was submitted, while the LABEL is the run's state as of
+ * this render. A run submitted Monday and delivered Tuesday sits under Monday
+ * reading "Delivered". Jobs carry no per-transition timestamps, so an honest
+ * "delivered at" is a data-layer change rather than a rendering one.
+ *
+ * Exported for test: a node run cannot mount this component (the staff branch
+ * renders AddNoteForm, which calls useRouter), and the rule worth pinning is
+ * that no two run states share a title.
+ */
+export function eventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
   return jobs.map((j) => ({
     id: `job:${j.id}`,
     timestamp: j.createdAt,
     type: "CAMPAIGN_CREATED" as ActivityEventType,
-    title: `${j.agentName} delivered a draft`,
-    description:
-      j.status === "failed"
-        ? `Failed: ${j.error ?? "Unknown error"}`
-        : j.title || undefined,
+    title: `${j.agentName} · ${jobStatusLabel(j.status)}`,
+    // The stored error REPLACES the run's own title only when there is one. A
+    // failed run with no message used to read "Failed: Unknown error", a phrase
+    // that says nothing the title does not now say by itself.
+    description: (j.status === "failed" && j.error ? j.error : j.title) || undefined,
     actor: "Staff",
     actorRole: "staff" as const,
     agentIdentity: j.agentName,
@@ -124,6 +162,15 @@ function dayKeyOf(t: number): string {
  * fire, and the run's internal title (the catalog product code plus the client
  * name) is dropped. Failures stay one row each — a failed run is a distinct
  * event with its own message — but under a title that matches what happened.
+ *
+ * AND THAT IS WHY THIS BRANCH DOES NOT ASK `job-status-copy` the way the staff
+ * branch above now does. The register answers "what is this ONE run's state
+ * called"; a collapsed row has no one run and therefore no one state, and the
+ * two words it does need ("worked on your content", "couldn't finish a run")
+ * are the only two distinctions a client is told. Pointing this branch at the
+ * register to make the two halves match would republish the run ladder —
+ * Queued, Running, In review — to the viewer the collapse exists to keep it
+ * from.
  */
 function clientEventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
   const events: TimelineEvent[] = [];
