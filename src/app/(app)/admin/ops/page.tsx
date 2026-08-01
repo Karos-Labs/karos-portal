@@ -1,10 +1,11 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listClients } from "@/lib/data";
 import { isLabOutputsConfigured, labRepoName } from "@/lib/lab-outputs";
 import { isOpsInboxConfigured, listInboxBundles, opsInboxDir } from "@/lib/ops-inbox";
 import { findPriorImports } from "@/lib/ops-import-history";
-import { Badge, Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
+import { Badge, Button, Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { LabImportButton } from "@/components/lab-import";
 import { OpsImport } from "@/components/ops-import";
@@ -96,6 +97,22 @@ export default async function OpsImportPage() {
             icon={<Icon name="FolderOpen" className="h-6 w-6" />}
             title="No client has a lab repo slug"
             description="Set a client's Lab repo slug in its Edit dialog to import that client's runs here."
+            /*
+              #108: the instruction was correct and unactionable. `EmptyState`
+              takes an `action`, and the sibling states on this page and on the
+              agents page use it — this one named a dialog on ANOTHER page and
+              offered no way there. Clients is where that dialog lives, and the
+              Edit control that opens it is reachable by keyboard and on touch
+              since #89, so this link lands somewhere a reader can finish.
+            */
+            action={
+              <Link href="/clients">
+                <Button size="sm" variant="subtle">
+                  Open Clients
+                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
+                </Button>
+              </Link>
+            }
           />
         ) : (
           <div className="space-y-1">
