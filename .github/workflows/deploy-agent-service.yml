@@ -131,4 +131,4 @@ jobs:
             --project="${{ vars.PROD_PROJECT_ID }}" \
             --config=agent-service/cloudbuild.yaml \
             --gcs-source-staging-dir=gs://karoscmo-agent-service-build-staging/source \
-            --substitutions=_REGION="${{ vars.PROD_REGION }}",_INTERNAL_API_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_JOB_HTTP_PROXY="http://${{ steps.proxy.outputs.ip }}:8888",_AGENTS_REF="${{ inputs.agents_ref || 'main' }}"
+            --substitutions=COMMIT_SHA="${{ github.sha }}",_REGION="${{ vars.PROD_REGION }}",_INTERNAL_API_URL="${{ vars.PROD_AGENT_SERVICE_URL }}",_JOB_HTTP_PROXY="http://${{ steps.proxy.outputs.ip }}:8888",_AGENTS_REF="${{ inputs.agents_ref || 'main' }}"
