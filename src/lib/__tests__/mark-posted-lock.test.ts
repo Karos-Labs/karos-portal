@@ -63,13 +63,30 @@ describe("markAssetPostedAction — future-dated posts (churn rule A3/A4)", () =
 });
 
 describe("redactLockedAsset + MarkPostedRow predicate", () => {
-  it("keeps status but drops publishMode — so the UI must key off `locked`", () => {
+  /**
+   * The name used to be "keeps status but drops publishMode", and the general
+   * claim in it stopped being true when `redactLockedAsset` began carrying
+   * `publishMode: "placeholder"` — the one value that is a promise to the client.
+   * This fixture uses "manual", which still drops, so the test stayed green while
+   * its own title described the opposite of the redaction. A test named for a
+   * false premise is the worst place for one to live, so the title now says what
+   * is asserted and the placeholder case is asserted beside it.
+   */
+  it("keeps status and drops a publishMode that is not a client promise", () => {
     const locked = redactLockedAsset(
       makeAsset({ status: "approved", scheduledAt: Date.now() + 3 * DAY }),
     );
     // The exact shape that made the old predicate return true.
     expect(locked.status).toBe("approved");
     expect(locked.publishMode).toBeUndefined();
+
+    // The value that DOES cross, and the reason the predicate may not key on the
+    // field's absence: a locked roadmap entry carries it so the calendar can
+    // classify it without waiting for its own day.
+    const roadmap = redactLockedAsset(
+      makeAsset({ status: "approved", scheduledAt: Date.now() + 3 * DAY, publishMode: "placeholder" }),
+    );
+    expect(roadmap.publishMode).toBe("placeholder");
     expect(locked.locked).toBe(true);
     // …and nothing real crossed the boundary.
     expect(locked.content).toBe("");

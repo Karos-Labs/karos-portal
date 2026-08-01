@@ -251,6 +251,37 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // ── Scheduled (future) runs ─────────────────────────────────────────
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const scheduleNow = Date.now();
+  // ACTIVE ONLY, and it stays that way: a paused schedule has no upcoming fires,
+  // so projecting its occurrences would paint days it will not run — the exact
+  // class of thing this surface is being fixed for. The cost is that pausing
+  // deletes the row from this page's data outright, which unmounts the card that
+  // did it. That is not a data problem to solve here; it is why the calendar
+  // itself now carries the acknowledgement and the resume (PausedRunNotice in
+  // components/run-calendar), rather than the card that disappears.
+  /**
+   * Paused schedules, carried to the calendar WITHOUT being projected.
+   *
+   * The filter below drops them from the day grid deliberately — painting days a
+   * paused schedule will not run is the same class of lie the grid exists to
+   * avoid. But dropping them from the PAGE is what made pausing a one-way door:
+   * the AI Agents page shows nothing for cadence "monthly" or "once"
+   * (`weeklyFireDays` returns null and `toScheduleRows` drops the row), so those
+   * two had no route back at all once the calendar forgot them. Identity and a
+   * cadence label only; no occurrences.
+   */
+  const pausedSchedules = scheduledRuns
+    .filter((r) => r.status === "paused")
+    .map((r) => ({
+      id: r.id,
+      productName: agentById.get(r.customAgentId)?.name ?? r.agentName,
+      // The SAME cadence vocabulary the active cards use — resolved here, per
+      // viewer, because a client never reads `describeCadence`'s operator wording.
+      cadenceLabel: isClient
+        ? clientCadenceLabel({ ...r, timeZone: runZone(r.timeZone) })
+        : describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
+      ...(single ? {} : { clientName: nameOf(r.clientId) }),
+    }));
+
   const scheduledEntries: CalendarRun[] = scheduledRuns
     .filter((r) => r.status === "active")
     .flatMap((r) => {
@@ -544,6 +575,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         // and the server action already authorizes them. Deleting stays behind
         // canSchedule.
         canManageRuns
+        pausedSchedules={pausedSchedules}
 
         clients={clientOptions}
         agents={agentOptions}

@@ -40,7 +40,7 @@ import {
 import { assetStatusLabel } from "@/lib/asset-status-copy";
 import { clientSafeRunError, CLIENT_SAVE_REFUSAL_MESSAGE } from "@/lib/custom-agent-launch";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
-import { isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
+import { isInClientArchive, isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
 import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -918,12 +918,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   /**
    * One deep link per viewer role, resolved server-side (redaction-at-the-
-   * boundary, same doctrine every other projection on this route follows).
+   * boundary, same doctrine every other projection on this route follows), or
+   * NULL when this viewer has no screen that holds this output.
+   *
    * Staff get the exact per-job route (`/jobs/{id}`) when one exists, or the
-   * agent page with `?asset=` (OutputsHub auto-opens the modal from it).
-   * Clients never get `/jobs` or `/assets` — both redirect a CLIENT_USER away
-   * — so they get the agent detail page they actually have, or the Workspace
-   * as a last resort.
+   * agent page with `?asset=` (OutputsHub auto-opens the modal from it), or the
+   * client-scoped Assets list — three returns, none of them null, and none of
+   * them filtered by anything a staff account cannot see. Only a client can be
+   * told there is nowhere to go.
+   *
+   * A CLIENT'S LINK IS GATED ON THE DESTINATION'S OWN FILTER (#102), and the
+   * gate is the whole fix. Two things were wrong with the old two lines.
+   *
+   *  1. The fallback was a bare `/tasks` — the Workspace BOARD. That surface
+   *     holds tasks, not deliverables; `client-home-overview.tsx` reasons
+   *     exactly that about the same set two screens away ("The Workspace board
+   *     holds tasks, not deliverables, so it does not contain these either").
+   *     The archive is a TAB of the same route, and `?tab=archive` is the param
+   *     ProgressView actually reads.
+   *  2. Adding the param alone would still have lied. `promptAssets` filters out
+   *     future-dated, launch and test-run assets and nothing else, so a DRAFT is
+   *     reachable by `find_output` — and a draft is excluded from a client's
+   *     archive BY DESIGN (`getClientArchiveAssets`), and from the agent detail
+   *     page's own list too, which runs the same filter. So both client
+   *     destinations provably exclude exactly the thing the link would name.
+   *
+   * So the client branch asks `isInClientArchive` — the predicate the archive
+   * itself is built from, the same one `client-home-overview.tsx` asks before it
+   * makes a row a link — and offers no link at all when the answer is no. The
+   * callers drop the markdown line rather than printing a dead one; the tool
+   * still reports the output's title, status and content, which is what was
+   * asked for. Silence beats "[View this output]" landing on a list that
+   * excludes it.
+   *
+   * `nowMs` rather than a fresh `Date.now()`: the archive is a 30-day window, so
+   * this is a time-dependent question, and it must be answered at the same
+   * instant the rest of this handler used.
    */
   // `viewerIsClient` is bound once, near the top of this handler, and decides
   // BOTH the link below and the register the §3 tools speak in — see the note
@@ -933,7 +963,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // non-null (the route's early `if (!user...) return` above) does not
   // survive into a hoisted `function` declaration's body, only into a
   // closure, which is also why every tool below is defined the same way.
-  const deepLinkForAsset = (asset: Asset): string => {
+  const deepLinkForAsset = (asset: Asset): string | null => {
     const job = asset.jobId ? (jobs.find((j) => j.id === asset.jobId) ?? null) : null;
     const identity = resolveContentIdentity({ asset, job }, umbrellas as ClientAgentIdentity[]);
     const umbrella = identity.clientAgentId
@@ -944,8 +974,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}?asset=${asset.id}`;
       return `/assets?clientId=${clientId}`;
     }
+    if (!isInClientArchive(asset, nowMs)) return null;
     if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}`;
-    return "/tasks";
+    return "/tasks?tab=archive";
+  };
+
+  /** The "[View this output]" line, or nothing when no screen holds it. */
+  const viewOutputLine = (asset: Asset): string => {
+    const href = deepLinkForAsset(asset);
+    return href ? `[View this output](${href})` : "";
   };
 
   /**
@@ -992,14 +1029,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const asset = matches[0];
       const rawContent = asset.content ?? "";
       const content = rawContent.slice(0, 4000);
+      // The view line and the blank line above it drop together — a trailing
+      // empty line is the tell that a link was expected and withheld, and the
+      // model reads it as one.
+      const view = viewOutputLine(asset);
       return [
         `**${asset.title || "Untitled"}** — status: ${statusLabelForActor(asset.status)}` +
           (asset.scheduledAt ? `, scheduled for ${new Date(asset.scheduledAt).toISOString()}` : ""),
         `id: ${asset.id}`,
         "",
         content + (rawContent.length > 4000 ? "\n[…truncated]" : ""),
-        "",
-        `[View this output](${deepLinkForAsset(asset)})`,
+        ...(view ? ["", view] : []),
       ].join("\n");
     },
   });
@@ -1046,7 +1086,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }
         return `Couldn't save that: ${e instanceof Error ? e.message : "unknown error"}.`;
       }
-      return `Saved. [View this output](${deepLinkForAsset(existing)})`;
+      const view = viewOutputLine(existing);
+      return view ? `Saved. ${view}` : "Saved.";
     },
   });
 

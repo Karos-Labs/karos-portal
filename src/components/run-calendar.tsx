@@ -303,6 +303,7 @@ function ScheduledRunCard({
   canDelete,
   canOpenJob,
   viewerIsClient,
+  onPaused,
 }: {
   run: CalendarRun;
   /** Pause this schedule. Clients may manage their own (requireClientAccess). */
@@ -323,12 +324,21 @@ function ScheduledRunCard({
    * directive with it.
    */
   viewerIsClient: boolean;
+  /**
+   * Raised when the pause has actually landed. THE ACKNOWLEDGEMENT DOES NOT
+   * BELONG ON THIS CARD, which is why it leaves through a callback instead of a
+   * local flag: the calendar is built from ACTIVE schedules only
+   * (calendar-body), so the row leaves the page's data the moment the write
+   * succeeds and this component unmounts on the very refresh that follows. A
+   * flag set here printed a reassurance that never survived to be read. The
+   * calendar owns it now, and owns the resume that goes with it.
+   */
+  onPaused: (run: CalendarRun) => void;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<null | "pause" | "delete">(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [paused, setPaused] = useState(false);
 
   // Both handlers previously ignored the result and never cleared the busy
   // flag: a refused call span forever with no message and left the card on
@@ -352,6 +362,11 @@ function ScheduledRunCard({
     }
   }
 
+  // No `finally` here, unlike `remove` above, and that is the point: on success
+  // this card is about to be unmounted by the refresh below (the calendar
+  // carries active schedules only), so `busy` is left set and the controls stay
+  // disabled for the moment in between rather than inviting a second click at a
+  // schedule that is already paused. Both failure paths clear it themselves.
   async function pause() {
     if (busy) return;
     setBusy("pause");
@@ -360,15 +375,13 @@ function ScheduledRunCard({
       const res = await setPlannedRunStatusAction(run.id, "paused");
       if (res?.error) {
         setError(res.error);
+        setBusy(null);
         return;
       }
-      // The calendar only carries active schedules, so this card is about to
-      // disappear — say so rather than letting it blink out.
-      setPaused(true);
+      onPaused(run);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't pause this schedule.");
-    } finally {
       setBusy(null);
     }
   }
@@ -489,72 +502,248 @@ function ScheduledRunCard({
               )}
             </div>
           )}
-          {paused ? (
-            <p className="mt-3 text-xs text-muted-2">
-              Paused. It won&apos;t fire again until you resume it on the AI Agents page.
-            </p>
-          ) : (
-            (canManage || canDelete) && (
-              <div className="mt-3 space-y-2">
-                {confirmingDelete ? (
-                  <>
-                    <p className="text-xs text-danger">
-                      Delete this schedule permanently? The agent stops running on this cadence and
-                      it can&apos;t be undone. To stop it temporarily, pause it instead.
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        onClick={remove}
-                        loading={busy === "delete"}
-                        disabled={busy != null}
-                      >
-                        Yes, delete it
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setConfirmingDelete(false)}
-                        disabled={busy != null}
-                      >
-                        Keep it
-                      </Button>
-                    </div>
-                  </>
-                ) : (
+          {(canManage || canDelete) && (
+            <div className="mt-3 space-y-2">
+              {confirmingDelete ? (
+                <>
+                  <p className="text-xs text-danger">
+                    Delete this schedule permanently? The agent stops running on this cadence and
+                    it can&apos;t be undone. To stop it temporarily, pause it instead.
+                  </p>
                   <div className="flex flex-wrap gap-2">
-                    {canManage && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={pause}
-                        loading={busy === "pause"}
-                        disabled={busy != null}
-                      >
-                        Pause
-                      </Button>
-                    )}
-                    {canDelete && (
-                      // Named for what it does. "Cancel" sat next to a dismissible
-                      // card and destroyed the schedule on one click.
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        onClick={() => setConfirmingDelete(true)}
-                        disabled={busy != null}
-                      >
-                        Delete schedule
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={remove}
+                      loading={busy === "delete"}
+                      disabled={busy != null}
+                    >
+                      Yes, delete it
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setConfirmingDelete(false)}
+                      disabled={busy != null}
+                    >
+                      Keep it
+                    </Button>
                   </div>
-                )}
-              </div>
-            )
+                </>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {canManage && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={pause}
+                      loading={busy === "pause"}
+                      disabled={busy != null}
+                    >
+                      Pause
+                    </Button>
+                  )}
+                  {canDelete && (
+                    // Named for what it does. "Cancel" sat next to a dismissible
+                    // card and destroyed the schedule on one click.
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => setConfirmingDelete(true)}
+                      disabled={busy != null}
+                    >
+                      Delete schedule
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
           {error && <p className="mt-2 text-xs text-danger">{error}</p>}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** The one fact the calendar keeps about a schedule it has just lost. */
+interface PausedRunMemo {
+  id: string;
+  productName: string;
+}
+
+/** One paused schedule, as the durable strip needs it. Identity only — never projected. */
+export interface PausedScheduleView {
+  id: string;
+  productName: string;
+  /** "weekly · Mon-Fri", "monthly", "one-off" — resolved server-side like every other cadence label. */
+  cadenceLabel?: string;
+  clientName?: string;
+}
+
+/**
+ * EVERY paused schedule, from DATA, always.
+ *
+ * `PausedRunNotice` above acknowledges the press that just happened and dies
+ * with the component's state. This is the half that survives a reload — and it
+ * is why a client can no longer pause themselves into a corner:
+ * `calendar-body` drops paused rows from the projection deliberately (painting
+ * days a schedule will not run is the same class of lie), so before this the
+ * ONLY route back was the AI Agents page, which shows nothing at all for cadence
+ * "monthly" or "once".
+ *
+ * Identity and a cadence label, never occurrences. A paused schedule has no
+ * upcoming days and must not appear to have any.
+ */
+function PausedScheduleStrip({ schedules }: { schedules: readonly PausedScheduleView[] }) {
+  if (schedules.length === 0) return null;
+  return (
+    <div className="rounded-[var(--radius)] border border-border bg-surface-2/30 px-4 py-3">
+      <p className="mb-2 text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+        Paused schedules
+      </p>
+      <ul className="space-y-2">
+        {schedules.map((s) => (
+          <li key={s.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+            <p className="min-w-0 text-xs text-muted">
+              <span className="font-medium text-foreground">{s.productName}</span>
+              {s.clientName ? ` · ${s.clientName}` : ""}
+              {s.cadenceLabel ? ` · ${s.cadenceLabel}` : ""}
+            </p>
+            <PausedScheduleResume id={s.id} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Resume for one strip row. Its own state, so one refusal cannot blank the others. */
+function PausedScheduleResume({ id }: { id: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function resume() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // The same action and the same gates the notice runs: a resume re-arms
+      // paid recurring fires, so it can legitimately refuse (credit cap, agent
+      // setup, an elapsed one-off) and the client reads that answer.
+      const res = await setPlannedRunStatusAction(id, "active");
+      if (res?.error) {
+        setError(res.error);
+        setBusy(false);
+        return;
+      }
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't resume this schedule.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="flex shrink-0 items-center gap-2">
+      {error && <span className="text-xs text-danger">{error}</span>}
+      <Button size="sm" variant="outline" onClick={resume} loading={busy}>
+        Resume
+      </Button>
+    </span>
+  );
+}
+
+/**
+ * WHAT HAPPENED TO THE SCHEDULE THAT JUST VANISHED, and the only way back to it
+ * on this surface.
+ *
+ * Two things live here, and neither could live on the card that raises them.
+ *
+ * 1. THE ACKNOWLEDGEMENT. `scheduledRuns.filter((r) => r.status === "active")`
+ *    in calendar-body is what the whole calendar is built from, so a paused
+ *    schedule leaves the page's data outright: every chip for it disappears from
+ *    the grid and `selectedScheduled` stops containing it, which unmounts
+ *    ScheduledRunCard on the same refresh. The reassurance used to be a local
+ *    flag on that card, so the client's schedule blinked out and the sentence
+ *    explaining it was destroyed in the same tick. This component is a child of
+ *    the calendar, which the refresh keeps.
+ *
+ * 2. THE REVERSE DOOR. `canManage` renders Pause and there was no resume branch
+ *    anywhere on this screen — and a paused schedule is not on this screen to
+ *    grow one. So the calendar could stop a schedule and could not start it
+ *    again. Resume is the SAME server action with the other reversible status,
+ *    the pair a CLIENT_USER is already allowed (setPlannedRunStatusAction
+ *    authorizes with requireClientAccess and refuses "completed" both ways).
+ *
+ * It can REFUSE — a resume re-arms paid recurring fires, so it runs the same
+ * gates a create does (credit cap, agent setup, an elapsed one-off), and those
+ * answers are already written for this viewer. So the returned error is printed
+ * rather than swallowed, and the notice stays up when it fires.
+ *
+ * IT DOES NOT NAME THE AI AGENTS PAGE, and the first version did. That page's
+ * schedule row comes from `toScheduleRows`, and `weeklyFireDays` returns null for
+ * cadence "monthly" and "once" — so for those two the row is dropped and the
+ * schedule is on NO surface once this notice goes. Telling a client to resume
+ * somewhere the schedule does not appear re-creates the one-way door this whole
+ * change exists to close, for the two cadences least likely to be noticed.
+ *
+ * The durable answer is `PausedScheduleStrip` below, which is rendered from
+ * DATA rather than from this component's state, so it survives a reload for
+ * every cadence. This notice is only the acknowledgement of the press that just
+ * happened, and it points there.
+ *
+ * `role="status"` + `aria-live="polite"`: pausing unmounts the card the button
+ * was in, so focus falls to <body> and this renders a full calendar above the
+ * viewport — a keyboard or screen-reader client would otherwise be told nothing
+ * at all, which is the half of this finding that is not about pixels.
+ */
+function PausedRunNotice({ run, onDone }: { run: PausedRunMemo; onDone: () => void }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function resume() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await setPlannedRunStatusAction(run.id, "active");
+      if (res?.error) {
+        setError(res.error);
+        setBusy(false);
+        return;
+      }
+      onDone();
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't resume this schedule.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="rounded-[var(--radius)] border border-border bg-surface-2/40 px-4 py-3"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <p className="min-w-0 text-xs text-muted">
+          <span className="font-medium text-foreground">{run.productName}</span> is paused. It
+          won&apos;t run again until you resume it — here, or under Paused schedules below.
+        </p>
+        <div className="flex shrink-0 gap-2">
+          <Button size="sm" variant="outline" onClick={resume} loading={busy}>
+            Resume
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onDone} disabled={busy}>
+            Dismiss
+          </Button>
+        </div>
+      </div>
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
     </div>
   );
 }
@@ -824,6 +1013,7 @@ function PostCard({
 
 export function RunCalendar({
   runs,
+  pausedSchedules = [],
   posts,
   assets,
   viewerIsClient = false,
@@ -835,6 +1025,12 @@ export function RunCalendar({
   defaultClientId,
 }: {
   runs: CalendarRun[];
+  /**
+   * Paused schedules, NOT projected onto days. `calendar-body` filters paused
+   * rows out of `runs` on purpose; these come through separately so the way
+   * back survives a reload for every cadence.
+   */
+  pausedSchedules?: readonly PausedScheduleView[];
   posts: CalendarPost[];
   assets: Asset[];
   /**
@@ -874,6 +1070,13 @@ export function RunCalendar({
   const [scheduleOpen, setScheduleOpen] = useState(false);
   /** Day clicked on an empty cell, carried into the schedule form as a prefill. */
   const [schedulePrefillAt, setSchedulePrefillAt] = useState<number | null>(null);
+  /**
+   * The schedule this viewer has just paused. Held HERE and not on the card
+   * that paused it: the pause takes the row out of `runs` entirely, so the card
+   * is unmounted by the refresh that follows and anything it was saying goes
+   * with it. See PausedRunNotice.
+   */
+  const [pausedRun, setPausedRun] = useState<PausedRunMemo | null>(null);
   // Status filter: which of the named calendar statuses are currently hidden.
   // "review" is a CalendarRun bucket (jobStatus === "review", i.e. Pending
   // Review) — everything else is a CalendarPost kind.
@@ -965,6 +1168,11 @@ export function RunCalendar({
 
   return (
     <div className="space-y-4">
+      {/* Outside the grid AND outside the day detail below: both of those are
+          rebuilt from `runs`, which no longer contains the schedule this is
+          about. */}
+      {pausedRun && <PausedRunNotice run={pausedRun} onDone={() => setPausedRun(null)} />}
+      <PausedScheduleStrip schedules={pausedSchedules} />
       <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
         {/* Header — wraps as a row before it wraps a control's label. Nothing
             here had a minimum width, so at laptop width the primary action
@@ -1178,6 +1386,11 @@ export function RunCalendar({
                       // The disclosure question, threaded from this component's own
                       // viewer rather than reusing one of the capability flags above.
                       viewerIsClient={viewerIsClient}
+                      // Only the two fields the notice prints and acts on: the
+                      // whole CalendarRun is a projected occurrence, and holding
+                      // one past the refresh that deleted its row would leave a
+                      // stale "next fire" in state for a schedule that has none.
+                      onPaused={(r) => setPausedRun({ id: r.id, productName: r.productName })}
                     />
                   ))}
                 </Section>

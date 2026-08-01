@@ -52,6 +52,20 @@ export interface CalendarKindInput {
  * over a body that plainly said the post was waiting its turn. The two are told
  * apart by `isPublishHold`, the one test for it (lib/asset-status-copy), never
  * by a prefix check spelled again here.
+ *
+ * TWO OF THE FIELDS BELOW ARE READ ACROSS THE REDACTION BOUNDARY. A client's
+ * future-dated posts reach this function as whitelist-redacted copies
+ * (redactLockedAsset in lib/asset-visibility), so a field that copy does not
+ * carry is one this classifier is blind to for exactly the posts a client
+ * cannot see yet:
+ *
+ *  • `publishMode` — CARRIED, as the placeholder marker. It was not, and the
+ *    cost was a roadmap entry the tier's own promise says Karos never posts
+ *    being painted "Scheduled post" and flipping to "Placeholder" on its day.
+ *  • `publishError` — NOT carried, and it cannot be: it holds the platform's
+ *    own exception. So a locked post carrying one classifies "scheduled" here
+ *    and reclassifies once it unlocks. That residual is stated rather than
+ *    papered over, and pinned in calendar-locked-chip.test.ts.
  */
 export function postKind(a: CalendarKindInput): CalendarAssetKind | null {
   if (a.publishError && a.status !== "published") {
@@ -138,9 +152,11 @@ export function isClientCalendarStatus(status: CalendarKindInput["status"]): boo
  * are in the same position, and the answer is none of them:
  *
  *  • published, scheduled — most of a client's calendar. Obviously matchable.
- *  • placeholder — `publishMode: "placeholder"` is stripped from a LOCKED post
- *    by redactLockedAsset, but an unlocked one keeps it, and that is an ordinary
- *    shape rather than a staff-only one.
+ *  • placeholder — `publishMode: "placeholder"` reaches a client on both sides
+ *    of the unlock: redactLockedAsset carries that one value through, and an
+ *    unlocked post keeps the field whole. While it was stripped the chip was
+ *    still matchable, but a locked roadmap entry matched the WRONG key
+ *    ("scheduled") until its own day.
  *  • failed — `clientSafePublishError` replaces the WORDS of a stored
  *    publishError, never the field, so a client's failed post still classifies
  *    as failed.

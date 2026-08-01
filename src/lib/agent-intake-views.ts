@@ -16,6 +16,7 @@ import "server-only";
  */
 
 import type { ComponentProps } from "react";
+import { notFound } from "next/navigation";
 import {
   getAgentIntake,
   getCustomAgentByKey,
@@ -74,39 +75,74 @@ const IDENTITY_BY_FAMILY: Record<AgentIntake["agent"], (key: string) => boolean>
 };
 
 /**
- * This client's own agent page for an intake family, or null.
+ * The grant rung for an intake page, AND this client's own agent page for that
+ * family — one call, because they are one read and because the second must not
+ * be obtainable without the first (#82, #114).
  *
- * For #82: an intake page's header control sends a CLIENT to the agent's own
- * page (the only surface where their run gesture lives), and needs that page's
- * `customAgents` doc id to do it. Resolved from the GRANT rather than from the
- * key alone, because the detail route's client guard is
- * `client.customAgentIds.includes(agent.id) || hasDelivered` — this asks the
- * cheaper half of that condition, which is strictly NARROWER, so an id it
- * returns is one the route will open and an id it withholds may still have been
- * openable. That is the fail-closed direction: the caller's fallback is an
- * honestly-labelled link to the roster, not a 404.
+ * WHY THEY ARE THE SAME FUNCTION rather than a gate the page remembers to call.
+ * The agent DETAIL route refuses a client who was neither granted this agent nor
+ * already delivered by it, and gives "not granted" and "does not exist" the same
+ * answer on purpose ("a client probing ids must not learn which agents the lab
+ * has"). The three intake pages had no such rung, so a client who typed
+ * `/clients/<their id>/x-agent` reached a form for an agent they do not have and
+ * could write an intake document nothing would ever read. Making the refusal a
+ * separate statement each page has to remember is the shape that produced the
+ * gap; here the ONLY way to the header control's destination is through the
+ * refusal, so a fourth intake page cannot render the control without it.
  *
- * The instance filter is the same predicate the agents page and the submit core
- * use (`agentKeyMatchesClientSlug`), so this can never point a client at
- * another client's per-client instance.
+ * WHAT IT ASKS, per rung, and why the two rungs use different sets:
+ *
+ *  - The GATE asks whether this client has an enabled, granted agent of this
+ *    FAMILY — deliberately without the per-client instance filter. It is the
+ *    coarser question ("do they have an X agent at all"), and being coarser is
+ *    the safe direction for a gate: it cannot 404 a client whose granted
+ *    instance happens not to match their lab slug.
+ *  - The PAGE ID keeps the instance filter (`agentKeyMatchesClientSlug`, the same
+ *    predicate the agents page and the submit core use), so the control can never
+ *    point a client at another client's per-client instance. Null is not a
+ *    refusal: `intakePageAction`'s fallback is an honestly-labelled link to the
+ *    roster.
+ *
+ * `runs` is the detail route's `hasDelivered` rung at family grain, and it is
+ * passed as the ROWS rather than as a boolean so "any?" is asked in one place.
+ * Non-emptiness is the one property of that list the display projection cannot
+ * change: `toRunRowViews` collapses a client's rows per day and caps them at 8,
+ * and neither can turn a non-empty job set into no rows. (Contrast
+ * `anyRunInFlight` below, which is a predicate the collapse CAN flip and is
+ * therefore answered from the unfiltered scan.)
+ *
+ * TWO RESIDUALS, because an overstated guarantee is worse than a stated one:
+ *  - `hasDelivered` on the detail route also counts LAB-IMPORTED assets, which
+ *    carry no job. A client whose grant was withdrawn and whose only work from
+ *    this family was imported can open that agent's detail page and will now get
+ *    a 404 from the intake links on it. Closing that needs the asset join
+ *    (`agentsWithDeliveredWork`), which is four more reads per intake page.
+ *  - This is the rung on the PAGES. The save actions
+ *    (`saveRedditCompanyIntakeAction` and friends) still stop at
+ *    `requireClientAccess`, so a client who posts the action directly still
+ *    writes the document. Those files are not this change's to edit.
  */
-export async function intakeAgentPageId(args: {
+export async function requireIntakeAgentAccess(args: {
   family: AgentIntake["agent"];
+  isStaff: boolean;
   clientSlug: string | null | undefined;
   grantedAgentIds: readonly string[] | null | undefined;
+  /** This family's run rows for this client, exactly as the view built them. */
+  runs: readonly unknown[];
 }): Promise<string | null> {
   const granted = new Set(args.grantedAgentIds ?? []);
-  if (granted.size === 0) return null;
   const matchesFamily = IDENTITY_BY_FAMILY[args.family];
-  const agents = await listCustomAgents();
-  const hit = agents.find(
-    (agent) =>
-      agent.enabled &&
-      granted.has(agent.id) &&
-      matchesFamily(agent.key) &&
-      agentKeyMatchesClientSlug(agent.key, args.clientSlug),
-  );
-  return hit?.id ?? null;
+  const family =
+    granted.size === 0
+      ? []
+      : (await listCustomAgents()).filter(
+          (agent) => agent.enabled && granted.has(agent.id) && matchesFamily(agent.key),
+        );
+  // Same refusal as the detail route, and the same two rungs: granted, or this
+  // family has already worked for them. Staff reached this line through
+  // requireVisibleClient, which is their gate.
+  if (!args.isStaff && family.length === 0 && args.runs.length === 0) notFound();
+  return family.find((agent) => agentKeyMatchesClientSlug(agent.key, args.clientSlug))?.id ?? null;
 }
 
 /**

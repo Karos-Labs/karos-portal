@@ -139,7 +139,8 @@ describe("postKind and the ordering hold", () => {
  * silently withholding a filter a client needed.
  *
  * The grid is an UPPER bound, deliberately: it ignores the RSC redaction
- * (redactLockedAsset drops publishMode and publishError from a locked post),
+ * (redactLockedAsset drops publishError from a locked post, and every publishMode
+ * except "placeholder"),
  * which can only remove shapes. So a key is withheld only when no shape at all
  * could match it — the safe direction.
  */

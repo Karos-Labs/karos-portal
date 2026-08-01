@@ -44,9 +44,14 @@ export function ClientHomeOverview({
    * `/tasks?tab=archive` these two links used to carry dropped a staff viewer
    * onto the cross-client board with no archive at all — the same defect as #90
    * on the three agent intake pages, found by grepping its shape rather than
-   * its symptom. The plain `/tasks` links below are NOT that shape: the
-   * cross-client board does hold this client's tasks, so they land somewhere
-   * real (unfiltered, which is a different complaint).
+   * its symptom.
+   *
+   * The attention rows below were long read as NOT that shape, on the grounds
+   * that the board does hold this client's tasks. It holds them on one of two
+   * disjoint OWNER TABS, and a bare `/tasks` picks the wrong one for half of
+   * them — see `taskBoardHref` at the foot of this file (#101). Nothing in this
+   * card is staff-reachable in practice: the page hands `tasks` an empty array
+   * for a staff viewer, so every attention row is a client's.
    */
   clientId: string;
   tasks: ClientTask[];
@@ -180,7 +185,7 @@ export function ClientHomeOverview({
             )}
             {reviewPendingTasks.length > 0 && (
               <AttentionRow
-                href="/tasks"
+                href={taskBoardHref(reviewPendingTasks)}
                 icon="Eye"
                 label={`${reviewPendingTasks.length} task${reviewPendingTasks.length === 1 ? "" : "s"} ready for review`}
                 hint="Completed work waiting for your sign-off."
@@ -188,7 +193,7 @@ export function ClientHomeOverview({
             )}
             {pendingTasks.length > 0 && (
               <AttentionRow
-                href="/tasks"
+                href={taskBoardHref(pendingTasks)}
                 icon="Circle"
                 label={`${pendingTasks.length} pending task${pendingTasks.length === 1 ? "" : "s"}`}
                 hint="Open items on your workspace board."
@@ -273,6 +278,51 @@ export function ClientHomeOverview({
 
 const ATTENTION_ROW_BASE =
   "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5";
+
+/**
+ * The Workspace board, opened on a tab that actually holds this row's work (#101).
+ *
+ * The board has TWO tabs, split by task owner, and they are disjoint by
+ * construction: `?owner=client` selects the client tab and anything else — a bare
+ * `/tasks` included — selects "karos". So these rows counted tasks of either
+ * owner and then sent the client to the karos tab, which for a client whose
+ * review-pending work is all client-owned holds none of it. QA F64 fixed exactly
+ * this in the notification bell and left it here.
+ *
+ * KEYED TO A TASK, NOT TO AN OWNER, and that is the point rather than a
+ * shorthand. `?task=` makes the board resolve the tab itself
+ * (`ownerTab(inferOwner(linkedTask))`), and it OUTRANKS `?owner=` whenever the
+ * task resolves — so the decision is asked of the surface that owns it. Building
+ * `?owner=` here would mean copying TWO rules that are each already spelled more
+ * than once: owner→tab (tasks-board.tsx and notification-bell.tsx) and
+ * owner-inference for a task whose `owner` field is unset (tasks-board.tsx,
+ * task-dedup.ts, execution-engine.ts, task-sync.ts). Neither of those is this
+ * card's to own, and a copy of either is the kind of duplicate this campaign
+ * keeps paying for.
+ *
+ * TWO RESIDUALS, because a promise a file cannot keep is worse than a stated
+ * limit:
+ *
+ *  - The row is a COUNT and the link is singular. When a row's tasks span both
+ *    owners, no single link opens a tab holding all of them; this opens the tab
+ *    holding the FIRST — the same tab the bell would open for that card — and
+ *    the ticket with it. Splitting the row per owner needs the mapping written
+ *    here after all.
+ *  - "The board holds this task" is not guaranteed, only overwhelmingly likely.
+ *    Both surfaces read `listClientTasks` for this client, but with different
+ *    windows: this page takes the 50 newest pending/review_pending, the board
+ *    the 200 newest of every status. A client with more than 200 live tasks can
+ *    therefore have a row whose task the board's page does not contain — and
+ *    then `?task=` resolves to nothing and the board opens on its default tab,
+ *    which is exactly today's behaviour. It degrades to the bug, never past it.
+ *
+ * Exported for test: the rule is which PARAM the board is keyed on, and that is
+ * a fact about the returned string, not about anything rendered.
+ */
+export function taskBoardHref(tasks: ClientTask[]): string {
+  const first = tasks[0];
+  return first ? `/tasks?task=${encodeURIComponent(first.id)}` : "/tasks";
+}
 
 /**
  * `href` is optional: a row whose items have no screen a client can open is

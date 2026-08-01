@@ -9,6 +9,7 @@ import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { CLIENT_SAFE_ACTOR, SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
 import { researchReportReadyTitle } from "@/lib/activity-titles";
+import { intakePageAction } from "@/lib/agent-intake-links";
 import { addActivityNoteAction } from "@/lib/actions";
 import type { ActivityEventType, ClientReport, Job, Role } from "@/lib/types";
 
@@ -472,6 +473,28 @@ export function ActivityTimeline({
 
   const isStaff = currentUserRole === "KAROS_ADMIN" || currentUserRole === "KAROS_EMPLOYEE";
 
+  // #92. THE EMPTY STATE IS THE FIRST THING A BRAND-NEW CLIENT SEES ON THIS TAB,
+  // and it read "Run an agent →" over a hard-coded link to `/clients/<id>/agents`
+  // — the roster whose client branch states in its own comment that it carries no
+  // Run button ("a client's run gesture lives only inside a detail page"). That
+  // made this the FOURTH control offering a run on a page built to refuse one, so
+  // it asks the resolver the other three already ask instead of being edited into
+  // a fourth spelling of the same promise.
+  //
+  // `agentId: null` is the honest answer FROM HERE, not a shortcut. This is a
+  // browser component handed a serialized timeline; resolving "which of this
+  // client's agents may they open" is a Firestore read, and the surface that
+  // mounts it (progress-view.tsx → tasks-body.tsx) is not this change's to edit.
+  // So the resolver returns its no-destination branch: the roster, named for what
+  // it is, with the verb dropped. It is also the state this empty state describes
+  // — a client with nothing on their timeline yet is the client least likely to
+  // have a resolvable instance.
+  //
+  // The real `isStaff` is passed rather than a literal `false`, so the wording
+  // stays correct if the control is ever shown to both roles; today only the
+  // client branch renders it.
+  const runControl = intakePageAction({ clientId, isStaff, agentId: null });
+
   const allEvents = buildEvents(activityLogs, jobs, report, currentUserRole);
   const visibleEvents = allEvents.slice(0, shown);
   const remaining = allEvents.length - shown;
@@ -508,12 +531,15 @@ export function ActivityTimeline({
               Every agent run, brand update, and competitor change shows up here as your team works.
             </p>
             {!isStaff && (
+              /* The label and the href come from the same call and are rendered
+                 on the same element — the arrow rides inside the resolved label,
+                 so a control that has lost its destination cannot keep an arrow
+                 pointing at one. */
               <Link
-                href={`/clients/${clientId}/agents`}
+                href={runControl.href}
                 className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-neon hover:underline"
               >
-                Run an agent
-                <Icon name="ArrowRight" className="h-3 w-3" />
+                {runControl.label}
               </Link>
             )}
           </div>

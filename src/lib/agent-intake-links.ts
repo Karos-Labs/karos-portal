@@ -10,9 +10,10 @@
  * prevent.
  *
  * Nothing here reads Firestore. `intakePageAction` is handed the agent id its
- * caller already resolved (see `intakeAgentPageId` in agent-intake-views.ts)
- * rather than resolving one itself, so the routing decision stays pure and
- * testable and the read stays where the page's other reads are.
+ * caller already resolved (see `requireIntakeAgentAccess` in
+ * agent-intake-views.ts) rather than resolving one itself, so the routing
+ * decision stays pure and testable and the read stays where the page's other
+ * reads are.
  */
 
 /* ─────────────────── anchors: one row, one place to land ────────────────── */
@@ -81,10 +82,18 @@ export function clientArchiveLink(args: { clientId: string; isStaff: boolean }):
     : { href: "/tasks?tab=archive", label: "your archive" };
 }
 
-/* ─────────────── the intake page's own navigation control ──────────────── */
+/* ────────── the one control that offers a viewer their agent ───────── */
 
 /**
- * The one control in an intake page's header, per role.
+ * Where a control that offers a viewer their agent goes, and what it may say.
+ *
+ * FOUR CALL SITES, one answer (grep the name for today's list). It began as the
+ * three intake pages' header control (#82). The Workspace activity tab's empty
+ * state was found doing the same thing — "Run an agent →" over a hard-coded
+ * `/clients/<id>/agents` (#92) — and asks this rather than being edited into a
+ * fourth spelling of the same promise. Everything below is therefore a claim
+ * about the DESTINATIONS, not about one page's header, which is what makes it
+ * safe to ask from anywhere.
  *
  * It said "Run the agent →" to everyone and went to `/clients/<id>/agents`.
  *
@@ -118,11 +127,18 @@ export function clientArchiveLink(args: { clientId: string; isStaff: boolean }):
  * client reached the intake page FROM the agent's detail page, so "Back to the
  * agent" is where they came from; a staff member typically did not, so theirs
  * names the destination instead.
+ *
+ * ONE LIMIT ON THAT WORD, now that a fourth caller exists. "Back" is an arrival
+ * claim, and it is only true of the three intake pages — a client reading the
+ * empty Workspace timeline did not come from an agent's page. It cannot be
+ * WRONG there, because that caller has no resolvable instance to pass and only
+ * ever reaches the roster branch; but a fifth caller that CAN resolve one would
+ * need this split reconsidered rather than inherited.
  */
 export function intakePageAction(args: {
   clientId: string;
   isStaff: boolean;
-  /** This client's granted, enabled instance of this agent — see intakeAgentPageId. */
+  /** This client's granted, enabled instance — see requireIntakeAgentAccess. */
   agentId: string | null;
 }): { href: string; label: string } {
   if (!args.agentId) {

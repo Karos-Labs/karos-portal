@@ -257,9 +257,29 @@ export function isAssetPublishable(a: Pick<Asset, "status" | "publishMode">): bo
  * CONSTRUCTION (never spread-and-delete) so any field added to Asset later is
  * excluded by default. Deliberately excluded: the original title/content/meta,
  * mimeType, imageUrl, recommendedAt/recommendedReason, publishedAt,
- * publishError, publishClaimedAt, publishMode, scheduledPlatform, and orderKey
- * (it embeds internal run names/dates — ordering is internal-only). The title
- * becomes the template placeholder (post titles reveal content).
+ * publishError, publishClaimedAt, scheduledPlatform, and orderKey (it embeds
+ * internal run names/dates — ordering is internal-only). The title becomes the
+ * template placeholder (post titles reveal content).
+ *
+ * `publishMode` CROSSES, AND ONLY AS THE PLACEHOLDER MARKER — the one value
+ * that is a PROMISE to the client rather than internal routing.
+ *
+ * Dropping it outright made the calendar misdescribe the client's own week.
+ * `postKind` (lib/calendar-kind) classifies on `publishMode === "placeholder"`,
+ * so with the field gone every locked roadmap entry — an item the tier's own
+ * promise says Karos never posts — was painted with the info-blue "Scheduled
+ * post" chip, then flipped to "Placeholder" on the day the redaction lifted.
+ * mark-posted-row.tsx had already been bitten by this same omission; the
+ * calendar's classifier was its second reader.
+ *
+ * "auto" and "manual" stay behind, because they say who pushes the button and
+ * a locked post's chip does not distinguish them (both read "Scheduled post"),
+ * so withholding them costs the client nothing. The value scoping is also what
+ * makes the field's ABSENCE meaningful rather than lossy: on a redacted asset
+ * `publishMode === "placeholder"` holds exactly when the real asset is one, so
+ * a classifier reading it reaches the same answer either side of the unlock.
+ * That equivalence — not this paragraph — is what has to stay true, and it is
+ * asked of every shape `postKind` reads in calendar-locked-chip.test.ts.
  */
 export function redactLockedAsset(a: Asset): Asset {
   const templateName = a.templateName ?? templateForAsset(a)?.name;
@@ -275,6 +295,9 @@ export function redactLockedAsset(a: Asset): Asset {
     imageUrl: null,
     ...(a.channels ? { channels: a.channels } : {}),
     status: a.status,
+    // The placeholder marker only — see the note above for why the other two
+    // modes stay behind and why this one has to travel.
+    ...(a.publishMode === "placeholder" ? { publishMode: "placeholder" as const } : {}),
     ...(a.scheduledAt != null ? { scheduledAt: a.scheduledAt } : {}),
     ...(a.templateKey ? { templateKey: a.templateKey } : {}),
     ...(templateName ? { templateName } : {}),
