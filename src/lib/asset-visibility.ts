@@ -48,9 +48,54 @@ export function getClientLibraryAssets(
   const now = opts.now ?? Date.now();
   return sorted
     .filter((a) => !isLaunchDeliverable(a) && !isTestRunAsset(a))
+    // `isAssetContentVisibleToClient` rather than the bare unlock test: after
+    // the filter above the two are equivalent here, and asking the shared
+    // predicate is what keeps a future tightening of it from applying
+    // everywhere EXCEPT the library.
     .map((a) =>
-      isAssetUnlockedForClient(a, now) ? withClientSafePublishError(a) : redactLockedAsset(a),
+      isAssetContentVisibleToClient(a, now)
+        ? withClientSafePublishError(a)
+        : redactLockedAsset(a),
     );
+}
+
+/**
+ * MAY THIS CLIENT BE HANDED THIS ASSET'S REAL CONTENT — the churn rule (A3) as
+ * one predicate, for anything that is not a list projection.
+ *
+ * The two client asset projections above answer it for the surfaces they build,
+ * by dropping or redacting rows. Anything that takes ONE asset id from the
+ * browser and derives something from that asset's text has the same question to
+ * answer and no list to filter, so it has to ask here — otherwise the redaction
+ * is a property of two read paths rather than of the asset, and the next
+ * endpoint reintroduces the hole. The whole point of the rule is that a client
+ * cannot learn that next Thursday's post already exists; an endpoint that
+ * paraphrases that post's text back to them tells them exactly that, and it
+ * does not matter that no list ever rendered it.
+ *
+ * Three ways to fail, all of them already the library's:
+ *   1. **Launch deliverable** — a setup run's working material, never a
+ *      deliverable (see isLaunchDeliverable).
+ *   2. **Test run** — staff checking the pipeline (see isTestRunAsset).
+ *   3. **Still locked** — chain date in the future. This is the churn rule.
+ *
+ * Drafts are deliberately NOT a fourth: an unlocked draft is visible in the
+ * client library by design ("pending work is reviewable"), so refusing one here
+ * would refuse content the client is already reading. The ARCHIVE excludes
+ * drafts, and it asks this predicate and then adds that rule on top — which is
+ * the honest relationship between the two sets, rather than two lists of rules
+ * that have to be kept equal by hand.
+ */
+export function isAssetContentVisibleToClient(
+  a: Pick<Asset, "meta" | "status" | "scheduledAt" | "publishedAt" | "updatedAt" | "createdAt">,
+  now: number,
+): boolean {
+  if (isLaunchDeliverable(a)) return false;
+  // Not covered by any status test: approveAssetAction has no test-run guard,
+  // so a staff member approving one by mistake (the plain review queue shows no
+  // TEST badge) flips its status without going through promoteTestAssetAction.
+  if (isTestRunAsset(a)) return false;
+  return isAssetUnlockedForClient(a, now);
 }
 
 /**
@@ -148,15 +193,11 @@ export function isInClientArchive(
   a: Pick<Asset, "meta" | "status" | "scheduledAt" | "publishedAt" | "updatedAt" | "createdAt">,
   now: number,
 ): boolean {
-  if (isLaunchDeliverable(a)) return false;
-  // Not covered by the draft-status exclusion below alone: approveAssetAction
-  // has no test-run guard, so a staff member approving one by mistake (the
-  // plain review queue shows no TEST badge) flips status away from "draft"
-  // without going through promoteTestAssetAction — this is the second,
-  // independent gate that keeps it out regardless.
-  if (isTestRunAsset(a)) return false;
+  // Rules 1 and 2 plus the launch/test-run exclusions are the same question the
+  // library asks, so they are asked in the same place — the archive is a strict
+  // subset of "content this client may be handed", not a parallel list.
+  if (!isAssetContentVisibleToClient(a, now)) return false;
   if (a.status === "draft") return false;
-  if (!isAssetUnlockedForClient(a, now)) return false;
   if (a.status === "published") return clientDeliveryStamp(a) >= now - CLIENT_ARCHIVE_WINDOW_MS;
   return true;
 }

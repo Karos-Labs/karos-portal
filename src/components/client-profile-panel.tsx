@@ -9,6 +9,35 @@ import { BrandFavicon } from "@/components/brand-favicon";
 import { updateClientProfileAction } from "@/lib/actions";
 import type { Client, SocialLinks } from "@/lib/types";
 
+/**
+ * The Client fields this panel renders or edits — its whole contract, stated
+ * rather than implied by taking the document.
+ *
+ * Both shells mount it from a PROJECTION now (toClientPortalView for the client
+ * rail, toStaffShellView for the staff Company sheet), and neither ships a full
+ * client document to the browser. Asking for `Client` here would have forced
+ * one of them to widen again just to satisfy a signature — for fields this file
+ * never reads.
+ */
+export type ClientProfileFields = Pick<
+  Client,
+  | "id"
+  | "name"
+  | "logoUrl"
+  | "accentColor"
+  | "brandingGuidelines"
+  | "website"
+  | "industry"
+  | "category"
+  | "teamSize"
+  | "brief"
+  | "description"
+  | "brandVoice"
+  | "contactEmail"
+  | "domains"
+  | "socialLinks"
+>;
+
 const TEAM_SIZES = ["1–10", "11–50", "51–200", "201–500", "500+"];
 
 // Only channels we actually handle — @-handles.
@@ -44,7 +73,13 @@ function Pill({
 
 /* ── Brand Profile slide-in modal ─────────────────────────────────────── */
 
-function BrandProfileModal({ client, onClose }: { client: Client; onClose: () => void }) {
+function BrandProfileModal({
+  client,
+  onClose,
+}: {
+  client: ClientProfileFields;
+  onClose: () => void;
+}) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -192,7 +227,13 @@ function BrandProfileModal({ client, onClose }: { client: Client; onClose: () =>
  * which is the wall of text the product owner hit in the client lens on the
  * 30 July call.
  */
-export function ClientProfilePanel({ client, compact = false }: { client: Client; compact?: boolean }) {
+export function ClientProfilePanel({
+  client,
+  compact = false,
+}: {
+  client: ClientProfileFields;
+  compact?: boolean;
+}) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [pending, startTransition] = useTransition();

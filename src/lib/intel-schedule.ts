@@ -17,8 +17,25 @@ export interface IntelScheduleInfo {
   lastIntelReportAt: number | null;
 }
 
+/**
+ * The five fields this projection actually reads.
+ *
+ * Named as a Pick rather than taking the whole `Client` so a caller holding a
+ * narrowed staff/portal projection can ask without carrying a full client
+ * document just to satisfy the signature — the shells deliberately ship less
+ * than a document now (see StaffShellClientView).
+ */
+export type ClientIntelScheduleFields = Pick<
+  Client,
+  | "intelScheduleEnabled"
+  | "intelScheduleIntervalMonths"
+  | "intelScheduleDayOfMonth"
+  | "intelScheduleNextRunAt"
+  | "lastIntelReportAt"
+>;
+
 /** Project a Client doc's flat schedule fields into the shape the Schedule modal expects. */
-export function clientIntelSchedule(client: Client): IntelScheduleInfo {
+export function clientIntelSchedule(client: ClientIntelScheduleFields): IntelScheduleInfo {
   return {
     enabled: client.intelScheduleEnabled ?? false,
     intervalMonths: client.intelScheduleIntervalMonths ?? MIN_INTERVAL_MONTHS,

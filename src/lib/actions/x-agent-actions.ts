@@ -31,6 +31,8 @@ import {
   upsertAgentIntake,
 } from "@/lib/data";
 import { requireClientAccess } from "./_shared";
+import { CREDIT_COSTS } from "@/lib/credits";
+import { withClientModelCharge } from "@/lib/client-model-charge";
 
 const MAX_TEXT = 2_000;
 const MAX_NAME = 120;
@@ -235,13 +237,24 @@ export async function addXSeatAction(input: {
  * already know about the client (onboarding docs + profile), grounded with
  * live web search. The client approves or edits — nothing is engaged off an
  * unapproved list, and the engine re-verifies every handle live at run time.
+ *
+ * PRICED AT `CREDIT_COSTS.chatMessage` (1), which is not a new price but the
+ * existing rate for the nearest operation: that constant's own definition is
+ * "one copilot chat message (Sonnet, up to 6 tool steps)", and this is one
+ * Sonnet call with up to 4 web-search tool uses. Same model, same order of tool
+ * budget, one press of a button — so it charges what a copilot turn charges.
+ *
+ * Booked under `ai_tool`, not `chat_message`, because the client's own spend
+ * breakdown groups by operation: an account suggestion filed under "Copilot"
+ * would tell them they spent credits on a feature they did not use. The price
+ * comes from the nearest operation; the LABEL has to name the real one.
  */
 export async function proposeXRosterAction(input: {
   clientId: string;
   /** When proposing for a person's seat rather than the company page. */
   seatName?: string;
 }): Promise<{ handles?: Array<{ handle: string; why: string }>; error?: string }> {
-  await requireClientAccess(input.clientId);
+  const user = await requireClientAccess(input.clientId);
   const client = await getClient(input.clientId);
   if (!client) return { error: "Client not found." };
 
@@ -268,29 +281,58 @@ export async function proposeXRosterAction(input: {
     ? `a personal X account belonging to ${input.seatName}, a person at ${client.name}. Favor respected operators, founders, and voices this person would credibly reply to — people a notch or two bigger than them in the same space.`
     : `the company X page of ${client.name}. Favor the loudest credible voices their buyers already follow in this niche.`;
 
-  try {
-    const { text } = await generateText({
-      model: anthropic(MODELS.SONNET),
-      tools: { web_search: anthropic.tools.webSearch_20250305({ maxUses: 4 }) },
-      system:
-        "You propose X (Twitter) engagement rosters. Only ever name accounts you are confident exist and are active — well-known people and companies. Use web search to confirm anyone you are less than certain about. Output STRICT JSON only: an array of {\"handle\": \"@...\", \"why\": \"one short line\"} with 10 to 15 entries, no other text.",
-      prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
-    });
-    const match = text.match(/\[[\s\S]*\]/);
-    if (!match) return { error: "Could not build a proposal — try again or type accounts manually." };
-    const parsed = JSON.parse(match[0]) as Array<{ handle?: string; why?: string }>;
-    const handles = parsed
-      .map((p) => ({
-        handle: `@${String(p.handle ?? "").replace(/^@+/, "").trim()}`,
-        why: String(p.why ?? "").slice(0, 200),
-      }))
-      .filter((p) => /^@[A-Za-z0-9_]{1,15}$/.test(p.handle))
-      .slice(0, 15);
-    if (handles.length < 5) return { error: "Proposal came back too thin — try again or type accounts manually." };
-    return { handles };
-  } catch {
-    return { error: "Could not build a proposal right now — try again or type accounts manually." };
-  }
+  const outcome = await withClientModelCharge(
+    {
+      user,
+      clientId: input.clientId,
+      amount: CREDIT_COSTS.chatMessage,
+      operation: "ai_tool",
+      // Client copy: the ledger feed renders ungated to a CLIENT_USER.
+      reason: input.seatName
+        ? `Account suggestions · X agent · ${input.seatName.slice(0, 40)}`
+        : "Account suggestions · X agent",
+    },
+    async ({ refund }) => {
+      // Every failure below hands the credit back. The client pressed a button
+      // that promised a list of accounts; if they did not get one, they did not
+      // get the thing they paid for — whether the model threw, returned
+      // unparseable text, or returned too few usable handles.
+      try {
+        const { text } = await generateText({
+          model: anthropic(MODELS.SONNET),
+          tools: { web_search: anthropic.tools.webSearch_20250305({ maxUses: 4 }) },
+          system:
+            "You propose X (Twitter) engagement rosters. Only ever name accounts you are confident exist and are active — well-known people and companies. Use web search to confirm anyone you are less than certain about. Output STRICT JSON only: an array of {\"handle\": \"@...\", \"why\": \"one short line\"} with 10 to 15 entries, no other text.",
+          prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
+        });
+        const match = text.match(/\[[\s\S]*\]/);
+        if (!match) {
+          await refund("Refund · account suggestions came back empty");
+          return { error: "Could not build a proposal — try again or type accounts manually." };
+        }
+        const parsed = JSON.parse(match[0]) as Array<{ handle?: string; why?: string }>;
+        const handles = parsed
+          .map((p) => ({
+            handle: `@${String(p.handle ?? "").replace(/^@+/, "").trim()}`,
+            why: String(p.why ?? "").slice(0, 200),
+          }))
+          .filter((p) => /^@[A-Za-z0-9_]{1,15}$/.test(p.handle))
+          .slice(0, 15);
+        if (handles.length < 5) {
+          await refund("Refund · account suggestions came back empty");
+          return { error: "Proposal came back too thin — try again or type accounts manually." };
+        }
+        return { handles };
+      } catch {
+        // This catch is why the refund is spelled here rather than left to the
+        // wrapper: it swallows the throw to keep the client-safe sentence, so
+        // the wrapper never sees a failure to pair a refund to.
+        await refund("Refund · account suggestions failed");
+        return { error: "Could not build a proposal right now — try again or type accounts manually." };
+      }
+    },
+  );
+  return outcome.ok ? outcome.result : { error: outcome.denied };
 }
 
 export async function saveXSeatIntakeAction(input: {

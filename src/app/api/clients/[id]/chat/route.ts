@@ -21,18 +21,12 @@ import {
   createClientTask,
   getTaskBoardCapacity,
   getClientPerformanceBenchmarks,
-  chargeClientCredits,
   getClientCredits,
 } from "@/lib/data";
 import { listClientAgents, listClientAgentFeedback } from "@/lib/data-client-agents";
 import { findDuplicateReason, queueCapacitySkipNote } from "@/lib/task-dedup";
-import {
-  CREDIT_COSTS,
-  TASK_EXECUTION_COSTS,
-  CreditError,
-  isBillableClientActor,
-  availableCredits,
-} from "@/lib/credits";
+import { CREDIT_COSTS, TASK_EXECUTION_COSTS, availableCredits } from "@/lib/credits";
+import { chargeClientModelCall } from "@/lib/client-model-charge";
 import type { ClientCredits } from "@/lib/types";
 import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
 import {
@@ -123,23 +117,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // "View as Client" sessions are free). The charge enforces the balance +
   // weekly/monthly caps; denials return 402 with a readable message the dock
   // renders inline.
+  //
+  // `chargeClientModelCall` rather than an inline isBillableClientActor +
+  // try/catch: this route was one of four hand-written spellings of the same
+  // block, and the differences between them were not deliberate. It charges
+  // rather than wrapping with `withClientModelCharge` because the model call
+  // this pays for is a STREAM that outlives the handler — there is no `try`
+  // here for a refund to hang off. What a failed stream owes the client is a
+  // separate question from this cluster's, and it is not answered here.
   let credits: ClientCredits | null = null;
-  if (isBillableClientActor(user)) {
-    try {
-      await chargeClientCredits({
-        clientId,
-        amount: CREDIT_COSTS.chatMessage,
-        operation: "chat_message",
-        reason: "Copilot chat message",
-        actorUid: user.uid,
-        actorName: user.name,
-      });
-    } catch (e) {
-      if (e instanceof CreditError) {
-        return Response.json({ error: e.message }, { status: 402 });
-      }
-      throw e;
-    }
+  const chatCharge = await chargeClientModelCall({
+    user,
+    clientId,
+    amount: CREDIT_COSTS.chatMessage,
+    operation: "chat_message",
+    reason: "Copilot chat message",
+  });
+  if (chatCharge.denied !== null) {
+    return Response.json({ error: chatCharge.denied }, { status: 402 });
+  }
+  if (chatCharge.chargedAt !== null) {
     credits = await getClientCredits(clientId);
   }
 

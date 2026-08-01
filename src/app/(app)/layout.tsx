@@ -21,7 +21,11 @@ import {
   creditBlockReason,
   isBillableClientActor,
 } from "@/lib/credits";
-import { toClientPortalView } from "@/lib/client-visibility";
+import {
+  toClientPortalView,
+  toStaffShellView,
+  type StaffShellClientView,
+} from "@/lib/client-visibility";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldBlockForOnboarding } from "@/lib/onboarding";
@@ -44,7 +48,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (shouldBlockForOnboarding({ isImpersonating, user })) redirect("/onboarding");
 
   let pendingCount = 0;
-  let clients: Client[] = [];
+  // The PROJECTION, not the documents: this array is a prop of the Sidebar, a
+  // "use client" component that renders on every staff page, so a whole Client
+  // here puts every client's join token into every one of those RSC payloads.
+  // StaffShellClientView carries exactly what the picker rows and the rail read.
+  let clients: StaffShellClientView[] = [];
 
   // Staff bell feeds are cross-client, so they need the viewer's client scope:
   // admins see every client, an employee only their assigned ones — the same
@@ -104,7 +112,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   if (adminData) {
     pendingCount = adminData.allUsers.filter((u) => u.disabled && !u.approvedAt).length;
-    clients = adminData.allClients;
+    clients = adminData.allClients.map(toStaffShellView);
   }
 
   // ── Client portal shell (CLIENT_USER only) ──

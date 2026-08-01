@@ -1,6 +1,5 @@
-import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
-import { getClient } from "@/lib/data";
+import { redirect } from "next/navigation";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { TasksBody } from "@/app/(app)/tasks/tasks-body";
 
 export const dynamic = "force-dynamic";
@@ -20,8 +19,7 @@ export default async function ClientTasksPage({ params }: { params: Promise<{ id
     redirect("/dashboard");
   }
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  const client = await requireVisibleClient(user, id);
 
   return <TasksBody user={user} viewClientId={client.id} />;
 }

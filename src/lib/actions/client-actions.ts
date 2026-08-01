@@ -191,6 +191,15 @@ export async function updateClientAction(id: string, input: Partial<Client> & { 
   delete (patch as Partial<Client> & { clientKeyId?: string }).clientKeyId;
   delete (patch as Partial<Client> & { createdAt?: number }).createdAt;
   delete (patch as Partial<Client> & { createdBy?: string }).createdBy;
+  // `assignedEmployeeIds` is now a PERMISSION (canViewClient), and this action
+  // is gated on requireStaff() alone while taking a whole Partial<Client> — so
+  // an employee the fence excludes could post their own uid into the array and
+  // lift it, which is the one field a fenced actor must not be able to write.
+  // Nothing loses a capability: no surface in this app sends the field through
+  // here (grep — the only writers are client creation and registration
+  // approval), so this strips a hole rather than a feature. Reassignment needs
+  // an admin-only action once the two-field split above is resolved.
+  delete (patch as Partial<Client> & { assignedEmployeeIds?: string[] }).assignedEmployeeIds;
   await updateClient(id, patch);
   revalidatePath(`/clients/${id}`);
   revalidatePath("/clients");

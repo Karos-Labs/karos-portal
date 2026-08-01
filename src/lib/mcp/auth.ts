@@ -1,6 +1,7 @@
 import "server-only";
 
 import { userFromToken } from "@/lib/tokens";
+import { canViewClient } from "@/lib/client-visibility";
 import { verifyJobToken } from "./job-token";
 import type { AppUser, Client } from "@/lib/types";
 
@@ -38,12 +39,17 @@ export async function resolveActor(bearer: string | undefined): Promise<McpActor
 }
 
 /**
- * Whether a staff user may act on a client — mirrors the web app's scoping
- * (`listClients({ employeeId })`): admins see every client, employees only the
- * clients they're assigned to.
+ * Whether a staff user may act on a client.
+ *
+ * The assignment rule itself is `canViewClient` — one home, shared with the
+ * `/clients/[id]` route guard, so a change to what "assigned" means cannot
+ * reach the web app and miss the MCP server. What this adds is MCP's own
+ * restriction, which is a fact about THIS transport and not about the client:
+ * the staff actor kind is reached from a personal access token, and only
+ * employees and admins drive Karos that way. Delegating without the role test
+ * would hand a CLIENT_USER holding a PAT their own client's full toolset.
  */
 export function canStaffAccessClient(user: AppUser, client: Client): boolean {
-  if (user.role === "KAROS_ADMIN") return true;
-  if (user.role === "KAROS_EMPLOYEE") return (client.assignedEmployeeIds ?? []).includes(user.uid);
-  return false;
+  if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") return false;
+  return canViewClient(user, client);
 }

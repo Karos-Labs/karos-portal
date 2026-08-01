@@ -4,7 +4,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { createActivityLog, getClientTask } from "@/lib/data";
 import type { ActivityLog, AppUser, ClientTask } from "@/lib/types";
 
-import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
+import { SYSTEM_AI_ACTOR_NAME, sessionSafeActor } from "@/lib/activity-actors";
+import { needsOnboarding } from "@/lib/onboarding";
 export async function requireStaff(): Promise<AppUser> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
@@ -17,6 +18,26 @@ export async function requireAdmin(): Promise<AppUser> {
   if (!user || user.disabled) throw new Error("Unauthorized");
   if (user.role !== "KAROS_ADMIN") throw new Error("Forbidden");
   return user;
+}
+
+/**
+ * The gate for work a client account may have done FOR IT EXACTLY ONCE.
+ *
+ * Sits alongside requireStaff/requireAdmin because it answers the same kind of
+ * question — may this session reach the work behind me — and it is the only
+ * thing standing between a client and the AI provisioning pipeline. Onboarding
+ * is free by design (a client should not spend credits being set up), and that
+ * decision is only affordable because it cannot be replayed.
+ *
+ * `hasCompletedOnboarding` was already the wizard's own predicate, but only the
+ * (app) layout's redirect enforced it. A redirect is not a gate: a server action
+ * is network-reachable directly, so an already-onboarded client could re-post
+ * `completeOnboardingAction` and re-fire the intel pipeline plus a full swarm,
+ * free and unlimited, as often as they liked. The AI-processing lock does not
+ * close it either — that stops CONCURRENT runs, not sequential ones.
+ */
+export async function requireFirstOnboarding(user: AppUser): Promise<void> {
+  if (!needsOnboarding(user)) throw new Error("This workspace has already been set up.");
 }
 
 /** Allows both staff (any client) and a CLIENT_USER (own client only). */
@@ -98,12 +119,49 @@ export async function requireTaskAccess(
   return { ok: true, user, task };
 }
 
-/** Fire-and-forget activity log writer. Never throws — never blocks the caller. */
-export async function logActivity(data: Omit<ActivityLog, "id">): Promise<void> {
+/**
+ * Fire-and-forget activity log writer. Never throws — never blocks the caller.
+ *
+ * THE funnel, which is why the impersonation correction is applied here rather
+ * than at each writer: fifteen call sites across nine modules build these rows,
+ * every one of them reaches Firestore through this function, and the ones that
+ * get the attribution wrong are precisely the ones that derive it from the
+ * session. Correcting at the writers would be fifteen edits that a sixteenth
+ * writer inherits none of. See sessionSafeActor for the rule and for what it
+ * deliberately leaves alone.
+ *
+ * The session is resolved ONLY for a row claiming the client acted — the one
+ * claim impersonation can falsify — so system rows, staff rows, and every
+ * cron-written row cost nothing extra.
+ *
+ * If the session cannot be resolved the row is written as the caller built it.
+ * That is not a fail-open guard, because this is attribution and not
+ * authorization: the alternative is dropping a real event from the trail, and
+ * `getCurrentUser` returning nothing on a row that claims a CLIENT_USER acted
+ * means the request had no session to impersonate from.
+ */
+export async function logActivity(input: Omit<ActivityLog, "id">): Promise<void> {
   try {
+    // Written as a plain forward of this function's own parameter into the
+    // Firestore writer, and it has to stay one: client-copy-boundary.test.ts
+    // recognises a persisting WRAPPER by exactly that shape, and it is how
+    // every copy literal at the fifteen `logActivity(...)` call sites gets
+    // swept at all. Folding the correction into the call argument dropped
+    // `logActivity` out of that scan — silently, until four of its assertions
+    // went red. Rename either binding and it reds again.
+    const data = await honestlyAttributed(input);
     await createActivityLog(data);
   } catch {
     // Non-fatal
+  }
+}
+
+async function honestlyAttributed(input: Omit<ActivityLog, "id">): Promise<Omit<ActivityLog, "id">> {
+  if (input.actorRole !== "client") return input;
+  try {
+    return sessionSafeActor(input, await getCurrentUser());
+  } catch {
+    return input;
   }
 }
 

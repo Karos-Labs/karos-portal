@@ -12,6 +12,7 @@ import {
   updatePlannedScheduledRun,
 } from "@/lib/data";
 import { CREDIT_COSTS, isBillableClientActor, scheduledAgentWeeklyCost } from "@/lib/credits";
+import { canViewClient } from "@/lib/client-visibility";
 import {
   computeNextRun,
   scheduleLimitsFor,
@@ -67,12 +68,24 @@ function resolveTimeZone(requested: string | undefined): string {
   return isValidTimeZone(requested) ? requested : runtimeTimeZone();
 }
 
-/** Staff can act on a client only if admin, or an employee assigned to it. */
+/**
+ * Staff can act on a client only if admin, or an employee assigned to it.
+ *
+ * Asks `canViewClient` rather than re-reading `assignedEmployeeIds`, which is
+ * what this did: the assignment relationship is recorded on TWO documents (see
+ * canViewClient) and a site that reads one of them fences out every employee
+ * assigned through the other. That is exactly the drift the shared predicate
+ * exists to prevent, and this was the site still drifting.
+ *
+ * The role test stays where it is — `requireStaff` throws for a CLIENT_USER
+ * before the predicate is reached, so the "own client" arm of canViewClient
+ * cannot let one in here.
+ */
 async function authorizeClient(clientId: string) {
   const user = await requireStaff();
   const client = await getClient(clientId);
   if (!client) return { error: "Client not found." as const };
-  if (user.role === "KAROS_EMPLOYEE" && !(client.assignedEmployeeIds ?? []).includes(user.uid)) {
+  if (!canViewClient(user, client)) {
     return { error: "You are not assigned to this client." as const };
   }
   return { user, client };

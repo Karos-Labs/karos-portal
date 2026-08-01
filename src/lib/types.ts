@@ -941,6 +941,19 @@ export interface ActivityLog {
   /** Display name: "System AI", "Tomer H.", etc. */
   actor: string;
   actorRole: "system" | "staff" | "client";
+  /**
+   * Uid of the admin who was in "View as Client" when this row was written.
+   *
+   * Present only on rows `sessionSafeActor` re-attributed, so it says WHICH
+   * staff member is behind a row whose display name is the agency's. Stored,
+   * never displayed — the timeline's RSC projection is a whitelist and this is
+   * not on it, so a staff uid never reaches a client's browser.
+   *
+   * Absent means only "this row does not carry the signal": rows written before
+   * the field existed never recorded the difference, so nothing may read its
+   * absence as proof the client acted themselves.
+   */
+  impersonatedBy?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -1422,6 +1435,15 @@ export type CreditOperation =
   | "agent_launch"
   /** Purchase of an additional LinkedIn employee-advocacy seat beyond the plan limit. */
   | "seat_purchase"
+  /**
+   * A one-off AI tool the client pressed in the portal — account suggestions on
+   * the X intake form, a task-map refresh, an audience simulation. Not the
+   * copilot, not a task run, not an agent run: those have their own operations
+   * and their own labels, and folding these into one of them would make the
+   * client's own spend breakdown name the wrong feature. The reason line
+   * carries which tool it was.
+   */
+  | "ai_tool"
   | "manual";
 
 /**

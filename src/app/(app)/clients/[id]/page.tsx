@@ -1,7 +1,6 @@
-import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
 import {
-  getClient,
   getClientSeoGeo,
   listAssets,
   listJobs,
@@ -33,8 +32,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     redirect("/dashboard");
   }
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  const client = await requireVisibleClient(user, id);
 
   const isClientViewer = user.role === "CLIENT_USER";
 

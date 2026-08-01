@@ -1,7 +1,6 @@
-import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
 import {
-  getClient,
   getClientCredits,
   listAssets,
   listCustomAgents,
@@ -55,8 +54,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     redirect("/dashboard");
   }
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  const client = await requireVisibleClient(user, id);
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   const agentServiceConfigured = isAgentServiceConfigured();

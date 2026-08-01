@@ -1,8 +1,7 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
 import {
-  getClient,
   getClientCredits,
   listClientIntegrations,
   listCreditLedger,
@@ -56,8 +55,7 @@ export default async function ClientSettingsPage({
     redirect("/dashboard");
   }
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  const client = await requireVisibleClient(user, id);
 
   const isAdmin = user.role === "KAROS_ADMIN";
   const isStaff = isAdmin || user.role === "KAROS_EMPLOYEE";

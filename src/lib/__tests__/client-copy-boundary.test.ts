@@ -160,14 +160,27 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const parse = (abs: string) =>
-  ts.createSourceFile(
-    abs,
-    readFileSync(abs, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    abs.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
+/**
+ * MEMOIZED, and it has to be: the credit-ledger follow searches every file in
+ * the tree for callers, once per followed field, and re-parsing ~700 modules
+ * each time turned this suite from seconds into minutes. Nothing mutates a file
+ * during the run, so one tree per path is the same tree.
+ */
+const PARSE_CACHE = new Map<string, ts.SourceFile>();
+const parse = (abs: string): ts.SourceFile => {
+  let cached = PARSE_CACHE.get(abs);
+  if (!cached) {
+    cached = ts.createSourceFile(
+      abs,
+      readFileSync(abs, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+      abs.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+    PARSE_CACHE.set(abs, cached);
+  }
+  return cached;
+};
 
 const lineOf = (sf: ts.SourceFile, pos: number) =>
   sf.getLineAndCharacterOfPosition(pos).line + 1;
@@ -1570,6 +1583,15 @@ interface WriterFact {
  * data.ts whose body performs a Firestore write"; the second pass is ONE hop,
  * over the seed snapshot only (a transitive closure would depend on file order),
  * for helpers that forward their own document parameter into a seed writer.
+ *
+ * DELIBERATELY STILL ONE HOP. Widening this to "any function whose call to a
+ * known writer mentions one of its parameters", run twice, was tried when the
+ * credits consolidation moved the ledger reasons two calls further out. It
+ * promoted 29 unrelated functions — every action that forwards an argument into
+ * any writer — and each one arrives as a new unclassified `writer.field` pair
+ * this channel must fail closed on. The reasons are recovered by widening the
+ * one-hop parameter FOLLOW below instead, which adds chunks under the existing
+ * `chargeClientCredits.reason` key rather than minting new keys.
  */
 const PERSISTING_WRITERS: ReadonlyMap<string, WriterFact> = (() => {
   const out = new Map<string, WriterFact>();
@@ -1704,6 +1726,9 @@ function activityRowGate(obj: ts.ObjectLiteralExpression, sf: ts.SourceFile): st
   return null;
 }
 
+/** The follow's search space: the whole tree minus this directory's own scans. */
+const FOLLOW_FILES: readonly string[] = walk(SRC).filter((abs) => !abs.includes("__tests__"));
+
 const PERSISTED_CHUNKS: PersistedChunk[] = (() => {
   const out: PersistedChunk[] = [];
   for (const abs of walk(SRC)) {
@@ -1725,10 +1750,155 @@ const PERSISTED_CHUNKS: PersistedChunk[] = (() => {
      *
      * The channel-2 lesson in a different position: the persisting call is not
      * where the sentence was written. `chargeClientCredits({ reason })` inside
-     * `chargeDocCorrection` says nothing, and the four ledger reasons that reach
-     * a client's Recent activity feed are literals at that helper's call sites.
+     * `chargeClientModelCall` says nothing, and the ledger reasons that reach a
+     * client's Recent activity feed are literals at that helper's call sites.
+     *
+     * ── WHAT IT FOLLOWS, and why each shape had to be added ──────────────────
+     *
+     * ACROSS FILES, for the one field `followableAcrossFiles` admits. The follow
+     * used to search only the file holding the persisting call. That was true
+     * while every charge helper was private to the action file that used it;
+     * consolidating them into one home (lib/client-model-charge.ts) put every
+     * caller in a different file and the follow went blind — the strings were
+     * unchanged, still stored, still client copy, and silently no longer swept.
+     *
+     * THROUGH A PROPERTY of a parameter. `{ reason: call.reason }` forwards a
+     * FIELD of the spec object, not the whole parameter, so the caller's literal
+     * is the matching field of the object it passed. Following the bare
+     * parameter instead would collapse a spec's `reason` and its `operation`
+     * onto one key, which is the merge the "only at a NAMED field" rule below
+     * exists to prevent.
+     *
+     * THROUGH A LOCAL CONST. A site that needs the same spec twice — charge now,
+     * refund later — binds it (`const simulationCharge = { … }`) instead of
+     * writing it inline, and the argument is then an identifier.
+     *
+     * TWO HOPS, bounded. `withClientModelCharge` passes its own parameter
+     * straight to `chargeClientModelCall`, so one hop lands on an identifier
+     * rather than a literal. Depth is capped and the recursion carries a `seen`
+     * set, so a mutually recursive pair cannot spin.
      */
-    const followParams = (expr: ts.Node, at: ts.Node, path: string): Chunk[] => {
+    const FOLLOW_DEPTH = 2;
+
+    /** `x.reason` → ["reason"]; `x` → []; anything else → null (not followable). */
+    const propertyPath = (expr: ts.Node, root: string): string[] | null => {
+      const parts: string[] = [];
+      let q: ts.Node = unwrapValue(expr);
+      while (ts.isPropertyAccessExpression(q)) {
+        parts.unshift(q.name.text);
+        q = unwrapValue(q.expression);
+      }
+      return ts.isIdentifier(q) && q.text === root ? parts : null;
+    };
+
+    /** Dig `path` out of an object literal, following a local const binding once. */
+    const atPath = (arg: ts.Node, path: string[], owner: ts.SourceFile): ts.Node | null => {
+      let node = unwrapValue(arg);
+      if (ts.isIdentifier(node)) {
+        // `const spec = { … }; charge(spec)` — resolve the binding in this file.
+        let bound: ts.Node | null = null;
+        const findConst = (n: ts.Node) => {
+          if (
+            ts.isVariableDeclaration(n) &&
+            ts.isIdentifier(n.name) &&
+            n.name.text === (node as ts.Identifier).text &&
+            n.initializer
+          ) {
+            bound = unwrapValue(n.initializer);
+          }
+          n.forEachChild(findConst);
+        };
+        findConst(owner);
+        if (!bound) return null;
+        node = bound;
+      }
+      for (const key of path) {
+        if (!ts.isObjectLiteralExpression(node)) return null;
+        const prop = node.properties.find((p) => p.name?.getText(owner) === key);
+        if (!prop) return null;
+        node = unwrapValue(
+          ts.isPropertyAssignment(prop)
+            ? prop.initializer
+            : ts.isShorthandPropertyAssignment(prop)
+              ? prop.name
+              : prop,
+        );
+      }
+      return node;
+    };
+
+    const followFrom = (
+      fnName: string,
+      argIndex: number,
+      path: string[],
+      depth: number,
+      seen: Set<string>,
+      scope: readonly string[],
+    ): Chunk[] => {
+      const stamp = `${fnName}#${argIndex}#${path.join(".")}`;
+      if (depth <= 0 || seen.has(stamp)) return [];
+      seen.add(stamp);
+      const found: Chunk[] = [];
+      for (const abs of scope) {
+        const callerSf = parse(abs);
+        const visitCalls = (n: ts.Node) => {
+          if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === fnName) {
+            const arg = n.arguments[argIndex];
+            if (arg) {
+              const target = atPath(arg, path, callerSf);
+              if (target) found.push(...messageChunks(target, callerSf));
+              else {
+                // The caller forwarded ITS own parameter — hop out one more.
+                const outer = ((): ts.FunctionDeclaration | null => {
+                  for (let q: ts.Node | undefined = n; q; q = q.parent) {
+                    if (ts.isFunctionDeclaration(q) && q.name && q.body) return q;
+                  }
+                  return null;
+                })();
+                if (outer?.name) {
+                  const plain = unwrapValue(arg);
+                  const idx = outer.parameters.findIndex(
+                    (p) => ts.isIdentifier(plain) && p.name.getText(callerSf) === plain.text,
+                  );
+                  if (idx >= 0) {
+                    found.push(
+                      ...followFrom(outer.name.getText(callerSf), idx, path, depth - 1, seen, scope),
+                    );
+                  }
+                }
+              }
+            }
+          }
+          n.forEachChild(visitCalls);
+        };
+        visitCalls(callerSf);
+      }
+      return found;
+    };
+
+    /**
+     * WHICH FIELD MAY BE FOLLOWED ACROSS FILES, and why it is only one.
+     *
+     * `reason` on the two credit writers is the only field of a ledger row that
+     * carries prose — its siblings are ids, enums and numbers, which is why
+     * `chargeClientCredits.operation` and `creditClientCredits.kind` sit in
+     * NOT_TEXT. It is also the field whose literals moved out of reach when the
+     * charge helpers were consolidated into lib/client-model-charge.ts.
+     *
+     * Enabling the cross-file follow for EVERY field was tried and backed out. It
+     * works, and it surfaces thirteen further `writer.field` pairs that have never
+     * been classified (`chargeClientCredits.actorName`, `logActivity.actor`,
+     * `upsertClientContextDoc.clientId@tier=?` and so on) — including several that
+     * do carry real client-facing prose, like the reconciler's own auto-refund
+     * reasons. Every one of them is a judgement about who reads that field, and
+     * making thirteen of those silently, inside the sweep that is supposed to
+     * catch them, is how a guard turns green over a leak. Widening this is worth
+     * doing; it is its own piece of work, with its own classifications.
+     */
+    const followableAcrossFiles = (writer: string, path: string): boolean =>
+      path === "reason" && (writer === "chargeClientCredits" || writer === "creditClientCredits");
+
+    const followParams = (expr: ts.Node, at: ts.Node, path: string, writer: string): Chunk[] => {
       // Only at a NAMED field. Following the whole document parameter instead
       // (`createActivityLog(data)`) collapses every field of every caller's row
       // onto one key, which merges audiences that the lists below have to keep
@@ -1746,22 +1916,33 @@ const PERSISTED_CHUNKS: PersistedChunk[] = (() => {
         .map((p, i) => ({ i, name: p.name.getText(sf) }))
         .filter((p) => names.has(p.name));
       if (wanted.length === 0) return [];
-      const found: Chunk[] = [];
       const fnName = fn.name.getText(sf);
-      const visitCalls = (n: ts.Node) => {
-        if (
-          ts.isCallExpression(n) &&
-          ts.isIdentifier(n.expression) &&
-          n.expression.text === fnName
-        ) {
-          for (const w of wanted) {
+      const found: Chunk[] = [];
+      for (const w of wanted) {
+        const prop = propertyPath(expr, w.name);
+        // TWO FOLLOWS, and the narrow one is left byte-for-byte as it was.
+        //
+        // The precise cross-file follow needs a property path to know which part
+        // of the caller's argument to read, and it is admitted for one field
+        // (see followableAcrossFiles). Every other field takes the ORIGINAL
+        // follow — same file, whole argument, no const resolution — because
+        // changing it at all changes what the sweep sees everywhere: adding just
+        // the const-resolution step surfaced `updateClientTask.metadata
+        // .autoCompletedReason`, an unclassified field with nothing to do with
+        // this cluster. A repair to one channel must not quietly re-scope another.
+        if (prop !== null && followableAcrossFiles(writer, path)) {
+          found.push(...followFrom(fnName, w.i, prop, FOLLOW_DEPTH, new Set(), FOLLOW_FILES));
+          continue;
+        }
+        const visitCalls = (n: ts.Node) => {
+          if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === fnName) {
             const arg = n.arguments[w.i];
             if (arg) found.push(...messageChunks(arg, sf));
           }
-        }
-        n.forEachChild(visitCalls);
-      };
-      visitCalls(sf);
+          n.forEachChild(visitCalls);
+        };
+        visitCalls(sf);
+      }
       return found;
     };
 
@@ -1820,7 +2001,7 @@ const PERSISTED_CHUNKS: PersistedChunk[] = (() => {
                 return;
               }
               const direct = messageChunks(node, sf).map((c) => ({ c, viaParam: false }));
-              const followed = followParams(node, n, path).map((c) => ({ c, viaParam: true }));
+              const followed = followParams(node, n, path, writer).map((c) => ({ c, viaParam: true }));
               for (const { c, viaParam } of [...direct, ...followed]) {
                 if (c.shape.trim() === "") continue;
                 const pair = `${writer}.${path}`;

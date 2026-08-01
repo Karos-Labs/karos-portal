@@ -3,6 +3,9 @@
 import { useCallback, useRef, useState } from "react";
 import { Button, Badge, Skeleton, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
+// The SAME constant the route charges from (lib/credits.ts is client-safe), so
+// the quote next to the button cannot drift away from the price at the till.
+import { CREDIT_COSTS } from "@/lib/credits";
 // Type-only import — erased at compile time, so the server-only engine never
 // reaches the client bundle.
 import type { PersonaSimulationResult } from "@/lib/simulation-engine";
@@ -26,12 +29,35 @@ const SENTIMENT_META: Record<Sentiment, { tone: "success" | "warning" | "danger"
 };
 
 /**
+ * What one press costs the reader looking at the button, or null when it costs
+ * them nothing. One press runs a persona planner plus one call per persona and
+ * now charges for it, and the button said nothing about that — a client learned
+ * the price by watching the rail drop, or by a refusal after committing.
+ *
+ * Two facts, in one place so the two surfaces below cannot disagree: the NUMBER
+ * comes from the constant the route charges from, and it is quoted only to a
+ * client reader (staff runs are free — the same gate the agent run dialog's own
+ * "Costs N credits." line uses).
+ */
+export function simulationPrice(viewerIsClient: boolean): string | null {
+  return viewerIsClient ? `${CREDIT_COSTS.taskExecution} credits` : null;
+}
+
+/**
  * Audience Simulation panel — runs the asset's artifact past the synthetic
  * persona panel on demand and renders each verdict with a color-coded score
  * bar, sentiment indicator, and the raw qualitative critique. Handles the
  * parallel run with a graceful skeleton grid and isolates per-persona failures.
  */
-export function AudienceSimulation({ clientId, assetId }: { clientId: string; assetId: string }) {
+export function AudienceSimulation({
+  clientId,
+  assetId,
+  viewerIsClient = false,
+}: {
+  clientId: string;
+  assetId: string;
+  viewerIsClient?: boolean;
+}) {
   const [results, setResults] = useState<PersonaSimulationResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,13 +90,18 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
     }
   }, [clientId, assetId]);
 
+  const price = simulationPrice(viewerIsClient);
+
   // Intro state — nothing run yet.
   if (!results && !loading && !error) {
     return (
       <EmptyState
         icon={<Icon name="Users" className="h-6 w-6" />}
         title="Pre-flight audience simulation"
-        description="Test this content against 2–4 distinct stakeholder personas (for example: buyers, strategists, skeptics, or competitors) before you publish."
+        description={
+          "Test this content against 2–4 distinct stakeholder personas (for example: buyers, strategists, skeptics, or competitors) before you publish." +
+          (price ? ` Each run costs ${price}.` : "")
+        }
         action={
           <Button size="sm" onClick={() => void run()}>
             <Icon name="Sparkles" className="h-3.5 w-3.5" />
@@ -89,14 +120,18 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
           <p className="text-sm font-medium text-foreground">Synthetic persona panel</p>
         </div>
         {!loading && (
-          <button
-            type="button"
-            onClick={() => void run()}
-            className="inline-flex items-center gap-1 text-xs text-neon transition-opacity hover:underline"
-          >
-            <Icon name="RefreshCw" className="h-3 w-3" />
-            Re-run
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Re-run is a second press at the same price, so it says so too. */}
+            {price && <span className="text-[11px] text-muted-2">{price}</span>}
+            <button
+              type="button"
+              onClick={() => void run()}
+              className="inline-flex items-center gap-1 text-xs text-neon transition-opacity hover:underline"
+            >
+              <Icon name="RefreshCw" className="h-3 w-3" />
+              Re-run
+            </button>
+          </div>
         )}
       </div>
 

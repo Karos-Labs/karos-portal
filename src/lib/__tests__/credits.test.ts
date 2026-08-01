@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import {
   CREDIT_OPERATION_LABEL,
   creditBucketFor,
@@ -265,19 +268,29 @@ describe("isBillableClientActor", () => {
  * a stable label and a bucket.
  */
 describe("credit ledger presentation", () => {
+  /**
+   * The union is READ OUT OF types.ts rather than retyped here. The hand-kept
+   * list this replaces was eight names long and the test promised "every
+   * operation in the union" — a name that outran its assertion the moment a
+   * ninth was added, which is exactly what happened when `ai_tool` landed. A
+   * label map missing an entry renders a blank chip in the client's own spend
+   * breakdown, so the sweep has to widen by itself.
+   */
+  const operationsInTheUnion = (): CreditOperation[] => {
+    const src = readFileSync(resolve(__dirname, "..", "types.ts"), "utf8");
+    const union = /export type CreditOperation =([\s\S]*?);\n/.exec(src);
+    expect(union, "CreditOperation is no longer a string-literal union in types.ts").not.toBeNull();
+    return [...union![1].matchAll(/\|\s*"([a-z_]+)"/g)].map((m) => m[1] as CreditOperation);
+  };
+
   it("labels every operation in the union", () => {
-    const operations: CreditOperation[] = [
-      "agent_run",
-      "chat_message",
-      "task_execution",
-      "doc_correction",
-      "custom_agent_run",
-      "agent_launch",
-      "seat_purchase",
-      "manual",
-    ];
+    const operations = operationsInTheUnion();
+    // Non-vacuity: a regex that matched nothing would make the loop below a
+    // no-op and this test a green light over an unlabelled operation.
+    expect(operations.length).toBeGreaterThanOrEqual(9);
+    expect(operations).toContain("ai_tool");
     for (const op of operations) {
-      expect(CREDIT_OPERATION_LABEL[op]).toBeTruthy();
+      expect(CREDIT_OPERATION_LABEL[op], `no ledger label for "${op}"`).toBeTruthy();
     }
   });
 

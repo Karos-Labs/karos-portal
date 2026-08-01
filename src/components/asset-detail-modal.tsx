@@ -255,7 +255,12 @@ export function AssetDetailModal({
       </div>
 
       {tab === "simulation" ? (
-        <AudienceSimulation key={asset.id} clientId={asset.clientId} assetId={asset.id} />
+        <AudienceSimulation
+          key={asset.id}
+          clientId={asset.clientId}
+          assetId={asset.id}
+          viewerIsClient={viewerIsClient}
+        />
       ) : (
       <div className="space-y-4">
         {/* Status + template + type row */}

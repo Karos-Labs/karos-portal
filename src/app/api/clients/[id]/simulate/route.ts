@@ -1,10 +1,14 @@
 import { getCurrentUser } from "@/lib/auth";
 import { getClient, getAsset } from "@/lib/data";
+import { isAssetContentVisibleToClient } from "@/lib/asset-visibility";
+import { canViewClient } from "@/lib/client-visibility";
 import {
   buildSimulationPersonas,
   runSimulation,
   type SimulationArtifact,
 } from "@/lib/simulation-engine";
+import { CREDIT_COSTS } from "@/lib/credits";
+import { chargeClientModelCall, refundClientModelCall } from "@/lib/client-model-charge";
 import type { Asset, Client } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -75,6 +79,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!asset || asset.clientId !== clientId) {
     return Response.json({ error: "Asset not found" }, { status: 404 });
   }
+  // A3, THE CHURN RULE, ON THE ONE SURFACE THAT BYPASSED IT.
+  //
+  // Every read path a client has runs assets through the archive/library
+  // projections; this API did not, so a client could hand it the id of a
+  // FUTURE-DATED post and read content the calendar deliberately withholds —
+  // and once this route started charging, they were billed 5 credits for the
+  // leak. `isAssetContentVisibleToClient` is the predicate those projections
+  // already use; asking it here rather than writing a second visibility test is
+  // the point (a second answer is how this rule got a hole in the first place).
+  //
+  // BEFORE the charge, deliberately: a client refused for visibility must not
+  // pay. The 404 matches the "asset not found" shape above so the refusal does
+  // not confirm that a hidden asset exists.
+  if (user.role === "CLIENT_USER" && !isAssetContentVisibleToClient(asset, Date.now())) {
+    return Response.json({ error: "Asset not found" }, { status: 404 });
+  }
+
+  // STAFF SCOPE, the same hole one surface over: the only role test above is the
+  // CLIENT_USER branch, so an employee 404'd on /clients/[id] pages could still
+  // read any client's asset through this API. Same predicate the pages use.
+  if (user.role === "KAROS_EMPLOYEE" && !canViewClient(user, client)) {
+    return Response.json({ error: "Client not found" }, { status: 404 });
+  }
+
   if (!asset.content?.trim()) {
     return Response.json({ error: "This asset has no content to simulate." }, { status: 422 });
   }
@@ -97,6 +125,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     businessModel,
   };
 
+  // ── Charge ──
+  // One press runs a persona planner plus one call per persona — up to five
+  // Haiku calls — and it ran free, on any asset, as often as the client liked.
+  //
+  // PRICED AT `CREDIT_COSTS.taskExecution` (5): the existing rate for one
+  // in-process AI run, which is the nearest operation this app already prices.
+  // Charged FLAT rather than per persona on purpose — the panel size is chosen
+  // by the planner model, so a per-persona price could not be quoted before the
+  // client pressed the button, and five is the top of the range it can pick.
+  const simulationCharge = {
+    user,
+    clientId,
+    amount: CREDIT_COSTS.taskExecution,
+    operation: "ai_tool" as const,
+    // Client copy: the ledger feed renders ungated to a CLIENT_USER.
+    reason: `Audience simulation · ${asset.title.slice(0, 80)}`,
+  };
+  const { denied, chargedAt } = await chargeClientModelCall(simulationCharge);
+  if (denied !== null) return Response.json({ error: denied }, { status: 402 });
+
   // Unlike simulatePersona (which has a 3-tier fallback), persona planning is a
   // single model call with no rescue tier — a transient failure here must degrade
   // to a clean error response, not an unhandled throw / generic 500.
@@ -104,6 +152,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     personas = await buildSimulationPersonas(artifact, simCtx);
   } catch {
+    await refundClientModelCall(
+      simulationCharge,
+      chargedAt,
+      "Refund · audience simulation could not run",
+    );
     return Response.json(
       { error: "Couldn't generate the audience panel for this asset. Please try again." },
       { status: 502 },
@@ -111,6 +164,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const results = await runSimulation(artifact, personas, simCtx);
+
+  // runSimulation never throws — it settles each persona and returns failures as
+  // `error` entries — so "did this work" cannot be read off a catch. A panel
+  // where EVERY persona failed is a panel the client cannot read a single
+  // verdict from, and they are not paying for it. A partial panel is a real
+  // result and stays charged.
+  if (results.length === 0 || results.every((r) => r.error)) {
+    await refundClientModelCall(
+      simulationCharge,
+      chargedAt,
+      "Refund · audience simulation returned no verdicts",
+    );
+  }
 
   return Response.json({ assetId: asset.id, results });
 }

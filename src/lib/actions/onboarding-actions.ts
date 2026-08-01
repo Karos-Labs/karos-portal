@@ -4,7 +4,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { logGenerationFailure } from "./_shared";
+import { logGenerationFailure, requireFirstOnboarding } from "./_shared";
 import {
   upsertUser,
   completeOnboarding,
@@ -73,6 +73,10 @@ export async function completeOnboardingAction(input: {
   if (!user || user.disabled) throw new Error("Unauthorized");
   if (user.impersonatedBy) throw new Error("Cannot run onboarding while impersonating a client.");
   if (user.role !== "CLIENT_USER" || !user.clientId) throw new Error("Forbidden");
+  // The gate that makes the free AI provisioning below affordable: this may run
+  // once per account. Until now only the (app) layout's redirect enforced that,
+  // and a redirect does not gate a server action.
+  await requireFirstOnboarding(user);
 
   const name = input.name.trim();
   if (!name) throw new Error("Name cannot be empty.");

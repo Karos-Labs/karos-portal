@@ -20,12 +20,11 @@ import { ContactUsButton } from "@/components/contact-us-modal";
 import { LogoutButton } from "@/components/logout-button";
 import { MobileCompanySheet, MobileTabBar, useCompanySheet } from "@/components/mobile-shell";
 import { isAiProcessingLockActive } from "@/lib/constants";
-import { hasAiProcessingFailure } from "@/lib/client-visibility";
+import { hasAiProcessingFailure, type StaffShellClientView } from "@/lib/client-visibility";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
   AppUser,
-  Client,
   ClientTask,
   Role,
 } from "@/lib/types";
@@ -84,7 +83,13 @@ const ROLE_LABEL: Record<Role, string> = {
 
 /* ── View-as-Client picker ───────────────────────────────────────────── */
 
-function ClientContextPicker({ clients, isAdmin }: { clients: Client[]; isAdmin: boolean }) {
+function ClientContextPicker({
+  clients,
+  isAdmin,
+}: {
+  clients: StaffShellClientView[];
+  isAdmin: boolean;
+}) {
   const router = useRouter();
   const { activeClient, setActiveClient } = useActiveClient();
   const [open, setOpen] = useState(false);
@@ -94,7 +99,7 @@ function ClientContextPicker({ clients, isAdmin }: { clients: Client[]; isAdmin:
     ? clients.filter((c) => c.name.toLowerCase().includes(query.toLowerCase()))
     : clients;
 
-  function selectClient(client: Client) {
+  function selectClient(client: StaffShellClientView) {
     setOpen(false);
     setQuery("");
     // Optimistically switch the nav immediately; ClientContextSync fills in docs/competitors on load.
@@ -382,7 +387,7 @@ export function Sidebar({
   user: AppUser;
   pendingCount?: number;
   realAdmin?: AppUser;
-  clients?: Client[];
+  clients?: StaffShellClientView[];
   /**
    * Bell feeds. They used to be handed to AppHeader, the floating top-right
    * strip; CD-G9c retired that strip and the bell now lives in the account

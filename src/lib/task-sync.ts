@@ -120,6 +120,38 @@ export type JobOutcome =
   | { ok: false; error: string };
 
 /**
+ * The board task that dispatched this agent-service run, or null when the run
+ * was fired directly at an agent.
+ *
+ * OUR OWN RECORD FIRST (`metadata.externalJobId`), the service's metadata echo
+ * second: `karos_task_id` comes back through a signed payload, but it is still
+ * a value that arrived over the wire naming a Firestore document, and it is
+ * used to decide where a REFUND is written. So the echo is accepted only when
+ * the task it names belongs to this run's client AND is not already bound to a
+ * different job — which is also exactly the dispatch race it exists to cover
+ * (a run that terminates before the dispatcher persisted externalJobId).
+ *
+ * Deliberately says nothing about whether the task is still live — that is a
+ * separate question, asked by syncTaskForJobOutcome for the state write and NOT
+ * asked by the refund path, which only needs the ledger key the charge was
+ * filed under.
+ */
+export async function findDispatchingTask(
+  platformJobId: string,
+  clientId: string,
+  fallbackTaskId?: string,
+): Promise<ClientTask | null> {
+  let task = await findTaskByExternalJobId(platformJobId);
+  if (!task && fallbackTaskId) {
+    const candidate = await getClientTask(fallbackTaskId);
+    const linked = candidate?.metadata?.externalJobId;
+    if (candidate && (linked == null || linked === platformJobId)) task = candidate;
+  }
+  if (!task || task.clientId !== clientId) return null;
+  return task;
+}
+
+/**
  * Job-completion hook: the agent-service run dispatched FOR a task finished.
  * Success → the deliverable lands on the task ticket (review_pending) for the
  * client preview + approve/re-run loop. Failure → task returns to pending with
@@ -137,15 +169,8 @@ export async function syncTaskForJobOutcome(
   outcome: JobOutcome,
   fallbackTaskId?: string,
 ): Promise<boolean> {
-  let task = await findTaskByExternalJobId(platformJobId);
-  if (!task && fallbackTaskId) {
-    const candidate = await getClientTask(fallbackTaskId);
-    // Accept the echo only when the task hasn't been re-dispatched to a
-    // DIFFERENT run in the meantime (absent id = the race we're covering).
-    const linked = candidate?.metadata?.externalJobId;
-    if (candidate && (linked == null || linked === platformJobId)) task = candidate;
-  }
-  if (!task || task.clientId !== clientId) return false;
+  const task = await findDispatchingTask(platformJobId, clientId, fallbackTaskId);
+  if (!task) return false;
   // Only a live dispatch consumes the outcome — re-delivered webhooks after
   // the task moved on must not clobber later state.
   if (task.status !== "in_progress" || task.metadata?.executing !== true) return false;

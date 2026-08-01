@@ -1,6 +1,5 @@
-import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
-import { getClient } from "@/lib/data";
+import { redirect } from "next/navigation";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { buildXAgentIntakeView } from "@/lib/agent-intake-views";
 import { PageHeader } from "@/components/ui";
 import { XAgentIntake } from "@/components/x-agent-intake";
@@ -20,8 +19,9 @@ export default async function XAgentPage({ params }: { params: Promise<{ id: str
   }
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  // Called for the refusal, not the document: this page reads nothing off
+  // the client record, but it is still one of the client's pages.
+  await requireVisibleClient(user, id);
 
   const view = await buildXAgentIntakeView(id, { isStaff });
 

@@ -1,10 +1,18 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect } from "react";
-import type { Client, ClientCompetitor, ClientContextDoc } from "@/lib/types";
+import type { StaffShellClientView } from "@/lib/client-visibility";
+import type { ClientCompetitor, ClientContextDoc } from "@/lib/types";
 
+/**
+ * `client` is the PROJECTION, not the document. This context is held by "use
+ * client" components in the staff shell, so whatever is put here is serialized
+ * into the RSC payload of every page that mounts them — see
+ * StaffShellClientView for the field list and why it is the field list.
+ * Widening this back to `Client` is what re-ships the join token.
+ */
 export interface ActiveClientData {
-  client: Client;
+  client: StaffShellClientView;
   contextDocs: ClientContextDoc[];
   competitors: ClientCompetitor[];
   isAdmin: boolean;

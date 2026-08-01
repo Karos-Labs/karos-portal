@@ -34,7 +34,11 @@ import { refundJobCharge } from "@/lib/credit-reconcile";
 import { applyLaunchOutcome, isLaunchTemplatesArtifact } from "@/lib/jobs/launch-outcome";
 import { getClientAgent } from "@/lib/data-client-agents";
 import { syncOptionsFromBatchAsset } from "@/lib/client-agent-slots";
-import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
+import {
+  autoCompleteTasksByTrigger,
+  findDispatchingTask,
+  syncTaskForJobOutcome,
+} from "@/lib/task-sync";
 import { notifyJobFailure } from "@/lib/job-alerts";
 import { logger } from "@/services/logger";
 
@@ -596,12 +600,62 @@ export async function POST(req: NextRequest) {
           level: "error",
           message: `Failed to create deliverable asset: ${e instanceof Error ? e.message : "unknown error"}`,
         });
+        // Keyed by the JOB only, deliberately. A task-dispatched run whose asset
+        // write throws still lands its draft on the board ticket (task-sync
+        // below writes `artifact: taskArtifactContent` on the success path), so
+        // the client did receive the deliverable — just not into their library.
+        // The zero-deliverable branch below is the case where they received
+        // nothing at all, and that one pairs on the task key too.
         await refundJobCharge(
           job.id,
           `Auto-refund · asset creation failed · ${job.agentName}`.slice(0, 120),
         ).catch((refundErr) =>
           console.error("[webhook] refund after asset-creation failure also failed:", refundErr),
         );
+      }
+    } else if (!isLaunchRun) {
+      // A run that finished with NOTHING THE CLIENT CAN SEE. The service says
+      // "done", so the refund above (gated on a non-done status) never fires and
+      // the asset-creation refund below it is unreachable — no asset was
+      // attempted. The client paid for a deliverable and received none, which is
+      // the same outcome as a failed run and is refunded the same way.
+      //
+      // BOTH LEDGER KEYS, because the charge is not always filed under the job.
+      // A run fired at the agent directly is charged under the JOB id; a run
+      // dispatched by a board task was charged under the TASK id before this job
+      // existed (execution-actions passes `jobId: task.id`), and the job itself
+      // was submitted as the non-billable task engine, so nothing was ever
+      // written under job.id for it. Task dispatch is the ordinary way a client
+      // spends agent credits, so looking up the job alone made this refund a
+      // no-op for most real runs. The task is resolved from OUR record of the
+      // dispatch (findDispatchingTask), not from the payload's word for it.
+      //
+      // Idempotent by construction: refundJobCharge writes the deterministic
+      // refund_<chargeEntryId> ledger id via tx.create() — keyed to the CHARGE,
+      // not to the key it was found under — so a redelivery that gets past the
+      // advisory filter, and the task-sync refund further down, cannot pay
+      // twice. A no-op for staff-fired runs, which were never charged.
+      const zeroDeliverableTask = await findDispatchingTask(
+        job.id,
+        job.clientId,
+        payload.metadata?.karos_task_id,
+      ).catch((e) => {
+        console.error("[webhook] dispatching-task lookup for zero-deliverable refund failed:", e);
+        return null;
+      });
+      const zeroDeliverableRefund = await refundJobCharge(
+        [job.id, zeroDeliverableTask?.id],
+        `Auto-refund · run produced no deliverables · ${job.agentName}`.slice(0, 120),
+      ).catch((refundErr) => {
+        console.error("[webhook] refund after zero-deliverable run failed:", refundErr);
+        return { refunded: false as const, amount: undefined };
+      });
+      if (zeroDeliverableRefund.refunded) {
+        events.push({
+          at: now,
+          level: "info",
+          message: `Refunded ${zeroDeliverableRefund.amount} credit${zeroDeliverableRefund.amount === 1 ? "" : "s"} — the run produced no client-facing deliverables`,
+        });
       }
     }
     events.push({

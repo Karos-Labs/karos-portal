@@ -452,6 +452,7 @@ export const CREDIT_OPERATION_LABEL: Record<CreditOperation, string> = {
   custom_agent_run: "Agent runs",
   agent_launch: "Setup",
   seat_purchase: "Seats",
+  ai_tool: "AI tools",
   manual: "Adjustments",
 };
 

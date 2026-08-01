@@ -1,6 +1,5 @@
-import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
-import { getClient } from "@/lib/data";
+import { redirect } from "next/navigation";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { buildLinkedInAgentIntakeView } from "@/lib/agent-intake-views";
 import { PageHeader } from "@/components/ui";
 import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
@@ -22,8 +21,7 @@ export default async function LinkedInAgentPage({ params }: { params: Promise<{ 
   }
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  const client = await requireVisibleClient(user, id);
 
   const view = await buildLinkedInAgentIntakeView(id, {
     isStaff,

@@ -11,7 +11,6 @@ import {
   getClient,
   updateClientTask,
   createTaskComment,
-  chargeClientCredits,
   claimTaskForExecution,
   claimTaskCompletion,
   releaseTaskClaim,
@@ -21,7 +20,7 @@ import {
   listAssets,
   listClientIntegrations,
 } from "@/lib/data";
-import { CreditError, isBillableClientActor } from "@/lib/credits";
+import { chargeClientModelCall } from "@/lib/client-model-charge";
 import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
@@ -42,6 +41,12 @@ const ALERT_EMAIL = "hello@karoslabs.com";
  * via plannedTaskExecutionCost so media-heavy agent runs price above the
  * in-process baseline. Returns the denial message when the charge is refused,
  * null when it went through (or wasn't needed).
+ *
+ * Charges through `chargeClientModelCall` (lib/client-model-charge.ts) rather
+ * than reaching for `chargeClientCredits` itself: who pays for a
+ * client-triggered model call is one decision, and this file used to be the
+ * fourth place that answered it. `jobId: task.id` is what pairs the crash
+ * reconciler's refund to this charge, so it stays.
  */
 async function chargeTaskExecution(
   user: AppUser,
@@ -49,22 +54,15 @@ async function chargeTaskExecution(
   task: ClientTask,
   reasonPrefix: string,
 ): Promise<string | null> {
-  if (!isBillableClientActor(user)) return null;
-  try {
-    await chargeClientCredits({
-      clientId,
-      amount: await plannedTaskExecutionCost(task),
-      operation: "task_execution",
-      reason: `${reasonPrefix} · ${task.title.slice(0, 80)}`,
-      jobId: task.id,
-      actorUid: user.uid,
-      actorName: user.name,
-    });
-    return null;
-  } catch (e) {
-    if (e instanceof CreditError) return e.message;
-    throw e;
-  }
+  const { denied } = await chargeClientModelCall({
+    user,
+    clientId,
+    amount: await plannedTaskExecutionCost(task),
+    operation: "task_execution",
+    reason: `${reasonPrefix} · ${task.title.slice(0, 80)}`,
+    jobId: task.id,
+  });
+  return denied;
 }
 
 /* ── Trigger: manual drag Pending → In Progress ──────────────────── */
