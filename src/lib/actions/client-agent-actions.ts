@@ -94,7 +94,13 @@ function chainFamilyForAgent(agent: Pick<CustomAgent, "key" | "name">): ClientAg
 
 /**
  * Whether this agent is ALREADY working for this client — a successful custom
- * run in its history, or a live weekly schedule row.
+ * run in its history, or any schedule row that has not been retired.
+ *
+ * "A live WEEKLY schedule row" is what this line used to claim, and the code
+ * under it has never tested the cadence: a daily, monthly or one-off row counts
+ * too, which is the answer this question wants. The comment was the overstated
+ * half. Left broader than `isLiveAgentSchedule` on purpose — a pending one-off
+ * is still work in flight, and binding over it is still the thing to ask about.
  *
  * Binding such an agent as `not_launched` is not a neutral act: the client's
  * agents page hands a pre-launch umbrella its card, which removes the agent's

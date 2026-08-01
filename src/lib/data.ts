@@ -599,6 +599,12 @@ export async function listDuePlannedScheduledRuns(before?: number, limit = 25): 
  * completes a one-off) and stamps `lastRunAt` in the same transaction.
  * Returns false if another tick already claimed it, it was paused/completed,
  * or the cadence moved on — the caller should skip the run, not retry.
+ *
+ * It also opens the fire's IN-FLIGHT window (`fireInFlightSince`), which the
+ * caller closes once the fire settles. Stamped here rather than by the caller
+ * immediately afterwards on purpose: a marker written after the claim has its
+ * own unobserved window, and that window is the whole defect it exists to make
+ * visible.
  */
 export async function claimPlannedScheduledRun(
   id: string,
@@ -614,6 +620,7 @@ export async function claimPlannedScheduledRun(
     if (run.nextRunAt !== expectedNextRunAt) return false;
     tx.update(ref, {
       lastRunAt: Date.now(),
+      fireInFlightSince: Date.now(),
       updatedAt: Date.now(),
       ...("completed" in advance ? { status: "completed" as const } : { nextRunAt: advance.nextRunAt }),
     });

@@ -69,6 +69,22 @@ export function scheduleLimitsFor(agentKey: string): {
 }
 
 /**
+ * The plain calendar day an instant falls on, as a comparable number
+ * (midnight-UTC of that Y/M/D). Read in `timeZone` when the row carries one,
+ * else on the runtime's clock — the same two-branch split computeNextRun
+ * itself walks, so a candidate and the last fire are always compared on ONE
+ * calendar.
+ */
+function localDayOrdinal(at: number, timeZone: string | undefined): number {
+  if (isValidTimeZone(timeZone)) {
+    const { y, mo, d } = localYMD(timeZone, at);
+    return Date.UTC(y, mo - 1, d);
+  }
+  const local = new Date(at);
+  return Date.UTC(local.getFullYear(), local.getMonth(), local.getDate());
+}
+
+/**
  * Next fire time (epoch millis) strictly after `from` for a recurring cadence.
  *
  * Not used for "once" — a one-off run stores its explicit target time directly.
@@ -79,6 +95,24 @@ export function scheduleLimitsFor(agentKey: string): {
  * candidate wall clock is converted through the DST-correct helper shared with
  * the other scheduler; without it the walk uses the runtime's local calendar
  * (legacy rows only).
+ *
+ * ── A DAY THAT ALREADY FIRED IS NOT A CANDIDATE AGAIN (`lastRunAt`) ────────
+ * `lastRunAt` is the instant of the schedule's most recent fire, stamped by
+ * claimPlannedScheduledRun in the same transaction that advances the cursor.
+ * Every recompute site passes it — the cron's advance, a pace edit, a resume —
+ * because "strictly after `from`" alone re-admits a day whose post has already
+ * been produced AND CHARGED: a client on Mon/Wed/Fri 09:00 opening the pace
+ * dialog at 10:00 on a Monday and moving the time to 18:00 got a second post
+ * that evening and a second charge for it.
+ *
+ * The comparison is by DAY, never by instant: the product's unit of "a post" is
+ * a calendar day (one slot per day per umbrella), and an instant comparison is
+ * exactly what admits the 18:00 slot on an already-posted Monday.
+ *
+ * DIRECTION, because this decides money: the exclusion only ever REMOVES
+ * candidates from the walk, so the instant returned is greater than or equal to
+ * the one returned without it. Passing `lastRunAt` cannot make any caller fire
+ * more often, only later.
  */
 export function computeNextRun(opts: {
   cadence: Exclude<PlannedRunCadence, "once">;
@@ -90,12 +124,20 @@ export function computeNextRun(opts: {
   from?: number;
   /** IANA zone the hour/minute are expressed in. */
   timeZone?: string;
+  /**
+   * Instant of the most recent fire. Candidates on that calendar day, or any
+   * earlier one, are refused — see the note above. Omit (or pass null) on a
+   * schedule that has never fired.
+   */
+  lastRunAt?: number | null;
 }): number {
   const from = opts.from ?? Date.now();
   const weeklyDays =
     opts.weekdays && opts.weekdays.length > 0
       ? new Set(opts.weekdays)
       : new Set([opts.weekday ?? 1]);
+  const firedDay =
+    opts.lastRunAt != null ? localDayOrdinal(opts.lastRunAt, opts.timeZone) : null;
 
   if (isValidTimeZone(opts.timeZone)) {
     const zone = opts.timeZone;
@@ -113,6 +155,7 @@ export function computeNextRun(opts: {
         const lastDay = new Date(Date.UTC(y, mo, 0)).getUTCDate();
         if (d !== Math.min(opts.dayOfMonth ?? 1, lastDay)) continue;
       }
+      if (firedDay != null && Date.UTC(y, mo - 1, d) <= firedDay) continue;
 
       const at = zonedWallToUtc(y, mo, d, opts.hour, opts.minute, zone);
       if (at > from) return at;
@@ -125,6 +168,9 @@ export function computeNextRun(opts: {
     d.setDate(d.getDate() + i);
     d.setHours(opts.hour, opts.minute, 0, 0);
     if (d.getTime() <= from) continue;
+    if (firedDay != null && Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) <= firedDay) {
+      continue;
+    }
 
     if (opts.cadence === "daily") return d.getTime();
     if (opts.cadence === "weekly" && weeklyDays.has(d.getDay())) return d.getTime();
@@ -134,7 +180,15 @@ export function computeNextRun(opts: {
       if (d.getDate() === target) return d.getTime();
     }
   }
-  // Unreachable in practice (400-day horizon covers every cadence).
+  // Backstop, not a computed answer. Every WELL-FORMED cadence hits inside the
+  // 400-day walk (daily hits tomorrow; a weekly set holds a real weekday; a
+  // monthly day-of-month is clamped to the month's length), and excluding one
+  // already-fired day cannot exhaust it. A MALFORMED stored row can reach here
+  // — `weekdays: [9]` matches no weekday, and nothing re-validates a row on
+  // read — so the fallback is deliberately a FUTURE instant: a bad row parks a
+  // day out instead of reading as due on every tick. It is not day-filtered,
+  // which is safe only because `from + DAY_MS` is a later day than `from` for
+  // every real zone offset, and `lastRunAt` is never after `from` at any caller.
   return from + DAY_MS;
 }
 

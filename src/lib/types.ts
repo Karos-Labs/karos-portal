@@ -652,6 +652,23 @@ export interface PlannedScheduledRun {
   lastError?: string | null;
   /** Epoch millis of `lastError`. */
   lastErrorAt?: number | null;
+  /**
+   * Non-null from the instant a fire CLAIMS its slot until the cron settles that
+   * fire (submitted, refused, or thrown), and cleared to null when it does.
+   *
+   * The claim advances `nextRunAt` and stamps `lastRunAt` in one transaction
+   * BEFORE the submit — correct for double-fire safety, and lossy without this
+   * field: a Cloud Run timeout or a container recycle in that window leaves a
+   * row with a fresh `lastRunAt`, a null `lastError`, an advanced `nextRunAt`
+   * and NO job. Nothing else on the row tells that apart from a clean fire, so
+   * no alert fires and the "Stuck" flag never trips — `nextRunAt` is
+   * legitimately in the future.
+   *
+   * A row still carrying it at its NEXT claim is that vanished fire, and the
+   * cron reports it then. `undefined` on rows written before the field existed,
+   * and `null` on every settled row.
+   */
+  fireInFlightSince?: number | null;
   createdBy: string;
   createdAt: number;
   updatedAt: number;

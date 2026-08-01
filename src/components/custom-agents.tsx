@@ -41,6 +41,7 @@ import {
 import { CREDIT_COSTS, creditsLabel, scheduledAgentWeeklyCost } from "@/lib/credits";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
+import { validateScheduleTiming } from "@/lib/scheduling";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
 import {
   agentKeyMatchesClientSlug,
@@ -1312,7 +1313,23 @@ export function AgentScheduleModal({
 
   function save() {
     setError(null);
-    const [hour, minute] = time.split(":").map(Number);
+    // A cleared time field used to save 00:00. `"".split(":").map(Number)` is
+    // `[0]`, so hour became 0 and minute undefined, and the server had no way
+    // to tell that from a client who genuinely picked midnight — one slip moved
+    // every future post to the middle of the night. Nothing is submitted until
+    // the time reads as a time; 00:00 still parses, because midnight is a
+    // choice a client is allowed to make.
+    const timing = validateScheduleTiming({
+      time,
+      // Swept as the payload, not as a list: whatever numbers this save is
+      // about to send are the numbers checked.
+      counts: { postsPerWeek, outputsPerRun },
+    });
+    if (!timing.ok) {
+      setError(timing.error);
+      return;
+    }
+    const { hour, minute } = timing;
     startTransition(async () => {
       const result = await configureClientAgentScheduleAction({
         clientId,

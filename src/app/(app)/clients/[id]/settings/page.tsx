@@ -165,7 +165,18 @@ export default async function ClientSettingsPage({
           <CardTitle className="mb-1">Scheduled runs</CardTitle>
           <p className="mb-3 text-sm text-muted-2">
             Fire a custom agent for this client on a recurring cadence (e.g. the LinkedIn
-            company-page generator, Tue–Thu). Runs are draft-first and never charge credits.
+            company-page generator, Tue–Thu). Runs are draft-first and never charge the
+            client&apos;s credits — the model spend is ours and appears in no credit ledger.
+          </p>
+          {/* Where these DON'T show up. A schedule nobody can see is a schedule
+              nobody turns off, and this card creates rows that are absent from
+              the calendar entirely and separate from the pace on the AI Agents
+              page — so an agent can be running on both at once. Said here, on
+              the only surface that can create one. */}
+          <p className="mb-3 text-sm text-muted-2">
+            These are separate from an agent&apos;s pace on the AI agents page, and they do not
+            appear on the calendar. An agent can be running on both at once — check the AI agents
+            page, which now lists any schedule set here.
           </p>
           <ScheduledRunsCard
             clientId={client.id}

@@ -235,6 +235,105 @@ export function recommendPublishTimeWithDensity(opts: {
   return base;
 }
 
+/* ══════════ schedule-form field validation (pure, client-safe) ══════════ */
+
+/**
+ * The closed question this section answers: **can a number that is not a finite
+ * number reach a stored schedule field?**
+ *
+ * A PlannedScheduledRun stores its intent as plain numbers (hour, minute,
+ * weekday, dayOfMonth, …) and every path that turns them into a fire time is
+ * arithmetic. So a bad number is not "input that gets rejected downstream" — it
+ * IS a schedule, and it is a schedule that bills:
+ *
+ *  · An EMPTY `<input type="time">` is the string `""`. Split on ":" and mapped
+ *    through `Number`, that is `[0]` — hour 0, minute undefined — which is
+ *    indistinguishable from a client deliberately choosing 00:00, so a
+ *    fat-fingered field silently moved every future post to the middle of the
+ *    night.
+ *  · A NON-NUMERIC value is NaN, and NaN survives Math.round / Math.min /
+ *    Math.max unchanged. It reaches storage, renders as "NaN:NaN", and makes
+ *    the next-fire search return no candidate — so the schedule fires roughly
+ *    whenever the cron happens to catch it, drifting.
+ *
+ * Both are answered here, in one place, before the payload leaves the browser.
+ *
+ * MIDNIGHT STAYS REACHABLE. An hour of 0 is a real time of day and "00:00"
+ * parses to hour 0. What is refused is the ABSENCE of a choice, never a
+ * legitimate zero — which is also why the sweep below tests `Number.isFinite`
+ * rather than falsiness.
+ */
+
+/** Result of reading a schedule field off a form: the value, or what to show. */
+export type ScheduleFieldResult<T> = ({ ok: true } & T) | { ok: false; error: string };
+
+/** `HH:MM`, optionally with the seconds a stepped time input can append. */
+const WALL_CLOCK_RE = /^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/;
+
+const TIME_MISSING = "Choose a time of day before saving.";
+const TIME_UNREADABLE = "Enter a valid time of day, for example 09:30.";
+
+/**
+ * Strictly reads an `<input type="time">` value into the hour/minute a schedule
+ * stores. Anything that is not a real 24-hour wall clock — empty, blank,
+ * partial, out of range — comes back as a message the person can read instead
+ * of a number the scheduler would fire on.
+ */
+export function parseWallClockTime(
+  raw: string | null | undefined,
+): ScheduleFieldResult<{ hour: number; minute: number }> {
+  const value = (raw ?? "").trim();
+  if (value === "") return { ok: false, error: TIME_MISSING };
+  const match = WALL_CLOCK_RE.exec(value);
+  if (!match) return { ok: false, error: TIME_UNREADABLE };
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return { ok: false, error: TIME_UNREADABLE };
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) {
+    return { ok: false, error: TIME_UNREADABLE };
+  }
+  return { ok: true, hour, minute };
+}
+
+/**
+ * Name of the first entry that is a number but not a finite one, else null.
+ *
+ * Mechanical on purpose: it walks the object it is HANDED rather than a
+ * hand-written list of field names, so a schedule payload that grows a new
+ * numeric field is swept the day it is added and nobody has to remember. A
+ * missing (`undefined`) field is not this function's business — the server
+ * decides what a field's absence means — and `0` is a legitimate value for
+ * every numeric schedule field that can hold it.
+ */
+export function firstNonFiniteScheduleField(payload: Record<string, unknown>): string | null {
+  for (const [key, value] of Object.entries(payload)) {
+    if (typeof value === "number" && !Number.isFinite(value)) return key;
+  }
+  return null;
+}
+
+/**
+ * The one pre-flight both schedule dialogs run before calling their server
+ * action: the typed time of day, plus a finiteness sweep of every other number
+ * the form is about to send.
+ *
+ * The sweep's message never names the offending field — a field name is an
+ * internal identifier, and the only way a client sees this branch at all is a
+ * page whose state is already wrong.
+ */
+export function validateScheduleTiming(input: {
+  time: string | null | undefined;
+  /** Every other number the form is about to send, by payload key. */
+  counts?: Record<string, unknown>;
+}): ScheduleFieldResult<{ hour: number; minute: number }> {
+  const parsed = parseWallClockTime(input.time);
+  if (!parsed.ok) return parsed;
+  if (input.counts && firstNonFiniteScheduleField(input.counts) !== null) {
+    return { ok: false, error: "Those settings could not be read. Reload the page and try again." };
+  }
+  return parsed;
+}
+
 /**
  * Convenience spread for asset-creation sites:
  * `{ ...recommendedScheduleFields(type, i) }` adds recommendedAt/recommendedReason

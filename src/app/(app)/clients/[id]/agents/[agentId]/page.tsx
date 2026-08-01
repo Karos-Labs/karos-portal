@@ -17,6 +17,7 @@ import { AgentIdentity } from "@/components/agent-identity";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { isLaunchInFlight, lastRunFailedAgentIds, rosterStatus } from "@/lib/client-agents";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
@@ -305,7 +306,10 @@ export default async function ClientAgentDetailPage({
 
   const status = rosterStatus({
     launchState: umbrella?.launchState ?? null,
-    scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
+    // Raw refusal + raw status: `rosterStatus` owns both the pause rule and
+    // the freshness window, so the roster card and this page cannot end up
+    // ageing the same refusal differently.
+    scheduleRefusal: schedule?.lastError ?? null,
     scheduleRefusalAt: schedule?.lastErrorAt ?? null,
     scheduleActive: schedule?.status === "active",
     hasDelivered: stripHasDelivered,
@@ -329,14 +333,13 @@ export default async function ClientAgentDetailPage({
   // connectors and feedback are the common chassis and render for all three.
   const archetype = agentArchetype({ key: agent.key, name: agent.name });
 
-  // The agent's own weekly schedule row, unredacted, for the day projections.
+  // The agent's own schedule row, unredacted, for the day projections.
   // `scheduleRows` above is the client-safe projection and deliberately drops
-  // the fields projectRunOccurrences needs.
-  const plannedRun =
-    scheduledRuns.find(
-      (run) =>
-        run.customAgentId === agent.id && run.cadence === "weekly" && run.status !== "completed",
-    ) ?? null;
+  // the fields projectRunOccurrences needs — so this reads the SAME selection
+  // (`selectAgentSchedule`) rather than a fifth private copy of the weekly-only
+  // filter. It had one, and it was the copy that made the Reddit panel print
+  // "Not looking yet" for a daily agent that drafts every day.
+  const plannedRun = selectAgentSchedule(scheduledRuns, agent.id)?.schedule ?? null;
 
   const clipView =
     archetype === "clip_maker"
@@ -659,18 +662,11 @@ export default async function ClientAgentDetailPage({
             </section>
           )}
 
-          {finderView && (
-            <DailyFinderPanel
-              clientId={id}
-              view={finderView}
-              scheduleActive={schedule?.status === "active"}
-              emptyHint={
-                schedule?.status === "active"
-                  ? "It looks once a day and only brings back a thread worth answering — some days there is nothing good, and a forced reply is worse than none."
-                  : "Your Karos team sets how often this agent goes looking. Nothing runs until they do."
-              }
-            />
-          )}
+          {/* No `scheduleActive` and no `emptyHint`: both were this page's own
+              derivation of "is it running?" from the redacted schedule row,
+              beside a strip the server had already derived from the raw run.
+              The panel reads `view.scheduleState` — one answer, one source. */}
+          {finderView && <DailyFinderPanel clientId={id} view={finderView} />}
 
           {/* Hero: the launch card for a non-live umbrella (§7.1 states 1–3),
               the working agent once it is live. An agent with no umbrella at

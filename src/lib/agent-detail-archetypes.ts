@@ -447,6 +447,25 @@ export interface FinderDay {
 }
 
 /**
+ * Is this agent going looking at all? ONE derivation, on the view.
+ *
+ * The panel used to answer this twice from two different inputs — a
+ * `scheduleActive` prop the page derived from the redacted schedule ROW, and
+ * `finderDays`, which derived its own answer from the raw run — and printed
+ * both. A paused schedule made them disagree out loud: the header read "Not
+ * looking yet" directly above a strip of dated chips for tomorrow and the day
+ * after. Both now read the same field.
+ */
+export type FinderScheduleState = "none" | "paused" | "active";
+
+export function finderScheduleState(
+  run: Pick<PlannedScheduledRun, "status"> | null,
+): FinderScheduleState {
+  if (!run || run.status === "completed") return "none";
+  return run.status === "active" ? "active" : "paused";
+}
+
+/**
  * The days this agent goes looking, from its own schedule.
  *
  * Albert on the Reddit agent: "it will find a thread every day… fully connected
@@ -467,13 +486,22 @@ export function finderDays(args: {
   lookbackDays?: number;
   horizonDays?: number;
 }): FinderDay[] {
-  // NO SCHEDULE, NO STRIP. The lookback days were painted unconditionally, so
+  // NOT FIRING, NO STRIP. The lookback days were painted unconditionally, so
   // an agent nobody has scheduled rendered four dated chips under "WHEN IT
   // LOOKS" while the panel above it said "Not looking yet" — days on which it
   // demonstrably did not look. The strip answers "when does it go looking", and
-  // for an unscheduled agent the honest answer is the one DailyStrip already
-  // renders for an empty list: there is no schedule yet.
-  if (!args.run || args.run.status === "completed") return [];
+  // for an agent that is not going looking the honest answer is the one
+  // DailyStrip already renders for an empty list.
+  //
+  // A PAUSED run is that same case and used to fall straight through this
+  // guard: `projectRunOccurrences` knows nothing about status, so it happily
+  // dated the next four fires of a schedule that will not fire again until
+  // somebody resumes it. Keyed to `status === "active"`, not to a list of the
+  // two statuses that were wrong, so a fourth status could not slip past.
+  // (The null test is what narrows `run` for the projection below; the state
+  // call alone already rejects null.)
+  const run = args.run;
+  if (!run || finderScheduleState(run) !== "active") return [];
 
   const todayKey = dateKeyInZone(args.now, args.zone);
   const lookback = args.lookbackDays ?? 3;
@@ -489,11 +517,12 @@ export function finderDays(args: {
   keys.add(todayKey);
 
   // The projection's own guard (`run && status !== "completed"`) is gone: the
-  // early return above already settled both halves of it.
-  for (const at of projectRunOccurrences(args.run, {
+  // early return above already settled both halves of it, and more — it also
+  // settles the half `projectRunOccurrences` never had, which is `paused`.
+  for (const at of projectRunOccurrences(run, {
     from: args.now,
     horizonDays: horizon,
-    ...(args.run.timeZone ? { timeZone: args.run.timeZone } : {}),
+    ...(run.timeZone ? { timeZone: run.timeZone } : {}),
   })) {
     keys.add(dateKeyInZone(at, args.zone));
   }
@@ -602,6 +631,15 @@ export interface DailyFinderView {
   earlier: FinderBatch[];
   days: FinderDay[];
   /**
+   * Whether this agent is going looking — the ONE answer the whole panel reads.
+   *
+   * `days` and this field are computed from the same run in the same call, so
+   * the header and the strip under it cannot print two verdicts again. The
+   * panel takes no `scheduleActive` prop any more: a second input derived by
+   * the page from a different object is exactly how they came to disagree.
+   */
+  scheduleState: FinderScheduleState;
+  /**
    * This agent's output that is NOT a draft batch — run reports, notes.
    *
    * The common chassis promises "the documents it produced", and a finder page
@@ -666,6 +704,7 @@ export function buildDailyFinderView(args: {
     today: batches.filter((b) => b.dateKey === todayKey).map(strip),
     earlier: batches.filter((b) => b.dateKey !== todayKey).map(strip),
     days: finderDays({ run: args.run, now: args.now, zone }),
+    scheduleState: finderScheduleState(args.run),
     documents,
   };
 }

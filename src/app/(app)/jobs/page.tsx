@@ -75,6 +75,11 @@ export default async function JobsPage() {
         agentLabel: scheduleRowLabel(r, umbrellasByClient.get(r.clientId) ?? []),
         nextRunAt: r.nextRunAt,
         cadenceLabel: describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
+        // `=== false`, never `!r.billClientCredits`: an ABSENT flag is a row
+        // written before it existed, and the cron falls back to the actor test
+        // for those, so this panel does not know. Only a recorded intent gets
+        // to make the claim.
+        ...(r.billClientCredits === false ? { unbilled: true } : {}),
       })),
     ...legacyRuns
       .filter((r) => r.enabled && nameById.has(r.clientId))
@@ -85,6 +90,10 @@ export default async function JobsPage() {
         agentLabel: r.label,
         nextRunAt: r.nextRunAt,
         cadenceLabel: describeLegacyCadence(r.cadence),
+        // Unconditional, and it is not a policy choice here: /api/scheduler
+        // passes `charge: null` to the submit core on every fire of this
+        // collection, so there is no legacy row that bills.
+        unbilled: true,
       })),
   ]
     .sort((a, b) => a.nextRunAt - b.nextRunAt)

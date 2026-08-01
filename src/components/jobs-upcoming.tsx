@@ -13,14 +13,30 @@ export interface UpcomingRunRow {
   nextRunAt: number;
   /** Already carries its own zone suffix (describeCadence/describeLegacyCadence). */
   cadenceLabel: string;
+  /**
+   * Set only when this fire is KNOWN not to charge the client — a legacy
+   * settings-page schedule (submitted with `charge: null`, always) or a planned
+   * row that recorded `billClientCredits: false`.
+   *
+   * Absent is not "billed": a planned row written before that flag existed
+   * leaves the decision to the cron's actor test, and this panel cannot resolve
+   * it. So the marker is a positive claim about the rows that carry it and says
+   * nothing about the rest.
+   */
+  unbilled?: boolean;
 }
 
 /**
  * Item 2's "Upcoming Scheduled Runs" pane: exact trigger time + target agent
  * + client, nearest first, across BOTH scheduling systems (jobs/page.tsx does
- * the merge). A glance panel, not the full picture — the Calendar already
- * shows every projected occurrence across a month; this is capped by the
- * caller to a handful of "what's coming up next" rows.
+ * the merge). A glance panel, capped by the caller to a handful of "what's
+ * coming up next" rows.
+ *
+ * It is also the ONLY surface that shows both systems. The Calendar projects
+ * PlannedScheduledRun and nothing else, so a legacy settings-page schedule
+ * appears there not at all — which is why the link below says "Full calendar"
+ * rather than claiming it is the full picture, and why the unbilled marker is
+ * worth the pixels here.
  */
 export function UpcomingRunsPanel({ runs, now }: { runs: UpcomingRunRow[]; now: number }) {
   if (runs.length === 0) return null;
@@ -42,7 +58,10 @@ export function UpcomingRunsPanel({ runs, now }: { runs: UpcomingRunRow[]; now: 
               <p className="truncate">
                 {run.agentLabel} <span className="text-muted-2">· {run.clientName}</span>
               </p>
-              <p className="text-xs text-muted-2">{run.cadenceLabel}</p>
+              <p className="text-xs text-muted-2">
+                {run.cadenceLabel}
+                {run.unbilled && " · not billed to the client"}
+              </p>
             </div>
             <span className="shrink-0 whitespace-nowrap text-xs text-muted-2">
               {nextRunCountdown(run.nextRunAt, now)}

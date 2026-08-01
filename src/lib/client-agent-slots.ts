@@ -15,6 +15,7 @@ import {
   OPTIONS_TEMPLATE_KEY,
   shiftDateKey,
 } from "@/lib/client-agents";
+import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
 import {
   assignOptionRefs,
   generateSlotHorizon,
@@ -41,12 +42,21 @@ import type { AgentSlot, ClientAgent, PlannedScheduledRun } from "@/lib/types";
  */
 
 /**
- * The weekly schedule row that fires this umbrella.
+ * The schedule row that fires this umbrella.
  *
  * Prefers the stored linkage (`scheduleRunId`) and falls back to the client's
- * weekly row for the same custom agent — the state every umbrella is in before
- * the backfill (§9 step 3) or a go-live has linked one. When the fallback hits,
- * both sides of the link are stamped so the next read is direct.
+ * governing row for the same custom agent — the state every umbrella is in
+ * before the backfill (§9 step 3) or a go-live has linked one. When the
+ * fallback hits, both sides of the link are stamped so the next read is direct.
+ *
+ * The fallback asks `selectAgentSchedule` rather than carrying its own
+ * `cadence === "weekly"` test (the fourth of five) and its own first-match rule.
+ * Both mattered here and in the same direction: a DAILY umbrella never resolved
+ * a schedule, so `ensureSlotHorizon` short-circuited on `no_schedule` and its
+ * calendar stayed empty; and with two live rows the winner moved with
+ * `nextRunAt`, which is a coin toss that then gets WRITTEN — this function
+ * stamps `scheduleRunId` from it, so whichever row won a given read became the
+ * umbrella's clock permanently.
  */
 export async function resolveUmbrellaSchedule(
   umbrella: ClientAgent,
@@ -57,13 +67,27 @@ export async function resolveUmbrellaSchedule(
     : undefined;
   if (linked) return linked;
 
-  const candidate = runs.find(
-    (run) =>
-      run.customAgentId === umbrella.customAgentId &&
-      run.cadence === "weekly" &&
-      run.status !== "completed",
-  );
+  const candidate = selectAgentSchedule(runs, umbrella.customAgentId)?.schedule;
   if (!candidate) return null;
+  /**
+   * BOUND ONLY TO A CLOCK THAT CAN ACTUALLY PRODUCE A PLAN, and the question is
+   * asked of the row rather than of its cadence name.
+   *
+   * The fallback used to admit weekly rows only. Widening it to the shared
+   * selector brought MONTHLY rows with it — and `slotScheduleFor` returns null
+   * for a row with no weekday grid, so `ensureSlotHorizon` answers
+   * `skipped: "no_schedule"`. The two lines below are a PERSISTENT Firestore
+   * write, and the linked row short-circuits every future read at the top of
+   * this function: a live umbrella whose agent had a monthly run would have been
+   * bound for good to a clock that can never fill a calendar, and a weekly pace
+   * set afterwards would never have been picked up. Before the widening, no link
+   * was written and that later weekly row WAS found — so this is a fix taking a
+   * remedy with it, caught before it shipped.
+   *
+   * Asking `slotScheduleFor` rather than listing cadences means a cadence added
+   * later is admitted exactly when it can drive a plan, with nobody editing this.
+   */
+  if (!slotScheduleFor(candidate, runtimeTimeZone())) return null;
   // Link both directions — the schedule stays the single clock (F108), the
   // umbrella just learns which clock is its own.
   await Promise.all([

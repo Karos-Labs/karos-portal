@@ -6,6 +6,7 @@ import {
   listCustomAgents,
   listJobs,
   listPlannedScheduledRuns,
+  listScheduledRuns,
 } from "@/lib/data";
 import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
@@ -19,6 +20,7 @@ import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { selectAgentSchedules } from "@/lib/agent-schedule-selection";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { isLaunchInFlight, lastRunFailedAgentIds, rosterStatus } from "@/lib/client-agents";
 import { agentsWithDeliveredWork } from "@/lib/agent-detail-archetypes";
@@ -223,12 +225,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         }),
         status: rosterStatus({
           launchState: umbrella?.launchState ?? null,
-          // Already client-redacted by toScheduleRows. A refusal outranks
-          // "Live" (F24/F129) — an agent whose every fire is turned away is
-          // not live, whatever its umbrella says.
-          scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
-          // …but only while it is still current. It clears in Firestore on the
-          // next CLEAN fire, which on a weekly cadence is up to a week away.
+          // Already client-redacted by toScheduleRows, and passed RAW: a
+          // refusal outranks "Live" (F24/F129), but WHEN it stops counting —
+          // aged out, or answered by a pause — is `rosterStatus`'s rule, not
+          // this page's. The `status === "active" ? … : null` that used to sit
+          // here was the same rule written at each of three call sites.
+          scheduleRefusal: schedule?.lastError ?? null,
           scheduleRefusalAt: schedule?.lastErrorAt ?? null,
           scheduleActive: schedule?.status === "active",
           // "Not set up yet" beside a shelf of delivered work is the card
@@ -275,10 +277,18 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     );
   }
 
-  const [jobs, customAgents, scheduledRuns, umbrellas, assets] = await Promise.all([
+  const [jobs, customAgents, scheduledRuns, legacyScheduledRuns, umbrellas, assets] = await Promise.all([
     listJobs({ clientId: id }),
     listCustomAgents(),
     listPlannedScheduledRuns({ clientId: id }),
+    // THE OTHER SCHEDULING SYSTEM. `scheduledRuns` (the legacy collection, fired
+    // by /api/scheduler) writes to its own docs, submits with `charge: null`, and
+    // is created from — and until now listed only on — the client's settings
+    // card. So a second recurring generator could be pointed at an agent while
+    // this page, the page staff come to to ask "what is this agent doing",
+    // showed no sign of it. Read here to say so; nothing on this page can
+    // create, edit or fire one.
+    listScheduledRuns({ clientId: id }),
     listClientAgents({ clientId: id }),
     // Same reason as the client branch, and the same cost — see the note on that
     // call for what this read is and the cheaper shapes when it stops being fine.
@@ -332,6 +342,21 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // page it opens is where it gets set up.
   const staffUmbrellaByAgentId = new Map(umbrellas.map((u) => [u.customAgentId, u]));
   const staffScheduleByAgentId = new Map(staffScheduleRows.map((row) => [row.agentId, row]));
+  // The rows `toScheduleRows` did NOT pick. It returns one governing row per
+  // agent (see selectAgentSchedules) — which is what stops two surfaces showing
+  // two different schedules — so without this the extras would simply be gone
+  // from staff's view as well as the client's, and the point of picking one is
+  // that somebody is told there were two.
+  const staffScheduleSelection = selectAgentSchedules(scheduledRuns);
+  // The legacy generator, indexed by the agent it fires. Its rows key the agent
+  // on `agentId` (the planned rows use `customAgentId`) — same collection of
+  // custom agents, different field name.
+  const legacyByAgentId = new Map<string, typeof legacyScheduledRuns>();
+  for (const run of legacyScheduledRuns) {
+    const bucket = legacyByAgentId.get(run.agentId);
+    if (bucket) bucket.push(run);
+    else legacyByAgentId.set(run.agentId, [run]);
+  }
   // The clock the refusal window is measured against — resolved once for the
   // whole roster so every card ages a refusal from the same instant.
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
@@ -373,14 +398,37 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // One line of operator state, so the roster still answers "which of these
     // needs me" without becoming a control panel again. Highest-priority fact
     // only — the detail page carries the full ladder.
+    //
+    // A DUPLICATE SCHEDULE OUTRANKS ALL OF IT. Two live rows for one client and
+    // one agent is not a state anyone chose: nothing refuses to create the
+    // second, every surface renders only the one `selectAgentSchedules` picks,
+    // and the other keeps firing and billing where nobody can see or pause it.
+    // Ranked above the review queue because a queue is work and this is a
+    // defect that produced some of it.
+    const extraSchedules = staffScheduleSelection.get(agent.id)?.duplicates.length ?? 0;
     const note =
-      review > 0
-        ? `${review} draft${review === 1 ? "" : "s"} waiting for review`
-        : setup && !setup.ready
-          ? `${setup.label} is still empty`
-          : schedule
-            ? `${schedule.postsPerWeek} run${schedule.postsPerWeek === 1 ? "" : "s"}/week · ${schedule.outputsPerRun} output${schedule.outputsPerRun === 1 ? "" : "s"} each`
-            : null;
+      extraSchedules > 0
+        ? `${extraSchedules + 1} schedules for this agent — only the next to fire is shown here or editable`
+        : review > 0
+          ? `${review} draft${review === 1 ? "" : "s"} waiting for review`
+          : setup && !setup.ready
+            ? `${setup.label} is still empty`
+            : schedule
+              ? `${schedule.postsPerWeek} run${schedule.postsPerWeek === 1 ? "" : "s"}/week · ${schedule.outputsPerRun} output${schedule.outputsPerRun === 1 ? "" : "s"} each`
+              : null;
+    // APPENDED, NOT RANKED. The legacy generator is a different fact from every
+    // rung above — it names a SECOND system firing this agent, not a competing
+    // status — so ranking it would mean either hiding it behind a review count
+    // or hiding the review count behind it. It says "not billed" out loud
+    // because that is the whole reason it is easy to forget: its fires cost the
+    // client nothing, appear in no credit ledger, and still spend real money at
+    // the model.
+    const legacy = legacyByAgentId.get(agent.id) ?? [];
+    const legacyNote =
+      legacy.length > 0
+        ? `${legacy.length} settings-page schedule${legacy.length === 1 ? "" : "s"} (${legacy.filter((r) => r.enabled).length} on) — not billed to the client`
+        : null;
+    const fullNote = [note, legacyNote].filter(Boolean).join(" · ") || null;
     return {
       customAgentId: agent.id,
       identity: `${agent.key} ${agent.name}`,
@@ -393,14 +441,16 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       }),
       status: rosterStatus({
         launchState: umbrella?.launchState ?? null,
-        scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
+        // Raw refusal + raw status — the pause and freshness rules are the
+        // helper's (see the client branch above).
+        scheduleRefusal: schedule?.lastError ?? null,
         scheduleRefusalAt: schedule?.lastErrorAt ?? null,
         scheduleActive: schedule?.status === "active",
         hasDelivered: staffDeliveredAgentIds.has(agent.id),
         lastRunFailed: staffFailedAgentIds.has(agent.id),
         now: staffNow,
       }),
-      note,
+      note: fullNote,
     };
   });
 

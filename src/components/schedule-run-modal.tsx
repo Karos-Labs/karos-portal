@@ -8,6 +8,7 @@ import { Icon } from "@/components/icon";
 import { AgentMark } from "@/components/agent-identity";
 import { createPlannedRunAction } from "@/lib/actions/planned-run-actions";
 import { computeNextRun, describeCadence, shortZoneLabel } from "@/lib/scheduled-runs";
+import { validateScheduleTiming } from "@/lib/scheduling";
 import type { CalendarClientOption, ScheduleAgentOption } from "@/components/run-calendar";
 import type { PlannedRunCadence } from "@/lib/types";
 
@@ -54,7 +55,15 @@ export function ScheduleRunModal({
   const [error, setError] = useState<string | null>(null);
 
   const agent = useMemo(() => agents.find((a) => a.id === agentId), [agents, agentId]);
-  const [hour, minute] = time.split(":").map((n) => parseInt(n, 10));
+  // The recurring cadences store a wall clock, so an unreadable one is not a
+  // display problem — it is a fire time. `parseInt("", 10)` is NaN, and the
+  // `|| 0` this used to lean on turned both an empty field and a NaN into a
+  // schedule at midnight that nobody chose. Same pre-flight the client pace
+  // dialog runs; 00:00 still parses, because midnight is a real answer.
+  const timing = useMemo(
+    () => validateScheduleTiming({ time, counts: { weekday, dayOfMonth } }),
+    [time, weekday, dayOfMonth],
+  );
   // The zone this preview is computed in. It travels with the schedule so the
   // server stores the same clock the person just read, instead of recomputing
   // the wall time in the container's zone (UTC in production).
@@ -70,15 +79,28 @@ export function ScheduleRunModal({
       if (Number.isNaN(at)) return null;
       return `Fires ${new Date(at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} ${shortZoneLabel(timeZone, at)}`;
     }
-    const nextRunAt = computeNextRun({ cadence, hour: hour || 0, minute: minute || 0, weekday, dayOfMonth, timeZone });
-    const label = describeCadence({ cadence, hour: hour || 0, minute: minute || 0, weekday, dayOfMonth, nextRunAt, timeZone });
+    // No preview for a time that isn't one — the message below says why, and a
+    // "next fire" line computed from a substituted midnight would contradict it.
+    if (!timing.ok) return null;
+    const { hour, minute } = timing;
+    const nextRunAt = computeNextRun({ cadence, hour, minute, weekday, dayOfMonth, timeZone });
+    const label = describeCadence({ cadence, hour, minute, weekday, dayOfMonth, nextRunAt, timeZone });
     return `${label} · next ${new Date(nextRunAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
-  }, [cadence, hour, minute, weekday, dayOfMonth, runAt, timeZone]);
+  }, [cadence, timing, weekday, dayOfMonth, runAt, timeZone]);
 
   async function submit() {
     setError(null);
     if (!clientId) { setError("Pick a client."); return; }
     if (!agentId) { setError("Pick an agent."); return; }
+    // A one-off carries its own instant from the datetime-local field; only the
+    // recurring cadences send a wall clock, and none of them is sent unread.
+    let recurringFields:
+      | { hour: number; minute: number; weekday: number; dayOfMonth: number }
+      | null = null;
+    if (cadence !== "once") {
+      if (!timing.ok) { setError(timing.error); return; }
+      recurringFields = { hour: timing.hour, minute: timing.minute, weekday, dayOfMonth };
+    }
     setSubmitting(true);
     const res = await createPlannedRunAction({
       clientId,
@@ -86,9 +108,7 @@ export function ScheduleRunModal({
       prompt,
       cadence,
       timeZone,
-      ...(cadence === "once"
-        ? { runAt: runAt ? new Date(runAt).getTime() : undefined }
-        : { hour: hour || 0, minute: minute || 0, weekday, dayOfMonth }),
+      ...(recurringFields ?? { runAt: runAt ? new Date(runAt).getTime() : undefined }),
     });
     setSubmitting(false);
     if (res.error) { setError(res.error); return; }

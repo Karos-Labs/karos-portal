@@ -6,8 +6,11 @@ import {
   listDuePlannedScheduledRuns,
   updatePlannedScheduledRun,
 } from "@/lib/data";
+import { getAgentSlot } from "@/lib/data-client-agents";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { computeNextRun } from "@/lib/scheduled-runs";
+import { agentSlotDocId, dateKeyInZone } from "@/lib/client-agents";
+import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
 import { requireCronSecret } from "@/lib/cron-auth";
 import { notifyScheduleFireFailure } from "@/lib/job-alerts";
 import type { AppUser, PlannedScheduledRun } from "@/lib/types";
@@ -17,6 +20,62 @@ export const maxDuration = 120;
 
 /** A stored refusal is one readable sentence on the schedule row, not a log. */
 const MAX_ERROR_CHARS = 400;
+
+/**
+ * Why this fire produced nothing on purpose — the day it would have produced
+ * for is already spoken for.
+ *
+ * THE ASKED QUESTION, narrowly: "this fire is about to produce ONE post for ONE
+ * day; does that day's slot already hold one?" The 2026-07-30 product rule is
+ * that a filled slot must not keep its run armed, and until now no code asked at
+ * all: the cron read the schedule row and nothing else — no slot read, no asset
+ * read, no per-day check — before claiming and submitting. A day whose post
+ * already existed got a second one generated, and the client was charged for it.
+ *
+ * WHAT COUNTS AS FILLED, named by the write that produces each state: an asset
+ * linked to the day (`assetId` — the options-batch slicer and the option pick
+ * both write it), a generation job already holding it (`jobId`), a day already
+ * published (`posted`), and a day someone removed from the plan (`skipped` — a
+ * removed day is not a day to produce for either).
+ *
+ * THREE FIRES THIS DOES NOT SPEAK FOR, each because it is not a one-post-for-
+ * this-day fire, and each dangerous to get wrong in the other direction — a
+ * check that swallowed one of these would silently stop the product:
+ *
+ *  · A SCHEDULE WITH NO UMBRELLA (`clientAgentId` absent — every row written
+ *    before the slot model). There is no plan to consult.
+ *  · A BATCH FIRE (`outputsPerRun > 1`). It produces several posts across
+ *    several days; today's slot being taken says nothing about the other four.
+ *  · AN OPTIONS DAY (`slot.kind === "options"` — the X pick-of-three model).
+ *    Those days are filled by the weekly batch slicer, not by the fire, and the
+ *    schedule that fires is the batch's producer: reading last week's refs on
+ *    today's slot as "already done" would stop the batch that fills next week.
+ *    Same `kind` boundary matchAssetsToSlots draws for the same reason.
+ *    RESIDUAL, therefore: per-day duplication on an options umbrella is not
+ *    covered here.
+ *
+ * A day with no slot doc is not evidence of a fill either, and treating it as
+ * one would stop every schedule whose horizon has not been generated — an
+ * outage dressed as a safety rule. The fail-closed direction that DOES matter
+ * here is money, and it holds: a Firestore error throws into the caller's
+ * catch, which records the refusal and alerts, and never submits.
+ */
+async function filledSlotReason(
+  run: PlannedScheduledRun,
+  at: number,
+): Promise<string | null> {
+  if (!run.clientAgentId) return null;
+  if ((run.outputsPerRun ?? 1) > 1) return null;
+  const zone = isValidTimeZone(run.timeZone) ? run.timeZone : runtimeTimeZone();
+  const slot = await getAgentSlot(agentSlotDocId(run.clientAgentId, dateKeyInZone(at, zone)));
+  if (!slot) return null;
+  if ((slot.kind ?? "single") !== "single") return null;
+  if (slot.status === "skipped") return "This day was removed from the plan.";
+  if (slot.status === "posted") return "This day's post is already published.";
+  if (slot.assetId) return "This day's post already exists.";
+  if (slot.jobId) return "This day's post is already being produced.";
+  return null;
+}
 
 /**
  * Scheduled-run cron. Every tick it drains active ScheduledRuns whose nextRunAt
@@ -34,13 +93,24 @@ const MAX_ERROR_CHARS = 400;
  * These used to collapse into one — the actor decided both — so an edit that
  * rewrote the flag without touching createdBy moved money the wrong way.
  *
- * Every fire that produces nothing — a credit refusal, a spend cap, missing
- * intake, the agent service being unreachable — is refused by the submit core
- * before a job row exists, leaving no job, no failed status and no charge
- * behind. Every such refusal is recorded on the schedule row as
- * lastError/lastErrorAt, and a fire that succeeds clears them. The agent card
- * reads those fields, so a schedule that can never fire is visible instead of
+ * A fire that produces nothing IN THIS PROCESS — a credit refusal, a spend cap,
+ * missing intake, the agent service being unreachable, a throw — is refused by
+ * the submit core before a job row exists, leaving no job, no failed status and
+ * no charge behind, and is recorded on the schedule row as
+ * lastError/lastErrorAt; a fire that succeeds clears them. The agent card reads
+ * those fields, so a schedule that can never fire is visible instead of
  * silently green.
+ *
+ * A fire that ENDS WITH THE PROCESS records none of that, and cannot: the
+ * claim below advances the cursor and stamps lastRunAt before the submit, so a
+ * Cloud Run timeout or a container recycle in that window leaves a row with a
+ * fresh lastRunAt, a null lastError, an advanced nextRunAt and no job. The
+ * ordering is deliberate and stays — reversing it trades a silent miss for a
+ * double fire, which costs money — so the window is made OBSERVABLE instead:
+ * the claim opens `fireInFlightSince`, every settlement path below closes it,
+ * and a row that still has one open at its next claim gets a fire-failure
+ * alert naming the vanished fire. The residual is a delay, not a hole: the
+ * report waits for that row's next due tick, since nothing else visits the row.
  *
  * Idempotent under redelivery/overlap: `claimPlannedScheduledRun` is a
  * compare-and-set on nextRunAt (same shape as the legacy scheduler's
@@ -49,6 +119,12 @@ const MAX_ERROR_CHARS = 400;
  * plain read-then-write (`listDuePlannedScheduledRuns` +
  * `updatePlannedScheduledRun`, no transaction), which let an overlapping
  * invocation re-read and double-fire the same due row.
+ *
+ * ONE FIRE PER CALENDAR DAY, the other half of "can't fire the same window
+ * twice": the advance passes `lastRunAt` so no recomputed cursor lands on a day
+ * this schedule already produced for (see computeNextRun), and a day whose slot
+ * is already filled is skipped before the submit rather than duplicated
+ * (filledSlotReason).
  */
 export async function GET(req: NextRequest) {
   // Fails closed in production when CRON_SECRET is unset — this route used to
@@ -89,6 +165,8 @@ export async function GET(req: NextRequest) {
     status: "submitted" | "failed" | "skipped";
     jobId?: string;
     error?: string;
+    /** Why a skip happened — the two kinds are not the same event. */
+    reason?: string;
   };
 
   // Sequential (not concurrent) — each submission is a network round-trip to the
@@ -114,6 +192,13 @@ export async function GET(req: NextRequest) {
             // Advance in the zone the schedule's wall clock was set in. Without
             // it every recurrence drifts to this container's zone (UTC in prod).
             ...(run.timeZone ? { timeZone: run.timeZone } : {}),
+            // The day this tick is firing is spent. Normally that changes
+            // nothing — today's slot is at or before `now`, so the walk skips it
+            // anyway — but a CATCH-UP fire does not have that property: a cursor
+            // stranded on last Friday, drained at 08:00 on a Monday, used to
+            // advance to Monday 09:00 and fire again an hour later. Two posts
+            // and two charges on one day, from one backlog.
+            lastRunAt: now,
           });
     const claimed = await claimPlannedScheduledRun(
       run.id,
@@ -123,11 +208,46 @@ export async function GET(req: NextRequest) {
     if (!claimed) {
       // Another tick already claimed this row this window (overlap), or it was
       // paused/completed between the list read and here — not an error.
-      results.push({ runId: run.id, status: "skipped" });
+      results.push({ runId: run.id, status: "skipped", reason: "Already claimed by another tick." });
       continue;
     }
 
     try {
+      // The claim we just won is the ONLY moment this row's previous fire can
+      // be audited: `fireInFlightSince` is opened by every claim and closed by
+      // every settle below, so finding one still open on the row we READ means
+      // the fire before this one never settled — the process died between
+      // claiming the slot and submitting. That fire left a fresh lastRunAt, a
+      // null lastError and an advanced nextRunAt, i.e. nothing else on the row
+      // tells it apart from a clean one. Reported, not repaired: the slot it
+      // held is gone, and re-firing it here would be a charge for a window
+      // nobody can reconstruct. Inside the try so a failure to REPORT a lost
+      // fire cannot cost the rest of the batch its own fires.
+      if (typeof run.fireInFlightSince === "number") {
+        const client = await getClient(run.clientId).catch(() => null);
+        await notifyScheduleFireFailure({
+          clientId: run.clientId,
+          ...(client?.name ? { clientName: client.name } : {}),
+          agentLabel: run.agentName,
+          scheduleId: run.id,
+          error: `A previous fire claimed its slot at ${new Date(
+            run.fireInFlightSince,
+          ).toISOString()} and never completed — no job was recorded for it.`,
+        });
+      }
+
+      // Nothing has been submitted or charged yet, so a day that is already
+      // spoken for costs only the cursor advance the claim already made.
+      const filled = await filledSlotReason(run, now);
+      if (filled) {
+        await updatePlannedScheduledRun(run.id, {
+          fireInFlightSince: null,
+          updatedAt: Date.now(),
+        });
+        results.push({ runId: run.id, status: "skipped", reason: filled });
+        continue;
+      }
+
       const actor = await actorFor(run);
       const { jobId, error } = await submitCustomAgentJob(actor, {
         clientId: run.clientId,
@@ -187,6 +307,10 @@ export async function GET(req: NextRequest) {
         // in place forever.
         lastError: error ? error.slice(0, MAX_ERROR_CHARS) : null,
         lastErrorAt: error ? Date.now() : null,
+        // The fire settled — submitted or refused, either way it reached an
+        // end the row records. Closing the window here is what makes an
+        // UNCLOSED one at the next claim mean something.
+        fireInFlightSince: null,
         updatedAt: Date.now(),
       });
 
@@ -215,6 +339,10 @@ export async function GET(req: NextRequest) {
         await updatePlannedScheduledRun(run.id, {
           lastError: message.slice(0, MAX_ERROR_CHARS),
           lastErrorAt: Date.now(),
+          // A throw is a settled fire too — it left a recorded refusal and an
+          // alert. Leaving the window open would report it twice, once here and
+          // again as a vanished fire at the next claim.
+          fireInFlightSince: null,
           updatedAt: Date.now(),
         });
       } catch {

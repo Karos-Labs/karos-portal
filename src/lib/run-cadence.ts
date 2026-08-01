@@ -111,6 +111,22 @@ export function isValidCadence(cadence: RunCadence): boolean {
 
 /**
  * The first fire instant strictly after `from`.
+ *
+ * KNOWN RESIDUAL, stated because the sibling scheduler no longer has it. This
+ * function has no "and not on a day that already fired" exclusion, while
+ * `computeNextRun` (lib/scheduled-runs.ts, the PlannedScheduledRun scheduler)
+ * takes `lastRunAt` for exactly that. The gap shows up on a CATCH-UP: a cursor
+ * stranded on Friday, drained at 08:00 on a Monday, advances to Monday 09:00
+ * and fires again an hour later — two outputs on one calendar day out of one
+ * outage. `ScheduledRun` carries `lastRunAt`, so closing it is the same shape:
+ * exclude candidates whose local day is on or before the last fire's, and pass
+ * the field from /api/scheduler and setScheduledRunEnabledAction.
+ *
+ * Why it is a residual and not an emergency: those fires are system fires
+ * (`/api/scheduler` submits with `charge: null` — "system-fired runs never bill
+ * the client"), so the cost is a duplicate draft rather than a duplicate
+ * invoice. It is still a duplicate draft.
+ *
  * @param from reference "now" (epoch millis); injectable for tests.
  * @throws if the cadence is invalid (callers validate first).
  */

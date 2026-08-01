@@ -101,6 +101,13 @@ function ScheduledRunRow({ run }: { run: ScheduledRun }) {
           <div className="flex items-center gap-2">
             <p className="truncate text-sm font-medium">{run.label}</p>
             {!run.enabled && <Badge tone="neutral">Paused</Badge>}
+            {/* ON THE ROW, not only in the paragraph above the list. This
+                generator submits with `charge: null`: its fires never touch the
+                client's credits, never appear in the credit ledger, and still
+                spend real money at the model. That was stated once, at the top
+                of a card, where it reads as a property of the CARD rather than
+                of each schedule someone is about to leave running. */}
+            <Badge tone="neutral">Not billed</Badge>
           </div>
           <p className="truncate text-xs text-muted-2">{describeCadence(run.cadence)}</p>
           <p className="text-xs text-muted-2">

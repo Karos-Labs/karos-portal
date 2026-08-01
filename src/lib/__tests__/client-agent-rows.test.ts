@@ -670,10 +670,24 @@ describe("toScheduleRows — the weekly-pace projection", () => {
     }
   });
 
-  /** Exhaustive over PlannedRunCadence — the card is a WEEKLY surface. */
+  /**
+   * Exhaustive over PlannedRunCadence — the card is a POSTS-PER-WEEK surface.
+   *
+   * `daily: false` was this table's answer, and it was the defect written down
+   * as a specification: the calendar modal offers Daily, `createPlannedRunAction`
+   * stores it, the cron fires and bills it, and the client's card showed no
+   * pace, no next run, no Pause and a "Start posting" button. A daily row is
+   * seven posting days a week, which `postsPerWeek` states exactly.
+   *
+   * `once` and `monthly` stay out for a reason the row can carry: neither has a
+   * posts-per-week figure, and `ClientAgentScheduleRow` has no cadence field to
+   * say so in — quoting a monthly schedule as one-a-week would overstate its
+   * cost more than fourfold in the pace dialog. Stated as a residual on
+   * `weeklyFireDays`, not as a design.
+   */
   const CADENCE_REACHES_THE_CARD: Record<PlannedRunCadence, boolean> = {
     once: false,
-    daily: false,
+    daily: true,
     weekly: true,
     monthly: false,
   };
@@ -720,14 +734,28 @@ describe("toScheduleRows — the weekly-pace projection", () => {
   it("a client's rows are a field-wise subset of staff's for every named class", () => {
     // Classes covered — named rather than claimed to be the whole input space:
     // an active weekly row with a raw refusal, a paused one with no refusal, a
-    // single-fire-per-week row, and a row written before weekdays existed.
-    const bare = scheduled({ id: "sched_legacy" });
+    // single-fire-per-week row, a row written before weekdays existed, and a
+    // daily row.
+    //
+    // ONE AGENT EACH, deliberately. The projection now returns one governing
+    // row per agent (selectAgentSchedules), so five rows sharing a
+    // customAgentId would be one row out and this would be asserting the
+    // subset property over a single shape. The de-duplication itself is pinned
+    // in agent-schedule-selection.test.ts.
+    const bare = scheduled({ id: "sched_legacy", customAgentId: "ca_legacy" });
     delete bare.weekdays;
     const runs = [
-      scheduled({ id: "sched_active_refused" }),
-      scheduled({ id: "sched_paused", status: "paused", lastError: null, lastErrorAt: null }),
-      scheduled({ id: "sched_one_day", weekdays: [2] }),
+      scheduled({ id: "sched_active_refused", customAgentId: "ca_refused" }),
+      scheduled({
+        id: "sched_paused",
+        customAgentId: "ca_paused",
+        status: "paused",
+        lastError: null,
+        lastErrorAt: null,
+      }),
+      scheduled({ id: "sched_one_day", customAgentId: "ca_one_day", weekdays: [2] }),
       bare,
+      scheduled({ id: "sched_daily", customAgentId: "ca_daily", cadence: "daily" }),
     ];
     const clientRows = toScheduleRows(runs, true);
     const staffRows = toScheduleRows(runs, false);
@@ -740,7 +768,7 @@ describe("toScheduleRows — the weekly-pace projection", () => {
 /* ══════════════════════ scheduleZonesByAgent (F108) ═════════════════ */
 
 describe("scheduleZonesByAgent", () => {
-  it("indexes the firing zone of every weekly schedule that has not completed", () => {
+  it("indexes the firing zone of every recurring schedule that has not completed", () => {
     const zones = scheduleZonesByAgent([
       scheduled({ id: "s1", customAgentId: "ca_x", timeZone: NZ }),
       // Paused is NOT excluded, and the name above says so: a paused schedule's
@@ -748,11 +776,22 @@ describe("scheduleZonesByAgent", () => {
       // so reading its days in the container's zone would shift them by a day.
       scheduled({ id: "s2", customAgentId: "ca_paused", status: "paused", timeZone: NZ }),
       scheduled({ id: "s3", customAgentId: "ca_done", status: "completed", timeZone: NZ }),
+      // A DAILY row's zone was dropped, so the one agent posting every day drew
+      // its week strip in the CONTAINER's zone (UTC in production) while every
+      // weekly agent used its own — the F108 shift, on the only agent whose
+      // strip changes every day.
       scheduled({ id: "s4", customAgentId: "ca_daily", cadence: "daily", timeZone: NZ }),
+      // Monthly keeps a zone even though it has no posts-per-week figure: the
+      // strip still has to be drawn in some zone, and this is the agent's own.
+      scheduled({ id: "s5", customAgentId: "ca_monthly", cadence: "monthly", timeZone: NZ }),
+      // One-off runs are bookings, not a pace, and hold no strip.
+      scheduled({ id: "s6", customAgentId: "ca_once", cadence: "once", timeZone: NZ }),
     ]);
     expect([...zones.entries()]).toEqual([
       ["ca_x", NZ],
       ["ca_paused", NZ],
+      ["ca_daily", NZ],
+      ["ca_monthly", NZ],
     ]);
   });
 

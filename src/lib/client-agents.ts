@@ -609,13 +609,28 @@ export interface RosterStatus {
  * routes, and planned-run-actions clears both together), so a refusal with no
  * timestamp is a row we cannot age rather than one we know to be old — and
  * hiding an alarm we cannot date is the wrong way to be wrong.
+ *
+ * A PAUSED SCHEDULE HAS NO CURRENT REFUSAL, and that rule lives here now.
+ * `lastError` is cleared in exactly three places — a clean fire, a resume to
+ * active, and a configure save — and pausing is none of them, so a refusal
+ * survives the pause that answers it and keeps badging the agent. Every caller
+ * had spotted that and written `schedule?.status === "active" ? lastError :
+ * null` into its own arguments; the rule written three times is the rule the
+ * fourth caller forgets, so the callers now hand over the refusal and the
+ * status and this decides.
+ *
+ * Keyed to `=== false`, so a caller that does not know the status still gets
+ * the alarm. That is the loud direction on purpose: an unanswerable "is it
+ * paused?" must not silence a refusal.
  */
 function refusalIsCurrent(input: {
   scheduleRefusal?: string | null;
   scheduleRefusalAt?: number | null;
+  scheduleActive?: boolean;
   now?: number;
 }): boolean {
   if (!input.scheduleRefusal?.trim()) return false;
+  if (input.scheduleActive === false) return false;
   if (input.scheduleRefusalAt == null) return true;
   return (input.now ?? Date.now()) - input.scheduleRefusalAt < SCHEDULE_REFUSAL_FRESH_MS;
 }
@@ -662,7 +677,12 @@ function refusalIsCurrent(input: {
 export function rosterStatus(input: {
   /** Null for a granted agent with no umbrella bound. */
   launchState: ClientAgentLaunchState | null;
-  /** The agent's weekly schedule refusal, already client-redacted. */
+  /**
+   * The agent's schedule refusal, already client-redacted — passed RAW, as
+   * stored. Callers used to null it out themselves for a paused schedule;
+   * `refusalIsCurrent` owns that rule now, so hand it over unfiltered or the
+   * rule exists in two places again.
+   */
   scheduleRefusal?: string | null;
   /**
    * When that refusal was recorded (PlannedScheduledRun.lastErrorAt). Past
@@ -670,7 +690,11 @@ export function rosterStatus(input: {
    * for why, and note that nothing is written to make it so.
    */
   scheduleRefusalAt?: number | null;
-  /** True when a weekly schedule exists and is not paused. */
+  /**
+   * True when a recurring schedule exists and is not paused. Read twice: it is
+   * the "Live" rung for an agent with no umbrella, AND the freshness test's
+   * pause rule (a refusal from before a pause is not the current state).
+   */
   scheduleActive?: boolean;
   /**
    * True when this agent has already landed work for this client — i.e. it has

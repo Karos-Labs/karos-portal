@@ -12,6 +12,7 @@ import {
   isXAgentIdentity,
 } from "@/lib/custom-agent-launch";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { selectAgentSchedules, weeklyFireDays } from "@/lib/agent-schedule-selection";
 import { runRowLabel, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgentFeedback } from "@/lib/data-client-agents";
 import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-agents";
@@ -119,18 +120,31 @@ export function toRunRows(
  * not at render: everything on a ClientAgentScheduleRow is serialized into the
  * RSC payload the browser receives, so a raw internal string handed to a client
  * component is readable whether or not it is ever painted.
+ *
+ * WHICH ROWS AND WHICH ONE PER AGENT are both `agent-schedule-selection`'s to
+ * answer, not this function's. It used to keep its own
+ * `cadence === "weekly"` copy of the first question — one of five — so a daily
+ * schedule that was firing and billing reached the card as `schedule: null` and
+ * the client was offered "Start posting" for an agent already posting. And it
+ * answered the second by accident: it returned every match and let the caller's
+ * `new Map(...)` keep whichever came last, while the detail page's `.find` kept
+ * the first, so two surfaces could show two different schedules for one agent.
+ *
+ * A row whose cadence has no weekly pace (monthly) is dropped rather than
+ * quoted at one-a-week — see `weeklyFireDays`, which states that residual.
  */
 export function toScheduleRows(
   runs: Awaited<ReturnType<typeof listPlannedScheduledRuns>>,
   viewerIsClient: boolean,
 ): ClientAgentScheduleRow[] {
-  return runs
-    .filter((run) => run.cadence === "weekly" && run.status !== "completed")
-    .map((run) => ({
+  return [...selectAgentSchedules(runs).values()].flatMap(({ schedule: run }) => {
+    const postsPerWeek = weeklyFireDays(run);
+    if (postsPerWeek == null) return [];
+    return [{
       id: run.id,
       agentId: run.customAgentId,
-      status: run.status === "paused" ? "paused" : "active",
-      postsPerWeek: run.weekdays?.length ?? 1,
+      status: run.status === "paused" ? ("paused" as const) : ("active" as const),
+      postsPerWeek,
       // The multiplier stays: the client's pace dialog has to quote the REAL
       // weekly cost of a schedule someone set at more than one output per fire,
       // and it cannot do that without this number. No client-visible copy
@@ -146,31 +160,51 @@ export function toScheduleRows(
       minute: run.minute,
       // The scheduler's refusal, so a schedule that can never fire stops
       // rendering as a healthy "Live" agent.
+      //
+      // SUBMIT-TIME ONLY, and that is a known hole rather than a full answer.
+      // Enumerated, because the residual is only credible if the writers are:
+      // `/api/run-scheduled` SETS it when a fire is refused before a job row
+      // exists; `configureClientAgentScheduleAction` and
+      // `setPlannedRunStatusAction`'s resume only CLEAR it; nothing else in
+      // src/ touches the field. The agent-service webhook is not on that list —
+      // a run that submits cleanly and then fails lands on `job.error` and
+      // never reaches this row, so a schedule whose every run has failed for a
+      // month still arrives here with `lastError: null`. What covers that case
+      // is the roster's separate `lastRunFailed` rung (`lastRunFailedAgentIds`,
+      // read from jobs); closing it HERE needs run history this cannot invent.
       lastError: run.lastError
         ? viewerIsClient
           ? clientSafeRefusal(run.lastError)
           : run.lastError
         : null,
       lastErrorAt: run.lastErrorAt ?? null,
-    }));
+    }];
+  });
 }
 
 /**
- * Firing zone per custom agent, from its weekly schedule row.
+ * Firing zone per custom agent, from its governing schedule row.
  *
  * The week strip's day boundaries come from the SCHEDULE's stored IANA zone,
  * not the container's — the F108 contract, and the same source
  * `slotScheduleFor` uses when the slots were planned. Reading them in a
  * different zone than they were written in shifts the whole strip by a day for
  * any client who is not in the server's timezone.
+ *
+ * Reads the SAME selection `toScheduleRows` does — the second of the five
+ * weekly-only copies of that rule, and the one that quietly handed a daily
+ * agent's strip the container's zone. With two live rows it also picked
+ * whichever came last, so an agent could get one row's pace and another row's
+ * timezone. A monthly row still contributes its zone: it has no weekly pace to
+ * quote, but it is this agent's clock and the strip has to be drawn in some
+ * zone.
  */
 export function scheduleZonesByAgent(
   runs: Awaited<ReturnType<typeof listPlannedScheduledRuns>>,
 ): Map<string, string> {
   const zones = new Map<string, string>();
-  for (const run of runs) {
-    if (run.cadence !== "weekly" || run.status === "completed") continue;
-    if (run.timeZone) zones.set(run.customAgentId, run.timeZone);
+  for (const [customAgentId, { schedule }] of selectAgentSchedules(runs)) {
+    if (schedule.timeZone) zones.set(customAgentId, schedule.timeZone);
   }
   return zones;
 }
