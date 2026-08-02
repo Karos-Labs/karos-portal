@@ -36,8 +36,12 @@ import type { JobStatus } from "@/lib/types";
  * answer in the same breath.
  */
 
-function job(status: JobStatus, id = "job-1"): { id: string; status: JobStatus } {
-  return { id, status };
+function job(
+  status: JobStatus,
+  id = "job-1",
+  createdBy?: string,
+): { id: string; status: JobStatus; createdBy?: string } {
+  return createdBy === undefined ? { id, status } : { id, status, createdBy };
 }
 
 /** What this module needs of an Asset, plus an id to identify one by. */
@@ -103,6 +107,71 @@ describe("which past runs reach a client's calendar", () => {
       "sat",
       "sun",
     ]);
+  });
+
+  /* ── AF-9: the client watches their OWN run execute ── */
+
+  it("keeps an in-flight card for the run this client started, empty though it is", () => {
+    // Rule 3 named this cost out loud ("a client no longer watches one execute")
+    // and it turned out to be the whole feedback of the client's own run gesture:
+    // press "Create a new post", and every surface they own goes silent for the
+    // twenty minutes it takes. Pressing a button and finding no trace of it is
+    // indistinguishable from the press having done nothing.
+    for (const status of ["queued", "running"] as JobStatus[]) {
+      const mine = job(status, `job-${status}`, "uid-client");
+      const entries = projectPastRuns([mine], noAssets(), {
+        ...forClient,
+        viewerUid: "uid-client",
+      });
+      expect(entries, status).toHaveLength(1);
+      // Nothing to show, and nothing invented to fill the gap — the card renders
+      // its in-flight line ahead of its "produced no assets" line, so an empty
+      // list reads as the run it is.
+      expect(entries[0].deliveredAssets).toEqual([]);
+    }
+  });
+
+  it("hides a SCHEDULED or staff-fired run in flight from the client (A3/A4)", () => {
+    // The scope of the exception, and the reason it is keyed to authorship
+    // rather than to status alone: "In progress" on a client's calendar for a
+    // cron tick states outright that a batch is being generated now, which is
+    // the one fact the slot model exists to keep indistinguishable. A staff run
+    // is likewise work they did not ask for and are not billed for.
+    const theirs = job("running", "job-cron", "uid-staff");
+    expect(
+      projectPastRuns([theirs], noAssets(), { ...forClient, viewerUid: "uid-client" }),
+    ).toEqual([]);
+    // A run with no recorded author never qualifies — the quiet direction.
+    expect(
+      projectPastRuns([job("running", "job-old")], noAssets(), {
+        ...forClient,
+        viewerUid: "uid-client",
+      }),
+    ).toEqual([]);
+    // And a caller that passes no viewer at all is unchanged from before.
+    expect(projectPastRuns([job("running", "j", "uid-client")], noAssets(), forClient)).toEqual(
+      [],
+    );
+    // Staff see it either way — this rule only ever removed things from clients.
+    expect(projectPastRuns([theirs], noAssets(), forStaff)).toHaveLength(1);
+  });
+
+  it("does not reopen the empty-card hole for a run that has FINISHED", () => {
+    // The exception admits queued and running only. A "delivered" run holding
+    // nothing the client may see is the original F80 card — a Delivered badge
+    // over an empty list — and it stays dropped however it was fired.
+    const mine = job("delivered", "job-done", "uid-client");
+    expect(
+      projectPastRuns([mine], noAssets(), { ...forClient, viewerUid: "uid-client" }),
+    ).toEqual([]);
+    // "review" likewise, which is what keeps "In review" and "nothing to review"
+    // mutually exclusive on a client's card.
+    expect(
+      projectPastRuns([job("review", "job-rev", "uid-client")], noAssets(), {
+        ...forClient,
+        viewerUid: "uid-client",
+      }),
+    ).toEqual([]);
   });
 
   it("keeps the card when the client HAS been given something, carrying only that", () => {

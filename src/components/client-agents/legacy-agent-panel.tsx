@@ -195,6 +195,11 @@ export function LegacyAgentPanel({
           contextItems={contextItems}
           viewerIsClient={viewerIsClient}
           {...(setup ? { setup } : {})}
+          // AF-9: this panel IS the agent's page, for both readers. A client
+          // already stayed here; a staff member was redirected to /jobs/<id>,
+          // away from the run banner and the cancel control this very panel
+          // mounts for the run they just started.
+          stayOnPage
           onClose={() => setRunning(false)}
         />
       )}

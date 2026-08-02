@@ -110,9 +110,22 @@ export function AgentDetailPanel({
   // rather than a generic "unavailable", and it is disabled by the same
   // server-evaluated gate the action re-checks (F131).
   const runnableTemplate = templates.find((t) => agent.templateGates[t.key]?.allowed) ?? null;
-  const firstBlock = templates
+  const blocked = templates
     .map((t) => agent.templateGates[t.key])
-    .find((gate) => gate && !gate.allowed);
+    .filter((gate) => gate && !gate.allowed);
+  // A PAUSED FORMAT IS THE WEAKEST REASON, and it used to win by being first
+  // (AF-10). This button is not about one format — it is the page's primary
+  // gesture, and it picks whichever format is runnable — so quoting the registry's
+  // first blocked gate meant a client whose first format happened to be paused
+  // read "This format is paused" while the real answer for every other format was
+  // that they were out of credits. The credits rung is also the one that comes
+  // with a way out (the Contact-us row below), and it was being hidden by a state
+  // the client themselves chose and can undo from the row's own toggle.
+  //
+  // Ordered rather than special-cased on `credits_short`, so the same rule holds
+  // for a setup block or a launch-state block arriving behind a paused row.
+  const firstBlock =
+    blocked.find((gate) => gate?.code !== "template_paused") ?? blocked[0];
   // An empty registry produces NO gate to quote, so the two shapes that
   // legitimately have no templates — options-mode (final) and a live umbrella
   // whose formats are not seeded yet (temporary) — used to get a dead button

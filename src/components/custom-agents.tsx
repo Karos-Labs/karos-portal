@@ -38,7 +38,12 @@ import {
   refreshJobStatusAction,
   retryJobAction,
 } from "@/lib/actions/external-job-actions";
-import { CREDIT_COSTS, creditsLabel, scheduledAgentWeeklyCost } from "@/lib/credits";
+import {
+  CREDIT_BLOCK_REASON,
+  CREDIT_COSTS,
+  creditsLabel,
+  scheduledAgentWeeklyCost,
+} from "@/lib/credits";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { validateScheduleTiming } from "@/lib/scheduling";
@@ -905,6 +910,11 @@ export function StaffAgentControls({
           viewerIsClient={false}
           {...(setup ? { setup } : {})}
           {...(runIntakeFirst ? { initialPane: "data" as const } : {})}
+          // AF-9. These controls only ever render inside the Control Room on an
+          // agent's own detail page, and that page is what the operator came to
+          // read — a redirect to the raw job record threw away the tab they had
+          // open and everything else on the agent with it.
+          stayOnPage
           onClose={() => setRunOpen(false)}
         />
       )}
@@ -1594,6 +1604,32 @@ export function AgentScheduleModal({
           )}
         </div>
 
+        {/* WHY SAVE IS OFF, when it is off because of credits (AF-10).
+            `insufficient` has disabled the primary button since F27, and the
+            only sign of it was the availability line above turning red — a
+            disabled control whose reason is a colour on a different sentence,
+            which is the F25 shape exactly. A client out of credits pressed
+            nothing, read "0 credits currently available.", and was told neither
+            that the button was dead nor what to do about it.
+
+            The WORDING is the shared one (`CREDIT_BLOCK_REASON`), not a line of
+            this dialog's own: the run gates beside it already refuse in those
+            words, and a client who meets the refusal here and again on the run
+            button must not read two different explanations of one balance.
+            Staff never see it — `availableCredits` is undefined for them, so
+            `insufficient` is false. */}
+        {insufficient && (
+          <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
+            <p className="text-xs text-warning">{CREDIT_BLOCK_REASON.insufficient_balance}</p>
+            {/* Precisely what is and is not off: Pause is never disabled by
+                the balance, and promising "you can still change the pace" would
+                be describing the very button that just went dead. */}
+            <p className="mt-0.5 text-[11px] text-muted-2">
+              You can still pause this agent. Saving a new pace works again once your balance is
+              topped up.
+            </p>
+          </div>
+        )}
         {blockedBySetup && setupNeeded && (
           <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
             Add the {INTAKE_LABEL[setupNeeded.kind]} agent data first. Every scheduled run drafts
@@ -1633,6 +1669,7 @@ export function RunCustomAgentModal({
   viewerIsClient,
   setup,
   initialPane,
+  stayOnPage,
   onClose,
 }: {
   agent: RunnableAgentSummary;
@@ -1651,6 +1688,23 @@ export function RunCustomAgentModal({
   setup?: AgentSetupState;
   /** "data" opens straight on the agent's data; so does a missing company page. */
   initialPane?: RunPane;
+  /**
+   * Keep a STAFF run's confirmation here instead of navigating to /jobs/<id>
+   * (AF-9).
+   *
+   * Albert on the post-run gesture: "when you click after run the agent, then it
+   * goes back to…". This dialog is only ever mounted from an agent's own detail
+   * page — the legacy panel and the Control Room's staff controls, which is the
+   * whole list — so for staff the successful press replaced the page they were
+   * reading with the raw job record, and every other thing they had open on that
+   * agent (the Control Room tab, the schedule, the outputs) was gone. The run
+   * itself is announced on the page they were already on: `running` on the status
+   * strip covers it now, and AutoRefresh polls it to completion.
+   *
+   * The job is not hidden — the confirmation links it. What changes is that
+   * following the link is a decision rather than a redirect.
+   */
+  stayOnPage?: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -1663,6 +1717,8 @@ export function RunCustomAgentModal({
   const [briefTouched, setBriefTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
+  /** The run this press produced, so a staff confirmation can link it (AF-9). */
+  const [startedJobId, setStartedJobId] = useState<string | null>(null);
   const intake = intakeFor(setup);
   const intakeReady = intake?.setup.ready ?? true;
   // The data opens on the company page being missing, not on the server gate:
@@ -1773,7 +1829,11 @@ export function RunCustomAgentModal({
         setError(result.error);
         return;
       }
-      if (viewerIsClient) {
+      if (viewerIsClient || stayOnPage) {
+        // The page behind this dialog is the one that narrates the run now, so
+        // the refresh is what makes it start doing so — the in-flight mark and
+        // the poller both key off a job that only exists after this await.
+        if (result.jobId) setStartedJobId(result.jobId);
         setStarted(true);
         router.refresh();
       } else if (result.jobId) {
@@ -1792,11 +1852,37 @@ export function RunCustomAgentModal({
               to approved, non-future items. phase3-design §3's sentence is for
               run-FINISHED surfaces; this one fires the moment a run starts, so
               it takes the future-tense "reviews it when it lands" form —
-              nobody is reviewing anything yet. */}
+              nobody is reviewing anything yet.
+
+              STAFF GET THEIR OWN SENTENCE (AF-9). This card is what a staff
+              member now sees instead of being redirected, and the client's line
+              tells the reader their Karos team will review it — which, to the
+              Karos team, is a machine telling them to wait for themselves. */}
           <p className="text-xs text-muted">
-            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Your Karos team
-            reviews it when it lands — finished posts appear in your Workspace once approved.
+            {viewerIsClient ? (
+              <>
+                The agent is working. This usually takes {profile.estimate.replace("~", "")}. Your
+                Karos team reviews it when it lands, and finished posts appear in your Workspace
+                once approved.
+              </>
+            ) : (
+              <>
+                The agent is working. This usually takes {profile.estimate.replace("~", "")}. This
+                page keeps itself up to date while it runs, and the deliverables land in the review
+                queue.
+              </>
+            )}
           </p>
+          {/* Where the redirect used to go, as a choice. Staff only: /jobs is
+              not a route a CLIENT_USER may open. */}
+          {!viewerIsClient && startedJobId && (
+            <Link
+              href={`/jobs/${startedJobId}`}
+              className="inline-flex items-center gap-1 text-xs text-neon hover:underline"
+            >
+              Open the run <Icon name="ArrowRight" className="h-3 w-3" />
+            </Link>
+          )}
           <Button variant="subtle" onClick={onClose}>
             Done
           </Button>

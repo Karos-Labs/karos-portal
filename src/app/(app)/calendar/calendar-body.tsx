@@ -422,6 +422,11 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     assetsByJob,
     {
       isClient,
+      // AF-9. Rule 3's in-flight exception needs to know whose press it is
+      // looking at: a client watches THEIR OWN run execute, and a scheduled fire
+      // stays invisible (see viewerIsWatchingOwnRun). Passed for staff too and
+      // simply never consulted — their cards are not dropped in the first place.
+      viewerUid: user.uid,
       // The card's view of one deliverable, built INSIDE the projection so the
       // list it guarantees non-empty for a client is literally the list this row
       // ships as `assets` — no parallel array here to keep in step with it.
