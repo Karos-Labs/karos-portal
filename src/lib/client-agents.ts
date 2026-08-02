@@ -622,7 +622,7 @@ export interface RosterStatus {
  * green badge on a paused schedule.
  */
 export const IMPORTED_CONTENT_STAFF_NOTE =
-  "Schedule is not firing — client-facing status reads Live because upcoming content for this agent is already on their calendar (produced internally).";
+  "Schedule is not firing. The client-facing status reads Live because upcoming content for this agent is already on their calendar, produced internally.";
 
 /**
  * Whether a stored schedule refusal is recent enough to still be the client's
