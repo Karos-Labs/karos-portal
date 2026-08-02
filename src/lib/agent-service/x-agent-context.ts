@@ -12,14 +12,17 @@ import "server-only";
 import { randomUUID } from "crypto";
 import {
   getAgentIntake,
+  getAgentProfileDocData,
   getAsset,
   listAgentIntake,
   listClientSeats,
   listJobs,
+  listSeatVoiceProfiles,
   listXDraftFeedback,
   listXNewsUpdates,
   listXTakes,
 } from "@/lib/data";
+import type { AgentProfileScopeFields } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import type { AgentIntake, ClientSeat, XDraftFeedback } from "@/lib/types";
@@ -35,7 +38,10 @@ export function isXAgent(agentKey: string): boolean {
  * is the floor and seats are additive on top of it. Bare shared seats never
  * satisfy the gate — one person keeps one seat across agents, so a seat may
  * have been created for LinkedIn and say nothing about X. Matches the
- * LinkedIn company-page policy in linkedin-agent-context.ts.
+ * LinkedIn company-page policy in linkedin-agent-context.ts. Company identity
+ * fields live in the profile doc now, but AgentIntake's company row is still
+ * written alongside it on every save (roster/premium), so this stays a valid
+ * existence check without a second read.
  */
 export async function hasXAgentIntake(clientId: string): Promise<boolean> {
   return (await getAgentIntake(clientId, "x", null)) !== null;
@@ -44,27 +50,38 @@ export async function hasXAgentIntake(clientId: string): Promise<boolean> {
 /** Most recent feedback rows serialized per account (the Learning Log source). */
 const FEEDBACK_ROWS_PER_ACCOUNT = 30;
 
-function intakeSection(label: string, intake: AgentIntake | null, seat?: ClientSeat): string {
+/**
+ * `intake` still carries roster/premium; `profile` carries handle/off-limits/
+ * how-they-want-to-come-across, now stored in the agent's clientContextDocs
+ * profile doc (see upsertAgentProfileScope) instead of AgentIntake.
+ */
+function intakeSection(
+  label: string,
+  intake: AgentIntake | null,
+  profile: AgentProfileScopeFields | null,
+  seat?: ClientSeat,
+): string {
   const lines: string[] = [`## ${label}`];
   if (seat) lines.push(`- Person: ${seat.name} (slug: ${seat.slug})`);
-  if (!intake) {
+  if (!intake && !profile) {
     lines.push("- No intake stored yet.");
     return lines.join("\n");
   }
   lines.push(
-    `- Handle: ${intake.handle ?? (seat ? "PENDING (seat drafts only — cannot post or self-sample)" : "none yet (launch mode)")}`,
+    `- Handle: ${profile?.handle ?? (seat ? "PENDING (seat drafts only — cannot post or self-sample)" : "none yet (launch mode)")}`,
   );
-  if (intake.comeAcross) lines.push(`- How they want to come across on X: ${intake.comeAcross}`);
-  lines.push(`- Never post (off-limits): ${intake.offLimits || "(none given — house rules still apply)"}`);
+  if (profile?.comeAcross) lines.push(`- How they want to come across on X: ${profile.comeAcross}`);
+  lines.push(`- Never post (off-limits): ${profile?.offLimits || "(none given — house rules still apply)"}`);
+  const roster = intake?.roster ?? [];
   lines.push(
-    intake.roster.length > 0
-      ? `- Engagement roster (activates the engagement lane): ${intake.roster.join(", ")}`
+    roster.length > 0
+      ? `- Engagement roster (activates the engagement lane): ${roster.join(", ")}`
       : "- Engagement roster: none given — engagement lane stays off.",
   );
   lines.push(
-    intake.premium === true
+    intake?.premium === true
       ? "- X Premium: YES (client-confirmed) — long-form posts past 280 characters are allowed where the account's style supports them."
-      : intake.premium === false
+      : intake?.premium === false
         ? "- X Premium: NO (client-confirmed) — hard 280-character limit on every post."
         : "- X Premium: auto-detect — check the account's checkmark and its own posting style live before drafting anything past 280 characters.",
   );
@@ -79,7 +96,9 @@ function feedbackSection(account: string, label: string, rows: XDraftFeedback[])
     const ref = r.draftRef ? ` on "${r.draftRef}"` : "";
     if (r.action === "posted") return `- ${when}: posted as drafted${ref}.`;
     if (r.action === "posted_with_edits")
-      return `- ${when}: posted with edits${ref}. Final text used: ${r.finalText ?? "(not captured)"}`;
+      return r.originalText
+        ? `- ${when}: posted with edits${ref}. Original: ${r.originalText} → Final: ${r.finalText ?? "(not captured)"}`
+        : `- ${when}: posted with edits${ref}. Final text used: ${r.finalText ?? "(not captured)"}`;
     if (r.action === "note") return `- ${when}: client note${ref}: ${r.reason ?? "(empty)"}`;
     return `- ${when}: not posted${ref}. Reason: ${r.reason ?? "(not given)"}`;
   });
@@ -148,16 +167,28 @@ export async function buildXAgentContextFiles(
   clientId: string,
   agentName?: string,
 ): Promise<AgentServiceContextFile[]> {
-  const [seats, intakes, news, takes, feedback] = await Promise.all([
+  const [seats, intakes, news, takes, feedback, profileData, voiceProfiles] = await Promise.all([
     listClientSeats(clientId),
     listAgentIntake(clientId, "x"),
     listXNewsUpdates(clientId),
     listXTakes(clientId),
     listXDraftFeedback(clientId),
+    getAgentProfileDocData(clientId, "x"),
+    listSeatVoiceProfiles(clientId, "x"),
   ]);
   const company = intakes.find((i) => i.seatId === null) ?? null;
+  // Whole-file-set gate: a client with genuinely nothing configured yet (never
+  // saved intake, never created a seat) gets no files at all. Once ANYTHING is
+  // configured, the per-file guarantee below takes over — a configured-but-quiet
+  // week still gets whats-new.json/takes--<slug>.json, just with empty arrays,
+  // so the agent can tell "quiet week" from "broken pipe".
   const hasAnything =
-    company !== null || intakes.length > 0 || seats.length > 0 || news.length > 0 || takes.length > 0;
+    company !== null ||
+    profileData.company !== null ||
+    intakes.length > 0 ||
+    seats.length > 0 ||
+    news.length > 0 ||
+    takes.length > 0;
   if (!hasAnything) return [];
 
   const files: AgentServiceContextFile[] = [];
@@ -173,7 +204,7 @@ export async function buildXAgentContextFiles(
     seats.map(async (seat) => {
       const intake = await getAgentIntake(clientId, "x", seat.id);
       return [
-        intakeSection(`Seat — ${seat.name}`, intake, seat),
+        intakeSection(`Seat — ${seat.name}`, intake, profileData.seats[seat.id] ?? null, seat),
         feedbackSection(seat.id, `Learning log — ${seat.name}'s seat`, feedback),
       ].join("\n\n");
     }),
@@ -188,7 +219,7 @@ export async function buildXAgentContextFiles(
     "(onboarding profile + the account's own posts + the edit loop) — they are not",
     "collected here and must never be asked of the client.",
     "",
-    intakeSection("Company page", company),
+    intakeSection("Company page", company, profileData.company),
     "",
     feedbackSection("company", "Learning log — company page", feedback),
     "",
@@ -204,29 +235,42 @@ export async function buildXAgentContextFiles(
       "Portal-collected X intake: company page + seats (handles, off-limits, rosters) and per-account learning logs. Overrides any older x-agent intake files in the repo.",
   });
 
-  // 2. The company news drop, in the exact whats-new.json shape the internal connector reads.
-  if (news.length > 0) {
-    const updates = news.map((n) => ({
-      title: n.title,
-      date: n.date,
-      ...(n.detail ? { detail: n.detail } : {}),
-      ...(n.url ? { url: n.url } : {}),
-      ...(n.type ? { type: n.type } : {}),
-    }));
-    const body = JSON.stringify({ updates }, null, 2);
+  // 2. Per-seat AI-built voice profile, one file per seat that has one.
+  for (const seat of seats) {
+    const profile = voiceProfiles.find((p) => p.seatId === seat.id);
+    if (!profile) continue;
+    const name = `voice-profile--${seat.slug}.md`;
     files.push({
-      name: "whats-new.json",
-      url: await upload(clientId, runKey, "whats-new.json", body, "application/json"),
-      content_type: "application/json",
-      description:
-        "The client's live company news drop (portal 'What's new' box) in the engine's whats-new.json shape. Overrides any repo copy.",
+      name,
+      url: await upload(clientId, runKey, name, profile.content, "text/markdown"),
+      content_type: "text/markdown",
+      description: `${seat.name}'s AI-built voice profile, swept from their own handle/posts by the setup run. Read-only reference — never asked of the client.`,
     });
   }
 
-  // 3. One takes file per seat that has takes, in the engine's takes.json shape.
+  // 3. The company news drop, in the exact whats-new.json shape the internal
+  // connector reads. Always emitted once anything is configured (even zero
+  // entries this week) — a missing file must never look like a quiet one.
+  const updates = news.map((n) => ({
+    title: n.title,
+    date: n.date,
+    ...(n.detail ? { detail: n.detail } : {}),
+    ...(n.url ? { url: n.url } : {}),
+    ...(n.type ? { type: n.type } : {}),
+  }));
+  files.push({
+    name: "whats-new.json",
+    url: await upload(clientId, runKey, "whats-new.json", JSON.stringify({ updates }, null, 2), "application/json"),
+    content_type: "application/json",
+    description:
+      "The client's live company news drop (portal 'What's new' box) in the engine's whats-new.json shape, always present — an empty `updates` array means a quiet week, not a broken pipe. Overrides any repo copy.",
+  });
+
+  // 4. One takes file per seat, in the engine's takes.json shape — always
+  // emitted for every seat, empty `takes` array when that seat has none this
+  // week, for the same quiet-week-vs-broken-pipe reason as whats-new.json.
   for (const seat of seats) {
     const seatTakes = takes.filter((t) => t.seatId === seat.id);
-    if (seatTakes.length === 0) continue;
     const body = JSON.stringify(
       {
         takes: seatTakes.map((t) => ({
@@ -244,7 +288,7 @@ export async function buildXAgentContextFiles(
       name,
       url: await upload(clientId, runKey, name, body, "application/json"),
       content_type: "application/json",
-      description: `${seat.name}'s live takes drop (portal 'Your takes & topics' box) in the engine's takes.json shape. Overrides any repo copy.`,
+      description: `${seat.name}'s live takes drop (portal 'Your takes & topics' box) in the engine's takes.json shape, always present. Overrides any repo copy.`,
     });
   }
 

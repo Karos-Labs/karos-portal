@@ -18,6 +18,7 @@ import "server-only";
 import type { ComponentProps } from "react";
 import {
   getAgentIntake,
+  getAgentProfileDocData,
   getCustomAgentByKey,
   listAgentIntake,
   listClientSeats,
@@ -28,6 +29,7 @@ import {
   listXNewsUpdates,
   listXTakes,
 } from "@/lib/data";
+import type { AgentProfileScopeFields } from "@/lib/data";
 import type {
   LinkedInAgentIntake,
   LiIntakeView,
@@ -83,15 +85,22 @@ function toRunRowViews(
   }));
 }
 
-/** Strip an intake doc to the client-safe X view. */
-function toXIntakeView(intake: AgentIntake | null): XIntakeView | null {
-  if (!intake) return null;
+/**
+ * Strip an intake doc + its profile-doc scope (handle/off-limits/come-across,
+ * now stored in clientContextDocs — see upsertAgentProfileScope) to the
+ * client-safe X view. `intake` alone still carries roster/premium.
+ */
+function toXIntakeView(
+  intake: AgentIntake | null,
+  profile: AgentProfileScopeFields | null,
+): XIntakeView | null {
+  if (!intake && !profile) return null;
   return {
-    handle: intake.handle,
-    ...(intake.comeAcross ? { comeAcross: intake.comeAcross } : {}),
-    offLimits: intake.offLimits,
-    roster: intake.roster,
-    ...(intake.premium !== undefined ? { premium: intake.premium } : {}),
+    handle: profile?.handle ?? null,
+    ...(profile?.comeAcross ? { comeAcross: profile.comeAcross } : {}),
+    offLimits: profile?.offLimits ?? "",
+    roster: intake?.roster ?? [],
+    ...(intake?.premium !== undefined ? { premium: intake.premium } : {}),
   };
 }
 
@@ -99,9 +108,9 @@ function toXIntakeView(intake: AgentIntake | null): XIntakeView | null {
 function toLiIntakeView(intake: AgentIntake | null): LiIntakeView | null {
   if (!intake) return null;
   return {
-    handle: intake.handle,
+    handle: intake.handle ?? null,
     ...(intake.comeAcross ? { comeAcross: intake.comeAcross } : {}),
-    offLimits: intake.offLimits,
+    offLimits: intake.offLimits ?? "",
     ...(intake.role ? { role: intake.role } : {}),
     ...(intake.focus ? { focus: intake.focus } : {}),
     ...(intake.fallbackKind ? { fallbackKind: intake.fallbackKind } : {}),
@@ -114,7 +123,7 @@ export async function buildXAgentIntakeView(
   clientId: string,
   opts: { isStaff: boolean; jobs?: Job[] },
 ): Promise<XAgentIntakeProps> {
-  const [seats, companyIntake, allIntake, news, takes, feedback, jobs, xAgent] = await Promise.all([
+  const [seats, companyIntake, allIntake, news, takes, feedback, jobs, xAgent, profileData] = await Promise.all([
     listClientSeats(clientId),
     getAgentIntake(clientId, "x", null),
     listAgentIntake(clientId, "x"),
@@ -123,6 +132,7 @@ export async function buildXAgentIntakeView(
     listXDraftFeedback(clientId),
     opts.jobs ?? listJobs({ clientId }),
     getCustomAgentByKey("karos-x-agent"),
+    getAgentProfileDocData(clientId, "x"),
   ]);
 
   const intakeBySeat = new Map(allIntake.filter((i) => i.seatId).map((i) => [i.seatId as string, i]));
@@ -130,7 +140,7 @@ export async function buildXAgentIntakeView(
     id: seat.id,
     name: seat.name,
     slug: seat.slug,
-    intake: toXIntakeView(intakeBySeat.get(seat.id) ?? null),
+    intake: toXIntakeView(intakeBySeat.get(seat.id) ?? null, profileData.seats[seat.id] ?? null),
     takes: takes
       .filter((t) => t.seatId === seat.id)
       .map((t) => ({ id: t.id, take: t.take, date: t.date, ...(t.topic ? { topic: t.topic } : {}) })),
@@ -149,7 +159,7 @@ export async function buildXAgentIntakeView(
 
   return {
     clientId,
-    company: toXIntakeView(companyIntake),
+    company: toXIntakeView(companyIntake, profileData.company),
     seats: seatViews,
     news: news.map((n) => ({
       id: n.id,
@@ -230,8 +240,8 @@ export async function buildLinkedInAgentIntakeView(
 function toRedditIntakeView(intake: AgentIntake | null): RedditIntakeView | null {
   if (!intake) return null;
   return {
-    handle: intake.handle,
-    offLimits: intake.offLimits,
+    handle: intake.handle ?? null,
+    offLimits: intake.offLimits ?? "",
     ...(intake.accountHistory ? { accountHistory: intake.accountHistory } : {}),
     ...(intake.subreddits?.length ? { subreddits: intake.subreddits } : {}),
     ...(intake.offLimitsSubreddits?.length

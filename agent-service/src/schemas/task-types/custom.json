@@ -51,6 +51,16 @@
       "type": "string",
       "maxLength": 2000,
       "description": "Optional extra notes for the agent."
+    },
+    "step_models": {
+      "type": "object",
+      "maxProperties": 20,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
+      "description": "Optional per-step model override, keyed by the named subagent identifier the skill's steps delegate to via the Task tool. Only takes effect when the skill's steps are structured as named subagent delegations matching these keys."
     }
   }
 }

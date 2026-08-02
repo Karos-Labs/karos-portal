@@ -71,6 +71,36 @@ export interface CustomAgentInput {
    */
   launchCreditCost?: number | null;
   enabled?: boolean;
+  /** Per-step model override — see CustomAgent.stepModels. Null/empty ⇒ no override. */
+  stepModels?: Record<string, string> | null;
+}
+
+const MAX_STEP_MODELS = 20;
+const MAX_STEP_KEY_CHARS = 100;
+const MAX_STEP_MODEL_CHARS = 100;
+
+function validateStepModels(stepModels: Record<string, string> | null | undefined): string | null {
+  if (!stepModels) return null;
+  const entries = Object.entries(stepModels);
+  if (entries.length > MAX_STEP_MODELS) return `At most ${MAX_STEP_MODELS} per-step model overrides.`;
+  for (const [key, model] of entries) {
+    if (!key.trim() || key.length > MAX_STEP_KEY_CHARS) return `Invalid step name: "${key}".`;
+    if (!model.trim() || model.length > MAX_STEP_MODEL_CHARS) return `Invalid model for step "${key}".`;
+  }
+  return null;
+}
+
+/** Drops blank keys/values and empty-string trims; empty object becomes null (no override). */
+function normalizeStepModels(
+  stepModels: Record<string, string> | null | undefined,
+): Record<string, string> | null {
+  if (!stepModels) return null;
+  const cleaned = Object.fromEntries(
+    Object.entries(stepModels)
+      .map(([k, v]) => [k.trim(), v.trim()] as const)
+      .filter(([k, v]) => k && v),
+  );
+  return Object.keys(cleaned).length > 0 ? cleaned : null;
 }
 
 function validateAgentInput(input: CustomAgentInput): string | null {
@@ -117,6 +147,8 @@ function validateAgentInput(input: CustomAgentInput): string | null {
   if (blurb && containsLabJargon(blurb)) {
     return "Client blurb reads as lab notes (product code, sub-skill, tonemap, FORGE, or Path X). Rewrite it in the client's language.";
   }
+  const stepModelsError = validateStepModels(input.stepModels);
+  if (stepModelsError) return stepModelsError;
   return null;
 }
 
@@ -151,6 +183,7 @@ export async function createCustomAgentAction(
     instructions: input.instructions.trim(),
     creditCost: input.creditCost ?? null,
     launchCreditCost: input.launchCreditCost ?? null,
+    stepModels: normalizeStepModels(input.stepModels),
     enabled: input.enabled !== false,
     source: null,
     createdBy: user.uid,
@@ -187,6 +220,7 @@ export async function updateCustomAgentAction(
     instructions: input.instructions.trim(),
     creditCost: input.creditCost ?? null,
     launchCreditCost: input.launchCreditCost ?? null,
+    stepModels: normalizeStepModels(input.stepModels),
     enabled: input.enabled !== false,
     updatedAt: Date.now(),
   });

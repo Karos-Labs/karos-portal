@@ -361,6 +361,12 @@ export async function submitCustomAgentJob(
         include_client_skills: agent.includeClientSkills,
         instructions: agent.instructions.slice(0, MAX_INSTRUCTIONS_CHARS),
         prompt,
+        // Per-step model routing (optional): only takes effect for skills whose
+        // steps are named Task-tool subagents matching these keys — see
+        // docs/one-pagers/x-agent-v2-integration-contract.md.
+        ...(agent.stepModels && Object.keys(agent.stepModels).length > 0
+          ? { step_models: agent.stepModels }
+          : {}),
       },
       callback_url: `${origin}/api/agent-service/webhook`,
       ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),

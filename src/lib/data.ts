@@ -15,6 +15,8 @@ import type {
   ClientCompetitor,
   ClientContextDoc,
   ClientCredits,
+  ContextDocType,
+  SeatVoiceProfile,
   Campaign,
   ClientInsightsCache,
   ClientIntegration,
@@ -123,6 +125,9 @@ const col = {
   xDraftFeedback: () => adminDb().collection("xDraftFeedback"),
   liDraftFeedback: () => adminDb().collection("liDraftFeedback"),
   redditDraftFeedback: () => adminDb().collection("redditDraftFeedback"),
+  // Per-seat AI-built voice profiles (agent-scoped: x/linkedin/reddit), one doc
+  // per (clientId, agent, seatId). See upsertSeatVoiceProfile.
+  seatVoiceProfiles: () => adminDb().collection("seatVoiceProfiles"),
   // Planned agent runs shown on the unified calendar. Kept separate from the
   // recurring generator scheduler because the two records have different schemas.
   plannedScheduledRuns: () => adminDb().collection("plannedScheduledRuns"),
@@ -320,8 +325,10 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   // Keep this list and the mirror in scripts/purge-orphaned-client-docs.ts in
   // step — the type is Array<keyof typeof col>, so an omission here is not a
   // compile error and no test covers the contents.
+  "liDraftFeedback",
   "redditDraftFeedback",
   "plannedScheduledRuns",
+  "seatVoiceProfiles",
 ];
 
 /** Per-client singleton docs (doc ID = clientId) removed alongside the cascade. */
@@ -1382,6 +1389,119 @@ export async function updateContextDocSummary(
   await col.clientContextDocs().doc(id).update({ summary, summaryVersion });
 }
 
+/* ─────────────────── Agent onboarding profile docs ──────────────────
+ *
+ * The identity narrative (handle, off-limits, how they want to come across)
+ * for one agent, moved out of `agentIntake` and into `clientContextDocs` so it
+ * lives alongside the client's other onboarding documents. `agentIntake`
+ * keeps roster/premium and the platform-specific operational fields.
+ *
+ * clientContextDocs has no seat dimension (its key is clientId+docType+tier),
+ * so company + every seat share ONE doc per (clientId, agent): each write
+ * reads the current doc, patches just its own scope, and writes the whole
+ * thing back. The doc's markdown content stays human/agent-readable; a fenced
+ * JSON marker at the top carries the structured fields back out for reads
+ * that need one scope's values (e.g. run-time context injection).
+ */
+
+const AGENT_PROFILE_DOC_TYPES: Record<"x" | "linkedin" | "reddit", ContextDocType> = {
+  x: "x-agent-profile",
+  linkedin: "linkedin-agent-profile",
+  reddit: "reddit-agent-profile",
+};
+
+export interface AgentProfileScopeFields {
+  handle: string | null;
+  offLimits: string;
+  /** Company scope only. */
+  comeAcross?: string;
+}
+
+export interface AgentProfileDocData {
+  company: AgentProfileScopeFields | null;
+  seats: Record<string, AgentProfileScopeFields & { name: string; slug: string }>;
+}
+
+const AGENT_PROFILE_MARKER = "<!-- STRUCTURED:";
+const AGENT_PROFILE_MARKER_END = " -->";
+
+function parseAgentProfileDoc(content: string): AgentProfileDocData {
+  const start = content.indexOf(AGENT_PROFILE_MARKER);
+  const end = start === -1 ? -1 : content.indexOf(AGENT_PROFILE_MARKER_END, start);
+  if (start === -1 || end === -1) return { company: null, seats: {} };
+  try {
+    const parsed = JSON.parse(
+      content.slice(start + AGENT_PROFILE_MARKER.length, end),
+    ) as Partial<AgentProfileDocData>;
+    return { company: parsed.company ?? null, seats: parsed.seats ?? {} };
+  } catch {
+    return { company: null, seats: {} };
+  }
+}
+
+function renderAgentProfileDoc(agentLabel: string, data: AgentProfileDocData): string {
+  const lines: string[] = [
+    `${AGENT_PROFILE_MARKER}${JSON.stringify({ company: data.company, seats: data.seats })}${AGENT_PROFILE_MARKER_END}`,
+    "",
+    `# ${agentLabel} agent — onboarding profile`,
+    "",
+    "_Portal-collected identity answers. Voice, pillars and cadence are built by the agent elsewhere and never stored here._",
+  ];
+  if (data.company) {
+    lines.push("", "## Company page");
+    lines.push(`- Handle: ${data.company.handle ?? "none yet"}`);
+    if (data.company.comeAcross) lines.push(`- How they want to come across: ${data.company.comeAcross}`);
+    lines.push(`- Off-limits: ${data.company.offLimits || "(none given)"}`);
+  }
+  for (const seat of Object.values(data.seats)) {
+    lines.push("", `## Seat — ${seat.name}`);
+    lines.push(`- Handle: ${seat.handle ?? "pending"}`);
+    lines.push(`- Off-limits: ${seat.offLimits || "(none given)"}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * Create-or-update one scope (company = seatId null, or one named seat)
+ * inside the agent's durable onboarding profile doc.
+ */
+export async function upsertAgentProfileScope(
+  clientId: string,
+  agent: "x" | "linkedin" | "reddit",
+  scope: { seatId: null } | { seatId: string; name: string; slug: string },
+  fields: AgentProfileScopeFields,
+): Promise<void> {
+  const docType = AGENT_PROFILE_DOC_TYPES[agent];
+  const existing = await getClientContextDocByTier(clientId, docType, "internal-only");
+  const data = existing ? parseAgentProfileDoc(existing.content) : { company: null, seats: {} };
+  if (scope.seatId === null) {
+    data.company = fields;
+  } else {
+    data.seats[scope.seatId] = { ...fields, name: scope.name, slug: scope.slug };
+  }
+  const now = Date.now();
+  await upsertClientContextDoc({
+    clientId,
+    docType,
+    tier: "internal-only",
+    content: renderAgentProfileDoc(agent, data),
+    version: (existing?.version ?? 0) + 1,
+    sources: existing?.sources,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  });
+}
+
+/** Read the whole profile doc — company + every seat — in one Firestore read. */
+export async function getAgentProfileDocData(
+  clientId: string,
+  agent: "x" | "linkedin" | "reddit",
+): Promise<AgentProfileDocData> {
+  const docType = AGENT_PROFILE_DOC_TYPES[agent];
+  const doc = await getClientContextDocByTier(clientId, docType, "internal-only");
+  return doc ? parseAgentProfileDoc(doc.content) : { company: null, seats: {} };
+}
+
 /* -------------------- client integrations --------------------------- */
 
 /** List all social/channel integrations for a client. Credentials are decrypted for the caller. */
@@ -2385,6 +2505,53 @@ export async function listXDraftFeedback(
   if (account) q = q.where("account", "==", account);
   const snap = await q.get();
   return snap.docs.map((d) => withId<XDraftFeedback>(d)).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/* ─────────────── Per-seat AI-built voice profiles (agent-scoped) ─────────────── */
+
+/** One doc per (clientId, agent, seatId); seats never share a company-level row. */
+export async function getSeatVoiceProfile(
+  clientId: string,
+  agent: SeatVoiceProfile["agent"],
+  seatId: string,
+): Promise<SeatVoiceProfile | null> {
+  const snap = await col
+    .seatVoiceProfiles()
+    .where("clientId", "==", clientId)
+    .where("agent", "==", agent)
+    .where("seatId", "==", seatId)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<SeatVoiceProfile>(snap.docs[0]);
+}
+
+export async function listSeatVoiceProfiles(
+  clientId: string,
+  agent: SeatVoiceProfile["agent"],
+): Promise<SeatVoiceProfile[]> {
+  const snap = await col
+    .seatVoiceProfiles()
+    .where("clientId", "==", clientId)
+    .where("agent", "==", agent)
+    .get();
+  return snap.docs.map((d) => withId<SeatVoiceProfile>(d));
+}
+
+/** Create-or-overwrite the seat's profile (a launch-run sweep replaces the prior content wholesale). */
+export async function upsertSeatVoiceProfile(
+  data: Omit<SeatVoiceProfile, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getSeatVoiceProfile(data.clientId, data.agent, data.seatId);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .seatVoiceProfiles()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col.seatVoiceProfiles().add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
 }
 
 export async function addLiDraftFeedback(data: Omit<LiDraftFeedback, "id">): Promise<string> {

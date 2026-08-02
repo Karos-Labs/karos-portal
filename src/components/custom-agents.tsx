@@ -2091,7 +2091,24 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
   const [launchCreditCost, setLaunchCreditCost] = useState(
     agent?.launchCreditCost != null ? String(agent.launchCreditCost) : "",
   );
+  const [stepModelsText, setStepModelsText] = useState(
+    Object.entries(agent?.stepModels ?? {})
+      .map(([step, model]) => `${step}: ${model}`)
+      .join("\n"),
+  );
   const [enabled, setEnabled] = useState(agent?.enabled ?? true);
+
+  function parseStepModels(raw: string): Record<string, string> | null {
+    const entries: Array<[string, string]> = [];
+    for (const line of raw.split("\n")) {
+      const idx = line.indexOf(":");
+      if (idx === -1) continue;
+      const step = line.slice(0, idx).trim();
+      const model = line.slice(idx + 1).trim();
+      if (step && model) entries.push([step, model]);
+    }
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
+  }
 
   function save() {
     setError(null);
@@ -2108,6 +2125,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       instructions,
       creditCost: creditCost.trim() === "" ? null : Number(creditCost),
       launchCreditCost: launchCreditCost.trim() === "" ? null : Number(launchCreditCost),
+      stepModels: parseStepModels(stepModelsText),
       enabled,
     };
     startTransition(async () => {
@@ -2281,6 +2299,22 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
             The one-off setup run that researches the brand and designs the template set. Must be
             higher than the per-run price. Left empty, clients cannot launch this agent themselves
             and staff run the setup for them.
+          </p>
+        </div>
+        <div>
+          <Label htmlFor="ae-step-models">Per-step model overrides (one per line, optional)</Label>
+          <Textarea
+            id="ae-step-models"
+            rows={3}
+            value={stepModelsText}
+            onChange={(e) => setStepModelsText(e.target.value)}
+            placeholder={"draft-post: claude-haiku-4-5\nresearch: claude-opus-4-8"}
+            className="font-mono text-xs"
+          />
+          <p className="mt-1 text-xs text-muted-2">
+            `step name: model id`, one per line. Only takes effect for a skill whose steps are
+            named subagents matching these names — a no-op otherwise. Leave empty to run the whole
+            job on the task type&apos;s single default model, as today.
           </p>
         </div>
         <div className="flex items-center gap-4">

@@ -6,10 +6,16 @@ import {
   claimExternalJobCompletion,
   createAsset,
   getClient,
+  getCustomAgent,
   getJob,
   getJobByExternalServiceId,
+  listClientSeats,
   updateJob,
+  upsertSeatVoiceProfile,
 } from "@/lib/data";
+import { isXAgent } from "@/lib/agent-service/x-agent-context";
+import { isLinkedInAgent } from "@/lib/agent-service/linkedin-agent-context";
+import { isRedditAgent } from "@/lib/agent-service/reddit-agent-context";
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -282,6 +288,13 @@ export async function POST(req: NextRequest) {
     // first. Keyed by artifact name so we can restore slide order (slide-2
     // before slide-10) regardless of artifact arrival order.
     const imageEntries: { name: string; url: string }[] = [];
+    // Setup (launch) runs may emit one voice-profile--<seat-slug>.md per seat
+    // swept — captured here off the same decoded bytes as primaryText, no
+    // second fetch. Only meaningful on launch runs; the artifact must be
+    // client_facing for the fetch below to even run (see the integration
+    // contract doc) — launch deliverables stay staff-only regardless via
+    // launchDeliverable:true below, so marking these client_facing is safe.
+    const voiceProfileArtifacts: { seatSlug: string; content: string }[] = [];
 
     for (const artifact of payload.artifacts) {
       const entry: ExternalJobArtifact = {
@@ -328,6 +341,13 @@ export async function POST(req: NextRequest) {
             const ext = extension(artifact.name);
             if (TEXT_EXTENSIONS.includes(ext)) {
               const content = bytes.toString("utf8");
+              const voiceProfileMatch = artifact.name
+                .split("/")
+                .pop()
+                ?.match(/^voice-profile--(.+)\.md$/i);
+              if (isLaunchRun && voiceProfileMatch) {
+                voiceProfileArtifacts.push({ seatSlug: voiceProfileMatch[1], content });
+              }
               // DRAFTS.md is the pinned deliverable-of-record for the drafting
               // agents (X, LinkedIn) — prefer it deterministically over the
               // size race, so a long sibling text file (a video brief, an
@@ -363,6 +383,48 @@ export async function POST(req: NextRequest) {
       orderedImageUrls.length > 1
         ? orderedImageUrls.map((url) => ({ imageUrl: url }))
         : undefined;
+
+    // Setup-run voice profiles (§ blocker 2): generic on any custom agent with
+    // seats, not gated to X — resolved via the job's customAgentId so LinkedIn/
+    // Reddit adopt this with no webhook change once they emit the same
+    // artifact convention. Best-effort: a save failure here must not fail the
+    // whole delivery — the next launch run re-sweeps and overwrites anyway.
+    if (isLaunchRun && voiceProfileArtifacts.length > 0) {
+      try {
+        const customAgent = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
+        const agentKey = customAgent?.key ?? "";
+        const agent = isXAgent(agentKey)
+          ? "x"
+          : isLinkedInAgent(agentKey)
+            ? "linkedin"
+            : isRedditAgent(agentKey)
+              ? "reddit"
+              : null;
+        if (agent) {
+          const seats = await listClientSeats(job.clientId);
+          const seatBySlug = new Map(seats.map((s) => [s.slug, s]));
+          for (const { seatSlug, content } of voiceProfileArtifacts) {
+            const seat = seatBySlug.get(seatSlug);
+            if (!seat) continue;
+            await upsertSeatVoiceProfile({
+              clientId: job.clientId,
+              agent,
+              seatId: seat.id,
+              content,
+              builtAt: now,
+              builtByJobId: job.id,
+            });
+          }
+        }
+      } catch (e) {
+        console.error("[webhook] seat voice profile save failed:", e);
+        events.push({
+          at: Date.now(),
+          level: "error",
+          message: "Voice profile save failed - retries on the next launch run",
+        });
+      }
+    }
 
     const clientFacingCount = artifacts.filter((a) => a.clientFacing).length;
     if (clientFacingCount > 0) {

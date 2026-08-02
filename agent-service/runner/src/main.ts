@@ -1,4 +1,4 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, type AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
 import { decodeJobSpec } from "../../src/exec/executor.js";
 import { resolveTaskConfig } from "../../src/task-types.js";
 import type { RunnerCompleteBody } from "../../src/types.js";
@@ -11,6 +11,32 @@ import { extractUsage, isResultMessage, TranscriptStreamer } from "./transcript.
 import { KAROS_MCP_ALLOWED_TOOLS, karosMcpServers } from "./mcp.js";
 
 const SELF_TIMEOUT_BUFFER_MS = 45_000;
+
+/**
+ * Turns a task config's `stepModels` (from brief.step_models, see
+ * resolveTaskConfig) into the SDK's `options.agents` shape — one
+ * AgentDefinition per named step, model-only. `description`/`prompt` are
+ * required by AgentDefinition but are inert placeholders here: this call
+ * exists purely to carry a model override for a subagent name the skill's own
+ * steps must already delegate to via the Task tool for it to have any effect
+ * (see docs/one-pagers/x-agent-v2-integration-contract.md). Reusable verbatim
+ * once other agents adopt the same named-subagent-step convention.
+ */
+function buildStepAgentDefinitions(
+  stepModels: Record<string, string> | undefined,
+): Record<string, AgentDefinition> | undefined {
+  if (!stepModels || Object.keys(stepModels).length === 0) return undefined;
+  return Object.fromEntries(
+    Object.entries(stepModels).map(([step, model]) => [
+      step,
+      {
+        description: `Step "${step}" (model routed via CustomAgent.stepModels)`,
+        prompt: `You are the "${step}" step of this run. Follow the skill's own instructions for this step.`,
+        model,
+      } satisfies AgentDefinition,
+    ]),
+  );
+}
 
 function isTransientError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -93,6 +119,7 @@ async function main(): Promise<void> {
       clientScaffolded: workspace.clientScaffolded,
     });
     const mcpServers = karosMcpServers(spec);
+    const stepAgents = buildStepAgentDefinitions(taskConfig.stepModels);
 
     const q = query({
       prompt,
@@ -105,6 +132,7 @@ async function main(): Promise<void> {
           : taskConfig.allowedTools,
         disallowedTools: taskConfig.disallowedTools,
         ...(mcpServers ? { mcpServers, strictMcpConfig: true } : {}),
+        ...(stepAgents ? { agents: stepAgents } : {}),
         permissionMode: "dontAsk",
         model: taskConfig.model,
         maxTurns: taskConfig.maxTurns,

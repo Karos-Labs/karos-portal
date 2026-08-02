@@ -19,6 +19,15 @@ export interface TaskTypeConfig {
   maxTurns: number;
   maxBudgetUsd: number;
   model: string;
+  /**
+   * Optional per-step model override, keyed by the named subagent identifier
+   * the skill's steps delegate to via the SDK's Task tool (custom task type
+   * only, from brief.step_models — see resolveTaskConfig). The runner (main.ts)
+   * turns each entry into an `options.agents[name] = { model }` definition for
+   * the query() call; only takes effect when the skill's steps are actually
+   * structured as named subagent delegations matching these keys.
+   */
+  stepModels?: Record<string, string>;
   /** egress-allowlist.json group names this task type needs */
   egressGroups: string[];
   buildPrompt: (spec: JobSpec, ctx: PromptContext) => string;
@@ -344,11 +353,31 @@ export function resolveTaskConfig(taskType: TaskType, brief: Record<string, unkn
     roots.push(root);
   }
 
+  const stepModels = parseStepModels(brief.step_models);
+
   return {
     ...base,
     entrySkill: entryDir.split("/").pop() ?? "custom",
     entrySkillDir: entryDir,
     skillRoots: [...new Set([...roots, ...base.skillRoots])],
     includeClientSkills: brief.include_client_skills !== false,
+    ...(stepModels ? { stepModels } : {}),
   };
+}
+
+/** Validates brief.step_models into a plain string→string map, or undefined if absent/empty. */
+function parseStepModels(raw: unknown): Record<string, string> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("invalid step_models: must be an object");
+  }
+  const entries = Object.entries(raw as Record<string, unknown>);
+  const out: Record<string, string> = {};
+  for (const [step, model] of entries) {
+    if (typeof model !== "string" || !model.trim()) {
+      throw new Error(`invalid step_models entry for "${step}": must be a non-empty string`);
+    }
+    out[step] = model.trim();
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
