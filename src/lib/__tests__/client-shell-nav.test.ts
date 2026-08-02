@@ -17,9 +17,11 @@ import { staffMainClass } from "@/components/staff-shell-main";
  *    `/clients/<id>`, plus a spliced AI Agents into the same subtree) route
  *    through `requireVisibleClient`, which `notFound()`s on precisely that
  *    condition. The branch was not dead — it was the only two 404s in the nav.
- *  · #134 /transcripts is a built, client-scoped, `excludeHiddenFromClient`
+ *  · #134/AF-1 /transcripts is a built, client-scoped, `excludeHiddenFromClient`
  *    redacted Meetings page with its own client copy, and the client's own
- *    shell had no way in.
+ *    shell had no way in. #134 answered that with a rail row; the product owner
+ *    replaced the row with a Settings tab. Both halves are asserted here: the
+ *    rail offers it nowhere, and Settings does.
  *  · #141 One route rendered "AI agents" for clients and "AI Agents" for staff,
  *    while the nav labels leading there said "AI Agents".
  *  · #127 The staff `<main>` reserved 112px of bottom scroll space at phone
@@ -42,6 +44,7 @@ const SIDEBAR = "src/components/sidebar.tsx";
 const RAIL = "src/components/client-rail.tsx";
 const AGENTS_PAGE = "src/app/(app)/clients/[id]/agents/page.tsx";
 const LAYOUT = "src/app/(app)/layout.tsx";
+const SETTINGS_PAGE = "src/app/(app)/clients/[id]/settings/page.tsx";
 
 const sidebar = source(SIDEBAR);
 const rail = source(RAIL);
@@ -167,40 +170,73 @@ describe("#137 · the staff shell's client rows lead where a client can go", () 
   });
 });
 
-describe("#134 · Meetings is in the client's own navigation", () => {
-  it("puts /transcripts in the client rail", () => {
-    expect(clientRailRoutes()).toContain("/transcripts");
+describe("AF-1 · Meetings is reached from Settings, not from the rail", () => {
+  /**
+   * #134 put a Meetings row in the client rail. The product owner reversed it:
+   * keep the feature, move the door. "I like that in the settings."
+   *
+   * So the assertions below are the inverse of the ones that stood here, plus
+   * the one they never had — that the destination #134 was right about (a
+   * built, redacted, client-scoped page) is still reachable. A ruling that
+   * removed the row AND the route would be a regression wearing a fix's name.
+   */
+  const settingsPage = source(SETTINGS_PAGE);
+
+  it("offers no Meetings row at either width", () => {
+    expect(clientRailRoutes()).not.toContain("/transcripts");
+    // The nav table and the phone bar are one list now, so neither can carry it
+    // back on its own.
+    expect(flat(rail)).toContain("items={tabNav}");
+    expect(flat(rail)).not.toContain("railNav");
+    expect(rail).not.toContain("meetingsItem");
   });
 
-  it("reaches it at phone width, where the rail is display:none", () => {
-    // The tab bar holds four items plus Company in both shells (CD-G9a's twin
-    // contract), so Meetings rides in the Company sheet beside Settings.
+  it("keeps the sheet clear of it too, where the rail is display:none", () => {
     const open = rail.indexOf("<MobileCompanySheet");
     const close = rail.indexOf("</MobileCompanySheet>");
     expect(open).toBeGreaterThan(-1);
     expect(close).toBeGreaterThan(open);
-    expect(rail.slice(open, close)).toContain("href={meetingsItem.href}");
-    // …and the bar itself is still the four-item set, not the rail's five.
-    expect(flat(rail)).toContain("items={tabNav}");
-    expect(flat(rail)).toContain("const railNav: NavItem[] = [...tabNav, meetingsItem];");
+    expect(rail.slice(open, close)).not.toContain("/transcripts");
+  });
+
+  it("puts the route on the Settings page instead", () => {
+    // The tab, and inside it the link to the whole page — twelve rows of
+    // preview is not a destination for a client with thirteen calls.
+    expect(settingsPage).toContain('{ id: "meetings", label: "Meetings"');
+    expect(flat(settingsPage)).toContain('href="/transcripts"');
   });
 
   it("leads to a page that is genuinely built for a client", () => {
-    // The entry would be worse than none if it opened the staff view.
+    // Unchanged by the move, and the reason the feature was kept at all: the
+    // entry would be worse than none if it opened the staff view.
     const page = pageOf("/transcripts");
     expect(page).toContain("excludeHiddenFromClient: true");
     expect(page).toContain("Summaries from your calls with the Karos team.");
   });
 
   it("leaves no route the staff shell offers a client that their own shell withholds", () => {
-    // The #134 defect stated as a relation between the two tables rather than
-    // as a list: one shell declared Meetings part of the client's navigation
-    // and the other omitted it. Before the fix /transcripts, /assets and
-    // /dashboard all failed this.
+    // #137's relation, still enforced — with /transcripts now carried by the
+    // Settings page rather than the rail's nav table.
+    //
+    // The staff shell keeps its own Meetings row for CLIENT_USER on purpose,
+    // and it is not an oversight left behind by AF-1: that shell renders for
+    // exactly one client — the one whose client document did not resolve — and
+    // that client has no /clients/<id>/settings to reach, so the row is their
+    // only route to a page built for them. Two shells, two correct answers.
     const railSide = new Set(clientRailRoutes());
+    const viaSettings = new Set(
+      [...settingsPage.matchAll(/href="(\/[^"]*)"/g)].map((m) => m[1]!),
+    );
     for (const route of staffShellClientRoutes()) {
-      expect(railSide.has(route), `${route} is offered by the staff shell only`).toBe(true);
+      expect(
+        railSide.has(route) || viaSettings.has(route),
+        `${route} is offered by the staff shell only`,
+      ).toBe(true);
     }
+    // Non-vacuity: the exemption is carrying exactly the route AF-1 moved, so a
+    // second route quietly dropping out of the rail still fails above.
+    expect(viaSettings.has("/transcripts")).toBe(true);
+    expect(railSide.has("/transcripts")).toBe(false);
   });
 });
 
